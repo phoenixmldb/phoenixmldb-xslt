@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PhoenixmlDb.Conformance.Tests</RootNamespace>
+    <Description>W3C XQuery and XSLT conformance tests for PhoenixmlDb</Description>
+    <!-- Conformance test harness needs relaxed analysis rules -->
+    <NoWarn>$(NoWarn);CA1002;CA1031;CA1062;CA1307;CA1304;CA1311;CA1805;CA1822;CA1861;CA2007;CA2227</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/PhoenixmlDb.XQuery/PhoenixmlDb.XQuery.csproj" />
+    <ProjectReference Include="../../src/PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj" />
+    <ProjectReference Include="../../src/PhoenixmlDb.Xdm/PhoenixmlDb.Xdm.csproj" />
+    <ProjectReference Include="../PhoenixmlDb.TestUtilities/PhoenixmlDb.TestUtilities.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="TestData/**/*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

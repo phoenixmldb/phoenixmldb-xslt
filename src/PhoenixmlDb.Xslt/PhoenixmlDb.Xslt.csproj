@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>13</LangVersion>
+    <RootNamespace>PhoenixmlDb.Xslt</RootNamespace>
+    <NoWarn>$(NoWarn);CA1002;CA1711;CA1716;CA1720</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PhoenixmlDb.Xslt.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PhoenixmlDb.Core\PhoenixmlDb.Core.csproj" />
+    <ProjectReference Include="..\PhoenixmlDb.Xdm\PhoenixmlDb.Xdm.csproj" />
+    <ProjectReference Include="..\PhoenixmlDb.XQuery\PhoenixmlDb.XQuery.csproj" />
+  </ItemGroup>
+
+</Project>
