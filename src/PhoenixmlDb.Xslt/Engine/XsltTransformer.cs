@@ -2440,6 +2440,13 @@ public sealed class XsltTransformOptions
     public Action<string, bool>? MessageListener { get; init; }
 
     /// <summary>
+    /// Trace listener for debugging. Receives (depth, eventType, details) where eventType
+    /// is "match", "apply", "call-template", "call-function", or "built-in".
+    /// Depth indicates call nesting level.
+    /// </summary>
+    public Action<int, string, string>? TraceListener { get; init; }
+
+    /// <summary>
     /// Whether a source document was explicitly supplied by the calling application.
     /// Used for xsl:global-context-item enforcement.
     /// </summary>
@@ -2851,6 +2858,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private int _documentNodeDepth; // >0 when inside xsl:document (cannot add attributes/namespaces)
     private int _textOutputModeDepth; // >0 when inside method="text" result-document; text from xsl:sequence/value-of gets sentinel-escaped to protect from StripXmlMarkup
     private int _insideXslEvaluateDepth; // >0 when inside xsl:evaluate; XSLT-specific functions raise XTDE3160
+    private int _templateDepth; // Nesting depth for trace output
     private Dictionary<string, string>? _evaluateNamespaceBindings; // Namespace bindings override during xsl:evaluate
     private readonly HashSet<QName> _activeAttributeSets = new(); // Detect circular attribute set references (XTDE0640)
     internal readonly HashSet<QName> _globalsBeingEvaluated = new(); // Detect circular global variable/param references (XTDE0640)
@@ -3906,6 +3914,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
                 if (template != null)
                 {
+                    // Trace: template match
+                    if (_options?.TraceListener != null)
+                    {
+                        var nodeDesc = DescribeTraceNode(node);
+                        var templateDesc = template.Name.HasValue
+                            ? $"name=\"{template.Name.Value.LocalName}\""
+                            : $"match=\"{template.Match}\"";
+                        var modeDesc = mode.HasValue ? $" mode=\"{mode.Value.LocalName}\"" : "";
+                        var priorityDesc = template.Priority.HasValue ? $" priority={template.Priority.Value}" : "";
+                        _options.TraceListener(_templateDepth, "match", $"{nodeDesc} → {templateDesc}{modeDesc}{priorityDesc}");
+                    }
+
                     // Enforce xsl:context-item constraints
                     var makeContextAbsent = EnforceContextItemConstraint(template);
 
@@ -4012,6 +4032,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         _defaultCollationStack.Push(template.DefaultCollation);
                     if (template.BaseUri != null)
                         _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
+                    _templateDepth++;
                     try
                     {
 
@@ -4120,6 +4141,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                     finally
                     {
+                        _templateDepth--;
                         if (template.BaseUri != null)
                             _staticBaseUriStack.Pop();
                         if (template.DefaultCollation != null)
@@ -4138,6 +4160,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 else
                 {
                     // Built-in template rules
+                    if (_options?.TraceListener != null)
+                        _options.TraceListener(_templateDepth, "built-in", DescribeTraceNode(node));
                     await ApplyBuiltInTemplateAsync(node, mode, withParams).ConfigureAwait(false);
                 }
             }
@@ -4885,6 +4909,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask CallTemplateAsync(QName name, List<XsltWithParam> withParams)
     {
+        // Trace: call-template
+        if (_options?.TraceListener != null)
+            _options.TraceListener(_templateDepth, "call-template", name.LocalName);
+
         CheckResourceLimits();
         if (_recursionDepth >= MaxRecursionDepth)
             return;
@@ -16915,6 +16943,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     internal async ValueTask<object?> CallXsltFunctionAsync(XsltFunction func, IReadOnlyList<object?> arguments)
     {
+        // Trace: function call
+        if (_options?.TraceListener != null)
+            _options.TraceListener(_templateDepth, "call-function", $"{func.Name.LocalName}#{arguments.Count}");
+
         // cache="yes" memoization: check cache before executing function body
         string? cacheKey = null;
         if (func.Cache)
@@ -17206,6 +17238,33 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Atomic values: serialize as string
         _output.Append(StringValueOf(result));
+    }
+
+    /// <summary>
+    /// Produces a concise node description for trace output.
+    /// </summary>
+    private static string DescribeTraceNode(object? node)
+    {
+        return node switch
+        {
+            XdmDocument => "document-node()",
+            XdmElement elem => elem.Prefix != null ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName,
+            XdmAttribute attr => $"@{attr.LocalName}",
+            XdmText t => $"text(\"{Truncate(t.Value, 20)}\")",
+            XdmComment => "comment()",
+            XdmProcessingInstruction pi => $"processing-instruction({pi.Target})",
+            System.Xml.Linq.XElement xe => xe.Name.LocalName,
+            System.Xml.Linq.XDocument => "document-node()",
+            string s => $"\"{Truncate(s, 20)}\"",
+            null => "(empty)",
+            _ => node.GetType().Name
+        };
+
+        static string Truncate(string s, int max)
+        {
+            s = s.Replace('\n', ' ').Replace('\r', ' ');
+            return s.Length <= max ? s : string.Concat(s.AsSpan(0, max), "...");
+        }
     }
 }
 
@@ -21618,6 +21677,7 @@ internal sealed class XsltPathFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
 
         return 1; // fallback
     }
+
 }
 
 /// <summary>

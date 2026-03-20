@@ -431,6 +431,32 @@ public sealed class PathPattern : XsltPattern
         }
     }
 
+    public override string ToString()
+    {
+        return string.Join("/", Steps.Select(s =>
+        {
+            var prefix = s.DescendantSeparator ? "/" : "";
+            var test = s.NodeTest switch
+            {
+                NameTest nt => nt.LocalName == "*" ? "*" : nt.LocalName,
+                KindTest kt => kt.Kind switch
+                {
+                    XdmNodeKind.Document => "/",
+                    XdmNodeKind.None => "node()",
+                    XdmNodeKind.Text => "text()",
+                    XdmNodeKind.Comment => "comment()",
+                    XdmNodeKind.ProcessingInstruction => "processing-instruction()",
+                    XdmNodeKind.Element when kt.Name?.LocalName != null => kt.Name.LocalName,
+                    XdmNodeKind.Attribute when kt.Name?.LocalName != null => $"@{kt.Name.LocalName}",
+                    _ => $"{kt.Kind}()"
+                },
+                _ => "?"
+            };
+            var axis = s.Axis == Axis.Attribute ? "@" : "";
+            return $"{prefix}{axis}{test}";
+        }));
+    }
+
     public override bool Matches(object node, XsltContext context)
     {
         if (Steps.Count == 0)

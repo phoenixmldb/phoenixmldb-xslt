@@ -11000,33 +11000,87 @@ public interface IExpressionParser
 }
 
 /// <summary>
-/// XSLT-specific exception.
+/// Represents an error that occurred during XSLT stylesheet compilation or transformation.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <c>XsltException</c> is thrown for both compile-time errors (malformed XSLT, invalid
+/// attribute values, unresolved imports) and runtime errors (type mismatches, failed
+/// assertions, dynamic evaluation errors). Check <see cref="Location"/> to determine
+/// where in the stylesheet the error originated.
+/// </para>
+/// <para>
+/// When an error occurs during transformation, the <see cref="Exception.Message"/> contains
+/// a description of the XSLT error condition (e.g., <c>XTDE0540</c> for conflicting
+/// <c>xsl:result-document</c> URIs), and <see cref="Location"/> pinpoints the stylesheet
+/// instruction that caused the failure.
+/// </para>
+/// </remarks>
+/// <seealso cref="XsltTransformer"/>
 public class XsltException : Exception
 {
+    /// <summary>
+    /// Gets the source location in the XSLT stylesheet where the error occurred,
+    /// or <c>null</c> if the location is not available.
+    /// </summary>
+    /// <remarks>
+    /// The location includes the line number and column number within the stylesheet,
+    /// which is useful for diagnostic messages and IDE integration.
+    /// </remarks>
     public SourceLocation? Location { get; }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="XsltException"/> class.
+    /// </summary>
     public XsltException()
         : base()
     {
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="XsltException"/> class with a
+    /// specified error message.
+    /// </summary>
+    /// <param name="message">A description of the XSLT error.</param>
     public XsltException(string message)
         : base(message)
     {
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="XsltException"/> class with a
+    /// specified error message and inner exception.
+    /// </summary>
+    /// <param name="message">A description of the XSLT error.</param>
+    /// <param name="innerException">The exception that caused this XSLT error.</param>
     public XsltException(string message, Exception innerException)
         : base(message, innerException)
     {
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="XsltException"/> class with a
+    /// specified error message and source location.
+    /// </summary>
+    /// <param name="message">A description of the XSLT error.</param>
+    /// <param name="location">
+    /// The location in the stylesheet where the error occurred, or <c>null</c>.
+    /// </param>
     public XsltException(string message, SourceLocation? location)
         : base(message)
     {
         Location = location;
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="XsltException"/> class with a
+    /// specified error message, source location, and inner exception.
+    /// </summary>
+    /// <param name="message">A description of the XSLT error.</param>
+    /// <param name="location">
+    /// The location in the stylesheet where the error occurred, or <c>null</c>.
+    /// </param>
+    /// <param name="innerException">The exception that caused this XSLT error.</param>
     public XsltException(string message, SourceLocation? location, Exception innerException)
         : base(message, innerException)
     {
