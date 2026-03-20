@@ -6,6 +6,8 @@
     <Nullable>enable</Nullable>
     <LangVersion>13</LangVersion>
     <RootNamespace>PhoenixmlDb.Xslt</RootNamespace>
+    <Description>XSLT 4.0 transformation engine for PhoenixmlDb</Description>
+    <PackageTags>xml;xslt;transform;stylesheet;xquery</PackageTags>
     <NoWarn>$(NoWarn);CA1002;CA1711;CA1716;CA1720</NoWarn>
   </PropertyGroup>
 
@@ -14,9 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PhoenixmlDb.Core\PhoenixmlDb.Core.csproj" />
-    <ProjectReference Include="..\PhoenixmlDb.Xdm\PhoenixmlDb.Xdm.csproj" />
-    <ProjectReference Include="..\PhoenixmlDb.XQuery\PhoenixmlDb.XQuery.csproj" />
+    <PackageReference Include="PhoenixmlDb.Core" />
+    <PackageReference Include="PhoenixmlDb.XQuery" />
   </ItemGroup>
 
 </Project>
