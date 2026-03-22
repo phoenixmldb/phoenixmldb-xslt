@@ -44,6 +44,12 @@ var result = await transformer.TransformAsync(xmlInput);
 
 ### Source Document
 - `TransformAsync(string? inputXml)` — pass source XML as string, or `null` for call-template/call-function
+- `TransformAsync(TextReader inputXml)` — read source from a TextReader (for large documents)
+- `TransformAsync(Stream inputXml)` — read source from a Stream
+- `TransformAsync(string? inputXml, TextWriter output)` — write result directly to a TextWriter
+- `TransformAsync(TextReader inputXml, TextWriter output)` — full stream-to-stream pipeline
+- `TransformAsync(Stream inputXml, Stream output)` — full stream-to-stream pipeline
+- `ResultDocumentHandler` — callback to provide TextWriters for xsl:result-document outputs
 - `SetSourceDocumentUri(Uri)` — set base-uri/document-uri metadata on the source document
 - `SetSourceSelect(string xpath)` — select initial context node (default: document root)
 - `SetInitialModeSelect(string xpath)` — apply templates to a computed node selection
