@@ -541,7 +541,7 @@ public sealed class XsltTransformEngine
                 ?? _stylesheet.NamedTemplates.Keys.First(k => k.LocalName == "initial-template");
             // XTDE0040: Check that initial template is public (in packages)
             // In TransformRawAsync (used by fn:transform), check all templates since
-            // xsl:expose isn't implemented and fn:transform targets specific packages.
+            // fn:transform targets specific packages — xsl:expose visibility is enforced.
             if (_stylesheet.IsPackage
                 && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
                 && rawTmpl.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
