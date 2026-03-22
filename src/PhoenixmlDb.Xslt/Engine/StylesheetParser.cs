@@ -4362,8 +4362,8 @@ public sealed class StylesheetParser
         {
             Name = nameAttr != null ? ParseQName(nameAttr.Value, element) : null,
             Streamable = streamableAttr?.Value == "yes",
-            OnNoMatch = onNoMatchAttr != null ? ParseOnNoMatchBehavior(onNoMatchAttr.Value) : null,
-            OnMultipleMatch = ParseOnMultipleMatchBehavior(onMultipleMatchAttr?.Value),
+            OnNoMatch = onNoMatchAttr != null ? ParseOnNoMatchBehavior(onNoMatchAttr.Value, element) : null,
+            OnMultipleMatch = onMultipleMatchAttr != null ? ParseOnMultipleMatchBehavior(onMultipleMatchAttr.Value, element) : OnMultipleMatchBehavior.UseLast,
             Visibility = ParseVisibility(visibilityAttr?.Value),
             VisibilityAttr = visibilityAttr?.Value.Trim(),
             UseAllAccumulators = useAllAccumulators,
@@ -4373,7 +4373,7 @@ public sealed class StylesheetParser
         };
     }
 
-    private static OnNoMatchBehavior ParseOnNoMatchBehavior(string? value) => value switch
+    private static OnNoMatchBehavior ParseOnNoMatchBehavior(string value, XElement element) => value switch
     {
         "deep-copy" => OnNoMatchBehavior.DeepCopy,
         "shallow-copy" => OnNoMatchBehavior.ShallowCopy,
@@ -4381,7 +4381,9 @@ public sealed class StylesheetParser
         "shallow-skip" => OnNoMatchBehavior.ShallowSkip,
         "text-only-copy" => OnNoMatchBehavior.TextOnlyCopy,
         "fail" => OnNoMatchBehavior.Fail,
-        _ => OnNoMatchBehavior.TextOnlyCopy // XSLT 3.0 default
+        _ => throw new XsltException(
+            $"XTSE0020: Invalid value '{value}' for attribute 'on-no-match' on xsl:mode (must be 'deep-copy', 'shallow-copy', 'deep-skip', 'shallow-skip', 'text-only-copy', or 'fail')",
+            GetSourceLocation(element))
     };
 
     /// <summary>
@@ -4400,11 +4402,13 @@ public sealed class StylesheetParser
         };
     }
 
-    private static OnMultipleMatchBehavior ParseOnMultipleMatchBehavior(string? value) => value switch
+    private static OnMultipleMatchBehavior ParseOnMultipleMatchBehavior(string value, XElement element) => value switch
     {
         "use-last" => OnMultipleMatchBehavior.UseLast,
         "fail" => OnMultipleMatchBehavior.Fail,
-        _ => OnMultipleMatchBehavior.UseLast // Default per XSLT spec
+        _ => throw new XsltException(
+            $"XTSE0020: Invalid value '{value}' for attribute 'on-multiple-match' on xsl:mode (must be 'use-last' or 'fail')",
+            GetSourceLocation(element))
     };
 
     private static Visibility ParseVisibility(string? value) => value switch
@@ -10083,7 +10087,7 @@ public sealed class StylesheetParser
                     "supports-streaming" => "no",
                     "supports-dynamic-evaluation" => "no",
                     "supports-higher-order-functions" => "yes",
-                    "xpath-version" => "3.1",
+                    "xpath-version" => "4.0",
                     "xsd-version" => "1.1",
                     _ => ""
                 };
@@ -10798,7 +10802,7 @@ public sealed class StylesheetParser
             "supports-streaming" => "no",
             "supports-dynamic-evaluation" => "no",
             "supports-higher-order-functions" => "yes",
-            "xpath-version" => "3.1",
+            "xpath-version" => "4.0",
             "xsd-version" => "1.1",
             _ => ""
         };

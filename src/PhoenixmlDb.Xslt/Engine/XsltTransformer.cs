@@ -18927,7 +18927,7 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
             "supports-streaming" => "no",
             "supports-dynamic-evaluation" => "no",
             "supports-higher-order-functions" => "yes",
-            "xpath-version" => "3.1",
+            "xpath-version" => "4.0",
             "xsd-version" => "1.1",
             _ => ""
         };
