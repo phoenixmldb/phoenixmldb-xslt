@@ -14,7 +14,7 @@ namespace PhoenixmlDb.Xslt;
 /// <para>
 /// <c>XsltTransformer</c> provides a simple three-step workflow for XSLT processing:
 /// create an instance, load a stylesheet, and transform XML input. It supports
-/// XSLT 3.0 and 4.0 features including packages, higher-order functions,
+/// XSLT 3.0 and 4.0 features including streaming, packages, higher-order functions,
 /// maps/arrays.
 /// </para>
 /// <para>

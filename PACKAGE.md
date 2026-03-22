@@ -4,7 +4,7 @@ XSLT 4.0 transformation engine for [PhoenixmlDb](https://phoenixml.dev) — tran
 
 ## Features
 
-- **XSLT 3.0/4.0** — template matching, accumulators, packages, maps/arrays
+- **XSLT 3.0/4.0** — template matching, streaming, accumulators, packages, maps/arrays
 - **All output methods** — HTML5, XML, XHTML, JSON, text, CSV, adaptive
 - **Multiple outputs** — `xsl:result-document` for multi-file generation
 - **Full XPath 4.0** — 240+ built-in functions available in all expressions

@@ -1,6 +1,6 @@
 # PhoenixmlDb XSLT
 
-A modern XSLT 4.0 transformation engine for .NET with package support.
+A modern XSLT 4.0 transformation engine for .NET with streaming and package support.
 
 ## Features
 
@@ -16,7 +16,7 @@ A modern XSLT 4.0 transformation engine for .NET with package support.
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
 - xsl:expose, xsl:accept with hidden visibility
-- xsl:source-document for multi-document processing (documents are fully loaded, not streamed)
+- Streaming (xsl:source-document, xsl:mode streamable, xsl:fork, accumulators)
 - Higher-order functions, maps, arrays
 - Accumulators, merge, JSON/adaptive output
 
