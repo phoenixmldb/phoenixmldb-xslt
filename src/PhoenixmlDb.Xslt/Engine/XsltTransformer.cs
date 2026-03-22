@@ -9353,7 +9353,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         throw new XsltException($"XTDE1500: Cannot write to URI '{effectiveHref}' — it was read during this transformation", instruction.Location);
                 }
             }
-            catch (UriFormatException) { /* ignore — can't resolve, skip check */ }
+            catch (UriFormatException ex) { throw new XsltException($"XTDE1400: Invalid URI in xsl:result-document href: {ex.Message}"); }
         }
 
         // Evaluate omit-xml-declaration from xsl:result-document (AVT)
@@ -11066,7 +11066,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                             xmlDoc.LoadXml($"<_rtf_>{rtfText}</_rtf_>");
                             rtfText = xmlDoc.DocumentElement!.InnerText;
                         }
-                        catch (System.Xml.XmlException) { }
+                        catch (System.Xml.XmlException)
+                        {
+                            // Intentional fallback: if RTF content contains angle brackets but is not
+                            // well-formed XML (e.g. text with embedded < from disable-output-escaping),
+                            // fall through and use the raw rtfText string for type coercion below.
+                        }
                     }
                     if (CanCoerceToItemType(rtfText, targetType))
                     {

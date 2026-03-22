@@ -1154,8 +1154,8 @@ public sealed class StylesheetParser
                 if (fileVersion != null && VersionMatches(fileVersion, requestedVersion))
                     return filePath;
             }
-            catch (System.IO.IOException) { /* ignore read errors */ }
-            catch (System.Xml.XmlException) { /* ignore parse errors */ }
+            catch (System.IO.IOException ex) { throw new XsltException($"XTDE3052: Failed to load package '{filePath}': {ex.Message}", location); }
+            catch (System.Xml.XmlException ex) { throw new XsltException($"XTDE3052: Failed to parse package '{filePath}': {ex.Message}", location); }
         }
 
         throw new XsltException($"XTDE3052: No matching version for package '{packageName}' " +
@@ -1704,7 +1704,6 @@ public sealed class StylesheetParser
                     }
                     catch (XsltException ex) when (ex.Message.Contains("XTSE3040", StringComparison.Ordinal))
                     { throw; }
-                    catch (XsltException) { /* name resolution failure — skip validation */ }
                     break;
                 }
                 case "variable":
@@ -3146,7 +3145,12 @@ public sealed class StylesheetParser
                 // Both modules declare xsl:global-context-item — check consistency
                 if (target.GlobalContextItemUse != source.GlobalContextItemUse)
                     throw new XsltException("XTSE3087: Inconsistent xsl:global-context-item declarations across stylesheet modules");
-                // TODO: also check consistency of the 'as' type
+                // Check consistency of the 'as' type across modules
+                var targetAs = target.GlobalContextItemAs?.ToString();
+                var sourceAs = source.GlobalContextItemAs?.ToString();
+                if (targetAs != sourceAs)
+                    throw new XsltException($"XTSE3087: Inconsistent xsl:global-context-item 'as' type across stylesheet modules ('{targetAs ?? "item()"}' vs '{sourceAs ?? "item()"}')");
+
             }
             else
             {
@@ -7713,8 +7717,14 @@ public sealed class StylesheetParser
                     {
                         var predExpr = predPart[1..k];
                         try { predicates.Add(ParseExpression(predExpr, context)); }
-#pragma warning disable CA1031
-                        catch (Exception) { /* skip unparseable predicates */ }
+#pragma warning disable CA1031 // Intentional broad catch — see comment below
+                        catch (Exception)
+                        {
+                            // Predicate parsing may fail during pattern optimization (e.g. forward
+                            // references, complex expressions). The predicate is still evaluated at
+                            // runtime via the full XPath evaluator; skipping it here only means this
+                            // optimization path won't pre-filter using it.
+                        }
 #pragma warning restore CA1031
                         predPart = predPart[(k + 1)..].Trim();
                     }
@@ -7770,8 +7780,14 @@ public sealed class StylesheetParser
                         {
                             predicates.Add(ParseExpression(predExpr, context));
                         }
-#pragma warning disable CA1031
-                        catch (Exception) { /* skip unparseable predicates */ }
+#pragma warning disable CA1031 // Intentional broad catch — see comment below
+                        catch (Exception)
+                        {
+                            // Predicate parsing may fail during pattern optimization (e.g. forward
+                            // references, complex expressions). The predicate is still evaluated at
+                            // runtime via the full XPath evaluator; skipping it here only means this
+                            // optimization path won't pre-filter using it.
+                        }
 #pragma warning restore CA1031
                         predPart = predPart[(k + 1)..].Trim();
                     }
@@ -8417,8 +8433,13 @@ public sealed class StylesheetParser
                 var resolvedUri = new Uri(baseUri, uri);
                 uri = resolvedUri.ToString();
             }
-#pragma warning disable CA1031
-            catch (Exception) { /* keep the original URI */ }
+#pragma warning disable CA1031 // Intentional broad catch — see comment below
+            catch (Exception)
+            {
+                // If the relative URI cannot be resolved against the stylesheet base URI at
+                // compile time (e.g. unknown base URI, opaque URI scheme), keep the original
+                // literal URI. It will be resolved at runtime by the document resolver.
+            }
 #pragma warning restore CA1031
         }
 
