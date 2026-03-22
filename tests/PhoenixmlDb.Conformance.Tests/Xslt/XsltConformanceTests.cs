@@ -444,8 +444,7 @@ public sealed class XsltTestFixture : IAsyncLifetime
             SupportsSchemaAwareness = false
         };
 
-        // xsl:expose is not implemented — skip its dedicated test set
-        config.SkipTestSets.Add("expose");
+        // xsl:expose is implemented — enable its test set
         // import-schema: we accept it as no-op, but the dedicated test set
         // requires actual schema validation runtime — skip for now
         config.SkipTestSets.Add("import-schema");

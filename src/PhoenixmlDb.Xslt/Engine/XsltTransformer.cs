@@ -541,7 +541,7 @@ public sealed class XsltTransformEngine
                 ?? _stylesheet.NamedTemplates.Keys.First(k => k.LocalName == "initial-template");
             // XTDE0040: Check that initial template is public (in packages)
             // In TransformRawAsync (used by fn:transform), check all templates since
-            // xsl:expose isn't implemented and fn:transform targets specific packages.
+            // fn:transform targets specific packages — xsl:expose visibility is enforced.
             if (_stylesheet.IsPackage
                 && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
                 && rawTmpl.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
@@ -1693,6 +1693,13 @@ public sealed class XsltTransformEngine
         if (xmlSource.Length > 0 && xmlSource[0] == '\uFEFF')
             xmlSource = xmlSource[1..];
 
+        // Check if initial mode is streamable — if so, use streaming execution
+        var initialModeKey = options?.InitialMode ?? new QName(NamespaceId.None, "");
+        if (_stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable)
+        {
+            return await TransformStreamingAsync(xmlSource, options).ConfigureAwait(false);
+        }
+
         // Parse the XML to an XdmNode tree
         // PreserveWhitespace must be true BEFORE LoadXml to preserve whitespace-only text nodes
         var doc = new XmlDocument { PreserveWhitespace = true };
@@ -1762,6 +1769,98 @@ public sealed class XsltTransformEngine
         }
 
         return await TransformAsync(sourceNode, options, nodeStore).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Transforms an XML string using streaming execution (XmlReader-based forward pass).
+    /// Used when the initial mode is declared as streamable="yes".
+    /// </summary>
+    private async Task<string> TransformStreamingAsync(string xmlSource, XsltTransformOptions? options)
+    {
+        options ??= new XsltTransformOptions();
+
+        var nodeStore = new InMemoryNodeStore();
+        _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
+
+        // Resolve namespaces in key match patterns
+        foreach (var keyDef in _stylesheet.Keys.Values)
+        {
+            TemplateIndex.ResolveNamespacesInPattern(keyDef.Match, nodeStore.InternNamespace);
+            if (keyDef.OtherDefinitions != null)
+            {
+                foreach (var other in keyDef.OtherDefinitions)
+                    TemplateIndex.ResolveNamespacesInPattern(other.Match, nodeStore.InternNamespace);
+            }
+        }
+
+        // Resolve namespaces in accumulator rule match patterns
+        foreach (var acc in _stylesheet.Accumulators.Values)
+        {
+            foreach (var rule in acc.Rules)
+                TemplateIndex.ResolveNamespacesInPattern(rule.Match, nodeStore.InternNamespace);
+        }
+
+        // Resolve namespaces in strip-space/preserve-space NameTests
+        foreach (var nt in _stylesheet.StripSpace)
+            nt.ResolveNamespace(nodeStore.InternNamespace);
+        foreach (var nt in _stylesheet.PreserveSpace)
+            nt.ResolveNamespace(nodeStore.InternNamespace);
+
+        // Create a synthetic document node for the context
+        var syntheticDocId = nodeStore.NextId();
+        var syntheticDoc = new XdmDocument
+        {
+            Id = syntheticDocId,
+            Document = new DocumentId(0),
+            Children = [],
+            BaseUri = options.SourceDocumentUri?.AbsoluteUri
+        };
+        nodeStore.Register(syntheticDoc);
+
+        var outputBuilder = new StringBuilder();
+        var context = new DefaultXsltExecutionContext(
+            _stylesheet,
+            _templateIndex,
+            syntheticDoc,
+            outputBuilder,
+            options,
+            nodeStore);
+
+        // Initialize global variables
+        if (!options.HasSourceDocument)
+            context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+
+        await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
+
+        if (!options.HasSourceDocument)
+            context.PopContextItem();
+
+        // Bind initial parameters as global variables
+        foreach (var (name, value) in options.InitialParameters)
+            context.GlobalVariables[name] = value;
+
+        // Stream with XmlReader
+        using var stringReader = new System.IO.StringReader(xmlSource);
+        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = true };
+        using var xmlReader = XmlReader.Create(stringReader, settings,
+            options.SourceDocumentUri?.AbsoluteUri ?? "");
+
+        // Resolve applicable accumulators for the streaming pass
+        var streamingAccumulators = _stylesheet.Accumulators.Count > 0
+            ? _stylesheet.Accumulators.Values.ToList()
+            : null;
+
+        var processor = new StreamingXmlProcessor(
+            _stylesheet, _templateIndex, context, nodeStore, options.InitialMode,
+            streamingAccumulators);
+        await processor.ProcessAsync(xmlReader, options.CancellationToken)
+            .ConfigureAwait(false);
+
+        var output = outputBuilder.ToString();
+
+        // Apply serialization post-processing (same as non-streaming path)
+        SecondaryResultDocuments = context.SecondaryResults;
+        return output;
     }
 
     /// <summary>
@@ -2238,6 +2337,12 @@ public sealed class XsltTransformEngine
         public NodeId NextId() => new(_nextId++);
         public void Register(XdmNode node) => _nodes[node.Id] = node;
         public XdmNode? GetNode(NodeId id) => _nodes.GetValueOrDefault(id);
+
+        /// <summary>
+        /// Removes a node from the store. Used by streaming execution to free
+        /// temporary nodes after they have been processed.
+        /// </summary>
+        internal void Remove(NodeId id) => _nodes.Remove(id);
 
         public NamespaceId InternNamespace(string uri)
         {
@@ -2862,6 +2967,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private Dictionary<string, string>? _evaluateNamespaceBindings; // Namespace bindings override during xsl:evaluate
     private readonly HashSet<QName> _activeAttributeSets = new(); // Detect circular attribute set references (XTDE0640)
     internal readonly HashSet<QName> _globalsBeingEvaluated = new(); // Detect circular global variable/param references (XTDE0640)
+
+    // Streaming execution state: when true, built-in template recursion into children is
+    // a no-op because the streaming loop (StreamingXmlProcessor) handles child dispatch.
+    internal bool _isStreamingExecution;
+    // Active streaming processor reference for triggering streaming from apply-templates
+    // inside xsl:source-document Content bodies.
+    internal StreamingXmlProcessor? _activeStreamingProcessor;
+    internal XmlReader? _activeStreamingReader;
+    internal CancellationToken _activeStreamingCancellationToken;
     internal Dictionary<QName, GlobalDeclaration>? _pendingGlobals; // Lazy global init: declarations not yet evaluated
     private bool _lastResultWasAtomic; // Track adjacent atomic values for space separation
     private string? _itemSeparatorOverride; // When set, overrides default space separator between sequence items
@@ -3091,7 +3205,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private readonly Stack<string> _defaultCollationStack = new();
 
     // XSLT 3.0 accumulator state: maps (accumulator name, node ID) → (before-value, after-value)
-    private Dictionary<QName, Dictionary<NodeId, (object? before, object? after)>>? _accumulatorValues;
+    internal Dictionary<QName, Dictionary<NodeId, (object? before, object? after)>>? _accumulatorValues;
     private HashSet<(QName, NodeId)>? _evaluatingAccEndPhase; // Cycle detection for accumulator-after
     private HashSet<NodeId>? _accumulatorComputedDocuments; // Documents that have had accumulators pre-computed
 
@@ -3795,6 +3909,27 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         List<XsltSort> sorts,
         List<XsltWithParam> withParams)
     {
+        // Streaming interception: when a streaming processor is active and
+        // apply-templates is called on children (select is null, context is the
+        // synthetic streaming document), delegate to the streaming processor.
+        if (_activeStreamingProcessor != null && select == null && _activeStreamingReader != null)
+        {
+            var ci = ContextItem;
+            if (ci is XdmDocument)
+            {
+                var proc = _activeStreamingProcessor;
+                var rdr = _activeStreamingReader;
+                var ct = _activeStreamingCancellationToken;
+                // Clear the active processor so it's not re-triggered during
+                // the streaming pass (the processor calls MatchAndExecuteStreamingNodeAsync
+                // which may invoke templates that call apply-templates again).
+                _activeStreamingProcessor = null;
+                _activeStreamingReader = null;
+                await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
+                return;
+            }
+        }
+
         // Get nodes to process
         IEnumerable<object> nodes;
         if (select != null)
@@ -4220,7 +4355,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             case OnNoMatchBehavior.DeepSkip:
                 // Skip the node and all descendants entirely.
                 // Exception: document nodes still recurse into children (otherwise nothing would ever match).
-                if (node is XdmDocument)
+                // In streaming mode, child recursion is handled by the streaming loop.
+                if (node is XdmDocument && !_isStreamingExecution)
                     await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 break;
             case OnNoMatchBehavior.ShallowSkip:
@@ -4241,7 +4377,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                             // If no match, shallow-skip does nothing for attributes
                         }
                     }
-                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                    // In streaming mode, child recursion is handled by the streaming loop.
+                    if (!_isStreamingExecution)
+                        await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 }
                 break;
             case OnNoMatchBehavior.Fail:
@@ -4256,7 +4394,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         {
             case XdmDocument:
             case XdmElement:
-                await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                // In streaming mode, child recursion is handled by the streaming loop —
+                // the built-in template only needs to handle the current node.
+                if (!_isStreamingExecution)
+                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 break;
             case XdmText text:
                 WriteText(text.Value, false);
@@ -4283,7 +4424,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         switch (node)
         {
             case XdmDocument:
-                await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                // In streaming mode, child recursion is handled by the streaming loop.
+                if (!_isStreamingExecution)
+                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 break;
             case XdmElement elem:
             {
@@ -4377,17 +4520,21 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 // Apply templates to children — suspend accumulator and track element depth
                 // so inner templates with 'as' serialize to _output (child content)
                 // instead of redirecting to an outer sequence accumulator.
-                var savedSeqAccumSC = _sequenceAccumulator;
-                _sequenceAccumulator = null;
-                _serializingElementDepth++;
-                try
+                // In streaming mode, child recursion is handled by the streaming loop.
+                if (!_isStreamingExecution)
                 {
-                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
-                }
-                finally
-                {
-                    _serializingElementDepth--;
-                    _sequenceAccumulator = savedSeqAccumSC;
+                    var savedSeqAccumSC = _sequenceAccumulator;
+                    _sequenceAccumulator = null;
+                    _serializingElementDepth++;
+                    try
+                    {
+                        await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _serializingElementDepth--;
+                        _sequenceAccumulator = savedSeqAccumSC;
+                    }
                 }
 
                 _output.Append("</");
@@ -4594,13 +4741,89 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// Matches a streaming node against templates in the given mode and executes
+    /// the matched template (or built-in rules). Called by StreamingXmlProcessor
+    /// for each node encountered during streaming execution.
+    /// </summary>
+    internal async ValueTask MatchAndExecuteStreamingNodeAsync(XdmNode node, QName? mode, int position)
+    {
+        PushContextItem(node, position, 1);
+        PushCurrentItem(node);
+        PushScope();
+        try
+        {
+            var template = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext());
+            if (template != null)
+            {
+                var savedTemplate = _currentTemplate;
+                var savedMode = _currentMode;
+                _currentTemplate = template;
+                _currentMode = mode;
+
+                // Bind template parameters with defaults
+                foreach (var param in template.Parameters)
+                {
+                    if (param.Select != null)
+                    {
+                        var defaultVal = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                        if (param.As != null)
+                        {
+                            defaultVal = CoerceToType(defaultVal, param.As);
+                        }
+                        SetVariable(param.Name, defaultVal);
+                    }
+                    else
+                    {
+                        SetVariable(param.Name, "");
+                    }
+                }
+
+                if (template.Version != null)
+                    _effectiveVersionStack.Push(template.Version);
+                if (template.DefaultCollation != null)
+                    _defaultCollationStack.Push(template.DefaultCollation);
+                if (template.BaseUri != null)
+                    _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
+                try
+                {
+                    await template.Body.ExecuteAsync(this).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (template.BaseUri != null)
+                        _staticBaseUriStack.Pop();
+                    if (template.DefaultCollation != null)
+                        _defaultCollationStack.Pop();
+                    if (template.Version != null)
+                        _effectiveVersionStack.Pop();
+                    _currentTemplate = savedTemplate;
+                    _currentMode = savedMode;
+                }
+            }
+            else
+            {
+                // Apply built-in template rules
+                await ApplyBuiltInTemplateAsync(node, mode, []).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            PopScope();
+            PopCurrentItem();
+            PopContextItem();
+        }
+    }
+
     private async ValueTask ApplyBuiltInDeepCopyAsync(object node, QName? mode, List<XsltWithParam> withParams)
     {
         // Deep copy: serialize the entire node subtree
         switch (node)
         {
             case XdmDocument:
-                await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                // In streaming mode, child recursion is handled by the streaming loop.
+                if (!_isStreamingExecution)
+                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 break;
             case XdmElement elem:
                 SerializeElement(elem);
@@ -9353,7 +9576,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         throw new XsltException($"XTDE1500: Cannot write to URI '{effectiveHref}' — it was read during this transformation", instruction.Location);
                 }
             }
-            catch (UriFormatException) { /* ignore — can't resolve, skip check */ }
+            catch (UriFormatException ex) { throw new XsltException($"XTDE1400: Invalid URI in xsl:result-document href: {ex.Message}"); }
         }
 
         // Evaluate omit-xml-declaration from xsl:result-document (AVT)
@@ -9814,7 +10037,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
-    private async ValueTask<object?> EvaluateAccumulatorRuleAsync(
+    internal async ValueTask<object?> EvaluateAccumulatorRuleAsync(
         object node, XsltAccumulatorRule rule, object? currentValue, XsltAccumulator accumulator)
     {
         PushScope();
@@ -9847,7 +10070,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         return currentValue;
     }
 
-    private static object? CoerceAccumulatorValue(object? value, XdmSequenceType declaredType, QName accName)
+    internal static object? CoerceAccumulatorValue(object? value, XdmSequenceType declaredType, QName accName)
     {
         // Unwrap single-item lists/arrays to scalar values (may be nested)
         if (declaredType.Occurrence is not (Occurrence.ZeroOrMore or Occurrence.OneOrMore))
@@ -10376,6 +10599,87 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         catch (UriFormatException ex)
         {
             throw new XsltException($"FODC0005: Invalid URI '{href}': {ex.Message}");
+        }
+
+        // If streamable="yes", use XmlReader-based streaming instead of full tree loading
+        if (instruction.Streamable && resolvedUri.IsFile && string.IsNullOrEmpty(fragment))
+        {
+            try
+            {
+                using var fileStream = System.IO.File.OpenRead(resolvedUri.LocalPath);
+                var readerSettings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Parse,
+                    Async = true
+                };
+                using var xmlReader = XmlReader.Create(fileStream, readerSettings, resolvedUri.AbsoluteUri);
+
+                var streamNodeStore = _nodeStore ?? new XsltTransformEngine.InMemoryNodeStore();
+                _templateIndex.ResolvePatternNamespaces(streamNodeStore.InternNamespace);
+
+                // Resolve accumulators for streaming
+                var streamAccumulators = new List<XsltAccumulator>();
+                if (instruction.UseAccumulators.Count > 0)
+                {
+                    foreach (var accName in instruction.UseAccumulators)
+                    {
+                        if (_stylesheet.Accumulators.TryGetValue(accName, out var acc))
+                            streamAccumulators.Add(acc);
+                    }
+                }
+
+                var processor = new StreamingXmlProcessor(
+                    _stylesheet, _templateIndex, this, streamNodeStore, _currentMode,
+                    streamAccumulators.Count > 0 ? streamAccumulators : null);
+
+                // Push a synthetic document node as context so the content body can execute
+                var syntheticDocId = new NodeId(999_999);
+                var syntheticDoc = new XdmDocument
+                {
+                    Id = syntheticDocId,
+                    Document = new DocumentId(0),
+                    Children = [],
+                    BaseUri = resolvedUri.AbsoluteUri
+                };
+                streamNodeStore.Register(syntheticDoc);
+
+                PushContextItem(syntheticDoc, 1, 1);
+                var savedStreamingProcessor = _activeStreamingProcessor;
+                var savedStreamingReader = _activeStreamingReader;
+                var savedStreamingCt = _activeStreamingCancellationToken;
+                _activeStreamingProcessor = processor;
+                _activeStreamingReader = xmlReader;
+                _activeStreamingCancellationToken = _options.CancellationToken;
+                try
+                {
+                    if (instruction.Content != null)
+                    {
+                        // Execute the Content body (typically xsl:apply-templates or xsl:iterate).
+                        // When ApplyTemplatesAsync is invoked within the Content body and the
+                        // streaming processor is active, it triggers the streaming processor
+                        // to read the document via XmlReader in a forward pass.
+                        await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    _activeStreamingProcessor = savedStreamingProcessor;
+                    _activeStreamingReader = savedStreamingReader;
+                    _activeStreamingCancellationToken = savedStreamingCt;
+                    PopContextItem();
+                    streamNodeStore.Remove(syntheticDocId);
+                }
+            }
+            catch (System.IO.FileNotFoundException)
+            {
+                throw new XsltException($"FODC0002: Document not found: '{resolvedUri}'");
+            }
+            catch (System.IO.IOException ex)
+            {
+                throw new XsltException($"FODC0002: Error loading document '{resolvedUri}': {ex.Message}");
+            }
+
+            return; // Skip the full-tree path
         }
 
         // Load the XML document (resolvedUri is already fragment-free)
@@ -11066,7 +11370,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                             xmlDoc.LoadXml($"<_rtf_>{rtfText}</_rtf_>");
                             rtfText = xmlDoc.DocumentElement!.InnerText;
                         }
-                        catch (System.Xml.XmlException) { }
+                        catch (System.Xml.XmlException)
+                        {
+                            // Intentional fallback: if RTF content contains angle brackets but is not
+                            // well-formed XML (e.g. text with embedded < from disable-output-escaping),
+                            // fall through and use the raw rtfText string for type coercion below.
+                        }
                     }
                     if (CanCoerceToItemType(rtfText, targetType))
                     {
@@ -11897,7 +12206,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// Computes the position of a node among its siblings matching the given node test.
     /// Returns (position, size) where position is 1-based.
     /// </summary>
-    private (int position, int size) ComputeNodePosition(object node, NodeTest nodeTest, object? descendantAncestor)
+    internal (int position, int size) ComputeNodePosition(object node, NodeTest nodeTest, object? descendantAncestor)
     {
         if (node is not XdmNode xdmNode || _nodeStore == null)
             return (1, 1);
@@ -11980,7 +12289,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         };
     }
 
-    private bool EvaluatePatternPredicate(object stepNode, XQueryExpression predicate, int position, int size, object? matchedNode)
+    internal bool EvaluatePatternPredicate(object stepNode, XQueryExpression predicate, int position, int size, object? matchedNode)
     {
         // Push the step node as context item for predicate evaluation (for "." references)
         // Position and size are used for position() and last() functions
@@ -12034,7 +12343,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// Evaluates a key() pattern during pattern matching.
     /// Checks if the given node is in the result set of key(keyName, valueExpr).
     /// </summary>
-    private bool EvaluateKeyPattern(string keyName, PhoenixmlDb.XQuery.Ast.XQueryExpression valueExpr, object node)
+    internal bool EvaluateKeyPattern(string keyName, PhoenixmlDb.XQuery.Ast.XQueryExpression valueExpr, object node)
     {
         try
         {
@@ -12079,7 +12388,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 #pragma warning restore CA1031
     }
 
-    private bool EvaluateIdPattern(PhoenixmlDb.XQuery.Ast.XQueryExpression valueExpr, object node)
+    internal bool EvaluateIdPattern(PhoenixmlDb.XQuery.Ast.XQueryExpression valueExpr, object node)
     {
         try
         {
@@ -13310,7 +13619,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask ForkAsync(XsltFork instruction)
     {
-        // Simplified: execute sequentially (non-streaming mode)
+        // Streaming-aware sequential execution: prongs execute one at a time.
+        // True parallel fork would require thread-safe output handling per prong;
+        // keeping sequential for safety while streaming is about input processing.
         foreach (var feg in instruction.ForEachGroups)
         {
             await ForEachGroupAsync(feg).ConfigureAwait(false);
@@ -13959,6 +14270,63 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 _sequenceAccumulator = savedAccum;
             }
         }
+    }
+
+    public override async ValueTask CreateRecordAsync(Ast.XsltRecord instruction)
+    {
+        // xsl:record produces an XDM map with string keys from xsl:entry children.
+        // Each entry has a name (string key) and a value (from select or sequence constructor body).
+        var map = new Dictionary<object, object?>();
+
+        foreach (var (name, valueBody) in instruction.Entries)
+        {
+            // Evaluate the entry's sequence constructor to get the value
+            object? value = null;
+            if (valueBody != null && valueBody.Instructions.Count > 0)
+            {
+                var savedAccum = _sequenceAccumulator;
+                _sequenceAccumulator = new List<object?>();
+                var savedOutput = _output.ToString();
+                _output.Clear();
+                _temporaryOutputDepth++;
+                try
+                {
+                    await valueBody.ExecuteAsync(this).ConfigureAwait(false);
+                    var items = _sequenceAccumulator;
+                    var outputText = _output.ToString();
+                    if (items.Count == 0 && outputText.Length > 0)
+                    {
+                        value = outputText;
+                    }
+                    else
+                    {
+                        value = items.Count switch
+                        {
+                            0 => null,
+                            1 => items[0],
+                            _ => items.ToArray()
+                        };
+                    }
+                }
+                finally
+                {
+                    _temporaryOutputDepth--;
+                    _output.Clear();
+                    _output.Append(savedOutput);
+                    _sequenceAccumulator = savedAccum;
+                }
+            }
+
+            if (map.ContainsKey(name))
+                throw new XsltException($"XTDE3365: Duplicate key '{name}' in xsl:record");
+            map[name] = value;
+        }
+
+        // Add the completed map to the output (same as xsl:map)
+        if (_sequenceAccumulator != null)
+            _sequenceAccumulator.Add(map);
+        else if (_outputNsScopes.Count > 0)
+            throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
     }
 
     public override async ValueTask WherePopulatedAsync(XsltWherePopulated instruction)
@@ -18923,11 +19291,11 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
             "is-schema-aware" => "no",
             "supports-serialization" => "yes",
             "supports-backwards-compatibility" => "yes",
-            "supports-namespace-axis" => "no",
-            "supports-streaming" => "no",
+            "supports-namespace-axis" => "yes",
+            "supports-streaming" => "yes",
             "supports-dynamic-evaluation" => "no",
             "supports-higher-order-functions" => "yes",
-            "xpath-version" => "3.1",
+            "xpath-version" => "4.0",
             "xsd-version" => "1.1",
             _ => ""
         };

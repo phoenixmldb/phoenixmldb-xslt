@@ -1,3 +1,4 @@
+using System.IO;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.XQuery.Parser;
@@ -14,7 +15,7 @@ namespace PhoenixmlDb.Xslt;
 /// <c>XsltTransformer</c> provides a simple three-step workflow for XSLT processing:
 /// create an instance, load a stylesheet, and transform XML input. It supports
 /// XSLT 3.0 and 4.0 features including streaming, packages, higher-order functions,
-/// and maps/arrays.
+/// maps/arrays.
 /// </para>
 /// <para>
 /// <b>Invocation styles:</b> XSLT defines three ways to start a transformation:
@@ -26,7 +27,7 @@ namespace PhoenixmlDb.Xslt;
 /// </description></item>
 /// <item><description>
 /// <b>Call template</b> — invoke a named template via <see cref="SetInitialTemplate"/>.
-/// No source document is required (pass <c>null</c> to <see cref="TransformAsync"/>).
+/// No source document is required (pass <c>null</c> to <see cref="TransformAsync(string?, CancellationToken)"/>).
 /// </description></item>
 /// <item><description>
 /// <b>Call function</b> — invoke a public stylesheet function via
@@ -85,7 +86,7 @@ public sealed class XsltTransformer
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This dictionary is repopulated after each call to <see cref="TransformAsync"/>.
+    /// This dictionary is repopulated after each call to <see cref="TransformAsync(string?, CancellationToken)"/>.
     /// Each entry maps the <c>href</c> URI from an <c>xsl:result-document</c> instruction
     /// to the serialized output string for that document.
     /// </para>
@@ -241,7 +242,7 @@ public sealed class XsltTransformer
     /// <para>
     /// When an initial template is set, the transformation begins by calling that named
     /// template rather than applying templates to the source document. This means the
-    /// <c>inputXml</c> parameter of <see cref="TransformAsync"/> can be <c>null</c> —
+    /// <c>inputXml</c> parameter of <see cref="TransformAsync(string?, CancellationToken)"/> can be <c>null</c> —
     /// the template generates output without needing a source document.
     /// </para>
     /// <para>
@@ -299,7 +300,7 @@ public sealed class XsltTransformer
     /// When using call-function invocation, supply arguments via
     /// <see cref="AddInitialFunctionArgument"/> in the order declared by the function's
     /// <c>xsl:param</c> elements. No source document is required — pass <c>null</c> to
-    /// <see cref="TransformAsync"/>.
+    /// <see cref="TransformAsync(string?, CancellationToken)"/>.
     /// </para>
     /// </remarks>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1054:URI-like parameters should not be strings")]
@@ -332,7 +333,7 @@ public sealed class XsltTransformer
     /// <param name="uri">
     /// The URI to associate with the source document. This does not load the document
     /// from the URI — it only sets the base URI metadata on the document node created
-    /// from the <c>inputXml</c> string passed to <see cref="TransformAsync"/>.
+    /// from the <c>inputXml</c> string passed to <see cref="TransformAsync(string?, CancellationToken)"/>.
     /// </param>
     /// <remarks>
     /// Setting a source document URI is important when the stylesheet uses relative URIs
@@ -513,9 +514,105 @@ public sealed class XsltTransformer
             result = await engine.TransformAsync("<empty/>", options).ConfigureAwait(false);
         }
 
-        SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        // If a handler is set, write secondary results to the provided writers
+        if (ResultDocumentHandler != null)
+        {
+            foreach (var (href, content) in engine.SecondaryResultDocuments)
+            {
+                var writer = ResultDocumentHandler(href);
+                await writer.WriteAsync(content).ConfigureAwait(false);
+                await writer.FlushAsync(ct).ConfigureAwait(false);
+            }
+            SecondaryResultDocuments = new Dictionary<string, string>();
+        }
+        else
+        {
+            SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        }
         return result;
     }
+
+    /// <summary>
+    /// Transforms XML from a <see cref="TextReader"/> source.
+    /// </summary>
+    public async Task<string> TransformAsync(TextReader inputXml, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(inputXml);
+        var xml = await inputXml.ReadToEndAsync(ct).ConfigureAwait(false);
+        return await TransformAsync(xml, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Transforms XML from a <see cref="Stream"/> source.
+    /// </summary>
+    public async Task<string> TransformAsync(Stream inputXml, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(inputXml);
+        using var reader = new StreamReader(inputXml, leaveOpen: true);
+        return await TransformAsync(reader, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Transforms XML and writes the primary result to a <see cref="TextWriter"/>.
+    /// </summary>
+    public async Task TransformAsync(string? inputXml, TextWriter output, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        var result = await TransformAsync(inputXml, ct).ConfigureAwait(false);
+        await output.WriteAsync(result).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Transforms XML from a <see cref="TextReader"/> and writes to a <see cref="TextWriter"/>.
+    /// </summary>
+    public async Task TransformAsync(TextReader inputXml, TextWriter output, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(inputXml);
+        ArgumentNullException.ThrowIfNull(output);
+        var xml = await inputXml.ReadToEndAsync(ct).ConfigureAwait(false);
+        var result = await TransformAsync(xml, ct).ConfigureAwait(false);
+        await output.WriteAsync(result).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Transforms XML from a <see cref="Stream"/> and writes to a <see cref="Stream"/>.
+    /// </summary>
+    public async Task TransformAsync(Stream inputXml, Stream output, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(inputXml);
+        ArgumentNullException.ThrowIfNull(output);
+        using var reader = new StreamReader(inputXml, leaveOpen: true);
+        var writer = new StreamWriter(output, leaveOpen: true);
+        await using (writer.ConfigureAwait(false))
+        {
+            await TransformAsync(reader, writer, ct).ConfigureAwait(false);
+            await writer.FlushAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Optional callback that provides a <see cref="TextWriter"/> for each secondary result document
+    /// produced by <c>xsl:result-document</c>. When set, secondary documents are written directly
+    /// to the provided writer instead of accumulating in <see cref="SecondaryResultDocuments"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The callback receives the <c>href</c> value from <c>xsl:result-document</c> and must return
+    /// a <see cref="TextWriter"/>. The caller is responsible for disposing the writer after
+    /// <see cref="TransformAsync(string?, CancellationToken)"/> completes.
+    /// </para>
+    /// <example>
+    /// <code>
+    /// transformer.ResultDocumentHandler = href =>
+    ///     new StreamWriter(File.Create($"output/{href}"));
+    ///
+    /// await transformer.TransformAsync(inputXml);
+    /// // Secondary documents have been written to files.
+    /// // SecondaryResultDocuments will be empty when a handler is set.
+    /// </code>
+    /// </example>
+    /// </remarks>
+    public Func<string, TextWriter>? ResultDocumentHandler { get; set; }
 
     private static QName ResolveQName(string name, string? namespaceUri)
     {

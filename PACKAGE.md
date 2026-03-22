@@ -29,6 +29,8 @@ foreach (var (href, content) in transformer.SecondaryResultDocuments)
     File.WriteAllText(Path.Combine(outputDir, href), content);
 ```
 
+See the [full API overview](https://github.com/phoenixmldb/phoenixmldb-xslt#api-overview) in the README.
+
 ## Related packages
 
 | Package | Description |

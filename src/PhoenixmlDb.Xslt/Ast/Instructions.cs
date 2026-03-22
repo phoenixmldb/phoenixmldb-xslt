@@ -402,21 +402,11 @@ public sealed class XsltRecord : XsltInstruction
 {
     public List<(string Name, XsltSequenceConstructor Value)> Entries { get; init; } = new();
 
-    public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => default!;
+    public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitRecord(this);
 
     public override async ValueTask ExecuteAsync(XsltExecutionContext context)
     {
-        // Build a map from entry name/value pairs
-        // Each entry's value is evaluated as a sequence constructor
-        // The result map is output via the sequence accumulator
-        var map = new Dictionary<object, object?>();
-        foreach (var (name, _) in Entries)
-        {
-            map[name] = name; // Placeholder — full execution TBD with sequence accumulator
-        }
-        // Output as text representation for now
-        context.WriteText(System.Text.Json.JsonSerializer.Serialize(map), false);
-        await ValueTask.CompletedTask.ConfigureAwait(false);
+        await context.CreateRecordAsync(this).ConfigureAwait(false);
     }
 }
 
@@ -1345,6 +1335,8 @@ public abstract class XsltExecutionContext
     public abstract ValueTask CreateMapEntryAsync(XsltMapEntry instruction);
     public abstract ValueTask CreateArrayAsync(XsltArray instruction);
     public abstract ValueTask CreateArrayMemberAsync(XsltArrayMember instruction);
+    /// <summary>Execute xsl:record (XSLT 4.0) — constructs a map with string keys from xsl:entry children.</summary>
+    public abstract ValueTask CreateRecordAsync(XsltRecord instruction);
     public abstract ValueTask CreateLiteralElementAsync(XsltLiteralResultElement instruction);
     public abstract ValueTask WherePopulatedAsync(XsltWherePopulated instruction);
     public abstract ValueTask OnEmptyAsync(XsltOnEmpty instruction);

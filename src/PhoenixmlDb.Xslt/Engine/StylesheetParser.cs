@@ -1154,8 +1154,8 @@ public sealed class StylesheetParser
                 if (fileVersion != null && VersionMatches(fileVersion, requestedVersion))
                     return filePath;
             }
-            catch (System.IO.IOException) { /* ignore read errors */ }
-            catch (System.Xml.XmlException) { /* ignore parse errors */ }
+            catch (System.IO.IOException ex) { throw new XsltException($"XTDE3052: Failed to load package '{filePath}': {ex.Message}", location); }
+            catch (System.Xml.XmlException ex) { throw new XsltException($"XTDE3052: Failed to parse package '{filePath}': {ex.Message}", location); }
         }
 
         throw new XsltException($"XTDE3052: No matching version for package '{packageName}' " +
@@ -1704,7 +1704,6 @@ public sealed class StylesheetParser
                     }
                     catch (XsltException ex) when (ex.Message.Contains("XTSE3040", StringComparison.Ordinal))
                     { throw; }
-                    catch (XsltException) { /* name resolution failure — skip validation */ }
                     break;
                 }
                 case "variable":
@@ -3146,7 +3145,12 @@ public sealed class StylesheetParser
                 // Both modules declare xsl:global-context-item — check consistency
                 if (target.GlobalContextItemUse != source.GlobalContextItemUse)
                     throw new XsltException("XTSE3087: Inconsistent xsl:global-context-item declarations across stylesheet modules");
-                // TODO: also check consistency of the 'as' type
+                // Check consistency of the 'as' type across modules
+                var targetAs = target.GlobalContextItemAs?.ToString();
+                var sourceAs = source.GlobalContextItemAs?.ToString();
+                if (targetAs != sourceAs)
+                    throw new XsltException($"XTSE3087: Inconsistent xsl:global-context-item 'as' type across stylesheet modules ('{targetAs ?? "item()"}' vs '{sourceAs ?? "item()"}')");
+
             }
             else
             {
@@ -4362,8 +4366,8 @@ public sealed class StylesheetParser
         {
             Name = nameAttr != null ? ParseQName(nameAttr.Value, element) : null,
             Streamable = streamableAttr?.Value == "yes",
-            OnNoMatch = onNoMatchAttr != null ? ParseOnNoMatchBehavior(onNoMatchAttr.Value) : null,
-            OnMultipleMatch = ParseOnMultipleMatchBehavior(onMultipleMatchAttr?.Value),
+            OnNoMatch = onNoMatchAttr != null ? ParseOnNoMatchBehavior(onNoMatchAttr.Value, element) : null,
+            OnMultipleMatch = onMultipleMatchAttr != null ? ParseOnMultipleMatchBehavior(onMultipleMatchAttr.Value, element) : OnMultipleMatchBehavior.UseLast,
             Visibility = ParseVisibility(visibilityAttr?.Value),
             VisibilityAttr = visibilityAttr?.Value.Trim(),
             UseAllAccumulators = useAllAccumulators,
@@ -4373,7 +4377,7 @@ public sealed class StylesheetParser
         };
     }
 
-    private static OnNoMatchBehavior ParseOnNoMatchBehavior(string? value) => value switch
+    private static OnNoMatchBehavior ParseOnNoMatchBehavior(string value, XElement element) => value switch
     {
         "deep-copy" => OnNoMatchBehavior.DeepCopy,
         "shallow-copy" => OnNoMatchBehavior.ShallowCopy,
@@ -4381,7 +4385,9 @@ public sealed class StylesheetParser
         "shallow-skip" => OnNoMatchBehavior.ShallowSkip,
         "text-only-copy" => OnNoMatchBehavior.TextOnlyCopy,
         "fail" => OnNoMatchBehavior.Fail,
-        _ => OnNoMatchBehavior.TextOnlyCopy // XSLT 3.0 default
+        _ => throw new XsltException(
+            $"XTSE0020: Invalid value '{value}' for attribute 'on-no-match' on xsl:mode (must be 'deep-copy', 'shallow-copy', 'deep-skip', 'shallow-skip', 'text-only-copy', or 'fail')",
+            GetSourceLocation(element))
     };
 
     /// <summary>
@@ -4400,11 +4406,13 @@ public sealed class StylesheetParser
         };
     }
 
-    private static OnMultipleMatchBehavior ParseOnMultipleMatchBehavior(string? value) => value switch
+    private static OnMultipleMatchBehavior ParseOnMultipleMatchBehavior(string value, XElement element) => value switch
     {
         "use-last" => OnMultipleMatchBehavior.UseLast,
         "fail" => OnMultipleMatchBehavior.Fail,
-        _ => OnMultipleMatchBehavior.UseLast // Default per XSLT spec
+        _ => throw new XsltException(
+            $"XTSE0020: Invalid value '{value}' for attribute 'on-multiple-match' on xsl:mode (must be 'use-last' or 'fail')",
+            GetSourceLocation(element))
     };
 
     private static Visibility ParseVisibility(string? value) => value switch
@@ -7709,8 +7717,14 @@ public sealed class StylesheetParser
                     {
                         var predExpr = predPart[1..k];
                         try { predicates.Add(ParseExpression(predExpr, context)); }
-#pragma warning disable CA1031
-                        catch (Exception) { /* skip unparseable predicates */ }
+#pragma warning disable CA1031 // Intentional broad catch — see comment below
+                        catch (Exception)
+                        {
+                            // Predicate parsing may fail during pattern optimization (e.g. forward
+                            // references, complex expressions). The predicate is still evaluated at
+                            // runtime via the full XPath evaluator; skipping it here only means this
+                            // optimization path won't pre-filter using it.
+                        }
 #pragma warning restore CA1031
                         predPart = predPart[(k + 1)..].Trim();
                     }
@@ -7766,8 +7780,14 @@ public sealed class StylesheetParser
                         {
                             predicates.Add(ParseExpression(predExpr, context));
                         }
-#pragma warning disable CA1031
-                        catch (Exception) { /* skip unparseable predicates */ }
+#pragma warning disable CA1031 // Intentional broad catch — see comment below
+                        catch (Exception)
+                        {
+                            // Predicate parsing may fail during pattern optimization (e.g. forward
+                            // references, complex expressions). The predicate is still evaluated at
+                            // runtime via the full XPath evaluator; skipping it here only means this
+                            // optimization path won't pre-filter using it.
+                        }
 #pragma warning restore CA1031
                         predPart = predPart[(k + 1)..].Trim();
                     }
@@ -8413,8 +8433,13 @@ public sealed class StylesheetParser
                 var resolvedUri = new Uri(baseUri, uri);
                 uri = resolvedUri.ToString();
             }
-#pragma warning disable CA1031
-            catch (Exception) { /* keep the original URI */ }
+#pragma warning disable CA1031 // Intentional broad catch — see comment below
+            catch (Exception)
+            {
+                // If the relative URI cannot be resolved against the stylesheet base URI at
+                // compile time (e.g. unknown base URI, opaque URI scheme), keep the original
+                // literal URI. It will be resolved at runtime by the document resolver.
+            }
 #pragma warning restore CA1031
         }
 
@@ -10079,11 +10104,11 @@ public sealed class StylesheetParser
                     "is-schema-aware" => "no",
                     "supports-serialization" => "yes",
                     "supports-backwards-compatibility" => "yes",
-                    "supports-namespace-axis" => "no",
-                    "supports-streaming" => "no",
+                    "supports-namespace-axis" => "yes",
+                    "supports-streaming" => "yes",
                     "supports-dynamic-evaluation" => "no",
                     "supports-higher-order-functions" => "yes",
-                    "xpath-version" => "3.1",
+                    "xpath-version" => "4.0",
                     "xsd-version" => "1.1",
                     _ => ""
                 };
@@ -10794,11 +10819,11 @@ public sealed class StylesheetParser
             "is-schema-aware" => "no",
             "supports-serialization" => "yes",
             "supports-backwards-compatibility" => "yes",
-            "supports-namespace-axis" => "no",
-            "supports-streaming" => "no",
+            "supports-namespace-axis" => "yes",
+            "supports-streaming" => "yes",
             "supports-dynamic-evaluation" => "no",
             "supports-higher-order-functions" => "yes",
-            "xpath-version" => "3.1",
+            "xpath-version" => "4.0",
             "xsd-version" => "1.1",
             _ => ""
         };

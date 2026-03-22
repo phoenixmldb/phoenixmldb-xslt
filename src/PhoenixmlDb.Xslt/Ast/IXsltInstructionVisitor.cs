@@ -70,6 +70,9 @@ public interface IXsltInstructionVisitor<T>
     // Merge (3.0)
     T VisitMerge(XsltMerge insn);
 
+    // Record (4.0)
+    T VisitRecord(XsltRecord insn);
+
     // Advanced control
     T VisitFork(XsltFork insn);
     T VisitWherePopulated(XsltWherePopulated insn);
@@ -153,6 +156,9 @@ public abstract class XsltInstructionVisitor<T> : IXsltInstructionVisitor<T>
 
     // Merge (3.0)
     public virtual T VisitMerge(XsltMerge insn) => DefaultVisit(insn);
+
+    // Record (4.0)
+    public virtual T VisitRecord(XsltRecord insn) => DefaultVisit(insn);
 
     // Advanced control
     public virtual T VisitFork(XsltFork insn) => DefaultVisit(insn);

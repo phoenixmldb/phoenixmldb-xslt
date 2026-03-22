@@ -7,7 +7,7 @@ namespace PhoenixmlDb.Conformance.Tests.Xslt;
 /// <summary>
 /// W3C XSLT 3.0 conformance tests for declaration features (decl/*).
 /// Covers variables, params, functions, templates, imports, includes, output, etc.
-/// Excludes: expose (unimplemented), import-schema (requires schema validation runtime).
+/// Excludes: import-schema (requires schema validation runtime).
 /// </summary>
 [Trait("Category", "Conformance")]
 [Trait("Suite", "XSLT")]

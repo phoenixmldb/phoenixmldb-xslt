@@ -16,7 +16,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
 - xsl:expose, xsl:accept with hidden visibility
-- Streaming (xsl:source-document, xsl:fork)
+- Streaming (xsl:source-document, xsl:mode streamable, xsl:fork, accumulators)
 - Higher-order functions, maps, arrays
 - Accumulators, merge, JSON/adaptive output
 
@@ -39,6 +39,37 @@ var transformer = new XsltTransformer();
 await transformer.LoadStylesheetAsync(xsltString);
 var result = await transformer.TransformAsync(xmlInput);
 ```
+
+## API Overview
+
+### Source Document
+- `TransformAsync(string? inputXml)` — pass source XML as string, or `null` for call-template/call-function
+- `TransformAsync(TextReader inputXml)` — read source from a TextReader (for large documents)
+- `TransformAsync(Stream inputXml)` — read source from a Stream
+- `TransformAsync(string? inputXml, TextWriter output)` — write result directly to a TextWriter
+- `TransformAsync(TextReader inputXml, TextWriter output)` — full stream-to-stream pipeline
+- `TransformAsync(Stream inputXml, Stream output)` — full stream-to-stream pipeline
+- `ResultDocumentHandler` — callback to provide TextWriters for xsl:result-document outputs
+- `SetSourceDocumentUri(Uri)` — set base-uri/document-uri metadata on the source document
+- `SetSourceSelect(string xpath)` — select initial context node (default: document root)
+- `SetInitialModeSelect(string xpath)` — apply templates to a computed node selection
+
+### Parameters
+- `SetParameter(string name, string value)` — string parameter (xs:untypedAtomic)
+- `SetParameter(string name, object? value)` — typed parameter (int, long, double, bool, decimal)
+- `SetInitialTemplateParameter(QName, object?)` — xsl:with-param for named templates
+- `SetInitialTunnelParameter(QName, object?)` — tunnel parameter
+
+### Invocation Styles
+- **Apply templates** (default) — optionally set mode with `SetInitialMode(string)`
+- **Call template** — `SetInitialTemplate(string)`, pass `null` to TransformAsync
+- **Call function** — `SetInitialFunction(string)` + `AddInitialFunctionArgument(object?)`
+
+### Collections
+- `SetCollection(string uri, List<string> paths)` — register documents for `fn:collection()`
+
+### Debugging
+- `TraceListener` — callback for template-match, function-call, built-in-rule events
 
 ## License
 
