@@ -1,6 +1,6 @@
 # PhoenixmlDb XSLT
 
-A modern XSLT 4.0 transformation engine for .NET with streaming and package support.
+A modern XSLT 4.0 transformation engine for .NET with package support.
 
 ## Features
 

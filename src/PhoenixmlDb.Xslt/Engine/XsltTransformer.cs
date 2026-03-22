@@ -13966,6 +13966,63 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    public override async ValueTask CreateRecordAsync(Ast.XsltRecord instruction)
+    {
+        // xsl:record produces an XDM map with string keys from xsl:entry children.
+        // Each entry has a name (string key) and a value (from select or sequence constructor body).
+        var map = new Dictionary<object, object?>();
+
+        foreach (var (name, valueBody) in instruction.Entries)
+        {
+            // Evaluate the entry's sequence constructor to get the value
+            object? value = null;
+            if (valueBody != null && valueBody.Instructions.Count > 0)
+            {
+                var savedAccum = _sequenceAccumulator;
+                _sequenceAccumulator = new List<object?>();
+                var savedOutput = _output.ToString();
+                _output.Clear();
+                _temporaryOutputDepth++;
+                try
+                {
+                    await valueBody.ExecuteAsync(this).ConfigureAwait(false);
+                    var items = _sequenceAccumulator;
+                    var outputText = _output.ToString();
+                    if (items.Count == 0 && outputText.Length > 0)
+                    {
+                        value = outputText;
+                    }
+                    else
+                    {
+                        value = items.Count switch
+                        {
+                            0 => null,
+                            1 => items[0],
+                            _ => items.ToArray()
+                        };
+                    }
+                }
+                finally
+                {
+                    _temporaryOutputDepth--;
+                    _output.Clear();
+                    _output.Append(savedOutput);
+                    _sequenceAccumulator = savedAccum;
+                }
+            }
+
+            if (map.ContainsKey(name))
+                throw new XsltException($"XTDE3365: Duplicate key '{name}' in xsl:record");
+            map[name] = value;
+        }
+
+        // Add the completed map to the output (same as xsl:map)
+        if (_sequenceAccumulator != null)
+            _sequenceAccumulator.Add(map);
+        else if (_outputNsScopes.Count > 0)
+            throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
+    }
+
     public override async ValueTask WherePopulatedAsync(XsltWherePopulated instruction)
     {
         // Buffer output and track whether "real" content is produced
@@ -18928,7 +18985,7 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
             "is-schema-aware" => "no",
             "supports-serialization" => "yes",
             "supports-backwards-compatibility" => "yes",
-            "supports-namespace-axis" => "no",
+            "supports-namespace-axis" => "yes",
             "supports-streaming" => "no",
             "supports-dynamic-evaluation" => "no",
             "supports-higher-order-functions" => "yes",
