@@ -7290,8 +7290,11 @@ public sealed class StylesheetParser
         var current = element;
         while (current != null)
         {
-            // Check xsl:expand-text (on LREs) or expand-text (on XSLT instructions)
-            var attr = current.Attribute(XsltNs + "expand-text") ?? current.Attribute("expand-text");
+            // Check xsl:expand-text (on LREs) or expand-text (on XSLT instructions).
+            // Unprefixed expand-text is only an XSLT attribute on elements in the XSLT namespace;
+            // on non-XSLT elements (LREs), it's just a regular attribute and should be ignored.
+            var attr = current.Attribute(XsltNs + "expand-text")
+                       ?? (current.Name.Namespace == XsltNs ? current.Attribute("expand-text") : null);
             if (attr != null)
             {
                 var v = attr.Value.Trim();

@@ -141,8 +141,13 @@ internal sealed class StreamingXmlProcessor
                         }
                         else
                         {
-                            // Self-closing: fire end-phase rules, then clean up
+                            // Self-closing: fire end-phase rules, close any deferred tag, then clean up
                             await FireAccumulatorRulesAsync(xdmElem, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
+                            if (_context._streamingOpenElements.Count > 0)
+                            {
+                                var qname = _context._streamingOpenElements.Pop();
+                                _context.WriteStreamingEndTag(qname);
+                            }
                             CleanupStreamingNode(current);
                         }
                         break;
@@ -160,6 +165,16 @@ internal sealed class StreamingXmlProcessor
                             var closingNode = _nodeStore.GetNode(closingContext.NodeId);
                             if (closingNode != null)
                                 await FireAccumulatorRulesAsync(closingNode, closingContext.NodeId, AccumulatorPhase.End).ConfigureAwait(false);
+
+                            // Write the deferred closing tag for elements opened by shallow-copy.
+                            // The built-in shallow-copy template writes only the start tag and
+                            // pushes the qname; we close it here so children are properly nested.
+                            if (_context._streamingOpenElements.Count > 0)
+                            {
+                                var qname = _context._streamingOpenElements.Pop();
+                                _context.WriteStreamingEndTag(qname);
+                            }
+
                             // Clean up temporary XDM nodes to free memory
                             CleanupStreamingNode(closingContext);
                         }

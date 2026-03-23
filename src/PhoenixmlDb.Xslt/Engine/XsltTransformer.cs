@@ -3522,6 +3522,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     // Streaming execution state: when true, built-in template recursion into children is
     // a no-op because the streaming loop (StreamingXmlProcessor) handles child dispatch.
     internal bool _isStreamingExecution;
+    // Stack of element qualified names whose start tags have been written during streaming
+    // but whose end tags must be deferred until the StreamingXmlProcessor sees EndElement.
+    internal readonly Stack<string> _streamingOpenElements = new();
     // Active streaming processor reference for triggering streaming from apply-templates
     // inside xsl:source-document Content bodies.
     internal StreamingXmlProcessor? _activeStreamingProcessor;
@@ -5071,8 +5074,14 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 // Apply templates to children — suspend accumulator and track element depth
                 // so inner templates with 'as' serialize to _output (child content)
                 // instead of redirecting to an outer sequence accumulator.
-                // In streaming mode, child recursion is handled by the streaming loop.
-                if (!_isStreamingExecution)
+                // In streaming mode, child recursion is handled by the streaming loop:
+                // we leave the element open (no closing tag) and push the qname so that
+                // StreamingXmlProcessor can write the closing tag on EndElement.
+                if (_isStreamingExecution)
+                {
+                    _streamingOpenElements.Push(qname);
+                }
+                else
                 {
                     var savedSeqAccumSC = _sequenceAccumulator;
                     _sequenceAccumulator = null;
@@ -5086,11 +5095,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         _serializingElementDepth--;
                         _sequenceAccumulator = savedSeqAccumSC;
                     }
-                }
 
-                _output.Append("</");
-                _output.Append(qname);
-                _output.Append('>');
+                    _output.Append("</");
+                    _output.Append(qname);
+                    _output.Append('>');
+                }
                 break;
             }
             case XdmText text:
@@ -5297,6 +5306,17 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// the matched template (or built-in rules). Called by StreamingXmlProcessor
     /// for each node encountered during streaming execution.
     /// </summary>
+    /// <summary>
+    /// Writes a closing tag for a streaming element whose start tag was deferred.
+    /// Called by StreamingXmlProcessor on EndElement events.
+    /// </summary>
+    internal void WriteStreamingEndTag(string qname)
+    {
+        _output.Append("</");
+        _output.Append(qname);
+        _output.Append('>');
+    }
+
     internal async ValueTask MatchAndExecuteStreamingNodeAsync(XdmNode node, QName? mode, int position)
     {
         // last=0 signals "unknown in streaming mode". The StreamabilityChecker rejects
