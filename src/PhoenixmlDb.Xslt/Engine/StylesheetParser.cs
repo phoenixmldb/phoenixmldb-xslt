@@ -2864,6 +2864,8 @@ public sealed class StylesheetParser
                 HtmlVersion = sorted.Select(o => o.HtmlVersion).FirstOrDefault(v => v != null),
                 BuildTree = sorted.Select(o => o.BuildTree).FirstOrDefault(v => v != null),
                 AllowDuplicateNames = sorted.Select(o => o.AllowDuplicateNames).FirstOrDefault(v => v != null),
+                ByteOrderMark = sorted.Select(o => o.ByteOrderMark).FirstOrDefault(v => v != null),
+                JsonNodeOutputMethod = sorted.Select(o => o.JsonNodeOutputMethod).FirstOrDefault(v => v != null),
             };
 
             // Union cdata-section-elements from all declarations
@@ -2887,6 +2889,18 @@ public sealed class StylesheetParser
                         merged.UseCharacterMaps.Add(m);
                 }
             }
+
+            // Union suppress-indentation from all declarations
+            HashSet<QName>? suppressElements = null;
+            foreach (var o in outputList)
+            {
+                if (o.SuppressIndentation != null)
+                {
+                    suppressElements ??= new HashSet<QName>();
+                    suppressElements.UnionWith(o.SuppressIndentation);
+                }
+            }
+            merged.SuppressIndentation = suppressElements;
 
             stylesheet.Outputs.Add(merged);
         }
@@ -3948,6 +3962,8 @@ public sealed class StylesheetParser
             HtmlVersion = element.Attribute("html-version")?.Value,
             BuildTree = element.Attribute("build-tree")?.Value,
             AllowDuplicateNames = ParseYesNo(element.Attribute("allow-duplicate-names")),
+            ByteOrderMark = ParseYesNo(element.Attribute("byte-order-mark")),
+            JsonNodeOutputMethod = element.Attribute("json-node-output-method")?.Value,
         };
 
         // Validate html-version: must be a valid decimal number (XTSE0020)
@@ -3974,6 +3990,15 @@ public sealed class StylesheetParser
             {
                 output.UseCharacterMaps.Add(ParseQName(n, element));
             }
+        }
+
+        var suppressIndentAttr = element.Attribute("suppress-indentation");
+        if (suppressIndentAttr != null)
+        {
+            output.SuppressIndentation = suppressIndentAttr.Value
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(n => ParseQName(n, element))
+                .ToHashSet();
         }
 
         return output;

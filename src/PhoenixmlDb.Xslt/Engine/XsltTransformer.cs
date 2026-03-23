@@ -437,7 +437,7 @@ public sealed class XsltTransformEngine
             if (outputDecl.Indent == true &&
                 outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
             {
-                output = ApplyIndentation(output, outputDecl.EffectiveMethod);
+                output = ApplyIndentation(output, outputDecl.EffectiveMethod, outputDecl.SuppressIndentation);
             }
         }
 
@@ -484,6 +484,32 @@ public sealed class XsltTransformEngine
             decl += "?>";
             output = decl + output;
         }
+
+        // Emit DOCTYPE declaration if doctype-system (and optionally doctype-public) is set
+        if (outputDecl != null && outputDecl.DoctypeSystem != null)
+        {
+            output = InsertDoctype(output, outputDecl.DoctypePublic, outputDecl.DoctypeSystem);
+        }
+
+        // Prepend UTF-8 BOM when byte-order-mark="yes"
+        if (outputDecl?.ByteOrderMark == true)
+        {
+            output = "\uFEFF" + output;
+        }
+
+        // escape-uri-attributes: in HTML/XHTML output, percent-encode non-ASCII characters
+        // in URI-valued attributes (href, src, action, cite, data, formaction, poster, srcset, usemap)
+        if (outputDecl != null &&
+            (outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
+            outputDecl.EscapeUriAttributes != false)
+        {
+            output = EscapeUriAttributes(output);
+        }
+
+        // undeclare-prefixes="yes" only has effect for XML 1.1 output. Since this engine
+        // produces XML 1.0 output, namespace undeclarations (xmlns:prefix="") are not
+        // generated. This is correct per the serialization spec: undeclare-prefixes is a
+        // no-op for XML 1.0 because namespace undeclarations are not permitted in XML 1.0.
 
         // Restore sentinel-escaped text content from method="text" result-documents.
         // Sentinels protect text node content (from xsl:sequence/xsl:value-of/xsl:text)
@@ -931,21 +957,339 @@ public sealed class XsltTransformEngine
     };
 
     /// <summary>
+    /// Inserts a DOCTYPE declaration into the output, after any XML declaration and before the root element.
+    /// Per the serialization spec:
+    ///   - If both public and system: &lt;!DOCTYPE root PUBLIC "public" "system"&gt;
+    ///   - If only system: &lt;!DOCTYPE root SYSTEM "system"&gt;
+    /// </summary>
+    internal static string InsertDoctype(string output, string? doctypePublic, string doctypeSystem)
+    {
+        // Find the root element name
+        var searchStart = 0;
+        if (output.StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            var declEnd = output.IndexOf("?>", StringComparison.Ordinal);
+            if (declEnd >= 0)
+                searchStart = declEnd + 2;
+        }
+
+        // Skip the BOM if present
+        if (searchStart < output.Length && output[searchStart] == '\uFEFF')
+            searchStart++;
+
+        // Find the first element start tag
+        var elemStart = output.IndexOf('<', searchStart);
+        while (elemStart >= 0 && elemStart < output.Length - 1)
+        {
+            var nextChar = output[elemStart + 1];
+            // Skip processing instructions, comments
+            if (nextChar == '?' || nextChar == '!')
+            {
+                elemStart = output.IndexOf('<', elemStart + 1);
+                continue;
+            }
+            break;
+        }
+
+        if (elemStart < 0 || elemStart >= output.Length - 1)
+            return output;
+
+        // Extract the root element name
+        var nameStart = elemStart + 1;
+        var nameEnd = nameStart;
+        while (nameEnd < output.Length && output[nameEnd] != ' ' && output[nameEnd] != '>'
+               && output[nameEnd] != '/' && output[nameEnd] != '\t' && output[nameEnd] != '\n'
+               && output[nameEnd] != '\r')
+            nameEnd++;
+
+        if (nameEnd <= nameStart)
+            return output;
+
+        var rootName = output[nameStart..nameEnd];
+
+        // Build the DOCTYPE declaration
+        string doctype;
+        if (doctypePublic != null)
+            doctype = $"<!DOCTYPE {rootName} PUBLIC \"{doctypePublic}\" \"{doctypeSystem}\">";
+        else
+            doctype = $"<!DOCTYPE {rootName} SYSTEM \"{doctypeSystem}\">";
+
+        // Insert before the root element, with a newline separator
+        return output[..elemStart] + doctype + "\n" + output[elemStart..];
+    }
+
+    /// <summary>
+    /// URI-valued HTML attributes whose values should be percent-encoded when
+    /// escape-uri-attributes is enabled (default for HTML/XHTML output).
+    /// </summary>
+    private static readonly HashSet<string> HtmlUriAttributes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "href", "src", "action", "cite", "data", "formaction", "poster", "srcset", "usemap"
+    };
+
+    /// <summary>
+    /// Applies URI escaping to URI-valued HTML attributes: percent-encodes non-ASCII characters
+    /// as required by the serialization spec when escape-uri-attributes="yes".
+    /// </summary>
+    internal static string EscapeUriAttributes(string output)
+    {
+        // Process attribute values in URI-valued attributes
+        var sb = new StringBuilder(output.Length);
+        int pos = 0;
+        while (pos < output.Length)
+        {
+            if (output[pos] == '<' && pos + 1 < output.Length && output[pos + 1] != '/' && output[pos + 1] != '!')
+            {
+                // Find end of tag
+                var tagEnd = output.IndexOf('>', pos);
+                if (tagEnd < 0) { sb.Append(output, pos, output.Length - pos); break; }
+
+                var tag = output.AsSpan(pos, tagEnd - pos + 1);
+
+                // Check for attributes within the tag
+                var tagStr = output[pos..(tagEnd + 1)];
+                var processed = EscapeUriAttributesInTag(tagStr);
+                sb.Append(processed);
+                pos = tagEnd + 1;
+            }
+            else
+            {
+                sb.Append(output[pos]);
+                pos++;
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static string EscapeUriAttributesInTag(string tag)
+    {
+        // Simple attribute pattern: attrname="value" or attrname='value'
+        var sb = new StringBuilder(tag.Length);
+        int i = 0;
+
+        // Skip past the element name
+        while (i < tag.Length && tag[i] != ' ' && tag[i] != '\t' && tag[i] != '\n'
+               && tag[i] != '\r' && tag[i] != '>' && tag[i] != '/')
+        {
+            sb.Append(tag[i]);
+            i++;
+        }
+
+        while (i < tag.Length)
+        {
+            if (tag[i] == '>' || (tag[i] == '/' && i + 1 < tag.Length && tag[i + 1] == '>'))
+            {
+                sb.Append(tag, i, tag.Length - i);
+                break;
+            }
+
+            // Skip whitespace
+            if (char.IsWhiteSpace(tag[i]))
+            {
+                sb.Append(tag[i]);
+                i++;
+                continue;
+            }
+
+            // Try to parse attribute name
+            var nameStart = i;
+            while (i < tag.Length && tag[i] != '=' && tag[i] != ' ' && tag[i] != '>'
+                   && tag[i] != '/' && tag[i] != '\t')
+                i++;
+
+            var attrName = tag[nameStart..i];
+
+            // Skip whitespace before =
+            while (i < tag.Length && char.IsWhiteSpace(tag[i])) { sb.Append(tag[nameStart..i]); nameStart = i; i++; }
+
+            if (i >= tag.Length || tag[i] != '=')
+            {
+                sb.Append(tag, nameStart, i - nameStart);
+                continue;
+            }
+
+            sb.Append(tag, nameStart, i - nameStart);
+            sb.Append('=');
+            i++; // skip =
+
+            // Skip whitespace after =
+            while (i < tag.Length && char.IsWhiteSpace(tag[i])) { sb.Append(tag[i]); i++; }
+
+            if (i >= tag.Length) break;
+
+            var quote = tag[i];
+            if (quote != '"' && quote != '\'')
+            {
+                sb.Append(tag[i]);
+                i++;
+                continue;
+            }
+
+            sb.Append(quote);
+            i++; // skip opening quote
+
+            var valueStart = i;
+            while (i < tag.Length && tag[i] != quote) i++;
+            var attrValue = tag[valueStart..i];
+
+            if (HtmlUriAttributes.Contains(attrName))
+            {
+                // Percent-encode non-ASCII characters in URI attribute values
+                sb.Append(PercentEncodeNonAscii(attrValue));
+            }
+            else
+            {
+                sb.Append(attrValue);
+            }
+
+            if (i < tag.Length)
+            {
+                sb.Append(quote); // closing quote
+                i++;
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static string PercentEncodeNonAscii(string value)
+    {
+        bool hasNonAscii = false;
+        foreach (char c in value)
+        {
+            if (c > 127) { hasNonAscii = true; break; }
+        }
+        if (!hasNonAscii) return value;
+
+        var sb = new StringBuilder(value.Length * 2);
+        foreach (char c in value)
+        {
+            if (c > 127)
+            {
+                // Encode the character as UTF-8 bytes, then percent-encode each byte
+                var bytes = System.Text.Encoding.UTF8.GetBytes(new[] { c });
+                foreach (var b in bytes)
+                    sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"%{b:X2}");
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Applies indentation to serialized output when xsl:output indent="yes" is specified.
     /// For XML/XHTML, re-parses and re-serializes with XmlWriter indentation.
     /// For HTML, adds newlines and indentation before block-level elements.
     /// </summary>
-    internal static string ApplyIndentation(string output, OutputMethod method)
+    internal static string ApplyIndentation(string output, OutputMethod method, HashSet<QName>? suppressIndentation = null)
     {
         if (method is OutputMethod.Xml or OutputMethod.Xhtml)
         {
-            return ApplyXmlIndentation(output);
+            var result = ApplyXmlIndentation(output);
+            if (suppressIndentation != null && suppressIndentation.Count > 0)
+                result = RemoveSuppressedIndentation(result, suppressIndentation);
+            return result;
         }
         else if (method == OutputMethod.Html)
         {
-            return ApplyHtmlIndentation(output);
+            var result = ApplyHtmlIndentation(output);
+            if (suppressIndentation != null && suppressIndentation.Count > 0)
+                result = RemoveSuppressedIndentation(result, suppressIndentation);
+            return result;
         }
         return output;
+    }
+
+    /// <summary>
+    /// Post-processes indented output to remove indentation whitespace inside elements
+    /// listed in suppress-indentation. Collapses added whitespace-only text nodes
+    /// between child elements back to no whitespace.
+    /// </summary>
+    private static string RemoveSuppressedIndentation(string output, HashSet<QName> suppressedElements)
+    {
+        // Build a simple set of local names for fast matching (most stylesheets use unprefixed names)
+        var suppressedNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var qn in suppressedElements)
+            suppressedNames.Add(qn.LocalName);
+
+        var sb = new StringBuilder(output.Length);
+        int suppressDepth = 0; // nesting depth inside suppressed elements
+        int pos = 0;
+        while (pos < output.Length)
+        {
+            if (output[pos] == '<')
+            {
+                var tagEnd = output.IndexOf('>', pos);
+                if (tagEnd < 0) { sb.Append(output, pos, output.Length - pos); break; }
+
+                bool isClosing = pos + 1 < output.Length && output[pos + 1] == '/';
+                bool isSelfClosing = output[tagEnd - 1] == '/';
+                bool isComment = pos + 3 < output.Length && output[pos + 1] == '!' && output[pos + 2] == '-';
+                bool isPI = pos + 1 < output.Length && output[pos + 1] == '?';
+                bool isDoctype = pos + 1 < output.Length && output[pos + 1] == '!';
+
+                // Extract element name
+                string? elemName = null;
+                if (!isComment && !isPI && !isDoctype)
+                {
+                    int nameStart = isClosing ? pos + 2 : pos + 1;
+                    int nameEnd2 = nameStart;
+                    while (nameEnd2 <= tagEnd && nameEnd2 < output.Length
+                           && output[nameEnd2] != ' ' && output[nameEnd2] != '>'
+                           && output[nameEnd2] != '/' && output[nameEnd2] != '\t'
+                           && output[nameEnd2] != '\n' && output[nameEnd2] != '\r')
+                        nameEnd2++;
+                    if (nameEnd2 > nameStart)
+                        elemName = output[nameStart..nameEnd2];
+                }
+
+                // Strip the prefix for matching (e.g., "ns:elem" -> "elem")
+                var localName = elemName;
+                if (localName != null && localName.Contains(':', StringComparison.Ordinal))
+                    localName = localName[(localName.IndexOf(':', StringComparison.Ordinal) + 1)..];
+
+                if (isClosing && localName != null && suppressedNames.Contains(localName))
+                {
+                    // Closing a suppressed element
+                    suppressDepth = Math.Max(0, suppressDepth - 1);
+                }
+
+                sb.Append(output, pos, tagEnd - pos + 1);
+                pos = tagEnd + 1;
+
+                if (!isClosing && !isSelfClosing && localName != null && suppressedNames.Contains(localName))
+                {
+                    // Opening a suppressed element
+                    suppressDepth++;
+                }
+            }
+            else if (suppressDepth > 0)
+            {
+                // Inside a suppressed element: skip indentation whitespace before tags
+                // (whitespace-only runs that precede a '<')
+                int wsStart = pos;
+                while (pos < output.Length && (output[pos] == ' ' || output[pos] == '\t'
+                       || output[pos] == '\n' || output[pos] == '\r'))
+                    pos++;
+                if (pos < output.Length && output[pos] == '<')
+                {
+                    // This was indentation whitespace before a tag — skip it
+                }
+                else
+                {
+                    // Not followed by a tag — preserve the text content
+                    sb.Append(output, wsStart, pos - wsStart);
+                }
+            }
+            else
+            {
+                sb.Append(output[pos]);
+                pos++;
+            }
+        }
+        return sb.ToString();
     }
 
     private static string ApplyXmlIndentation(string output)
@@ -2029,7 +2373,42 @@ public sealed class XsltTransformEngine
         if (streamOutputDecl != null && streamOutputDecl.Indent == true &&
             streamOutputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
         {
-            output = ApplyIndentation(output, streamOutputDecl.EffectiveMethod);
+            output = ApplyIndentation(output, streamOutputDecl.EffectiveMethod, streamOutputDecl.SuppressIndentation);
+        }
+
+        // Emit XML declaration for streaming output
+        if (streamOutputDecl != null &&
+            (streamOutputDecl.EffectiveMethod == OutputMethod.Xml || streamOutputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
+            streamOutputDecl.OmitXmlDeclaration != true &&
+            !output.StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            var encoding = streamOutputDecl.Encoding ?? "UTF-8";
+            var version = streamOutputDecl.Version ?? "1.0";
+            var decl = $"<?xml version=\"{version}\" encoding=\"{encoding}\"";
+            if (streamOutputDecl.Standalone.HasValue)
+                decl += streamOutputDecl.Standalone.Value ? " standalone=\"yes\"" : " standalone=\"no\"";
+            decl += "?>";
+            output = decl + output;
+        }
+
+        // Emit DOCTYPE declaration for streaming output
+        if (streamOutputDecl != null && streamOutputDecl.DoctypeSystem != null)
+        {
+            output = InsertDoctype(output, streamOutputDecl.DoctypePublic, streamOutputDecl.DoctypeSystem);
+        }
+
+        // Prepend UTF-8 BOM when byte-order-mark="yes" (streaming path)
+        if (streamOutputDecl?.ByteOrderMark == true)
+        {
+            output = "\uFEFF" + output;
+        }
+
+        // escape-uri-attributes for streaming HTML/XHTML output
+        if (streamOutputDecl != null &&
+            (streamOutputDecl.EffectiveMethod == OutputMethod.Html || streamOutputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
+            streamOutputDecl.EscapeUriAttributes != false)
+        {
+            output = EscapeUriAttributes(output);
         }
 
         return output;
@@ -9974,7 +10353,21 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 if (effectiveIndent == true &&
                     effectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
                 {
-                    secondaryContent = XsltTransformEngine.ApplyIndentation(secondaryContent, effectiveMethod);
+                    var effectiveSuppressIndent = matchedOutput?.SuppressIndentation ?? _stylesheet.Outputs.FirstOrDefault()?.SuppressIndentation;
+                    secondaryContent = XsltTransformEngine.ApplyIndentation(secondaryContent, effectiveMethod, effectiveSuppressIndent);
+                }
+
+                // Emit DOCTYPE for secondary result documents
+                var effectiveOutputDecl = matchedOutput ?? _stylesheet.Outputs.FirstOrDefault();
+                if (effectiveOutputDecl?.DoctypeSystem != null)
+                {
+                    secondaryContent = XsltTransformEngine.InsertDoctype(secondaryContent, effectiveOutputDecl.DoctypePublic, effectiveOutputDecl.DoctypeSystem);
+                }
+
+                // Prepend UTF-8 BOM for secondary result documents
+                if (effectiveOutputDecl?.ByteOrderMark == true)
+                {
+                    secondaryContent = "\uFEFF" + secondaryContent;
                 }
 
                 _secondaryResultDocuments[effectiveHref] = secondaryContent;

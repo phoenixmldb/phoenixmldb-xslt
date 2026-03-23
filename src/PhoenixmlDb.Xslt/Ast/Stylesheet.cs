@@ -1608,6 +1608,22 @@ public sealed class XsltOutput
     public string? BuildTree { get; init; }
     public bool? AllowDuplicateNames { get; init; }
     public List<QName> UseCharacterMaps { get; init; } = new();
+#pragma warning disable CA2227 // Collection properties should be read only - needs post-init assignment
+    /// <summary>
+    /// Space-separated list of element QNames whose content should NOT be indented
+    /// even when indent="yes" is specified on xsl:output.
+    /// </summary>
+    public HashSet<QName>? SuppressIndentation { get; set; }
+#pragma warning restore CA2227
+    /// <summary>
+    /// When true, a UTF-8 BOM (U+FEFF) is prepended to the serialized output.
+    /// </summary>
+    public bool? ByteOrderMark { get; init; }
+    /// <summary>
+    /// Controls how XML/HTML nodes are serialized when they appear inside JSON output (method="json").
+    /// Default is "xml".
+    /// </summary>
+    public string? JsonNodeOutputMethod { get; init; }
 
     /// <summary>
     /// Returns the effective output method, defaulting to Xml if not explicitly specified.
