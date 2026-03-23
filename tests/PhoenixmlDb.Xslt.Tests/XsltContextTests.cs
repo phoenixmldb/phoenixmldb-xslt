@@ -1087,4 +1087,19 @@ internal sealed class MockXsltExecutionContext : XsltExecutionContext
     {
         return ValueTask.CompletedTask;
     }
+
+    public override ValueTask SwitchAsync(XsltSwitch instruction)
+    {
+        return ValueTask.CompletedTask;
+    }
+
+    public override ValueTask ForEachMemberAsync(XsltForEachMember instruction)
+    {
+        return ValueTask.CompletedTask;
+    }
+
+    public override ValueTask CreateRecordAsync(XsltRecord instruction)
+    {
+        return ValueTask.CompletedTask;
+    }
 }
