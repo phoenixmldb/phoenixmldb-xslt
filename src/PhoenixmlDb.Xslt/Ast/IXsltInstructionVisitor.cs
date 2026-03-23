@@ -20,6 +20,7 @@ public interface IXsltInstructionVisitor<T>
     // Iteration
     T VisitForEach(XsltForEach insn);
     T VisitForEachGroup(XsltForEachGroup insn);
+    T VisitForEachMember(XsltForEachMember insn);
     T VisitIterate(XsltIterate insn);
     T VisitBreak(XsltBreak insn);
     T VisitNextIteration(XsltNextIteration insn);
@@ -27,6 +28,7 @@ public interface IXsltInstructionVisitor<T>
     // Conditionals
     T VisitIf(XsltIf insn);
     T VisitChoose(XsltChoose insn);
+    T VisitSwitch(XsltSwitch insn);
     T VisitTry(XsltTry insn);
 
     // Construction
@@ -83,6 +85,9 @@ public interface IXsltInstructionVisitor<T>
     // Streaming
     T VisitSourceDocument(XsltSourceDocument insn);
 
+    // Error
+    T VisitDynamicError(XsltDynamicError insn);
+
     // Special
     T VisitNoOp(XsltNoOp insn);
 }
@@ -107,6 +112,7 @@ public abstract class XsltInstructionVisitor<T> : IXsltInstructionVisitor<T>
     // Iteration
     public virtual T VisitForEach(XsltForEach insn) => DefaultVisit(insn);
     public virtual T VisitForEachGroup(XsltForEachGroup insn) => DefaultVisit(insn);
+    public virtual T VisitForEachMember(XsltForEachMember insn) => DefaultVisit(insn);
     public virtual T VisitIterate(XsltIterate insn) => DefaultVisit(insn);
     public virtual T VisitBreak(XsltBreak insn) => DefaultVisit(insn);
     public virtual T VisitNextIteration(XsltNextIteration insn) => DefaultVisit(insn);
@@ -114,6 +120,7 @@ public abstract class XsltInstructionVisitor<T> : IXsltInstructionVisitor<T>
     // Conditionals
     public virtual T VisitIf(XsltIf insn) => DefaultVisit(insn);
     public virtual T VisitChoose(XsltChoose insn) => DefaultVisit(insn);
+    public virtual T VisitSwitch(XsltSwitch insn) => DefaultVisit(insn);
     public virtual T VisitTry(XsltTry insn) => DefaultVisit(insn);
 
     // Construction
@@ -170,6 +177,9 @@ public abstract class XsltInstructionVisitor<T> : IXsltInstructionVisitor<T>
     // Streaming
     public virtual T VisitSourceDocument(XsltSourceDocument insn) => DefaultVisit(insn);
 
+    // Error
+    public virtual T VisitDynamicError(XsltDynamicError insn) => DefaultVisit(insn);
+
     // Special
     public virtual T VisitNoOp(XsltNoOp insn) => DefaultVisit(insn);
 }
@@ -214,6 +224,12 @@ public abstract class XsltInstructionWalker : XsltInstructionVisitor<object?>
         return null;
     }
 
+    public override object? VisitForEachMember(XsltForEachMember insn)
+    {
+        Walk(insn.Body);
+        return null;
+    }
+
     public override object? VisitIterate(XsltIterate insn)
     {
         if (insn.OnCompletion != null) Walk(insn.OnCompletion);
@@ -236,6 +252,14 @@ public abstract class XsltInstructionWalker : XsltInstructionVisitor<object?>
     }
 
     public override object? VisitChoose(XsltChoose insn)
+    {
+        foreach (var when in insn.When)
+            Walk(when.Body);
+        if (insn.Otherwise != null) Walk(insn.Otherwise);
+        return null;
+    }
+
+    public override object? VisitSwitch(XsltSwitch insn)
     {
         foreach (var when in insn.When)
             Walk(when.Body);
@@ -433,6 +457,8 @@ public abstract class XsltInstructionWalker : XsltInstructionVisitor<object?>
         if (insn.Content != null) Walk(insn.Content);
         return null;
     }
+
+    public override object? VisitDynamicError(XsltDynamicError insn) => null;
 
     public override object? VisitNoOp(XsltNoOp insn) => null;
 }

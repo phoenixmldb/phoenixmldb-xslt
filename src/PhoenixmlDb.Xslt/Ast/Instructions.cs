@@ -368,8 +368,7 @@ public sealed class XsltSwitch : XsltInstruction
     public required IReadOnlyList<XsltWhen> When { get; init; }
     public XsltSequenceConstructor? Otherwise { get; init; }
 
-    public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitChoose(
-        new XsltChoose { When = When, Otherwise = Otherwise });
+    public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitSwitch(this);
 
     public override async ValueTask ExecuteAsync(XsltExecutionContext context)
     {
@@ -386,7 +385,7 @@ public sealed class XsltForEachMember : XsltInstruction
     public required XQueryExpression Select { get; init; }
     public required XsltSequenceConstructor Body { get; init; }
 
-    public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => default!;
+    public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitForEachMember(this);
 
     public override async ValueTask ExecuteAsync(XsltExecutionContext context)
     {
@@ -1374,7 +1373,7 @@ public sealed class XsltDynamicError : XsltInstruction
 {
     public required string ErrorCode { get; init; }
     public required string Message { get; init; }
-    public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => default!;
+    public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitDynamicError(this);
     public override ValueTask ExecuteAsync(XsltExecutionContext context)
         => throw new PhoenixmlDb.Xslt.Engine.XsltException($"{ErrorCode}: {Message}");
 }
