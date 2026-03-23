@@ -51,6 +51,11 @@ internal sealed class StreamingXmlProcessor
     {
         var ancestorStack = new Stack<StreamingNodeContext>();
 
+        // Track sibling element position per depth level.
+        // Key = depth, Value = count of child elements seen so far at that depth
+        // under the current parent. Reset when the parent's EndElement is encountered.
+        var siblingCountByDepth = new Dictionary<int, int>();
+
         // Initialize accumulator state
         await InitializeAccumulatorsAsync().ConfigureAwait(false);
 
@@ -100,6 +105,13 @@ internal sealed class StreamingXmlProcessor
                             reader.MoveToElement();
                         }
 
+                        // Track sibling position: increment counter for this depth
+                        var elementDepth = reader.Depth;
+                        if (!siblingCountByDepth.TryGetValue(elementDepth, out var siblingCount))
+                            siblingCount = 0;
+                        siblingCount++;
+                        siblingCountByDepth[elementDepth] = siblingCount;
+
                         var current = new StreamingNodeContext
                         {
                             NodeKind = XdmNodeKind.Element,
@@ -110,7 +122,8 @@ internal sealed class StreamingXmlProcessor
                             Attributes = attrs,
                             NamespaceDeclarations = nsDecls,
                             Parent = ancestorStack.Count > 0 ? ancestorStack.Peek() : null,
-                            Depth = reader.Depth
+                            Depth = elementDepth,
+                            Position = siblingCount
                         };
 
                         // Match and execute template
@@ -140,6 +153,9 @@ internal sealed class StreamingXmlProcessor
                         if (ancestorStack.Count > 0)
                         {
                             var closingContext = ancestorStack.Pop();
+                            // Reset sibling counter for children of this closing element.
+                            // Children are at depth = closingContext.Depth + 1.
+                            siblingCountByDepth.Remove(closingContext.Depth + 1);
                             // Fire end-phase accumulator rules
                             var closingNode = _nodeStore.GetNode(closingContext.NodeId);
                             if (closingNode != null)

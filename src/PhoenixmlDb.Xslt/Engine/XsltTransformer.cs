@@ -1779,6 +1779,11 @@ public sealed class XsltTransformEngine
     {
         options ??= new XsltTransformOptions();
 
+        // Streaming is invoked with an XML source document, so mark it as present.
+        // This ensures xsl:global-context-item use="required" validation passes
+        // and use="absent" correctly rejects the invocation.
+        options.HasSourceDocument = true;
+
         var nodeStore = new InMemoryNodeStore();
         _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
 
@@ -1826,18 +1831,32 @@ public sealed class XsltTransformEngine
             options,
             nodeStore);
 
-        // Initialize global variables
-        if (!options.HasSourceDocument)
-            context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+        // In streaming mode, global variables are initialized with absent focus because
+        // the source document has not been read yet. The streaming processor provides
+        // per-node context during execution. This mirrors the call-template invocation
+        // path in the non-streaming TransformAsync (XSLT 3.0 §5.4.1).
+        context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
 
         await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
 
-        if (!options.HasSourceDocument)
-            context.PopContextItem();
+        context.PopContextItem();
 
         // Bind initial parameters as global variables
         foreach (var (name, value) in options.InitialParameters)
             context.GlobalVariables[name] = value;
+
+        // XTDE0050: Check that all required global parameters have been supplied
+        foreach (var param in _stylesheet.Parameters)
+        {
+            if (param.Required && !options.InitialParameters.ContainsKey(param.Name))
+                throw new XsltException($"XTDE0050: Required parameter ${param.Name.LocalName} was not supplied");
+        }
+
+        // xsl:global-context-item enforcement (same as non-streaming path)
+        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Required && !options.HasSourceDocument)
+            throw new XsltException("XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
+        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && options.HasSourceDocument)
+            throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a source document was provided");
 
         // Stream with XmlReader
         using var stringReader = new System.IO.StringReader(xmlSource);
@@ -4748,7 +4767,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     internal async ValueTask MatchAndExecuteStreamingNodeAsync(XdmNode node, QName? mode, int position)
     {
-        PushContextItem(node, position, 1);
+        // last=0 signals "unknown in streaming mode". The StreamabilityChecker rejects
+        // last() in streamable templates, so this value should never be accessed.
+        PushContextItem(node, position, 0);
         PushCurrentItem(node);
         PushScope();
         try
