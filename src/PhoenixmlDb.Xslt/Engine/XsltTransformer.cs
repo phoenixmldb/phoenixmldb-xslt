@@ -432,6 +432,13 @@ public sealed class XsltTransformEngine
             {
                 output = DefaultXsltExecutionContext.InsertContentTypeMeta(output, outputDecl);
             }
+
+            // Apply indentation when indent="yes" is specified on xsl:output
+            if (outputDecl.Indent == true &&
+                outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
+            {
+                output = ApplyIndentation(output, outputDecl.EffectiveMethod);
+            }
         }
 
         // Apply character maps: merge xsl:output maps with xsl:result-document maps.
@@ -909,6 +916,143 @@ public sealed class XsltTransformEngine
             default:
                 return DefaultXsltExecutionContext.StringValueOf(item);
         }
+    }
+
+    /// <summary>
+    /// Block-level HTML elements that should be preceded by a newline when indenting HTML output.
+    /// </summary>
+    private static readonly HashSet<string> HtmlBlockElements = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "html", "head", "body", "div", "p", "table", "thead", "tbody", "tfoot", "tr", "th", "td",
+        "ul", "ol", "li", "dl", "dt", "dd", "h1", "h2", "h3", "h4", "h5", "h6",
+        "section", "article", "header", "footer", "nav", "main", "aside", "details", "summary",
+        "form", "fieldset", "legend", "blockquote", "pre", "figure", "figcaption", "hr", "br",
+        "script", "style", "link", "meta", "title", "base", "noscript"
+    };
+
+    /// <summary>
+    /// Applies indentation to serialized output when xsl:output indent="yes" is specified.
+    /// For XML/XHTML, re-parses and re-serializes with XmlWriter indentation.
+    /// For HTML, adds newlines and indentation before block-level elements.
+    /// </summary>
+    internal static string ApplyIndentation(string output, OutputMethod method)
+    {
+        if (method is OutputMethod.Xml or OutputMethod.Xhtml)
+        {
+            return ApplyXmlIndentation(output);
+        }
+        else if (method == OutputMethod.Html)
+        {
+            return ApplyHtmlIndentation(output);
+        }
+        return output;
+    }
+
+    private static string ApplyXmlIndentation(string output)
+    {
+        try
+        {
+            // Check for and strip XML declaration before parsing, then re-add it after
+            string? xmlDecl = null;
+            var parseInput = output;
+            if (parseInput.StartsWith("<?xml", StringComparison.Ordinal))
+            {
+                var declEnd = parseInput.IndexOf("?>", StringComparison.Ordinal);
+                if (declEnd >= 0)
+                {
+                    xmlDecl = parseInput[..(declEnd + 2)];
+                    parseInput = parseInput[(declEnd + 2)..].TrimStart('\r', '\n');
+                }
+            }
+
+            var xdoc = System.Xml.Linq.XDocument.Parse(parseInput, System.Xml.Linq.LoadOptions.PreserveWhitespace);
+            var settings = new XmlWriterSettings
+            {
+                Indent = true,
+                IndentChars = "  ",
+                OmitXmlDeclaration = true, // We handle the declaration separately
+                NewLineHandling = NewLineHandling.Replace
+            };
+            using var sw = new System.IO.StringWriter();
+            using (var xw = XmlWriter.Create(sw, settings))
+            {
+                xdoc.WriteTo(xw);
+            }
+            var indented = sw.ToString();
+            return xmlDecl != null ? xmlDecl + "\n" + indented : indented;
+        }
+        catch (XmlException)
+        {
+            // If the output isn't well-formed XML (e.g., multiple root elements or fragments),
+            // fall back to the unindented output rather than crashing
+            return output;
+        }
+    }
+
+    private static string ApplyHtmlIndentation(string output)
+    {
+        // Simple HTML indentation: add newlines and indentation before block-level elements
+        var sb = new StringBuilder(output.Length + output.Length / 10);
+        int depth = 0;
+        int i = 0;
+        while (i < output.Length)
+        {
+            if (output[i] == '<')
+            {
+                // Find the end of the tag
+                var tagEnd = output.IndexOf('>', i);
+                if (tagEnd < 0)
+                {
+                    sb.Append(output, i, output.Length - i);
+                    break;
+                }
+
+                var tag = output.AsSpan(i, tagEnd - i + 1);
+                bool isClosing = tag.Length > 1 && tag[1] == '/';
+                bool isSelfClosing = tag[^2] == '/' || tag.EndsWith("/>".AsSpan());
+                bool isComment = tag.StartsWith("<!--".AsSpan());
+                bool isDoctype = tag.StartsWith("<!DOCTYPE".AsSpan(), StringComparison.OrdinalIgnoreCase);
+                bool isProcessingInstruction = tag.Length > 1 && tag[1] == '?';
+
+                // Extract the element name
+                string? elemName = null;
+                if (!isComment && !isDoctype && !isProcessingInstruction)
+                {
+                    int nameStart = isClosing ? 2 : 1;
+                    int nameEnd = nameStart;
+                    while (nameEnd < tag.Length && tag[nameEnd] != ' ' && tag[nameEnd] != '>'
+                           && tag[nameEnd] != '/' && tag[nameEnd] != '\t' && tag[nameEnd] != '\n')
+                        nameEnd++;
+                    if (nameEnd > nameStart)
+                        elemName = tag[nameStart..nameEnd].ToString();
+                }
+
+                bool isBlock = elemName != null && HtmlBlockElements.Contains(elemName);
+
+                if (isBlock)
+                {
+                    if (isClosing)
+                        depth = Math.Max(0, depth - 1);
+
+                    // Add newline and indentation before block elements
+                    if (sb.Length > 0 && sb[^1] != '\n')
+                        sb.Append('\n');
+                    sb.Append(' ', depth * 2);
+
+                    if (!isClosing && !isSelfClosing)
+                        depth++;
+                }
+
+                sb.Append(output, i, tagEnd - i + 1);
+                i = tagEnd + 1;
+            }
+            else
+            {
+                sb.Append(output[i]);
+                i++;
+            }
+        }
+        return sb.ToString();
     }
 
     private string ApplyCharacterMaps(string output, List<QName> useCharacterMaps)
@@ -1879,6 +2023,15 @@ public sealed class XsltTransformEngine
 
         // Apply serialization post-processing (same as non-streaming path)
         SecondaryResultDocuments = context.SecondaryResults;
+
+        // Apply indentation for streaming output
+        var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+        if (streamOutputDecl != null && streamOutputDecl.Indent == true &&
+            streamOutputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
+        {
+            output = ApplyIndentation(output, streamOutputDecl.EffectiveMethod);
+        }
+
         return output;
     }
 
@@ -9608,6 +9761,14 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             resultOmitXmlDecl = omitStr.Trim() is "yes" or "true" or "1";
         }
 
+        // Evaluate indent from xsl:result-document (AVT)
+        bool? resultIndent = null;
+        if (instruction.Indent != null)
+        {
+            var indentStr = await EvaluateAvtAsync(instruction.Indent).ConfigureAwait(false);
+            resultIndent = indentStr.Trim() is "yes" or "true" or "1";
+        }
+
         // Determine effective output method for this result-document
         // Priority: method attribute on xsl:result-document > matched xsl:output declaration
         OutputMethod? resultMethod = null;
@@ -9805,7 +9966,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             // Store secondary result document content
             if (redirectToSecondary)
             {
-                _secondaryResultDocuments[effectiveHref] = _output.ToString();
+                var secondaryContent = _output.ToString();
+
+                // Apply indentation for secondary result documents
+                var effectiveIndent = resultIndent ?? matchedOutput?.Indent ?? _stylesheet.Outputs.FirstOrDefault()?.Indent;
+                var effectiveMethod = resultMethod ?? matchedOutput?.EffectiveMethod ?? OutputMethod.Xml;
+                if (effectiveIndent == true &&
+                    effectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
+                {
+                    secondaryContent = XsltTransformEngine.ApplyIndentation(secondaryContent, effectiveMethod);
+                }
+
+                _secondaryResultDocuments[effectiveHref] = secondaryContent;
             }
             else if (redirectToPrimary)
             {
@@ -9817,7 +9989,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 // create a synthetic output declaration so the final serialization
                 // uses the correct method (not the xsl:output default)
                 _primaryOutputMatchedDeclaration = matchedOutput
-                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl) : null);
+                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl, resultIndent) : null);
             }
             else
             {
@@ -9825,7 +9997,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 // result-document href="", preventing further implicit writes
                 _primaryOutputClaimedByResultDocument = true;
                 _primaryOutputMatchedDeclaration = matchedOutput
-                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl) : null);
+                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl, resultIndent) : null);
             }
         }
         finally
@@ -9873,7 +10045,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// (omit-xml-declaration, encoding, etc.) from the stylesheet's default output declaration.
     /// Used when xsl:result-document has an explicit method attribute but no format attribute.
     /// </summary>
-    private Ast.XsltOutput CreateSyntheticOutput(OutputMethod method, bool? omitXmlDecl = null)
+    private Ast.XsltOutput CreateSyntheticOutput(OutputMethod method, bool? omitXmlDecl = null, bool? indent = null)
     {
         var baseOutput = _stylesheet.Outputs.FirstOrDefault();
         return new Ast.XsltOutput
@@ -9882,7 +10054,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             OmitXmlDeclaration = omitXmlDecl ?? baseOutput?.OmitXmlDeclaration,
             Encoding = baseOutput?.Encoding,
             Standalone = baseOutput?.Standalone,
-            Indent = baseOutput?.Indent,
+            Indent = indent ?? baseOutput?.Indent,
             Version = baseOutput?.Version,
         };
     }
