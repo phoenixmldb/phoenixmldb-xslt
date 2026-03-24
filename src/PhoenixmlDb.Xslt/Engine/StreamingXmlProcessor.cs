@@ -26,13 +26,20 @@ internal sealed class StreamingXmlProcessor
     private object?[]? _accCurrentValues;
     private Dictionary<NodeId, (object? before, object? after)>[]? _accNodeValueMaps;
 
+    // Stream watchers for consuming sub-expression evaluation
+    private readonly IReadOnlyList<StreamWatcher>? _watchers;
+
+    // Ancestor element names for watcher path matching (outermost first)
+    private readonly List<string> _ancestorNames = [];
+
     public StreamingXmlProcessor(
         XsltStylesheet stylesheet,
         TemplateIndex templateIndex,
         DefaultXsltExecutionContext context,
         XsltTransformEngine.InMemoryNodeStore nodeStore,
         QName? mode,
-        IReadOnlyList<XsltAccumulator>? accumulators = null)
+        IReadOnlyList<XsltAccumulator>? accumulators = null,
+        IReadOnlyList<StreamWatcher>? watchers = null)
     {
         _stylesheet = stylesheet;
         _templateIndex = templateIndex;
@@ -40,6 +47,7 @@ internal sealed class StreamingXmlProcessor
         _nodeStore = nodeStore;
         _mode = mode;
         _accumulators = accumulators ?? Array.Empty<XsltAccumulator>();
+        _watchers = watchers;
     }
 
     /// <summary>
@@ -132,17 +140,37 @@ internal sealed class StreamingXmlProcessor
                         // Fire start-phase accumulator rules before template execution
                         await FireAccumulatorRulesAsync(xdmElem, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
 
+                        // Fire stream watchers for element match
+                        if (_watchers != null)
+                        {
+                            // Build attribute dictionary for watcher matching
+                            Dictionary<string, string>? attrDict = null;
+                            if (attrs.Count > 0)
+                            {
+                                attrDict = new Dictionary<string, string>(attrs.Count);
+                                foreach (var attr in attrs)
+                                    attrDict[attr.LocalName] = attr.StringValue ?? "";
+                            }
+                            FireWatchers(current.LocalName, attrDict, null);
+                        }
+
                         await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
                             .ConfigureAwait(false);
 
                         if (!isEmptyElement)
                         {
                             ancestorStack.Push(current);
+                            _ancestorNames.Add(current.LocalName);
                         }
                         else
                         {
                             // Self-closing: fire end-phase rules, close any deferred tag, then clean up
                             await FireAccumulatorRulesAsync(xdmElem, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
+
+                            // Fire watchers for end of self-closing element
+                            if (_watchers != null)
+                                FireWatchersEndElement(current.LocalName);
+
                             if (_context._streamingOpenElements.Count > 0)
                             {
                                 var qname = _context._streamingOpenElements.Pop();
@@ -158,6 +186,11 @@ internal sealed class StreamingXmlProcessor
                         if (ancestorStack.Count > 0)
                         {
                             var closingContext = ancestorStack.Pop();
+
+                            // Pop ancestor name for watcher path matching
+                            if (_ancestorNames.Count > 0)
+                                _ancestorNames.RemoveAt(_ancestorNames.Count - 1);
+
                             // Reset sibling counter for children of this closing element.
                             // Children are at depth = closingContext.Depth + 1.
                             siblingCountByDepth.Remove(closingContext.Depth + 1);
@@ -165,6 +198,10 @@ internal sealed class StreamingXmlProcessor
                             var closingNode = _nodeStore.GetNode(closingContext.NodeId);
                             if (closingNode != null)
                                 await FireAccumulatorRulesAsync(closingNode, closingContext.NodeId, AccumulatorPhase.End).ConfigureAwait(false);
+
+                            // Fire watchers for end element (subtree tracking)
+                            if (_watchers != null)
+                                FireWatchersEndElement(closingContext.LocalName);
 
                             // Write the deferred closing tag for elements opened by shallow-copy.
                             // The built-in shallow-copy template writes only the start tag and
@@ -185,15 +222,21 @@ internal sealed class StreamingXmlProcessor
                     case XmlNodeType.CDATA:
                     case XmlNodeType.SignificantWhitespace:
                     {
+                        var textValue = reader.Value;
+
                         // Text nodes in streaming: create temporary text node, match templates
                         var textNodeId = new NodeId(_nextNodeId++);
                         var textNode = new XdmText
                         {
                             Id = textNodeId,
                             Document = new DocumentId(0),
-                            Value = reader.Value
+                            Value = textValue
                         };
                         _nodeStore.Register(textNode);
+
+                        // Fire stream watchers for text content
+                        if (_watchers != null)
+                            FireWatchersText(textValue);
 
                         // Fire accumulator rules for text nodes
                         await FireAccumulatorRulesAsync(textNode, textNodeId, AccumulatorPhase.Start).ConfigureAwait(false);
@@ -363,6 +406,76 @@ internal sealed class StreamingXmlProcessor
             {
                 var existing = _accNodeValueMaps[i].GetValueOrDefault(nodeId, (before: _accCurrentValues[i], after: _accCurrentValues[i]));
                 _accNodeValueMaps[i][nodeId] = (existing.before, after: _accCurrentValues[i]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fires watchers for element start events.
+    /// </summary>
+    private void FireWatchers(string elementName, IReadOnlyDictionary<string, string>? attributes, string? textContent)
+    {
+        if (_watchers == null) return;
+
+        foreach (var watcher in _watchers)
+        {
+            // Check for subtree collection in progress
+            if (watcher.IsCollectingSubtree)
+            {
+                var evt = new StreamXmlEvent(XmlNodeType.Element, elementName, null, null, attributes);
+                watcher.OnSubtreeEvent(evt);
+                continue;
+            }
+
+            // Check element path match
+            if (watcher.PathMatcher.Matches(_ancestorNames, elementName))
+            {
+                watcher.OnElementMatch(elementName, attributes, textContent);
+            }
+
+            // Check attribute match
+            var attrName = watcher.PathMatcher.MatchesAttribute(_ancestorNames, elementName);
+            if (attrName != null && attributes != null)
+            {
+                var attrValue = attributes.GetValueOrDefault(attrName);
+                if (attrValue != null)
+                {
+                    watcher.OnElementMatch(elementName, attributes, attrValue);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fires watchers for end element events (subtree tracking).
+    /// </summary>
+    private void FireWatchersEndElement(string localName)
+    {
+        if (_watchers == null) return;
+
+        foreach (var watcher in _watchers)
+        {
+            if (watcher.IsCollectingSubtree)
+            {
+                var evt = new StreamXmlEvent(XmlNodeType.EndElement, localName, null, null, null);
+                watcher.OnSubtreeEvent(evt);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fires watchers for text events (subtree tracking and text content delivery).
+    /// </summary>
+    private void FireWatchersText(string textValue)
+    {
+        if (_watchers == null) return;
+
+        foreach (var watcher in _watchers)
+        {
+            if (watcher.IsCollectingSubtree)
+            {
+                var evt = new StreamXmlEvent(XmlNodeType.Text, "", null, textValue, null);
+                watcher.OnSubtreeEvent(evt);
             }
         }
     }
