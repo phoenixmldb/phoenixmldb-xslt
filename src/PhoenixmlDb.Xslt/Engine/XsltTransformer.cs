@@ -433,8 +433,10 @@ public sealed class XsltTransformEngine
                 output = DefaultXsltExecutionContext.InsertContentTypeMeta(output, outputDecl);
             }
 
-            // Apply indentation when indent="yes" is specified on xsl:output
-            if (outputDecl.Indent == true &&
+            // Apply indentation. Per XSLT 3.0 §20: default is yes for html/xhtml, no for xml.
+            var effectiveIndent = outputDecl.Indent
+                ?? (outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
+            if (effectiveIndent &&
                 outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
             {
                 output = ApplyIndentation(output, outputDecl.EffectiveMethod, outputDecl.SuppressIndentation);
@@ -2370,7 +2372,9 @@ public sealed class XsltTransformEngine
 
         // Apply indentation for streaming output
         var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-        if (streamOutputDecl != null && streamOutputDecl.Indent == true &&
+        var streamEffectiveIndent = streamOutputDecl?.Indent
+            ?? (streamOutputDecl?.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
+        if (streamOutputDecl != null && streamEffectiveIndent == true &&
             streamOutputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
         {
             output = ApplyIndentation(output, streamOutputDecl.EffectiveMethod, streamOutputDecl.SuppressIndentation);
@@ -10368,8 +10372,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var secondaryContent = _output.ToString();
 
                 // Apply indentation for secondary result documents
-                var effectiveIndent = resultIndent ?? matchedOutput?.Indent ?? _stylesheet.Outputs.FirstOrDefault()?.Indent;
+                // Per XSLT 3.0 §20: default is yes for html/xhtml, no for xml.
                 var effectiveMethod = resultMethod ?? matchedOutput?.EffectiveMethod ?? OutputMethod.Xml;
+                var effectiveIndent = resultIndent ?? matchedOutput?.Indent
+                    ?? (effectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
                 if (effectiveIndent == true &&
                     effectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
                 {
