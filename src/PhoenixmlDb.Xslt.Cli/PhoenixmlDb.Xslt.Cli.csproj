@@ -12,7 +12,7 @@
     <!-- dotnet tool support -->
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>xslt</ToolCommandName>
-    <PackageId>PhoenixmlDb.Xslt.Cli</PackageId>
+    <PackageId>xslt</PackageId>
     <NoWarn>$(NoWarn);CA1303</NoWarn>
   </PropertyGroup>
 
