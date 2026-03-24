@@ -81,6 +81,11 @@ internal sealed class StreamingExpressionScanner
                 ScanInstructions(ctor);
                 break;
 
+            // Literal result elements have Content that may contain consuming instructions
+            case XsltLiteralResultElement lre:
+                ScanInstructions(lre.Content);
+                break;
+
             // Skip xsl:apply-templates and xsl:iterate — handled by existing streaming
             case XsltApplyTemplates:
             case XsltIterate:

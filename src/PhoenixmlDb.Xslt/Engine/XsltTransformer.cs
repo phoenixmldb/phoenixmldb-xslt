@@ -3535,6 +3535,70 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     internal XmlReader? _activeStreamingReader;
     internal CancellationToken _activeStreamingCancellationToken;
     internal IReadOnlyList<StreamWatcher>? _activeStreamWatchers;
+
+    /// <summary>
+    /// Try to resolve an expression (or its sub-expressions) from watcher results.
+    /// Handles direct matches and map constructors with watcher entry values.
+    /// </summary>
+    private static (bool Resolved, object? Value) TryResolveFromWatchers(
+        PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
+        IReadOnlyList<StreamWatcher> watchers)
+    {
+        // Direct match: the entire expression is a watched sub-expression
+        foreach (var watcher in watchers)
+        {
+            if (ReferenceEquals(expr, watcher.SourceExpression))
+                return (true, watcher.GetResult());
+        }
+
+        // Map constructor: resolve each entry's value from watchers and build the map
+        if (expr is PhoenixmlDb.XQuery.Ast.MapConstructor mapCtor)
+        {
+            var hasWatcherEntries = false;
+            foreach (var entry in mapCtor.Entries)
+            {
+                foreach (var watcher in watchers)
+                {
+                    if (ReferenceEquals(entry.Value, watcher.SourceExpression))
+                    {
+                        hasWatcherEntries = true;
+                        break;
+                    }
+                }
+                if (hasWatcherEntries) break;
+            }
+
+            if (hasWatcherEntries)
+            {
+                var map = new Dictionary<object, object?>();
+                foreach (var entry in mapCtor.Entries)
+                {
+                    object? key = entry.Key switch
+                    {
+                        PhoenixmlDb.XQuery.Ast.StringLiteral sl => sl.Value,
+                        PhoenixmlDb.XQuery.Ast.IntegerLiteral il => il.Value,
+                        _ => entry.Key.ToString()
+                    };
+
+                    object? value = null;
+                    foreach (var watcher in watchers)
+                    {
+                        if (ReferenceEquals(entry.Value, watcher.SourceExpression))
+                        {
+                            value = watcher.GetResult();
+                            break;
+                        }
+                    }
+
+                    if (key != null)
+                        map[key] = value;
+                }
+                return (true, map);
+            }
+        }
+
+        return (false, null);
+    }
     internal Dictionary<QName, GlobalDeclaration>? _pendingGlobals; // Lazy global init: declarations not yet evaluated
     private bool _lastResultWasAtomic; // Track adjacent atomic values for space separation
     private string? _itemSeparatorOverride; // When set, overrides default space separator between sequence items
@@ -7235,15 +7299,14 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 return result;
         }
 
-        // Check for stream watcher result substitution
+        // Check for stream watcher result substitution.
+        // This handles both direct matches (entire expr is a watcher) and
+        // nested matches (expr contains watcher sub-expressions, e.g., map entries).
         if (_activeStreamWatchers != null)
         {
-            // Direct match: the entire expression is a watched sub-expression
-            foreach (var watcher in _activeStreamWatchers)
-            {
-                if (ReferenceEquals(expr, watcher.SourceExpression))
-                    return watcher.GetResult();
-            }
+            var watcherResult = TryResolveFromWatchers(expr, _activeStreamWatchers);
+            if (watcherResult.Resolved)
+                return watcherResult.Value;
         }
 
         // Resolve NamespaceUri → ResolvedNamespace on NameTests using node store
