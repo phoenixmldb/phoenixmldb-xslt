@@ -1,0 +1,273 @@
+using System.Xml;
+using PhoenixmlDb.Core;
+using PhoenixmlDb.Xdm.Nodes;
+using PhoenixmlDb.XQuery.Ast;
+
+namespace PhoenixmlDb.Xslt.Engine;
+
+/// <summary>
+/// Aggregation strategy for a stream watcher.
+/// </summary>
+internal enum WatcherAggregation
+{
+    Count,
+    Sum,
+    Max,
+    Min,
+    Avg,
+    StringJoin,
+    Snapshot,
+    Sequence
+}
+
+/// <summary>
+/// Matches a path pattern against the streaming element stack.
+/// </summary>
+internal sealed class StreamPathMatcher
+{
+    private readonly string[] _steps;
+
+    public StreamPathMatcher(string pathPattern)
+    {
+        // Parse "transactions/transaction" into ["transactions", "transaction"]
+        // or "transactions/transaction/@value" into ["transactions", "transaction", "@value"]
+        _steps = pathPattern.Split('/');
+    }
+
+    /// <summary>
+    /// Checks if the current element stack matches this pattern.
+    /// </summary>
+    /// <param name="ancestorStack">Current element name stack (outermost first).</param>
+    /// <param name="currentName">The current element's local name.</param>
+    public bool Matches(IReadOnlyList<string> ancestorStack, string currentName)
+    {
+        // Build full path: ancestors + current
+        // Match against steps from the end
+        if (_steps.Length == 0) return false;
+
+        var lastStep = _steps[^1];
+
+        // Attribute step — matched separately via MatchesAttribute
+        if (lastStep.StartsWith('@')) return false;
+
+        if (lastStep != currentName && lastStep != "*") return false;
+
+        if (_steps.Length == 1) return true;
+
+        // Match remaining steps against ancestor stack (from bottom up)
+        var stackIdx = ancestorStack.Count - 1;
+        for (var stepIdx = _steps.Length - 2; stepIdx >= 0; stepIdx--)
+        {
+            if (stackIdx < 0) return false;
+            var step = _steps[stepIdx];
+            if (step != ancestorStack[stackIdx] && step != "*") return false;
+            stackIdx--;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Checks if the pattern ends with an attribute step and the element path matches.
+    /// Returns the attribute local name if matched, null otherwise.
+    /// </summary>
+    public string? MatchesAttribute(IReadOnlyList<string> ancestorStack, string currentElementName)
+    {
+        if (_steps.Length < 2) return null;
+        var lastStep = _steps[^1];
+        if (!lastStep.StartsWith('@')) return null;
+
+        // Check the element path (all steps except the last)
+        var elementSteps = _steps[..^1];
+        if (elementSteps[^1] != currentElementName && elementSteps[^1] != "*") return null;
+
+        var stackIdx = ancestorStack.Count - 1;
+        for (var stepIdx = elementSteps.Length - 2; stepIdx >= 0; stepIdx--)
+        {
+            if (stackIdx < 0) return null;
+            if (elementSteps[stepIdx] != ancestorStack[stackIdx] && elementSteps[stepIdx] != "*") return null;
+            stackIdx--;
+        }
+
+        return lastStep[1..]; // Strip the @ prefix
+    }
+}
+
+/// <summary>
+/// A watcher that accumulates data from the XML stream for a consuming sub-expression.
+/// </summary>
+internal sealed class StreamWatcher
+{
+    /// <summary>
+    /// Identity of the AST sub-expression this watcher replaces.
+    /// </summary>
+    public required XQueryExpression SourceExpression { get; init; }
+
+    /// <summary>
+    /// Path pattern to match in the stream.
+    /// </summary>
+    public required StreamPathMatcher PathMatcher { get; init; }
+
+    /// <summary>
+    /// How to accumulate matched values.
+    /// </summary>
+    public required WatcherAggregation Aggregation { get; init; }
+
+    /// <summary>
+    /// Optional: attribute name to extract from matched elements (e.g., "value" for @value).
+    /// When null, the element's text content or the element itself is used.
+    /// </summary>
+    public string? ValueAttribute { get; init; }
+
+    /// <summary>
+    /// For StringJoin: the separator string.
+    /// </summary>
+    public string? Separator { get; init; }
+
+    // Accumulation state
+    private long _count;
+    private double _sum;
+    private double? _max;
+    private double? _min;
+    private readonly List<string> _strings = [];
+    private readonly List<object> _items = [];
+    private readonly List<XdmNode> _snapshots = [];
+
+    // Subtree collection state (for Sequence/Snapshot)
+    private bool _collectingSubtree;
+    private int _subtreeDepth;
+    private readonly List<StreamXmlEvent> _subtreeEvents = [];
+
+    /// <summary>
+    /// Called when a matching element is encountered during the streaming pass.
+    /// </summary>
+    public void OnElementMatch(string elementName, IReadOnlyDictionary<string, string>? attributes, string? textContent)
+    {
+        switch (Aggregation)
+        {
+            case WatcherAggregation.Count:
+                _count++;
+                break;
+
+            case WatcherAggregation.Sum:
+            case WatcherAggregation.Max:
+            case WatcherAggregation.Min:
+            case WatcherAggregation.Avg:
+                var numStr = ValueAttribute != null
+                    ? attributes?.GetValueOrDefault(ValueAttribute)
+                    : textContent;
+                if (numStr != null && double.TryParse(numStr, System.Globalization.CultureInfo.InvariantCulture, out var num))
+                {
+                    _sum += num;
+                    _count++;
+                    if (!_max.HasValue || num > _max.Value) _max = num;
+                    if (!_min.HasValue || num < _min.Value) _min = num;
+                }
+                break;
+
+            case WatcherAggregation.StringJoin:
+                var str = ValueAttribute != null
+                    ? attributes?.GetValueOrDefault(ValueAttribute)
+                    : textContent;
+                if (str != null) _strings.Add(str);
+                break;
+
+            case WatcherAggregation.Sequence:
+            case WatcherAggregation.Snapshot:
+                // For simple leaf elements, capture value directly
+                if (ValueAttribute != null && attributes != null)
+                {
+                    var attrVal = attributes.GetValueOrDefault(ValueAttribute);
+                    if (attrVal != null) _items.Add(attrVal);
+                }
+                else if (textContent != null)
+                {
+                    _items.Add(textContent);
+                }
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Begin collecting a subtree for Sequence/Snapshot watchers.
+    /// Called when a match occurs at a non-leaf element.
+    /// </summary>
+    public void BeginSubtreeCollection()
+    {
+        _collectingSubtree = true;
+        _subtreeDepth = 0;
+        _subtreeEvents.Clear();
+    }
+
+    /// <summary>
+    /// Feed a streaming event during subtree collection.
+    /// Returns true if the subtree is complete.
+    /// </summary>
+    public bool OnSubtreeEvent(StreamXmlEvent evt)
+    {
+        if (!_collectingSubtree) return false;
+        _subtreeEvents.Add(evt);
+
+        if (evt.Type == XmlNodeType.Element) _subtreeDepth++;
+        else if (evt.Type == XmlNodeType.EndElement)
+        {
+            _subtreeDepth--;
+            if (_subtreeDepth < 0)
+            {
+                _collectingSubtree = false;
+                // Build in-memory node from collected events
+                // (implementation deferred to integration task)
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public bool IsCollectingSubtree => _collectingSubtree;
+
+    /// <summary>
+    /// Gets the accumulated result after the streaming pass.
+    /// </summary>
+    public object? GetResult()
+    {
+        return Aggregation switch
+        {
+            WatcherAggregation.Count => _count,
+            WatcherAggregation.Sum => _count > 0 ? _sum : null,
+            WatcherAggregation.Max => _max.HasValue ? _max.Value : null,
+            WatcherAggregation.Min => _min.HasValue ? _min.Value : null,
+            WatcherAggregation.Avg => _count > 0 ? _sum / _count : null,
+            WatcherAggregation.StringJoin => string.Join(Separator ?? "", _strings),
+            WatcherAggregation.Sequence => _items.Count > 0 ? _items.ToArray() : Array.Empty<object>(),
+            WatcherAggregation.Snapshot => _snapshots.Count > 0 ? _snapshots.ToArray() : Array.Empty<XdmNode>(),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Reset for reuse.
+    /// </summary>
+    public void Reset()
+    {
+        _count = 0;
+        _sum = 0;
+        _max = null;
+        _min = null;
+        _strings.Clear();
+        _items.Clear();
+        _snapshots.Clear();
+        _collectingSubtree = false;
+        _subtreeEvents.Clear();
+    }
+}
+
+/// <summary>
+/// A captured XML event for incremental subtree building.
+/// </summary>
+internal readonly record struct StreamXmlEvent(
+    XmlNodeType Type,
+    string LocalName,
+    string? NamespaceUri,
+    string? Value,
+    IReadOnlyDictionary<string, string>? Attributes);
