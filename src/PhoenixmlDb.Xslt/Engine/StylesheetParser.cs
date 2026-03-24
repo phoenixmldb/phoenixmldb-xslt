@@ -109,6 +109,11 @@ public sealed class StylesheetParser
     /// </summary>
     private readonly Dictionary<string, List<(string? Version, string FilePath)>>? _packageCatalog;
 
+    /// <summary>
+    /// When true, DTD processing is allowed in stylesheet loading. Default is false (secure).
+    /// </summary>
+    public bool AllowDtdProcessing { get; init; }
+
     public StylesheetParser(IExpressionParser expressionParser)
     {
         _expressionParser = expressionParser;
@@ -158,8 +163,8 @@ public sealed class StylesheetParser
             xml = xml[1..];
         _baseUri = baseUri;
         XDocument doc;
-        // Use XmlReader with DTD processing when baseUri is available (for external entity resolution)
-        if (baseUri != null && xml.Contains("<!DOCTYPE", StringComparison.Ordinal))
+        // Use XmlReader with DTD processing only when explicitly allowed and a DTD is present
+        if (AllowDtdProcessing && baseUri != null && xml.Contains("<!DOCTYPE", StringComparison.Ordinal))
         {
             var settings = new System.Xml.XmlReaderSettings
             {
@@ -1056,7 +1061,7 @@ public sealed class StylesheetParser
         var packageFile = ResolvePackageVersion(packageEntries, packageVersion, packageName, GetSourceLocation(element));
 
         // Parse the package stylesheet with a fresh parser sharing our expression parser and catalog
-        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog);
+        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing };
         var packageXml = System.IO.File.ReadAllText(packageFile);
         var packageBaseUri = new Uri(Path.GetFullPath(packageFile));
         var packageStylesheet = packageParser.Parse(packageXml, packageBaseUri, isLibraryPackage: true);
@@ -2980,7 +2985,7 @@ public sealed class StylesheetParser
             var savedDefaultMode = _currentDefaultMode;
             _baseUri = new Uri(fullPath);
             XDocument doc;
-            if (xml.Contains("<!DOCTYPE", StringComparison.Ordinal))
+            if (AllowDtdProcessing && xml.Contains("<!DOCTYPE", StringComparison.Ordinal))
             {
                 var dtdSettings = new System.Xml.XmlReaderSettings
                 {

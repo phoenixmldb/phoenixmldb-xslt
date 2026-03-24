@@ -109,6 +109,29 @@ public sealed class XsltTransformer
         = new Dictionary<string, string>();
 
     /// <summary>
+    /// Controls whether DTD processing is allowed when loading stylesheets.
+    /// Default is <c>false</c> (DTDs are prohibited) for security.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <c>false</c>, stylesheets containing <c>&lt;!DOCTYPE&gt;</c> declarations will have
+    /// DTDs ignored. Entity references in the stylesheet will not be expanded.
+    /// </para>
+    /// <para>
+    /// Set to <c>true</c> only if you trust the stylesheet source and need DTD entity expansion
+    /// (e.g., stylesheets that define shorthand entities via internal DTD subsets). When enabled,
+    /// entity expansion is limited to 1,000,000 characters to mitigate entity expansion attacks.
+    /// </para>
+    /// </remarks>
+    public bool AllowDtdProcessing { get; set; }
+
+    /// <summary>
+    /// Maximum number of secondary result documents allowed per transformation.
+    /// Default is 1000. Set to 0 for unlimited.
+    /// </summary>
+    public int MaxResultDocuments { get; set; } = 1000;
+
+    /// <summary>
     /// Compiles and loads an XSLT stylesheet from its XML source text.
     /// </summary>
     /// <param name="stylesheetXml">
@@ -141,8 +164,8 @@ public sealed class XsltTransformer
         ArgumentNullException.ThrowIfNull(stylesheetXml);
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog)
-            : new StylesheetParser(exprParser);
+            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing }
+            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing };
         _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
         return Task.CompletedTask;
     }

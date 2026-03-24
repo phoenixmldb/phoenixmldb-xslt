@@ -3771,6 +3771,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private readonly HashSet<string> _resultDocumentUris = new(StringComparer.OrdinalIgnoreCase);
     // Secondary result documents: href → serialized content
     private readonly Dictionary<string, string> _secondaryResultDocuments = new(StringComparer.OrdinalIgnoreCase);
+    // Maximum secondary result documents allowed (0 = unlimited). Security limit.
+    internal int MaxResultDocuments { get; init; } = 1000;
     // XTDE1480: Track whether we're in temporary output state (variable/param body)
     private int _temporaryOutputDepth;
     // Track nesting depth of secondary result-document redirects
@@ -10396,6 +10398,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     secondaryContent = "\uFEFF" + secondaryContent;
                 }
 
+                if (MaxResultDocuments > 0 && _secondaryResultDocuments.Count >= MaxResultDocuments)
+                    throw new XsltException($"XTDE1490: Maximum number of secondary result documents ({MaxResultDocuments}) exceeded. " +
+                        "Set MaxResultDocuments on XsltTransformer to increase the limit.");
                 _secondaryResultDocuments[effectiveHref] = secondaryContent;
             }
             else if (redirectToPrimary)
