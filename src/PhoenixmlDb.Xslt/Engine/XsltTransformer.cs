@@ -3534,6 +3534,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     internal StreamingXmlProcessor? _activeStreamingProcessor;
     internal XmlReader? _activeStreamingReader;
     internal CancellationToken _activeStreamingCancellationToken;
+    internal IReadOnlyList<StreamWatcher>? _activeStreamWatchers;
     internal Dictionary<QName, GlobalDeclaration>? _pendingGlobals; // Lazy global init: declarations not yet evaluated
     private bool _lastResultWasAtomic; // Track adjacent atomic values for space separation
     private string? _itemSeparatorOverride; // When set, overrides default space separator between sequence items
@@ -7234,6 +7235,17 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 return result;
         }
 
+        // Check for stream watcher result substitution
+        if (_activeStreamWatchers != null)
+        {
+            // Direct match: the entire expression is a watched sub-expression
+            foreach (var watcher in _activeStreamWatchers)
+            {
+                if (ReferenceEquals(expr, watcher.SourceExpression))
+                    return watcher.GetResult();
+            }
+        }
+
         // Resolve NamespaceUri → ResolvedNamespace on NameTests using node store
         if (_nodeStore != null)
             ResolveExpressionNamespaceIds(expr);
@@ -7300,6 +7312,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             foreach (var (name, value) in scope.Variables)
             {
                 execContext.BindVariable(name, ConvertRtfForXQuery(value));
+            }
+        }
+
+        // Bind stream watcher results as synthetic variables for map constructor entries etc.
+        if (_activeStreamWatchers != null)
+        {
+            for (var wi = 0; wi < _activeStreamWatchers.Count; wi++)
+            {
+                var watcherVar = new QName(NamespaceId.None, $"__streaming_watcher_{wi}");
+                execContext.BindVariable(watcherVar, _activeStreamWatchers[wi].GetResult());
             }
         }
 
@@ -11245,9 +11267,14 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                 }
 
+                // Pre-scan for consuming expressions that need stream watchers
+                var scanner = new StreamingExpressionScanner();
+                var watchers = instruction.Content != null ? scanner.Scan(instruction.Content) : [];
+
                 var processor = new StreamingXmlProcessor(
                     _stylesheet, _templateIndex, this, streamNodeStore, _currentMode,
-                    streamAccumulators.Count > 0 ? streamAccumulators : null);
+                    streamAccumulators.Count > 0 ? streamAccumulators : null,
+                    watchers.Count > 0 ? watchers : null);
 
                 // Push a synthetic document node as context so the content body can execute
                 var syntheticDocId = new NodeId(999_999);
@@ -11267,8 +11294,23 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 _activeStreamingProcessor = processor;
                 _activeStreamingReader = xmlReader;
                 _activeStreamingCancellationToken = _options.CancellationToken;
+                // Store watchers for result substitution during EvaluateAsync
+                var savedWatchers = _activeStreamWatchers;
+                _activeStreamWatchers = watchers.Count > 0 ? watchers : null;
+
                 try
                 {
+                    // If watchers exist but no xsl:apply-templates will trigger the streaming
+                    // pass, run ProcessAsync now so watcher results are available when the
+                    // content body evaluates variable select expressions.
+                    if (watchers.Count > 0 && instruction.Content != null
+                        && !ContentContainsApplyTemplates(instruction.Content))
+                    {
+                        _activeStreamingProcessor = null;
+                        _activeStreamingReader = null;
+                        await processor.ProcessAsync(xmlReader, _options.CancellationToken).ConfigureAwait(false);
+                    }
+
                     if (instruction.Content != null)
                     {
                         // Execute the Content body (typically xsl:apply-templates or xsl:iterate).
@@ -11283,6 +11325,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     _activeStreamingProcessor = savedStreamingProcessor;
                     _activeStreamingReader = savedStreamingReader;
                     _activeStreamingCancellationToken = savedStreamingCt;
+                    _activeStreamWatchers = savedWatchers;
                     PopContextItem();
                     streamNodeStore.Remove(syntheticDocId);
                 }
@@ -11297,6 +11340,17 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
 
             return; // Skip the full-tree path
+        }
+
+        // Helper: check if a content body contains xsl:apply-templates (which triggers streaming)
+        static bool ContentContainsApplyTemplates(Ast.XsltSequenceConstructor body)
+        {
+            foreach (var insn in body.Instructions)
+            {
+                if (insn is Ast.XsltApplyTemplates) return true;
+                if (insn is Ast.XsltSequenceConstructor nested && ContentContainsApplyTemplates(nested)) return true;
+            }
+            return false;
         }
 
         // Load the XML document (resolvedUri is already fragment-free)
