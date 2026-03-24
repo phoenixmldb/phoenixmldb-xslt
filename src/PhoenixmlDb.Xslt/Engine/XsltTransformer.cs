@@ -19899,7 +19899,7 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
             "supports-backwards-compatibility" => "yes",
             "supports-namespace-axis" => "yes",
             "supports-streaming" => "yes",
-            "supports-dynamic-evaluation" => "no",
+            "supports-dynamic-evaluation" => "yes",
             "supports-higher-order-functions" => "yes",
             "xpath-version" => "4.0",
             "xsd-version" => "1.1",
