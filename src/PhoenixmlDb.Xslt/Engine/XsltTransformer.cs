@@ -8962,6 +8962,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     Children = newChildren,
                     Attributes = newAttrs
                 };
+                newElem._stringValue = elem.StringValue;
                 _nodeStore.Register(newElem);
                 return newElem;
             }
@@ -21575,6 +21576,9 @@ internal static class SnapshotHelper
                 Children = [childId],
                 NamespaceDeclarations = elem.NamespaceDeclarations
             };
+            // Recompute string value after adding child
+            var child = store.GetNode(childId);
+            newElem._stringValue = child?.StringValue ?? elem.StringValue;
             store.Register(newElem);
         }
     }
