@@ -17354,6 +17354,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         or ItemType.Duration or ItemType.YearMonthDuration or ItemType.DayTimeDuration
         or ItemType.Boolean or ItemType.QName;
 
+    /// <summary>
+    /// Returns true for any atomic type (strict + string/anyURI/untypedAtomic).
+    /// Used for TextNodeItem coercion in function return values — atomizing a text
+    /// node always produces a string, which can then be cast to the target type.
+    /// </summary>
+    private static bool IsAtomicReturnType(ItemType type) =>
+        IsStrictAtomicType(type) || type is ItemType.String or ItemType.AnyUri
+            or ItemType.UntypedAtomic or ItemType.AnyAtomicType;
+
     private static bool IsNodeType(ItemType type) => type is
         ItemType.Node or ItemType.Element or ItemType.Attribute or ItemType.Text
         or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Document;
@@ -18180,15 +18189,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             if (accumulatedItems.Count == 1 && string.IsNullOrEmpty(textOutput))
             {
                 funcResult = accumulatedItems[0];
-                // TextNodeItem from TVTs/xsl:text: coerce to atomic return type if needed
-                if (funcResult is Xdm.TextNodeItem tni && func.As != null && IsStrictAtomicType(func.As.ItemType))
+                // TextNodeItem from TVTs/xsl:text/xsl:value-of: coerce to atomic return type if needed.
+                // Includes string/anyURI types — atomization of text nodes always produces a string.
+                if (funcResult is Xdm.TextNodeItem tni && func.As != null && IsAtomicReturnType(func.As.ItemType))
                     funcResult = CoerceToType(tni.Value, func.As);
                 ValidateFunctionReturnType(funcResult, func);
             }
             else if (accumulatedItems.Count > 1 && string.IsNullOrEmpty(textOutput))
             {
-                // Coerce TextNodeItems to atomic types if function has strict atomic return type
-                if (func.As != null && IsStrictAtomicType(func.As.ItemType))
+                // Coerce TextNodeItems to atomic types if function has atomic return type
+                if (func.As != null && IsAtomicReturnType(func.As.ItemType))
                 {
                     for (var i = 0; i < accumulatedItems.Count; i++)
                     {
@@ -18254,8 +18264,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 // Combine accumulated items with text output — return the accumulated items
                 // (text is typically from LREs inside the function)
-                // Coerce TextNodeItems to atomic types if function has strict atomic return type
-                if (func.As != null && IsStrictAtomicType(func.As.ItemType))
+                // Coerce TextNodeItems to atomic types if function has atomic return type
+                if (func.As != null && IsAtomicReturnType(func.As.ItemType))
                 {
                     for (var i = 0; i < accumulatedItems.Count; i++)
                     {
