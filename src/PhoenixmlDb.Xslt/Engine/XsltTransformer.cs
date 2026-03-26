@@ -14878,7 +14878,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             _sequenceAccumulator.Add(map);
         else if (_outputNsScopes.Count > 0)
             throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
-        // At the top level (not inside element), silently ignore — JSON/adaptive output not yet supported
+        else
+        {
+            // Top-level map: serialize as JSON text per XSLT 3.0 §20 adaptive/JSON output
+            WriteText(XsltTransformEngine.SerializeItemAsJson(map, true), false);
+        }
     }
 
     public override async ValueTask CreateMapEntryAsync(XsltMapEntry instruction)
@@ -24024,6 +24028,7 @@ internal sealed class XsltJsonToXml2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
 
         // Parse options map
         var liberal = false;
+        var escape = false;
         var duplicates = "use-first";
         var options = arguments[1];
         if (options is Dictionary<object, object?> map)
@@ -24059,8 +24064,8 @@ internal sealed class XsltJsonToXml2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
             // escape option: must be xs:boolean
             if (map.TryGetValue("escape", out var escapeVal))
             {
-                if (escapeVal is bool)
-                { /* noted but not fully implemented */ }
+                if (escapeVal is bool eb)
+                    escape = eb;
                 else if (escapeVal is null || escapeVal is object?[] ea && ea.Length == 0)
                     throw new XsltException("XPTY0004: Option 'escape' must be a boolean value, got empty sequence");
                 else if (escapeVal is string)
@@ -24096,7 +24101,7 @@ internal sealed class XsltJsonToXml2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
 
         try
         {
-            var doc = JsonToXmlConverter.Convert(jsonText, store, liberal, duplicates);
+            var doc = JsonToXmlConverter.Convert(jsonText, store, liberal, duplicates, escape);
             return ValueTask.FromResult<object?>(doc);
         }
         catch (System.Text.Json.JsonException ex)
@@ -24113,7 +24118,7 @@ internal static class JsonToXmlConverter
 {
     private static readonly NamespaceId FnNs = NamespaceId.Fn;
 
-    public static XdmDocument Convert(string json, XsltTransformEngine.InMemoryNodeStore store, bool liberal = false, string duplicates = "use-first")
+    public static XdmDocument Convert(string json, XsltTransformEngine.InMemoryNodeStore store, bool liberal = false, string duplicates = "use-first", bool escape = false)
     {
         using var jsonDoc = System.Text.Json.JsonDocument.Parse(json,
             new System.Text.Json.JsonDocumentOptions { AllowTrailingCommas = liberal, CommentHandling = System.Text.Json.JsonCommentHandling.Skip });
@@ -24122,7 +24127,7 @@ internal static class JsonToXmlConverter
         EnsureFnNamespace(store);
 
         var docId = store.NextId();
-        var rootElem = ConvertValue(jsonDoc.RootElement, null, store, duplicates, isRoot: true);
+        var rootElem = ConvertValue(jsonDoc.RootElement, null, store, duplicates, isRoot: true, escape: escape);
 
         var doc = new XdmDocument
         {
@@ -24137,13 +24142,13 @@ internal static class JsonToXmlConverter
         return doc;
     }
 
-    private static XdmElement ConvertValue(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false)
+    private static XdmElement ConvertValue(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false, bool escape = false)
     {
         return je.ValueKind switch
         {
-            System.Text.Json.JsonValueKind.Object => ConvertObject(je, key, store, duplicates, isRoot),
-            System.Text.Json.JsonValueKind.Array => ConvertArray(je, key, store, duplicates, isRoot),
-            System.Text.Json.JsonValueKind.String => CreateSimpleElement("string", je.GetString() ?? "", key, store, isRoot),
+            System.Text.Json.JsonValueKind.Object => ConvertObject(je, key, store, duplicates, isRoot, escape),
+            System.Text.Json.JsonValueKind.Array => ConvertArray(je, key, store, duplicates, isRoot, escape),
+            System.Text.Json.JsonValueKind.String => CreateStringElement(je, key, store, isRoot, escape),
             System.Text.Json.JsonValueKind.Number => CreateSimpleElement("number", je.GetRawText(), key, store, isRoot),
             System.Text.Json.JsonValueKind.True => CreateSimpleElement("boolean", "true", key, store, isRoot),
             System.Text.Json.JsonValueKind.False => CreateSimpleElement("boolean", "false", key, store, isRoot),
@@ -24154,7 +24159,7 @@ internal static class JsonToXmlConverter
 
     private static readonly IReadOnlyList<NamespaceBinding> FnNsDecl = new[] { new NamespaceBinding("", FnNs) };
 
-    private static XdmElement ConvertObject(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false)
+    private static XdmElement ConvertObject(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false, bool escape = false)
     {
         var elemId = store.NextId();
         var children = new List<NodeId>();
@@ -24174,7 +24179,7 @@ internal static class JsonToXmlConverter
                 // use-first: skip subsequent occurrences
                 continue;
             }
-            var child = ConvertValue(prop.Value, prop.Name, store, duplicates);
+            var child = ConvertValue(prop.Value, prop.Name, store, duplicates, escape: escape);
             child.Parent = elemId;
             children.Add(child.Id);
         }
@@ -24194,7 +24199,7 @@ internal static class JsonToXmlConverter
         return elem;
     }
 
-    private static XdmElement ConvertArray(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false)
+    private static XdmElement ConvertArray(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false, bool escape = false)
     {
         var elemId = store.NextId();
         var children = new List<NodeId>();
@@ -24205,7 +24210,7 @@ internal static class JsonToXmlConverter
 
         foreach (var item in je.EnumerateArray())
         {
-            var child = ConvertValue(item, null, store, duplicates);
+            var child = ConvertValue(item, null, store, duplicates, escape: escape);
             child.Parent = elemId;
             children.Add(child.Id);
         }
@@ -24222,6 +24227,28 @@ internal static class JsonToXmlConverter
             NamespaceDeclarations = isRoot ? FnNsDecl : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
         };
         store.Register(elem);
+        return elem;
+    }
+
+    /// <summary>
+    /// Creates a fn:string element, adding escaped="true" attribute when the escape option is set
+    /// and the JSON string contains backslash escape sequences.
+    /// </summary>
+    private static XdmElement CreateStringElement(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, bool isRoot, bool escape)
+    {
+        var interpreted = je.GetString() ?? "";
+        if (!escape)
+            return CreateSimpleElement("string", interpreted, key, store, isRoot);
+
+        // When escape=true, check if the raw JSON string contains escape sequences
+        var raw = je.GetRawText(); // includes surrounding quotes
+        var hasEscapes = raw.Length > 2 && raw.AsSpan(1, raw.Length - 2).Contains('\\');
+        var elem = CreateSimpleElement("string", interpreted, key, store, isRoot);
+        if (hasEscapes)
+        {
+            // Add escaped="true" attribute per XSLT 3.0 §22.1.2
+            AddAttribute(elem.Id, NamespaceId.None, "escaped", "true", elem.Attributes as List<NodeId> ?? new List<NodeId>(), store);
+        }
         return elem;
     }
 
@@ -24284,14 +24311,19 @@ internal static class JsonToXmlConverter
 
     private static void AddKeyAttribute(NodeId parentId, string key, List<NodeId> attrs, XsltTransformEngine.InMemoryNodeStore store)
     {
+        AddAttribute(parentId, NamespaceId.None, "key", key, attrs, store);
+    }
+
+    private static void AddAttribute(NodeId parentId, NamespaceId ns, string localName, string value, List<NodeId> attrs, XsltTransformEngine.InMemoryNodeStore store)
+    {
         var attrId = store.NextId();
         var attr = new XdmAttribute
         {
             Id = attrId,
             Document = default,
-            Namespace = NamespaceId.None,
-            LocalName = "key",
-            Value = key,
+            Namespace = ns,
+            LocalName = localName,
+            Value = value,
             Parent = parentId
         };
         store.Register(attr);
