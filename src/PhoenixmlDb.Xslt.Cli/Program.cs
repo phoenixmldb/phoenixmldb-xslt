@@ -245,9 +245,10 @@ try
 
     return 0;
 }
-catch (Exception ex) when (ex is PhoenixmlDb.Xslt.Engine.XsltException)
+catch (PhoenixmlDb.Xslt.Engine.XsltException ex)
 {
-    await Console.Error.WriteLineAsync($"XSLT error: {ex.Message}").ConfigureAwait(true);
+    var locationInfo = ex.Location != null ? $" at line {ex.Location.Line}, column {ex.Location.Column}" : "";
+    await Console.Error.WriteLineAsync($"XSLT error{locationInfo}: {ex.Message}").ConfigureAwait(true);
     return 2;
 }
 catch (PhoenixmlDb.XQuery.Parser.XQueryParseException ex)

@@ -16916,6 +16916,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         var targetType = template.As.ItemType;
         var occurrence = template.As.Occurrence;
+        // Include template identity in error messages for diagnostics
+        var templateId = template.Name != null ? $" '{template.Name.Value.LocalName}'" :
+            template.Match != null ? $" match=\"{template.Match}\"" : "";
+        var locInfo = templateId;
 
         // Apply function conversion rules: atomize nodes for atomic target types
         var isAtomicTarget = targetType is not ItemType.Item and not ItemType.Node
@@ -16937,15 +16941,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Cardinality check
         if (occurrence == Occurrence.Zero && nonNullCount != 0)
-            throw new XsltException($"XTTE0505: Template return value does not match declared type empty-sequence(): expected zero items, got {nonNullCount}");
+            throw new XsltException($"XTTE0505: Template{locInfo} return value does not match declared type empty-sequence(): expected zero items, got {nonNullCount}");
         if (occurrence == Occurrence.Zero)
             return; // empty-sequence() — no item type check needed
         if (occurrence == Occurrence.ExactlyOne && nonNullCount != 1)
-            throw new XsltException($"XTTE0505: Template return value does not match declared type {template.As.ItemType}: expected exactly one item, got {nonNullCount}");
+            throw new XsltException($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected exactly one item, got {nonNullCount}");
         if (occurrence == Occurrence.ZeroOrOne && nonNullCount > 1)
-            throw new XsltException($"XTTE0505: Template return value does not match declared type {template.As.ItemType}: expected zero or one item, got {nonNullCount}");
+            throw new XsltException($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected zero or one item, got {nonNullCount}");
         if (occurrence == Occurrence.OneOrMore && nonNullCount == 0)
-            throw new XsltException($"XTTE0505: Template return value does not match declared type {template.As.ItemType}: expected one or more items, got 0");
+            throw new XsltException($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected one or more items, got 0");
 
         // Item type check — for atomic types, attempt coercion from string (function conversion rules)
         if (isAtomicTarget)
@@ -16992,7 +16996,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 else if (IsStrictlyIncompatible(sv, targetType))
                 {
                     // Only raise error for clearly invalid conversions (e.g., "hello" → xs:double)
-                    throw new XsltException($"XTTE0505: Template return value '{sv}' cannot be cast to declared type {template.As.ItemType}");
+                    throw new XsltException($"XTTE0505: Template{locInfo} return value '{sv}' cannot be cast to declared type {template.As.ItemType}");
                 }
                 // else: conversion failed but might be due to unsupported features (e.g., negative years);
                 // pass the string value through to maintain previous behavior
@@ -17022,7 +17026,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     _ => false
                 };
                 if (!matches)
-                    throw new XsltException($"XTTE0505: Template return value item of type {item.GetType().Name} does not match declared type {template.As.ItemType}");
+                    throw new XsltException($"XTTE0505: Template{locInfo} return value item of type {item.GetType().Name} does not match declared type {template.As.ItemType}");
             }
         }
     }
