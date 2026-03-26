@@ -32,6 +32,30 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 dotnet add package PhoenixmlDb.Xslt
 ```
 
+### Command-Line Tool
+
+A standalone `xslt` CLI tool is also available as a .NET global tool:
+
+```bash
+dotnet tool install -g xslt
+```
+
+```bash
+# Transform XML with a stylesheet
+xslt -s:stylesheet.xsl input.xml
+
+# Transform with parameters
+xslt -s:stylesheet.xsl -p:name=value input.xml
+
+# Call a named template (no source document)
+xslt -s:stylesheet.xsl -it:main
+
+# Show timing breakdown
+xslt --timing -s:stylesheet.xsl input.xml
+```
+
+Run `xslt --help` for the full list of options.
+
 ## Quick Start
 
 ```csharp
