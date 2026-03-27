@@ -6202,7 +6202,7 @@ public sealed class StylesheetParser
         {
             Location = location,
             Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
-            Content = element.HasElements ? ParseSequenceConstructor(element) : null,
+            Content = selectAttr == null && element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
             Terminate = terminateAttr?.Value is "yes" or "true" or "1",
             TerminateAvt = isTerminateAvt ? ParseAvt(terminateAttr!.Value, element) : null,
             ErrorCode = errorCodeAttr?.Value
