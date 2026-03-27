@@ -455,6 +455,13 @@ public sealed class XsltTransformer
     public Action<int, string, string>? TraceListener { get; set; }
 
     /// <summary>
+    /// Listener for <c>xsl:message</c> output. Receives the message text and a boolean
+    /// indicating whether <c>terminate="yes"</c> was specified.
+    /// When not set, messages are silently discarded.
+    /// </summary>
+    public Action<string, bool>? MessageListener { get; set; }
+
+    /// <summary>
     /// Transforms an XML string using the loaded stylesheet and returns the serialized
     /// primary result document.
     /// </summary>
@@ -521,7 +528,8 @@ public sealed class XsltTransformer
             SourceSelect = _sourceSelect,
             InitialModeSelect = _initialModeSelect,
             Collections = _collections.Count > 0 ? _collections : null,
-            TraceListener = TraceListener
+            TraceListener = TraceListener,
+            MessageListener = MessageListener
         };
 
         var engine = new XsltTransformEngine(_stylesheet);

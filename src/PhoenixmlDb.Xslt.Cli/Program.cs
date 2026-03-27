@@ -60,6 +60,13 @@ try
         return 0;
     }
 
+    // Wire up xsl:message output to stderr
+    transformer.MessageListener = (message, terminate) =>
+    {
+        Console.Error.Write(terminate ? "xsl:message terminate: " : "xsl:message: ");
+        Console.Error.WriteLine(message);
+    };
+
     // Set up trace listener
     if (options.Trace)
     {

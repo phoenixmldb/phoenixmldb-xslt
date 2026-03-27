@@ -3885,6 +3885,39 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// Builds xmlns:prefix="uri" declarations for all in-scope namespaces, for use as
+    /// attributes on a synthetic wrapper element when re-parsing serialized template/function output.
+    /// </summary>
+    private string BuildInScopeNamespaceDeclarations()
+    {
+        var sb = new StringBuilder();
+        var seen = new HashSet<string>();
+        foreach (var scope in _outputNsScopes)
+        {
+            foreach (var (prefix, uri) in scope)
+            {
+                if (string.IsNullOrEmpty(uri) || !seen.Add(prefix))
+                    continue;
+                if (prefix.Length > 0)
+                {
+                    sb.Append(" xmlns:");
+                    sb.Append(prefix);
+                    sb.Append("=\"");
+                    sb.Append(EscapeAttributeValue(uri));
+                    sb.Append('"');
+                }
+                else
+                {
+                    sb.Append(" xmlns=\"");
+                    sb.Append(EscapeAttributeValue(uri));
+                    sb.Append('"');
+                }
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Generates a unique namespace prefix by appending _0, _1, etc. to the base prefix.
     /// Used during namespace fixup when xsl:namespace conflicts with an element's own prefix.
     /// </summary>
@@ -4818,7 +4851,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                                 {
                                     var xmlDoc = new System.Xml.XmlDocument();
                                     xmlDoc.PreserveWhitespace = true;
-                                    xmlDoc.LoadXml($"<_tmpl_wrap_>{bodyOutput}</_tmpl_wrap_>");
+                                    var nsDecls = BuildInScopeNamespaceDeclarations();
+                                    xmlDoc.LoadXml($"<_tmpl_wrap_{nsDecls}>{bodyOutput}</_tmpl_wrap_>");
                                     var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
                                     if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
                                     {
@@ -5972,7 +6006,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         {
                             var xmlDoc = new System.Xml.XmlDocument();
                             xmlDoc.PreserveWhitespace = true;
-                            xmlDoc.LoadXml($"<_tmpl_wrap_>{bodyOutput}</_tmpl_wrap_>");
+                            // Include in-scope namespace declarations on the wrapper so prefixed
+                            // elements (e.g. <svrl:active-pattern/>) can be parsed correctly
+                            var nsDecls = BuildInScopeNamespaceDeclarations();
+                            xmlDoc.LoadXml($"<_tmpl_wrap_{nsDecls}>{bodyOutput}</_tmpl_wrap_>");
                             var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
                             if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
                             {
@@ -6000,7 +6037,6 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     foreach (var item in _sequenceAccumulator)
                         if (item != null)
                             resultItems.Add(item);
-
                     // Track whether results are only from body serialization
                     // (no sequence accumulator items). When true, emit bodyOutput
                     // directly to preserve exact namespace declarations (e.g. xmlns=""
@@ -17012,7 +17048,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var matches = (targetType, item) switch
                 {
                     (ItemType.Element, XdmElement el) =>
-                        template.As.ElementName == null || el.LocalName == template.As.ElementName,
+                        template.As.ElementName == null || MatchesElementName(el, template.As.ElementName),
                     (ItemType.Text, XdmText or string or Xdm.TextNodeItem) => true,
                     (ItemType.Comment, XdmComment) => true,
                     (ItemType.ProcessingInstruction, XdmProcessingInstruction) => true,
@@ -17352,6 +17388,22 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// Checks whether a target type is a strict atomic type where type mismatches
     /// should always be reported as errors (not silently accepted).
     /// </summary>
+    /// <summary>
+    /// Checks if an element matches a declared element name, handling both simple names
+    /// and EQName syntax (Q{uri}local or uri}local after Q{ is stripped).
+    /// </summary>
+    private static bool MatchesElementName(XdmElement el, string declaredName)
+    {
+        // Simple local name match
+        if (el.LocalName == declaredName)
+            return true;
+        // EQName: extract local part after the closing '}'
+        var closeBrace = declaredName.LastIndexOf('}');
+        if (closeBrace >= 0 && closeBrace < declaredName.Length - 1)
+            return el.LocalName == declaredName[(closeBrace + 1)..];
+        return false;
+    }
+
     private static bool IsStrictAtomicType(ItemType type) => type is
         ItemType.Integer or ItemType.Double or ItemType.Float or ItemType.Decimal
         or ItemType.Date or ItemType.DateTime or ItemType.Time
