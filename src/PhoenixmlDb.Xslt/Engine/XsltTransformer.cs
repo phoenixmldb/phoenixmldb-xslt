@@ -24921,7 +24921,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             object? rawResult;
             if (sourceNode is Xdm.Nodes.XdmNode srcNode)
             {
-                rawResult = await engine.TransformRawAsync(srcNode, transformOptions, null).ConfigureAwait(false);
+                rawResult = await engine.TransformRawAsync(srcNode, transformOptions, _context._nodeStore).ConfigureAwait(false);
             }
             else
             {
@@ -24937,7 +24937,9 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             string result;
             if (sourceNode is Xdm.Nodes.XdmNode srcNode)
             {
-                result = await engine.TransformAsync(srcNode, transformOptions).ConfigureAwait(false);
+                // Pass the outer context's node store so the inner transform can
+                // resolve children of the source document (its nodes live there)
+                result = await engine.TransformAsync(srcNode, transformOptions, _context._nodeStore).ConfigureAwait(false);
             }
             else
             {
