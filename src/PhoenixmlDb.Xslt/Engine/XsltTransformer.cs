@@ -3095,9 +3095,15 @@ public sealed class XsltTransformOptions
     public Uri? SourceDocumentUri { get; init; }
 
     /// <summary>
-    /// Message listener for xsl:message output.
+    /// Message listener for xsl:message output. Receives (message, terminate).
     /// </summary>
     public Action<string, bool>? MessageListener { get; init; }
+
+    /// <summary>
+    /// Extended message listener that also receives source location.
+    /// Receives (message, terminate, line, column). Takes precedence over <see cref="MessageListener"/>.
+    /// </summary>
+    public Action<string, bool, int, int>? MessageListenerWithLocation { get; init; }
 
     /// <summary>
     /// Trace listener for debugging. Receives (depth, eventType, details) where eventType
@@ -11631,7 +11637,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 throw new XsltException($"XTDE0030: The effective value of the terminate attribute ('{terminateStr}') is not a valid xs:boolean value (yes|no|true|false|1|0)");
         }
 
-        _options.MessageListener?.Invoke(message, shouldTerminate);
+        var msgLine = instruction.Location?.Line ?? 0;
+        var msgCol = instruction.Location?.Column ?? 0;
+        if (_options.MessageListenerWithLocation != null)
+            _options.MessageListenerWithLocation.Invoke(message, shouldTerminate, msgLine, msgCol);
+        else
+            _options.MessageListener?.Invoke(message, shouldTerminate);
 
         if (shouldTerminate)
         {
@@ -16882,6 +16893,72 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         var da = a is System.Numerics.BigInteger abi ? (double)abi : Convert.ToDouble(a, CultureInfo.InvariantCulture);
         var db = b is System.Numerics.BigInteger bbi ? (double)bbi : Convert.ToDouble(b, CultureInfo.InvariantCulture);
         return da.CompareTo(db);
+    }
+
+    /// <summary>
+    /// Serializes an XDM node to its XML string representation for passing to a sub-transform.
+    /// </summary>
+    internal string SerializeXdmNodeToXml(XdmNode node)
+    {
+        if (_nodeStore == null)
+            return node.StringValue;
+        var sb = new StringBuilder();
+        SerializeXdmNodeToXml(node, sb);
+        return sb.ToString();
+    }
+
+    private void SerializeXdmNodeToXml(XdmNode node, StringBuilder sb)
+    {
+        switch (node)
+        {
+            case XdmDocument doc:
+                foreach (var child in _nodeStore!.GetChildren(doc))
+                    SerializeXdmNodeToXml(child, sb);
+                break;
+            case XdmElement elem:
+                var prefix = elem.Prefix;
+                var localName = elem.LocalName;
+                var qname = !string.IsNullOrEmpty(prefix) ? $"{prefix}:{localName}" : localName;
+                sb.Append('<').Append(qname);
+                foreach (var nsDecl in elem.NamespaceDeclarations)
+                {
+                    var nsUri = _nodeStore!.GetNamespaceUri(nsDecl.Namespace) ?? "";
+                    if (string.IsNullOrEmpty(nsDecl.Prefix))
+                        sb.Append(" xmlns=\"").Append(nsUri).Append('"');
+                    else
+                        sb.Append(" xmlns:").Append(nsDecl.Prefix).Append("=\"").Append(nsUri).Append('"');
+                }
+                foreach (var attr in _nodeStore!.GetAttributes(elem))
+                {
+                    var attrName = !string.IsNullOrEmpty(attr.Prefix) ? $"{attr.Prefix}:{attr.LocalName}" : attr.LocalName;
+                    sb.Append(' ').Append(attrName).Append("=\"").Append(EscapeAttributeValue(attr.Value)).Append('"');
+                }
+                var children = _nodeStore.GetChildren(elem).ToList();
+                if (children.Count == 0)
+                {
+                    sb.Append("/>");
+                }
+                else
+                {
+                    sb.Append('>');
+                    foreach (var child in children)
+                        SerializeXdmNodeToXml(child, sb);
+                    sb.Append("</").Append(qname).Append('>');
+                }
+                break;
+            case XdmText text:
+                sb.Append(System.Security.SecurityElement.Escape(text.Value));
+                break;
+            case XdmComment comment:
+                sb.Append("<!--").Append(comment.Value).Append("-->");
+                break;
+            case XdmProcessingInstruction pi:
+                sb.Append("<?").Append(pi.Target);
+                if (!string.IsNullOrEmpty(pi.Value))
+                    sb.Append(' ').Append(pi.Value);
+                sb.Append("?>");
+                break;
+        }
     }
 
     private IEnumerable<object> GetChildren(object? node)
@@ -24894,6 +24971,10 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             : new StylesheetParser(exprParser);
         var stylesheet = parser.Parse(stylesheetXml, baseUri);
 
+        // Unwrap source-node if it came wrapped in a single-item sequence (from map constructor)
+        if (sourceNode is object?[] srcArr && srcArr.Length == 1)
+            sourceNode = srcArr[0];
+
         // Build transform options
         var hasSource = sourceNode is Xdm.Nodes.XdmNode;
         string? initialModeSelect = null;
@@ -24921,7 +25002,8 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             object? rawResult;
             if (sourceNode is Xdm.Nodes.XdmNode srcNode)
             {
-                rawResult = await engine.TransformRawAsync(srcNode, transformOptions, _context._nodeStore).ConfigureAwait(false);
+                var rawSrcXml = _context.SerializeXdmNodeToXml(srcNode);
+                rawResult = await engine.TransformRawAsync(rawSrcXml, transformOptions).ConfigureAwait(false);
             }
             else
             {
@@ -24937,9 +25019,12 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             string result;
             if (sourceNode is Xdm.Nodes.XdmNode srcNode)
             {
-                // Pass the outer context's node store so the inner transform can
-                // resolve children of the source document (its nodes live there)
-                result = await engine.TransformAsync(srcNode, transformOptions, _context._nodeStore).ConfigureAwait(false);
+                // Serialize the source node to XML so the inner engine can parse and
+                // register it in its own node store. Passing the outer node store directly
+                // doesn't work because the inner engine needs its own independent store
+                // for nodes it creates during transformation.
+                var srcXml = _context.SerializeXdmNodeToXml(srcNode);
+                result = await engine.TransformAsync(srcXml, transformOptions).ConfigureAwait(false);
             }
             else
             {
@@ -24952,7 +25037,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             }
             else
             {
-                resultMap["output"] = !string.IsNullOrEmpty(result) ? ParseResultAsDocument(result) : null;
+                resultMap["output"] = !string.IsNullOrEmpty(result) ? ParseResultAsDocument(result, _context._nodeStore) : null;
             }
 
             foreach (var (href, content) in engine.SecondaryResultDocuments)
@@ -24960,7 +25045,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                 if (string.Equals(deliveryFormat, "serialized", StringComparison.Ordinal))
                     resultMap[href] = content;
                 else
-                    resultMap[href] = ParseResultAsDocument(content);
+                    resultMap[href] = ParseResultAsDocument(content, _context._nodeStore);
             }
         }
 
@@ -24983,7 +25068,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         };
     }
 
-    private static object? ParseResultAsDocument(string xml)
+    private static object? ParseResultAsDocument(string xml, XsltTransformEngine.InMemoryNodeStore? store = null)
     {
         if (string.IsNullOrWhiteSpace(xml))
             return null;
@@ -24992,8 +25077,8 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             var xmlDoc = new System.Xml.XmlDocument();
             xmlDoc.PreserveWhitespace = true;
             xmlDoc.LoadXml(xml);
-            var nodeStore = new XsltTransformEngine.InMemoryNodeStore();
-            return XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore);
+            store ??= new XsltTransformEngine.InMemoryNodeStore();
+            return XsltTransformEngine.ConvertToXdm(xmlDoc, store);
         }
         catch (System.Xml.XmlException)
         {

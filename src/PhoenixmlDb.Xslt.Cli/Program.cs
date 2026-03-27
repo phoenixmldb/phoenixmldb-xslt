@@ -61,10 +61,11 @@ try
         return 0;
     }
 
-    // Wire up xsl:message output to stderr
-    transformer.MessageListener = (message, terminate) =>
+    // Wire up xsl:message output to stderr with source location
+    transformer.MessageListenerWithLocation = (message, terminate, line, col) =>
     {
-        Console.Error.Write(terminate ? "xsl:message terminate: " : "xsl:message: ");
+        var loc = line > 0 ? $" ({line}:{col})" : "";
+        Console.Error.Write(terminate ? $"xsl:message terminate{loc}: " : $"xsl:message{loc}: ");
         Console.Error.WriteLine(message);
     };
 

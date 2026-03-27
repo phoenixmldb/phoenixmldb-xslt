@@ -462,6 +462,12 @@ public sealed class XsltTransformer
     public Action<string, bool>? MessageListener { get; set; }
 
     /// <summary>
+    /// Extended listener for <c>xsl:message</c> that also receives source location (line, column).
+    /// Takes precedence over <see cref="MessageListener"/> when set.
+    /// </summary>
+    public Action<string, bool, int, int>? MessageListenerWithLocation { get; set; }
+
+    /// <summary>
     /// Transforms an XML string using the loaded stylesheet and returns the serialized
     /// primary result document.
     /// </summary>
@@ -529,7 +535,8 @@ public sealed class XsltTransformer
             InitialModeSelect = _initialModeSelect,
             Collections = _collections.Count > 0 ? _collections : null,
             TraceListener = TraceListener,
-            MessageListener = MessageListener
+            MessageListener = MessageListener,
+            MessageListenerWithLocation = MessageListenerWithLocation
         };
 
         var engine = new XsltTransformEngine(_stylesheet);
