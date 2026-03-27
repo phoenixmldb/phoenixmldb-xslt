@@ -7084,23 +7084,31 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     PushScope();
                     // Set $err:code, $err:description, $err:value, $err:module, $err:line-number, $err:column-number
-                    // Use StylesheetParser's namespace resolution to match the IDs assigned during parsing
-                    var errNs = StylesheetParser.ResolveNamespaceUri("http://www.w3.org/2005/xqt-errors");
+                    // Register with both NamespaceId (for prefix-resolved references like $err:code)
+                    // and ExpandedNamespace (for EQName references like $Q{uri}code).
+                    // QName is a record struct — Dictionary equality uses all fields — so we register
+                    // under both forms for correct lookup.
+                    const string errUri = "http://www.w3.org/2005/xqt-errors";
+                    var errNs = StylesheetParser.ResolveNamespaceUri(errUri);
                     SetVariable(new QName(errNs, "description", "err"), ex.Message);
-                    // $err:code is xs:QName per spec — standard errors in err namespace, user-defined in no namespace
+                    SetVariable(new QName(NamespaceId.None, "description", "") { ExpandedNamespace = errUri }, ex.Message);
                     var errCodeValue = isStandardError
                         ? (object)new QName(errNs, errorCode, "err")
                         : (object)new QName(NamespaceId.None, errorCode);
                     SetVariable(new QName(errNs, "code", "err"), errCodeValue);
+                    SetVariable(new QName(NamespaceId.None, "code", "") { ExpandedNamespace = errUri }, errCodeValue);
                     SetVariable(new QName(errNs, "value", "err"), null);
-                    // Extract location info from XsltException if available
+                    SetVariable(new QName(NamespaceId.None, "value", "") { ExpandedNamespace = errUri }, null);
                     var errLocation = (ex as XsltException)?.Location;
                     var errModule = errLocation != null ? XsltTransformEngine.UriString(_stylesheet.BaseUri) ?? "" : "";
                     var errLine = errLocation?.Line ?? 0;
                     var errColumn = errLocation?.Column ?? 0;
                     SetVariable(new QName(errNs, "module", "err"), errModule.Length > 0 ? errModule : null);
+                    SetVariable(new QName(NamespaceId.None, "module", "") { ExpandedNamespace = errUri }, errModule.Length > 0 ? errModule : null);
                     SetVariable(new QName(errNs, "line-number", "err"), errLine > 0 ? (object)errLine : null);
+                    SetVariable(new QName(NamespaceId.None, "line-number", "") { ExpandedNamespace = errUri }, errLine > 0 ? (object)errLine : null);
                     SetVariable(new QName(errNs, "column-number", "err"), errColumn > 0 ? (object)errColumn : null);
+                    SetVariable(new QName(NamespaceId.None, "column-number", "") { ExpandedNamespace = errUri }, errColumn > 0 ? (object)errColumn : null);
 
                     try
                     {
