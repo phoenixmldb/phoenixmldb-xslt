@@ -5,7 +5,8 @@ var options = CliOptions.Parse(args);
 
 if (options.ShowVersion)
 {
-    Console.WriteLine("xslt 1.1.0 (PhoenixmlDb XSLT 3.0/4.0)");
+    var version = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
+    Console.WriteLine($"xslt {version} (PhoenixmlDb XSLT 3.0/4.0)");
     return 0;
 }
 
