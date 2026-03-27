@@ -24885,6 +24885,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var initialMode = GetQNameOption(options, "initial-mode");
         var sourceNode = GetOption(options, "source-node");
         var initialMatchSelection = GetOption(options, "initial-match-selection");
+        var staticParamsMap = GetOption(options, "static-params") as IDictionary<object, object?>;
 
         // Load the stylesheet
         string stylesheetXml;
@@ -24929,7 +24930,10 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         }
         else if (stylesheetNode is Xdm.Nodes.XdmNode node)
         {
-            stylesheetXml = node.StringValue ?? throw new XsltException("FOXT0001: Stylesheet node has no content");
+            // Serialize the node to XML — StringValue strips markup which breaks parsing
+            stylesheetXml = _context.SerializeXdmNodeToXml(node);
+            if (string.IsNullOrWhiteSpace(stylesheetXml))
+                throw new XsltException("FOXT0001: Stylesheet node has no content");
         }
         else if (stylesheetText != null)
         {
@@ -24963,13 +24967,28 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             throw new XsltException("FOXT0001: No stylesheet specified (stylesheet-location, stylesheet-node, stylesheet-text, or package-name required)");
         }
 
-        // Parse the stylesheet
+        // Parse the stylesheet, passing static-params if provided
         var exprParser = new PhoenixmlDb.Xslt.XQueryExpressionParser();
         var catalog2 = _context._stylesheet.PackageCatalog;
         var parser = catalog2 != null
             ? new StylesheetParser(exprParser, catalog2)
             : new StylesheetParser(exprParser);
-        var stylesheet = parser.Parse(stylesheetXml, baseUri);
+        Dictionary<string, string>? externalStaticParams = null;
+        if (staticParamsMap != null)
+        {
+            externalStaticParams = new Dictionary<string, string>();
+            foreach (var (key, value) in staticParamsMap)
+            {
+                // Keys are QNames — use local name for unprefixed, Q{uri}local for namespaced
+                var paramName = key is QName qn
+                    ? (qn.Namespace != NamespaceId.None && !string.IsNullOrEmpty(qn.ExpandedNamespace)
+                        ? $"Q{{{qn.ExpandedNamespace}}}{qn.LocalName}"
+                        : qn.LocalName)
+                    : key.ToString() ?? "";
+                externalStaticParams[paramName] = DefaultXsltExecutionContext.StringValueOf(value);
+            }
+        }
+        var stylesheet = parser.Parse(stylesheetXml, baseUri, externalStaticParams);
 
         // Unwrap source-node if it came wrapped in a single-item sequence (from map constructor)
         if (sourceNode is object?[] srcArr && srcArr.Length == 1)
@@ -24981,12 +25000,25 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         if (initialMatchSelection != null && !hasSource && !initialTemplate.HasValue)
             initialModeSelect = ConvertToSelectExpression(initialMatchSelection);
 
+        // Build initial parameters from static-params (they serve as both compile-time
+        // and runtime values) plus any regular stylesheet-params
+        var initialParams = new Dictionary<QName, object?>();
+        if (staticParamsMap != null)
+        {
+            foreach (var (key, value) in staticParamsMap)
+            {
+                var qn = key is QName q ? q : new QName(NamespaceId.None, key.ToString() ?? "");
+                initialParams[qn] = DefaultXsltExecutionContext.StringValueOf(value);
+            }
+        }
+
         var transformOptions = new XsltTransformOptions
         {
             InitialTemplate = initialTemplate,
             InitialMode = initialMode,
             HasSourceDocument = hasSource,
             InitialModeSelect = initialModeSelect,
+            InitialParameters = initialParams,
         };
 
         // Create engine and run transformation
