@@ -8800,7 +8800,7 @@ public sealed class StylesheetParser
             }
             return new KindTest { Kind = XdmNodeKind.ProcessingInstruction, Name = piNameTest };
         }
-        if (name == "document-node()")
+        if (name is "document-node()" or "root()")
             return new KindTest { Kind = XdmNodeKind.Document };
         // document-node(element(E)) or document-node(element(E, type))
         if (name.StartsWith("document-node(element(", StringComparison.Ordinal) && name.EndsWith("))", StringComparison.Ordinal))
