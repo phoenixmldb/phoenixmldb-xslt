@@ -9068,6 +9068,10 @@ public sealed class StylesheetParser
             case VariableReference vr:
                 if (!string.IsNullOrEmpty(vr.Name.Prefix) && vr.Name.Namespace == NamespaceId.None)
                     vr.Name = ParseQName($"{vr.Name.Prefix}:{vr.Name.LocalName}", context);
+                // EQName variable references: resolve ExpandedNamespace to NamespaceId so
+                // Dictionary lookup matches the declared variable's QName (record struct equality)
+                else if (vr.Name.ExpandedNamespace != null && vr.Name.Namespace == NamespaceId.None)
+                    vr.Name = ParseQName($"Q{{{vr.Name.ExpandedNamespace}}}{vr.Name.LocalName}", context);
                 break;
             case FunctionCallExpression fc:
                 if (!string.IsNullOrEmpty(fc.Name.Prefix) && fc.Name.Namespace == NamespaceId.None)
