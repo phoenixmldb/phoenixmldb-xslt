@@ -24881,6 +24881,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var packageName = GetStringOption(options, "package-name");
         var packageVersion = GetStringOption(options, "package-version");
         var deliveryFormat = GetStringOption(options, "delivery-format") ?? "document";
+        var postProcessFn = GetOption(options, "post-process") as PhoenixmlDb.XQuery.Ast.XQueryFunction;
         var initialTemplate = GetQNameOption(options, "initial-template");
         var initialMode = GetQNameOption(options, "initial-mode");
         var sourceNode = GetOption(options, "source-node");
@@ -25078,6 +25079,20 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                     resultMap[href] = content;
                 else
                     resultMap[href] = ParseResultAsDocument(content, _context._nodeStore);
+            }
+        }
+
+        // Apply post-process function to each result document
+        if (postProcessFn != null)
+        {
+            var keys = new List<object>(resultMap.Keys);
+            foreach (var key in keys)
+            {
+                var uri = key is string s ? s : key.ToString() ?? "";
+                var result = resultMap[key];
+                var args = new List<object?> { uri, result };
+                var processed = await postProcessFn.InvokeAsync(args, context).ConfigureAwait(false);
+                resultMap[key] = processed;
             }
         }
 

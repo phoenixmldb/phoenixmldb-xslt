@@ -782,4 +782,74 @@ public class XsltTransformerIntegrationTests
     }
 
     #endregion
+
+    #region fn:transform post-process
+
+    [Fact]
+    public async Task Transform_fn_transform_post_process_chains_stylesheets()
+    {
+        // Write two simple stylesheets to temp files
+        var dir = Path.Combine(Path.GetTempPath(), "xslt-postprocess-test-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var sheet1Path = Path.Combine(dir, "sheet1.xsl");
+            var sheet2Path = Path.Combine(dir, "sheet2.xsl");
+
+            await File.WriteAllTextAsync(sheet1Path, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+                  <xsl:mode on-no-match="shallow-copy"/>
+                  <xsl:template match="root">
+                    <root><step1/><xsl:apply-templates/></root>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            await File.WriteAllTextAsync(sheet2Path, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+                  <xsl:mode on-no-match="shallow-copy"/>
+                  <xsl:template match="root">
+                    <root><step2/><xsl:apply-templates/></root>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            // Main stylesheet uses fn:transform with post-process to chain sheet1 → sheet2
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync($$"""
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                  expand-text="yes">
+                  <xsl:template match="/" name="xsl:initial-template">
+                    <xsl:copy-of select="transform(
+                      map {
+                        'source-node' : .,
+                        'stylesheet-location' : '{{sheet1Path}}',
+                        'delivery-format' : 'document',
+                        'post-process' : function($uri, $result) {
+                          transform(map {
+                            'source-node' : $result,
+                            'stylesheet-location' : '{{sheet2Path}}',
+                            'delivery-format' : 'document'
+                          })?output
+                        }
+                      }
+                    )?output"/>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """, baseUri: new Uri("file:///tmp/test/"));
+
+            var result = await transformer.TransformAsync("<root><item>data</item></root>");
+
+            // Both sheet1 (step1) and sheet2 (step2) should have been applied
+            result.Should().Contain("<step1");
+            result.Should().Contain("<step2");
+            result.Should().Contain("data");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    #endregion
 }

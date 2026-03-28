@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+- Fix fn:transform `post-process` option — was completely unimplemented. Now invokes the post-process function for each result document, enabling stylesheet chaining pipelines
+
 ## 1.1.0 (2026-03-26)
 
 ### Features
