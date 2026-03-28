@@ -4,6 +4,7 @@
 
 ### Fixes
 - Fix fn:transform `post-process` option — was completely unimplemented. Now invokes the post-process function for each result document, enabling stylesheet chaining pipelines
+- Fix streaming: empty template suppression now correctly skips all child events instead of leaking them as stray output
 
 ## 1.1.0 (2026-03-26)
 

@@ -64,6 +64,11 @@ internal sealed class StreamingXmlProcessor
         // under the current parent. Reset when the parent's EndElement is encountered.
         var siblingCountByDepth = new Dictionary<int, int>();
 
+        // When a user template with an empty body matches an element (suppressing it),
+        // we must skip all child events until the matching EndElement. Track the depth
+        // at which suppression started; -1 means no suppression active.
+        int suppressionDepth = -1;
+
         // Initialize accumulator state
         await InitializeAccumulatorsAsync().ConfigureAwait(false);
 
@@ -82,6 +87,64 @@ internal sealed class StreamingXmlProcessor
                     {
                         var nodeId = new NodeId(_nextNodeId++);
                         var isEmptyElement = reader.IsEmptyElement;
+                        var elementDepth = reader.Depth;
+
+                        // If we're inside a suppressed subtree, skip template execution
+                        // but still fire accumulators (they must track the full document).
+                        if (suppressionDepth >= 0 && elementDepth > suppressionDepth)
+                        {
+                            // Build minimal node for accumulator rules
+                            var skipAttrs = new List<StreamingNodeContext>();
+                            var skipNsDecls = new Dictionary<string, string>();
+                            if (reader.HasAttributes)
+                            {
+                                for (int i = 0; i < reader.AttributeCount; i++)
+                                {
+                                    reader.MoveToAttribute(i);
+                                    if (reader.Prefix == "xmlns" || (reader.Prefix.Length == 0 && reader.LocalName == "xmlns"))
+                                        skipNsDecls[reader.Prefix == "xmlns" ? reader.LocalName : ""] = reader.Value;
+                                    else
+                                    {
+                                        var skipAttrId = new NodeId(_nextNodeId++);
+                                        skipAttrs.Add(new StreamingNodeContext
+                                        {
+                                            NodeKind = XdmNodeKind.Attribute,
+                                            LocalName = reader.LocalName,
+                                            NamespaceUri = reader.NamespaceURI,
+                                            Prefix = reader.Prefix,
+                                            StringValue = reader.Value,
+                                            NodeId = skipAttrId,
+                                            Depth = elementDepth + 1
+                                        });
+                                    }
+                                }
+                                reader.MoveToElement();
+                            }
+                            var skipCtx = new StreamingNodeContext
+                            {
+                                NodeKind = XdmNodeKind.Element,
+                                LocalName = reader.LocalName,
+                                NamespaceUri = reader.NamespaceURI,
+                                Prefix = reader.Prefix,
+                                NodeId = nodeId,
+                                Attributes = skipAttrs,
+                                NamespaceDeclarations = skipNsDecls,
+                                Depth = elementDepth
+                            };
+                            var skipXdm = skipCtx.ToXdmElement(_nodeStore);
+                            await FireAccumulatorRulesAsync(skipXdm, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
+                            if (!isEmptyElement)
+                            {
+                                ancestorStack.Push(skipCtx);
+                                _ancestorNames.Add(skipCtx.LocalName);
+                            }
+                            else
+                            {
+                                await FireAccumulatorRulesAsync(skipXdm, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
+                                CleanupStreamingNode(skipCtx);
+                            }
+                            break;
+                        }
 
                         // Collect attributes and namespace declarations
                         var attrs = new List<StreamingNodeContext>();
@@ -114,7 +177,6 @@ internal sealed class StreamingXmlProcessor
                         }
 
                         // Track sibling position: increment counter for this depth
-                        var elementDepth = reader.Depth;
                         if (!siblingCountByDepth.TryGetValue(elementDepth, out var siblingCount))
                             siblingCount = 0;
                         siblingCount++;
@@ -154,13 +216,17 @@ internal sealed class StreamingXmlProcessor
                             FireWatchers(current.LocalName, attrDict, null);
                         }
 
-                        await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
+                        var wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
                             .ConfigureAwait(false);
 
                         if (!isEmptyElement)
                         {
                             ancestorStack.Push(current);
                             _ancestorNames.Add(current.LocalName);
+
+                            // If the template had an empty body (suppression), skip all children
+                            if (wasSuppressed && suppressionDepth < 0)
+                                suppressionDepth = elementDepth;
                         }
                         else
                         {
@@ -191,10 +257,15 @@ internal sealed class StreamingXmlProcessor
                             if (_ancestorNames.Count > 0)
                                 _ancestorNames.RemoveAt(_ancestorNames.Count - 1);
 
+                            // Check if we're closing a suppressed element
+                            var wasSuppressedElement = suppressionDepth >= 0 && closingContext.Depth == suppressionDepth;
+                            if (wasSuppressedElement)
+                                suppressionDepth = -1;
+
                             // Reset sibling counter for children of this closing element.
                             // Children are at depth = closingContext.Depth + 1.
                             siblingCountByDepth.Remove(closingContext.Depth + 1);
-                            // Fire end-phase accumulator rules
+                            // Fire end-phase accumulator rules (always, even for suppressed elements)
                             var closingNode = _nodeStore.GetNode(closingContext.NodeId);
                             if (closingNode != null)
                                 await FireAccumulatorRulesAsync(closingNode, closingContext.NodeId, AccumulatorPhase.End).ConfigureAwait(false);
@@ -204,9 +275,8 @@ internal sealed class StreamingXmlProcessor
                                 FireWatchersEndElement(closingContext.LocalName);
 
                             // Write the deferred closing tag for elements opened by shallow-copy.
-                            // The built-in shallow-copy template writes only the start tag and
-                            // pushes the qname; we close it here so children are properly nested.
-                            if (_context._streamingOpenElements.Count > 0)
+                            // Skip this for suppressed elements — they never wrote an open tag.
+                            if (!wasSuppressedElement && _context._streamingOpenElements.Count > 0)
                             {
                                 var qname = _context._streamingOpenElements.Pop();
                                 _context.WriteStreamingEndTag(qname);
@@ -238,12 +308,15 @@ internal sealed class StreamingXmlProcessor
                         if (_watchers != null)
                             FireWatchersText(textValue);
 
-                        // Fire accumulator rules for text nodes
+                        // Fire accumulator rules for text nodes (always, even if suppressed)
                         await FireAccumulatorRulesAsync(textNode, textNodeId, AccumulatorPhase.Start).ConfigureAwait(false);
 
-                        // Match text node templates (e.g., text() match patterns)
-                        await _context.MatchAndExecuteStreamingNodeAsync(textNode, _mode, 1)
-                            .ConfigureAwait(false);
+                        // Only match templates if not inside a suppressed subtree
+                        if (suppressionDepth < 0)
+                        {
+                            await _context.MatchAndExecuteStreamingNodeAsync(textNode, _mode, 1)
+                                .ConfigureAwait(false);
+                        }
 
                         // Fire end-phase accumulator rules for text nodes
                         await FireAccumulatorRulesAsync(textNode, textNodeId, AccumulatorPhase.End).ConfigureAwait(false);
@@ -265,8 +338,11 @@ internal sealed class StreamingXmlProcessor
                         _nodeStore.Register(comment);
 
                         await FireAccumulatorRulesAsync(comment, commentId, AccumulatorPhase.Start).ConfigureAwait(false);
-                        await _context.MatchAndExecuteStreamingNodeAsync(comment, _mode, 1)
-                            .ConfigureAwait(false);
+                        if (suppressionDepth < 0)
+                        {
+                            await _context.MatchAndExecuteStreamingNodeAsync(comment, _mode, 1)
+                                .ConfigureAwait(false);
+                        }
                         await FireAccumulatorRulesAsync(comment, commentId, AccumulatorPhase.End).ConfigureAwait(false);
 
                         _nodeStore.Remove(commentId);
@@ -286,8 +362,11 @@ internal sealed class StreamingXmlProcessor
                         _nodeStore.Register(pi);
 
                         await FireAccumulatorRulesAsync(pi, piId, AccumulatorPhase.Start).ConfigureAwait(false);
-                        await _context.MatchAndExecuteStreamingNodeAsync(pi, _mode, 1)
-                            .ConfigureAwait(false);
+                        if (suppressionDepth < 0)
+                        {
+                            await _context.MatchAndExecuteStreamingNodeAsync(pi, _mode, 1)
+                                .ConfigureAwait(false);
+                        }
                         await FireAccumulatorRulesAsync(pi, piId, AccumulatorPhase.End).ConfigureAwait(false);
 
                         _nodeStore.Remove(piId);

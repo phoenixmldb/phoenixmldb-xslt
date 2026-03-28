@@ -5428,7 +5428,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         _output.Append('>');
     }
 
-    internal async ValueTask MatchAndExecuteStreamingNodeAsync(XdmNode node, QName? mode, int position)
+    /// <summary>
+    /// Matches and executes a template for a streaming node.
+    /// Returns true if the matched template suppressed the node (empty body = no output).
+    /// </summary>
+    internal async ValueTask<bool> MatchAndExecuteStreamingNodeAsync(XdmNode node, QName? mode, int position)
     {
         // last=0 signals "unknown in streaming mode". The StreamabilityChecker rejects
         // last() in streamable templates, so this value should never be accessed.
@@ -5440,6 +5444,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             var template = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext());
             if (template != null)
             {
+                // An empty template body in streaming mode means "suppress this element"
+                // — skip the element and all its children. Return true so the streaming
+                // processor can skip child events.
+                var isSuppression = template.Body.Instructions.Count == 0
+                    && node is Xdm.Nodes.XdmElement;
+
                 var savedTemplate = _currentTemplate;
                 var savedMode = _currentMode;
                 _currentTemplate = template;
@@ -5484,6 +5494,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     _currentTemplate = savedTemplate;
                     _currentMode = savedMode;
                 }
+
+                return isSuppression;
             }
             else
             {
@@ -5497,6 +5509,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             PopCurrentItem();
             PopContextItem();
         }
+        return false;
     }
 
     private async ValueTask ApplyBuiltInDeepCopyAsync(object node, QName? mode, List<XsltWithParam> withParams)
