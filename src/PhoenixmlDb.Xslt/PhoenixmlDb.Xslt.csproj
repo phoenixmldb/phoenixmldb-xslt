@@ -16,8 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="PhoenixmlDb.Core" />
-    <PackageReference Include="PhoenixmlDb.XQuery" />
+    <ProjectReference Include="../../../phoenixmldb-core/src/PhoenixmlDb.Core/PhoenixmlDb.Core.csproj" />
+    <ProjectReference Include="../../../phoenixmldb-xquery/src/PhoenixmlDb.XQuery/PhoenixmlDb.XQuery.csproj" />
   </ItemGroup>
 
 </Project>

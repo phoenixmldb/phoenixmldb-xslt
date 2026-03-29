@@ -378,7 +378,7 @@ public sealed class XsltTransformEngine
                 {
                 var allowDupNames = principalOutput?.AllowDuplicateNames == true;
                 if (jsonItems.Count == 1)
-                    outputBuilder.Append(SerializeItemAsJson(jsonItems[0], effectiveMethod == OutputMethod.Adaptive, allowDupNames));
+                    outputBuilder.Append(SerializeItemAsJson(jsonItems[0], effectiveMethod == OutputMethod.Adaptive, allowDupNames, nodeStore));
                 else
                 {
                     // Multiple items: for adaptive, separate with newlines; for json, wrap in array
@@ -387,7 +387,7 @@ public sealed class XsltTransformEngine
                         for (int i = 0; i < jsonItems.Count; i++)
                         {
                             if (i > 0) outputBuilder.Append('\n');
-                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], true, allowDupNames));
+                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], true, allowDupNames, nodeStore));
                         }
                     }
                     else
@@ -705,7 +705,7 @@ public sealed class XsltTransformEngine
         }
     }
 
-    internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false)
+    internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, InMemoryNodeStore? store = null)
     {
         if (item == null) return "null";
 
@@ -728,7 +728,7 @@ public sealed class XsltTransformEngine
                     sb.Append('"');
                     sb.Append(JsonEscapeString(keyStr));
                     sb.Append("\":");
-                    sb.Append(SerializeItemAsJson(value, adaptive, allowDuplicateNames));
+                    sb.Append(SerializeItemAsJson(value, adaptive, allowDuplicateNames, store));
                 }
                 sb.Append('}');
                 return sb.ToString();
@@ -744,20 +744,20 @@ public sealed class XsltTransformEngine
                     if (array[i] is object?[] memberSeq)
                     {
                         if (memberSeq.Length == 1)
-                            sb.Append(SerializeItemAsJson(memberSeq[0], adaptive, allowDuplicateNames));
+                            sb.Append(SerializeItemAsJson(memberSeq[0], adaptive, allowDuplicateNames, store));
                         else
                         {
                             sb.Append('[');
                             for (int j = 0; j < memberSeq.Length; j++)
                             {
                                 if (j > 0) sb.Append(',');
-                                sb.Append(SerializeItemAsJson(memberSeq[j], adaptive, allowDuplicateNames));
+                                sb.Append(SerializeItemAsJson(memberSeq[j], adaptive, allowDuplicateNames, store));
                             }
                             sb.Append(']');
                         }
                     }
                     else
-                        sb.Append(SerializeItemAsJson(array[i], adaptive, allowDuplicateNames));
+                        sb.Append(SerializeItemAsJson(array[i], adaptive, allowDuplicateNames, store));
                 }
                 sb.Append(']');
                 return sb.ToString();
@@ -784,13 +784,13 @@ public sealed class XsltTransformEngine
             case object?[] seq:
             {
                 // Sequence — serialize items
-                if (seq.Length == 1) return SerializeItemAsJson(seq[0], adaptive, allowDuplicateNames);
+                if (seq.Length == 1) return SerializeItemAsJson(seq[0], adaptive, allowDuplicateNames, store);
                 var sb = new StringBuilder();
                 sb.Append('[');
                 for (int i = 0; i < seq.Length; i++)
                 {
                     if (i > 0) sb.Append(',');
-                    sb.Append(SerializeItemAsJson(seq[i], adaptive, allowDuplicateNames));
+                    sb.Append(SerializeItemAsJson(seq[i], adaptive, allowDuplicateNames, store));
                 }
                 sb.Append(']');
                 return sb.ToString();
@@ -808,7 +808,7 @@ public sealed class XsltTransformEngine
             {
                 // In adaptive mode, nodes are serialized as XML
                 if (adaptive)
-                    return SerializeXdmNodeAsXml(node);
+                    return SerializeXdmNodeAsXml(node, store);
                 // JSON mode: nodes are serialized as their string value
                 var nodeStr = node.StringValue ?? "";
                 return $"\"{JsonEscapeString(nodeStr)}\"";
@@ -823,21 +823,143 @@ public sealed class XsltTransformEngine
 
     /// <summary>
     /// Serializes an XDM node as XML markup for adaptive output.
+    /// For documents and elements, uses the node store for full tree serialization.
     /// </summary>
-    private static string SerializeXdmNodeAsXml(Xdm.Nodes.XdmNode node)
+    private static string SerializeXdmNodeAsXml(Xdm.Nodes.XdmNode node, InMemoryNodeStore? store = null)
     {
-        return node switch
+        switch (node)
         {
-            Xdm.Nodes.XdmAttribute attr =>
-                $"{(attr.Prefix != null ? attr.Prefix + ":" : "")}{attr.LocalName}=\"{attr.Value}\"",
-            Xdm.Nodes.XdmComment comment =>
-                $"<!--{comment.StringValue}-->",
-            Xdm.Nodes.XdmProcessingInstruction pi =>
-                $"<?{pi.Target} {pi.StringValue}?>",
-            Xdm.Nodes.XdmText text =>
-                text.Value ?? "",
-            _ => node.StringValue ?? ""
-        };
+            case Xdm.Nodes.XdmAttribute attr:
+                return $"{(attr.Prefix != null ? attr.Prefix + ":" : "")}{attr.LocalName}=\"{attr.Value}\"";
+            case Xdm.Nodes.XdmComment comment:
+                return $"<!--{comment.StringValue}-->";
+            case Xdm.Nodes.XdmProcessingInstruction pi:
+                return $"<?{pi.Target} {pi.StringValue}?>";
+            case Xdm.Nodes.XdmText text:
+                return text.Value ?? "";
+            case Xdm.Nodes.XdmDocument:
+            case Xdm.Nodes.XdmElement:
+                if (store != null)
+                    return SerializeNodeTreeAsXml(node, store);
+                return node.StringValue ?? "";
+            default:
+                return node.StringValue ?? "";
+        }
+    }
+
+    /// <summary>
+    /// Serializes an XDM document or element node to XML markup using the node store.
+    /// </summary>
+    private static string SerializeNodeTreeAsXml(Xdm.Nodes.XdmNode node, InMemoryNodeStore store)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        if (node is Xdm.Nodes.XdmDocument doc)
+        {
+            // Include xml declaration for document nodes
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            foreach (var childId in doc.Children)
+            {
+                var child = store.GetNode(childId);
+                if (child != null)
+                    SerializeNodeTreeRecursive(child, store, sb);
+            }
+        }
+        else
+        {
+            SerializeNodeTreeRecursive(node, store, sb);
+        }
+        return sb.ToString();
+    }
+
+    private static void SerializeNodeTreeRecursive(Xdm.Nodes.XdmNode node, InMemoryNodeStore store, System.Text.StringBuilder sb)
+    {
+        switch (node)
+        {
+            case Xdm.Nodes.XdmElement elem:
+            {
+                var ns = store.GetNamespaceUri(elem.Namespace) ?? "";
+                var name = !string.IsNullOrEmpty(elem.Prefix) ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName;
+                sb.Append('<').Append(name);
+
+                // Namespace declarations
+                foreach (var nsDecl in elem.NamespaceDeclarations)
+                {
+                    var declUri = store.GetNamespaceUri(nsDecl.Namespace) ?? "";
+                    if (string.IsNullOrEmpty(nsDecl.Prefix))
+                        sb.Append(" xmlns=\"").Append(declUri).Append('"');
+                    else
+                        sb.Append(" xmlns:").Append(nsDecl.Prefix).Append("=\"").Append(declUri).Append('"');
+                }
+
+                // Attributes
+                foreach (var attrId in elem.Attributes)
+                {
+                    if (store.GetNode(attrId) is Xdm.Nodes.XdmAttribute attr)
+                    {
+                        var attrName = !string.IsNullOrEmpty(attr.Prefix) ? $"{attr.Prefix}:{attr.LocalName}" : attr.LocalName;
+                        sb.Append(' ').Append(attrName).Append("=\"");
+                        AppendEscapedXmlAttribute(sb, attr.Value);
+                        sb.Append('"');
+                    }
+                }
+
+                if (elem.Children.Count == 0)
+                {
+                    sb.Append("/>");
+                }
+                else
+                {
+                    sb.Append('>');
+                    foreach (var childId in elem.Children)
+                    {
+                        var child = store.GetNode(childId);
+                        if (child != null)
+                            SerializeNodeTreeRecursive(child, store, sb);
+                    }
+                    sb.Append("</").Append(name).Append('>');
+                }
+                break;
+            }
+            case Xdm.Nodes.XdmText text:
+                AppendEscapedXmlText(sb, text.Value ?? "");
+                break;
+            case Xdm.Nodes.XdmComment comment:
+                sb.Append("<!--").Append(comment.Value).Append("-->");
+                break;
+            case Xdm.Nodes.XdmProcessingInstruction pi:
+                sb.Append("<?").Append(pi.Target).Append(' ').Append(pi.Value).Append("?>");
+                break;
+        }
+    }
+
+    private static void AppendEscapedXmlAttribute(System.Text.StringBuilder sb, string value)
+    {
+        foreach (var c in value)
+        {
+            switch (c)
+            {
+                case '&': sb.Append("&amp;"); break;
+                case '"': sb.Append("&quot;"); break;
+                case '<': sb.Append("&lt;"); break;
+                case '>': sb.Append("&gt;"); break;
+                default: sb.Append(c); break;
+            }
+        }
+    }
+
+    private static void AppendEscapedXmlText(System.Text.StringBuilder sb, string value)
+    {
+        foreach (var c in value)
+        {
+            switch (c)
+            {
+                case '&': sb.Append("&amp;"); break;
+                case '<': sb.Append("&lt;"); break;
+                case '>': sb.Append("&gt;"); break;
+                default: sb.Append(c); break;
+            }
+        }
     }
 
     internal static string JsonEscapeString(string s)
@@ -870,7 +992,7 @@ public sealed class XsltTransformEngine
     /// Maps use XPath map{} notation, arrays use [...], strings are unquoted,
     /// and orphan attributes use name="value" format.
     /// </summary>
-    internal static string SerializeItemAdaptive(object? item)
+    internal static string SerializeItemAdaptive(object? item, InMemoryNodeStore? store = null)
     {
         if (item == null) return "";
 
@@ -905,7 +1027,7 @@ public sealed class XsltTransformEngine
                     sb.Append('"');
                     sb.Append(keyStr);
                     sb.Append("\":");
-                    sb.Append(SerializeItemAdaptive(value));
+                    sb.Append(SerializeItemAdaptive(value, store));
                 }
                 sb.Append('}');
                 return sb.ToString();
@@ -917,7 +1039,7 @@ public sealed class XsltTransformEngine
                 for (int i = 0; i < array.Count; i++)
                 {
                     if (i > 0) sb.Append(',');
-                    sb.Append(SerializeItemAdaptive(array[i]));
+                    sb.Append(SerializeItemAdaptive(array[i], store));
                 }
                 sb.Append(']');
                 return sb.ToString();
@@ -940,7 +1062,7 @@ public sealed class XsltTransformEngine
                 return $"function#{funcName}/{func.Arity}";
             }
             case Xdm.Nodes.XdmNode node when node is not Xdm.Nodes.XdmAttribute:
-                return SerializeXdmNodeAsXml(node);
+                return SerializeXdmNodeAsXml(node, store);
             default:
                 return DefaultXsltExecutionContext.StringValueOf(item);
         }
@@ -2872,7 +2994,7 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// In-memory node store for XSLT processing.
     /// </summary>
-    internal sealed class InMemoryNodeStore
+    internal sealed class InMemoryNodeStore : PhoenixmlDb.XQuery.INodeBuilder
     {
         private readonly Dictionary<NodeId, XdmNode> _nodes = new();
         private ulong _nextId = 1;
@@ -2892,6 +3014,10 @@ public sealed class XsltTransformEngine
         public NodeId NextId() => new(_nextId++);
         public void Register(XdmNode node) => _nodes[node.Id] = node;
         public XdmNode? GetNode(NodeId id) => _nodes.GetValueOrDefault(id);
+
+        // INodeBuilder explicit interface implementations (delegate to existing methods)
+        NodeId PhoenixmlDb.XQuery.INodeBuilder.AllocateId() => NextId();
+        void PhoenixmlDb.XQuery.INodeBuilder.RegisterNode(XdmNode node) => Register(node);
 
         /// <summary>
         /// Removes a node from the store. Used by streaming execution to free
@@ -12588,6 +12714,23 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         ResolvePatternNamespacesLocal(countPattern);
         ResolvePatternNamespacesLocal(fromPattern);
 
+        // Push the target node as current() for count/from pattern predicates.
+        // Per XSLT 3.0 §13.4, current() in count/from patterns returns the node being numbered.
+        PushCurrentItem(xdmNode);
+        try
+        {
+            return CountNodesCore(instruction, xdmNode, countPattern, fromPattern);
+        }
+        finally
+        {
+            PopCurrentItem();
+        }
+    }
+
+#pragma warning disable CS8602 // _nodeStore guaranteed non-null by caller
+    private List<object> CountNodesCore(XsltNumber instruction, XdmNode xdmNode,
+        XsltPattern? countPattern, XsltPattern? fromPattern)
+    {
         switch (instruction.Level)
         {
             case NumberLevel.Single:
@@ -12776,6 +12919,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 return [1.0];
         }
     }
+#pragma warning restore CS8602
 
     private void CountNodesInDocOrder(XdmNode? node, XdmNode target, XsltPattern countPattern,
         XsltPattern? fromPattern, ref long count, out bool done)

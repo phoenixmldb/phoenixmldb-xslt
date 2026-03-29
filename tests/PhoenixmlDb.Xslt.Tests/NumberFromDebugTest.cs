@@ -126,7 +126,7 @@ public class NumberFromDebugTest
         result.Should().Be("<out>Selected: ccc</out>");
     }
 
-    [Fact(Skip = "Known issue: current() in xsl:number count patterns needs additional work")]
+    [Fact]
     public async Task Number1701_CurrentInCountPattern()
     {
         // Test use of current() in the count pattern of xsl:number
@@ -155,17 +155,18 @@ public class NumberFromDebugTest
         result.Should().Be(@"<doc nr=""""><a nr=""""><a nr=""1""/></a><a nr=""1""><b nr=""1""/></a><a nr=""1""><a nr=""2""/></a><a nr=""2""><b nr=""2""/><b nr=""2""/></a></doc>");
     }
 
-    [Fact(Skip = "Known issue: literal text between elements not being output")]
+    [Fact]
     public async Task CurrentFunctionBasic()
     {
-        // Test that current() returns the outer XSLT context
-        // NOTE: current() works correctly, but literal text (: and ;) between elements is missing
+        // Test that current() returns the outer XSLT context and
+        // literal text between instructions is output correctly.
+        // Uses xsl:text for precise whitespace control (the XSLT idiom).
         var stylesheet = @"<?xml version=""1.0""?>
 <xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""2.0"">
 <xsl:template match=""/"">
   <out>
     <xsl:for-each select=""//item"">
-      <xsl:value-of select=""name(current())""/>:<xsl:value-of select=""current()""/>;
+      <xsl:value-of select=""name(current())""/><xsl:text>:</xsl:text><xsl:value-of select=""current()""/><xsl:text>;</xsl:text>
     </xsl:for-each>
   </out>
 </xsl:template>
@@ -339,7 +340,7 @@ Line2</xsl:text></out>
         result.Should().Contain("Line1\nLine2");
     }
 
-    [Fact(Skip = "Known issue: xsl:number with select pointing to variable tree requires RTF parsing support")]
+    [Fact]
     public async Task Number0818_SelectWithVariableTree()
     {
         // Test xsl:number level="any" with a count pattern that matches nodes in a variable tree
