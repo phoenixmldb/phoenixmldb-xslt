@@ -377,8 +377,9 @@ public sealed class XsltTransformEngine
                 else
                 {
                 var allowDupNames = principalOutput?.AllowDuplicateNames == true;
+                var jsonNodeMethod = principalOutput?.JsonNodeOutputMethod;
                 if (jsonItems.Count == 1)
-                    outputBuilder.Append(SerializeItemAsJson(jsonItems[0], effectiveMethod == OutputMethod.Adaptive, allowDupNames, nodeStore));
+                    outputBuilder.Append(SerializeItemAsJson(jsonItems[0], effectiveMethod == OutputMethod.Adaptive, allowDupNames, nodeStore, jsonNodeMethod));
                 else
                 {
                     // Multiple items: for adaptive, separate with newlines; for json, wrap in array
@@ -387,7 +388,7 @@ public sealed class XsltTransformEngine
                         for (int i = 0; i < jsonItems.Count; i++)
                         {
                             if (i > 0) outputBuilder.Append('\n');
-                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], true, allowDupNames, nodeStore));
+                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], true, allowDupNames, nodeStore, jsonNodeMethod));
                         }
                     }
                     else
@@ -397,7 +398,7 @@ public sealed class XsltTransformEngine
                         for (int i = 0; i < jsonItems.Count; i++)
                         {
                             if (i > 0) outputBuilder.Append(',');
-                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], false, allowDupNames));
+                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], false, allowDupNames, nodeStore, jsonNodeMethod));
                         }
                         outputBuilder.Append(']');
                     }
@@ -705,7 +706,7 @@ public sealed class XsltTransformEngine
         }
     }
 
-    internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, InMemoryNodeStore? store = null)
+    internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, InMemoryNodeStore? store = null, string? jsonNodeOutputMethod = null)
     {
         if (item == null) return "null";
 
@@ -728,7 +729,7 @@ public sealed class XsltTransformEngine
                     sb.Append('"');
                     sb.Append(JsonEscapeString(keyStr));
                     sb.Append("\":");
-                    sb.Append(SerializeItemAsJson(value, adaptive, allowDuplicateNames, store));
+                    sb.Append(SerializeItemAsJson(value, adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
                 }
                 sb.Append('}');
                 return sb.ToString();
@@ -744,20 +745,20 @@ public sealed class XsltTransformEngine
                     if (array[i] is object?[] memberSeq)
                     {
                         if (memberSeq.Length == 1)
-                            sb.Append(SerializeItemAsJson(memberSeq[0], adaptive, allowDuplicateNames, store));
+                            sb.Append(SerializeItemAsJson(memberSeq[0], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
                         else
                         {
                             sb.Append('[');
                             for (int j = 0; j < memberSeq.Length; j++)
                             {
                                 if (j > 0) sb.Append(',');
-                                sb.Append(SerializeItemAsJson(memberSeq[j], adaptive, allowDuplicateNames, store));
+                                sb.Append(SerializeItemAsJson(memberSeq[j], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
                             }
                             sb.Append(']');
                         }
                     }
                     else
-                        sb.Append(SerializeItemAsJson(array[i], adaptive, allowDuplicateNames, store));
+                        sb.Append(SerializeItemAsJson(array[i], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
                 }
                 sb.Append(']');
                 return sb.ToString();
@@ -784,13 +785,13 @@ public sealed class XsltTransformEngine
             case object?[] seq:
             {
                 // Sequence — serialize items
-                if (seq.Length == 1) return SerializeItemAsJson(seq[0], adaptive, allowDuplicateNames, store);
+                if (seq.Length == 1) return SerializeItemAsJson(seq[0], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod);
                 var sb = new StringBuilder();
                 sb.Append('[');
                 for (int i = 0; i < seq.Length; i++)
                 {
                     if (i > 0) sb.Append(',');
-                    sb.Append(SerializeItemAsJson(seq[i], adaptive, allowDuplicateNames, store));
+                    sb.Append(SerializeItemAsJson(seq[i], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
                 }
                 sb.Append(']');
                 return sb.ToString();
@@ -806,10 +807,18 @@ public sealed class XsltTransformEngine
             }
             case Xdm.Nodes.XdmNode node:
             {
-                // In adaptive mode, nodes are serialized as XML
+                // Adaptive mode always serializes nodes as XML
                 if (adaptive)
                     return SerializeXdmNodeAsXml(node, store);
-                // JSON mode: nodes are serialized as their string value
+                // JSON mode: json-node-output-method controls how nodes are serialized
+                // Default is "xml" per XSLT 3.0 spec §26.1
+                var nodeMethod = jsonNodeOutputMethod ?? "xml";
+                if (nodeMethod == "xml")
+                {
+                    var xml = SerializeXdmNodeAsXml(node, store, omitXmlDeclaration: true);
+                    return $"\"{JsonEscapeString(xml)}\"";
+                }
+                // text method: use string value
                 var nodeStr = node.StringValue ?? "";
                 return $"\"{JsonEscapeString(nodeStr)}\"";
             }
@@ -825,7 +834,7 @@ public sealed class XsltTransformEngine
     /// Serializes an XDM node as XML markup for adaptive output.
     /// For documents and elements, uses the node store for full tree serialization.
     /// </summary>
-    private static string SerializeXdmNodeAsXml(Xdm.Nodes.XdmNode node, InMemoryNodeStore? store = null)
+    private static string SerializeXdmNodeAsXml(Xdm.Nodes.XdmNode node, InMemoryNodeStore? store = null, bool omitXmlDeclaration = false)
     {
         switch (node)
         {
@@ -840,7 +849,7 @@ public sealed class XsltTransformEngine
             case Xdm.Nodes.XdmDocument:
             case Xdm.Nodes.XdmElement:
                 if (store != null)
-                    return SerializeNodeTreeAsXml(node, store);
+                    return SerializeNodeTreeAsXml(node, store, omitXmlDeclaration);
                 return node.StringValue ?? "";
             default:
                 return node.StringValue ?? "";
@@ -850,14 +859,14 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// Serializes an XDM document or element node to XML markup using the node store.
     /// </summary>
-    private static string SerializeNodeTreeAsXml(Xdm.Nodes.XdmNode node, InMemoryNodeStore store)
+    private static string SerializeNodeTreeAsXml(Xdm.Nodes.XdmNode node, InMemoryNodeStore store, bool omitXmlDeclaration = false)
     {
         var sb = new System.Text.StringBuilder();
 
         if (node is Xdm.Nodes.XdmDocument doc)
         {
-            // Include xml declaration for document nodes
-            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            if (!omitXmlDeclaration)
+                sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
             foreach (var childId in doc.Children)
             {
                 var child = store.GetNode(childId);
