@@ -7506,7 +7506,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (!_planCache.TryGetValue(expr, out var plan))
         {
             var optimizer = new PhoenixmlDb.XQuery.Optimizer.QueryOptimizer();
-            var optContext = new PhoenixmlDb.XQuery.Optimizer.OptimizationContext { Container = default, BackwardsCompatible = IsBackwardsCompatible };
+            var optContext = new PhoenixmlDb.XQuery.Optimizer.OptimizationContext { Container = default, BackwardsCompatible = IsBackwardsCompatible, FunctionLibrary = _functionLibrary };
             plan = optimizer.Optimize(expr, optContext);
             _planCache[expr] = plan;
         }
@@ -21321,7 +21321,7 @@ internal sealed class XsltLang2Function : PhoenixmlDb.XQuery.Ast.XQueryFunction
 }
 
 /// <summary>
-/// XSLT-aware fn:deep-equal($arg1, $arg2) — performs proper structural comparison of XDM nodes.
+/// XSLT-aware fn:deep-equal($parameter1, $parameter2) — performs proper structural comparison of XDM nodes.
 /// </summary>
 internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
@@ -21333,8 +21333,8 @@ internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     public override PhoenixmlDb.XQuery.Ast.XdmSequenceType ReturnType => PhoenixmlDb.XQuery.Ast.XdmSequenceType.Boolean;
     public override IReadOnlyList<PhoenixmlDb.XQuery.Ast.FunctionParameterDef> Parameters =>
     [
-        new() { Name = new QName(NamespaceId.None, "arg1"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.ZeroOrMoreItems },
-        new() { Name = new QName(NamespaceId.None, "arg2"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.ZeroOrMoreItems }
+        new() { Name = new QName(NamespaceId.None, "parameter1"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.ZeroOrMoreItems },
+        new() { Name = new QName(NamespaceId.None, "parameter2"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.ZeroOrMoreItems }
     ];
 
     public override ValueTask<object?> InvokeAsync(

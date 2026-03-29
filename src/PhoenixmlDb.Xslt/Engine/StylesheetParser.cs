@@ -4602,6 +4602,7 @@ public sealed class StylesheetParser
                     "on-non-empty" => ParseOnNonEmpty(element, location),
                     "evaluate" => ParseEvaluate(element, location),
                     "source-document" => ParseSourceDocument(element, location),
+                    "stream" => ParseStream(element, location),
                     _ => ParseUnknownInstruction(element, location)
                 };
                 // Propagate standard attributes from XSLT elements (per XSLT 3.0 §3.5)
@@ -6081,7 +6082,7 @@ public sealed class StylesheetParser
         };
     }
 
-    private XsltSourceDocument ParseSourceDocument(XElement element, SourceLocation? location)
+    private XsltSourceDocument ParseSourceDocument(XElement element, SourceLocation? location, bool forceStreamable = false)
     {
         var hrefAttr = element.Attribute("href");
         var streamableAttr = element.Attribute("streamable");
@@ -6106,7 +6107,7 @@ public sealed class StylesheetParser
         {
             Location = location,
             Href = ParseAvt(hrefAttr.Value, element),
-            Streamable = streamableAttr?.Value == "yes",
+            Streamable = forceStreamable || streamableAttr?.Value == "yes",
             Validation = ParseValidationMode(validationAttr) ?? Ast.ValidationMode.Strip,
             Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
             BaseUri = ResolveEffectiveBaseUri(element),
@@ -6140,6 +6141,13 @@ public sealed class StylesheetParser
 
         return result;
     }
+
+    /// <summary>
+    /// Parses xsl:stream — an alias for xsl:source-document with streamable="yes" (XSLT 3.0 §8.4).
+    /// </summary>
+    private XsltSourceDocument ParseStream(XElement element, SourceLocation? location)
+        => ParseSourceDocument(element, location, forceStreamable: true);
+
 
     /// <summary>
     /// Resolves the effective base URI for an element by walking up xml:base attributes
