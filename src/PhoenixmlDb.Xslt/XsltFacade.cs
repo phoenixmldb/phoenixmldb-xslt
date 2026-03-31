@@ -132,6 +132,14 @@ public sealed class XsltTransformer
     public int MaxResultDocuments { get; set; } = 1000;
 
     /// <summary>
+    /// Optional resource security policy. When set, controls which URIs the stylesheet can access
+    /// via <c>doc()</c>, <c>unparsed-text()</c>, <c>collection()</c>, <c>xsl:result-document</c>,
+    /// and <c>xsl:import</c>/<c>xsl:include</c>.
+    /// See <see cref="PhoenixmlDb.XQuery.Security.ResourcePolicy.ServerDefault"/> for a secure server configuration.
+    /// </summary>
+    public PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; set; }
+
+    /// <summary>
     /// Compiles and loads an XSLT stylesheet from its XML source text.
     /// </summary>
     /// <param name="stylesheetXml">
