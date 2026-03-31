@@ -114,6 +114,11 @@ public sealed class StylesheetParser
     /// </summary>
     public bool AllowDtdProcessing { get; init; }
 
+    /// <summary>
+    /// Optional resource policy for controlling xsl:import/xsl:include resolution.
+    /// </summary>
+    internal PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; init; }
+
     public StylesheetParser(IExpressionParser expressionParser)
     {
         _expressionParser = expressionParser;
@@ -1061,7 +1066,7 @@ public sealed class StylesheetParser
         var packageFile = ResolvePackageVersion(packageEntries, packageVersion, packageName, GetSourceLocation(element));
 
         // Parse the package stylesheet with a fresh parser sharing our expression parser and catalog
-        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing };
+        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy };
         var packageXml = System.IO.File.ReadAllText(packageFile);
         var packageBaseUri = new Uri(Path.GetFullPath(packageFile));
         var packageStylesheet = packageParser.Parse(packageXml, packageBaseUri, isLibraryPackage: true);
@@ -2978,9 +2983,22 @@ public sealed class StylesheetParser
             throw new XsltException($"XTSE0210: Stylesheet module '{href}' directly or indirectly imports itself",
                 GetSourceLocation(element));
 
+        // Resource policy: check import access and try custom resolver
+        string? policyResolvedXml = null;
+        if (ResourcePolicy != null)
+        {
+            var importUri = new Uri(fullPath);
+            if (!ResourcePolicy.IsAllowed(importUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet))
+                throw new XsltException(
+                    $"XTSE0165: Resource policy denied import access to '{href}'",
+                    GetSourceLocation(element));
+
+            policyResolvedXml = ResourcePolicy.ResourceResolver?.ResolveStylesheetModule(href, _baseUri);
+        }
+
         try
         {
-            var xml = File.ReadAllText(resolvedPath);
+            var xml = policyResolvedXml ?? File.ReadAllText(resolvedPath);
             var savedBaseUri = _baseUri;
             var savedDefaultMode = _currentDefaultMode;
             _baseUri = new Uri(fullPath);

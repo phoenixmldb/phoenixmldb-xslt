@@ -172,8 +172,8 @@ public sealed class XsltTransformer
         ArgumentNullException.ThrowIfNull(stylesheetXml);
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing }
-            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing };
+            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy }
+            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy };
         _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
         return Task.CompletedTask;
     }
