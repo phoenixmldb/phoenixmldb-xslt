@@ -7520,12 +7520,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             _planCache[expr] = plan;
         }
 
-        // Build node provider from our node store
-        PhoenixmlDb.XQuery.INodeProvider? nodeProvider = null;
-        if (_nodeStore != null)
-        {
-            nodeProvider = new PhoenixmlDb.XQuery.DelegateNodeProvider(id => _nodeStore.GetNode(id));
-        }
+        // Pass the node store directly as the node provider — this preserves INodeBuilder
+        // so XQuery constructors can create proper XDM elements instead of serialized strings
+        PhoenixmlDb.XQuery.INodeProvider? nodeProvider = _nodeStore;
 
         using var execContext = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
             container: default,
