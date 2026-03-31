@@ -3284,6 +3284,12 @@ public sealed class XsltTransformOptions
     /// Key is the collection URI, value is the list of document file paths.
     /// </summary>
     public Dictionary<string, List<string>>? Collections { get; init; }
+
+    /// <summary>
+    /// Optional resource security policy. When set, controls which URIs the transformation
+    /// can access via doc(), unparsed-text(), collection(), xsl:result-document, and xsl:import/include.
+    /// </summary>
+    public PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; init; }
 }
 
 /// <summary>
@@ -3645,6 +3651,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     internal readonly XsltTransformEngine.InMemoryNodeStore? _nodeStore;
     private readonly PhoenixmlDb.XQuery.Functions.FunctionLibrary _functionLibrary;
     private readonly XsltDocumentResolver _documentResolver;
+    private readonly PhoenixmlDb.XQuery.Security.PolicyEnforcingResolver? _policyResolver;
 
     public Dictionary<QName, object?> GlobalVariables { get; } = new();
 
@@ -4267,6 +4274,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore);
         if (options.Collections != null)
             _documentResolver.SetCollections(options.Collections);
+        if (options.ResourcePolicy != null)
+            _policyResolver = new PhoenixmlDb.XQuery.Security.PolicyEnforcingResolver(_documentResolver, options.ResourcePolicy);
         // Seed the resolver cache with the source document for identity preservation
         if (source is XdmDocument sourceDoc)
         {
@@ -4284,6 +4293,39 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         _scopes.Push(new Scope());
         _contextItems.Push(source);
         _contextPositions.Push((1, 1));
+    }
+
+    /// <summary>
+    /// Checks the resource policy for text access and tries the custom resolver first.
+    /// Returns null to indicate the caller should fall through to default file-based resolution.
+    /// Throws <see cref="PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException"/> if denied.
+    /// </summary>
+    internal string? ResolveUnparsedTextViaPolicy(string href, string? encoding)
+    {
+        if (_policyResolver == null)
+            return null; // No policy — fall through to default
+
+        return _policyResolver.ResolveText(href, encoding);
+    }
+
+    /// <summary>
+    /// Checks whether the policy allows text access without throwing.
+    /// </summary>
+    internal bool IsUnparsedTextAvailableViaPolicy(string href)
+    {
+        if (_policyResolver == null)
+            return true; // No policy — allow default check
+
+        return _policyResolver.IsTextAvailable(href);
+    }
+
+    /// <summary>
+    /// Checks the resource policy for write access (xsl:result-document).
+    /// Throws <see cref="PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException"/> if denied.
+    /// </summary>
+    internal void CheckResultDocumentPolicy(string href)
+    {
+        _policyResolver?.CheckWriteAccess(href);
     }
 
     private PhoenixmlDb.XQuery.Functions.FunctionLibrary BuildFunctionLibrary(XsltStylesheet stylesheet)
@@ -7528,7 +7570,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             container: default,
             functions: _functionLibrary,
             nodeProvider: nodeProvider,
-            documentResolver: _documentResolver,
+            documentResolver: (PhoenixmlDb.XQuery.IDocumentResolver?)_policyResolver ?? _documentResolver,
             namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
         // Provide in-scope namespace prefix bindings so XSLT functions (system-property, etc.)
         // can resolve prefixed QName string arguments at runtime
@@ -10399,6 +10441,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             effectiveHref = await EvaluateAvtAsync(instruction.Href).ConfigureAwait(false);
         }
 
+        // Resource policy: check write access before proceeding
+        if (!string.IsNullOrEmpty(effectiveHref))
+            CheckResultDocumentPolicy(effectiveHref);
+
         // XTDE1490: Check for duplicate result-document URIs
         // When targeting primary output (empty href) and NOT inside a secondary redirect,
         // check if primary output has already been written to (implicit content before explicit result-document)
@@ -13125,7 +13171,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     {
         try
         {
-            return _documentResolver.ResolveDocument(uri);
+            return _policyResolver?.ResolveDocument(uri) ?? _documentResolver.ResolveDocument(uri);
         }
 #pragma warning disable CA1031
         catch (Exception)
@@ -14642,7 +14688,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     object contextItem = item;
                     if (item is string uri)
                     {
-                        var doc = _documentResolver.ResolveDocument(uri);
+                        var doc = _policyResolver?.ResolveDocument(uri) ?? _documentResolver.ResolveDocument(uri);
                         if (doc == null)
                             continue;
                         contextItem = doc;
@@ -20567,6 +20613,14 @@ internal sealed class XsltUnparsedTextFunction : PhoenixmlDb.XQuery.Ast.XQueryFu
 
         try
         {
+            // Check policy and try custom resolver first
+            var policyText = _context.ResolveUnparsedTextViaPolicy(href, null);
+            if (policyText != null)
+            {
+                UnparsedTextHelper.ValidateTextContent(policyText);
+                return policyText;
+            }
+
             var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
             if (filePath != null)
             {
@@ -20620,6 +20674,13 @@ internal sealed class XsltUnparsedText2Function : PhoenixmlDb.XQuery.Ast.XQueryF
 
         try
         {
+            var policyText = _context.ResolveUnparsedTextViaPolicy(href, encodingName);
+            if (policyText != null)
+            {
+                UnparsedTextHelper.ValidateTextContent(policyText);
+                return policyText;
+            }
+
             var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
             if (filePath != null)
             {
@@ -20659,6 +20720,9 @@ internal sealed class XsltUnparsedTextAvailableFunction : PhoenixmlDb.XQuery.Ast
 
         try
         {
+            if (!_context.IsUnparsedTextAvailableViaPolicy(href))
+                return ValueTask.FromResult<object?>(false);
+
             var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
             return ValueTask.FromResult<object?>(filePath != null);
         }
@@ -20705,6 +20769,9 @@ internal sealed class XsltUnparsedTextAvailable2Function : PhoenixmlDb.XQuery.As
 
         try
         {
+            if (!_context.IsUnparsedTextAvailableViaPolicy(href))
+                return ValueTask.FromResult<object?>(false);
+
             var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
             return ValueTask.FromResult<object?>(filePath != null);
         }
@@ -20742,13 +20809,22 @@ internal sealed class XsltUnparsedTextLinesFunction : PhoenixmlDb.XQuery.Ast.XQu
 
         try
         {
+            var policyText = _context.ResolveUnparsedTextViaPolicy(href, null);
+            if (policyText != null)
+            {
+                UnparsedTextHelper.ValidateTextContent(policyText);
+                var policyLines = policyText.Split('\n').Select(l => (object)l.TrimEnd('\r')).ToList();
+                if (policyLines.Count > 0 && ((string)policyLines[^1]).Length == 0)
+                    policyLines.RemoveAt(policyLines.Count - 1);
+                return policyLines;
+            }
+
             var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
             if (filePath != null)
             {
                 var text = await UnparsedTextHelper.ReadWithEncodingDetectionAsync(filePath).ConfigureAwait(false);
                 UnparsedTextHelper.ValidateTextContent(text);
                 var lines = text.Split('\n').Select(l => (object)l.TrimEnd('\r')).ToList();
-                // Per spec: trailing empty line from terminal newline is excluded
                 if (lines.Count > 0 && ((string)lines[^1]).Length == 0)
                     lines.RemoveAt(lines.Count - 1);
                 return lines;
@@ -20803,13 +20879,22 @@ internal sealed class XsltUnparsedTextLines2Function : PhoenixmlDb.XQuery.Ast.XQ
 
         try
         {
+            var policyText = _context.ResolveUnparsedTextViaPolicy(href, encodingName);
+            if (policyText != null)
+            {
+                UnparsedTextHelper.ValidateTextContent(policyText);
+                var policyLines = policyText.Split('\n').Select(l => (object)l.TrimEnd('\r')).ToList();
+                if (policyLines.Count > 0 && ((string)policyLines[^1]).Length == 0)
+                    policyLines.RemoveAt(policyLines.Count - 1);
+                return policyLines;
+            }
+
             var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
             if (filePath != null)
             {
                 var text = await System.IO.File.ReadAllTextAsync(filePath, encoding).ConfigureAwait(false);
                 UnparsedTextHelper.ValidateTextContent(text);
                 var lines = text.Split('\n').Select(l => (object)l.TrimEnd('\r')).ToList();
-                // Per spec: trailing empty line from terminal newline is excluded
                 if (lines.Count > 0 && ((string)lines[^1]).Length == 0)
                     lines.RemoveAt(lines.Count - 1);
                 return lines;

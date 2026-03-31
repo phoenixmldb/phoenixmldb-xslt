@@ -544,7 +544,8 @@ public sealed class XsltTransformer
             Collections = _collections.Count > 0 ? _collections : null,
             TraceListener = TraceListener,
             MessageListener = MessageListener,
-            MessageListenerWithLocation = MessageListenerWithLocation
+            MessageListenerWithLocation = MessageListenerWithLocation,
+            ResourcePolicy = ResourcePolicy
         };
 
         var engine = new XsltTransformEngine(_stylesheet);
