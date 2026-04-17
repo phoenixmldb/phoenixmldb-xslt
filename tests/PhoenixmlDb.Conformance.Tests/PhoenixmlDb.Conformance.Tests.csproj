@@ -10,7 +10,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/PhoenixmlDb.XQuery/PhoenixmlDb.XQuery.csproj" />
     <ProjectReference Include="../../src/PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj" />
-    <ProjectReference Include="../../src/PhoenixmlDb.Xdm/PhoenixmlDb.Xdm.csproj" />
     <ProjectReference Include="../PhoenixmlDb.TestUtilities/PhoenixmlDb.TestUtilities.csproj" />
   </ItemGroup>
 

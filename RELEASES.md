@@ -1,6 +1,6 @@
 # Release History
 
-## Unreleased
+## 1.1.0.22 (Unreleased)
 
 ### Fixes
 - **fn:transform `post-process` option**: the `post-process` option was completely unimplemented — the function value was silently ignored. Now extracted from the options map and invoked as `function($uri, $result)` for each entry in the result map (primary output and secondary result documents). The returned value replaces the original, enabling stylesheet chaining pipelines.
