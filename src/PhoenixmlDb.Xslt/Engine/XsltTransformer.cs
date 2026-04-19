@@ -19096,7 +19096,15 @@ internal sealed class XsltCurrentGroupFunction : PhoenixmlDb.XQuery.Ast.XQueryFu
         IReadOnlyList<object?> arguments, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         if (_context.TryGetVariable(new QName(NamespaceId.None, "current-group"), out var group) && group != null)
+        {
+            // Return as object?[] so FunctionCallOperator yields items individually.
+            // List<object> must not be returned directly because at runtime it matches
+            // the "is List<object?>" check (nullable reference types are erased) and
+            // would be yielded as a single XDM array item instead of being iterated.
+            if (group is List<object> list)
+                return ValueTask.FromResult<object?>(list.ToArray());
             return ValueTask.FromResult<object?>(group);
+        }
 
         // XSLT 3.0: calling current-group() when there is no current group is a dynamic error
         throw new XsltException("XTDE1061: current-group() called when there is no current group");
