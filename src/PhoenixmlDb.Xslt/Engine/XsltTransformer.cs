@@ -20392,7 +20392,7 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
         {
             "version" => "3.0",
             "vendor" => "PhoenixmlDb",
-            "vendor-url" => "https://phoenixml.endpointsystems.com",
+            "vendor-url" => "https://endpointsystems.com",
             "product-name" => "PhoenixmlDb XSLT",
             "product-version" => typeof(XsltTransformEngine).Assembly.GetName().Version?.ToString(3) ?? "1.0",
             "is-schema-aware" => "no",

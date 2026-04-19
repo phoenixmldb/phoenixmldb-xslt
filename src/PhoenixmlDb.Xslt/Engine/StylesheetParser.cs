@@ -10161,7 +10161,7 @@ public sealed class StylesheetParser
                 {
                     "version" => "3.0",
                     "vendor" => "PhoenixmlDb",
-                    "vendor-url" => "https://phoenixml.endpointsystems.com",
+                    "vendor-url" => "https://endpointsystems.com",
                     "product-name" => "PhoenixmlDb XSLT",
                     "product-version" => "1.0",
                     "is-schema-aware" => "no",
@@ -10876,7 +10876,7 @@ public sealed class StylesheetParser
         {
             "version" => "3.0",
             "vendor" => "PhoenixmlDb",
-            "vendor-url" => "https://phoenixml.endpointsystems.com",
+            "vendor-url" => "https://endpointsystems.com",
             "product-name" => "PhoenixmlDb XSLT",
             "product-version" => "1.0",
             "is-schema-aware" => "no",
