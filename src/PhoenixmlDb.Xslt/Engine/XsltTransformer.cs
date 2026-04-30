@@ -57,6 +57,7 @@ public sealed class XsltTransformEngine
 {
     private readonly XsltStylesheet _stylesheet;
     private readonly TemplateIndex _templateIndex;
+    private readonly PhoenixmlDb.XQuery.ISchemaProvider? _schemaProvider;
 
     /// <summary>
     /// Secondary result documents from the last transformation, keyed by href URI.
@@ -64,11 +65,13 @@ public sealed class XsltTransformEngine
     public IReadOnlyDictionary<string, string> SecondaryResultDocuments { get; private set; }
         = new Dictionary<string, string>();
 
-    public XsltTransformEngine(XsltStylesheet stylesheet)
+    public XsltTransformEngine(XsltStylesheet stylesheet,
+        PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider = null)
     {
         ArgumentNullException.ThrowIfNull(stylesheet);
         _stylesheet = stylesheet;
         _templateIndex = new TemplateIndex(stylesheet);
+        _schemaProvider = schemaProvider;
     }
 
     /// <summary>
@@ -120,7 +123,8 @@ public sealed class XsltTransformEngine
             source,
             outputBuilder,
             options,
-            nodeStore);
+            nodeStore,
+            _schemaProvider);
 
         // When there is no source document, the context item is absent during global variable
         // evaluation (XSLT 3.0 §5.4.1: global variables are evaluated with the initial focus).
@@ -545,7 +549,8 @@ public sealed class XsltTransformEngine
             source,
             outputBuilder,
             options,
-            nodeStore);
+            nodeStore,
+            _schemaProvider);
 
         if (!options.HasSourceDocument)
             context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
@@ -3652,6 +3657,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private readonly PhoenixmlDb.XQuery.Functions.FunctionLibrary _functionLibrary;
     private readonly XsltDocumentResolver _documentResolver;
     private readonly PhoenixmlDb.XQuery.Security.PolicyEnforcingResolver? _policyResolver;
+    private readonly PhoenixmlDb.XQuery.ISchemaProvider? _schemaProvider;
 
     public Dictionary<QName, object?> GlobalVariables { get; } = new();
 
@@ -4262,13 +4268,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         XdmNode source,
         StringBuilder output,
         XsltTransformOptions options,
-        XsltTransformEngine.InMemoryNodeStore? nodeStore = null)
+        XsltTransformEngine.InMemoryNodeStore? nodeStore = null,
+        PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider = null)
     {
         _stylesheet = stylesheet;
         _templateIndex = templateIndex;
         _output = output;
         _options = options;
         _nodeStore = nodeStore;
+        _schemaProvider = schemaProvider;
         _ct = options.CancellationToken;
         _maxOutputSize = options.MaxOutputSize;
         _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore);
@@ -7571,6 +7579,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             functions: _functionLibrary,
             nodeProvider: nodeProvider,
             documentResolver: (PhoenixmlDb.XQuery.IDocumentResolver?)_policyResolver ?? _documentResolver,
+            schemaProvider: _schemaProvider,
             namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
         // Provide in-scope namespace prefix bindings so XSLT functions (system-property, etc.)
         // can resolve prefixed QName string arguments at runtime

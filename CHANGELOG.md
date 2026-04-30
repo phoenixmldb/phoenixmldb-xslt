@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Features
+- **`xsl:import-schema` wired to `ISchemaProvider`.** Schema imports captured during stylesheet parsing are now forwarded to the runtime provider's `ImportSchema` method when the stylesheet is loaded. `XsltTransformer.SchemaProvider` defaults to a fresh `XsdSchemaProvider`; callers can replace it with a custom `ISchemaProvider` implementation (RelaxNG, Schematron-derived, in-memory) before calling `LoadStylesheetAsync`. Schema-location URIs in `xsl:import-schema` resolve relative to the stylesheet base URI. Errors from the provider surface as `XsltException` with the underlying error code (e.g. XQST0059 when a schema can't be located). Imports are walked recursively across imported and included modules.
+
 ### Fixes
 - Fix fn:transform `post-process` option — was completely unimplemented. Now invokes the post-process function for each result document, enabling stylesheet chaining pipelines
 - Fix streaming: empty template suppression now correctly skips all child events instead of leaking them as stray output

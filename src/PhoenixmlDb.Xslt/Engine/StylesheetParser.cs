@@ -924,12 +924,36 @@ public sealed class StylesheetParser
                     break;
 
                 case "import-schema":
-                    // Non-schema-aware processor: accept xsl:import-schema but ignore it.
-                    // Per XSLT 3.0 §3.15, a basic XSLT processor may accept xsl:import-schema
-                    // without performing schema validation. The schema-location and namespace
-                    // attributes are parsed but not acted upon.
-                    // Set flag to suppress XTSE1660 for validation="strict" in this stylesheet.
-                    _hasImportSchema = true;
+                    {
+                        // Capture the import for runtime resolution against the registered
+                        // ISchemaProvider. namespace + schema-location attributes are both
+                        // optional per the schema; missing namespace = no-namespace schema.
+                        _hasImportSchema = true;
+                        var nsAttr = child.Attribute("namespace")?.Value ?? "";
+                        var locAttr = child.Attribute("schema-location")?.Value;
+                        var locations = !string.IsNullOrWhiteSpace(locAttr)
+                            ? locAttr.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries)
+                            : Array.Empty<string>();
+                        // The xmlns:* declarations on the element provide the prefix binding
+                        // for any prefixed schema-element/attribute references later. Capture
+                        // the prefix that maps to this namespace, if any.
+                        string? prefix = null;
+                        foreach (var attr in child.Attributes())
+                        {
+                            if (attr.IsNamespaceDeclaration && attr.Value == nsAttr)
+                            {
+                                prefix = attr.Name.LocalName == "xmlns" ? null : attr.Name.LocalName;
+                                break;
+                            }
+                        }
+                        stylesheet.SchemaImports.Add(new XsltSchemaImport
+                        {
+                            TargetNamespace = nsAttr,
+                            Prefix = prefix,
+                            SchemaLocations = locations,
+                            Location = GetSourceLocation(child),
+                        });
+                    }
                     break;
 
                 default:

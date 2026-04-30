@@ -125,6 +125,15 @@ public sealed class XsltStylesheet
     public List<NameTest> PreserveSpace { get; init; } = new();
 
     /// <summary>
+    /// xsl:import-schema declarations. Each entry records a target namespace and any
+    /// schema-location hints. Loaded against the runtime <c>ISchemaProvider</c> when the
+    /// stylesheet is bound to an <see cref="XsltTransformer"/>, after which
+    /// <c>schema-element(...)</c> / <c>schema-attribute(...)</c> references and
+    /// <c>validation="strict|lax"</c> attributes resolve against the schema set.
+    /// </summary>
+    public List<XsltSchemaImport> SchemaImports { get; init; } = new();
+
+    /// <summary>
     /// Accumulator definitions (XSLT 3.0).
     /// </summary>
     public Dictionary<QName, XsltAccumulator> Accumulators { get; init; } = new();
@@ -2005,4 +2014,23 @@ public sealed class XsltSourceDocument : XsltInstruction
 
     public override ValueTask ExecuteAsync(XsltExecutionContext context)
         => context.SourceDocumentAsync(this);
+}
+
+/// <summary>
+/// Captures an <c>xsl:import-schema</c> declaration. Resolved against the runtime
+/// <c>ISchemaProvider</c> when the stylesheet is loaded into an <c>XsltTransformer</c>.
+/// </summary>
+public sealed class XsltSchemaImport
+{
+    /// <summary>The target namespace URI of the schema to import. Empty string for the no-namespace schema.</summary>
+    public required string TargetNamespace { get; init; }
+
+    /// <summary>Optional namespace prefix declared by the import. Null when the import has no namespace= attribute.</summary>
+    public string? Prefix { get; init; }
+
+    /// <summary>Schema-location hints from the schema-location attribute (space-separated URIs).</summary>
+    public IReadOnlyList<string> SchemaLocations { get; init; } = Array.Empty<string>();
+
+    /// <summary>Source location of the xsl:import-schema element (for diagnostic messages).</summary>
+    public SourceLocation? Location { get; init; }
 }

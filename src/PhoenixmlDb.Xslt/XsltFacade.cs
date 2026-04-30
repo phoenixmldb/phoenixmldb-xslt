@@ -140,6 +140,23 @@ public sealed class XsltTransformer
     public PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; set; }
 
     /// <summary>
+    /// Schema provider for schema-aware processing. Defaults to a fresh
+    /// <see cref="PhoenixmlDb.XQuery.XsdSchemaProvider"/> with no schemas loaded;
+    /// any <c>xsl:import-schema</c> declarations encountered while loading a
+    /// stylesheet are routed to this provider via
+    /// <see cref="PhoenixmlDb.XQuery.ISchemaProvider.ImportSchema"/>.
+    /// </summary>
+    /// <remarks>
+    /// Replace with a custom <see cref="PhoenixmlDb.XQuery.ISchemaProvider"/> implementation
+    /// (e.g. RelaxNG-backed, Schematron-derived, in-memory) before calling
+    /// <see cref="LoadStylesheetAsync"/>. Set to <c>null</c> to disable schema features
+    /// entirely (rare opt-out — every <c>schema-element/attribute</c> reference becomes
+    /// XPST0008 and every <c>validation="strict"</c> raises a runtime error).
+    /// </remarks>
+    public PhoenixmlDb.XQuery.ISchemaProvider? SchemaProvider { get; set; }
+        = new PhoenixmlDb.XQuery.XsdSchemaProvider();
+
+    /// <summary>
     /// Compiles and loads an XSLT stylesheet from its XML source text.
     /// </summary>
     /// <param name="stylesheetXml">
@@ -175,7 +192,59 @@ public sealed class XsltTransformer
             ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy }
             : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy };
         _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
+        ResolveSchemaImports(_stylesheet, baseUri);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Forwards every captured <c>xsl:import-schema</c> declaration to the registered
+    /// <see cref="SchemaProvider"/>. Schema-location URIs are resolved against the
+    /// stylesheet base URI before being handed to the provider so relative hints work.
+    /// </summary>
+    private void ResolveSchemaImports(XsltStylesheet stylesheet, Uri? baseUri)
+    {
+        if (SchemaProvider is null) return;
+        // Walk imported and included stylesheets too — import-schema can appear in any module.
+        foreach (var import in EnumerateAllSchemaImports(stylesheet))
+        {
+            var resolved = ResolveLocations(import.SchemaLocations, baseUri);
+            try
+            {
+                SchemaProvider.ImportSchema(import.TargetNamespace, resolved);
+            }
+            catch (PhoenixmlDb.XQuery.SchemaException ex)
+            {
+                throw new XsltException(
+                    $"{ex.ErrorCode}: xsl:import-schema failed for namespace '{import.TargetNamespace}': {ex.Message}",
+                    import.Location);
+            }
+        }
+    }
+
+    private static IEnumerable<XsltSchemaImport> EnumerateAllSchemaImports(XsltStylesheet stylesheet)
+    {
+        foreach (var imp in stylesheet.SchemaImports) yield return imp;
+        foreach (var inc in stylesheet.Includes)
+            foreach (var imp in EnumerateAllSchemaImports(inc))
+                yield return imp;
+        foreach (var imp in stylesheet.Imports)
+            foreach (var s in EnumerateAllSchemaImports(imp))
+                yield return s;
+    }
+
+    private static IReadOnlyList<string>? ResolveLocations(IReadOnlyList<string> locations, Uri? baseUri)
+    {
+        if (locations.Count == 0) return null;
+        if (baseUri is null) return locations;
+        var result = new List<string>(locations.Count);
+        foreach (var loc in locations)
+        {
+            if (Uri.TryCreate(baseUri, loc, out var resolved))
+                result.Add(resolved.IsFile ? resolved.LocalPath : resolved.ToString());
+            else
+                result.Add(loc);
+        }
+        return result;
     }
 
     /// <summary>
@@ -548,7 +617,7 @@ public sealed class XsltTransformer
             ResourcePolicy = ResourcePolicy
         };
 
-        var engine = new XsltTransformEngine(_stylesheet);
+        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
 
         string result;
         if (inputXml != null)

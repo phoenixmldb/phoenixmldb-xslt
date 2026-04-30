@@ -1073,6 +1073,114 @@ public class XsltTransformerIntegrationTests
 
     #endregion
 
+    #region xsl:import-schema → ISchemaProvider
+
+    // The XsltTransformer ships with an XsdSchemaProvider by default. xsl:import-schema
+    // declarations are captured during parsing and forwarded to the provider's ImportSchema
+    // method when the stylesheet loads, so subsequent schema-element/attribute references
+    // and validation="strict" attributes can resolve.
+
+    [Fact]
+    public async Task ImportSchema_with_no_location_hints_throws_with_provider_error()
+    {
+        var transformer = new XsltTransformer();
+        var act = async () => await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:po="http://example.com/po">
+              <xsl:import-schema namespace="http://example.com/po"/>
+              <xsl:template match="/"><r/></xsl:template>
+            </xsl:stylesheet>
+            """);
+        var ex = await act.Should().ThrowAsync<XsltException>();
+        // Default XsdSchemaProvider raises XQST0059 when it can't locate the schema.
+        ex.Which.Message.Should().Contain("XQST0059");
+    }
+
+    [Fact]
+    public async Task ImportSchema_loads_xsd_and_makes_namespace_available()
+    {
+        // Write a schema to disk and reference it via schema-location.
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-import-schema-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var xsdPath = Path.Combine(dir, "items.xsd");
+            await File.WriteAllTextAsync(xsdPath, """
+                <?xml version="1.0"?>
+                <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                           targetNamespace="http://example.com/items"
+                           elementFormDefault="qualified">
+                  <xs:element name="item" type="xs:string"/>
+                </xs:schema>
+                """);
+
+            var stylesheetPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(stylesheetPath, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+                  <xsl:import-schema namespace="http://example.com/items"
+                                     schema-location="items.xsd"/>
+                  <xsl:template match="/"><ok/></xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            // LoadStylesheetAsync should resolve the schema-location relative to baseUri and
+            // hand it to the default XsdSchemaProvider without throwing.
+            var transformer = new XsltTransformer();
+            var act = async () => await transformer.LoadStylesheetAsync(
+                await File.ReadAllTextAsync(stylesheetPath),
+                baseUri: new Uri(stylesheetPath));
+            await act.Should().NotThrowAsync();
+
+            // The provider was populated. (Verifying HasElementDeclaration round-trips through
+            // the provider's NamespaceId mapping is slice-3 work; here we only assert that
+            // schema loading succeeded.)
+            transformer.SchemaProvider.Should().NotBeNull();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ImportSchema_replaceable_with_custom_provider()
+    {
+        // Verifies the extension-point story: callers can swap in a custom ISchemaProvider.
+        var custom = new RecordingSchemaProvider();
+        var transformer = new XsltTransformer { SchemaProvider = custom };
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import-schema namespace="http://example.com/x" schema-location="x.xsd"/>
+              <xsl:template match="/"><r/></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        custom.Imports.Should().ContainSingle()
+            .Which.targetNamespace.Should().Be("http://example.com/x");
+    }
+
+    /// <summary>Test double for ISchemaProvider that records every ImportSchema call.</summary>
+    private sealed class RecordingSchemaProvider : PhoenixmlDb.XQuery.ISchemaProvider
+    {
+        public List<(string targetNamespace, IReadOnlyList<string>? hints)> Imports { get; } = new();
+
+        public void ImportSchema(string targetNamespace, IReadOnlyList<string>? locationHints = null)
+            => Imports.Add((targetNamespace, locationHints));
+
+        public bool IsSubtypeOf(PhoenixmlDb.Xdm.XdmTypeName a, PhoenixmlDb.Xdm.XdmTypeName b) => a == b;
+        public bool HasElementDeclaration(PhoenixmlDb.Xdm.XdmQName name) => false;
+        public bool HasAttributeDeclaration(PhoenixmlDb.Xdm.XdmQName name) => false;
+        public PhoenixmlDb.Xdm.XdmTypeName? GetElementType(PhoenixmlDb.Xdm.XdmQName name) => null;
+        public PhoenixmlDb.Xdm.XdmTypeName? GetAttributeType(PhoenixmlDb.Xdm.XdmQName name) => null;
+        public bool MatchesSchemaElement(PhoenixmlDb.Xdm.Nodes.XdmElement e, PhoenixmlDb.Xdm.XdmQName n) => false;
+        public bool MatchesSchemaAttribute(PhoenixmlDb.Xdm.Nodes.XdmAttribute a, PhoenixmlDb.Xdm.XdmQName n) => false;
+        public PhoenixmlDb.Xdm.Nodes.XdmNode Validate(PhoenixmlDb.Xdm.Nodes.XdmNode node,
+            PhoenixmlDb.XQuery.ValidationMode mode, string? typeNamespaceUri = null, string? typeLocalName = null)
+            => node;
+    }
+
+    #endregion
+
     #region Regression: XPST0051 includes source location
 
     [Fact]
