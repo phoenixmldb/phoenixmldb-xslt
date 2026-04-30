@@ -1293,6 +1293,55 @@ public class XsltTransformerIntegrationTests
 
     #endregion
 
+    #region as="schema-element(name)" sequence types
+
+    [Fact]
+    public async Task Variable_as_schema_element_passes_when_value_matches_declared_element()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-as-schema-elem-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var xsdPath = Path.Combine(dir, "items.xsd");
+            await File.WriteAllTextAsync(xsdPath, """
+                <?xml version="1.0"?>
+                <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                           targetNamespace="http://example.com/items"
+                           elementFormDefault="qualified">
+                  <xs:element name="item" type="xs:string"/>
+                </xs:schema>
+                """);
+
+            var xslPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(xslPath, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:i="http://example.com/items">
+                  <xsl:import-schema namespace="http://example.com/items" schema-location="items.xsd"/>
+                  <xsl:template match="/">
+                    <xsl:variable name="x" as="schema-element(i:item)">
+                      <i:item>hello</i:item>
+                    </xsl:variable>
+                    <result><xsl:copy-of select="$x"/></result>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(
+                await File.ReadAllTextAsync(xslPath),
+                baseUri: new Uri(xslPath));
+
+            var result = await transformer.TransformAsync("<x/>");
+            result.Should().Contain("hello");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    #endregion
+
     #region Regression: XPST0051 includes source location
 
     [Fact]

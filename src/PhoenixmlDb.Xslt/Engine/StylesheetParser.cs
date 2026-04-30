@@ -9403,6 +9403,30 @@ public sealed class StylesheetParser
         return false;
     }
 
+    /// <summary>
+    /// Splits a possibly-prefixed XML name into (localName, namespaceUri). Resolves prefixes
+    /// against the in-scope namespace declarations on <paramref name="context"/>. Recognizes
+    /// EQName syntax <c>Q{uri}local</c>. Returns <c>("", null)</c> for the wildcard <c>*</c>.
+    /// </summary>
+    private static (string localName, string? namespaceUri) SplitPrefixedName(string name, XElement? context)
+    {
+        if (string.IsNullOrEmpty(name) || name == "*")
+            return ("", null);
+        if (name.StartsWith("Q{", StringComparison.Ordinal))
+        {
+            var close = name.IndexOf('}', 2);
+            if (close > 0 && close < name.Length - 1)
+                return (name[(close + 1)..], name[2..close]);
+            return (name, null);
+        }
+        var colon = name.IndexOf(':', StringComparison.Ordinal);
+        if (colon <= 0) return (name, null);
+        var prefix = name[..colon];
+        var local = name[(colon + 1)..];
+        var ns = context?.GetNamespaceOfPrefix(prefix)?.NamespaceName;
+        return (local, ns);
+    }
+
     private static XdmSequenceType ParseSequenceType(string type, XElement? context = null)
     {
         // Simplified - would use full type parser
@@ -9570,6 +9594,35 @@ public sealed class StylesheetParser
             // attribute(name) — no type annotation
             var localName3 = inner.IndexOf(':', StringComparison.Ordinal) is var ci4 && ci4 >= 0 ? inner[(ci4 + 1)..] : inner;
             return new XdmSequenceType { ItemType = ItemType.Attribute, Occurrence = occurrence, AttributeName = localName3 };
+        }
+
+        // Handle schema-element(name) — schema-aware element test. The provider
+        // supplies substitution-group / type-annotation matching at runtime.
+        if (type.StartsWith("schema-element(", StringComparison.Ordinal) && type.EndsWith(')'))
+        {
+            var inner = type["schema-element(".Length..^1].Trim();
+            var (localName, nsUri) = SplitPrefixedName(inner, context);
+            return new XdmSequenceType
+            {
+                ItemType = ItemType.SchemaElement,
+                Occurrence = occurrence,
+                SchemaElementName = localName,
+                SchemaElementNamespace = nsUri,
+            };
+        }
+
+        // Handle schema-attribute(name)
+        if (type.StartsWith("schema-attribute(", StringComparison.Ordinal) && type.EndsWith(')'))
+        {
+            var inner = type["schema-attribute(".Length..^1].Trim();
+            var (localName, nsUri) = SplitPrefixedName(inner, context);
+            return new XdmSequenceType
+            {
+                ItemType = ItemType.SchemaAttribute,
+                Occurrence = occurrence,
+                SchemaAttributeName = localName,
+                SchemaAttributeNamespace = nsUri,
+            };
         }
 
         // Handle parameterized array(TYPE) and map(KEY, VALUE) forms
