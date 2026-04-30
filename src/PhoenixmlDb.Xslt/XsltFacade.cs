@@ -685,7 +685,9 @@ public sealed class XsltTransformer
 /// </summary>
 internal sealed class XQueryExpressionParser : IExpressionParser
 {
-    private readonly XQueryParserFacade _parser = new();
+    // XSLT/XPath retains the namespace axis (deprecated but optional) — let it through.
+    // XQuery's XQST0134 only applies when this parser is invoked from a pure XQuery context.
+    private readonly XQueryParserFacade _parser = new() { AllowNamespaceAxis = true };
 
     public XQueryExpression Parse(string expression)
     {

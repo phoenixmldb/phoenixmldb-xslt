@@ -5,6 +5,11 @@
 ### Fixes
 - Fix fn:transform `post-process` option — was completely unimplemented. Now invokes the post-process function for each result document, enabling stylesheet chaining pipelines
 - Fix streaming: empty template suppression now correctly skips all child events instead of leaking them as stray output
+- Fix `castable as xs:integer` / `instance of xs:Name` and other prefixed atomic types wrongly raising XPST0051 — the validator was treating prefixed type references as if they were unprefixed. Reported by Martin Honnen against DocBook xslTNG and Schxslt2 transpile.xsl (paired XQuery fix in `XdmSequenceType.UnprefixedTypeName`/`LocalTypeName` split)
+- Fix XTSE3450 false positive when an importing module declared a static variable whose local name matched an imported static param **in a different namespace** (e.g. DocBook xslTNG's `v:debug` colliding with `param.xsl`'s `debug`) — static variable tracking now keys on full QName, not local name
+- Fix `namespace::` axis raising XQST0134 in XSLT/XPath — the axis is deprecated but optional in XPath 3.1/XSLT 3.0 (only XQuery prohibits it). Added `AllowNamespaceAxis` to the parser facade; XSLT sets it to `true`. Reported against DocBook xslTNG
+- Fix locally-declared `xmlns:*` on `xsl:when` not being visible to its own `test=` expression (raised XPST0081). Now the namespace context is anchored at the `xsl:when` itself when parsing the test. Reported against DocBook xslTNG `docbook.xsl` line 152
+- Add source location (line/column) to XPST0051 errors for "unknown atomic type" — previously the error fired without context, making it hard to locate the offending expression
 
 ## 1.1.0 (2026-03-26)
 

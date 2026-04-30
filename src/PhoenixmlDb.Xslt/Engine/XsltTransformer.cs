@@ -336,7 +336,7 @@ public sealed class XsltTransformEngine
             // If InitialModeSelect is specified, evaluate it and apply templates to the result
             if (options.InitialModeSelect != null)
             {
-                var selectExpr = new XQuery.Parser.XQueryParserFacade().Parse(options.InitialModeSelect);
+                var selectExpr = new XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(options.InitialModeSelect);
                 await context.ApplyTemplatesAsync(
                     selectExpr,
                     effectiveInitialMode,
@@ -590,7 +590,7 @@ public sealed class XsltTransformEngine
         }
         else if (options.InitialModeSelect != null)
         {
-            var selectExpr = new XQuery.Parser.XQueryParserFacade().Parse(options.InitialModeSelect);
+            var selectExpr = new XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(options.InitialModeSelect);
             var effectiveInitialMode = options.InitialMode ?? new QName(NamespaceId.None, "");
             await context.ApplyTemplatesAsync(selectExpr, effectiveInitialMode, [], []).ConfigureAwait(false);
         }
@@ -15786,7 +15786,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         XQueryExpression parsedExpr;
         try
         {
-            parsedExpr = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade().Parse(xpathStr);
+            parsedExpr = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(xpathStr);
         }
         catch (Exception ex)
         {

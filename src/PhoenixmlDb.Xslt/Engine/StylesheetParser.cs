@@ -82,14 +82,17 @@ public sealed class StylesheetParser
     /// <summary>
     /// Variables available in use-when static context (quantified expression bindings).
     /// </summary>
-    private readonly Dictionary<string, object?> _staticVariables = new();
+    private readonly Dictionary<QName, object?> _staticVariables = new();
 
     /// <summary>
-    /// Static variable names that were introduced by imported (lower-precedence) modules.
-    /// Value is true for xsl:variable, false for xsl:param.
+    /// Static variable names (full QName) that were introduced by imported (lower-precedence)
+    /// modules. Value is true for xsl:variable, false for xsl:param. Keyed by full QName so that
+    /// names like `v:debug` (in a custom namespace) and `debug` (no namespace) are not conflated
+    /// — that mistake produced spurious XTSE3450 errors against DocBook xslTNG (`v:debug` in the
+    /// docbook variables namespace coexisting with the `debug` static param).
     /// Used for XTSE3450 detection when the importing module re-declares the same variable.
     /// </summary>
-    private readonly Dictionary<string, bool> _importedStaticVarNames = new();
+    private readonly Dictionary<QName, bool> _importedStaticVarNames = new();
 
     /// <summary>
     /// Static param names whose values were provided by the calling processor (external params).
@@ -286,15 +289,16 @@ public sealed class StylesheetParser
         if (externalStaticParams == null) return;
         foreach (var (name, value) in externalStaticParams)
         {
+            var qname = new QName(NamespaceId.None, name);
             var val = value.Trim();
             if ((val.StartsWith('\'') && val.EndsWith('\'')) || (val.StartsWith('"') && val.EndsWith('"')))
-                _staticVariables[name] = val[1..^1];
+                _staticVariables[qname] = val[1..^1];
             else if (val is "true()" or "false()")
-                _staticVariables[name] = val == "true()" ? (object)true : false;
+                _staticVariables[qname] = val == "true()" ? (object)true : false;
             else if (val == "()")
-                _staticVariables[name] = null;
+                _staticVariables[qname] = null;
             else
-                _staticVariables[name] = val;
+                _staticVariables[qname] = val;
             _externalStaticParamNames.Add(name);
         }
     }
@@ -549,7 +553,7 @@ public sealed class StylesheetParser
                         ValidateAllowedAttributes(child, GetSourceLocation(child), "href");
                         ValidateEmptyElement(child);
                         // Save current static variables — importing module has higher precedence
-                        var savedStaticVars = new Dictionary<string, object?>(_staticVariables);
+                        var savedStaticVars = new Dictionary<QName, object?>(_staticVariables);
                         var savedInsideImported = _insideImportedModule;
                         _insideImportedModule = true;
                         var imported = LoadExternalStylesheet(child);
@@ -557,8 +561,8 @@ public sealed class StylesheetParser
                         // Track which variables were newly added by the import (lower precedence)
                         // Also track whether each is a variable or param for XTSE3450 consistency check
                         var importedParamNames = imported != null
-                            ? new HashSet<string>(imported.Parameters.Where(p => p.Static).Select(p => p.Name.LocalName))
-                            : new HashSet<string>();
+                            ? new HashSet<QName>(imported.Parameters.Where(p => p.Static).Select(p => p.Name))
+                            : new HashSet<QName>();
                         foreach (var svName in _staticVariables.Keys)
                         {
                             if (!savedStaticVars.ContainsKey(svName))
@@ -615,21 +619,21 @@ public sealed class StylesheetParser
                     // Track static variables for use-when and shadow attribute resolution
                     if (variable.Static && variable.Select != null)
                     {
-                        var varName = variable.Name.LocalName;
+                        var varKey = variable.Name;
                         var newVal = EvaluateStaticSelectSafe(variable.Select, child);
                         // XTSE3450: A later higher-precedence static variable conflicts with
                         // an earlier lower-precedence one from an import
-                        if (_importedStaticVarNames.TryGetValue(varName, out var importedIsVariable))
+                        if (_importedStaticVarNames.TryGetValue(varKey, out var importedIsVariable))
                         {
                             // Inconsistency: one is xsl:variable and the other is xsl:param
                             if (!importedIsVariable) // imported was a param, this is a variable
-                                throw new XsltException($"XTSE3450: Static variable '{varName}' is inconsistent with an imported static parameter of the same name",
+                                throw new XsltException($"XTSE3450: Static variable '{varKey.LocalName}' is inconsistent with an imported static parameter of the same name",
                                     GetSourceLocation(child));
-                            if (_staticVariables.TryGetValue(varName, out var importedVal) && !Equals(newVal, importedVal))
-                                throw new XsltException($"XTSE3450: Static variable '{varName}' has value '{newVal}' which is inconsistent with the imported value '{importedVal}'",
+                            if (_staticVariables.TryGetValue(varKey, out var importedVal) && !Equals(newVal, importedVal))
+                                throw new XsltException($"XTSE3450: Static variable '{varKey.LocalName}' has value '{newVal}' which is inconsistent with the imported value '{importedVal}'",
                                     GetSourceLocation(child));
                         }
-                        _staticVariables[varName] = newVal;
+                        _staticVariables[varKey] = newVal;
                     }
                     break;
 
@@ -643,23 +647,24 @@ public sealed class StylesheetParser
                     // Track static params for use-when and shadow attribute resolution
                     if (param.Static && param.Select != null)
                     {
-                        var paramName = param.Name.LocalName;
+                        var paramKey = param.Name;
                         // Skip select evaluation if the value was provided externally by the calling processor
-                        if (_externalStaticParamNames.Contains(paramName))
+                        // (external params are passed as bare names, hence keyed by LocalName here).
+                        if (_externalStaticParamNames.Contains(paramKey.LocalName))
                             break;
                         var newParamVal = EvaluateStaticSelectSafe(param.Select, child);
                         // XTSE3450: check same as for variables
-                        if (_importedStaticVarNames.TryGetValue(paramName, out var importedParamIsVariable))
+                        if (_importedStaticVarNames.TryGetValue(paramKey, out var importedParamIsVariable))
                         {
                             // Inconsistency: one is xsl:variable and the other is xsl:param
                             if (importedParamIsVariable) // imported was a variable, this is a param
-                                throw new XsltException($"XTSE3450: Static parameter '{paramName}' is inconsistent with an imported static variable of the same name",
+                                throw new XsltException($"XTSE3450: Static parameter '{paramKey.LocalName}' is inconsistent with an imported static variable of the same name",
                                     GetSourceLocation(child));
-                            if (_staticVariables.TryGetValue(paramName, out var importedParamVal) && !Equals(newParamVal, importedParamVal))
-                                throw new XsltException($"XTSE3450: Static parameter '{paramName}' has value '{newParamVal}' which is inconsistent with the imported value '{importedParamVal}'",
+                            if (_staticVariables.TryGetValue(paramKey, out var importedParamVal) && !Equals(newParamVal, importedParamVal))
+                                throw new XsltException($"XTSE3450: Static parameter '{paramKey.LocalName}' has value '{newParamVal}' which is inconsistent with the imported value '{importedParamVal}'",
                                     GetSourceLocation(child));
                         }
-                        _staticVariables[paramName] = newParamVal;
+                        _staticVariables[paramKey] = newParamVal;
                     }
                     break;
 
@@ -5189,7 +5194,14 @@ public sealed class StylesheetParser
                     throw new XsltException("XTSE0010: xsl:when must not appear after xsl:otherwise in xsl:choose", location);
                 var testAttr = child.Attribute("test")
                     ?? throw new XsltException("XTSE0010: xsl:when requires a 'test' attribute", location);
-                var test = ParseExpr(testAttr.Value);
+                // Resolve namespace prefixes against the xsl:when itself so that locally-declared
+                // xmlns:* on the when (e.g. DocBook xslTNG's `<xsl:when xmlns:ls="..." test="/ls:locale">`)
+                // are visible to the test expression.
+                var savedNsCtx = _nsContext;
+                _nsContext = child;
+                XQueryExpression test;
+                try { test = ParseExpr(testAttr.Value); }
+                finally { _nsContext = savedNsCtx; }
                 whens.Add(new XsltWhen
                 {
                     Test = test,
@@ -9322,7 +9334,8 @@ public sealed class StylesheetParser
         var xpathDefaultNs = GetXpathDefaultNamespace(context);
         if (xpathDefaultNs != "http://www.w3.org/2001/XMLSchema")
             throw new XsltException($"XPST0051: Unknown atomic type '{type.UnprefixedTypeName}' " +
-                $"(unprefixed type names require xpath-default-namespace=\"http://www.w3.org/2001/XMLSchema\")");
+                $"(unprefixed type names require xpath-default-namespace=\"http://www.w3.org/2001/XMLSchema\")",
+                GetSourceLocation(context));
     }
 
     /// <summary>
@@ -10515,7 +10528,7 @@ public sealed class StylesheetParser
                     : ie.Else != null ? EvaluateStaticExpression(ie.Else, context) : null;
 
             case VariableReference vr:
-                if (_staticVariables.TryGetValue(vr.Name.LocalName, out var varVal))
+                if (_staticVariables.TryGetValue(vr.Name, out var varVal))
                     return varVal;
                 throw new XsltException($"XPST0008: Variable ${vr.Name.LocalName} is not declared in the static use-when context");
 
@@ -10615,19 +10628,19 @@ public sealed class StylesheetParser
         };
     }
 
-    private bool EvaluateStaticQuantified(QuantifiedExpression qe, XElement context, Dictionary<string, object?> vars)
+    private bool EvaluateStaticQuantified(QuantifiedExpression qe, XElement context, Dictionary<QName, object?> vars)
     {
         return EvaluateQuantifiedBinding(qe, context, vars, 0);
     }
 
     private bool EvaluateQuantifiedBinding(QuantifiedExpression qe, XElement context,
-        Dictionary<string, object?> vars, int bindingIndex)
+        Dictionary<QName, object?> vars, int bindingIndex)
     {
         if (bindingIndex >= qe.Bindings.Count)
             return CoerceToBoolean(EvaluateStaticExpression(qe.Satisfies, context));
 
         var binding = qe.Bindings[bindingIndex];
-        var varName = binding.Variable.LocalName;
+        var varName = binding.Variable;
         var sequenceVal = EvaluateStaticExpression(binding.Expression, context);
 
         // Convert to list of items

@@ -852,4 +852,245 @@ public class XsltTransformerIntegrationTests
     }
 
     #endregion
+
+    #region Regression: prefixed atomic types in cast/castable/instance-of (martin's report)
+
+    // Bug: castable/cast/instance-of with a prefixed atomic type like xs:integer or xs:Name was
+    // wrongly raising XPST0051 "unprefixed type names require xpath-default-namespace=...".
+    // Root cause: the XQuery parser populated XdmSequenceType.UnprefixedTypeName with the local
+    // name regardless of whether the source was prefixed; the XSLT validator then mistook every
+    // prefixed reference for an unprefixed one. UnprefixedTypeName is now only set when the
+    // source name was actually unprefixed; LocalTypeName carries the local-name component used
+    // by cast/castable derived-type checks.
+
+    [Fact]
+    public async Task Castable_with_prefixed_xs_integer_compiles()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:template match="/">
+                <r><xsl:value-of select="'42' castable as xs:integer"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">true</r>");
+    }
+
+    [Fact]
+    public async Task Castable_with_prefixed_xs_Name_compiles()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:template match="/">
+                <r><xsl:value-of select="'foo' castable as xs:Name"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">true</r>");
+    }
+
+    [Fact]
+    public async Task InstanceOf_with_prefixed_xs_integer_compiles()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:template match="/">
+                <r><xsl:value-of select="42 instance of xs:integer"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">true</r>");
+    }
+
+    [Fact]
+    public async Task Cast_with_prefixed_xs_int_validates_range()
+    {
+        // Verifies LocalTypeName carries the local part for derived-integer range validation
+        // even when the source was prefixed. xs:int has range [-2^31, 2^31-1]; 99999999999 overflows.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:template match="/">
+                <r><xsl:value-of select="99999999999 castable as xs:int"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">false</r>");
+    }
+
+    [Fact]
+    public async Task Castable_unprefixed_without_xpath_default_namespace_raises_XPST0051()
+    {
+        // Regression guard: the original validator semantics must still fire when an
+        // unprefixed type name is used without xpath-default-namespace.
+        var transformer = new XsltTransformer();
+        var act = async () => await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <r><xsl:value-of select="'42' castable as integer"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var ex = await act.Should().ThrowAsync<XsltException>();
+        ex.Which.Message.Should().Contain("XPST0051");
+    }
+
+    [Fact]
+    public async Task Castable_unprefixed_with_xpath_default_namespace_compiles()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xpath-default-namespace="http://www.w3.org/2001/XMLSchema">
+              <xsl:template match="/">
+                <r><xsl:value-of select="'42' castable as integer"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">true</r>");
+    }
+
+    #endregion
+
+    #region Regression: namespace-aware static variable conflict (DocBook v:debug vs debug)
+
+    // Bug: XTSE3450 mistakenly fired when an importing module declared a static `xsl:variable`
+    // whose local-name matched an imported static `xsl:param` *in a different namespace*. DocBook
+    // xslTNG declares `<xsl:variable name="v:debug" static="yes" .../>` (in the docbook variables
+    // namespace) while `param.xsl` declares `<xsl:param name="debug" static="yes" .../>` (no
+    // namespace) — these are distinct names and must not collide.
+
+    [Fact]
+    public async Task Static_var_with_prefix_does_not_conflict_with_unprefixed_param_of_same_local_name()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-ns-static-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(dir, "param.xsl"), """
+                <xsl:stylesheet version="3.0"
+                                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                  <xsl:param name="debug" static="yes" as="xs:string" select="''"/>
+                </xsl:stylesheet>
+                """);
+            var mainPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(mainPath, """
+                <xsl:stylesheet version="3.0"
+                                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                                xmlns:v="http://example.com/variables">
+                  <xsl:import href="param.xsl"/>
+                  <xsl:variable name="v:debug" as="xs:boolean" select="false()" static="yes"/>
+                  <xsl:template match="/"><r/></xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(await File.ReadAllTextAsync(mainPath),
+                baseUri: new Uri(mainPath));
+            var result = await transformer.TransformAsync("<x/>");
+            result.Should().Contain("<r");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    #endregion
+
+    #region Regression: namespace axis available in XPath/XSLT (XQuery raises XQST0134; XPath does not)
+
+    [Fact]
+    public async Task Namespace_axis_compiles_in_xslt()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <r><xsl:value-of select="count(/*/namespace::*)"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<root xmlns:a='http://a' xmlns:b='http://b'/>");
+        result.Should().Contain("<r");
+    }
+
+    #endregion
+
+    #region Regression: locally-declared xmlns on xsl:when visible to its test expression
+
+    // Bug: <xsl:when xmlns:ls="..." test="/ls:locale"> raised XPST0081 because the parser's
+    // namespace-context was anchored at the enclosing xsl:choose / xsl:template ancestor, not
+    // the xsl:when itself, so locally-declared prefixes weren't visible. Reported against
+    // DocBook xslTNG docbook.xsl line 152.
+
+    [Fact]
+    public async Task LocalXmlns_on_xsl_when_is_visible_to_its_test_expression()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <xsl:choose>
+                  <xsl:when xmlns:ls="http://example.com/ls" test="/ls:locale">
+                    <hit/>
+                  </xsl:when>
+                  <xsl:otherwise><miss/></xsl:otherwise>
+                </xsl:choose>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("<miss");
+    }
+
+    #endregion
+
+    #region Regression: XPST0051 includes source location
+
+    [Fact]
+    public async Task XPST0051_error_includes_line_and_column()
+    {
+        var transformer = new XsltTransformer();
+        var act = async () => await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <r><xsl:value-of select="'42' castable as integer"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var ex = await act.Should().ThrowAsync<XsltException>();
+        ex.Which.Location.Should().NotBeNull();
+        ex.Which.Location!.Line.Should().BeGreaterThan(0);
+    }
+
+    #endregion
 }
