@@ -10346,6 +10346,41 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             MarkContentProduced();
     }
 
+    /// <summary>
+    /// Runs the serialized result-document content through the registered
+    /// <see cref="PhoenixmlDb.XQuery.ISchemaProvider"/> when <c>validation="strict|lax"</c>
+    /// was set. Modes <c>strip</c> and <c>preserve</c> are no-ops (XSLT 3.0 §27.2): they only
+    /// affect type annotations on the XDM tree, which our string-output path doesn't carry.
+    /// </summary>
+    private void ValidateResultDocumentContent(XsltResultDocument instruction, string content)
+    {
+        var mode = instruction.Validation;
+        PhoenixmlDb.XQuery.ValidationMode? xqueryMode = mode switch
+        {
+            Ast.ValidationMode.Strict => PhoenixmlDb.XQuery.ValidationMode.Strict,
+            Ast.ValidationMode.Lax => PhoenixmlDb.XQuery.ValidationMode.Lax,
+            _ => null,
+        };
+        if (xqueryMode is null) return;
+        if (_schemaProvider is null)
+        {
+            throw new XsltException(
+                "XTTE1545: xsl:result-document validation requires a registered ISchemaProvider on the XsltTransformer",
+                instruction.Location);
+        }
+
+        try
+        {
+            _schemaProvider.ValidateXml(content, xqueryMode.Value);
+        }
+        catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
+        {
+            throw new XsltException(
+                $"{ex.ErrorCode}: xsl:result-document validation failed: {ex.Message}",
+                instruction.Location);
+        }
+    }
+
     public override async ValueTask ResultDocumentAsync(XsltResultDocument instruction)
     {
         // XTDE1480: Cannot use result-document in temporary output state (e.g., inside a variable)
@@ -10737,6 +10772,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 if (MaxResultDocuments > 0 && _secondaryResultDocuments.Count >= MaxResultDocuments)
                     throw new XsltException($"XTDE1490: Maximum number of secondary result documents ({MaxResultDocuments}) exceeded. " +
                         "Set MaxResultDocuments on XsltTransformer to increase the limit.");
+                ValidateResultDocumentContent(instruction, secondaryContent);
                 _secondaryResultDocuments[effectiveHref] = secondaryContent;
             }
             else if (redirectToPrimary)

@@ -1181,6 +1181,118 @@ public class XsltTransformerIntegrationTests
 
     #endregion
 
+    #region xsl:result-document validation= → ISchemaProvider.ValidateXml
+
+    [Fact]
+    public async Task ResultDocument_validation_strict_against_loaded_schema_passes_when_valid()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-validate-rd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var xsdPath = Path.Combine(dir, "ok.xsd");
+            await File.WriteAllTextAsync(xsdPath, """
+                <?xml version="1.0"?>
+                <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                           targetNamespace="http://example.com/ok"
+                           elementFormDefault="qualified">
+                  <xs:element name="ok" type="xs:string"/>
+                </xs:schema>
+                """);
+
+            var xslPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(xslPath, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:k="http://example.com/ok">
+                  <xsl:import-schema namespace="http://example.com/ok" schema-location="ok.xsd"/>
+                  <xsl:template match="/">
+                    <xsl:result-document href="out.xml" validation="strict">
+                      <k:ok>hello</k:ok>
+                    </xsl:result-document>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(
+                await File.ReadAllTextAsync(xslPath),
+                baseUri: new Uri(xslPath));
+
+            await transformer.TransformAsync("<x/>");
+            transformer.SecondaryResultDocuments.Should().ContainKey("out.xml");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ResultDocument_validation_strict_throws_when_content_violates_schema()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-validate-fail-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var xsdPath = Path.Combine(dir, "must-int.xsd");
+            await File.WriteAllTextAsync(xsdPath, """
+                <?xml version="1.0"?>
+                <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                           targetNamespace="http://example.com/i"
+                           elementFormDefault="qualified">
+                  <xs:element name="n" type="xs:integer"/>
+                </xs:schema>
+                """);
+
+            var xslPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(xslPath, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:i="http://example.com/i">
+                  <xsl:import-schema namespace="http://example.com/i" schema-location="must-int.xsd"/>
+                  <xsl:template match="/">
+                    <xsl:result-document href="out.xml" validation="strict">
+                      <i:n>not-a-number</i:n>
+                    </xsl:result-document>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(
+                await File.ReadAllTextAsync(xslPath),
+                baseUri: new Uri(xslPath));
+
+            var act = async () => await transformer.TransformAsync("<x/>");
+            var ex = await act.Should().ThrowAsync<XsltException>();
+            ex.Which.Message.Should().Contain("XQDY0027");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ResultDocument_validation_lax_passes_when_namespace_unknown()
+    {
+        // Lax mode: skip validation when no declaration is found (XSLT 3.0 §27.2).
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <xsl:result-document href="out.xml" validation="lax">
+                  <whatever>fine in lax mode</whatever>
+                </xsl:result-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """, baseUri: new Uri("file:///tmp/test/"));
+        await transformer.TransformAsync("<x/>");
+        transformer.SecondaryResultDocuments.Should().ContainSingle()
+            .Which.Value.Should().Contain("fine in lax mode");
+    }
+
+    #endregion
+
     #region Regression: XPST0051 includes source location
 
     [Fact]

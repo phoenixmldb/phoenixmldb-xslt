@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- **`xsl:result-document validation="strict|lax"` runs schema validation.** Schema-aware result documents are now actually validated against the registered `ISchemaProvider`. Strict mode raises XQDY0027 (wrapped in `XsltException`) when content doesn't match a global declaration; lax mode skips silently when no declaration is found, per XSLT 3.0 §27.2. `validation="preserve|strip"` remain no-ops (they only affect type annotations on the XDM tree). Required: a registered `ISchemaProvider` (default `XsdSchemaProvider` in-box) and at least one loaded schema for strict mode to be useful.
 - **`xsl:import-schema` wired to `ISchemaProvider`.** Schema imports captured during stylesheet parsing are now forwarded to the runtime provider's `ImportSchema` method when the stylesheet is loaded. `XsltTransformer.SchemaProvider` defaults to a fresh `XsdSchemaProvider`; callers can replace it with a custom `ISchemaProvider` implementation (RelaxNG, Schematron-derived, in-memory) before calling `LoadStylesheetAsync`. Schema-location URIs in `xsl:import-schema` resolve relative to the stylesheet base URI. Errors from the provider surface as `XsltException` with the underlying error code (e.g. XQST0059 when a schema can't be located). Imports are walked recursively across imported and included modules.
 
 ### Fixes
