@@ -1746,10 +1746,20 @@ public sealed class XsltTransformEngine
                 var needsNodeOrphan = global.As != null &&
                     global.As.ItemType is ItemType.Element or ItemType.Attribute or ItemType.Node &&
                     global.As.ElementName == null;
+                // Map / array / function / record items must come through the accumulator so
+                // xsl:map / xsl:array constructions land as the live Dictionary or List object,
+                // not as their JSON-serialized text form (the default top-level fallback path).
+                // Without this, `<xsl:variable as="map(*)"><xsl:map>…</xsl:map></xsl:variable>`
+                // ends up as a JSON string and downstream `map:contains($v, …)` calls fail with
+                // XPTY0004 "must be a single map".
+                var isContainerItem = global.As != null &&
+                    global.As.ItemType is ItemType.Map or ItemType.Array
+                                        or ItemType.Function or ItemType.Record;
                 var isSequenceType = global.As != null &&
                     (global.As.Occurrence == Occurrence.ZeroOrMore
                     || global.As.Occurrence == Occurrence.OneOrMore
-                    || needsNodeOrphan);
+                    || needsNodeOrphan
+                    || isContainerItem);
 
                 if (isSequenceType)
                 {

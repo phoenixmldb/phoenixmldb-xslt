@@ -1,5 +1,19 @@
 # Release History
 
+## 1.2.1 (2026-05-01)
+
+### Fixes
+
+- **`<xsl:variable as="map(*)">…<xsl:map>…</xsl:map></xsl:variable>` lost the map at the
+  variable boundary** — the global-init non-sequence-type branch captured serialized text
+  output, and `xsl:map`'s top-level fallback path (when no sequence accumulator is active)
+  writes the map as JSON via `WriteText`. The variable then held a JSON string, and any
+  downstream `map:contains($var, …)` failed at runtime with XPTY0004 "must be a single map".
+  Fix: route map / array / function / record item types through the sequence-accumulator
+  branch so `xsl:map` adds the live `Dictionary<object, object?>` and the variable holds
+  the map item directly. Reported by Martin Honnen running DocBook xslTNG 2.8.0
+  `docbook.xsl` against `samples/article.xml`.
+
 ## 1.2.0 (2026-04-30)
 
 ### Schema-aware XSLT, end-to-end

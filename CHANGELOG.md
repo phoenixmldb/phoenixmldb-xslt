@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixes
+- Fix `<xsl:variable as="map(*)">…<xsl:map>…</xsl:map></xsl:variable>` ending up as a JSON-serialized string instead of the map item. Downstream `map:contains($var, …)` then failed with XPTY0004. Routes map / array / function / record item types through the sequence-accumulator branch so the live `Dictionary` / `List` lands as the variable value. Reported by Martin Honnen against DocBook xslTNG 2.8.0.
+
 ### Features
 - **`as="schema-element(name)"` and `as="schema-attribute(name)"` are now parsed and runtime-matched** against the registered `ISchemaProvider`. Works on `xsl:variable`, `xsl:param`, function parameters, function return types, and template return types. Substitution-group members and elements with schema-derived type annotations match correctly. Local prefixed names (e.g. `i:item`) resolve via the in-scope namespace declarations on the surrounding XSLT element; EQName syntax (`Q{uri}item`) is also accepted.
 - **`xsl:result-document validation="strict|lax"` runs schema validation.** Schema-aware result documents are now actually validated against the registered `ISchemaProvider`. Strict mode raises XQDY0027 (wrapped in `XsltException`) when content doesn't match a global declaration; lax mode skips silently when no declaration is found, per XSLT 3.0 §27.2. `validation="preserve|strip"` remain no-ops (they only affect type annotations on the XDM tree). Required: a registered `ISchemaProvider` (default `XsdSchemaProvider` in-box) and at least one loaded schema for strict mode to be useful.

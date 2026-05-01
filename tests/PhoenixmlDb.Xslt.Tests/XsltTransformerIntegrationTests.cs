@@ -1485,6 +1485,52 @@ public class XsltTransformerIntegrationTests
 
     #endregion
 
+    #region Regression: xsl:variable as="map(*)" preserves the map item
+
+    // Bug: <xsl:variable name="m" as="map(*)"><xsl:map>…</xsl:map></xsl:variable> ended up
+    // as a JSON-serialized string because the global-init non-sequence-type branch captured
+    // _output text (which the xsl:map top-level-fallback path had written via WriteText). The
+    // resulting string failed downstream `map:contains($m, …)` calls with XPTY0004 "must be
+    // a single map". Fix: route map/array/function/record item types through the sequence
+    // accumulator so xsl:map's Dictionary lands as a live map. Reported by Martin Honnen
+    // running DocBook xslTNG 2.8.0 docbook.xsl against samples/article.xml.
+
+    [Fact]
+    public async Task GlobalVariable_as_map_preserves_map_item_for_map_contains()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:map="http://www.w3.org/2005/xpath-functions/map">
+              <xsl:variable name="m" as="map(*)">
+                <xsl:map>
+                  <xsl:map-entry key="'a'" select="1"/>
+                  <xsl:map-entry key="'b'" select="2"/>
+                </xsl:map>
+              </xsl:variable>
+              <xsl:template match="/">
+                <r>
+                  <a><xsl:value-of select="map:contains($m, 'a')"/></a>
+                  <z><xsl:value-of select="map:contains($m, 'z')"/></z>
+                </r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">true</a>");
+        result.Should().Contain(">false</z>");
+    }
+
+    // Note: a similar test for `as="array(*)"` is not included yet — `xsl:sequence` inside an
+    // array-typed xsl:variable currently flattens the array members into the sequence
+    // accumulator (`array:size` returns 0). That's a separate bug in xsl:sequence's interaction
+    // with the array container and isn't on the same call path as the map regression. Tracked
+    // separately; the fix here is scoped to map/array/function/record items NOT being JSON-
+    // serialized at the variable boundary.
+
+    #endregion
+
     #region Regression: XPST0051 includes source location
 
     [Fact]
