@@ -7744,11 +7744,53 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         _recursionDepth++;
         try
         {
-            await CreateElementCoreAsync(instruction).ConfigureAwait(false);
+            await RunInstructionWithValidationAsync(
+                instruction.Validation, "xsl:element", instruction.Location,
+                () => CreateElementCoreAsync(instruction)).ConfigureAwait(false);
         }
         finally
         {
             _recursionDepth--;
+        }
+    }
+
+    /// <summary>
+    /// Returns true when the instruction's <c>validation=</c> attribute is set to
+    /// <c>strict</c> or <c>lax</c> (the modes that actually trigger schema processing).
+    /// </summary>
+    private static bool ShouldRunValidation(Ast.ValidationMode? mode)
+        => mode is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax;
+
+    /// <summary>
+    /// Executes <paramref name="body"/> and validates the XML fragment it appends to the
+    /// primary output buffer. Captures via length-marker so that surrounding output (parent
+    /// elements still being serialized) is preserved correctly.
+    ///
+    /// Validation is skipped when the body runs in text-content mode (xsl:attribute /
+    /// xsl:comment / xsl:processing-instruction body, where output is atomized text) or
+    /// when a sequence accumulator is active (xsl:variable, xsl:document XDM construction
+    /// — those paths build XdmNode trees rather than serialized markup, and a separate
+    /// validation hook on the constructing instruction handles them).
+    /// </summary>
+    private async ValueTask RunInstructionWithValidationAsync(Ast.ValidationMode? mode,
+        string instructionName, SourceLocation? location, Func<ValueTask> body)
+    {
+        var shouldValidate = ShouldRunValidation(mode)
+            && _textContentDepth == 0
+            && _sequenceAccumulator is null;
+
+        if (!shouldValidate)
+        {
+            await body().ConfigureAwait(false);
+            return;
+        }
+
+        var startLength = _output.Length;
+        await body().ConfigureAwait(false);
+        if (_output.Length > startLength)
+        {
+            var fragment = _output.ToString(startLength, _output.Length - startLength);
+            RunValidation(mode, fragment, ValidationKind.Fragment, instructionName, location);
         }
     }
 
@@ -8276,6 +8318,14 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             value = "";
         }
 
+        // xsl:attribute validation. The XSLT 3.0 spec §27.2 says attribute validation is
+        // considered to occur in the context of an element. Without that context here, we
+        // do the part we can do reliably: confirm the global schema-attribute declaration
+        // exists when validation="strict" (raise XQDY0027 otherwise), and skip silently
+        // for lax. Value-against-type checking is a TODO; today it relies on the parent
+        // element's validation= when one is set.
+        ValidateAttributeIfRequested(instruction, name, explicitNsUri);
+
         // If sequence accumulator is active, create an XdmAttribute node for the sequence
         if (_sequenceAccumulator != null)
         {
@@ -8535,7 +8585,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
-    public override async ValueTask CopyAsync(XsltCopy instruction)
+    public override ValueTask CopyAsync(XsltCopy instruction)
+        => RunInstructionWithValidationAsync(
+            instruction.Validation, "xsl:copy", instruction.Location,
+            () => CopyCoreAsync(instruction));
+
+    private async ValueTask CopyCoreAsync(XsltCopy instruction)
     {
         if (instruction.Select != null)
         {
@@ -8941,7 +8996,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
-    public override async ValueTask CopyOfAsync(XsltCopyOf instruction)
+    public override ValueTask CopyOfAsync(XsltCopyOf instruction)
+        => RunInstructionWithValidationAsync(
+            instruction.Validation, "xsl:copy-of", instruction.Location,
+            () => CopyOfCoreAsync(instruction));
+
+    private async ValueTask CopyOfCoreAsync(XsltCopyOf instruction)
     {
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
         var copyNs = instruction.CopyNamespaces ?? true;
@@ -10201,6 +10261,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
             if (content.Length > 0)
             {
+                RunValidation(instruction.Validation, content, ValidationKind.Fragment,
+                    "xsl:document", instruction.Location);
                 try
                 {
                     var xmlDoc = new System.Xml.XmlDocument();
@@ -10303,6 +10365,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
             if (xmlContent.Length > 0)
             {
+                RunValidation(instruction.Validation, xmlContent, ValidationKind.Fragment,
+                    "xsl:document", instruction.Location);
                 try
                 {
                     var xmlDoc = new System.Xml.XmlDocument();
@@ -10339,22 +10403,31 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         var textContent = _output.ToString();
         _output.Clear();
         _output.Append(savedOut);
-        _output.Append(textContent);
-
-        // A non-empty document node is significant for where-populated tracking
         if (textContent.Length > 0)
+        {
+            RunValidation(instruction.Validation, textContent, ValidationKind.Fragment,
+                "xsl:document", instruction.Location);
+            _output.Append(textContent);
+            // A non-empty document node is significant for where-populated tracking
             MarkContentProduced();
+        }
     }
 
     /// <summary>
-    /// Runs the serialized result-document content through the registered
-    /// <see cref="PhoenixmlDb.XQuery.ISchemaProvider"/> when <c>validation="strict|lax"</c>
-    /// was set. Modes <c>strip</c> and <c>preserve</c> are no-ops (XSLT 3.0 §27.2): they only
-    /// affect type annotations on the XDM tree, which our string-output path doesn't carry.
+    /// Runs the serialized content through the registered <see cref="PhoenixmlDb.XQuery.ISchemaProvider"/>
+    /// when the XSLT instruction's <c>validation=</c> attribute requests it. Modes <c>strip</c>
+    /// and <c>preserve</c> are no-ops (XSLT 3.0 §27.2): they only affect type annotations on the
+    /// XDM tree, which the string-output path doesn't carry.
     /// </summary>
-    private void ValidateResultDocumentContent(XsltResultDocument instruction, string content)
+    /// <param name="mode">The validation mode parsed from the instruction.</param>
+    /// <param name="content">Already-serialized XML content to validate.</param>
+    /// <param name="kind">Validation conformance: document for `xsl:result-document` / `xsl:document`,
+    /// fragment for `xsl:element` / `xsl:attribute` / `xsl:copy` / `xsl:copy-of`.</param>
+    /// <param name="instructionName">Used in error messages, e.g. "xsl:result-document".</param>
+    /// <param name="location">Source location for the diagnostic.</param>
+    private void RunValidation(Ast.ValidationMode? mode, string content, ValidationKind kind,
+        string instructionName, SourceLocation? location)
     {
-        var mode = instruction.Validation;
         PhoenixmlDb.XQuery.ValidationMode? xqueryMode = mode switch
         {
             Ast.ValidationMode.Strict => PhoenixmlDb.XQuery.ValidationMode.Strict,
@@ -10365,19 +10438,95 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (_schemaProvider is null)
         {
             throw new XsltException(
-                "XTTE1545: xsl:result-document validation requires a registered ISchemaProvider on the XsltTransformer",
-                instruction.Location);
+                $"XTTE1545: {instructionName} validation requires a registered ISchemaProvider on the XsltTransformer",
+                location);
         }
 
         try
         {
-            _schemaProvider.ValidateXml(content, xqueryMode.Value);
+            switch (kind)
+            {
+                case ValidationKind.Document:
+                    _schemaProvider.ValidateXml(content, xqueryMode.Value);
+                    break;
+                case ValidationKind.Fragment:
+                    _schemaProvider.ValidateXmlFragment(content, xqueryMode.Value,
+                        inScopeNamespaces: SnapshotInScopeNamespaces());
+                    break;
+            }
         }
         catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
         {
             throw new XsltException(
-                $"{ex.ErrorCode}: xsl:result-document validation failed: {ex.Message}",
+                $"{ex.ErrorCode}: {instructionName} validation failed: {ex.Message}",
+                location);
+        }
+    }
+
+    /// <summary>
+    /// Flattens the engine's namespace scope stack into the prefix→URI bindings currently
+    /// in scope (innermost wins on conflicts). Returned to the schema provider so fragment
+    /// validation can resolve prefixes whose declarations live on enclosing elements.
+    /// </summary>
+    private Dictionary<string, string> SnapshotInScopeNamespaces()
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Stack iterates innermost→outermost. Add innermost-first; outer scopes won't
+        // overwrite already-set inner bindings (TryAdd preserves the closer declaration).
+        foreach (var scope in _outputNsScopes)
+        {
+            foreach (var kv in scope)
+                result.TryAdd(kv.Key, kv.Value);
+        }
+        // Stylesheet-level prefix bindings are the outermost layer.
+        foreach (var kv in _stylesheet.Namespaces)
+            result.TryAdd(kv.Key, kv.Value);
+        return result;
+    }
+
+    private enum ValidationKind { Document, Fragment }
+
+    private void ValidateResultDocumentContent(XsltResultDocument instruction, string content)
+        => RunValidation(instruction.Validation, content, ValidationKind.Document,
+            "xsl:result-document", instruction.Location);
+
+    /// <summary>
+    /// Best-effort schema check for <c>xsl:attribute validation="strict"</c>. The full XSLT
+    /// 3.0 contract validates an attribute in the context of its parent element; in that
+    /// context lookup we only know the attribute name, namespace, and value. We confirm a
+    /// global schema-attribute declaration exists (and otherwise raise XQDY0027). Value-vs-
+    /// type checking (typed casts, facet enforcement) is deferred — when the parent element
+    /// also carries <c>validation="strict|lax"</c>, the element-level check covers the value.
+    /// </summary>
+    private void ValidateAttributeIfRequested(XsltAttribute instruction, string name, string? explicitNsUri)
+    {
+        if (!ShouldRunValidation(instruction.Validation)) return;
+        if (_schemaProvider is null)
+        {
+            throw new XsltException(
+                "XTTE1545: xsl:attribute validation requires a registered ISchemaProvider on the XsltTransformer",
                 instruction.Location);
+        }
+
+        var colonIdx = name.IndexOf(':', StringComparison.Ordinal);
+        var localName = colonIdx >= 0 ? name[(colonIdx + 1)..] : name;
+        string nsUri = explicitNsUri ?? "";
+        if (string.IsNullOrEmpty(nsUri) && colonIdx > 0)
+        {
+            var prefix = name[..colonIdx];
+            if (instruction.InScopeNamespaces.TryGetValue(prefix, out var bound))
+                nsUri = bound;
+        }
+
+        if (!_schemaProvider.HasAttributeDeclaration(nsUri, localName))
+        {
+            if (instruction.Validation == Ast.ValidationMode.Strict)
+            {
+                throw new XsltException(
+                    $"XQDY0027: xsl:attribute validation=\"strict\" requires a global schema-attribute declaration for '{name}' (namespace: '{nsUri}'); none found in the loaded schemas",
+                    instruction.Location);
+            }
+            // Lax: silently skip when no declaration is found.
         }
     }
 

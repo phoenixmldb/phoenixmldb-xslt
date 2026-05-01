@@ -207,6 +207,12 @@ public sealed class XsltTransformer
         // Walk imported and included stylesheets too — import-schema can appear in any module.
         foreach (var import in EnumerateAllSchemaImports(stylesheet))
         {
+            // A bare <xsl:import-schema/> with no namespace and no location hints is a
+            // marker that puts the parser into schema-aware mode (suppresses XTSE1660 on
+            // validation= attributes) without actually loading anything. Don't forward it
+            // to the provider — that would fail with XQST0059 since there's nothing to load.
+            if (string.IsNullOrEmpty(import.TargetNamespace) && import.SchemaLocations.Count == 0)
+                continue;
             var resolved = ResolveLocations(import.SchemaLocations, baseUri);
             try
             {

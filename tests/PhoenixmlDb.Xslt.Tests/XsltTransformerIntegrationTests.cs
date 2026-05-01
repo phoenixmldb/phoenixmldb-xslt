@@ -1342,6 +1342,149 @@ public class XsltTransformerIntegrationTests
 
     #endregion
 
+    #region validation= on xsl:document, xsl:element, xsl:copy, xsl:copy-of, xsl:attribute
+
+    [Fact]
+    public async Task Element_validation_strict_throws_when_content_violates_schema()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-elem-validate-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var xsdPath = Path.Combine(dir, "n.xsd");
+            await File.WriteAllTextAsync(xsdPath, """
+                <?xml version="1.0"?>
+                <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                           targetNamespace="http://example.com/n"
+                           elementFormDefault="qualified">
+                  <xs:element name="n" type="xs:integer"/>
+                </xs:schema>
+                """);
+
+            var xslPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(xslPath, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:n="http://example.com/n">
+                  <xsl:import-schema namespace="http://example.com/n" schema-location="n.xsd"/>
+                  <xsl:template match="/">
+                    <root>
+                      <xsl:element name="n:n" namespace="http://example.com/n" validation="strict">
+                        <xsl:text>not-a-number</xsl:text>
+                      </xsl:element>
+                    </root>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(
+                await File.ReadAllTextAsync(xslPath),
+                baseUri: new Uri(xslPath));
+
+            var act = async () => await transformer.TransformAsync("<x/>");
+            var ex = await act.Should().ThrowAsync<XsltException>();
+            ex.Which.Message.Should().Contain("XQDY0027");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Document_validation_lax_skips_when_namespace_unknown()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <xsl:document validation="lax">
+                  <whatever>fine in lax</whatever>
+                </xsl:document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        // Lax mode against an empty schema set: validation runs but emits no errors.
+        // Should not throw.
+        var act = async () => await transformer.TransformAsync("<x/>");
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task Attribute_validation_strict_throws_when_no_global_declaration()
+    {
+        // xsl:import-schema is required to put the parser in schema-aware mode (otherwise
+        // XTSE1660 rejects validation="strict" before runtime). The empty import is enough
+        // to flip the flag; the actual attribute lookup happens at runtime against the
+        // registered XsdSchemaProvider, which has no schemas loaded → strict validation
+        // can't find the global decl → XQDY0027.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import-schema/>
+              <xsl:template match="/">
+                <root>
+                  <xsl:attribute name="undeclared" validation="strict">value</xsl:attribute>
+                </root>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var act = async () => await transformer.TransformAsync("<x/>");
+        var ex = await act.Should().ThrowAsync<XsltException>();
+        ex.Which.Message.Should().Contain("XQDY0027");
+        ex.Which.Message.Should().Contain("undeclared");
+    }
+
+    [Fact]
+    public async Task CopyOf_validation_strict_throws_when_copy_violates_schema()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-copyof-validate-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var xsdPath = Path.Combine(dir, "n.xsd");
+            await File.WriteAllTextAsync(xsdPath, """
+                <?xml version="1.0"?>
+                <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                           targetNamespace="http://example.com/n"
+                           elementFormDefault="qualified">
+                  <xs:element name="n" type="xs:integer"/>
+                </xs:schema>
+                """);
+
+            var xslPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(xslPath, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:n="http://example.com/n">
+                  <xsl:import-schema namespace="http://example.com/n" schema-location="n.xsd"/>
+                  <xsl:template match="/">
+                    <root>
+                      <xsl:variable name="bad">
+                        <n:n>not-a-number</n:n>
+                      </xsl:variable>
+                      <xsl:copy-of select="$bad" validation="strict"/>
+                    </root>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(
+                await File.ReadAllTextAsync(xslPath),
+                baseUri: new Uri(xslPath));
+
+            var act = async () => await transformer.TransformAsync("<x/>");
+            var ex = await act.Should().ThrowAsync<XsltException>();
+            ex.Which.Message.Should().Contain("XQDY0027");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    #endregion
+
     #region Regression: XPST0051 includes source location
 
     [Fact]
