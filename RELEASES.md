@@ -1,5 +1,48 @@
 # Release History
 
+## 1.2.0 (2026-04-30)
+
+### Schema-aware XSLT, end-to-end
+
+`XsltTransformer.SchemaProvider` is the public extension point — defaults to a fresh
+`XsdSchemaProvider`, swap with any `ISchemaProvider` implementation. The whole
+schema-aware feature surface now actually does work:
+
+- `xsl:import-schema` is captured during stylesheet parsing and forwarded to the
+  registered provider's `ImportSchema` when the stylesheet loads. Schema-location URIs
+  resolve relative to the stylesheet base URI.
+- `validation="strict|lax"` on `xsl:result-document`, `xsl:document`, `xsl:element`,
+  `xsl:copy`, `xsl:copy-of`, `xsl:attribute` runs schema validation against the loaded
+  set. Strict mode raises XQDY0027 (wrapped in `XsltException`); lax mode skips silently
+  when no declaration is found, per XSLT 3.0 §27.2.
+- `as="schema-element(name)"` and `as="schema-attribute(name)"` on `xsl:variable`,
+  `xsl:param`, function parameters/return types — parsed and matched at runtime via
+  `ISchemaProvider.MatchesSchemaElement` (substitution-group members, schema-derived
+  type annotations honored). Names accept bare local, prefixed (`po:order`), or
+  EQName (`Q{http://x}order`) syntax.
+- A bare `<xsl:import-schema/>` (no namespace, no location) is treated as a
+  schema-aware-mode marker only — it no longer fails with XQST0059.
+
+### Critical fixes from real-world stylesheets (Martin Honnen reports)
+
+DocBook xslTNG 2.7.1 `docbook.xsl` now compiles successfully:
+
+- Prefixed atomic types (`castable as xs:integer`, `instance of xs:Name`) wrongly raised
+  XPST0051. Paired XQuery fix in `XdmSequenceType.UnprefixedTypeName`/`LocalTypeName`.
+- XTSE3450 false positive when an importer declared a static `xsl:variable` whose local
+  name matched an imported static `xsl:param` *in a different namespace* (DocBook's
+  `v:debug` colliding with `param.xsl`'s `debug`). Static-variable tracking now keys on
+  full QName.
+- `namespace::` axis raised XQST0134 in XSLT/XPath. Now permitted (deprecated-but-optional
+  per XPath 3.1 §3.2); only XQuery prohibits.
+- Locally-declared `xmlns:*` on `xsl:when` not visible to its own `test=` expression.
+  Now scoped correctly.
+- XPST0051 errors carry source location (line/column).
+
+### Other
+
+- Pin `PhoenixmlDb.Core` to 1.0.28 and `PhoenixmlDb.XQuery` to 1.2.0.
+
 ## 1.1.0.22 (Unreleased)
 
 ### Fixes
