@@ -1531,6 +1531,51 @@ public class XsltTransformerIntegrationTests
 
     #endregion
 
+    #region Regression: external static params accept bare boolean / numeric values
+
+    // Schxslt2 declares `<xsl:param name="schxslt:debug" static="yes" select="false()"/>` and
+    // gates `<xsl:output indent="yes" use-when="$schxslt:debug"/>` on it. Martin asked how to
+    // override that from the CLI's `-p name=value` syntax. The CLI now passes -p values to
+    // both the static-param compile-time path and the runtime-param path; the static-param
+    // value parser additionally recognizes bare `true` / `false` / integers / doubles, on top
+    // of XPath-shaped literals (true(), false(), '...', "...", ()).
+
+    [Fact]
+    public async Task StaticParam_accepts_bare_true_via_LoadStylesheetAsync_staticParams()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:param name="debug" static="yes" select="false()"/>
+              <xsl:template match="/">
+                <r><xsl:value-of select="if ($debug) then 'on' else 'off'"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """, staticParams: new Dictionary<string, string> { ["debug"] = "true" });
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">on</r>");
+    }
+
+    [Fact]
+    public async Task StaticParam_default_select_is_used_when_no_external_value()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:param name="debug" static="yes" select="false()"/>
+              <xsl:template match="/">
+                <r><xsl:value-of select="if ($debug) then 'on' else 'off'"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">off</r>");
+    }
+
+    #endregion
+
     #region Regression: XPST0051 includes source location
 
     [Fact]

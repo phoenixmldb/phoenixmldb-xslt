@@ -4,6 +4,7 @@
 
 ### Fixes
 - Fix `<xsl:variable as="map(*)">…<xsl:map>…</xsl:map></xsl:variable>` ending up as a JSON-serialized string instead of the map item. Downstream `map:contains($var, …)` then failed with XPTY0004. Routes map / array / function / record item types through the sequence-accumulator branch so the live `Dictionary` / `List` lands as the variable value. Reported by Martin Honnen against DocBook xslTNG 2.8.0.
+- CLI `-p name=value` now feeds static parameters too (in addition to runtime parameters), so `xslt -p debug=true …` overrides `<xsl:param name="debug" static="yes" select="false()"/>` as expected. External static-param value parser additionally accepts bare `true` / `false` / integers / doubles, on top of the existing XPath-shaped literals (`true()`, `false()`, `'…'`, `"…"`, `()`). `LoadStylesheetAsync(staticParams: …)` cross-feeds the static values into the runtime parameter map so both compile-time and runtime see consistent values. Reported by Martin Honnen against Schxslt2's `schxslt:debug` static parameter.
 
 ### Features
 - **`as="schema-element(name)"` and `as="schema-attribute(name)"` are now parsed and runtime-matched** against the registered `ISchemaProvider`. Works on `xsl:variable`, `xsl:param`, function parameters, function return types, and template return types. Substitution-group members and elements with schema-derived type annotations match correctly. Local prefixed names (e.g. `i:item`) resolve via the in-scope namespace declarations on the surrounding XSLT element; EQName syntax (`Q{uri}item`) is also accepted.

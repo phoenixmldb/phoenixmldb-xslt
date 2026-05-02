@@ -291,12 +291,23 @@ public sealed class StylesheetParser
         {
             var qname = new QName(NamespaceId.None, name);
             var val = value.Trim();
+            // CLI-friendly value parsing. Order matters: literal-quoted strings first so a
+            // value like "'true'" stays a string. Then XPath-shaped literals (true()/false()/()),
+            // then bare booleans (the typical command-line spelling), then numerics. Anything
+            // else falls through as an xs:untypedAtomic-like raw string — the static-param
+            // consumer (use-when, shadow attrs) coerces via boolean()/number() at use time.
             if ((val.StartsWith('\'') && val.EndsWith('\'')) || (val.StartsWith('"') && val.EndsWith('"')))
                 _staticVariables[qname] = val[1..^1];
             else if (val is "true()" or "false()")
                 _staticVariables[qname] = val == "true()" ? (object)true : false;
             else if (val == "()")
                 _staticVariables[qname] = null;
+            else if (val.Equals("true", StringComparison.Ordinal) || val.Equals("false", StringComparison.Ordinal))
+                _staticVariables[qname] = val == "true";
+            else if (long.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var l))
+                _staticVariables[qname] = l;
+            else if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+                _staticVariables[qname] = d;
             else
                 _staticVariables[qname] = val;
             _externalStaticParamNames.Add(name);

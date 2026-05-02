@@ -193,7 +193,45 @@ public sealed class XsltTransformer
             : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy };
         _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
         ResolveSchemaImports(_stylesheet, baseUri);
+        // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
+        // parameter is resolved at compile time for use-when / shadow attributes, but the
+        // same `$debug` variable is also visible at runtime — and consumers expect both
+        // sides to see the same overridden value. Without this, `LoadStylesheetAsync(staticParams: { debug: "true" })`
+        // would still evaluate `<xsl:param select="false()"/>` at runtime and surface false
+        // for `<xsl:if test="$debug">`. Skip names that the caller has already explicitly set
+        // via SetParameter, so user-provided typed values take precedence over the string
+        // form supplied here.
+        if (staticParams is not null)
+        {
+            foreach (var (name, value) in staticParams)
+            {
+                if (!_typedParameters.ContainsKey(name))
+                    _typedParameters[name] = ParseExternalParamValue(value);
+            }
+        }
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Same value-parsing heuristics as <c>StylesheetParser.PopulateExternalStaticParams</c>:
+    /// recognise XPath-shaped literals, bare booleans, and numeric strings, falling through
+    /// to <c>xs:untypedAtomic</c> for free-form strings. Keeps the runtime-side variable in
+    /// sync with what the static-param resolver decided about the same value.
+    /// </summary>
+    private static object? ParseExternalParamValue(string value)
+    {
+        var v = value.Trim();
+        if ((v.StartsWith('\'') && v.EndsWith('\'')) || (v.StartsWith('"') && v.EndsWith('"')))
+            return v[1..^1];
+        if (v is "true()" or "false()") return v == "true()";
+        if (v == "()") return null;
+        if (v.Equals("true", StringComparison.Ordinal) || v.Equals("false", StringComparison.Ordinal))
+            return v == "true";
+        if (long.TryParse(v, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var l))
+            return l;
+        if (double.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+            return d;
+        return new Xdm.XsUntypedAtomic(value);
     }
 
     /// <summary>

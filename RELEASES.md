@@ -1,5 +1,19 @@
 # Release History
 
+## 1.2.2 (2026-05-02)
+
+### Fixes / UX
+
+- **CLI `-p name=value` now feeds static parameters too.** Previously `xslt -p debug=true …`
+  only set runtime parameters; `<xsl:param name="debug" static="yes" select="false()"/>` kept
+  its default because the static-param compile-time path never saw the override. The CLI now
+  passes `-p` values to both `LoadStylesheetAsync(staticParams: …)` and `SetParameter`,
+  covering both kinds without the user having to know which is which.
+- **External static-param value parser accepts bare `true` / `false` / integers / doubles**,
+  not only XPath-shaped literals like `true()` / `false()`. So `xslt -p debug=true` Just
+  Works for `<xsl:param … as="xs:boolean">`. Reported by Martin Honnen against Schxslt2's
+  `schxslt:debug` static parameter.
+
 ## 1.2.1 (2026-05-01)
 
 ### Fixes

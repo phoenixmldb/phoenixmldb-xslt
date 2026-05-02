@@ -35,7 +35,17 @@ try
 
     var compileSw = Stopwatch.StartNew();
     var transformer = new XsltTransformer();
-    await transformer.LoadStylesheetAsync(stylesheetXml, stylesheetUri).ConfigureAwait(true);
+    // Feed -p values into the static-param path too. Compile-time static parameters (used by
+    // xsl:use-when / xsl:value-of in shadow attributes) are resolved during stylesheet
+    // parsing; values supplied here override the param's default `select=` expression.
+    Dictionary<string, string>? staticParams = null;
+    if (options.Parameters.Count > 0)
+    {
+        staticParams = new Dictionary<string, string>();
+        foreach (var (name, value) in options.Parameters)
+            staticParams[name] = value;
+    }
+    await transformer.LoadStylesheetAsync(stylesheetXml, stylesheetUri, staticParams).ConfigureAwait(true);
     compileSw.Stop();
 
     if (options.Timing)
@@ -79,7 +89,11 @@ try
         };
     }
 
-    // Set parameters
+    // Set parameters. The same -p value is fed to both the static-param and runtime-param
+    // paths because the CLI doesn't (and shouldn't have to) know whether the user-named
+    // parameter is declared `static="yes"`. Static-param values are consumed at compile time
+    // by use-when / shadow-attribute evaluation; non-static values go to the global-init
+    // path where they're cast through function-conversion against the `as` type.
     foreach (var (name, value) in options.Parameters)
     {
         transformer.SetParameter(name, value);
