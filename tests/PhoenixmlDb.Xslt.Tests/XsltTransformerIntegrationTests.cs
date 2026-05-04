@@ -1576,6 +1576,73 @@ public class XsltTransformerIntegrationTests
 
     #endregion
 
+    #region Regression: mode="#current" preserved across xsl:for-each
+
+    // Bug: xsl:for-each (and xsl:for-each-group) cleared the engine's _currentMode field
+    // alongside _currentTemplate. Per XSLT 3.0 §13.4.1 the current template *rule* is absent
+    // inside xsl:for-each but the current *mode* is unchanged. The bug meant a nested
+    // <xsl:apply-templates mode="#current"> resolved to the unnamed mode and silently failed
+    // to match templates declared `mode="m1"`. Reported by Martin Honnen against Schxslt2 —
+    // the transpile pass relies on map:keys / for-each / apply-templates mode="#current"
+    // to dispatch sch:rule templates, which never fired.
+
+    [Fact]
+    public async Task ApplyTemplates_mode_current_preserved_across_xsl_for_each()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            default-mode="m1">
+              <xsl:mode name="m1" on-no-match="shallow-skip"/>
+              <xsl:template match="root" mode="m1">
+                <r>
+                  <xsl:for-each select="group">
+                    <xsl:apply-templates select="item" mode="#current"/>
+                  </xsl:for-each>
+                </r>
+              </xsl:template>
+              <xsl:template match="item" mode="m1">
+                <hit><xsl:value-of select="@id"/></hit>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync(
+            "<root><group><item id='1'/><item id='2'/></group></root>");
+        // Without the fix, the inner mode would resolve to the unnamed mode and the m1
+        // template wouldn't match — output would be `<r/>`. With the fix, both items match.
+        result.Should().Contain("<hit>1</hit>");
+        result.Should().Contain("<hit>2</hit>");
+    }
+
+    [Fact]
+    public async Task ApplyTemplates_mode_current_preserved_across_xsl_for_each_group()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            default-mode="m1">
+              <xsl:mode name="m1" on-no-match="shallow-skip"/>
+              <xsl:template match="root" mode="m1">
+                <r>
+                  <xsl:for-each-group select="item" group-by="@cat">
+                    <xsl:apply-templates select="current-group()" mode="#current"/>
+                  </xsl:for-each-group>
+                </r>
+              </xsl:template>
+              <xsl:template match="item" mode="m1">
+                <hit cat="{@cat}" id="{@id}"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync(
+            "<root><item id='1' cat='a'/><item id='2' cat='b'/><item id='3' cat='a'/></root>");
+        result.Should().Contain("id=\"1\"");
+        result.Should().Contain("id=\"2\"");
+        result.Should().Contain("id=\"3\"");
+    }
+
+    #endregion
+
     #region Regression: XPST0051 includes source location
 
     [Fact]

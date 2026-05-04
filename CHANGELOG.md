@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixes
+- Fix `mode="#current"` not propagating across `xsl:for-each` and `xsl:for-each-group`. The engine was nulling the current-mode tracking field alongside the current-template-rule field on entry to these instructions; per XSLT 3.0 §13.4.1 only the current template rule becomes absent, the current mode is unchanged. Schxslt2's transpile pass relies on this for dispatching `sch:rule` templates from inside a for-each over `map:keys($patterns)`. Reported by Martin Honnen.
 - Fix `<xsl:variable as="map(*)">…<xsl:map>…</xsl:map></xsl:variable>` ending up as a JSON-serialized string instead of the map item. Downstream `map:contains($var, …)` then failed with XPTY0004. Routes map / array / function / record item types through the sequence-accumulator branch so the live `Dictionary` / `List` lands as the variable value. Reported by Martin Honnen against DocBook xslTNG 2.8.0.
 - CLI `-p name=value` now feeds static parameters too (in addition to runtime parameters), so `xslt -p debug=true …` overrides `<xsl:param name="debug" static="yes" select="false()"/>` as expected. External static-param value parser additionally accepts bare `true` / `false` / integers / doubles, on top of the existing XPath-shaped literals (`true()`, `false()`, `'…'`, `"…"`, `()`). `LoadStylesheetAsync(staticParams: …)` cross-feeds the static values into the runtime parameter map so both compile-time and runtime see consistent values. Reported by Martin Honnen against Schxslt2's `schxslt:debug` static parameter.
 

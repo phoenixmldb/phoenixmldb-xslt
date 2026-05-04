@@ -1,5 +1,19 @@
 # Release History
 
+## 1.2.3 (2026-05-03)
+
+### Fixes
+
+- **`mode="#current"` now preserved across `xsl:for-each` and `xsl:for-each-group`.** The
+  engine was clearing the current-mode tracking field alongside the current-template-rule
+  field on entry to these instructions. Per XSLT 3.0 §13.4.1, only the current template
+  rule becomes absent inside `xsl:for-each`/`xsl:for-each-group`; the current mode is
+  unchanged. The bug meant a nested `<xsl:apply-templates mode="#current">` resolved to the
+  unnamed mode and silently failed to match templates declared with `mode="m1"`. Schxslt2's
+  transpile pass relies on this for dispatching `sch:rule` templates from inside a
+  `for-each` over `map:keys($patterns)` — those templates never fired before. Reported by
+  Martin Honnen.
+
 ## 1.2.2 (2026-05-02)
 
 ### Fixes / UX

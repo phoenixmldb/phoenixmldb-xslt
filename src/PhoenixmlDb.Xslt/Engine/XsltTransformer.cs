@@ -6548,9 +6548,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     // Use a single shared scope for the entire range loop to avoid N dictionary allocations.
                     PushScope();
                     var savedTemplate = _currentTemplate;
-                    var savedMode = _currentMode;
                     _currentTemplate = null;
-                    _currentMode = null;
+                    // Per XSLT 3.0 §13.4.1, xsl:for-each does NOT change the current mode.
+                    // Only the current template rule is absent inside xsl:for-each (XTDE0560).
+                    // `mode="#current"` on a nested xsl:apply-templates must still see the
+                    // enclosing template's mode.
                     try
                     {
                         for (var i = s; i <= e; i++)
@@ -6573,7 +6575,6 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     finally
                     {
                         _currentTemplate = savedTemplate;
-                        _currentMode = savedMode;
                         PopScope();
                     }
                 }
@@ -6609,11 +6610,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             PushCurrentItem(effectiveItem); // For XSLT current() function
             PushScope();
 
-            // XTDE0560: current template rule is absent inside xsl:for-each
+            // XTDE0560: the current template rule is absent inside xsl:for-each — but
+            // per XSLT 3.0 §13.4.1, the *current mode* is unchanged. Don't null it: a
+            // nested xsl:apply-templates with mode="#current" must still see the
+            // enclosing template's mode.
             var savedTemplate = _currentTemplate;
-            var savedMode = _currentMode;
             _currentTemplate = null;
-            _currentMode = null;
 
             try
             {
@@ -6622,7 +6624,6 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             finally
             {
                 _currentTemplate = savedTemplate;
-                _currentMode = savedMode;
                 PopScope();
                 PopCurrentItem();
                 PopContextItem();
@@ -6938,11 +6939,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 SetVariable(new QName(NamespaceId.None, "current-grouping-key"),
                     instruction.GroupBy != null || instruction.GroupAdjacent != null ? key : null);
 
-                // XTDE0560: current template rule is absent inside xsl:for-each-group
+                // XTDE0560: the current template rule is absent inside xsl:for-each-group —
+                // but the current mode is unchanged (XSLT 3.0 §15). Don't null it: a nested
+                // xsl:apply-templates with mode="#current" must still see the enclosing
+                // template's mode.
                 var savedTemplate = _currentTemplate;
-                var savedMode = _currentMode;
                 _currentTemplate = null;
-                _currentMode = null;
 
                 try
                 {
@@ -6951,7 +6953,6 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 finally
                 {
                     _currentTemplate = savedTemplate;
-                    _currentMode = savedMode;
                     PopScope();
                     PopCurrentItem();
                     PopContextItem();
