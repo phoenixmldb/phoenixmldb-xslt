@@ -1643,6 +1643,47 @@ public class XsltTransformerIntegrationTests
 
     #endregion
 
+    #region Regression: fn:serialize(method=adaptive) on a map of nodes
+
+    // Bug: `$patterns => serialize(map { 'method': 'adaptive' })` from inside an XSLT stylesheet
+    // produced JSON output (`{"k":"text"}`) instead of adaptive (`map{"k":<elem/>}`). Two
+    // causes: (1) Serialize2Function only routed through XQueryResultSerializer when
+    // NodeProvider was XdmDocumentStore — XSLT uses its own InMemoryNodeStore; (2) the
+    // fallback SerializeItem path always used SerializeMapAsJson regardless of the requested
+    // method. Reported by Martin Honnen against the Schxslt2 transpile workflow.
+
+    [Fact]
+    public async Task fn_serialize_adaptive_method_emits_map_with_node_values()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                            xmlns:map="http://www.w3.org/2005/xpath-functions/map">
+              <xsl:template match="/">
+                <xsl:variable name="m" as="map(xs:string, element()+)">
+                  <xsl:map>
+                    <xsl:map-entry key="'all'" select="//item"/>
+                  </xsl:map>
+                </xsl:variable>
+                <r><xsl:value-of select="$m => serialize(map { 'method': 'adaptive' })"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync(
+            "<root><item id='1'>a</item><item id='2'>b</item></root>");
+
+        // Adaptive form: `map{` opener (not `{`), node values serialized as XML markup
+        // (escaped here because it's inside an XSLT `xsl:value-of`).
+        result.Should().Contain("map{");
+        result.Should().Contain("&lt;item");
+        result.Should().Contain("id=\"1\"");
+        result.Should().Contain("id=\"2\"");
+    }
+
+    #endregion
+
     #region Regression: XPST0051 includes source location
 
     [Fact]

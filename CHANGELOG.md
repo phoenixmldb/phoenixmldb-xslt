@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.4 (2026-04-29)
+
+### Fixes
+- Pulls in PhoenixmlDb.XQuery 1.2.1, which fixes `fn:serialize($input)` (1-arg) and `fn:serialize($input, map { 'method': 'adaptive' })` producing JSON instead of adaptive output. Per XPath/XQuery 3.1 §17.1.3, the default serialization method is `adaptive`. Maps now serialize as `map{key:value,…}`, arrays as `[…]`, sequences as `(…)`, atomic types in their constructor form (e.g. `xs:date("2025-01-01")`), and nodes as XML. Reported by Martin Honnen.
+
 ## Unreleased
 
 ### Fixes
