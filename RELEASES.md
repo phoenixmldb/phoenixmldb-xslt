@@ -1,5 +1,30 @@
 # Release History
 
+## 1.2.6 (2026-05-05)
+
+### Schxslt2 transpile.xsl runs cleanly
+
+Two fixes for `as="node()*"` template/function bodies that compose attributes and
+non-attribute children, and one CLI ergonomics fix:
+
+- **Source-order reassembly.** When the body emitted an `xsl:attribute` (routed to
+  `_sequenceAccumulator`) before an LRE (written to `_output`), the parent element
+  constructor saw the attribute land *after* the LRE and raised `XTDE0410`. The engine
+  now records the `_output` offset for each accumulator item and weaves them back in
+  document order at result assembly. This is exactly the failure mode in Schxslt2
+  1.10.3's `schxslt:failed-assertion-content` template.
+- **`xsl:where-populated` filters empty attributes inside `as=` bodies.** The
+  zero-length-value filter previously only saw attrs that routed via `_collectedAttributes`;
+  attrs that landed in `_sequenceAccumulator` (the `as=` body path) leaked through.
+  Schxslt2's `failed-assertion-attributes` no longer emits `ruleId=""` / `patternId=""`
+  for rules without an `@id`.
+- **CLI catches `XQueryRuntimeException` / `XQueryException`** and prints a clean
+  `XQuery error: <code>: <message>` instead of a .NET stack trace. Stack traces still
+  print under `--verbose`. Useful when an XPath/XQuery runtime error escapes an XSLT
+  instruction without a surrounding `XsltException` wrapper.
+
+Reported by Martin Honnen.
+
 ## 1.2.5 (2026-05-05)
 
 ### Diagnostics: source location and module URI on every error

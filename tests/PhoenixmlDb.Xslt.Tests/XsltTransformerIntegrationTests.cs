@@ -1682,6 +1682,65 @@ public class XsltTransformerIntegrationTests
         result.Should().Contain("id=\"2\"");
     }
 
+    // Regression: a template typed `as="node()*"` whose body produces an `xsl:attribute`
+    // before an LRE must reassemble its result in source order. Previously the engine
+    // collected accumulator items (xsl:attribute → XdmAttribute) after serialized output
+    // (LREs in _output) regardless of source order, which made the parent constructor see
+    // attribute-after-children → spurious XTDE0410. Reported by Martin Honnen against
+    // Schxslt2 1.10.3 transpile.xsl which composes svrl:failed-assert from an `as="node()*"`
+    // helper that returns attrs followed by an svrl:text element.
+    [Fact]
+    public async Task as_node_template_returns_items_in_source_order()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template name="emit-content" as="node()*">
+                <xsl:attribute name="ruleId" select="'r1'"/>
+                <text-elem>some text</text-elem>
+              </xsl:template>
+              <xsl:template match="/">
+                <root>
+                  <xsl:call-template name="emit-content"/>
+                </root>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("ruleId=\"r1\"");
+        result.Should().Contain("<text-elem>some text</text-elem>");
+    }
+
+    // Regression: xsl:where-populated must filter zero-length-valued xsl:attribute even when
+    // those attributes route via _sequenceAccumulator (i.e. inside an `as=` body). Without
+    // this, Schxslt2's `failed-assertion-attributes` template emitted spurious empty
+    // attributes like `ruleId=""` whenever the source rule had no @id.
+    [Fact]
+    public async Task where_populated_filters_empty_attribute_in_as_body()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template name="emit-content" as="node()*">
+                <xsl:attribute name="keep" select="'yes'"/>
+                <xsl:where-populated>
+                  <xsl:attribute name="drop" select="''"/>
+                </xsl:where-populated>
+              </xsl:template>
+              <xsl:template match="/">
+                <root>
+                  <xsl:call-template name="emit-content"/>
+                </root>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("keep=\"yes\"");
+        result.Should().NotContain("drop=");
+    }
+
     // Regression: XTDE0410 (attribute after children) must carry the source location of
     // the offending xsl:attribute / xsl:copy. Reported by Martin Honnen — Schxslt2 produces
     // this error and the bare message gave no clue which template/instruction was at fault.

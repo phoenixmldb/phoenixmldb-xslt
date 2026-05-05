@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.6 (2026-05-05)
+
+### Fixes
+- **`as="node()*"` template/function bodies now reassemble result items in source order.** When a body produces both `xsl:attribute` (which routes to `_sequenceAccumulator`) and an LRE (which writes to `_output`), the engine previously placed all accumulator items *after* serialized output regardless of source order. The parent element constructor then saw an attribute after non-attribute children and raised a spurious `XTDE0410`. Now records the `_output` offset at the moment each accumulator item is added and weaves them back into result items in document order. Reported by Martin Honnen against Schxslt2 1.10.3 transpile.xsl (`schxslt:failed-assertion-content` composes `svrl:failed-assert` from an `as="node()*"` helper that returns attrs followed by `svrl:text`).
+- **`xsl:where-populated` now filters zero-length-valued `xsl:attribute` even inside an `as=` body.** Previously `where-populated`'s zero-length attribute filter only saw attrs routed via `_collectedAttributes`; attrs that landed in `_sequenceAccumulator` (the `as=` body path) leaked through unfiltered. Now snapshots accumulator length on entry, filters insignificant attrs from the slice on exit. Schxslt2's `failed-assertion-attributes` no longer emits stray `ruleId=""` / `patternId=""` on rules without an `@id`.
+- CLI now catches `PhoenixmlDb.XQuery.XQueryRuntimeException` and `PhoenixmlDb.XQuery.Functions.XQueryException` and formats them as `XQuery error: <code>: <message>` instead of dumping a .NET stack trace. Stack traces still print under `--verbose`. Reported by Martin Honnen against DocBook xslTNG `docbook.xsl` (XPDY0050-class error escaping the engine without an XSLT-instruction wrapper).
+
 ## 1.2.5 (2026-05-05)
 
 ### Diagnostics

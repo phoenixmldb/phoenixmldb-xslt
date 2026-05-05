@@ -3682,6 +3682,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private int _documentNodeDepth; // >0 when inside xsl:document (cannot add attributes/namespaces)
     private SourceLocation? _currentInstructionLocation; // Most-recent attribute-emitting instruction location, for XTDE0410/0420 messages
 
+    // When a template/function body is being captured for `as=` type-checking, we have two
+    // parallel output channels: `_output` (LREs, text) and `_sequenceAccumulator`
+    // (xsl:attribute, xsl:sequence, xsl:document). To recover document order at result
+    // assembly, we record the `_output.Length` at the moment each accumulator item is
+    // added — `_asBodyAccumulatorPositions` runs in parallel with `_sequenceAccumulator`,
+    // both reset at body entry. `_asBodyOutputBaseLen` is the `_output` length when the
+    // body began, so positions are stored as offsets relative to body start.
+    private List<int>? _asBodyAccumulatorPositions;
+    private int _asBodyOutputBaseLen;
+
     private int _textOutputModeDepth; // >0 when inside method="text" result-document; text from xsl:sequence/value-of gets sentinel-escaped to protect from StripXmlMarkup
     private int _insideXslEvaluateDepth; // >0 when inside xsl:evaluate; XSLT-specific functions raise XTDE3160
     private int _templateDepth; // Nesting depth for trace output
@@ -4081,6 +4091,90 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Reassembles the result items of an `as=`-typed template/function body in document order.
+    /// </summary>
+    /// <remarks>
+    /// During body execution, two output channels run in parallel: <c>_output</c> captures
+    /// LRE/text serialization, while <c>_sequenceAccumulator</c> captures distinct XDM items
+    /// (xsl:attribute → XdmAttribute, xsl:sequence → arbitrary items, xsl:document → XdmDocument).
+    /// <paramref name="accumulatorPositions"/> records, for each accumulator entry, the
+    /// <c>_output</c> offset (relative to body start) at the moment the entry was added.
+    /// We walk those offsets in order, parsing the <paramref name="bodyOutput"/> chunk preceding
+    /// each one, then emitting the corresponding accumulator item at its recorded position.
+    /// This restores creation order so a subsequent element constructor sees attributes
+    /// before non-attribute children, avoiding spurious XTDE0410. Reported by Martin Honnen
+    /// against Schxslt2 1.10.3 transpile.xsl.
+    /// </remarks>
+    private List<object?> AssembleAsBodyResultItems(string bodyOutput, List<object?> accumulatorItems, List<int> accumulatorPositions)
+    {
+        var result = new List<object?>();
+        var cursor = 0;
+
+        for (var i = 0; i < accumulatorItems.Count; i++)
+        {
+            var item = accumulatorItems[i];
+            if (item == null)
+                continue;
+            var position = i < accumulatorPositions.Count ? accumulatorPositions[i] : bodyOutput.Length;
+            if (position > bodyOutput.Length)
+                position = bodyOutput.Length;
+            if (position > cursor)
+            {
+                AddBodyOutputChunk(bodyOutput.Substring(cursor, position - cursor), result);
+                cursor = position;
+            }
+            result.Add(item);
+        }
+
+        if (cursor < bodyOutput.Length)
+            AddBodyOutputChunk(bodyOutput[cursor..], result);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Parses a chunk of serialized body output into top-level XDM nodes (or a raw string
+    /// when parsing fails) and appends them to <paramref name="result"/>.
+    /// </summary>
+    private void AddBodyOutputChunk(string chunk, List<object?> result)
+    {
+        if (string.IsNullOrEmpty(chunk))
+            return;
+
+        if (_nodeStore != null && chunk.Contains('<', StringComparison.Ordinal))
+        {
+            try
+            {
+                var xmlDoc = new System.Xml.XmlDocument();
+                xmlDoc.PreserveWhitespace = true;
+                var nsDecls = BuildInScopeNamespaceDeclarations();
+                xmlDoc.LoadXml($"<_tmpl_wrap_{nsDecls}>{chunk}</_tmpl_wrap_>");
+                var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
+                if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                {
+                    var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
+                    if (wrapper != null)
+                    {
+                        foreach (var child in _nodeStore.GetChildren(wrapper))
+                        {
+                            if (child is XdmNode cn)
+                                cn.Parent = null;
+                            result.Add(child);
+                        }
+                        return;
+                    }
+                }
+            }
+            catch (System.Xml.XmlException)
+            {
+                // Fall through to add as raw string
+            }
+        }
+
+        result.Add(chunk);
     }
 
     /// <summary>
@@ -6203,56 +6297,25 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 if (template.As != null)
                 {
                     var savedAccum = _sequenceAccumulator;
+                    var savedAccumPositions = _asBodyAccumulatorPositions;
+                    var savedAccumBase = _asBodyOutputBaseLen;
                     _sequenceAccumulator = new List<object?>();
+                    _asBodyAccumulatorPositions = new List<int>();
                     var savedLen = _output.Length;
+                    _asBodyOutputBaseLen = savedLen;
                     await template.Body.ExecuteAsync(this).ConfigureAwait(false);
                     var bodyOutput = _output.ToString(savedLen, _output.Length - savedLen);
                     _output.Length = savedLen;
+                    var bodyAccumPositions = _asBodyAccumulatorPositions;
+                    _asBodyAccumulatorPositions = savedAccumPositions;
+                    _asBodyOutputBaseLen = savedAccumBase;
 
-                    // Collect items: serialized output first, then accumulator items.
-                    // Serialized output comes from LRE elements which appear in creation order.
-                    // Accumulator items come from xsl:sequence/xsl:document.
-                    // For correct creation order: serialized items first (they're written inline),
-                    // then accumulator items (which capture distinct XDM nodes).
-                    var resultItems = new List<object?>();
-
-                    if (!string.IsNullOrEmpty(bodyOutput) && _nodeStore != null && bodyOutput.Contains('<', StringComparison.Ordinal))
-                    {
-                        try
-                        {
-                            var xmlDoc = new System.Xml.XmlDocument();
-                            xmlDoc.PreserveWhitespace = true;
-                            // Include in-scope namespace declarations on the wrapper so prefixed
-                            // elements (e.g. <svrl:active-pattern/>) can be parsed correctly
-                            var nsDecls = BuildInScopeNamespaceDeclarations();
-                            xmlDoc.LoadXml($"<_tmpl_wrap_{nsDecls}>{bodyOutput}</_tmpl_wrap_>");
-                            var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
-                            if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
-                            {
-                                var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                                if (wrapper != null)
-                                    foreach (var child in _nodeStore.GetChildren(wrapper))
-                                    {
-                                        // Detach children from synthetic wrapper so they're truly parentless
-                                        if (child is XdmNode cn)
-                                            cn.Parent = null;
-                                        resultItems.Add(child);
-                                    }
-                            }
-                        }
-                        catch (System.Xml.XmlException)
-                        {
-                            resultItems.Add(bodyOutput);
-                        }
-                    }
-                    else if (!string.IsNullOrEmpty(bodyOutput))
-                    {
-                        resultItems.Add(bodyOutput);
-                    }
-
-                    foreach (var item in _sequenceAccumulator)
-                        if (item != null)
-                            resultItems.Add(item);
+                    // Reassemble in document order: parse `bodyOutput` into top-level XDM nodes,
+                    // then weave accumulator items in at the offsets recorded when each was added.
+                    // Without this, an `xsl:attribute` emitted before an LRE in source order would
+                    // land *after* the LRE in resultItems and trigger XTDE0410 at the parent
+                    // element constructor (Schxslt2's failed-assertion-attributes).
+                    var resultItems = AssembleAsBodyResultItems(bodyOutput, _sequenceAccumulator, bodyAccumPositions);
                     // Track whether results are only from body serialization
                     // (no sequence accumulator items). When true, emit bodyOutput
                     // directly to preserve exact namespace declarations (e.g. xmlns=""
@@ -6273,8 +6336,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         if (_sequenceAccumulator != null)
                         {
+                            // When the outer scope is itself an `as=` body capture, every
+                            // item we forward must record its own position offset so the
+                            // outer reassembly can interleave correctly. Without this,
+                            // a nested `as=` template's result attrs land at the end of
+                            // the outer accumulator and end up after non-attribute siblings
+                            // — exactly the Schxslt2 transpile.xsl XTDE0410 case.
+                            var outerOffset = _output.Length - _asBodyOutputBaseLen;
                             foreach (var item in resultItems)
+                            {
+                                _asBodyAccumulatorPositions?.Add(outerOffset);
                                 _sequenceAccumulator.Add(item);
+                            }
                         }
                         else if (canEmitBodyDirectly2)
                         {
@@ -8369,6 +8442,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 Id = NodeId.None,
                 Parent = NodeId.None
             };
+            // When inside an `as=` body capture, record the current _output offset so the
+            // result-assembly step can reweave accumulator items into the correct document
+            // position relative to LREs that wrote to _output.
+            _asBodyAccumulatorPositions?.Add(_output.Length - _asBodyOutputBaseLen);
             _sequenceAccumulator.Add(attr);
             return;
         }
@@ -15558,6 +15635,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (_attributeCollecting)
             _collectedAttributes!.Clear();
 
+        // When the surrounding scope is an `as=` template/function body, xsl:attribute goes
+        // to `_sequenceAccumulator` rather than `_collectedAttributes`. Snapshot its length
+        // here so we can identify (and filter) accumulator items produced inside this body.
+        var accumStartCount = _sequenceAccumulator?.Count ?? 0;
+        var accumPositionsStartCount = _asBodyAccumulatorPositions?.Count ?? 0;
+
         _wherePopulatedDepth++;
         BeginPopulatedTracking();
         try
@@ -15569,6 +15652,24 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             _wherePopulatedDepth--;
         }
         var trackingMarked = EndPopulatedTracking();
+
+        // Filter accumulator items added during the body: drop XdmAttributes whose value is a
+        // zero-length string (insignificant per §11.4). Other items (elements, text, etc.) are
+        // preserved unconditionally — `where-populated` only filters at the attribute level.
+        if (_sequenceAccumulator != null && _sequenceAccumulator.Count > accumStartCount)
+        {
+            var addedRange = _sequenceAccumulator.GetRange(accumStartCount, _sequenceAccumulator.Count - accumStartCount);
+            _sequenceAccumulator.RemoveRange(accumStartCount, _sequenceAccumulator.Count - accumStartCount);
+            if (_asBodyAccumulatorPositions != null && _asBodyAccumulatorPositions.Count > accumPositionsStartCount)
+                _asBodyAccumulatorPositions.RemoveRange(accumPositionsStartCount, _asBodyAccumulatorPositions.Count - accumPositionsStartCount);
+            foreach (var item in addedRange)
+            {
+                if (item is XdmAttribute attr && string.IsNullOrEmpty(attr.Value))
+                    continue;
+                _asBodyAccumulatorPositions?.Add(_output.Length - _asBodyOutputBaseLen);
+                _sequenceAccumulator.Add(item);
+            }
+        }
 
         var result = _output.ToString();
         _output.Clear();

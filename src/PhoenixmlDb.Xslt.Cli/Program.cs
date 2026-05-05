@@ -302,6 +302,23 @@ catch (PhoenixmlDb.XQuery.Parser.XQueryParseException ex)
     await Console.Error.WriteLineAsync($"XPath parse error: {ex.Message}").ConfigureAwait(true);
     return 2;
 }
+catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException ex)
+{
+    // Runtime XPath/XQuery errors that escape XSLT-instruction handlers come through here —
+    // surface them as clean "XQuery error: <code>: <message>" so users don't see a raw
+    // .NET stack trace for a spec-defined error like XPDY0050 / XPTY0019.
+    await Console.Error.WriteLineAsync($"XQuery error: {ex.ErrorCode}: {ex.Message}").ConfigureAwait(true);
+    if (options.Verbose && ex.StackTrace != null)
+        await Console.Error.WriteLineAsync(ex.StackTrace).ConfigureAwait(true);
+    return 2;
+}
+catch (PhoenixmlDb.XQuery.Functions.XQueryException ex)
+{
+    await Console.Error.WriteLineAsync($"XQuery error: {ex.ErrorCode}: {ex.Message}").ConfigureAwait(true);
+    if (options.Verbose && ex.StackTrace != null)
+        await Console.Error.WriteLineAsync(ex.StackTrace).ConfigureAwait(true);
+    return 2;
+}
 catch (Exception ex)
 {
     await Console.Error.WriteLineAsync($"Error: {ex.Message}").ConfigureAwait(true);
