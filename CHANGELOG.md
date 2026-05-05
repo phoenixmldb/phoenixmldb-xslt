@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.5 (2026-05-05)
+
+### Diagnostics
+- **Source-location info on every error**, including the originating module path. Every `XsltException.Location` now carries a `Module` (the imported/included stylesheet's URI / file path) alongside `Line` / `Column`. The CLI's error formatter prints `XSLT error at <module>:<line>:<col>: <message>` so failures in multi-module stylesheets (DocBook xslTNG, Schxslt2) are debuggable. Reported by Martin Honnen.
+- **`XPST0008` in static use-when shows the full QName** (`$prefix:local` or `Q{uri}local`) instead of just the bare local name. A reference to `$v:debug` no longer reports as `$debug`, eliminating the namespace-mismatch confusion. Includes the offending element's source location.
+- **`XTDE0410` / `XTDE0420` (attribute-after-children) carry the source location** of the offending `xsl:attribute` / `xsl:copy` / `xsl:copy-of` instruction. A best-effort `_currentInstructionLocation` field is updated by attribute-emitting instruction handlers and consumed by the helper paths that ultimately raise the error.
+- Stylesheet loading now always goes through `XmlReader` when a base URI is available, so `XElement.BaseUri` is populated and downstream `GetSourceLocation` calls capture the originating module.
+- Bumps `PhoenixmlDb.XQuery` pin to 1.2.2 for the new `SourceLocation.Module` field.
+
 ## 1.2.4 (2026-04-29)
 
 ### Fixes

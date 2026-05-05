@@ -1,5 +1,31 @@
 # Release History
 
+## 1.2.5 (2026-05-05)
+
+### Diagnostics: source location and module URI on every error
+
+This release threads originating-module and line/column info through every error path
+that previously raised a bare message, and surfaces them in the CLI:
+
+```
+XSLT error at /path/to/stylesheet.xsl:70:4: XPST0008: Variable $v:debug is not declared in the static use-when context
+```
+
+- `XsltException.Location` now carries a `Module` field (file path / URI of the originating
+  stylesheet module) alongside `Line` and `Column`. Pulls in `PhoenixmlDb.XQuery` 1.2.2
+  for the new `SourceLocation.Module` property.
+- `XPST0008` in static use-when shows the full QName: `$v:debug` instead of `$debug`, and
+  `Q{namespace}local` for prefix-less names with a namespace. Includes the source location
+  of the offending element.
+- `XTDE0410` / `XTDE0420` (attribute-after-children, attribute-on-document-node) carry the
+  source location of the offending `xsl:attribute`, `xsl:copy`, or `xsl:copy-of` instruction.
+- Stylesheet loading goes through `XmlReader` whenever a base URI is available so
+  `XElement.BaseUri` is populated — that's the input to module-path detection at every
+  diagnostic site.
+
+Reported by Martin Honnen — debugging multi-module stylesheets (DocBook xslTNG,
+Schxslt2) without source location info was unworkable.
+
 ## 1.2.4 (2026-04-29)
 
 ### fn:serialize adaptive method

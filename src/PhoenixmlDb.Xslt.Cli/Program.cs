@@ -270,7 +270,30 @@ try
 }
 catch (PhoenixmlDb.Xslt.Engine.XsltException ex)
 {
-    var locationInfo = ex.Location != null ? $" at line {ex.Location.Line}, column {ex.Location.Column}" : "";
+    // Compose: "XSLT error at <module>:<line>:<col>: <message>". The module is most useful
+    // when stylesheets are composed of imported/included files — without it, a line number
+    // alone is ambiguous. Strip a "file://" prefix to keep the path readable on the console.
+    var locationInfo = "";
+    if (ex.Location != null)
+    {
+        var loc = ex.Location;
+        var module = loc.Module;
+        if (!string.IsNullOrEmpty(module) && module.StartsWith("file://", StringComparison.Ordinal))
+        {
+            try
+            {
+                module = new Uri(module).LocalPath;
+            }
+            catch (UriFormatException)
+            {
+                // Leave the raw URI in place — better than stripping incorrectly.
+            }
+        }
+        var modulePart = string.IsNullOrEmpty(module) ? "" : $"{module}:";
+        var linePart = loc.Line > 0 ? $"{loc.Line}:{loc.Column}" : "";
+        if (modulePart.Length > 0 || linePart.Length > 0)
+            locationInfo = $" at {modulePart}{linePart}".TrimEnd(':');
+    }
     await Console.Error.WriteLineAsync($"XSLT error{locationInfo}: {ex.Message}").ConfigureAwait(true);
     return 2;
 }

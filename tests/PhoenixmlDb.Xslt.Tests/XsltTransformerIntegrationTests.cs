@@ -1682,6 +1682,55 @@ public class XsltTransformerIntegrationTests
         result.Should().Contain("id=\"2\"");
     }
 
+    // Regression: XTDE0410 (attribute after children) must carry the source location of
+    // the offending xsl:attribute / xsl:copy. Reported by Martin Honnen — Schxslt2 produces
+    // this error and the bare message gave no clue which template/instruction was at fault.
+    [Fact]
+    public async Task XTDE0410_attribute_after_children_carries_location()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <r>
+                  <xsl:text>oops</xsl:text>
+                  <xsl:attribute name="late">value</xsl:attribute>
+                </r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var act = async () => await transformer.TransformAsync("<x/>");
+        var ex = await act.Should().ThrowAsync<XsltException>();
+        ex.Which.Message.Should().Contain("XTDE0410");
+        ex.Which.Location.Should().NotBeNull();
+        ex.Which.Location!.Line.Should().BeGreaterThan(0);
+    }
+
+    // Regression: XPST0008 in static use-when must show full QName (with prefix) and the
+    // location of the offending element. Reported by Martin Honnen — diagnosing a use-when
+    // failure in a multi-module stylesheet (DocBook xslTNG) was unworkable when the message
+    // showed only `$debug` for an actual `$v:debug` reference and gave no line number.
+    [Fact]
+    public async Task XPST0008_use_when_includes_prefix_and_location()
+    {
+        var transformer = new XsltTransformer();
+        var act = async () => await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:v="http://example.com/v">
+              <xsl:variable name="x" use-when="$v:debug" select="1"/>
+              <xsl:template match="/"><r/></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var ex = await act.Should().ThrowAsync<XsltException>();
+        ex.Which.Message.Should().Contain("XPST0008");
+        ex.Which.Message.Should().Contain("$v:debug");
+        ex.Which.Location.Should().NotBeNull();
+        ex.Which.Location!.Line.Should().BeGreaterThan(0);
+    }
+
     #endregion
 
     #region Regression: XPST0051 includes source location

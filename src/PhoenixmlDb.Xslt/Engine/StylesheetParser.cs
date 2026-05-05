@@ -171,17 +171,22 @@ public sealed class StylesheetParser
             xml = xml[1..];
         _baseUri = baseUri;
         XDocument doc;
-        // Use XmlReader with DTD processing only when explicitly allowed and a DTD is present
-        if (AllowDtdProcessing && baseUri != null && xml.Contains("<!DOCTYPE", StringComparison.Ordinal))
+        // Always go through XmlReader when a base URI is available so XElement.BaseUri is
+        // populated — that's what diagnostics surface as the originating module path. The
+        // DTD-processing branch is the same code path with extra settings.
+        if (baseUri != null)
         {
             var settings = new System.Xml.XmlReaderSettings
             {
-                DtdProcessing = System.Xml.DtdProcessing.Parse,
-                XmlResolver = new System.Xml.XmlUrlResolver(),
-                MaxCharactersFromEntities = 1_000_000
+                DtdProcessing = AllowDtdProcessing && xml.Contains("<!DOCTYPE", StringComparison.Ordinal)
+                    ? System.Xml.DtdProcessing.Parse
+                    : System.Xml.DtdProcessing.Prohibit,
+                MaxCharactersFromEntities = 1_000_000,
             };
+            if (settings.DtdProcessing == System.Xml.DtdProcessing.Parse)
+                settings.XmlResolver = new System.Xml.XmlUrlResolver();
             using var reader = System.Xml.XmlReader.Create(new System.IO.StringReader(xml), settings, baseUri.AbsoluteUri);
-            doc = XDocument.Load(reader, LoadOptions.SetLineInfo | LoadOptions.PreserveWhitespace);
+            doc = XDocument.Load(reader, LoadOptions.SetLineInfo | LoadOptions.SetBaseUri | LoadOptions.PreserveWhitespace);
         }
         else
         {
@@ -3042,22 +3047,20 @@ public sealed class StylesheetParser
             var savedBaseUri = _baseUri;
             var savedDefaultMode = _currentDefaultMode;
             _baseUri = new Uri(fullPath);
-            XDocument doc;
-            if (AllowDtdProcessing && xml.Contains("<!DOCTYPE", StringComparison.Ordinal))
+            // Always load imported/included modules through XmlReader so SetBaseUri can
+            // populate XElement.BaseUri with the imported module's URI — that's what
+            // diagnostics later surface as "this error came from <module>".
+            var importSettings = new System.Xml.XmlReaderSettings
             {
-                var dtdSettings = new System.Xml.XmlReaderSettings
-                {
-                    DtdProcessing = System.Xml.DtdProcessing.Parse,
-                    XmlResolver = new System.Xml.XmlUrlResolver(),
-                    MaxCharactersFromEntities = 1_000_000
-                };
-                using var dtdReader = System.Xml.XmlReader.Create(new System.IO.StringReader(xml), dtdSettings, _baseUri.AbsoluteUri);
-                doc = XDocument.Load(dtdReader, LoadOptions.SetLineInfo | LoadOptions.SetBaseUri | LoadOptions.PreserveWhitespace);
-            }
-            else
-            {
-                doc = XDocument.Parse(xml, LoadOptions.SetLineInfo | LoadOptions.PreserveWhitespace);
-            }
+                DtdProcessing = AllowDtdProcessing && xml.Contains("<!DOCTYPE", StringComparison.Ordinal)
+                    ? System.Xml.DtdProcessing.Parse
+                    : System.Xml.DtdProcessing.Prohibit,
+                MaxCharactersFromEntities = 1_000_000,
+            };
+            if (importSettings.DtdProcessing == System.Xml.DtdProcessing.Parse)
+                importSettings.XmlResolver = new System.Xml.XmlUrlResolver();
+            using var importReader = System.Xml.XmlReader.Create(new System.IO.StringReader(xml), importSettings, _baseUri.AbsoluteUri);
+            var doc = XDocument.Load(importReader, LoadOptions.SetLineInfo | LoadOptions.SetBaseUri | LoadOptions.PreserveWhitespace);
             // For embedded stylesheets, find the element with matching id (§3.11.2)
             XElement stylesheetRoot;
             if (fragmentId != null)
@@ -9852,13 +9855,34 @@ public sealed class StylesheetParser
         };
     }
 
+    /// <summary>
+    /// Formats a QName for display in error messages. Prefers <c>prefix:local</c>, falls back
+    /// to <c>Q{uri}local</c> for prefix-less names that carry a non-default namespace, and uses
+    /// the bare local name otherwise.
+    /// </summary>
+    private static string FormatVariableName(QName name)
+    {
+        if (!string.IsNullOrEmpty(name.Prefix))
+            return name.PrefixedName;
+        var ns = name.ResolvedNamespace;
+        if (!string.IsNullOrEmpty(ns))
+            return $"Q{{{ns}}}{name.LocalName}";
+        return name.LocalName;
+    }
+
     private static SourceLocation? GetSourceLocation(XElement element)
     {
         if (element is IXmlLineInfo lineInfo && lineInfo.HasLineInfo())
         {
-            return new SourceLocation(lineInfo.LineNumber, lineInfo.LinePosition, 0, 0);
+            return new SourceLocation(lineInfo.LineNumber, lineInfo.LinePosition, 0, 0)
+            {
+                Module = string.IsNullOrEmpty(element.BaseUri) ? null : element.BaseUri,
+            };
         }
-        return null;
+        // Even without line info, BaseUri is still useful diagnostic context.
+        return string.IsNullOrEmpty(element.BaseUri)
+            ? null
+            : new SourceLocation(0, 0, 0, 0) { Module = element.BaseUri };
     }
 
     private XsltWherePopulated ParseWherePopulated(XElement element, SourceLocation? location)
@@ -10618,7 +10642,12 @@ public sealed class StylesheetParser
             case VariableReference vr:
                 if (_staticVariables.TryGetValue(vr.Name, out var varVal))
                     return varVal;
-                throw new XsltException($"XPST0008: Variable ${vr.Name.LocalName} is not declared in the static use-when context");
+                // Show the variable's display form (prefix:local or Q{uri}local) so users can
+                // tell a prefixed reference apart from an unprefixed one — critical when
+                // diagnosing namespace mismatches (e.g. $v:debug vs $debug).
+                throw new XsltException(
+                    $"XPST0008: Variable ${FormatVariableName(vr.Name)} is not declared in the static use-when context",
+                    GetSourceLocation(context));
 
             case InstanceOfExpression instOf:
             {

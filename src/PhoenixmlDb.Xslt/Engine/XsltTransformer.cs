@@ -3680,6 +3680,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private int _textContentDepth; // >0 when collecting simple text content (attribute/comment/PI body)
     private int _attributeContentDepth; // >0 when collecting attribute value content (no space joining)
     private int _documentNodeDepth; // >0 when inside xsl:document (cannot add attributes/namespaces)
+    private SourceLocation? _currentInstructionLocation; // Most-recent attribute-emitting instruction location, for XTDE0410/0420 messages
+
     private int _textOutputModeDepth; // >0 when inside method="text" result-document; text from xsl:sequence/value-of gets sentinel-escaped to protect from StripXmlMarkup
     private int _insideXslEvaluateDepth; // >0 when inside xsl:evaluate; XSLT-specific functions raise XTDE3160
     private int _templateDepth; // Nesting depth for trace output
@@ -8115,16 +8117,21 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask CreateAttributeAsync(XsltAttribute instruction)
     {
+        // Set ambient location so XTDE0410/0420 raised from helper paths (CopySingleItemAsync,
+        // SerializeNode) can attribute the error to *this* xsl:attribute. We don't restore on
+        // exit — the next instruction will overwrite, and the value is best-effort diagnostics.
+        _currentInstructionLocation = instruction.Location ?? _currentInstructionLocation;
+
         // XTDE0420: Cannot add attribute to a document node
         if (_documentNodeDepth > 0 && !_attributeCollecting)
-            throw new XsltException("XTDE0420: Cannot add an attribute node to a document node");
+            throw new XsltException("XTDE0420: Cannot add an attribute node to a document node", instruction.Location);
 
         // XTDE0410: Cannot add attribute after child content has been added to the element
         // Inside xsl:where-populated, defer this check until after insignificant items are filtered
         if (_attributeCollecting && _output.Length > 0 && _wherePopulatedDepth == 0)
         {
             if (!IsBackwardsCompatible)
-                throw new InvalidOperationException("XTDE0410: Cannot add an attribute to an element after children have been added");
+                throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added", instruction.Location);
             // In backwards-compatible (1.0) mode, silently ignore the attribute
             return;
         }
@@ -8603,6 +8610,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     private async ValueTask CopyCoreAsync(XsltCopy instruction)
     {
+        _currentInstructionLocation = instruction.Location ?? _currentInstructionLocation;
         if (instruction.Select != null)
         {
             // XSLT 3.0: xsl:copy with select — evaluate and copy each item
@@ -8942,11 +8950,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 // XTDE0420: Cannot add attribute to a document node
                 if (_documentNodeDepth > 0 && !_attributeCollecting)
-                    throw new XsltException("XTDE0420: Cannot add an attribute node to a document node");
+                    throw new XsltException("XTDE0420: Cannot add an attribute node to a document node", _currentInstructionLocation);
                 // XTDE0410: Cannot add attribute after child content has been added
                 // Inside xsl:where-populated, defer this check until after filtering
                 if (_attributeCollecting && _output.Length > 0 && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
-                    throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added");
+                    throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added", _currentInstructionLocation);
 
                 // When in attribute collection mode, add as attribute
                 var target = _attributeCollecting ? _collectedAttributes! : _output;
@@ -9014,6 +9022,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     private async ValueTask CopyOfCoreAsync(XsltCopyOf instruction)
     {
+        _currentInstructionLocation = instruction.Location ?? _currentInstructionLocation;
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
         var copyNs = instruction.CopyNamespaces ?? true;
 
@@ -9580,11 +9589,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 // XTDE0420: Cannot add attribute to a document node
                 if (_documentNodeDepth > 0 && !_attributeCollecting)
-                    throw new XsltException("XTDE0420: Cannot add an attribute node to a document node");
+                    throw new XsltException("XTDE0420: Cannot add an attribute node to a document node", _currentInstructionLocation);
                 // XTDE0410: Cannot add attribute after child content has been added
                 // Inside xsl:where-populated, defer this check until after filtering
                 if (_attributeCollecting && _output.Length > 0 && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
-                    throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added");
+                    throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added", _currentInstructionLocation);
 
                 var target = _attributeCollecting ? _collectedAttributes! : _output;
                 var attrPrefix = attr.Prefix;
