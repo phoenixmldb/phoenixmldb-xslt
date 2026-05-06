@@ -1,5 +1,32 @@
 # Release History
 
+## 1.2.10 (2026-05-06)
+
+### HTTP(S) source documents and fn:doc fetches
+
+Completes the HTTP coverage started in 1.2.9 — that release handled stylesheet
+entry + imports, this one handles the source side:
+
+```bash
+xslt my-sheet.xsl https://example.com/data.xml
+```
+
+```xml
+<!-- inside a stylesheet loaded over HTTPS -->
+<xsl:variable name="cfg" select="doc('config.xml')"/>
+<!-- relative URI resolves to https://.../config.xml and is fetched -->
+```
+
+Previously the CLI rejected an HTTPS source with "Source file not found" and
+`fn:doc()` returned `()` (raising FODC0002 in stricter callers) when given an
+HTTPS URI. Both paths now branch to a streaming HTTP fetcher with the same
+30 s timeout and `User-Agent: PhoenixmlDb.Xslt` as `xsl:import`.
+
+Bumps `PhoenixmlDb.XQuery` pin to 1.2.5 for the matching change in
+`XdmDocumentStore` (the underlying document resolver).
+
+Reported by Martin Honnen.
+
 ## 1.2.9 (2026-05-06)
 
 ### HTTP(S) stylesheet URLs and imports

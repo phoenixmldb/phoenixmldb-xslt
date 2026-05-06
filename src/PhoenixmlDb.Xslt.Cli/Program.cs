@@ -145,21 +145,63 @@ try
         transformer.SetInitialMode(mName, mNs);
     }
 
-    // Load source document
+    // Load source document — accept either a local path or an http(s):// URL, mirroring
+    // the stylesheet-loading code path. Streaming mode (-s) requires a local file because
+    // we hand File.OpenRead to the streaming transformer; an HTTP source is downloaded
+    // first and then transformed in non-streaming mode.
     string? inputXml = null;
+    string? sourcePath = null;
     if (options.SourceFile != null)
     {
         var sourceSw = Stopwatch.StartNew();
-        var sourcePath = Path.GetFullPath(options.SourceFile);
-        if (!File.Exists(sourcePath))
+        if (Uri.TryCreate(options.SourceFile, UriKind.Absolute, out var srcAbsUri)
+            && (srcAbsUri.Scheme == Uri.UriSchemeHttp || srcAbsUri.Scheme == Uri.UriSchemeHttps))
         {
-            await Console.Error.WriteLineAsync($"Error: Source file not found: {options.SourceFile}").ConfigureAwait(true);
-            return 1;
+            try
+            {
+                using var srcHttp = new HttpClient
+                {
+                    Timeout = TimeSpan.FromSeconds(30),
+                };
+                srcHttp.DefaultRequestHeaders.UserAgent.ParseAdd("PhoenixmlDb.Xslt");
+                inputXml = await srcHttp.GetStringAsync(srcAbsUri).ConfigureAwait(true);
+            }
+            catch (HttpRequestException ex)
+            {
+                await Console.Error.WriteLineAsync($"Error: Failed to fetch source '{options.SourceFile}': {ex.Message}").ConfigureAwait(true);
+                return 1;
+            }
+            catch (TaskCanceledException)
+            {
+                await Console.Error.WriteLineAsync($"Error: Timeout fetching source '{options.SourceFile}'").ConfigureAwait(true);
+                return 1;
+            }
+            transformer.SetSourceDocumentUri(srcAbsUri);
+            sourceSw.Stop();
+            if (options.Timing)
+            {
+                await Console.Error.WriteLineAsync(
+                    $"  source:  {sourceSw.Elapsed.TotalMilliseconds,8:F1} ms  ({inputXml.Length:N0} chars over HTTP)")
+                    .ConfigureAwait(true);
+            }
+            // HTTP source loaded into inputXml; skip the file-based streaming branch below.
+        }
+        else
+        {
+            sourcePath = Path.GetFullPath(options.SourceFile);
+            if (!File.Exists(sourcePath))
+            {
+                await Console.Error.WriteLineAsync($"Error: Source file not found: {options.SourceFile}").ConfigureAwait(true);
+                return 1;
+            }
+
+            transformer.SetSourceDocumentUri(new Uri(sourcePath));
         }
 
-        transformer.SetSourceDocumentUri(new Uri(sourcePath));
-
-        if (options.Stream)
+        // Streaming requires a local file (we hand the path to File.OpenRead). When the
+        // source is HTTP it has already been read into inputXml above; fall through to
+        // the in-memory transform path.
+        if (options.Stream && sourcePath != null)
         {
             sourceSw.Stop();
             if (options.Timing)
@@ -210,7 +252,7 @@ try
                     .ConfigureAwait(true);
             }
         }
-        else
+        else if (sourcePath != null)
         {
             inputXml = await File.ReadAllTextAsync(sourcePath).ConfigureAwait(true);
             sourceSw.Stop();
@@ -222,6 +264,7 @@ try
                     .ConfigureAwait(true);
             }
         }
+        // else: HTTP source already loaded into inputXml above
     }
     else if (Console.IsInputRedirected)
     {

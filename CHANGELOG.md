@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.10 (2026-05-06)
+
+### Features
+- **HTTP(S) URLs work as the source document** on the CLI (`xslt sheet.xsl https://example.com/data.xml`) and for `fn:doc()` / `document()` from inside a stylesheet. Completes the HTTP coverage started in 1.2.9 (which handled stylesheet entry + imports). When a stylesheet loaded over HTTPS calls `doc('books.xml')`, the relative URI resolves against the stylesheet's HTTPS base and the document is fetched over HTTP. `XsltDocumentResolver.LoadDocument` now branches to `HttpDocumentLoader.OpenRead` for `http(s)://`. Bumps `PhoenixmlDb.XQuery` pin to 1.2.5 (which carries the matching change in `XdmDocumentStore`). Reported by Martin Honnen.
+
 ## 1.2.9 (2026-05-06)
 
 ### Features

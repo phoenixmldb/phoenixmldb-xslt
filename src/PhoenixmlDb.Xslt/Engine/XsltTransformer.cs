@@ -21511,7 +21511,15 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         try
         {
             var resolvedUri = ResolveUri(uri);
-            return resolvedUri.IsFile && System.IO.File.Exists(resolvedUri.LocalPath);
+            if (resolvedUri.IsFile)
+                return System.IO.File.Exists(resolvedUri.LocalPath);
+            if (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps)
+            {
+                // For HTTP we have to fetch (or HEAD) to know — reuse ResolveDocument so
+                // a successful fetch is cached and the next doc() call is free.
+                return ResolveDocument(uri) != null;
+            }
+            return false;
         }
         catch (UriFormatException)
         {
@@ -21578,13 +21586,31 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         try
         {
             var resolvedUri = ResolveUri(uri);
-            if (!resolvedUri.IsAbsoluteUri || !resolvedUri.IsFile)
+            if (!resolvedUri.IsAbsoluteUri)
                 return null;
 
-            if (!System.IO.File.Exists(resolvedUri.LocalPath))
+            string xmlContent;
+            if (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps)
+            {
+                // Fetch over HTTP. Same opt-in-by-scheme rule as xsl:import — if a stylesheet
+                // running over HTTPS calls fn:doc with a relative URI that resolves to HTTPS,
+                // we honor it. ResourcePolicy still gates this when configured (the policy-
+                // enforcing wrapper sits in front of this resolver in the call chain).
+                using var stream = HttpDocumentLoader.OpenRead(resolvedUri);
+                using var reader = new System.IO.StreamReader(stream);
+                xmlContent = reader.ReadToEnd();
+            }
+            else if (resolvedUri.IsFile)
+            {
+                if (!System.IO.File.Exists(resolvedUri.LocalPath))
+                    return null;
+                xmlContent = System.IO.File.ReadAllText(resolvedUri.LocalPath);
+            }
+            else
+            {
                 return null;
+            }
 
-            var xmlContent = System.IO.File.ReadAllText(resolvedUri.LocalPath);
             var xmlDoc = new XmlDocument { PreserveWhitespace = true };
             xmlDoc.LoadXml(xmlContent);
 
@@ -21609,6 +21635,14 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
             return null;
         }
         catch (System.IO.IOException)
+        {
+            return null;
+        }
+        catch (System.Net.Http.HttpRequestException)
+        {
+            return null;
+        }
+        catch (TaskCanceledException)
         {
             return null;
         }

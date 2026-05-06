@@ -70,3 +70,38 @@ internal static class HttpResourceLoader
         }
     }
 }
+
+/// <summary>
+/// Streaming HTTP fetcher for documents read by <c>fn:doc</c> / <c>document()</c>.
+/// </summary>
+/// <remarks>
+/// Separate from <see cref="HttpResourceLoader"/> because document fetching wants a
+/// streaming interface (caller pipes the response into <see cref="System.IO.StreamReader"/>),
+/// while stylesheet-import fetching wants an eager string for the parser. Both share the
+/// same connection-pooled <see cref="HttpClient"/> behind the scenes via the JIT-loaded
+/// static instance below.
+/// </remarks>
+internal static class HttpDocumentLoader
+{
+    private static readonly HttpClient _client = CreateClient();
+
+    private static HttpClient CreateClient()
+    {
+        var c = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("PhoenixmlDb.Xslt");
+        return c;
+    }
+
+    /// <summary>
+    /// Opens a streaming read of <paramref name="uri"/>. The caller disposes the stream.
+    /// </summary>
+    public static Stream OpenRead(Uri uri)
+    {
+        var response = _client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+        response.EnsureSuccessStatusCode();
+        return response.Content.ReadAsStreamAsync().GetAwaiter().GetResult();
+    }
+}

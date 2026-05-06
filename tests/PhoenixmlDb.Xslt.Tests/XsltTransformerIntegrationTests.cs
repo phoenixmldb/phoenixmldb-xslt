@@ -1940,6 +1940,71 @@ public class XsltTransformerIntegrationTests
         }
     }
 
+    // Regression: when a stylesheet loaded over HTTP calls fn:doc with a relative URI,
+    // the URI must resolve against the stylesheet's HTTP base and be fetched over HTTP.
+    // Previously raised FODC0002 because XsltDocumentResolver.LoadDocument only handled
+    // file:// URIs. Reported by Martin Honnen.
+    [Fact]
+#pragma warning disable CA2000
+    public async Task fn_doc_with_http_uri_fetches_over_http()
+    {
+        using var listener = new System.Net.HttpListener();
+        var port = GetFreeTcpPort();
+        var prefix = $"http://localhost:{port}/";
+        listener.Prefixes.Add(prefix);
+        listener.Start();
+#pragma warning restore CA2000
+
+        const string mainXsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <result><fetched-name>{local-name(doc('books.xml')/*)}</fetched-name></result>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        const string booksXml = "<books><book><title>x</title></book></books>";
+
+        var serverTask = Task.Run(async () =>
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                var ctx = await listener.GetContextAsync();
+                var path = ctx.Request.Url!.AbsolutePath;
+                var body = path.EndsWith("main.xsl", StringComparison.Ordinal) ? mainXsl
+                         : path.EndsWith("books.xml", StringComparison.Ordinal) ? booksXml
+                         : "";
+                var bytes = System.Text.Encoding.UTF8.GetBytes(body);
+                ctx.Response.ContentType = "application/xml";
+                ctx.Response.ContentLength64 = bytes.Length;
+                await ctx.Response.OutputStream.WriteAsync(bytes);
+                ctx.Response.OutputStream.Close();
+            }
+        });
+
+        try
+        {
+            using var http = new System.Net.Http.HttpClient();
+            var mainUri = new Uri(prefix + "main.xsl");
+            var xml = await http.GetStringAsync(mainUri);
+
+            var transformer = new XsltTransformer();
+            // expand-text via the {local-name(...)} AVT-shortcut requires a stylesheet attribute,
+            // so instead we just rely on the explicit element form here.
+            xml = xml.Replace("{local-name(doc('books.xml')/*)}",
+                              "<xsl:value-of select=\"local-name(doc('books.xml')/*)\"/>",
+                              StringComparison.Ordinal);
+            await transformer.LoadStylesheetAsync(xml, mainUri);
+
+            var result = await transformer.TransformAsync("<x/>");
+            result.Should().Contain(">books</fetched-name>");
+        }
+        finally
+        {
+            listener.Stop();
+            try { await serverTask; } catch { /* listener stopped */ }
+        }
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
