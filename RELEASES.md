@@ -1,5 +1,19 @@
 # Release History
 
+## 1.2.8 (2026-05-06)
+
+### `fn:transform()` auto-registers on assembly load
+
+Adds a `[ModuleInitializer]` to `PhoenixmlDb.Xslt` that registers
+`XsltTransformProvider` with `TransformFunction.Provider` the first time the assembly
+loads. Any application or CLI that references `PhoenixmlDb.Xslt` gets `fn:transform()`
+working — no explicit
+`TransformFunction.Provider = new XsltTransformProvider()` call needed.
+
+Setup that fixed: standalone `xquery` CLI tool that bundles
+`PhoenixmlDb.Xslt` (via PackageReference) so XQuery scripts can call `fn:transform()`
+without an extra registration step. Reported by Martin Honnen.
+
 ## 1.2.7 (2026-05-05)
 
 ### Schxslt2 transpiled validation runs cleanly

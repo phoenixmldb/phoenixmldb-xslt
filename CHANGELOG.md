@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.8 (2026-05-06)
+
+### Features
+- **Auto-registers with `fn:transform()`** on assembly load. A `[ModuleInitializer]` in `XsltModuleInitializer` now sets `TransformFunction.Provider ??= new XsltTransformProvider()` the first time any type in `PhoenixmlDb.Xslt` is touched. Any application or CLI that references `PhoenixmlDb.Xslt` gets `fn:transform()` working out of the box — the previous "Add a reference to PhoenixmlDb.Xslt and call TransformFunction.Provider = new XsltTransformProvider()" prompt is no longer needed. Reported by Martin Honnen against the standalone `xquery` CLI tool.
+
 ## 1.2.7 (2026-05-05)
 
 ### Fixes
