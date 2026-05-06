@@ -2991,14 +2991,20 @@ public sealed class StylesheetParser
             effectiveBase = elementBaseUri;
         }
 
-        // Resolve relative href against base URI
+        // Resolve href against base URI. Two paths from here on:
+        //  - file:// (or unspecified): resolve to a local path and read with File.ReadAllText
+        //  - http(s)://: fetch with HttpClient. We treat HTTP imports as opt-in by URI scheme —
+        //    if the entry stylesheet was loaded over HTTPS, its imports come over HTTPS too.
+        //    This mirrors how Saxon resolves imports against the entry's system id.
+        Uri? resolvedUri = null;
         string? resolvedPath = null;
         if (effectiveBase != null)
         {
             try
             {
-                var resolvedUri = new Uri(effectiveBase, hrefPath);
-                resolvedPath = resolvedUri.LocalPath;
+                resolvedUri = new Uri(effectiveBase, hrefPath);
+                if (resolvedUri.IsFile)
+                    resolvedPath = resolvedUri.LocalPath;
             }
             catch (UriFormatException)
             {
@@ -3006,7 +3012,9 @@ public sealed class StylesheetParser
             }
         }
 
-        if (resolvedPath == null || !File.Exists(resolvedPath))
+        var isHttp = resolvedUri != null && (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps);
+
+        if (!isHttp && (resolvedPath == null || !File.Exists(resolvedPath)))
         {
             // Try as relative path from base URI directory
             if (effectiveBase?.IsFile == true)
@@ -3019,12 +3027,13 @@ public sealed class StylesheetParser
             }
         }
 
-        if (resolvedPath == null || !File.Exists(resolvedPath))
+        if (!isHttp && (resolvedPath == null || !File.Exists(resolvedPath)))
             throw new XsltException($"XTSE0165: Cannot find stylesheet module '{href}'",
                 GetSourceLocation(element));
 
-        var fullPath = Path.GetFullPath(resolvedPath);
-        if (!_loadedStylesheets.Add(fullPath))
+        // Recursion key: the absolute URI for HTTP imports, the canonical full path for file imports.
+        var recursionKey = isHttp ? resolvedUri!.AbsoluteUri : Path.GetFullPath(resolvedPath!);
+        if (!_loadedStylesheets.Add(recursionKey))
             throw new XsltException($"XTSE0210: Stylesheet module '{href}' directly or indirectly imports itself",
                 GetSourceLocation(element));
 
@@ -3032,7 +3041,7 @@ public sealed class StylesheetParser
         string? policyResolvedXml = null;
         if (ResourcePolicy != null)
         {
-            var importUri = new Uri(fullPath);
+            var importUri = isHttp ? resolvedUri! : new Uri(recursionKey);
             if (!ResourcePolicy.IsAllowed(importUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet))
                 throw new XsltException(
                     $"XTSE0165: Resource policy denied import access to '{href}'",
@@ -3043,10 +3052,16 @@ public sealed class StylesheetParser
 
         try
         {
-            var xml = policyResolvedXml ?? File.ReadAllText(resolvedPath);
+            string xml;
+            if (policyResolvedXml != null)
+                xml = policyResolvedXml;
+            else if (isHttp)
+                xml = HttpResourceLoader.GetStringSync(resolvedUri!);
+            else
+                xml = File.ReadAllText(resolvedPath!);
             var savedBaseUri = _baseUri;
             var savedDefaultMode = _currentDefaultMode;
-            _baseUri = new Uri(fullPath);
+            _baseUri = isHttp ? resolvedUri! : new Uri(recursionKey);
             // Always load imported/included modules through XmlReader so SetBaseUri can
             // populate XElement.BaseUri with the imported module's URI — that's what
             // diagnostics later surface as "this error came from <module>".
@@ -3120,7 +3135,7 @@ public sealed class StylesheetParser
         // should cause compilation to fail (XTSE0010, XTSE0090, etc.)
         finally
         {
-            _loadedStylesheets.Remove(fullPath);
+            _loadedStylesheets.Remove(recursionKey);
         }
     }
 

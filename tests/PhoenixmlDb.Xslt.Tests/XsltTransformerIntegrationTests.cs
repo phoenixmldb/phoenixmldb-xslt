@@ -1868,4 +1868,86 @@ public class XsltTransformerIntegrationTests
     }
 
     #endregion
+
+    // Regression: stylesheets loaded over HTTP(S) must resolve their xsl:import / xsl:include
+    // hrefs against the entry stylesheet's HTTP base URI. Previously the parser only handled
+    // file:// imports and raised XTSE0165 for HTTP. Reported by Martin Honnen against the
+    // schxslt2 transpile.xsl hosted on github.io. We spin up a local HttpListener so the
+    // test exercises the HTTP path without depending on external network reachability.
+    #region Regression: HTTP(S) stylesheet imports
+
+    [Fact]
+#pragma warning disable CA2000  // listener disposed in finally; analyzer can't see through Stop()
+    public async Task stylesheet_loaded_over_http_resolves_imports_over_http()
+    {
+        // HttpListener requires an explicit prefix; pick a free port.
+        using var listener = new System.Net.HttpListener();
+        var port = GetFreeTcpPort();
+        var prefix = $"http://localhost:{port}/";
+        listener.Prefixes.Add(prefix);
+        listener.Start();
+#pragma warning restore CA2000
+
+        const string mainXsl = """
+            <xsl:stylesheet version="3.0"
+                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:lib="http://example.com/lib">
+              <xsl:import href="lib.xsl"/>
+              <xsl:template match="/"><out><xsl:call-template name="lib:greet"/></out></xsl:template>
+            </xsl:stylesheet>
+            """;
+        const string libXsl = """
+            <xsl:stylesheet version="3.0"
+                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:lib="http://example.com/lib">
+              <xsl:template name="lib:greet">hello-from-lib</xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var serverTask = Task.Run(async () =>
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                var ctx = await listener.GetContextAsync();
+                var path = ctx.Request.Url!.AbsolutePath;
+                var body = path.EndsWith("main.xsl", StringComparison.Ordinal) ? mainXsl
+                         : path.EndsWith("lib.xsl", StringComparison.Ordinal) ? libXsl
+                         : "";
+                var bytes = System.Text.Encoding.UTF8.GetBytes(body);
+                ctx.Response.ContentType = "application/xml";
+                ctx.Response.ContentLength64 = bytes.Length;
+                await ctx.Response.OutputStream.WriteAsync(bytes);
+                ctx.Response.OutputStream.Close();
+            }
+        });
+
+        try
+        {
+            using var http = new System.Net.Http.HttpClient();
+            var mainUri = new Uri(prefix + "main.xsl");
+            var xml = await http.GetStringAsync(mainUri);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(xml, mainUri);
+
+            var result = await transformer.TransformAsync("<x/>");
+            result.Should().Contain(">hello-from-lib</out>");
+        }
+        finally
+        {
+            listener.Stop();
+            try { await serverTask; } catch { /* listener stopped */ }
+        }
+    }
+
+    private static int GetFreeTcpPort()
+    {
+        using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        l.Start();
+        var port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+        l.Stop();
+        return port;
+    }
+
+    #endregion
 }

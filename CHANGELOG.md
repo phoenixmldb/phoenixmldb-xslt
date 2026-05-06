@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.9 (2026-05-06)
+
+### Features
+- **HTTP(S) URLs work as stylesheet inputs and as `xsl:import` / `xsl:include` hrefs.** The `xslt` CLI now accepts `http://` and `https://` URLs directly (`xslt https://example.com/sheet.xsl input.xml`) — fetched via `HttpClient` with a 30 s timeout. The library's stylesheet parser also resolves imports against an HTTP base URI: when the entry stylesheet is loaded with an `https://...` base, its `xsl:import href="lib.xsl"/>` resolves to `https://.../lib.xsl` and is fetched over HTTP. Previously raised "Stylesheet not found" / `XTSE0165: Cannot find stylesheet module 'lib.xsl'`. `ResourcePolicy.IsAllowed(uri, ImportStylesheet)` is consulted before the fetch when a policy is configured. Reported by Martin Honnen against schxslt2 stylesheets hosted on github.io.
+
 ## 1.2.8 (2026-05-06)
 
 ### Features

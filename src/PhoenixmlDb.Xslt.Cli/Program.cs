@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http;
 using PhoenixmlDb.Xslt;
 
 var options = CliOptions.Parse(args);
@@ -20,17 +21,48 @@ try
 {
     var totalSw = Stopwatch.StartNew();
 
-    // Load the stylesheet
-    var stylesheetPath = Path.GetFullPath(options.Stylesheet);
-    if (!File.Exists(stylesheetPath))
-    {
-        await Console.Error.WriteLineAsync($"Error: Stylesheet not found: {options.Stylesheet}").ConfigureAwait(true);
-        return 1;
-    }
-
+    // Load the stylesheet — accept either a local path or an http(s):// URL. URL form
+    // is fetched via HttpClient so users can run e.g.
+    //     xslt https://example.com/stylesheets/transform.xsl input.xml
+    // without first downloading the stylesheet manually.
+    string stylesheetXml;
+    Uri stylesheetUri;
     var readSw = Stopwatch.StartNew();
-    var stylesheetXml = await File.ReadAllTextAsync(stylesheetPath).ConfigureAwait(true);
-    var stylesheetUri = new Uri(stylesheetPath);
+    if (Uri.TryCreate(options.Stylesheet, UriKind.Absolute, out var absUri)
+        && (absUri.Scheme == Uri.UriSchemeHttp || absUri.Scheme == Uri.UriSchemeHttps))
+    {
+        try
+        {
+            using var httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(30),
+            };
+            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("PhoenixmlDb.Xslt");
+            stylesheetXml = await httpClient.GetStringAsync(absUri).ConfigureAwait(true);
+            stylesheetUri = absUri;
+        }
+        catch (HttpRequestException ex)
+        {
+            await Console.Error.WriteLineAsync($"Error: Failed to fetch stylesheet '{options.Stylesheet}': {ex.Message}").ConfigureAwait(true);
+            return 1;
+        }
+        catch (TaskCanceledException)
+        {
+            await Console.Error.WriteLineAsync($"Error: Timeout fetching stylesheet '{options.Stylesheet}'").ConfigureAwait(true);
+            return 1;
+        }
+    }
+    else
+    {
+        var stylesheetPath = Path.GetFullPath(options.Stylesheet);
+        if (!File.Exists(stylesheetPath))
+        {
+            await Console.Error.WriteLineAsync($"Error: Stylesheet not found: {options.Stylesheet}").ConfigureAwait(true);
+            return 1;
+        }
+        stylesheetXml = await File.ReadAllTextAsync(stylesheetPath).ConfigureAwait(true);
+        stylesheetUri = new Uri(stylesheetPath);
+    }
     readSw.Stop();
 
     var compileSw = Stopwatch.StartNew();

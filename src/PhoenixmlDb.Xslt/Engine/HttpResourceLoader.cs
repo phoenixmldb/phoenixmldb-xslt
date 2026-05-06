@@ -1,0 +1,72 @@
+using System.Net.Http;
+
+namespace PhoenixmlDb.Xslt.Engine;
+
+/// <summary>
+/// Fetches stylesheet modules and similar text resources over HTTP/HTTPS.
+/// </summary>
+/// <remarks>
+/// <para>
+/// XSLT 3.0 doesn't restrict the scheme of <c>xsl:include</c>/<c>xsl:import</c> hrefs —
+/// any URI is fair game. The parser resolves the href against the entry stylesheet's
+/// base URI; when that resolves to <c>http://</c> or <c>https://</c>, this helper
+/// performs the fetch.
+/// </para>
+/// <para>
+/// The parser is synchronous, so this exposes a sync-blocking <see cref="GetStringSync"/>
+/// that runs the async <see cref="HttpClient"/> call to completion. Stylesheet imports
+/// are infrequent (compile-time only) and modest in size, so blocking the calling thread
+/// here is acceptable.
+/// </para>
+/// <para>
+/// A single static <see cref="HttpClient"/> with a 30-second timeout is reused across
+/// the process to amortize handshake/connection cost. The timeout is conservative —
+/// a stylesheet over 30 s of network is almost certainly a misconfiguration that the
+/// user will want to surface as an error rather than have hang the build.
+/// </para>
+/// <para>
+/// Sandboxing remains the caller's responsibility: <c>ResourcePolicy</c> is consulted
+/// before this helper is invoked, so a configured policy can deny HTTP imports
+/// entirely or restrict them to specific hosts/path prefixes.
+/// </para>
+/// </remarks>
+internal static class HttpResourceLoader
+{
+    private static readonly HttpClient _client = CreateClient();
+
+    private static HttpClient CreateClient()
+    {
+        var c = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("PhoenixmlDb.Xslt");
+        return c;
+    }
+
+    /// <summary>
+    /// Fetches the resource at <paramref name="uri"/> as a string. Blocks the calling
+    /// thread until the request completes.
+    /// </summary>
+    /// <exception cref="System.IO.IOException">Thrown when the request fails (network
+    /// error, non-success status, timeout). Wrapping in <c>IOException</c> lets the
+    /// existing parser <c>catch (IOException)</c> path produce the standard
+    /// <c>XTSE0165</c> error.</exception>
+    public static string GetStringSync(Uri uri)
+    {
+        try
+        {
+            using var response = _client.GetAsync(uri).GetAwaiter().GetResult();
+            response.EnsureSuccessStatusCode();
+            return response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new System.IO.IOException($"HTTP request for '{uri}' failed: {ex.Message}", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new System.IO.IOException($"HTTP request for '{uri}' timed out: {ex.Message}", ex);
+        }
+    }
+}

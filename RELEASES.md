@@ -1,5 +1,33 @@
 # Release History
 
+## 1.2.9 (2026-05-06)
+
+### HTTP(S) stylesheet URLs and imports
+
+The CLI and library now accept stylesheets and imports over HTTP/HTTPS:
+
+```bash
+xslt https://example.com/transform.xsl input.xml
+```
+
+```csharp
+var transformer = new XsltTransformer();
+await transformer.LoadStylesheetAsync(
+    await client.GetStringAsync(xsltUrl),
+    new Uri(xsltUrl));   // imports relative to this resolve over HTTPS
+```
+
+Previously `xsl:import href="lib.xsl"/>` against an HTTPS base URI raised
+`XTSE0165: Cannot find stylesheet module 'lib.xsl'` because the parser only walked
+`file://`. The CLI also rejected non-file paths up front with "Stylesheet not found."
+
+Implementation: a static `HttpClient` (30 s timeout, `User-Agent: PhoenixmlDb.Xslt`)
+is used for all HTTP fetches. When a `ResourcePolicy` is configured, its
+`IsAllowed(uri, ImportStylesheet)` rule fires before the fetch — same gate as for
+file imports — so callers can restrict to specific hosts / path prefixes.
+
+Reported by Martin Honnen against the schxslt2 stylesheets hosted on github.io.
+
 ## 1.2.8 (2026-05-06)
 
 ### `fn:transform()` auto-registers on assembly load
