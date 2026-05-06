@@ -3016,6 +3016,70 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// Scoped capture of writes to a <see cref="StringBuilder"/> via a length cursor,
+    /// not via a string copy of the existing content.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Replaces the historical pattern:
+    /// </para>
+    /// <code>
+    /// var savedOutput = _output.ToString();   // O(N) alloc of whole buffer
+    /// _output.Clear();
+    /// ... write inner content ...
+    /// var inner = _output.ToString();         // O(M) alloc of inner
+    /// _output.Clear();
+    /// _output.Append(savedOutput);            // O(N) copy back
+    /// </code>
+    /// <para>
+    /// with the cursor-based equivalent that allocates only the inner string and
+    /// truncates the builder back to its saved length on disposal:
+    /// </para>
+    /// <code>
+    /// var saved = new XsltTransformEngine.ScopedOutputBuffer(_output);
+    /// ... write inner content ...
+    /// var inner = saved.GetWritten();         // O(M) alloc — the only one
+    /// saved.Dispose();                        // O(1) truncate
+    /// </code>
+    /// <para>
+    /// At <c>N = 100 MB</c> outer / <c>M = 1 KB</c> inner, the historical pattern
+    /// allocates ~200 MB and copies the buffer twice; the cursor-based form
+    /// allocates ~1 KB. This shows up most acutely in deeply-nested or
+    /// many-iteration XSLT constructs over Dataverse-scale source documents.
+    /// </para>
+    /// <para>
+    /// Used as a regular struct (not <c>using var</c> ref-struct) so it can be
+    /// stored in a try/finally block for code that wants to do the truncate
+    /// after a possibly-throwing body — many of the existing save/restore sites
+    /// have that shape.
+    /// </para>
+    /// </remarks>
+    internal struct ScopedOutputBuffer
+    {
+        private readonly System.Text.StringBuilder _buffer;
+        private readonly int _savedLength;
+
+        public ScopedOutputBuffer(System.Text.StringBuilder buffer)
+        {
+            _buffer = buffer;
+            _savedLength = buffer.Length;
+        }
+
+        /// <summary>The length of <c>_output</c> at the time this scope was opened.</summary>
+        public readonly int SavedLength => _savedLength;
+
+        /// <summary>The number of characters written to <c>_output</c> since this scope was opened.</summary>
+        public readonly int WrittenLength => _buffer.Length - _savedLength;
+
+        /// <summary>Returns the slice of <c>_output</c> written since this scope was opened, as a new string.</summary>
+        public readonly string GetWritten()
+            => WrittenLength == 0 ? string.Empty : _buffer.ToString(_savedLength, WrittenLength);
+
+        /// <summary>Truncates <c>_output</c> back to its saved length, discarding anything written in this scope.</summary>
+        public readonly void Dispose() => _buffer.Length = _savedLength;
+    }
+
+    /// <summary>
     /// In-memory node store for XSLT processing.
     /// </summary>
     internal sealed class InMemoryNodeStore : PhoenixmlDb.XQuery.INodeBuilder
@@ -3681,6 +3745,22 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private int _attributeContentDepth; // >0 when collecting attribute value content (no space joining)
     private int _documentNodeDepth; // >0 when inside xsl:document (cannot add attributes/namespaces)
     private SourceLocation? _currentInstructionLocation; // Most-recent attribute-emitting instruction location, for XTDE0410/0420 messages
+
+    // Offset in `_output` below which content is considered "outer" — owned by an enclosing
+    // scope, not by anything currently executing. Updated by `ScopedOutputBuffer` to the
+    // saved length on entry and restored to the previous value on dispose.
+    //
+    // Why it exists: the historical pattern was to do `_output.ToString()` + `_output.Clear()`
+    // before executing a body that could produce e.g. an `xsl:attribute`, then restore via
+    // `_output.Clear()` + `_output.Append(savedOutput)`. The `Clear()` step had a functional
+    // side effect beyond restoration: it made `_output.Length == 0` inside the body, which
+    // is what the XTDE0410 / XTDE0420 / simple-content-spacing checks compare against to
+    // decide "has any child content been produced yet?". When we replace the save/restore
+    // pattern with a length-cursor (eliminating the O(N) string copy on big documents), we
+    // need a separate signal for "logical start of the current scope" so those checks still
+    // see "no children yet." Otherwise an inner xsl:attribute fires a spurious XTDE0410
+    // because outer content makes `_output.Length > 0`.
+    private int _outputLogicalStart;
 
     // When a template/function body is being captured for `as=` type-checking, we have two
     // parallel output channels: `_output` (LREs, text) and `_sequenceAccumulator`
@@ -5451,17 +5531,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 if (templateMatches.Count > 0)
                 {
                     _collectedAttributesStack.Push(new StringBuilder());
-                    var savedOutput = _output.ToString();
-                    _output.Clear();
+                    var scope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                     foreach (var (matchedTemplate, matchedAttr) in templateMatches)
                     {
                         await ExecuteMatchedTemplateAsync(matchedTemplate, matchedAttr, mode, withParams)
                             .ConfigureAwait(false);
                     }
                     var collectedAttrs = _collectedAttributesStack.Pop();
-                    templateChildContent = _output.ToString();
-                    _output.Clear();
-                    _output.Append(savedOutput);
+                    templateChildContent = scope.GetWritten();
+                    scope.Dispose();
                     _output.Append(collectedAttrs);
                 }
 
@@ -8021,8 +8099,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         // Use attribute-collection mode flag (push new buffer for nesting support)
         _collectedAttributesStack.Push(new StringBuilder());
 
-        var savedOutput = _output.ToString();
-        _output.Clear();
+        var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+        var savedLogicalStart = _outputLogicalStart;
+        _outputLogicalStart = _output.Length;
         var savedLastAtomic = _lastResultWasAtomic;
         _lastResultWasAtomic = false;
 
@@ -8075,9 +8154,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         var collectedAttrs = _collectedAttributesStack.Pop();
-        var content = _output.ToString();
-        _output.Clear();
-        _output.Append(savedOutput);
+        var content = savedScope.GetWritten();
+        savedScope.Dispose();
+        _outputLogicalStart = savedLogicalStart;
         // After producing an element node, reset atomic state (nodes break atomic adjacency)
         _lastResultWasAtomic = false;
 
@@ -8187,7 +8266,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0410: Cannot add attribute after child content has been added to the element
         // Inside xsl:where-populated, defer this check until after insignificant items are filtered
-        if (_attributeCollecting && _output.Length > 0 && _wherePopulatedDepth == 0)
+        if (_attributeCollecting && _output.Length > _outputLogicalStart && _wherePopulatedDepth == 0)
         {
             if (!IsBackwardsCompatible)
                 throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added", instruction.Location);
@@ -8332,8 +8411,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 var savedAccumulator = _sequenceAccumulator;
                 _sequenceAccumulator = new List<object?>();
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                 _textContentDepth++;
                 _attributeContentDepth++;
                 // Disable outer text collection so attribute content text goes to
@@ -8357,18 +8435,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     if (item != null)
                         items.Add(StringValueOf(item));
                 }
-                var textContent = _output.ToString();
+                var textContent = savedScope.GetWritten();
                 if (!string.IsNullOrEmpty(textContent))
                     items.Add(textContent);
                 value = string.Join(resolvedSeparator, items);
-                _output.Clear();
-                _output.Append(savedOutput);
+                savedScope.Dispose();
                 _sequenceAccumulator = savedAccumulator;
             }
             else
             {
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                 _textContentDepth++;
                 _attributeContentDepth++;
                 // Disable text collection so attribute content text goes to _output
@@ -8385,9 +8461,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     _attributeContentDepth--;
                     _textContentDepth--;
                 }
-                value = _output.ToString();
-                _output.Clear();
-                _output.Append(savedOutput);
+                value = savedScope.GetWritten();
+                savedScope.Dispose();
             }
         }
         else
@@ -8610,11 +8685,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             // Enable _collectTextAsSequenceItems so inner xsl:value-of text goes to
             // the accumulator instead of _output, preserving instruction ordering (§5.7.2).
             var savedAccumulator = _sequenceAccumulator;
-            var savedOutput = _output.ToString();
+            var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
             var savedCollectText = _collectTextAsSequenceItems;
             var savedElemDepth = _serializingElementDepth;
             _sequenceAccumulator = new List<object?>();
-            _output.Clear();
             _collectTextAsSequenceItems = true;
             _serializingElementDepth = 0;
             _textContentDepth++;
@@ -8629,7 +8703,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
 
             // Flush any trailing text as a text node item
-            var trailingText = _output.ToString();
+            var trailingText = savedScope.GetWritten();
             if (trailingText.Length > 0)
                 AppendToSeqAccumulator(new Xdm.TextNodeItem(trailingText));
 
@@ -8637,8 +8711,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             value = MergeSimpleContent(_sequenceAccumulator, sep);
 
             _sequenceAccumulator = savedAccumulator;
-            _output.Clear();
-            _output.Append(savedOutput);
+            savedScope.Dispose();
         }
         else
         {
@@ -8853,8 +8926,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 _outputElementIsLreStack.Push(false); // xsl:copy — not an LRE
                 _xslNamespaceBindings.Push(new Dictionary<string, string>());
 
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+                var savedLogicalStart = _outputLogicalStart;
+                _outputLogicalStart = _output.Length;
 
                 // Process use-attribute-sets first (they create attributes)
                 var attrSetParts = new StringBuilder();
@@ -8904,9 +8978,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 }
 
                 var collectedAttrs = _collectedAttributesStack.Pop();
-                var content = _output.ToString();
-                _output.Clear();
-                _output.Append(savedOutput);
+                var content = savedScope.GetWritten();
+                savedScope.Dispose();
+                _outputLogicalStart = savedLogicalStart;
 
                 // Build output element name (with prefix if present)
                 var elemName = elem.Prefix != null ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName;
@@ -9012,7 +9086,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     throw new XsltException("XTDE0420: Cannot add an attribute node to a document node", _currentInstructionLocation);
                 // XTDE0410: Cannot add attribute after child content has been added
                 // Inside xsl:where-populated, defer this check until after filtering
-                if (_attributeCollecting && _output.Length > 0 && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
+                if (_attributeCollecting && _output.Length > _outputLogicalStart && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
                     throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added", _currentInstructionLocation);
 
                 // When in attribute collection mode, add as attribute
@@ -9651,7 +9725,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     throw new XsltException("XTDE0420: Cannot add an attribute node to a document node", _currentInstructionLocation);
                 // XTDE0410: Cannot add attribute after child content has been added
                 // Inside xsl:where-populated, defer this check until after filtering
-                if (_attributeCollecting && _output.Length > 0 && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
+                if (_attributeCollecting && _output.Length > _outputLogicalStart && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
                     throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added", _currentInstructionLocation);
 
                 var target = _attributeCollecting ? _collectedAttributes! : _output;
@@ -10041,13 +10115,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             // §5.7.2 simple content: collect each instruction's output as a separate
             // item in the accumulator, then join with space separator.
             var savedAccumulator = _sequenceAccumulator;
-            var savedOutput = _output.ToString();
+            var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
             var savedCollectText = _collectTextAsSequenceItems;
             var savedElemDepth = _serializingElementDepth;
             var savedLastWasNode = _simpleContentLastWasNode;
             var savedAtomic = _lastResultWasAtomic;
             _sequenceAccumulator = new List<object?>();
-            _output.Clear();
             _collectTextAsSequenceItems = true;
             _serializingElementDepth = 0;
             _simpleContentLastWasNode = false;
@@ -10067,14 +10140,13 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
 
             // Flush any trailing text to accumulator
-            var trailingText = _output.ToString();
+            var trailingText = savedScope.GetWritten();
             if (trailingText.Length > 0)
                 AppendToSeqAccumulator(new Xdm.TextNodeItem(trailingText));
 
             value = MergeSimpleContent(_sequenceAccumulator, " ");
             _sequenceAccumulator = savedAccumulator;
-            _output.Clear();
-            _output.Append(savedOutput);
+            savedScope.Dispose();
         }
         else
         {
@@ -10115,13 +10187,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         {
             // §5.7.2 simple content: same pattern as xsl:comment
             var savedAccumulator = _sequenceAccumulator;
-            var savedOutput = _output.ToString();
+            var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
             var savedCollectText = _collectTextAsSequenceItems;
             var savedElemDepth = _serializingElementDepth;
             var savedLastWasNode = _simpleContentLastWasNode;
             var savedAtomic = _lastResultWasAtomic;
             _sequenceAccumulator = new List<object?>();
-            _output.Clear();
             _collectTextAsSequenceItems = true;
             _serializingElementDepth = 0;
             _simpleContentLastWasNode = false;
@@ -10140,14 +10211,13 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 _lastResultWasAtomic = savedAtomic;
             }
 
-            var trailingText = _output.ToString();
+            var trailingText = savedScope.GetWritten();
             if (trailingText.Length > 0)
                 AppendToSeqAccumulator(new Xdm.TextNodeItem(trailingText));
 
             value = MergeSimpleContent(_sequenceAccumulator, " ");
             _sequenceAccumulator = savedAccumulator;
-            _output.Clear();
-            _output.Append(savedOutput);
+            savedScope.Dispose();
         }
         else
         {
@@ -15562,17 +15632,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 var savedAccum = _sequenceAccumulator;
                 _sequenceAccumulator = new List<object?>();
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                 _temporaryOutputDepth++;
                 try
                 {
                     await valueBody.ExecuteAsync(this).ConfigureAwait(false);
                     var items = _sequenceAccumulator;
-                    var outputText = _output.ToString();
-                    if (items.Count == 0 && outputText.Length > 0)
+                    if (items.Count == 0 && savedScope.WrittenLength > 0)
                     {
-                        value = outputText;
+                        value = savedScope.GetWritten();
                     }
                     else
                     {
@@ -15587,8 +15655,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 finally
                 {
                     _temporaryOutputDepth--;
-                    _output.Clear();
-                    _output.Append(savedOutput);
+                    savedScope.Dispose();
                     _sequenceAccumulator = savedAccum;
                 }
             }
@@ -16713,8 +16780,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         // Push namespace scope before processing body so children can see our ns bindings
         _collectedAttributesStack.Push(new StringBuilder());
 
-        var savedOutput = _output.ToString();
-        _output.Clear();
+        var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+        var savedLogicalStart = _outputLogicalStart;
+        _outputLogicalStart = _output.Length;
         var savedLastAtomic = _lastResultWasAtomic;
         _lastResultWasAtomic = false;
 
@@ -16779,9 +16847,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         var collectedAttrs = _collectedAttributesStack.Pop();
-        var content = _output.ToString();
-        _output.Clear();
-        _output.Append(savedOutput);
+        var content = savedScope.GetWritten();
+        savedScope.Dispose();
+        _outputLogicalStart = savedLogicalStart;
         // After producing an element node, reset atomic state (nodes break atomic adjacency)
         _lastResultWasAtomic = false;
 

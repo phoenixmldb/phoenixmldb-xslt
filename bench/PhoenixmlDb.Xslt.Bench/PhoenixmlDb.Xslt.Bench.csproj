@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PhoenixmlDb.Xslt.Bench</RootNamespace>
+    <!-- Benchmarks need release-quality JIT to be meaningful -->
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <!-- Bench code runs reflectively via BenchmarkDotNet; relax analyzer noise -->
+    <NoWarn>$(NoWarn);CA1303;CA1812;CA1822;CA2007;CA1707;CA1515</NoWarn>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ProjectReference into the local source so changes to PhoenixmlDb.Xslt get picked up
+         without needing a NuGet round-trip. The csproj's normal references (PackageReference
+         to PhoenixmlDb.Core / PhoenixmlDb.XQuery) are used as-is — pinned versions matter for
+         the perf comparison so we measure the engine, not dependency drift. -->
+    <ProjectReference Include="../../src/PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj" />
+  </ItemGroup>
+
+</Project>
