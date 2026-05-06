@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.7 (2026-05-05)
+
+### Fixes
+- **`as=` template/function bodies dispatched via `apply-templates` now reassemble result items in source order**, matching the prior fix to the `call-template` path. Schxslt2's transpiled validation stylesheet has `<template match="root()" as="element()*" mode="...validate">` whose body emits an LRE (`<svrl:active-pattern/>`) before `<apply-templates>` whose results route through `xsl:sequence`. Before this fix, the apply-templates dispatch path placed all accumulator-routed items (`xsl:sequence`, `xsl:attribute`) before serialized output regardless of source order, so `<svrl:schematron-output>` ended up with `<svrl:failed-assert/>`/`<svrl:successful-report/>` *before* `<svrl:active-pattern/>`/`<svrl:fired-rule/>`. Reported by Martin Honnen.
+- Refactored as-body capture into a scoped `AsBodyCapture` object that only records position offsets when items go to *its* accumulator. Inner accumulators (xsl:variable typed-sequence buffers, etc.) no longer leak position recordings into the outer capture's list. Eliminates the position/item count mismatch that prevented the earlier per-field tracking from working.
+- Bumps `PhoenixmlDb.XQuery` pin to 1.2.3 for `fn:doc-available` accepting `xs:untypedAtomic`.
+
 ## 1.2.6 (2026-05-05)
 
 ### Fixes

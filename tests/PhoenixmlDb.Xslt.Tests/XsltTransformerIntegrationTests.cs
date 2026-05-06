@@ -1682,6 +1682,62 @@ public class XsltTransformerIntegrationTests
         result.Should().Contain("id=\"2\"");
     }
 
+    // Regression: fn:doc-available accepts xs:untypedAtomic per XPath 3.1 function
+    // conversion rules. Previously raised XPTY0004 when $uri came from
+    // `xs:untypedAtomic('foo.xml')`. Reported by Martin Honnen.
+    [Fact]
+    public async Task doc_available_accepts_xs_untypedAtomic()
+    {
+        // Spec-required: xs:untypedAtomic must cast to xs:string per the function
+        // conversion rules. The previous behavior raised XPTY0004 instead. Asserting
+        // here that the call type-checks; we don't care whether the file exists, only
+        // that doc-available returns a boolean rather than throwing.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:param name="uri" select="xs:untypedAtomic('http://example.com/missing.xml')"/>
+              <xsl:template match="/">
+                <r><xsl:value-of select="doc-available($uri) instance of xs:boolean"/></r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">true</r>");
+    }
+
+    // Regression: a matched template (apply-templates dispatch path, not call-template)
+    // typed `as="element()*"` whose body emits an LRE *before* an xsl:sequence (or any
+    // accumulator-routed item) must reassemble result items in source order. Previously
+    // the apply-templates code path collected accumulator items first and serialized
+    // output last, so Schxslt2's transpiled validation stylesheet emitted
+    // svrl:active-pattern / svrl:fired-rule *after* svrl:failed-assert /
+    // svrl:successful-report inside svrl:schematron-output. Reported by Martin Honnen.
+    [Fact]
+    public async Task apply_templates_as_body_preserves_source_order()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/x" as="element()*">
+                <first/>
+                <xsl:variable name="v" as="element(second)"><second/></xsl:variable>
+                <xsl:sequence select="$v"/>
+                <third/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<x/>");
+        var firstIdx = result.IndexOf("<first/>", StringComparison.Ordinal);
+        var secondIdx = result.IndexOf("<second/>", StringComparison.Ordinal);
+        var thirdIdx = result.IndexOf("<third/>", StringComparison.Ordinal);
+        firstIdx.Should().BeGreaterThan(-1);
+        secondIdx.Should().BeGreaterThan(firstIdx);
+        thirdIdx.Should().BeGreaterThan(secondIdx);
+    }
+
     // Regression: a template typed `as="node()*"` whose body produces an `xsl:attribute`
     // before an LRE must reassemble its result in source order. Previously the engine
     // collected accumulator items (xsl:attribute → XdmAttribute) after serialized output

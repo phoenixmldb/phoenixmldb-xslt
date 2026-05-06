@@ -1,5 +1,37 @@
 # Release History
 
+## 1.2.7 (2026-05-05)
+
+### Schxslt2 transpiled validation runs cleanly
+
+A second source-order fix for `as=` typed bodies — this one for the `apply-templates`
+dispatch path. The `call-template` path was already covered by 1.2.6; this release
+extends the same reassembly logic to matched templates invoked via `apply-templates`,
+which is what Schxslt2's transpiled validation stylesheet uses:
+
+```xml
+<template match="root()" as="element()*" mode="...validate">
+  <svrl:active-pattern/>
+  <apply-templates select="root()" mode="group..."/>
+</template>
+```
+
+The body emits an LRE before `apply-templates` whose results route through
+`xsl:sequence` (i.e. via `_sequenceAccumulator`). Before this fix, the engine put all
+accumulator items before the serialized LRE output regardless of source order, so
+`<svrl:schematron-output>` ended up with `<svrl:failed-assert/>` and
+`<svrl:successful-report/>` *before* `<svrl:active-pattern/>` and `<svrl:fired-rule/>`.
+
+Internally, this required refactoring the as-body capture state into a scoped
+`AsBodyCapture` object so position recording only fires when an item goes into *that*
+capture's accumulator, not into an inner accumulator (e.g. an `xsl:variable` typed-
+sequence buffer) that just happens to be active at the same time.
+
+Also bumps `PhoenixmlDb.XQuery` pin to 1.2.3 for `fn:doc-available` accepting
+`xs:untypedAtomic`.
+
+Reported by Martin Honnen.
+
 ## 1.2.6 (2026-05-05)
 
 ### Schxslt2 transpile.xsl runs cleanly
