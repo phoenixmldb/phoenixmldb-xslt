@@ -1,5 +1,28 @@
 # Release History
 
+## 1.3.2 (2026-05-07)
+
+### Fix: namespace fixup for serialized elements
+
+When an XDM element selected from a variable (e.g. `<xsl:sequence
+select="$var/node()"/>`) was serialized into a new context whose output
+namespace scope did not include the element's prefix binding, the
+serializer omitted the `xmlns:` declaration — the prefix had been
+declared on an ancestor in the source tree, not on the element itself.
+The serialized chunk then failed XmlReader re-parsing in `as=`-typed
+template/variable bodies, the body fell back to a raw string, and the
+type check raised `XTTE0505: ... return value item of type String does
+not match declared type Element`.
+
+Reported by Martin Honnen — Schxslt2's `transpile.xsl` `reduce-schema`
+template raised XTTE0505 on `flowers.sch`. Schxslt2 transpile now runs
+to completion.
+
+Fix: `SerializeNode` emits the element's own prefix→URI binding when
+neither `elem.NamespaceDeclarations` nor the output scope already
+declares it — symmetric with the existing namespace fixup for
+prefixed attributes.
+
 ## 1.3.1 (2026-05-07)
 
 ### Internal: `INodeBuilder.InternNamespace(uri, preferredId)` implementation
