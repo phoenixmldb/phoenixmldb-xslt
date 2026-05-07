@@ -1832,75 +1832,66 @@ public sealed class XsltTransformEngine
                         {
                             var globalSeqBaseUri = XsltTransformEngine.UriString(global.BaseUri) ?? XsltTransformEngine.UriString(_stylesheet.BaseUri);
 
+                            // Stream-parse rather than allocating a full XmlDocument.
+                            var initSettings = new System.Xml.XmlReaderSettings
+                            {
+                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                IgnoreWhitespace = false,
+                                IgnoreComments = false,
+                                IgnoreProcessingInstructions = false,
+                            };
+                            using var initStringReader = new System.IO.StringReader($"<_seq_root_>{textContent}</_seq_root_>");
+                            using var initReader = System.Xml.XmlReader.Create(initStringReader, initSettings);
+                            var initParsed = new List<object?>();
+                            context.ReadAsBodyChunkChildren(initReader, initParsed);
+
                             // When as="document-node()", create a proper XdmDocument node
                             // wrapping the content, rather than extracting individual children
                             if (global.As?.ItemType == ItemType.Document)
                             {
-                                var xmlDoc = new System.Xml.XmlDocument();
-                                xmlDoc.PreserveWhitespace = true;
-                                xmlDoc.LoadXml($"<_seq_root_>{textContent}</_seq_root_>");
-                                var wrapperDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, context._nodeStore, globalSeqBaseUri);
-                                if (wrapperDoc.DocumentElement.HasValue && wrapperDoc.DocumentElement.Value != NodeId.None)
+                                var docId = context._nodeStore.NextId();
+                                var children = new List<NodeId>();
+                                NodeId docElementId = NodeId.None;
+                                foreach (var item in initParsed)
                                 {
-                                    var wrapper = context._nodeStore.GetNode(wrapperDoc.DocumentElement.Value) as XdmElement;
-                                    if (wrapper != null)
+                                    if (item is XdmNode cn)
                                     {
-                                        var docId = context._nodeStore.NextId();
-                                        var children = new List<NodeId>();
-                                        NodeId docElementId = NodeId.None;
-                                        foreach (var child in context._nodeStore.GetChildren(wrapper))
-                                        {
-                                            if (child is XdmNode cn)
-                                            {
-                                                cn.Parent = docId;
-                                                children.Add(cn.Id);
-                                                if (cn is XdmElement && docElementId == NodeId.None)
-                                                    docElementId = cn.Id;
-                                            }
-                                        }
-                                        string? docElemLocalName = docElementId != NodeId.None
-                                            ? (context._nodeStore.GetNode(docElementId) as XdmElement)?.LocalName : null;
-                                        var docNode = new XdmDocument
-                                        {
-                                            Id = docId,
-                                            Document = new DocumentId(1),
-                                            Parent = NodeId.None,
-                                            DocumentElement = docElementId,
-                                            Children = children,
-                                            DocumentElementLocalName = docElemLocalName
-                                        };
-                                        docNode.BaseUri = globalSeqBaseUri;
-                                        context._nodeStore.Register(docNode);
-                                        seqItems.Add(docNode);
+                                        cn.Parent = docId;
+                                        children.Add(cn.Id);
+                                        if (cn is XdmElement && docElementId == NodeId.None)
+                                            docElementId = cn.Id;
                                     }
                                 }
+                                string? docElemLocalName = docElementId != NodeId.None
+                                    ? (context._nodeStore.GetNode(docElementId) as XdmElement)?.LocalName : null;
+                                var docNode = new XdmDocument
+                                {
+                                    Id = docId,
+                                    Document = new DocumentId(1),
+                                    Parent = NodeId.None,
+                                    DocumentElement = docElementId,
+                                    Children = children,
+                                    DocumentElementLocalName = docElemLocalName,
+                                };
+                                docNode.BaseUri = globalSeqBaseUri;
+                                context._nodeStore.Register(docNode);
+                                seqItems.Add(docNode);
                             }
                             else
                             {
-                                var xmlDoc = new System.Xml.XmlDocument();
-                                xmlDoc.PreserveWhitespace = true;
-                                xmlDoc.LoadXml($"<_seq_root_>{textContent}</_seq_root_>");
-                                var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, context._nodeStore, globalSeqBaseUri);
-                                if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                                foreach (var item in initParsed)
                                 {
-                                    var wrapper = context._nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                                    if (wrapper != null)
+                                    // Detach children from the synthetic _seq_root_ wrapper
+                                    // so they become parentless nodes per XSLT as="node()*" semantics
+                                    if (item is XdmNode childNode)
                                     {
-                                        foreach (var child in context._nodeStore.GetChildren(wrapper))
-                                        {
-                                            // Detach children from the synthetic _seq_root_ wrapper
-                                            // so they become parentless nodes per XSLT as="node()*" semantics
-                                            if (child is XdmNode childNode)
-                                            {
-                                                childNode.Parent = null;
-                                                // Set construction context base URI so parentless
-                                                // nodes can resolve relative xml:base attributes
-                                                if (globalSeqBaseUri != null)
-                                                    childNode.BaseUri = globalSeqBaseUri;
-                                            }
-                                            seqItems.Add(child);
-                                        }
+                                        childNode.Parent = null;
+                                        // Set construction context base URI so parentless
+                                        // nodes can resolve relative xml:base attributes
+                                        if (globalSeqBaseUri != null)
+                                            childNode.BaseUri = globalSeqBaseUri;
                                     }
+                                    seqItems.Add(item);
                                 }
                             }
                         }
@@ -4289,7 +4280,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// avoids the per-call XmlDocument allocation that dominates wall time on workloads
     /// with many small <c>as=</c>-typed bodies.
     /// </summary>
-    private void ReadAsBodyChunkChildren(System.Xml.XmlReader reader, List<object?> result)
+    internal void ReadAsBodyChunkChildren(System.Xml.XmlReader reader, List<object?> result)
     {
         // Walk to the wrapper start tag, then descend one level so we read its children.
         if (!reader.Read())
@@ -9003,29 +8994,30 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         try
                         {
-                            var xmlDoc2 = new System.Xml.XmlDocument();
-                            xmlDoc2.PreserveWhitespace = true;
-                            xmlDoc2.LoadXml($"<_seq_root_>{content}</_seq_root_>");
-                            var seqBaseUri2 = EffectiveBaseUri;
+                            // Stream-parse rather than allocating an XmlDocument and
+                            // re-converting. Same hot-path optimization as elsewhere.
+                            var settings2 = new System.Xml.XmlReaderSettings
+                            {
+                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                IgnoreWhitespace = false,
+                                IgnoreComments = false,
+                                IgnoreProcessingInstructions = false,
+                            };
+                            using var stringReader2 = new System.IO.StringReader($"<_seq_root_>{content}</_seq_root_>");
+                            using var reader2 = System.Xml.XmlReader.Create(stringReader2, settings2);
                             var docId2 = _nodeStore.NextId();
                             var children2 = new List<NodeId>();
                             NodeId docElemId2 = NodeId.None;
-                            var wrapperDoc2 = XsltTransformEngine.ConvertToXdm(xmlDoc2, _nodeStore, seqBaseUri2);
-                            if (wrapperDoc2.DocumentElement.HasValue && wrapperDoc2.DocumentElement.Value != NodeId.None)
+                            var parsedChildren2 = new List<object?>();
+                            ReadAsBodyChunkChildren(reader2, parsedChildren2);
+                            foreach (var item in parsedChildren2)
                             {
-                                var wrapper2 = _nodeStore.GetNode(wrapperDoc2.DocumentElement.Value) as XdmElement;
-                                if (wrapper2 != null)
+                                if (item is XdmNode cn)
                                 {
-                                    foreach (var child in _nodeStore.GetChildren(wrapper2))
-                                    {
-                                        if (child is XdmNode cn)
-                                        {
-                                            cn.Parent = docId2;
-                                            children2.Add(cn.Id);
-                                            if (cn is XdmElement && docElemId2 == NodeId.None)
-                                                docElemId2 = cn.Id;
-                                        }
-                                    }
+                                    cn.Parent = docId2;
+                                    children2.Add(cn.Id);
+                                    if (cn is XdmElement && docElemId2 == NodeId.None)
+                                        docElemId2 = cn.Id;
                                 }
                             }
                             string? docElemLocalName2 = docElemId2 != NodeId.None
@@ -9230,18 +9222,28 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         {
                             var elemXml = _output.ToString(elemStartPos, _output.Length - elemStartPos);
                             _output.Length = elemStartPos;
-                            var xmlDoc2 = new System.Xml.XmlDocument();
-                            xmlDoc2.PreserveWhitespace = true;
-                            xmlDoc2.LoadXml(elemXml);
-                            var xdmDoc2 = XsltTransformEngine.ConvertToXdm(xmlDoc2, _nodeStore, null);
-                            if (xdmDoc2.DocumentElement.HasValue && xdmDoc2.DocumentElement.Value != NodeId.None)
+                            // Stream-parse rather than allocating an XmlDocument and
+                            // re-converting. Wrap in a synthetic root so we can reuse
+                            // ReadAsBodyChunkChildren and pick up the single element.
+                            var settingsCopy = new System.Xml.XmlReaderSettings
                             {
-                                var copyElem = _nodeStore.GetNode(xdmDoc2.DocumentElement.Value);
-                                if (copyElem != null)
+                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                IgnoreWhitespace = false,
+                                IgnoreComments = false,
+                                IgnoreProcessingInstructions = false,
+                            };
+                            using var stringReaderCopy = new System.IO.StringReader($"<_copy_root_>{elemXml}</_copy_root_>");
+                            using var readerCopy = System.Xml.XmlReader.Create(stringReaderCopy, settingsCopy);
+                            var copyChildren = new List<object?>();
+                            ReadAsBodyChunkChildren(readerCopy, copyChildren);
+                            foreach (var child in copyChildren)
+                            {
+                                if (child is XdmElement copyElem)
                                 {
                                     copyElem.Parent = null;
                                     copyElem.CopySourceBaseUri = sourceBaseUri;
                                     AppendToSeqAccumulator(copyElem);
+                                    break;
                                 }
                             }
                         }
@@ -10453,17 +10455,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
         else if (instruction.Content != null)
         {
-            var savedOutput = _output.ToString();
-            _output.Clear();
+            var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
             // Save/restore sequence accumulator to prevent xsl:value-of inside namespace
             // content from leaking TextNodeItems into the function's accumulator
             var savedAccumNs = _sequenceAccumulator;
             _sequenceAccumulator = null;
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
             _sequenceAccumulator = savedAccumNs;
-            uri = _output.ToString();
-            _output.Clear();
-            _output.Append(savedOutput);
+            uri = savedScope.GetWritten();
+            savedScope.Dispose();
         }
         else
         {
@@ -10556,8 +10556,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         // document-node functions work correctly.
         if (_sequenceAccumulator != null && _nodeStore != null)
         {
-            var savedOutput = _output.ToString();
-            _output.Clear();
+            var seqScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
 
             // Save and clear the sequence accumulator so that child instructions
             // (like xsl:sequence) serialize to the output buffer instead of
@@ -10589,9 +10588,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 _collectTextAsSequenceItems = savedCollectText;
             }
 
-            var content = _output.ToString();
-            _output.Clear();
-            _output.Append(savedOutput);
+            var content = seqScope.GetWritten();
+            seqScope.Dispose();
 
 
             if (content.Length > 0)
@@ -10600,36 +10598,40 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     "xsl:document", instruction.Location);
                 try
                 {
-                    var xmlDoc = new System.Xml.XmlDocument();
-                    xmlDoc.PreserveWhitespace = true;
-                    xmlDoc.LoadXml($"<_seq_root_>{content}</_seq_root_>");
+                    // Stream-parse via XmlReader rather than allocating a full XmlDocument.
+                    // Same hot-path optimization as AddBodyOutputChunk and the xsl:variable
+                    // as=element(...) path: reads one synthetic wrapper element and emits
+                    // its children directly into XDM nodes without an intermediate DOM.
+                    var settings = new System.Xml.XmlReaderSettings
+                    {
+                        DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                        IgnoreWhitespace = false,
+                        IgnoreComments = false,
+                        IgnoreProcessingInstructions = false,
+                    };
+                    using var stringReader = new System.IO.StringReader($"<_seq_root_>{content}</_seq_root_>");
+                    using var reader = System.Xml.XmlReader.Create(stringReader, settings);
                     var seqBaseUri = EffectiveBaseUri;
                     var docId = _nodeStore.NextId();
                     var children = new List<NodeId>();
                     NodeId docElementId = NodeId.None;
-                    var wrapperDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore, seqBaseUri);
-                    if (wrapperDoc.DocumentElement.HasValue && wrapperDoc.DocumentElement.Value != NodeId.None)
+                    var parsedChildren = new List<object?>();
+                    ReadAsBodyChunkChildren(reader, parsedChildren);
+                    var stringValueBuilder = new StringBuilder();
+                    foreach (var item in parsedChildren)
                     {
-                        var wrapper = _nodeStore.GetNode(wrapperDoc.DocumentElement.Value) as XdmElement;
-                        if (wrapper != null)
+                        if (item is XdmNode cn)
                         {
-                            foreach (var child in _nodeStore.GetChildren(wrapper))
-                            {
-                                if (child is XdmNode cn)
-                                {
-                                    cn.Parent = docId;
-                                    children.Add(cn.Id);
-                                    if (cn is XdmElement && docElementId == NodeId.None)
-                                        docElementId = cn.Id;
-                                }
-                            }
+                            cn.Parent = docId;
+                            children.Add(cn.Id);
+                            if (cn is XdmElement && docElementId == NodeId.None)
+                                docElementId = cn.Id;
+                            // Concatenate descendant text values for the document's string value
+                            stringValueBuilder.Append(cn.StringValue);
                         }
                     }
                     string? docElemLocalName = docElementId != NodeId.None
                         ? (_nodeStore.GetNode(docElementId) as XdmElement)?.LocalName : null;
-                    // Compute string value: concatenation of all descendant text nodes
-                    // (excludes comments and PIs per XDM spec)
-                    var docStringValue = xmlDoc.DocumentElement?.InnerText ?? "";
                     var docNode = new XdmDocument
                     {
                         Id = docId,
@@ -10638,7 +10640,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         DocumentElement = docElementId,
                         Children = children,
                         DocumentElementLocalName = docElemLocalName,
-                        _stringValue = docStringValue
+                        _stringValue = stringValueBuilder.ToString(),
                     };
                     _nodeStore.Register(docNode);
                     AppendToSeqAccumulator(docNode);
@@ -10704,12 +10706,28 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     "xsl:document", instruction.Location);
                 try
                 {
-                    var xmlDoc = new System.Xml.XmlDocument();
-                    xmlDoc.PreserveWhitespace = true;
-                    xmlDoc.LoadXml($"<_doc_wrap_>{xmlContent}</_doc_wrap_>");
-                    // String value = concatenation of all descendant text nodes (excludes comments/PIs)
-                    var docStringValue = xmlDoc.DocumentElement?.InnerText ?? "";
-                    _output.Append(docStringValue);
+                    // Stream descendant text nodes — equivalent to
+                    // XmlDocument.DocumentElement.InnerText without DOM allocation.
+                    var docSettings = new System.Xml.XmlReaderSettings
+                    {
+                        Async = true,
+                        DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                        IgnoreWhitespace = false,
+                        IgnoreComments = true,
+                        IgnoreProcessingInstructions = true,
+                    };
+                    using var docStringReader = new System.IO.StringReader($"<_doc_wrap_>{xmlContent}</_doc_wrap_>");
+                    using var docReader = System.Xml.XmlReader.Create(docStringReader, docSettings);
+                    while (await docReader.ReadAsync().ConfigureAwait(false))
+                    {
+                        if (docReader.NodeType is System.Xml.XmlNodeType.Text
+                            or System.Xml.XmlNodeType.CDATA
+                            or System.Xml.XmlNodeType.SignificantWhitespace
+                            or System.Xml.XmlNodeType.Whitespace)
+                        {
+                            _output.Append(docReader.Value);
+                        }
+                    }
                 }
                 catch (System.Xml.XmlException)
                 {
@@ -10722,8 +10740,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         // Default path: buffer content to text output
-        var savedOut = _output.ToString();
-        _output.Clear();
+        var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+        var savedLogicalStart = _outputLogicalStart;
+        _outputLogicalStart = _output.Length;
 
         _documentNodeDepth++;
         try
@@ -10735,9 +10754,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             _documentNodeDepth--;
         }
 
-        var textContent = _output.ToString();
-        _output.Clear();
-        _output.Append(savedOut);
+        var textContent = savedScope.GetWritten();
+        savedScope.Dispose();
+        _outputLogicalStart = savedLogicalStart;
         if (textContent.Length > 0)
         {
             RunValidation(instruction.Validation, textContent, ValidationKind.Fragment,
@@ -12322,17 +12341,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else if (instruction.Content != null)
             {
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                 // Save/restore sequence accumulator so xsl:sequence inside xsl:message
                 // doesn't pollute the parent variable's accumulator
                 var savedAccumulator = _sequenceAccumulator;
                 _sequenceAccumulator = null;
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
                 _sequenceAccumulator = savedAccumulator;
-                message = _output.ToString();
-                _output.Clear();
-                _output.Append(savedOutput);
+                message = savedScope.GetWritten();
+                savedScope.Dispose();
             }
             else
             {
@@ -12447,8 +12464,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedAccumulator = _sequenceAccumulator;
                 _sequenceAccumulator = new List<object?>();
 
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+                var savedLogicalStart = _outputLogicalStart;
+                _outputLogicalStart = _output.Length;
                 var savedAtomic = _lastResultWasAtomic;
                 _lastResultWasAtomic = false;
                 // Save and clear namespace scopes so RTF content has all needed declarations
@@ -12484,10 +12502,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     _collectTextAsSequenceItems = savedCollectText;
                     _serializingElementDepth = savedElemDepth;
                 }
-                var textContent = _output.ToString();
+                var textContent = savedScope.GetWritten();
 
-                _output.Clear();
-                _output.Append(savedOutput);
+                savedScope.Dispose();
+                _outputLogicalStart = savedLogicalStart;
                 _lastResultWasAtomic = savedAtomic;
                 // Restore namespace scopes
                 _outputNsScopes.Clear();
@@ -12566,31 +12584,29 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         // wrapping the content, rather than extracting individual children
                         if (instruction.As?.ItemType == ItemType.Document)
                         {
-
-
-                            var xmlDoc = new System.Xml.XmlDocument();
-                            xmlDoc.PreserveWhitespace = true;
-                            xmlDoc.LoadXml($"<_seq_root_>{textContent}</_seq_root_>");
-                            // Build a document node with the wrapper's children as direct children
+                            // Stream-parse rather than allocating a full XmlDocument.
+                            var settings = new System.Xml.XmlReaderSettings
+                            {
+                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                IgnoreWhitespace = false,
+                                IgnoreComments = false,
+                                IgnoreProcessingInstructions = false,
+                            };
+                            using var stringReader = new System.IO.StringReader($"<_seq_root_>{textContent}</_seq_root_>");
+                            using var reader = System.Xml.XmlReader.Create(stringReader, settings);
                             var docId = _nodeStore.NextId();
                             var children = new List<NodeId>();
                             NodeId docElementId = NodeId.None;
-                            var wrapperDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore, seqBaseUri);
-                            if (wrapperDoc.DocumentElement.HasValue && wrapperDoc.DocumentElement.Value != NodeId.None)
+                            var parsedChildren = new List<object?>();
+                            ReadAsBodyChunkChildren(reader, parsedChildren);
+                            foreach (var item in parsedChildren)
                             {
-                                var wrapper = _nodeStore.GetNode(wrapperDoc.DocumentElement.Value) as XdmElement;
-                                if (wrapper != null)
+                                if (item is XdmNode cn)
                                 {
-                                    foreach (var child in _nodeStore.GetChildren(wrapper))
-                                    {
-                                        if (child is XdmNode cn)
-                                        {
-                                            cn.Parent = docId;
-                                            children.Add(cn.Id);
-                                            if (cn is XdmElement && docElementId == NodeId.None)
-                                                docElementId = cn.Id;
-                                        }
-                                    }
+                                    cn.Parent = docId;
+                                    children.Add(cn.Id);
+                                    if (cn is XdmElement && docElementId == NodeId.None)
+                                        docElementId = cn.Id;
                                 }
                             }
                             string? docElemLocalName2 = docElementId != NodeId.None
@@ -12708,8 +12724,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else
             {
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+                var savedLogicalStart = _outputLogicalStart;
+                _outputLogicalStart = _output.Length;
                 var savedAtomic2 = _lastResultWasAtomic;
                 _lastResultWasAtomic = false;
                 // Variable content creates a document fragment — isolate attribute collection
@@ -12743,10 +12760,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     foreach (var scope in savedNsScopes2.AsEnumerable().Reverse())
                         _outputNsScopes.Push(scope);
                 }
-                var content = _output.ToString();
+                var content = savedScope.GetWritten();
 
-                _output.Clear();
-                _output.Append(savedOutput);
+                savedScope.Dispose();
+                _outputLogicalStart = savedLogicalStart;
                 _lastResultWasAtomic = savedAtomic2;
                 // XSLT 2.0: variables with content and no 'as' attribute always create a
                 // temporary tree (document node). Variables with 'as' that land here have typed
@@ -12874,10 +12891,31 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         try
                         {
-                            var xmlDoc = new System.Xml.XmlDocument();
-                            xmlDoc.PreserveWhitespace = true;
-                            xmlDoc.LoadXml($"<_rtf_>{rtfText}</_rtf_>");
-                            rtfText = xmlDoc.DocumentElement!.InnerText;
+                            // Stream the RTF content and accumulate descendant text — equivalent
+                            // to XmlDocument.DocumentElement.InnerText but without allocating the
+                            // DOM. Same hot-path optimization as the rest of the as= body capture.
+                            var settings = new System.Xml.XmlReaderSettings
+                            {
+                                Async = true,
+                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                IgnoreWhitespace = false,
+                                IgnoreComments = true,
+                                IgnoreProcessingInstructions = true,
+                            };
+                            using var stringReader = new System.IO.StringReader($"<_rtf_>{rtfText}</_rtf_>");
+                            using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                            var sb = new StringBuilder();
+                            while (await reader.ReadAsync().ConfigureAwait(false))
+                            {
+                                if (reader.NodeType is System.Xml.XmlNodeType.Text
+                                    or System.Xml.XmlNodeType.CDATA
+                                    or System.Xml.XmlNodeType.SignificantWhitespace
+                                    or System.Xml.XmlNodeType.Whitespace)
+                                {
+                                    sb.Append(reader.Value);
+                                }
+                            }
+                            rtfText = sb.ToString();
                         }
                         catch (System.Xml.XmlException)
                         {
@@ -12977,14 +13015,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedAccumulator = _sequenceAccumulator;
                 _sequenceAccumulator = new List<object?>();
 
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+                var savedLogicalStart = _outputLogicalStart;
+                _outputLogicalStart = _output.Length;
                 var savedAtomic = _lastResultWasAtomic;
                 _lastResultWasAtomic = false;
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
-                var textContent = _output.ToString();
-                _output.Clear();
-                _output.Append(savedOutput);
+                var textContent = savedScope.GetWritten();
+                savedScope.Dispose();
+                _outputLogicalStart = savedLogicalStart;
                 _lastResultWasAtomic = savedAtomic;
 
                 var sequenceItems = new List<object?>();
@@ -12996,23 +13035,23 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     try
                     {
-                        var xmlDoc = new System.Xml.XmlDocument();
-                        xmlDoc.PreserveWhitespace = true;
-                        xmlDoc.LoadXml($"<_seq_root_>{textContent}</_seq_root_>");
-                        var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
-                        if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                        // Stream-parse the wrapper rather than allocating a full XmlDocument.
+                        var settings = new System.Xml.XmlReaderSettings
                         {
-                            var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                            if (wrapper != null)
-                            {
-                                foreach (var child in _nodeStore.GetChildren(wrapper))
-                                {
-                                    // Detach children from synthetic _seq_root_ wrapper
-                                    if (child is XdmNode cn)
-                                        cn.Parent = null;
-                                    sequenceItems.Add(child);
-                                }
-                            }
+                            DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                            IgnoreWhitespace = false,
+                            IgnoreComments = false,
+                            IgnoreProcessingInstructions = false,
+                        };
+                        using var stringReader = new System.IO.StringReader($"<_seq_root_>{textContent}</_seq_root_>");
+                        using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                        var parsedChildren = new List<object?>();
+                        ReadAsBodyChunkChildren(reader, parsedChildren);
+                        foreach (var child in parsedChildren)
+                        {
+                            if (child is XdmNode cn)
+                                cn.Parent = null;
+                            sequenceItems.Add(child);
                         }
                     }
                     catch (System.Xml.XmlException)
@@ -13030,14 +13069,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else
             {
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+                var savedLogicalStart = _outputLogicalStart;
+                _outputLogicalStart = _output.Length;
                 var savedAtomic2 = _lastResultWasAtomic;
                 _lastResultWasAtomic = false;
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
-                var content = _output.ToString();
-                _output.Clear();
-                _output.Append(savedOutput);
+                var content = savedScope.GetWritten();
+                savedScope.Dispose();
+                _outputLogicalStart = savedLogicalStart;
                 _lastResultWasAtomic = savedAtomic2;
                 value = content.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(content) : (object)new Xdm.XsUntypedAtomic(StripXmlMarkup(content));
             }
@@ -14893,12 +14933,13 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             _collectTextAsSequenceItems = true;
             _serializingElementDepth = 0; // Reset so perform-sort content starts at "top level"
 
-            var savedOutput = _output.ToString();
-            _output.Clear();
+            var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+            var savedLogicalStart = _outputLogicalStart;
+            _outputLogicalStart = _output.Length;
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
-            var xmlContent = _output.ToString();
-            _output.Clear();
-            _output.Append(savedOutput);
+            var xmlContent = savedScope.GetWritten();
+            savedScope.Dispose();
+            _outputLogicalStart = savedLogicalStart;
             _collectTextAsSequenceItems = savedCollectText;
             _serializingElementDepth = savedElementDepth;
 
@@ -14917,20 +14958,21 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 try
                 {
-                    var xmlDoc = new System.Xml.XmlDocument();
-                    xmlDoc.PreserveWhitespace = true;
-                    xmlDoc.LoadXml($"<_sort_root_>{xmlContent}</_sort_root_>");
-                    var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
-                    // Get the wrapper element's children as individual items
-                    if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                    // Stream-parse rather than allocating a full XmlDocument.
+                    var settings = new System.Xml.XmlReaderSettings
                     {
-                        var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                        if (wrapper != null)
-                        {
-                            foreach (var child in _nodeStore.GetChildren(wrapper))
-                                collected.Add(child);
-                        }
-                    }
+                        DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                        IgnoreWhitespace = false,
+                        IgnoreComments = false,
+                        IgnoreProcessingInstructions = false,
+                    };
+                    using var stringReader = new System.IO.StringReader($"<_sort_root_>{xmlContent}</_sort_root_>");
+                    using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                    var parsedChildren = new List<object?>();
+                    ReadAsBodyChunkChildren(reader, parsedChildren);
+                    foreach (var child in parsedChildren)
+                        if (child != null)
+                            collected.Add(child);
                 }
                 catch (System.Xml.XmlException)
                 {
@@ -15694,19 +15736,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             var savedAccum = _sequenceAccumulator;
             _sequenceAccumulator = new List<object?>();
             // Save/clear _output so text content is captured for the map entry value
-            var savedOutput = _output.ToString();
-            _output.Clear();
+            var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
             _temporaryOutputDepth++;
             try
             {
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
                 var items = _sequenceAccumulator;
-                // Check if text was written to _output (e.g., literal text content)
-                var outputText = _output.ToString();
-                if (items.Count == 0 && outputText.Length > 0)
+                if (items.Count == 0 && savedScope.WrittenLength > 0)
                 {
                     // Text-only content — use the text as the value
-                    value = outputText;
+                    value = savedScope.GetWritten();
                 }
                 else
                 {
@@ -15721,8 +15760,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             finally
             {
                 _temporaryOutputDepth--;
-                _output.Clear();
-                _output.Append(savedOutput);
+                savedScope.Dispose();
                 _sequenceAccumulator = savedAccum;
             }
         }
@@ -15860,8 +15898,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     public override async ValueTask WherePopulatedAsync(XsltWherePopulated instruction)
     {
         // Buffer output and track whether "real" content is produced
-        var savedOutput = _output.ToString();
-        _output.Clear();
+        var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+        var savedLogicalStart = _outputLogicalStart;
+        _outputLogicalStart = _output.Length;
 
         // Save collected attributes so where-populated content captures attributes separately.
         // This allows filtering zero-length "insignificant" attributes per XSLT 3.0 §11.4.
@@ -15909,9 +15948,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
 
-        var result = _output.ToString();
-        _output.Clear();
-        _output.Append(savedOutput);
+        var result = savedScope.GetWritten();
+        savedScope.Dispose();
+        _outputLogicalStart = savedLogicalStart;
 
         // Collect and filter attributes produced inside where-populated
         string? wpAttrs = null;
@@ -17537,15 +17576,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedAccumulator = _sequenceAccumulator;
                 _sequenceAccumulator = new List<object?>();
 
-                var savedOutput = _output.ToString();
-                _output.Clear();
+                var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+                var savedLogicalStart = _outputLogicalStart;
+                _outputLogicalStart = _output.Length;
                 _temporaryOutputDepth++;
                 try
                 { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
                 finally { _temporaryOutputDepth--; }
-                var textContent = _output.ToString();
-                _output.Clear();
-                _output.Append(savedOutput);
+                var textContent = savedScope.GetWritten();
+                savedScope.Dispose();
+                _outputLogicalStart = savedLogicalStart;
 
                 var sequenceItems = new List<object?>();
                 foreach (var item in _sequenceAccumulator)
@@ -17556,23 +17596,23 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     try
                     {
-                        var xmlDoc = new System.Xml.XmlDocument();
-                        xmlDoc.PreserveWhitespace = true;
-                        xmlDoc.LoadXml($"<_seq_root_>{textContent}</_seq_root_>");
-                        var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
-                        if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                        // Stream-parse rather than allocating a full XmlDocument.
+                        var settings = new System.Xml.XmlReaderSettings
                         {
-                            var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                            if (wrapper != null)
-                            {
-                                foreach (var child in _nodeStore.GetChildren(wrapper))
-                                {
-                                    // Detach children from synthetic _seq_root_ wrapper
-                                    if (child is XdmNode cn)
-                                        cn.Parent = null;
-                                    sequenceItems.Add(child);
-                                }
-                            }
+                            DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                            IgnoreWhitespace = false,
+                            IgnoreComments = false,
+                            IgnoreProcessingInstructions = false,
+                        };
+                        using var stringReader = new System.IO.StringReader($"<_seq_root_>{textContent}</_seq_root_>");
+                        using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                        var parsedChildren = new List<object?>();
+                        ReadAsBodyChunkChildren(reader, parsedChildren);
+                        foreach (var child in parsedChildren)
+                        {
+                            if (child is XdmNode cn)
+                                cn.Parent = null;
+                            sequenceItems.Add(child);
                         }
                     }
                     catch (System.Xml.XmlException)
@@ -17589,8 +17629,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 return sequenceItems.Count > 0 ? sequenceItems.ToArray() : Array.Empty<object?>();
             }
 
-            var savedOutput2 = _output.ToString();
-            _output.Clear();
+            var savedScope2 = new XsltTransformEngine.ScopedOutputBuffer(_output);
+            var savedLogicalStart2 = _outputLogicalStart;
+            _outputLogicalStart = _output.Length;
             // Save/restore sequence accumulator to prevent xsl:map/xsl:array
             // inside with-param content from leaking into the outer accumulator
             var savedAccum2 = _sequenceAccumulator;
@@ -17601,9 +17642,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             finally { _temporaryOutputDepth--; }
             var contentAccum = _sequenceAccumulator;
             _sequenceAccumulator = savedAccum2;
-            var result = _output.ToString();
-            _output.Clear();
-            _output.Append(savedOutput2);
+            var result = savedScope2.GetWritten();
+            savedScope2.Dispose();
+            _outputLogicalStart = savedLogicalStart2;
             // If the content produced typed items (maps, arrays, functions, nodes)
             // via sequence accumulator, use those directly instead of serialized output
             if (contentAccum.Count > 0 && string.IsNullOrEmpty(result))
@@ -18026,21 +18067,27 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                     else
                     {
-                        // Parse RTF XML content into actual XDM nodes (children only)
+                        // Parse RTF XML content into actual XDM nodes (children only) —
+                        // stream via XmlReader rather than allocating an XmlDocument and
+                        // re-converting it. Same hot-path optimization as the as=-body
+                        // assembly path.
                         try
                         {
-                            var xmlDoc = new System.Xml.XmlDocument();
-                            xmlDoc.PreserveWhitespace = true;
-                            xmlDoc.LoadXml($"<_rtf_wrap_>{rtf.XmlContent}</_rtf_wrap_>");
-                            var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
-                            if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                            var rtfSettings = new System.Xml.XmlReaderSettings
                             {
-                                var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                                if (wrapper != null)
-                                {
-                                    foreach (var child in _nodeStore.GetChildren(wrapper))
-                                        output.Add(child);
-                                }
+                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                IgnoreWhitespace = false,
+                                IgnoreComments = false,
+                                IgnoreProcessingInstructions = false,
+                            };
+                            using var rtfStringReader = new System.IO.StringReader($"<_rtf_wrap_>{rtf.XmlContent}</_rtf_wrap_>");
+                            using var rtfReader = System.Xml.XmlReader.Create(rtfStringReader, rtfSettings);
+                            var rtfChildren = new List<object?>();
+                            ReadAsBodyChunkChildren(rtfReader, rtfChildren);
+                            foreach (var child in rtfChildren)
+                            {
+                                if (child is XdmNode xn)
+                                    output.Add(xn);
                             }
                         }
                         catch (System.Xml.XmlException)
@@ -19129,34 +19176,33 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 funcResult = null;
                 try
                 {
-                    var xmlDoc = new System.Xml.XmlDocument();
-                    xmlDoc.PreserveWhitespace = true;
-                    xmlDoc.LoadXml($"<_fn_root_>{textOutput}</_fn_root_>");
-                    var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
-                    if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                    // Stream-parse via XmlReader rather than allocating a full XmlDocument
+                    // and re-converting to XDM. Children parented under the synthetic
+                    // wrapper, then unparented before being returned as the function result.
+                    var fnSettings = new System.Xml.XmlReaderSettings
                     {
-                        var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                        if (wrapper != null)
-                        {
-                            // Parse XML children — in function bodies, text from xsl:text is
-                            // written to both _sequenceAccumulator and _output, so parsed items
-                            // already contain text in the correct position relative to elements.
-                            // Only add non-TextNodeItem accumulated items (e.g., from xsl:sequence).
-                            var parsedItems = new List<object?>();
-                            foreach (var child in _nodeStore.GetChildren(wrapper))
-                            {
-                                if (child is XdmNode cn)
-                                    cn.Parent = null;
-                                parsedItems.Add(child);
-                            }
-                            foreach (var item in accumulatedItems)
-                            {
-                                if (item is not Xdm.TextNodeItem)
-                                    parsedItems.Add(item);
-                            }
-                            funcResult = parsedItems.Count == 1 ? parsedItems[0] : parsedItems.Count > 1 ? parsedItems.ToArray() : null;
-                        }
+                        DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                        IgnoreWhitespace = false,
+                        IgnoreComments = false,
+                        IgnoreProcessingInstructions = false,
+                    };
+                    using var fnStringReader = new System.IO.StringReader($"<_fn_root_>{textOutput}</_fn_root_>");
+                    using var fnReader = System.Xml.XmlReader.Create(fnStringReader, fnSettings);
+                    var fnChildren = new List<object?>();
+                    ReadAsBodyChunkChildren(fnReader, fnChildren);
+                    var parsedItems = new List<object?>();
+                    foreach (var child in fnChildren)
+                    {
+                        if (child is XdmNode cn)
+                            cn.Parent = null;
+                        parsedItems.Add(child);
                     }
+                    foreach (var item in accumulatedItems)
+                    {
+                        if (item is not Xdm.TextNodeItem)
+                            parsedItems.Add(item);
+                    }
+                    funcResult = parsedItems.Count == 1 ? parsedItems[0] : parsedItems.Count > 1 ? parsedItems.ToArray() : null;
                 }
                 catch (System.Xml.XmlException)
                 {
