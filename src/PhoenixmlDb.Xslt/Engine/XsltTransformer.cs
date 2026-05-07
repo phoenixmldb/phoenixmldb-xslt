@@ -9895,6 +9895,28 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                 }
 
+                // Namespace fixup: ensure the element's own prefix→URI is declared. When a
+                // node is detached from its source tree (e.g. selected via xsl:sequence from
+                // a variable) and serialized in a new context, the prefix binding from the
+                // source's ancestor chain is not present in either the local declarations or
+                // the output scope. Emit it now so re-parsing produces a well-formed document.
+                {
+                    var elemPrefixForFixup = elem.Prefix ?? "";
+                    if (!string.IsNullOrEmpty(elemPrefixForFixup) && !nsBindings.ContainsKey(elemPrefixForFixup))
+                    {
+                        var elemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
+                        if (!string.IsNullOrEmpty(elemNsUri) && !IsNamespaceInScope(elemPrefixForFixup, elemNsUri))
+                        {
+                            _output.Append(" xmlns:");
+                            _output.Append(elemPrefixForFixup);
+                            _output.Append("=\"");
+                            _output.Append(EscapeAttributeValue(elemNsUri));
+                            _output.Append('"');
+                            nsBindings[elemPrefixForFixup] = elemNsUri;
+                        }
+                    }
+                }
+
                 // Serialize attributes
                 if (_nodeStore != null)
                 {
