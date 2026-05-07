@@ -1,5 +1,15 @@
 # Release History
 
+## 1.3.1 (2026-05-07)
+
+### Internal: `INodeBuilder.InternNamespace(uri, preferredId)` implementation
+
+`InMemoryNodeStore` now implements the new `InternNamespace(uri, preferredId)`
+overload added in `PhoenixmlDb.XQuery` 1.3.0, so namespace IDs assigned during
+XQuery static analysis round-trip through the XSLT engine's in-memory store
+when the engines are composed (e.g. `fn:transform`). No public API change;
+internal class only.
+
 ## 1.3.0 (2026-05-07)
 
 ### Blazor WebAssembly support
