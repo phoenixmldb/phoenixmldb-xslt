@@ -3116,6 +3116,21 @@ public sealed class XsltTransformEngine
             return id;
         }
 
+        public NamespaceId InternNamespace(string uri, NamespaceId preferredId)
+        {
+            if (string.IsNullOrEmpty(uri))
+                return NamespaceId.None;
+            if (_nsToId.TryGetValue(uri, out var existing))
+                return existing;
+            if (preferredId != NamespaceId.None && !_idToNs.ContainsKey(preferredId))
+            {
+                _nsToId[uri] = preferredId;
+                _idToNs[preferredId] = uri;
+                return preferredId;
+            }
+            return InternNamespace(uri);
+        }
+
         /// <summary>
         /// Registers a well-known NamespaceId → URI mapping (does not allocate a new ID).
         /// </summary>
