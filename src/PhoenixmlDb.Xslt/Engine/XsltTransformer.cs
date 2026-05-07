@@ -4252,25 +4252,25 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         {
             try
             {
-                var xmlDoc = new System.Xml.XmlDocument();
-                xmlDoc.PreserveWhitespace = true;
+                // Stream the chunk through XmlReader instead of allocating an XmlDocument
+                // and walking its DOM. The previous path allocated O(N) XmlNode objects per
+                // call where N = nodes in the chunk; for an `xsl:variable as="element(…)"`
+                // body inside a deep for-each (Schxslt2 / Dataverse-shape transforms), that
+                // adds up to many thousands of XmlDocuments built and discarded per second.
+                // Direct reader → XDM eliminates the DOM intermediary entirely.
                 var nsDecls = BuildInScopeNamespaceDeclarations();
-                xmlDoc.LoadXml($"<_tmpl_wrap_{nsDecls}>{chunk}</_tmpl_wrap_>");
-                var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore);
-                if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                var wrapped = $"<_tmpl_wrap_{nsDecls}>{chunk}</_tmpl_wrap_>";
+                var settings = new System.Xml.XmlReaderSettings
                 {
-                    var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                    if (wrapper != null)
-                    {
-                        foreach (var child in _nodeStore.GetChildren(wrapper))
-                        {
-                            if (child is XdmNode cn)
-                                cn.Parent = null;
-                            result.Add(child);
-                        }
-                        return;
-                    }
-                }
+                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                    IgnoreWhitespace = false,
+                    IgnoreComments = false,
+                    IgnoreProcessingInstructions = false,
+                };
+                using var stringReader = new System.IO.StringReader(wrapped);
+                using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                ReadAsBodyChunkChildren(reader, result);
+                return;
             }
             catch (System.Xml.XmlException)
             {
@@ -4279,6 +4279,192 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         result.Add(chunk);
+    }
+
+    /// <summary>
+    /// Streams the children of the synthetic <c>_tmpl_wrap_</c> wrapper out of the
+    /// supplied <see cref="System.Xml.XmlReader"/> and into <paramref name="result"/>
+    /// as live XDM nodes registered in <c>_nodeStore</c>. Mirrors what
+    /// <c>ConvertToXdm</c> does, but driven by reader events rather than a built DOM —
+    /// avoids the per-call XmlDocument allocation that dominates wall time on workloads
+    /// with many small <c>as=</c>-typed bodies.
+    /// </summary>
+    private void ReadAsBodyChunkChildren(System.Xml.XmlReader reader, List<object?> result)
+    {
+        // Walk to the wrapper start tag, then descend one level so we read its children.
+        if (!reader.Read())
+            return;
+        while (reader.NodeType != System.Xml.XmlNodeType.Element)
+        {
+            if (!reader.Read()) return;
+        }
+        // Reader is now at the start of `<_tmpl_wrap_>`. Step inside.
+        if (reader.IsEmptyElement)
+            return;
+        reader.Read();
+
+        // Read top-level children until the matching end tag.
+        while (reader.NodeType != System.Xml.XmlNodeType.EndElement)
+        {
+            var node = ReadXdmNodeFromReader(reader, NodeId.None, new DocumentId(1));
+            if (node != null)
+                result.Add(node);
+            else if (!reader.Read())
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Reads a single XDM-relevant node (element subtree, text, comment, PI) out of
+    /// <paramref name="reader"/> and returns it. Returns <c>null</c> for irrelevant
+    /// node types (whitespace at the wrapper level, XML declarations, etc.) and
+    /// advances the reader past them so the caller can continue.
+    /// </summary>
+    private XdmNode? ReadXdmNodeFromReader(System.Xml.XmlReader reader, NodeId parentId, DocumentId docId)
+    {
+        switch (reader.NodeType)
+        {
+            case System.Xml.XmlNodeType.Element:
+                return ReadXdmElementFromReader(reader, parentId, docId);
+
+            case System.Xml.XmlNodeType.Text:
+            case System.Xml.XmlNodeType.CDATA:
+            case System.Xml.XmlNodeType.Whitespace:
+            case System.Xml.XmlNodeType.SignificantWhitespace:
+            {
+                var textId = _nodeStore!.NextId();
+                var value = reader.Value;
+                var text = new XdmText
+                {
+                    Id = textId,
+                    Document = docId,
+                    Parent = parentId,
+                    Value = value,
+                };
+                _nodeStore.Register(text);
+                reader.Read();
+                return text;
+            }
+
+            case System.Xml.XmlNodeType.Comment:
+            {
+                var commentId = _nodeStore!.NextId();
+                var value = reader.Value;
+                var comment = new XdmComment
+                {
+                    Id = commentId,
+                    Document = docId,
+                    Parent = parentId,
+                    Value = value,
+                };
+                _nodeStore.Register(comment);
+                reader.Read();
+                return comment;
+            }
+
+            case System.Xml.XmlNodeType.ProcessingInstruction:
+            {
+                var piId = _nodeStore!.NextId();
+                var pi = new XdmProcessingInstruction
+                {
+                    Id = piId,
+                    Document = docId,
+                    Parent = parentId,
+                    Target = reader.Name,
+                    Value = reader.Value,
+                };
+                _nodeStore.Register(pi);
+                reader.Read();
+                return pi;
+            }
+
+            default:
+                // XmlDeclaration, DocumentType, EntityReference, etc. — skip
+                reader.Read();
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads an element subtree (start tag, attributes, namespaces, recursive children,
+    /// end tag) out of <paramref name="reader"/> and returns it as a registered
+    /// <see cref="XdmElement"/>. The reader is positioned past the matching end tag on
+    /// return.
+    /// </summary>
+    private XdmElement ReadXdmElementFromReader(System.Xml.XmlReader reader, NodeId parentId, DocumentId docId)
+    {
+        var elemId = _nodeStore!.NextId();
+        var localName = reader.LocalName;
+        var prefix = reader.Prefix;
+        var nsUri = reader.NamespaceURI;
+        var elemNsId = _nodeStore.InternNamespace(nsUri ?? "");
+        var isEmpty = reader.IsEmptyElement;
+
+        // Walk attributes, splitting xmlns declarations from real attributes.
+        var nsDecls = new List<NamespaceBinding>();
+        var attrIds = new List<NodeId>();
+        if (reader.HasAttributes)
+        {
+            for (var i = 0; i < reader.AttributeCount; i++)
+            {
+                reader.MoveToAttribute(i);
+                if (reader.Prefix == "xmlns")
+                {
+                    nsDecls.Add(new NamespaceBinding(reader.LocalName, _nodeStore.InternNamespace(reader.Value)));
+                }
+                else if (string.IsNullOrEmpty(reader.Prefix) && reader.LocalName == "xmlns")
+                {
+                    nsDecls.Add(new NamespaceBinding("", _nodeStore.InternNamespace(reader.Value)));
+                }
+                else
+                {
+                    var attrId = _nodeStore.NextId();
+                    var xdmAttr = new XdmAttribute
+                    {
+                        Id = attrId,
+                        Document = docId,
+                        Parent = elemId,
+                        Namespace = _nodeStore.InternNamespace(reader.NamespaceURI ?? ""),
+                        LocalName = reader.LocalName,
+                        Prefix = string.IsNullOrEmpty(reader.Prefix) ? null : reader.Prefix,
+                        Value = reader.Value,
+                    };
+                    _nodeStore.Register(xdmAttr);
+                    attrIds.Add(attrId);
+                }
+            }
+            reader.MoveToElement();
+        }
+
+        var childIds = new List<NodeId>();
+        if (!isEmpty)
+        {
+            reader.Read(); // step inside the element
+            while (reader.NodeType != System.Xml.XmlNodeType.EndElement)
+            {
+                var child = ReadXdmNodeFromReader(reader, elemId, docId);
+                if (child != null)
+                    childIds.Add(child.Id);
+                else if (reader.NodeType != System.Xml.XmlNodeType.EndElement && !reader.Read())
+                    break;
+            }
+        }
+        reader.Read(); // consume the end tag (or the self-closing element itself)
+
+        var elem = new XdmElement
+        {
+            Id = elemId,
+            Document = docId,
+            Parent = parentId,
+            Namespace = elemNsId,
+            LocalName = localName,
+            Prefix = string.IsNullOrEmpty(prefix) ? null : prefix,
+            Attributes = attrIds,
+            Children = childIds,
+            NamespaceDeclarations = nsDecls.Count > 0 ? nsDecls.ToArray() : XdmElement.EmptyNamespaceDeclarations,
+        };
+        _nodeStore.Register(elem);
+        return elem;
     }
 
     /// <summary>
@@ -12423,30 +12609,29 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                         else
                         {
-                            var xmlDoc = new System.Xml.XmlDocument();
-                            xmlDoc.PreserveWhitespace = true;
-                            xmlDoc.LoadXml($"<_seq_root_>{textContent}</_seq_root_>");
-                            var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _nodeStore, seqBaseUri);
-                            if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+                            // Stream-parse instead of going through XmlDocument. Hot path for
+                            // `xsl:variable as="element(…)"` inside a for-each — fired once per
+                            // iteration in workloads like Schxslt2 transpile / Dataverse projection.
+                            var settings = new System.Xml.XmlReaderSettings
                             {
-                                var wrapper = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                                if (wrapper != null)
+                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                IgnoreWhitespace = false,
+                                IgnoreComments = false,
+                                IgnoreProcessingInstructions = false,
+                            };
+                            using var stringReader = new System.IO.StringReader($"<_seq_root_>{textContent}</_seq_root_>");
+                            using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                            var parsedChildren = new List<object?>();
+                            ReadAsBodyChunkChildren(reader, parsedChildren);
+                            foreach (var child in parsedChildren)
+                            {
+                                if (child is XdmNode cn)
                                 {
-                                    foreach (var child in _nodeStore.GetChildren(wrapper))
-                                    {
-                                        // Detach children from synthetic _seq_root_ wrapper
-                                        // and preserve base URI from construction context
-                                        if (child is XdmNode cn)
-                                        {
-                                            cn.Parent = null;
-                                            // Always set construction context base URI so parentless
-                                            // nodes can resolve relative xml:base attributes
-                                            if (seqBaseUri != null)
-                                                cn.BaseUri = seqBaseUri;
-                                        }
-                                        sequenceItems.Add(child);
-                                    }
+                                    cn.Parent = null;
+                                    if (seqBaseUri != null)
+                                        cn.BaseUri = seqBaseUri;
                                 }
+                                sequenceItems.Add(child);
                             }
                         }
                     }
