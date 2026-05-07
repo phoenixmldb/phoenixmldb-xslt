@@ -54,6 +54,8 @@ internal static class HttpResourceLoader
     /// <c>XTSE0165</c> error.</exception>
     public static string GetStringSync(Uri uri)
     {
+        if (OperatingSystem.IsBrowser())
+            throw PreloadedResources.CreateBrowserCacheMissException(uri, "imported stylesheet");
         try
         {
             using var response = _client.GetAsync(uri).GetAwaiter().GetResult();
@@ -100,6 +102,8 @@ internal static class HttpDocumentLoader
     /// </summary>
     public static Stream OpenRead(Uri uri)
     {
+        if (OperatingSystem.IsBrowser())
+            throw PreloadedResources.CreateBrowserCacheMissException(uri, "document");
         var response = _client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
         response.EnsureSuccessStatusCode();
         return response.Content.ReadAsStreamAsync().GetAwaiter().GetResult();

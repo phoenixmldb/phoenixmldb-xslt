@@ -1,5 +1,75 @@
 # Release History
 
+## 1.3.0 (2026-05-07)
+
+### Blazor WebAssembly support
+
+The engine no longer throws `Cannot wait on monitors on this runtime` on Blazor
+WebAssembly when a stylesheet imports another module over HTTP(S) or calls
+`fn:doc()` on an absolute HTTP(S) URI. Reported by Martin Honnen.
+
+Cause: the parser's `xsl:import`/`xsl:include` resolver and the runtime
+`fn:doc()` document loader both went through synchronous-over-async
+`HttpClient.GetAsync(...).GetAwaiter().GetResult()` calls. That works on
+runtimes with a real thread pool (server, desktop, CLI) but blows up on
+WASM, which is single-threaded and disallows monitor waits.
+
+Fix: introduce `PhoenixmlDb.Xslt.PreloadedResources`, a small cache that the
+host populates with pre-fetched contents before calling `LoadStylesheetAsync`.
+The parser and the runtime document loader both consult this cache before
+falling back to synchronous HTTP. On WASM, a cache miss now raises a clear
+engine exception that names the missing URI, instead of the obscure runtime
+error.
+
+```csharp
+// Blazor WebAssembly: pre-fetch every URI the stylesheet will need.
+var http = new HttpClient();
+var transpileXsl = await http.GetStringAsync("https://example.org/transpile.xsl");
+var priceSch     = await http.GetStringAsync("https://example.org/price.sch");
+
+var preloaded = new PreloadedResources();
+preloaded.Add(new Uri("https://example.org/transpile.xsl"), transpileXsl);
+preloaded.Add(new Uri("https://example.org/price.sch"),    priceSch);
+
+var t = new XsltTransformer { PreloadedResources = preloaded };
+await t.LoadStylesheetAsync(stylesheetXml, baseUri);
+var result = await t.TransformAsync(sourceXml);
+```
+
+Server / desktop / CLI behavior is unchanged — the synchronous HTTP path
+remains in place when running on a runtime that supports thread blocking.
+
+### Performance: stream-parse `as=` body output
+
+The transformation hot path for `xsl:variable as="element(…)"` and similar
+typed bodies (Schxslt2 transpile, Dataverse-shape projections) no longer goes
+through `XmlDocument.LoadXml` round-trips after each iteration. The body
+output is now stream-parsed via `XmlReader` directly into XDM nodes,
+eliminating the per-iteration DOM allocation that dominated wall time on
+large source documents.
+
+Bench result on a synthesized 10 MB Dataverse-shape XSD with the
+`projection-style` stylesheet (`xsl:variable as="element(entry)" / xsl:where-populated`
+inside a deep `xsl:for-each`):
+
+| | Before | After |
+|---|---|---|
+| ProjectToReport (mean of 30 runs) | 4151 ms | 1593 ms |
+| ProjectToReport (median) | — | 1597 ms |
+| ProjectToReport (stddev) | — | 110 ms |
+
+Net: 2.6× speedup on this shape. No measurable change on identity-copy and
+LRE-only workloads (those don't go through the body parse-back path).
+
+The bench harness gains a `micro` mode for reproducible A/B comparisons:
+
+```
+dotnet run --project bench/PhoenixmlDb.Xslt.Bench -c Release -- micro report 30 10
+```
+
+Reports min / median / p90 / max / mean / stddev across 30 iterations after
+a 3-iteration warm-up.
+
 ## 1.2.10 (2026-05-06)
 
 ### HTTP(S) source documents and fn:doc fetches

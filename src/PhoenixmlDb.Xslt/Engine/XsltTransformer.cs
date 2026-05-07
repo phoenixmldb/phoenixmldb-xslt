@@ -3360,6 +3360,14 @@ public sealed class XsltTransformOptions
     /// can access via doc(), unparsed-text(), collection(), xsl:result-document, and xsl:import/include.
     /// </summary>
     public PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; init; }
+
+    /// <summary>
+    /// Optional pre-fetched contents for URIs that <c>fn:doc()</c> / <c>document()</c> would
+    /// otherwise need to fetch over HTTP synchronously. Required on Blazor WebAssembly,
+    /// which cannot block the calling thread; ignored on runtimes that can. See
+    /// <see cref="PreloadedResources"/>.
+    /// </summary>
+    public PreloadedResources? PreloadedResources { get; init; }
 }
 
 /// <summary>
@@ -4666,7 +4674,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         _schemaProvider = schemaProvider;
         _ct = options.CancellationToken;
         _maxOutputSize = options.MaxOutputSize;
-        _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore);
+        _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore)
+        {
+            PreloadedResources = options.PreloadedResources
+        };
         if (options.Collections != null)
             _documentResolver.SetCollections(options.Collections);
         if (options.ResourcePolicy != null)
@@ -21757,6 +21768,12 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
     private readonly Dictionary<string, XdmDocument?> _cache = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, List<string>>? _collections;
 
+    /// <summary>
+    /// Pre-fetched contents for URIs the host already loaded asynchronously. Consulted
+    /// before <see cref="HttpDocumentLoader.OpenRead"/>; required on Blazor WebAssembly.
+    /// </summary>
+    internal PreloadedResources? PreloadedResources { get; set; }
+
     /// <summary>Set of absolute URIs that have been read via doc()/document() during this transformation.</summary>
     internal IReadOnlyCollection<string> ReadDocumentUris => _cache.Keys;
 
@@ -21895,9 +21912,27 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
                 // running over HTTPS calls fn:doc with a relative URI that resolves to HTTPS,
                 // we honor it. ResourcePolicy still gates this when configured (the policy-
                 // enforcing wrapper sits in front of this resolver in the call chain).
-                using var stream = HttpDocumentLoader.OpenRead(resolvedUri);
-                using var reader = new System.IO.StreamReader(stream);
-                xmlContent = reader.ReadToEnd();
+                //
+                // Preload-cache check: callers running on Blazor WebAssembly (or any runtime
+                // that disallows monitor waits) must supply pre-fetched content here, since
+                // the synchronous HttpClient call below blocks the calling thread.
+                if (PreloadedResources is { } preloaded && preloaded.TryGet(resolvedUri, out var preloadedContent))
+                {
+                    xmlContent = preloadedContent;
+                }
+                else if (OperatingSystem.IsBrowser())
+                {
+                    throw new XsltException(
+                        $"FODC0002: Cannot fetch '{resolvedUri}' on Blazor WebAssembly: " +
+                        "synchronous HTTP I/O is not supported. Pre-fetch the document " +
+                        "asynchronously and pass it through PreloadedResources to LoadStylesheetAsync.");
+                }
+                else
+                {
+                    using var stream = HttpDocumentLoader.OpenRead(resolvedUri);
+                    using var reader = new System.IO.StreamReader(stream);
+                    xmlContent = reader.ReadToEnd();
+                }
             }
             else if (resolvedUri.IsFile)
             {

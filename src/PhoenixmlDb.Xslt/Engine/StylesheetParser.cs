@@ -122,6 +122,14 @@ public sealed class StylesheetParser
     /// </summary>
     internal PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; init; }
 
+    /// <summary>
+    /// Optional pre-fetched HTTP imports / includes. Consulted before the parser falls
+    /// back to <see cref="HttpResourceLoader.GetStringSync"/>, so callers running on a
+    /// runtime that cannot block (Blazor WebAssembly) can pre-fetch async and pass the
+    /// content through. See <see cref="PreloadedResources"/> for usage.
+    /// </summary>
+    internal PreloadedResources? PreloadedResources { get; init; }
+
     public StylesheetParser(IExpressionParser expressionParser)
     {
         _expressionParser = expressionParser;
@@ -1111,7 +1119,7 @@ public sealed class StylesheetParser
         var packageFile = ResolvePackageVersion(packageEntries, packageVersion, packageName, GetSourceLocation(element));
 
         // Parse the package stylesheet with a fresh parser sharing our expression parser and catalog
-        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy };
+        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources };
         var packageXml = System.IO.File.ReadAllText(packageFile);
         var packageBaseUri = new Uri(Path.GetFullPath(packageFile));
         var packageStylesheet = packageParser.Parse(packageXml, packageBaseUri, isLibraryPackage: true);
@@ -3056,7 +3064,28 @@ public sealed class StylesheetParser
             if (policyResolvedXml != null)
                 xml = policyResolvedXml;
             else if (isHttp)
-                xml = HttpResourceLoader.GetStringSync(resolvedUri!);
+            {
+                // Consult the preload cache first: callers running on Blazor
+                // WebAssembly (or any runtime that disallows monitor-waits) must
+                // supply pre-fetched content this way, since the synchronous
+                // HttpClient call below blocks the calling thread to completion.
+                if (PreloadedResources is { } preloaded && preloaded.TryGet(resolvedUri!, out var preloadedXml))
+                {
+                    xml = preloadedXml;
+                }
+                else if (OperatingSystem.IsBrowser())
+                {
+                    throw new XsltException(
+                        $"XTSE0165: Cannot fetch xsl:import/xsl:include '{href}' on Blazor WebAssembly: " +
+                        "synchronous HTTP I/O is not supported. Pre-fetch the imported stylesheet " +
+                        "asynchronously and pass it through PreloadedResources to LoadStylesheetAsync.",
+                        GetSourceLocation(element));
+                }
+                else
+                {
+                    xml = HttpResourceLoader.GetStringSync(resolvedUri!);
+                }
+            }
             else
                 xml = File.ReadAllText(resolvedPath!);
             var savedBaseUri = _baseUri;

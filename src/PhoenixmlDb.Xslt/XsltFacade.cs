@@ -140,6 +140,17 @@ public sealed class XsltTransformer
     public PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; set; }
 
     /// <summary>
+    /// Pre-fetched contents for URIs that <c>xsl:import</c> / <c>xsl:include</c> /
+    /// <c>fn:doc()</c> would otherwise need to fetch over HTTP synchronously.
+    /// Required on Blazor WebAssembly, which cannot block the calling thread; ignored
+    /// on runtimes that can. Async-fetch the resources in your host code (via
+    /// <see cref="System.Net.Http.HttpClient"/> with <c>await</c> or via JS interop)
+    /// and assign before calling <see cref="LoadStylesheetAsync"/>.
+    /// See <see cref="PreloadedResources"/> for a usage example.
+    /// </summary>
+    public PreloadedResources? PreloadedResources { get; set; }
+
+    /// <summary>
     /// Schema provider for schema-aware processing. Defaults to a fresh
     /// <see cref="PhoenixmlDb.XQuery.XsdSchemaProvider"/> with no schemas loaded;
     /// any <c>xsl:import-schema</c> declarations encountered while loading a
@@ -189,8 +200,8 @@ public sealed class XsltTransformer
         ArgumentNullException.ThrowIfNull(stylesheetXml);
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy }
-            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy };
+            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources }
+            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources };
         _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
         ResolveSchemaImports(_stylesheet, baseUri);
         // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
@@ -658,7 +669,8 @@ public sealed class XsltTransformer
             TraceListener = TraceListener,
             MessageListener = MessageListener,
             MessageListenerWithLocation = MessageListenerWithLocation,
-            ResourcePolicy = ResourcePolicy
+            ResourcePolicy = ResourcePolicy,
+            PreloadedResources = PreloadedResources
         };
 
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);

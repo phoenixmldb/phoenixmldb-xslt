@@ -2005,6 +2005,59 @@ public class XsltTransformerIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task PreloadedResources_satisfies_xsl_import_over_http_without_network()
+    {
+        // No HTTP listener at all — the entry stylesheet imports an https://… href that we
+        // pre-fetch outside the engine. The parser must consult PreloadedResources and skip
+        // the synchronous HttpClient call. This is the path Blazor WebAssembly relies on.
+        var importUri = new Uri("https://example.invalid/lib/imported.xsl");
+        const string importedXsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template name="greet"><greeting>hello</greeting></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var mainXsl = $"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import href="{importUri}"/>
+              <xsl:template match="/"><xsl:call-template name="greet"/></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var preloaded = new PreloadedResources();
+        preloaded.Add(importUri, importedXsl);
+
+        var transformer = new XsltTransformer { PreloadedResources = preloaded };
+        await transformer.LoadStylesheetAsync(mainXsl, new Uri("https://example.invalid/main.xsl"));
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("<greeting>hello</greeting>");
+    }
+
+    [Fact]
+    public async Task PreloadedResources_satisfies_fn_doc_over_http_without_network()
+    {
+        // Same idea but for runtime fn:doc — the document is pre-fetched and surfaced via
+        // PreloadedResources; the engine must use the cached content instead of synchronously
+        // hitting the network.
+        var docUri = new Uri("https://example.invalid/data/books.xml");
+        const string booksXml = "<books><book><title>x</title></book></books>";
+        var mainXsl = $$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <result><xsl:value-of select="local-name(doc('{{docUri}}')/*)"/></result>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var preloaded = new PreloadedResources();
+        preloaded.Add(docUri, booksXml);
+
+        var transformer = new XsltTransformer { PreloadedResources = preloaded };
+        await transformer.LoadStylesheetAsync(mainXsl, new Uri("https://example.invalid/main.xsl"));
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">books</result>");
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
