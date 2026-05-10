@@ -1,5 +1,21 @@
 # Release History
 
+## 1.3.3 (2026-05-09)
+
+### Improvement: XSLT runtime errors carry module / line / column
+
+Inherited from `PhoenixmlDb.XQuery` 1.3.2: any runtime `XQueryException` raised
+during stylesheet execution now includes the originating module URI, line, and
+column in its formatted `Message`, prefixed as `[<module>:<line>:<col>] `.
+Particularly relevant for `XPTY0020` errors fired from axis steps in
+multi-module stylesheets (the canonical case being Docbook TNG): the message
+now pinpoints the offending step instead of leaving users to guess.
+
+This release also bumps `PhoenixmlDb.Core` to 1.1.1 (additive
+`IContainer.QueryAsync` overload — see core RELEASES.md).
+
+No XSLT-side code changes — pure rebuild against the upstream fixes.
+
 ## 1.3.2 (2026-05-07)
 
 ### Fix: namespace fixup for serialized elements

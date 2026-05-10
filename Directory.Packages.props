@@ -4,8 +4,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- PhoenixmlDb -->
-    <PackageVersion Include="PhoenixmlDb.Core" Version="1.0.30" />
-    <PackageVersion Include="PhoenixmlDb.XQuery" Version="1.3.0" />
+    <PackageVersion Include="PhoenixmlDb.Core" Version="1.1.1" />
+    <PackageVersion Include="PhoenixmlDb.XQuery" Version="1.3.2" />
     <!-- Used only by bench/ — kept here so central package management is consistent -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
     <!-- Testing -->
