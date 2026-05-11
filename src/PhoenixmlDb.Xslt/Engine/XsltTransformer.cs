@@ -15888,7 +15888,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         // Content may produce maps (via xsl:sequence, xsl:apply-templates, etc.) — merge them.
-        // XTTE3375: Only non-map items are errors.
+        // XTTE3375: Only non-map items are errors. Whitespace-only text nodes (the source
+        // formatting between `<xsl:map-entry>` siblings, e.g. `\n  `) are insignificant per
+        // XSLT 3.0 §6.2 and must not trigger XTTE3375 — they'd be stripped during stylesheet
+        // parsing, but our engine collects literal-text-element output to the accumulator
+        // which sometimes leaks them. Treat empty-or-whitespace strings as no-ops here.
         foreach (var item in strayItems)
         {
             if (item is IDictionary<object, object?> mapItem)
@@ -15900,8 +15904,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     map[kvp.Key] = kvp.Value;
                 }
             }
+            else if (item is string s && string.IsNullOrWhiteSpace(s))
+            {
+                // Insignificant whitespace text from source formatting — ignore.
+            }
+            else if (item is Xdm.TextNodeItem tni && string.IsNullOrWhiteSpace(tni.Value))
+            {
+                // Same, but already wrapped as a text-node item.
+            }
             else if (item != null)
-                throw new XsltException("XTTE3375: The content of xsl:map must consist entirely of xsl:map-entry instructions; found non-map content");
+                throw new XsltException($"XTTE3375: The content of xsl:map must consist entirely of xsl:map-entry instructions; found non-map content (got {item.GetType().Name}: {item})");
         }
 
         // Add the completed map to the output

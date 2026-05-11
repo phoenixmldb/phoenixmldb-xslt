@@ -4557,7 +4557,15 @@ public sealed class StylesheetParser
         "final" => Visibility.Final,
         "abstract" => Visibility.Abstract,
         "hidden" => Visibility.Hidden,
-        _ => Visibility.Private // Default
+        // Default per XSLT 3.0 §3.5: components declared at the top level of an
+        // xsl:package element default to private, but components in any other
+        // stylesheet module (the common case) default to public. Defaulting to
+        // Private here broke `xsl:evaluate` calls into ordinary stylesheet
+        // functions like Docbook TNG's fp:pi-from-list — XTDE3160 fired even
+        // though the function was correctly accessible from the rest of the
+        // stylesheet. Package-aware code paths set Private explicitly when
+        // needed; this default covers the non-package common case.
+        _ => Visibility.Public
     };
 
     private XsltSequenceConstructor ParseSequenceConstructor(XElement element)
