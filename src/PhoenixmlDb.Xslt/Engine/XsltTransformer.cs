@@ -8055,11 +8055,28 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             execContext.PushContextItem(ContextItem, Position, Last);
         }
 
-        // Execute and collect results
+        // Execute and collect results.
+        // Catch XQueryException missing source-module info and re-throw with the offending
+        // XPath expression text + AST type prefixed. Without this, errors like
+        // "XPTY0020: [line 2, col 24] An axis step was used..." give no clue WHICH
+        // expression in WHICH XSLT module raised them. The expression text alone is
+        // enough to bisect Docbook-TNG-scale stylesheets where many xpaths look alike.
         var results = new List<object?>();
-        await foreach (var item in plan.Root.ExecuteAsync(execContext).ConfigureAwait(false))
+        try
         {
-            results.Add(item);
+            await foreach (var item in plan.Root.ExecuteAsync(execContext).ConfigureAwait(false))
+            {
+                results.Add(item);
+            }
+        }
+        catch (PhoenixmlDb.XQuery.Functions.XQueryException xqe) when (string.IsNullOrEmpty(xqe.Module))
+        {
+            var snippet = expr.ToString() ?? "(unknown)";
+            if (snippet.Length > 200) snippet = snippet[..200] + "…";
+            throw new PhoenixmlDb.XQuery.Functions.XQueryException(
+                xqe.ErrorCode,
+                $"{xqe.Message}\n  ↳ in expression ({expr.GetType().Name}): {snippet}",
+                xqe);
         }
 
         return results.Count switch
