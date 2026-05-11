@@ -1,5 +1,90 @@
 # Release History
 
+## 1.3.4 (2026-05-11)
+
+### Docbook TNG conformance push (multiple Martin Honnen reports)
+
+Six engine bugs surfaced while bisecting the Docbook xslTNG 2.8.0
+stylesheet against `samples/article.xml`. Each fix unblocks the next
+bug in the chain; together they take Docbook TNG several thousand
+instructions deeper before failing.
+
+**1. `as="xs:string"` accepts `xs:anyURI` per function-conversion rules.**
+Per F&O 4.0 §1.6.3, an xs:anyURI value supplied where xs:string is
+expected is cast to xs:string. We rejected it. `templates.xsl` declares
+`<xsl:variable name="uri" as="xs:string" select="resolve-uri(...)"/>`
+and resolve-uri returns xs:anyURI; the bind raised XTTE0570.
+
+**2. Empty `<xsl:document/>` produces a real document-node.**
+The global-variable initializer's body-content path lacked an
+`as="document-node()"` branch. Empty `<xsl:document/>` fell through to
+the RTF/string path and ended up as `xs:string ""`. Downstream
+`$v:templates/*` then evaluated `Child::*` on the empty string,
+raising XPTY0020 — Martin's literal "v:theme-list returns
+ResultTreeFragment" report.
+
+**3. Atomic-typed `<xsl:variable>` body isolates its sequence accumulator.**
+The else branch of `BindVariableAsync` (atomic `as=` with body
+content) didn't save/clear `_sequenceAccumulator`. When invoked inside
+an `xsl:function` body (which sets up its own accumulator), the
+variable's `<xsl:sequence>` leaked into the FUNCTION's accumulator —
+body output empty, variable bound to `""`, XTTE0570. Found in Docbook
+TNG `$process`. Also added xs:string→xs:boolean coercion in
+`CoerceToType` so `"true"`/`"false"` lexical forms convert.
+
+**4. `xsl:with-param` body content preserves typed items in xsl:iterate.**
+Same shape as fix 3 but in `<xsl:iterate>`'s parameter binding (both
+initial `<xsl:param>` and per-iteration `<xsl:next-iteration>`'s
+`<xsl:with-param>`). Body content without `select=` ran without a
+sequence accumulator, so `<xsl:sequence>` inside fell through to text
+serialization. A doc-node bound this way was serialized to text and
+rebound as `xs:untypedAtomic`. Found in Docbook TNG `fp:run-transforms`
+where each iteration re-binds `$document`. Extracted
+`EvaluateBodyContentToValueAsync` helper.
+
+**5. `xsl:map` content ignores insignificant whitespace text.**
+The XTTE3375 check tripped on whitespace strings emitted by source
+formatting between sibling `<xsl:map-entry>` declarations (e.g. `\n  `).
+Per XSLT 3.0 §6.2 such whitespace is insignificant.
+
+**6. Non-package stylesheet components default to public visibility.**
+`ParseVisibility` defaulted to `Visibility.Private` everywhere. Per
+XSLT 3.0 §3.5: components in a regular stylesheet (not in `xsl:package`)
+default to **public**. Defaulting to Private blocked `<xsl:evaluate>`
+calling ordinary top-level stylesheet functions with XTDE3160. Found
+in Docbook TNG (`fp:pi-from-list` and similar).
+
+**7. LRE prefix map: rebuild per included module + record default-ns
+elements.** `_elementPrefixMap` was built once for the entry stylesheet
+but queried for ALL included modules — line/col entries from
+`docbook.xsl` collided with positions in `head.xsl`, returning the wrong
+prefix. Default-namespace elements (no prefix in source) had no entry
+at all, so the fallback LINQ walk could return any ancestor's prefix
+matching the namespace URI. Result: `<link>` LREs in the head module
+were getting prefix `xsl:`, serialization couldn't reparse the chunk
+(undeclared `xsl:` prefix), template body fell back to a raw string,
+XTTE0505 fired. Fix: rebuild map per `LoadExternalStylesheet`; record
+empty prefix for default-namespace elements so the lookup is
+authoritative.
+
+### Improvement: XQuery errors include the offending XPath text + module URI
+
+XQuery exceptions raised from XSLT-embedded XPath now surface as
+`XPTY0020: [file:///path/stylesheet.xsl:47] [line 2, col 24] An axis step …\n
+↳ in expression (FunctionCallExpression): not(namespace-uri(/*) = ...)`.
+
+The first prefix is the XSLT source file (stamped at parse time by
+`StylesheetParser.AttachXsltSourceLocation`). The relative line/col
+remains for pinpointing the position within multi-line inline XPath.
+The expression text + AST type makes "needle-in-haystack" debugging of
+real-world stylesheets actionable.
+
+Bumps `PhoenixmlDb.XQuery` to 1.3.3.
+
+Eight new regression tests across `AnyUriToStringCoercionTests`,
+`VariableSequenceAccumulatorIsolationTests`, and
+`DefaultNamespaceLrePrefixTests`. Full XSLT test suite at 364/364 passing.
+
 ## 1.3.3 (2026-05-09)
 
 ### Improvement: XSLT runtime errors carry module / line / column
