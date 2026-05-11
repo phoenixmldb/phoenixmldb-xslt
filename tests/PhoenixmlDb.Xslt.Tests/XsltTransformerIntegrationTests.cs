@@ -852,6 +852,37 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task Untyped_variable_captures_typed_template_result_via_apply_templates()
+    {
+        // Martin's SchXslt2 report: an `xsl:variable` with no `as=` (RTF construction)
+        // wrapping `<xsl:apply-templates/>` produced an empty tree when the matched template
+        // declared `as="element(...)"`. Root cause: the variable installs a fresh sequence
+        // accumulator as a leak barrier, but the RTF construction only read the text buffer —
+        // an inner template's `as=`-validated result was routed into the accumulator and
+        // dropped on the floor.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:sch="http://purl.oclc.org/dsdl/schematron"
+                            expand-text="yes">
+              <xsl:template match="sch:schema" as="element(captured)">
+                <captured at="from-typed-template"/>
+              </xsl:template>
+              <xsl:template match="/">
+                <xsl:variable name="v">
+                  <xsl:apply-templates select="*"/>
+                </xsl:variable>
+                <result count="{count($v/captured)}" attr="{$v/captured/@at}"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<schema xmlns=\"http://purl.oclc.org/dsdl/schematron\"/>");
+        result.Should().Contain("count=\"1\"");
+        result.Should().Contain("attr=\"from-typed-template\"");
+    }
+
+    [Fact]
     public async Task TransformToValueAsync_returns_typed_boolean_from_initial_function()
     {
         // Martin's report: fn:transform with delivery-format='raw' and an initial-function

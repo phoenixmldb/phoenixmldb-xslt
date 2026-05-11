@@ -1,6 +1,39 @@
 # Release History
 
-## 1.3.5 (2026-05-09)
+## 1.3.5 (2026-05-11)
+
+### Untyped `xsl:variable` captures typed-template results from `xsl:apply-templates`
+
+Martin's SchXslt2 report: importing `transpile.xsl`, the wrapper
+
+```xml
+<xsl:variable name="transpiled-schematron">
+  <xsl:apply-templates select="doc($schema-uri)/node()"/>
+</xsl:variable>
+```
+
+ended up empty, so the downstream `fn:transform` raised `FOXT0001:
+Stylesheet node has no content`. Saxon produced the transpiled
+stylesheet correctly.
+
+**Root cause.** `xsl:variable` with no `as=` constructs a result-tree
+fragment by reading the engine's text buffer. The variable also installs
+a fresh sequence accumulator as a leak barrier (so `xsl:sequence` inside
+doesn't escape to a parent function's accumulator — see 1.3.4 fix #3).
+But the matched template inside used `as="element(...)"`, and that path
+routes its validated result into the accumulator instead of writing
+serialized XML to the buffer. The RTF construction never read the
+accumulator, so the typed result was silently discarded.
+
+**Fix.** After the body of the no-`as=` `xsl:variable` runs, drain any
+captured accumulator items into the redirected output buffer (via
+`SerializeResult`) before the buffer is read. The accumulator stays as a
+barrier for `xsl:sequence`-inside-function correctness; what changes is
+that items captured by the barrier now flow into the RTF instead of
+being thrown away.
+
+Regression test:
+`XsltTransformerIntegrationTests.Untyped_variable_captures_typed_template_result_via_apply_templates`.
 
 ### `fn:transform` with `delivery-format='raw'` returns the typed XDM value
 

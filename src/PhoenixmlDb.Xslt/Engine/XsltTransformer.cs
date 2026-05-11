@@ -13004,6 +13004,25 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     foreach (var scope in savedNsScopes2.AsEnumerable().Reverse())
                         _outputNsScopes.Push(scope);
                 }
+                // RTF construction (no 'as=') only reads the text buffer below — drain
+                // any captured accumulator items into _output (still scoped to savedScope)
+                // before reading content. Without this, an inner template/instruction whose
+                // 'as=' path routes its result into our accumulator-as-barrier vanishes from
+                // the variable's tree. Found in SchXslt2 transpile: an `as="element(...)"`
+                // template's result was lost when called from inside an unconstrained
+                // `<xsl:variable name="transpiled-schematron">…<xsl:apply-templates/>…`.
+                if (instruction.As == null && capturedAccumulator is { Count: > 0 })
+                {
+                    var savedAccDrain = _sequenceAccumulator;
+                    _sequenceAccumulator = null;
+                    try
+                    {
+                        foreach (var item in capturedAccumulator)
+                            if (item != null)
+                                SerializeResult(item);
+                    }
+                    finally { _sequenceAccumulator = savedAccDrain; }
+                }
                 var content = savedScope.GetWritten();
 
                 savedScope.Dispose();
