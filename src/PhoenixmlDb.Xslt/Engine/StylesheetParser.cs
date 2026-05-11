@@ -240,11 +240,22 @@ public sealed class StylesheetParser
             {
                 if (reader.NodeType == XmlNodeType.Element && reader is IXmlLineInfo lineInfo && lineInfo.HasLineInfo())
                 {
-                    if (!string.IsNullOrEmpty(reader.Prefix))
-                    {
-                        map ??= new Dictionary<(int, int), string>();
-                        map[(lineInfo.LineNumber, lineInfo.LinePosition)] = reader.Prefix;
-                    }
+                    // Record EVERY element's source prefix (empty for default-namespace
+                    // elements). Recording even the empty case is important: it lets
+                    // ParseLiteralResultElement distinguish "this element had no prefix
+                    // in source" (lookup hit with empty value → don't propagate any
+                    // ancestor's prefix) from "no entry exists for this position"
+                    // (lookup miss → fall back to LINQ walk).
+                    //
+                    // Without the empty-case recording, a default-ns element would miss
+                    // the map and fall through to the LINQ walk, which can return a
+                    // non-empty prefix because LINQ's GetPrefixOfNamespace finds ANY
+                    // ancestor xmlns:* declaration matching the element's namespace —
+                    // even when the element itself had no prefix in source. That bug
+                    // surfaced as Martin Honnen's `<theme>` and later `<link>` LREs
+                    // being serialized as `<xsl:theme>` / `<xsl:link>` in Docbook TNG.
+                    map ??= new Dictionary<(int, int), string>();
+                    map[(lineInfo.LineNumber, lineInfo.LinePosition)] = reader.Prefix ?? "";
                     // Also record attribute prefixes (needed when multiple prefixes share same URI)
                     if (reader.HasAttributes)
                     {
@@ -255,7 +266,6 @@ public sealed class StylesheetParser
                                 && reader.Prefix != "xmlns"
                                 && reader is IXmlLineInfo attrLineInfo && attrLineInfo.HasLineInfo())
                             {
-                                map ??= new Dictionary<(int, int), string>();
                                 map[(attrLineInfo.LineNumber, attrLineInfo.LinePosition)] = reader.Prefix;
                             }
                         }
@@ -3145,7 +3155,23 @@ public sealed class StylesheetParser
             // Check use-when on the root xsl:stylesheet/xsl:transform element
             if (!ShouldIncludeElement(stylesheetRoot))
                 return null;
-            var result = ParseStylesheet(stylesheetRoot, isTopLevel: false);
+            // Save and replace _elementPrefixMap with one built from THIS module's xml.
+            // The map is keyed by (line, col) which are module-relative; querying entries
+            // built from the entry stylesheet against XElements from an included module
+            // returns wrong prefixes (Docbook TNG: head.xsl `<link>` LREs were getting
+            // prefix `xsl` because line 190 of head.xsl matched line 190 of docbook.xsl
+            // in the entry stylesheet's map — different file, same coordinates).
+            var savedPrefixMap = _elementPrefixMap;
+            _elementPrefixMap = BuildElementPrefixMap(xml);
+            XsltStylesheet? result;
+            try
+            {
+                result = ParseStylesheet(stylesheetRoot, isTopLevel: false);
+            }
+            finally
+            {
+                _elementPrefixMap = savedPrefixMap;
+            }
             _baseUri = savedBaseUri;
             _currentDefaultMode = savedDefaultMode;
             return result;
@@ -6963,27 +6989,27 @@ public sealed class StylesheetParser
     private XsltLiteralResultElement ParseLiteralResultElement(XElement element, SourceLocation? location)
     {
         // Determine the prefix the stylesheet author intended for this LRE.
-        // LINQ to XML loses original prefix info when multiple prefixes map to the same
-        // namespace URI. Use the XmlReader prefix map (keyed by line/col) when available.
+        // The XmlReader-built `_elementPrefixMap` is authoritative: it records EVERY
+        // element's source prefix (including empty string for default-namespace elements).
+        // Map hit with empty value → element had no prefix in source, return null/empty
+        // and let serialization use the default-namespace binding. Map hit with non-empty
+        // → use that exact prefix. Only fall through to the LINQ walk on a true miss
+        // (e.g. when the prefix map couldn't be built — DTD failure, etc.).
+        //
+        // Earlier versions tried to skip the map for elements LINQ-to-XML thought had no
+        // prefix, but `XElement.GetPrefixOfNamespace` returns ANY ancestor's prefix that
+        // maps to the element's namespace — so for an element in the default xhtml namespace
+        // when both `xmlns="xhtml"` and `xmlns:h="xhtml"` are in scope, LINQ returned "h"
+        // and the guard let stale prefix-map hits leak through. Recording the source's
+        // empty prefix in the map closes that hole. (Martin Honnen Docbook TNG bug — first
+        // surfaced as `<xsl:theme>`, persisted as `<xsl:link>` after the partial fix.)
         string? lrePrefix = null;
         if (element.Name.Namespace != XNamespace.None)
         {
-            // Only consult the prefix map if the SOURCE element actually had a prefix.
-            // For elements using the default namespace (no prefix in source), the map
-            // either has no entry or — worse — could have a STALE entry from a parent
-            // or sibling at a colliding (line, col) key, which is exactly Martin Honnen's
-            // Docbook TNG `<theme>` bug: the first sibling in a default-namespace
-            // sequence inside `<xsl:variable as="element()*">` was being assigned the
-            // parent's `xsl:` prefix because the map returned a hit for what should
-            // have been a no-prefix element. The defensive guard: ask LINQ-to-XML
-            // first whether THIS element had any prefix; if it didn't, skip the map.
-            var linqPrefix = element.GetPrefixOfNamespace(element.Name.Namespace);
-            var sourceHadPrefix = !string.IsNullOrEmpty(linqPrefix);
-
-            if (sourceHadPrefix && _elementPrefixMap != null && element is IXmlLineInfo eli && eli.HasLineInfo()
+            if (_elementPrefixMap != null && element is IXmlLineInfo eli && eli.HasLineInfo()
                 && _elementPrefixMap.TryGetValue((eli.LineNumber, eli.LinePosition), out var originalPrefix))
             {
-                lrePrefix = originalPrefix;
+                lrePrefix = string.IsNullOrEmpty(originalPrefix) ? null : originalPrefix;
             }
             else
             {

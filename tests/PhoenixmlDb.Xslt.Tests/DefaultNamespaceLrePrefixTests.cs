@@ -61,17 +61,19 @@ public class DefaultNamespaceLrePrefixTests
             """;
 
         var result = await TransformAsync(stylesheet, "<i/>");
-        // Output uses `h:` prefix because xhtml is the default namespace in the
-        // stylesheet AND the default-ns prefix-binding in the result tree is `h`.
-        result.Should().Contain("<h:c>2</h:c>");
-        result.Should().Contain("<h:both-element>true</h:both-element>",
+        // Default-namespace LREs serialize using the default namespace declaration
+        // on the result root. The values inside are what we actually care about.
+        result.Should().Contain("<c>2</c>");
+        result.Should().Contain("<both-element>true</both-element>",
             "both <theme/> siblings must remain element nodes (not coerced into result-tree-fragments)");
-        result.Should().Contain("<h:both-xhtml>true</h:both-xhtml>",
+        result.Should().Contain("<both-xhtml>true</both-xhtml>",
             "both <theme/> siblings must be in the xhtml namespace (no prefix in source = inherit default ns)");
-        result.Should().Contain("<h:dark-found>true</h:dark-found>",
+        result.Should().Contain("<dark-found>true</dark-found>",
             "predicate `@dark='true'` must work — requires axis-step on a real element node, not RTF/atomic");
         result.Should().NotContain("xsl:theme",
             "no <theme/> sibling should leak into the xsl namespace (Martin Honnen's specific bug)");
+        result.Should().NotContain("xsl:c",
+            "general guard against any LRE picking up xsl: prefix from prefix-map staleness");
     }
 
     [Fact]

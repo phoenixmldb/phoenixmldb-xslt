@@ -18160,7 +18160,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     _ => false
                 };
                 if (!matches)
-                    throw new XsltException($"XTTE0505: Template{locInfo} return value item of type {item.GetType().Name} does not match declared type {template.As.ItemType}");
+                {
+                    var valuePreview = item is string vs ? $"\"{(vs.Length > 80 ? vs[..80] + "…" : vs)}\"" : item.ToString() ?? "(null)";
+                    if (valuePreview.Length > 100) valuePreview = valuePreview[..100] + "…";
+                    throw new XsltException($"XTTE0505: Template{locInfo} return value item of type {item.GetType().Name} does not match declared type {template.As.ItemType}; value={valuePreview}");
+                }
             }
         }
     }
