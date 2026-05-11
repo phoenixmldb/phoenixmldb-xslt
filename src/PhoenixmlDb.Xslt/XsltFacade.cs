@@ -705,6 +705,70 @@ public sealed class XsltTransformer
     }
 
     /// <summary>
+    /// Transforms <paramref name="inputXml"/> and returns the RAW XDM value of the
+    /// transformation — the typed result (xs:boolean, xs:integer, map, array, node, …)
+    /// preserved end-to-end, not serialized to a string and reparsed.
+    ///
+    /// Used by <c>fn:transform()</c> with <c>delivery-format='raw'</c> from XQuery,
+    /// where the caller wants to consume the typed result directly rather than as
+    /// XML markup. Currently only honored when the transformation is invoked via
+    /// <see cref="SetInitialFunction"/> (the only case where there's a single
+    /// well-defined return value); template-based invocations still serialize.
+    /// </summary>
+    /// <returns>
+    /// The raw XDM value: a single item, an <c>object?[]</c> for sequences, or
+    /// <c>null</c> for the empty sequence.
+    /// </returns>
+    public async Task<object?> TransformToValueAsync(string? inputXml, CancellationToken ct = default)
+    {
+        if (_stylesheet == null)
+            throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
+
+        var paramDict = new Dictionary<QName, object?>();
+        foreach (var (name, value) in _typedParameters)
+            paramDict[new QName(NamespaceId.None, name)] = value;
+
+        var rawBox = new RawResultBox();
+        var options = new XsltTransformOptions
+        {
+            InitialTemplate = _initialTemplate != null
+                ? ResolveQName(_initialTemplate, _initialTemplateNamespace)
+                : null,
+            InitialMode = _initialMode != null
+                ? ResolveQName(_initialMode, _initialModeNamespace)
+                : null,
+            InitialFunction = _initialFunction != null
+                ? ResolveQName(_initialFunction, _initialFunctionNamespace)
+                : null,
+            InitialFunctionArguments = _initialFunctionArgs,
+            InitialParameters = paramDict,
+            InitialTemplateParameters = _initialTemplateParams,
+            InitialTunnelParameters = _initialTunnelParams,
+            CancellationToken = ct,
+            SourceDocumentUri = _sourceDocumentUri,
+            HasSourceDocument = inputXml != null,
+            SourceSelect = _sourceSelect,
+            InitialModeSelect = _initialModeSelect,
+            Collections = _collections.Count > 0 ? _collections : null,
+            TraceListener = TraceListener,
+            MessageListener = MessageListener,
+            MessageListenerWithLocation = MessageListenerWithLocation,
+            ResourcePolicy = ResourcePolicy,
+            PreloadedResources = PreloadedResources,
+            ReturnRawXdm = true,
+            RawResult = rawBox
+        };
+
+        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        // Engine still produces a serialized output buffer alongside the raw value;
+        // we discard the buffer and return the raw value directly.
+        _ = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
+
+        SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        return rawBox.Value;
+    }
+
+    /// <summary>
     /// Transforms XML from a <see cref="TextReader"/> source.
     /// </summary>
     public async Task<string> TransformAsync(TextReader inputXml, CancellationToken ct = default)

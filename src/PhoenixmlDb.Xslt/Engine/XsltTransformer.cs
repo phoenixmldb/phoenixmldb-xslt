@@ -232,8 +232,20 @@ public sealed class XsltTransformEngine
                 throw new XsltException(
                     $"XTDE0041: Stylesheet function '{funcName.LocalName}' is not public");
             var result = await context.CallXsltFunctionAsync(func, options.InitialFunctionArguments).ConfigureAwait(false);
-            // Serialize the function result to the output
-            context.SerializeFunctionResult(result, outputBuilder);
+            if (options.ReturnRawXdm)
+            {
+                // delivery-format='raw' from fn:transform: callers want the typed XDM
+                // value end-to-end (booleans, maps, nodes…). Skip the text serialization
+                // path that would otherwise stringify and lose the type. Found in Martin
+                // Honnen's testing of fn:transform with initial-function returning
+                // xs:boolean from xsl:evaluate.
+                options.RawResult.Value = result;
+            }
+            else
+            {
+                // Default path: serialize the function result to the output
+                context.SerializeFunctionResult(result, outputBuilder);
+            }
         }
         // If an initial template is specified, call it directly instead of applying templates
         // Also auto-detect xsl:initial-template from the parsed stylesheet
@@ -574,7 +586,10 @@ public sealed class XsltTransformEngine
             if (!_stylesheet.Functions.TryGetValue(funcKey, out var func))
                 throw new XsltException($"XTDE0041: No public stylesheet function '{funcName.LocalName}' with arity {arity}");
             var result = await context.CallXsltFunctionAsync(func, options.InitialFunctionArguments).ConfigureAwait(false);
-            context.SerializeFunctionResult(result, outputBuilder);
+            if (options.ReturnRawXdm)
+                options.RawResult.Value = result;
+            else
+                context.SerializeFunctionResult(result, outputBuilder);
         }
         else if (options.InitialTemplate != null || (!options.HasSourceDocument && _stylesheet.NamedTemplates.Keys.Any(k => k.LocalName == "initial-template")))
         {
@@ -3333,6 +3348,19 @@ internal sealed class LazyValue
 /// <summary>
 /// Options for XSLT transformation.
 /// </summary>
+/// <summary>
+/// Mutable holder for the raw XDM result of a transformation invoked with
+/// <see cref="XsltTransformOptions.ReturnRawXdm"/>. Used so the engine can write
+/// back to the caller's options object while the rest of <see cref="XsltTransformOptions"/>
+/// stays init-only. The boxed `Value` is the raw XDM: a single item, an `object?[]`
+/// for sequences, or `null` for the empty sequence.
+/// </summary>
+public sealed class RawResultBox
+{
+    /// <summary>The raw XDM items captured during the most recent transformation.</summary>
+    public object? Value { get; set; }
+}
+
 public sealed class XsltTransformOptions
 {
     /// <summary>
@@ -3371,6 +3399,26 @@ public sealed class XsltTransformOptions
     /// Positional arguments to pass to the initial function call.
     /// </summary>
     public List<object?> InitialFunctionArguments { get; init; } = [];
+
+    /// <summary>
+    /// When <c>true</c>, the engine captures the raw XDM return value of the
+    /// transformation (initial-function call, initial-template call, or
+    /// apply-templates) into <see cref="RawResult"/> instead of serializing it
+    /// to the output buffer. Used by <c>fn:transform()</c> with
+    /// <c>delivery-format='raw'</c>, where callers expect typed XDM items
+    /// (booleans, maps, nodes…) preserved end-to-end rather than serialized
+    /// as XML markup and reparsed.
+    /// </summary>
+    public bool ReturnRawXdm { get; init; }
+
+    /// <summary>
+    /// Output channel populated by the engine when <see cref="ReturnRawXdm"/>
+    /// is <c>true</c>. Holds the raw XDM result of the transformation: a single
+    /// item, an <c>object?[]</c> for sequences, or <c>null</c> for the empty
+    /// sequence. Mutable so the engine can write to it from inside the
+    /// transformation; callers read it after <c>TransformAsync</c> returns.
+    /// </summary>
+    public RawResultBox RawResult { get; init; } = new();
 
     /// <summary>
     /// Output format to use.

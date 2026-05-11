@@ -131,22 +131,36 @@ public sealed class XsltTransformProvider : ITransformProvider
         if (sourceNode is XdmNode srcNode)
             inputXml = SerializeNode(srcNode, nodeStore);
 
-        // Run the transformation
-        var result = await transformer.TransformAsync(inputXml).ConfigureAwait(false);
-
         // Build result map
         var resultMap = new Dictionary<object, object?>();
 
-        if (string.Equals(deliveryFormat, "serialized", StringComparison.Ordinal))
+        if (string.Equals(deliveryFormat, "raw", StringComparison.Ordinal))
         {
-            resultMap["output"] = result;
+            // delivery-format='raw' returns the typed XDM value of the transformation
+            // — preserves booleans/maps/nodes end-to-end instead of XML-roundtripping.
+            // Honored when the transformation has a single well-defined return value
+            // (initial-function path); template-based invocations still return a doc.
+            // Found in Martin Honnen's fn:transform with initial-function returning
+            // xs:boolean from xsl:evaluate, where ?output came back empty under both
+            // 'document' and 'serialized' because the boolean's serialization
+            // ("true"/"false") didn't reparse to a useful XDM document.
+            resultMap["output"] = await transformer.TransformToValueAsync(inputXml).ConfigureAwait(false);
         }
         else
         {
-            // "document" (default) or "raw" — parse result XML back to XDM
-            resultMap["output"] = !string.IsNullOrEmpty(result)
-                ? await ParseResultToXdmAsync(result, nodeStore).ConfigureAwait(false)
-                : null;
+            // 'document' (default) or 'serialized' — go through the engine's serializer.
+            var result = await transformer.TransformAsync(inputXml).ConfigureAwait(false);
+            if (string.Equals(deliveryFormat, "serialized", StringComparison.Ordinal))
+            {
+                resultMap["output"] = result;
+            }
+            else
+            {
+                // 'document' default — parse result XML back to XDM document
+                resultMap["output"] = !string.IsNullOrEmpty(result)
+                    ? await ParseResultToXdmAsync(result, nodeStore).ConfigureAwait(false)
+                    : null;
+            }
         }
 
         // Secondary result documents

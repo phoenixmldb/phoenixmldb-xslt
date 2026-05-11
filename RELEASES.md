@@ -1,5 +1,37 @@
 # Release History
 
+## 1.3.5 (2026-05-09)
+
+### `fn:transform` with `delivery-format='raw'` returns the typed XDM value
+
+Martin reported that `fn:transform(...)?output` came back empty when the
+called stylesheet used `initial-function` returning `xs:boolean` (e.g.
+from `xsl:evaluate`). Both `'document'` and `'serialized'` delivery
+formats produced empty output, because the boolean was being routed
+through the result-document serializer — `"true"`/`"false"` doesn't
+re-parse to a useful XDM document.
+
+**Fix.** Added a raw-value return path that bypasses the serializer
+entirely when the caller asks for typed output:
+
+- `XsltTransformOptions.ReturnRawXdm` + `RawResultBox` — engine writes
+  the initial-function's return value into the box instead of feeding
+  it to the output serializer.
+- `XsltTransformer.TransformToValueAsync(string?)` — public façade
+  returning `Task<object?>` (single item, `object?[]` for sequences,
+  `null` for empty).
+- `XsltTransformProvider` (XQuery's `fn:transform` adapter) calls the
+  new façade when `delivery-format='raw'`. `'document'` and
+  `'serialized'` are unchanged.
+
+Honored only on the `initial-function` path, where the transformation
+has a single well-defined return value. Template-based invocations
+still go through document serialization (the spec doesn't define a
+typed-value semantics for them).
+
+Regression test:
+`XsltTransformerIntegrationTests.TransformToValueAsync_returns_typed_boolean_from_initial_function`.
+
 ## 1.3.4 (2026-05-11)
 
 ### Docbook TNG conformance push (multiple Martin Honnen reports)

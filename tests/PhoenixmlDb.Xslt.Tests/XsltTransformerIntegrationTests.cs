@@ -851,6 +851,31 @@ public class XsltTransformerIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task TransformToValueAsync_returns_typed_boolean_from_initial_function()
+    {
+        // Martin's report: fn:transform with delivery-format='raw' and an initial-function
+        // returning xs:boolean was producing an empty ?output because the engine serialized
+        // the boolean ("true"/"false") instead of returning the typed XDM value.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                            xmlns:f="http://example.com/f">
+              <xsl:function name="f:check" as="xs:boolean">
+                <xsl:sequence select="true()"/>
+              </xsl:function>
+            </xsl:stylesheet>
+            """);
+        transformer.SetInitialFunction("check", namespaceUri: "http://example.com/f");
+
+        var raw = await transformer.TransformToValueAsync(null);
+
+        raw.Should().NotBeNull("delivery-format='raw' must preserve the typed boolean, not empty/serialize it");
+        raw.Should().Be(true);
+    }
+
     #endregion
 
     #region Regression: prefixed atomic types in cast/castable/instance-of (martin's report)
