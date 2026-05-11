@@ -2033,9 +2033,20 @@ public sealed class XsltTransformEngine
             }
             else
             {
-                // Per XSLT spec: variable with no select and no content defaults to empty string,
-                // but params with as type allowing empty sequence default to empty sequence
-                if (global.IsParam && global.As != null
+                // Per XSLT spec: variable with no select and no content defaults to empty
+                // value. The exact "empty" semantics depend on the declared `as=` type:
+                //   - cardinality allows empty (?, *) → empty sequence (null)
+                //   - cardinality requires ≥1 (1, +) → XTDE0700 for param, "" for variable
+                //     (the legacy "empty string" default for untyped variables)
+                //
+                // The previous code treated the null/"" choice based on `IsParam` rather
+                // than on the type's cardinality, so an `xsl:variable as="element()*"`
+                // with no value got "" — and downstream `<xsl:sequence select="$x"/>`
+                // emitted the empty string as a stray item, breaking sequence
+                // construction (Docbook TNG `$v:user-title-groups` → `$v:title-groups`
+                // got an extra empty-string item, then iterate failed XPTY0020 trying
+                // to navigate `@xpath` on the string).
+                if (global.As != null
                     && (global.As.Occurrence == Occurrence.ZeroOrOne
                         || global.As.Occurrence == Occurrence.ZeroOrMore))
                     context.GlobalVariables[global.Name] = null;
