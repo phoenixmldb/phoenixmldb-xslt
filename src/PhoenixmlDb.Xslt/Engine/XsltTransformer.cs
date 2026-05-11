@@ -1961,6 +1961,68 @@ public sealed class XsltTransformEngine
                             Value = content
                         };
                     }
+                    else if (context._nodeStore != null && global.As.ItemType == ItemType.Document)
+                    {
+                        // as="document-node()": parse content into a proper XdmDocument so
+                        // downstream `/` and `*` axis steps work. Falling through to the RTF/string
+                        // path produced an xs:string "" for empty content, which then failed
+                        // axis-step evaluation with XPTY0020 (Martin Honnen's Docbook TNG
+                        // $v:templates → fp:construct-templates path).
+                        var docId = context._nodeStore.NextId();
+                        var docChildren = new List<NodeId>();
+                        NodeId docElementId = NodeId.None;
+                        string? docElemLocalName = null;
+                        var sb = new StringBuilder();
+                        if (content.Length > 0)
+                        {
+                            try
+                            {
+                                var settings = new System.Xml.XmlReaderSettings
+                                {
+                                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                    IgnoreWhitespace = false,
+                                    IgnoreComments = false,
+                                    IgnoreProcessingInstructions = false,
+                                };
+                                using var sr = new System.IO.StringReader($"<_doc_root_>{content}</_doc_root_>");
+                                using var rdr = System.Xml.XmlReader.Create(sr, settings);
+                                var children = new List<object?>();
+                                context.ReadAsBodyChunkChildren(rdr, children);
+                                foreach (var item in children)
+                                {
+                                    if (item is XdmNode cn)
+                                    {
+                                        cn.Parent = docId;
+                                        docChildren.Add(cn.Id);
+                                        if (cn is XdmElement xe)
+                                        {
+                                            if (docElementId == NodeId.None)
+                                                docElementId = cn.Id;
+                                            docElemLocalName ??= xe.LocalName;
+                                        }
+                                        sb.Append(cn.StringValue);
+                                    }
+                                }
+                            }
+                            catch (System.Xml.XmlException)
+                            {
+                                // Malformed content (e.g. raw text). Empty document; the
+                                // failure will surface elsewhere if it matters.
+                            }
+                        }
+                        var docNode = new XdmDocument
+                        {
+                            Id = docId,
+                            Document = new DocumentId(1),
+                            Parent = NodeId.None,
+                            DocumentElement = docElementId,
+                            Children = docChildren,
+                            DocumentElementLocalName = docElemLocalName,
+                            _stringValue = sb.ToString(),
+                        };
+                        context._nodeStore.Register(docNode);
+                        context.GlobalVariables[global.Name] = docNode;
+                    }
                     else
                         context.GlobalVariables[global.Name] = content.Contains('<', StringComparison.Ordinal)
                             ? new ResultTreeFragment(content)
@@ -12790,12 +12852,24 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedAttrContentDepth = _attributeContentDepth;
                 _textContentDepth = 0;
                 _attributeContentDepth = 0;
+                // Save and replace _sequenceAccumulator. When this xsl:variable bind runs
+                // inside a function body (which sets up its own accumulator to capture
+                // xsl:sequence return values), failing to isolate here means xsl:sequence
+                // inside our body leaks into the FUNCTION's accumulator instead of
+                // contributing to our variable's value — body output ends up empty and the
+                // variable gets the empty string. Found in Docbook TNG `$process` (xs:boolean
+                // body inside fp:run-transforms function).
+                var savedAccumulatorVar = _sequenceAccumulator;
+                _sequenceAccumulator = new List<object?>();
                 _documentNodeDepth++;
                 _temporaryOutputDepth++;
+                List<object?>? capturedAccumulator;
                 try
                 { await instruction.Content.ExecuteAsync(this).ConfigureAwait(false); }
                 finally
                 {
+                    capturedAccumulator = _sequenceAccumulator;
+                    _sequenceAccumulator = savedAccumulatorVar;
                     _temporaryOutputDepth--;
                     _documentNodeDepth--;
                     _textContentDepth = savedTextDepth;
@@ -12819,6 +12893,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var varBaseUri = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
                 if (instruction.As == null)
                     value = new ResultTreeFragment(content, varBaseUri);
+                else if (capturedAccumulator is { Count: > 0 } && content.Length == 0)
+                {
+                    // The body produced typed items via xsl:sequence (or similar) — preserve
+                    // them rather than serializing through text. For ExactlyOne/ZeroOrOne the
+                    // single item is unwrapped; the downstream type validation handles
+                    // cardinality and coercion.
+                    var occ = instruction.As.Occurrence;
+                    if (occ == Occurrence.ExactlyOne || occ == Occurrence.ZeroOrOne)
+                        value = capturedAccumulator.Count == 1 ? capturedAccumulator[0] : capturedAccumulator.ToArray();
+                    else
+                        value = capturedAccumulator.ToArray();
+                }
                 else
                     value = content.Contains('<', StringComparison.Ordinal)
                         ? new ResultTreeFragment(content, varBaseUri)
@@ -18173,11 +18259,21 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (item is Xdm.XsUntypedAtomic)
             return true;
 
+        // xs:anyURI satisfies xs:string per XPath function conversion rules (F&O §1.6.3,
+        // step 4): "If the supplied value is an instance of xs:anyURI ... and the
+        // expected type is xs:string, the value is cast to xs:string." This was missing,
+        // so `<xsl:variable as="xs:string" select="resolve-uri(...)">` raised XTTE0570.
+        // Found while triaging Martin Honnen's Docbook TNG report — `templates.xsl`
+        // declares such a variable and resolve-uri() returns xs:anyURI.
+        if (item is Xdm.XsAnyUri && targetType == ItemType.String)
+            return true;
+
         // XDM nodes can be atomized: extract string value and try coercion
         string? s = item switch
         {
             string str => str,
             XdmNode node => node.StringValue,
+            Xdm.XsAnyUri uri => uri.Value,
             _ => null
         };
 
@@ -18217,6 +18313,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             XdmNode node => node.StringValue,
             ResultTreeFragment rtf => StripXmlMarkup(rtf.XmlContent),
             Xdm.TextNodeItem tni => tni.Value,
+            Xdm.XsAnyUri uri => uri.Value,
             string s => s,
             bool b => b ? "true" : "false",
             double d => FormatDouble(d),
@@ -18263,7 +18360,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             // xs:integer is a subtype of xs:decimal — accept int/long without conversion
             ItemType.Decimal => value is decimal or int or long ? value : decimal.TryParse(StringValueOf(value), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : value,
             ItemType.Double => value is double ? value : double.TryParse(StringValueOf(value), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var dbl) ? dbl : value,
-            ItemType.Boolean => value is bool ? value : value is Xdm.XsUntypedAtomic ? (object)(StringValueOf(value) is "true" or "1") : value,
+            ItemType.Boolean => CoerceToBoolean(value),
             ItemType.GYear => value is Xdm.XsGYear ? value : new Xdm.XsGYear(StringValueOf(value)),
             ItemType.GYearMonth => value is Xdm.XsGYearMonth ? value : new Xdm.XsGYearMonth(StringValueOf(value)),
             ItemType.GMonthDay => value is Xdm.XsGMonthDay ? value : new Xdm.XsGMonthDay(StringValueOf(value)),
@@ -18271,6 +18368,28 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             ItemType.GMonth => value is Xdm.XsGMonth ? value : new Xdm.XsGMonth(StringValueOf(value)),
             ItemType.UntypedAtomic => value is Xdm.XsUntypedAtomic ? value : new Xdm.XsUntypedAtomic(StringValueOf(value)),
             _ => value
+        };
+    }
+
+    /// <summary>
+    /// Coerces an arbitrary value to xs:boolean. Recognizes the lexical forms accepted
+    /// by xs:boolean (<c>"true"</c>, <c>"false"</c>, <c>"1"</c>, <c>"0"</c>) regardless
+    /// of whether the source is xs:string, xs:untypedAtomic, or already a .NET bool.
+    /// Previously only xs:untypedAtomic was converted, which broke
+    /// <c>&lt;xsl:variable as="xs:boolean"&gt;...&lt;xsl:sequence select="false()"/&gt;...&lt;/xsl:variable&gt;</c>:
+    /// the body's xs:boolean was serialized to text output as <c>"false"</c>, then
+    /// failed to coerce back. Found in Docbook TNG <c>$process</c> evaluation.
+    /// </summary>
+    private static object CoerceToBoolean(object? value)
+    {
+        return value switch
+        {
+            bool b => b,
+            Xdm.XsUntypedAtomic ua => StringValueOf(ua) is "true" or "1",
+            string s => s is "true" or "1" ? true
+                       : s is "false" or "0" ? (object)false
+                       : value!, // unrecognized lexical form — leave alone, downstream check will catch
+            _ => value!
         };
     }
 
