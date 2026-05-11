@@ -57,6 +57,49 @@ public class VariableSequenceAccumulatorIsolationTests
     }
 
     [Fact]
+    public async Task xsl_next_iteration_with_param_body_preserves_typed_items()
+    {
+        // Companion to #20: same accumulator-isolation issue but in xsl:next-iteration's
+        // with-param body. Found in Docbook TNG fp:run-transforms where each iteration
+        // re-binds $document via `<xsl:with-param name="document">
+        //   <xsl:choose>...<xsl:sequence select="$next-result?output"/>...</xsl:choose>
+        // </xsl:with-param>`. Without the fix, the doc-node gets serialized to text and
+        // rebound as XsUntypedAtomic — downstream `<xsl:evaluate context-item="$document">`
+        // then fails with XPTY0020 ("axis step on item of type XsUntypedAtomic").
+        var stylesheet = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                            xmlns:f="http://example.com/f" version="3.0">
+              <xsl:function name="f:roundtrip" as="xs:boolean*">
+                <xsl:param name="doc" as="document-node()"/>
+                <xsl:iterate select="(1, 2, 3)">
+                  <xsl:param name="d" as="document-node()" select="$doc"/>
+                  <xsl:on-completion select="()"/>
+                  <xsl:variable name="ok" as="xs:boolean">
+                    <xsl:evaluate xpath="'exists(/*)'" as="xs:boolean" context-item="$d"/>
+                  </xsl:variable>
+                  <xsl:sequence select="$ok"/>
+                  <xsl:next-iteration>
+                    <!-- Body content (no select) — the case that previously broke. -->
+                    <xsl:with-param name="d">
+                      <xsl:sequence select="$d"/>
+                    </xsl:with-param>
+                  </xsl:next-iteration>
+                </xsl:iterate>
+              </xsl:function>
+              <xsl:template match="/">
+                <out><xsl:value-of select="f:roundtrip(/)" separator=","/></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformAsync(stylesheet, "<root/>");
+        result.Should().Contain("true,true,true",
+            "all three iterations must see $d as a document-node — body-content with-param must preserve typed items, not atomize them");
+    }
+
+    [Fact]
     public async Task xs_integer_bodied_variable_inside_xsl_function_evaluates_correctly()
     {
         // Same shape but with xs:integer to confirm fix isn't boolean-specific.

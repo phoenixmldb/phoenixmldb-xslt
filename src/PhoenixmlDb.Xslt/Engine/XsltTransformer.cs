@@ -5200,6 +5200,53 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         _scopes.Peek().Variables[name] = value;
     }
 
+    /// <summary>
+    /// Evaluates the body content of an xsl:param / xsl:with-param (when no `select`
+    /// attribute is present) into a typed value, preserving xsl:sequence-emitted items.
+    ///
+    /// The naive path (write to output buffer, then atomize the text) destroys typed
+    /// items: an xsl:sequence emitting a document-node would serialize to text, then
+    /// the text would be wrapped as XsUntypedAtomic, then bound to the parameter.
+    /// Downstream code expecting `as="document-node()"` to preserve the doc-node would
+    /// see XsUntypedAtomic and fail XPTY0020 on axis steps. Found in Docbook TNG
+    /// fp:run-transforms's xsl:next-iteration with-param="document"; same shape as the
+    /// xsl:variable accumulator-isolation fix earlier.
+    ///
+    /// Strategy: install a fresh sequence accumulator around the body. xsl:sequence
+    /// inside the body appends items to it; literal text falls through to the output
+    /// buffer. After execution, prefer the accumulator items when present (they retain
+    /// type), otherwise fall back to the output text wrapped as untyped atomic.
+    /// </summary>
+    internal async ValueTask<object?> EvaluateBodyContentToValueAsync(XsltSequenceConstructor body)
+    {
+        var savedAccumulator = _sequenceAccumulator;
+        _sequenceAccumulator = new List<object?>();
+        var savedLen = _output.Length;
+        _temporaryOutputDepth++;
+        List<object?> captured;
+        try
+        {
+            await body.ExecuteAsync(this).ConfigureAwait(false);
+        }
+        finally
+        {
+            captured = _sequenceAccumulator;
+            _sequenceAccumulator = savedAccumulator;
+            _temporaryOutputDepth--;
+        }
+        var content = _output.ToString(savedLen, _output.Length - savedLen);
+        _output.Length = savedLen;
+        if (captured.Count > 0)
+        {
+            // Typed items captured — return them (single-item unwrapped, multi as array).
+            return captured.Count == 1 ? captured[0] : captured.ToArray();
+        }
+        // Fall back to text content as untyped atomic / RTF.
+        return content.Contains('<', StringComparison.Ordinal)
+            ? (object)new ResultTreeFragment(content)
+            : new Xdm.XsUntypedAtomic(StripXmlMarkup(content));
+    }
+
     private void ClearMergeGroupContext()
     {
         SetVariable(new QName(NamespaceId.None, "current-merge-group"), null);
@@ -7493,14 +7540,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else if (param.Content != null)
             {
-                var savedLen = _output.Length;
-                _temporaryOutputDepth++;
-                try
-                { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
-                finally { _temporaryOutputDepth--; }
-                var content = _output.ToString(savedLen, _output.Length - savedLen);
-                _output.Length = savedLen;
-                value = content.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(content) : (object)new Xdm.XsUntypedAtomic(StripXmlMarkup(content));
+                value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
             }
             else
             {
@@ -7544,14 +7584,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                         else if (param.Content != null)
                         {
-                            var savedLen = _output.Length;
-                            _temporaryOutputDepth++;
-                            try
-                            { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
-                            finally { _temporaryOutputDepth--; }
-                            var content = _output.ToString(savedLen, _output.Length - savedLen);
-                            _output.Length = savedLen;
-                            value = content.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(content) : (object)new Xdm.XsUntypedAtomic(StripXmlMarkup(content));
+                            // Use accumulator-isolated body eval so xsl:sequence emitting typed
+                            // items (doc-nodes, elements, etc.) is preserved instead of being
+                            // serialized to text and rebound as XsUntypedAtomic. Found in Docbook
+                            // TNG where xsl:next-iteration with-param="document" rebinds $document
+                            // each iteration via `<xsl:sequence select="$next-result?output"/>`.
+                            value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
                         }
                         else
                         {
