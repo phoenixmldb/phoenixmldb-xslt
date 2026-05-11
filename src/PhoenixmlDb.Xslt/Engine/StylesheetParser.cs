@@ -6960,8 +6960,19 @@ public sealed class StylesheetParser
         string? lrePrefix = null;
         if (element.Name.Namespace != XNamespace.None)
         {
-            // Try XmlReader prefix map first — it preserves the original prefix
-            if (_elementPrefixMap != null && element is IXmlLineInfo eli && eli.HasLineInfo()
+            // Only consult the prefix map if the SOURCE element actually had a prefix.
+            // For elements using the default namespace (no prefix in source), the map
+            // either has no entry or — worse — could have a STALE entry from a parent
+            // or sibling at a colliding (line, col) key, which is exactly Martin Honnen's
+            // Docbook TNG `<theme>` bug: the first sibling in a default-namespace
+            // sequence inside `<xsl:variable as="element()*">` was being assigned the
+            // parent's `xsl:` prefix because the map returned a hit for what should
+            // have been a no-prefix element. The defensive guard: ask LINQ-to-XML
+            // first whether THIS element had any prefix; if it didn't, skip the map.
+            var linqPrefix = element.GetPrefixOfNamespace(element.Name.Namespace);
+            var sourceHadPrefix = !string.IsNullOrEmpty(linqPrefix);
+
+            if (sourceHadPrefix && _elementPrefixMap != null && element is IXmlLineInfo eli && eli.HasLineInfo()
                 && _elementPrefixMap.TryGetValue((eli.LineNumber, eli.LinePosition), out var originalPrefix))
             {
                 lrePrefix = originalPrefix;
@@ -9162,6 +9173,7 @@ public sealed class StylesheetParser
     {
         var expr = _expressionParser.Parse(expression);
         ResolveExpressionNamespaces(expr, context);
+        AttachXsltSourceLocation(expr, context);
         return expr;
     }
 
@@ -9173,8 +9185,35 @@ public sealed class StylesheetParser
     {
         var expr = _expressionParser.Parse(expression);
         if (_nsContext != null)
+        {
             ResolveExpressionNamespaces(expr, _nsContext);
+            AttachXsltSourceLocation(expr, _nsContext);
+        }
         return expr;
+    }
+
+    /// <summary>
+    /// Records the originating XSLT module URI + element line/column on the parsed
+    /// expression's <see cref="SourceLocation"/>. Without this, runtime XQuery errors
+    /// raised from XPath embedded in XSLT show only "[line N, col M]" relative to the
+    /// inline XPath string — useless across thousands of similar expressions in real
+    /// stylesheets (Docbook TNG, Schxslt2, etc.). With it, the EvaluateAsync diagnostic
+    /// can prefix errors with the actual file URI and the line of the XSLT instruction
+    /// that contained the offending XPath.
+    /// </summary>
+    private static void AttachXsltSourceLocation(XQueryExpression expr, XElement context)
+    {
+        if (context is not System.Xml.IXmlLineInfo li || !li.HasLineInfo()) return;
+        var moduleUri = context.BaseUri;
+        if (string.IsNullOrEmpty(moduleUri)) return;
+        // Preserve any existing Line/Column from the XPath parser (which gave us the
+        // position WITHIN the inline XPath string), but stamp Module = XSLT file URI so
+        // the runtime can attribute errors to the right source file. The XSLT element's
+        // line is also useful, so when the parsed expression has no Location yet,
+        // synthesize one from the element's position.
+        expr.Location = expr.Location is { } existing
+            ? existing with { Module = moduleUri }
+            : new SourceLocation(li.LineNumber, li.LinePosition, 0, 0) { Module = moduleUri };
     }
 
     /// <summary>

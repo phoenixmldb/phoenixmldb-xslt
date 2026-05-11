@@ -8073,9 +8073,17 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         {
             var snippet = expr.ToString() ?? "(unknown)";
             if (snippet.Length > 200) snippet = snippet[..200] + "…";
+            // If the XSLT compiler stamped this expression's Location with the source
+            // module URI (StylesheetParser.AttachXsltSourceLocation), surface that as
+            // a [module:line] prefix. The original [line N, col M] from xqe.Message stays —
+            // it pinpoints the position WITHIN the inline XPath string. Together they
+            // identify "which XSLT element + which character in its XPath."
+            var sourcePrefix = expr.Location is { Module: { Length: > 0 } mod } loc
+                ? $"[{mod}:{loc.Line}] "
+                : "";
             throw new PhoenixmlDb.XQuery.Functions.XQueryException(
                 xqe.ErrorCode,
-                $"{xqe.Message}\n  ↳ in expression ({expr.GetType().Name}): {snippet}",
+                $"{sourcePrefix}{xqe.Message}\n  ↳ in expression ({expr.GetType().Name}): {snippet}",
                 xqe);
         }
 
