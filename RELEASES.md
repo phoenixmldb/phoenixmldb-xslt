@@ -2,6 +2,44 @@
 
 ## 1.3.5 (2026-05-11)
 
+### `xsl:break select="X"` preserves typed/node values across the iteration boundary
+
+`xsl:break` always atomized its `select` value to a string, because `Break`
+called the simple `OutputValue` helper (which routes through `StringValueOf`).
+Inside an `xsl:function` declared `as="element()?"`, an iterate that
+broke with `select="."` returned the matched element's *string value*
+rather than the element itself. Discovered while transpiling Docbook
+xform-locale.xsl: `fp:lookup-localization-template` returned a whitespace
+string instead of the matched `l:template` element, breaking every
+downstream `$template/lt:label` access.
+
+Fix: `Break` now mirrors `xsl:sequence` semantics — when a sequence
+accumulator is active, append items to it; otherwise serialize via
+`SerializeResult` (which preserves nodes as nodes).
+
+Regression test:
+`XsltTransformerIntegrationTests.Iterate_break_select_dot_returns_element_not_string_value`.
+
+### `xsl:copy-of` of a namespace node emits an `xmlns:` declaration, not text
+
+`SerializeNode` lacked a case for `XdmNamespace`, so namespace nodes from
+the `namespace::*` axis fell through to the `default` branch and were
+serialized as text — `WriteText(node.ToString())` emits the namespace
+URI as element content. Found while transpiling Docbook xform-locale.xsl,
+whose `<xsl:copy-of select="@*,namespace::*[…]"/>` poisoned every
+generated `l:template` with a leading `"http://docbook.org/ns/docbook"`
+text node, which then dominated the element's string value.
+
+Fix: added an `XdmNamespace` case to `SerializeNode` that emits an
+`xmlns[:prefix]="…"` declaration on the containing element (writing into
+`_collectedAttributes` while the start tag is still open). Skips the
+implicit `xml` prefix and any binding already in scope. Throws XTDE0440
+when copying a namespace node onto a document, and XTDE0410 when copying
+after the start tag has been closed.
+
+Regression test:
+`XsltTransformerIntegrationTests.CopyOf_namespace_node_emits_xmlns_declaration_not_text`.
+
 ### Untyped `xsl:variable` captures typed-template results from `xsl:apply-templates`
 
 Martin's SchXslt2 report: importing `transpile.xsl`, the wrapper

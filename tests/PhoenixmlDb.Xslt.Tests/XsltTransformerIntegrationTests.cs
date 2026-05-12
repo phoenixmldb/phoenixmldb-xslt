@@ -852,6 +852,69 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task CopyOf_namespace_node_emits_xmlns_declaration_not_text()
+    {
+        // Bug found in Docbook xform-locale.xsl: `xsl:copy-of select="namespace::*"`
+        // emitted the namespace URI as text content of the constructed element instead
+        // of as an xmlns declaration. This poisoned every transpiled l:template with a
+        // leading namespace-URI text node. SerializeNode lacked a case for XdmNamespace
+        // and fell through to default `WriteText(node.ToString())`.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:l="urn:l">
+              <xsl:template match="/">
+                <l:result>
+                  <xsl:copy-of select="*/namespace::*[local-name(.) != '']"/>
+                  <inner/>
+                </l:result>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<root xmlns:zz=\"urn:zz\" xmlns=\"urn:r\"/>");
+        // The zz namespace from the source must arrive as a declaration on l:result,
+        // not as text content of the element.
+        result.Should().Contain("xmlns:zz=\"urn:zz\"");
+        result.Should().NotContain(">urn:zz<");
+    }
+
+    [Fact]
+    public async Task Iterate_break_select_dot_returns_element_not_string_value()
+    {
+        // Bug found while transpiling Docbook xform-locale.xsl through fp:lookup-localization-template:
+        // `<xsl:break select="."/>` inside an `<xsl:iterate>` over elements caused the
+        // function to return the matched element's STRING VALUE rather than the element
+        // itself, because Break called OutputValue (which atomizes via StringValueOf)
+        // instead of routing through the sequence accumulator like xsl:sequence does.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:local="urn:l">
+              <xsl:function name="local:find" as="element()?">
+                <xsl:param name="elems" as="element()*"/>
+                <xsl:iterate select="$elems">
+                  <xsl:choose>
+                    <xsl:when test="@match='b'">
+                      <xsl:break select="."/>
+                    </xsl:when>
+                    <xsl:otherwise>
+                      <xsl:next-iteration/>
+                    </xsl:otherwise>
+                  </xsl:choose>
+                </xsl:iterate>
+              </xsl:function>
+              <xsl:template match="/">
+                <xsl:variable name="hit" select="local:find(/root/e)"/>
+                <result is-element="{$hit instance of element()}" sub-count="{count($hit/sub)}"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<root><e match=\"a\">A</e><e match=\"b\">B<sub/></e></root>");
+        result.Should().Contain("is-element=\"true\"");
+        result.Should().Contain("sub-count=\"1\"");
+    }
+
+    [Fact]
     public async Task Untyped_variable_captures_typed_template_result_via_apply_templates()
     {
         // Martin's SchXslt2 report: an `xsl:variable` with no `as=` (RTF construction)

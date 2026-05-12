@@ -10185,6 +10185,44 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 break;
             }
 
+            case XdmNamespace nsNode:
+            {
+                // Per XSLT 3.0 §5.7.3.1, copying a namespace node adds the namespace
+                // declaration to the containing element. Without this case, the node
+                // fell through to default (WriteText(node.ToString())) which emitted
+                // the URI as text content. Found while transpiling Docbook xform-locale.xsl,
+                // whose `xsl:copy-of select="@*,namespace::*[…]"` poisoned every locale
+                // template with a leading docbook-namespace text node.
+                if (_documentNodeDepth > 0 && !_attributeCollecting)
+                    throw new XsltException("XTDE0440: Cannot add a namespace node to a document node", _currentInstructionLocation);
+                if (_attributeCollecting && _output.Length > _outputLogicalStart && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
+                    throw new XsltException("XTDE0410: Cannot add a namespace node to an element after children have been added", _currentInstructionLocation);
+
+                var prefix = nsNode.Prefix ?? "";
+                var uri = nsNode.Uri ?? "";
+
+                // Skip the special "xml" prefix — it's always implicitly bound and must not be redeclared.
+                if (prefix == "xml")
+                    break;
+                // Suppress redundant declarations already in the output namespace scope.
+                if (IsNamespaceInScope(prefix, uri))
+                    break;
+
+                var target = _attributeCollecting ? _collectedAttributes! : _output;
+                target.Append(" xmlns");
+                if (!string.IsNullOrEmpty(prefix))
+                {
+                    target.Append(':');
+                    target.Append(prefix);
+                }
+                target.Append("=\"");
+                target.Append(EscapeAttributeValue(uri));
+                target.Append('"');
+                if (_outputNsScopes.Count > 0)
+                    _outputNsScopes.Peek()[prefix] = uri;
+                break;
+            }
+
             case XdmText text:
                 WriteText(text.Value, false);
                 break;
@@ -15442,12 +15480,45 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override void Break(XsltBreak instruction)
     {
-        // Execute break's content/select before throwing - this outputs to the result tree
-        // and the BreakException signals IterateAsync to skip on-completion
+        // Execute break's content/select before throwing — the BreakException signals
+        // IterateAsync to skip on-completion. The select value contributes to the
+        // iterate's result, mirroring xsl:sequence semantics: route through the
+        // sequence accumulator when active so node identity / typed values survive
+        // the iteration boundary (e.g. an iterate inside `as="element()?"` that
+        // breaks with `select="."` must return the element, not its string value).
+        // Found while transpiling Docbook xform-locale.xsl: fp:lookup-localization-template
+        // returned the matched l:template element via xsl:break, but Break wrote its
+        // string-value to the output buffer, so the function ended up returning a
+        // whitespace string instead of the element.
         if (instruction.Select != null)
         {
             var result = EvaluateAsync(instruction.Select).AsTask().GetAwaiter().GetResult();
-            OutputValue(result);
+            if (result != null)
+            {
+                if (_sequenceAccumulator != null)
+                {
+                    if (result is object?[] arr)
+                    {
+                        foreach (var item in arr)
+                            AppendToSeqAccumulator(item);
+                    }
+                    else if (result is System.Collections.IEnumerable enumerable
+                        && result is not string && result is not XdmNode
+                        && result is not IDictionary<object, object?>)
+                    {
+                        foreach (var item in enumerable)
+                            AppendToSeqAccumulator(item);
+                    }
+                    else
+                    {
+                        AppendToSeqAccumulator(result);
+                    }
+                }
+                else
+                {
+                    SerializeResult(result);
+                }
+            }
         }
         else if (instruction.Content != null)
         {
