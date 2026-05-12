@@ -4019,6 +4019,76 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     private readonly Stack<string?> _staticBaseUriStack = new(); // Static base URI for static-base-uri() function
     internal string? StaticBaseUri => _staticBaseUriStack.Count > 0 ? _staticBaseUriStack.Peek() : XsltTransformEngine.UriString(_stylesheet.BaseUri);
+
+    /// <summary>
+    /// The source location of the XSLT instruction or XPath expression currently being
+    /// evaluated, or <c>null</c> when no executor has installed one. Pushed via
+    /// <see cref="PushInstructionLocation"/>; consumed by <see cref="Error(string)"/>
+    /// to auto-attach module/line/column to <see cref="XsltException"/>.
+    /// </summary>
+    /// <remarks>
+    /// Phase A of the source-location audit: storage and helpers exist; Phase B
+    /// wires push/pop into individual executors. Existing set-and-forget writes to
+    /// <c>_currentInstructionLocation</c> (e.g. <c>CreateAttributeAsync</c> for
+    /// XTDE0410/0420) remain valid — Phase B replaces them with scoped pushes.
+    /// </remarks>
+    internal SourceLocation? CurrentInstructionLocation => _currentInstructionLocation;
+
+    /// <summary>
+    /// Pushes <paramref name="location"/> as the current instruction location for the
+    /// scope of the returned value; disposing it restores the prior location. A null
+    /// push is a no-op so callers don't need to null-check before pushing.
+    /// </summary>
+    internal LocationScope PushInstructionLocation(SourceLocation? location)
+    {
+        if (location is null) return new LocationScope(this, null, false);
+        var prior = _currentInstructionLocation;
+        _currentInstructionLocation = location;
+        return new LocationScope(this, prior, true);
+    }
+
+    /// <summary>
+    /// Disposable scope returned by <see cref="PushInstructionLocation"/>. Restores the
+    /// prior location on <see cref="Dispose"/>. Regular struct (not <c>ref struct</c>)
+    /// so it can live in async-iterator state machines.
+    /// </summary>
+#pragma warning disable CA1815 // override Equals — equality on a use-once disposable scope is meaningless
+    internal struct LocationScope : IDisposable
+#pragma warning restore CA1815
+    {
+        private readonly DefaultXsltExecutionContext _ctx;
+        private readonly SourceLocation? _prior;
+        private readonly bool _pushed;
+        private bool _disposed;
+
+        internal LocationScope(DefaultXsltExecutionContext ctx, SourceLocation? prior, bool pushed)
+        {
+            _ctx = ctx;
+            _prior = prior;
+            _pushed = pushed;
+            _disposed = false;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed || !_pushed) return;
+            _ctx._currentInstructionLocation = _prior;
+            _disposed = true;
+        }
+    }
+
+    /// <summary>
+    /// Constructs an <see cref="XsltException"/> tagged with <see cref="CurrentInstructionLocation"/>.
+    /// Use as <c>throw context.Error("XTTE0570: ...");</c> to auto-attach location info.
+    /// </summary>
+    internal XsltException Error(string message)
+        => new(message, _currentInstructionLocation);
+
+    /// <summary>
+    /// Same as <see cref="Error(string)"/> but wraps an inner exception.
+    /// </summary>
+    internal XsltException Error(string message, Exception innerException)
+        => new(message, _currentInstructionLocation, innerException);
     private bool _simpleContentLastWasNode; // Track node→text transitions for space insertion in simple content
     private StringBuilder? _collectedAttributes => _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek() : null;
     private bool _attributeCollecting => _collectedAttributesStack.Count > 0;
