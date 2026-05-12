@@ -2,6 +2,30 @@
 
 ## 1.3.5 (2026-05-11)
 
+### `xsl:function as="node()*"` wraps plain-text body output as text node
+
+`CallXsltFunctionAsync`'s text-output branch only parsed function output
+into XDM nodes when the captured text contained `<` (i.e. XML markup).
+For functions declared `as="node()*"` whose body produced plain text via
+`<xsl:apply-templates/>` over text-only content, the function returned
+the raw string instead of a text node — and the caller's
+`descendant-or-self::text()` axis then raised XPTY0020.
+
+Found in Docbook chunk-cleanup `f:chunk-title` (`as="node()*"`).
+
+Fix: also enter the parse-to-XDM branch when the function's declared
+return is a node type, regardless of `<`. With this, an apply-templates
+result that's just text becomes a single text node, satisfying both the
+`as=` constraint and downstream `text()` axis access.
+
+Regression test:
+`XsltTransformerIntegrationTests.Function_with_node_return_type_wraps_text_body_as_text_node`.
+
+**End-to-end milestone**: with this fix, Docbook xslTNG 2.8.0 runs
+end-to-end against `samples/article.xml` and produces HTML output
+(exit 0). Several smaller post-rendering issues remain (a duplicated
+`<html>` wrapper, etc.), tracked separately.
+
 ### `xsl:break select="X"` preserves typed/node values across the iteration boundary
 
 `xsl:break` always atomized its `select` value to a string, because `Break`

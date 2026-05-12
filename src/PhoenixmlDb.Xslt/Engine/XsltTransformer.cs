@@ -19559,8 +19559,19 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 ValidateFunctionReturnType(null, func);
                 funcResult = null;
             }
-            else if (!string.IsNullOrEmpty(textOutput) && textOutput.Contains('<', StringComparison.Ordinal)
+            else if (!string.IsNullOrEmpty(textOutput)
                 && _nodeStore != null
+                // Parse text output to XDM nodes when:
+                //   (a) the text contains XML markup — a parented subtree to extract, or
+                //   (b) the function's declared return is a node type — we need to produce
+                //       text nodes, not concatenated strings. Found in Docbook chunk-cleanup
+                //       f:chunk-title (as="node()*") whose apply-templates result was plain
+                //       text; without (b) the function returned the string and the caller's
+                //       `descendant-or-self::text()` axis step blew up with XPTY0020.
+                && (textOutput.Contains('<', StringComparison.Ordinal)
+                    || (func.As != null
+                        && func.As.ItemType is ItemType.Element or ItemType.Node or ItemType.Document
+                            or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Text))
                 && (func.As == null
                     || func.As.ItemType is ItemType.Element or ItemType.Node or ItemType.Document
                         or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Text))

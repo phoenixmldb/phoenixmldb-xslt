@@ -852,6 +852,38 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task Function_with_node_return_type_wraps_text_body_as_text_node()
+    {
+        // Bug found in Docbook chunk-cleanup f:chunk-title (as="node()*"): when the
+        // function body produced plain text via apply-templates (not XML markup),
+        // CallXsltFunctionAsync's text-output branch only wrapped the result as XDM
+        // when the text contained '<'. Plain text was returned as a raw string,
+        // breaking the caller's `descendant-or-self::text()` axis with XPTY0020.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:f="urn:f">
+              <xsl:function name="f:title" as="node()*">
+                <xsl:param name="e" as="element()"/>
+                <xsl:apply-templates select="$e/title/node()"/>
+              </xsl:function>
+              <xsl:template match="/">
+                <xsl:variable name="r" select="f:title(/root)"/>
+                <result is-text="{$r instance of text()}"
+                        text-axis-count="{count($r ! ./descendant-or-self::text())}"
+                        value="{string($r)}"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<root><title>Sample Article</title></root>");
+        // Without the fix: f:title returned the string "Sample Article" and the
+        // descendant-or-self::text() axis blew up with XPTY0020.
+        result.Should().Contain("is-text=\"true\"");
+        result.Should().Contain("text-axis-count=\"1\"");
+        result.Should().Contain("value=\"Sample Article\"");
+    }
+
+    [Fact]
     public async Task CopyOf_namespace_node_emits_xmlns_declaration_not_text()
     {
         // Bug found in Docbook xform-locale.xsl: `xsl:copy-of select="namespace::*"`
