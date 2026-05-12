@@ -2,6 +2,45 @@
 
 ## 1.3.5 (2026-05-11)
 
+### `as=` validator now enforces element name AND namespace
+
+Hardening pass on the function/template return validators after a multi-day
+Docbook conformance push surfaced three separate bug shapes (xsl:break,
+xsl:copy copy-namespaces="no", function-with-text-body) where the engine
+produced a *value* of the wrong XDM shape and the validator let it
+through, only to blow up downstream as XPTY0020 axis-step errors.
+
+**Changes**:
+- `ValidateValueMatchesType` (used by function returns and with-params)
+  now checks element NAME and NAMESPACE against `element(Q{ns}local)`,
+  not just "is it a node?". Same treatment for attribute names and
+  processing-instruction targets.
+- `ValidateTemplateReturnType`'s element-name matcher now also checks
+  the declared namespace, not only the local part.
+- `MatchesElementName` is namespace-aware (was: local-name only).
+- `CallXsltFunctionAsync` calls `ValidateFunctionReturnType` once after
+  every result-determination branch converges. Two branches (text-output
+  parse-to-XDM and combined accumulator+text) previously skipped
+  validation entirely, which is how the wrong-shape values leaked out.
+- StylesheetParser's `element(...)` / `attribute(...)` / `document-node(element(...))`
+  type-name parsers now route through `SplitPrefixedName`, which
+  correctly handles EQName syntax (`Q{ns}local`). The earlier
+  split-on-`:` swallowed any `:` inside the namespace URI — turning
+  `Q{urn:expected}root` into `ElementName="expected}root"` with no
+  namespace recorded, so the validator had nothing to check against.
+
+Errors now look like:
+`XTTE0780: Function f:wrong-ns return value requires type
+Element(Q{urn:expected}root) but got element root in namespace ""`
+
+Regression tests:
+`XsltTransformerIntegrationTests.Function_return_validator_rejects_wrong_namespace_element`
+and `…_accepts_correct_namespace_element`.
+
+Full XSLT suite 373/373; Docbook xslTNG 2.8.0 still runs end-to-end with
+identical output (proving the fix doesn't change correct-stylesheet
+behavior, only catches incorrect ones earlier).
+
 ### `xsl:copy copy-namespaces="no"` preserves the element's own namespace
 
 Per XSLT 3.0 §11.10.1 + §5.7.3.4 (namespace fixup), `copy-namespaces="no"`

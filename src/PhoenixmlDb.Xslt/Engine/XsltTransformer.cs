@@ -1734,7 +1734,7 @@ public sealed class XsltTransformEngine
             {
                 // Validate externally-supplied value against the param's as type
                 if (global.As != null)
-                    DefaultXsltExecutionContext.ValidateValueMatchesType(extValue, global.As, "XTTE0590",
+                    context.ValidateValueMatchesType(extValue, global.As, "XTTE0590",
                         $"Parameter ${global.Name.LocalName}");
                 context.GlobalVariables[global.Name] = extValue;
             }
@@ -2110,7 +2110,7 @@ public sealed class XsltTransformEngine
             if (global.IsParam && externalParams.TryGetValue(global.Name, out var extValue))
             {
                 if (global.As != null)
-                    DefaultXsltExecutionContext.ValidateValueMatchesType(extValue, global.As, "XTTE0590",
+                    context.ValidateValueMatchesType(extValue, global.As, "XTTE0590",
                         $"Parameter ${global.Name.LocalName}");
                 context.GlobalVariables[global.Name] = extValue;
             }
@@ -18201,7 +18201,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         throw new XsltException($"{errorCode}: Unknown collation URI '{collationUri}'");
     }
 
-    private static void ValidateTemplateReturnType(XsltTemplate template, List<object?> resultItems)
+    private void ValidateTemplateReturnType(XsltTemplate template, List<object?> resultItems)
     {
         if (template.As == null)
             return;
@@ -18304,7 +18304,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var matches = (targetType, item) switch
                 {
                     (ItemType.Element, XdmElement el) =>
-                        template.As.ElementName == null || MatchesElementName(el, template.As.ElementName),
+                        MatchesElementName(el, template.As.ElementName, template.As.ElementNamespace),
                     (ItemType.Text, XdmText or string or Xdm.TextNodeItem) => true,
                     (ItemType.Comment, XdmComment) => true,
                     (ItemType.ProcessingInstruction, XdmProcessingInstruction) => true,
@@ -18691,16 +18691,32 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// Checks if an element matches a declared element name, handling both simple names
     /// and EQName syntax (Q{uri}local or uri}local after Q{ is stripped).
     /// </summary>
-    private static bool MatchesElementName(XdmElement el, string declaredName)
+    /// <summary>
+    /// Per XSLT 3.0 §2.5.5, an element(QName) test matches when both the element's local name
+    /// and (when constrained) its namespace URI agree with the declared name. The earlier
+    /// implementation only checked local name, so e.g. element(Q{xhtml}html) accepted an
+    /// element named "html" in any namespace — including the null namespace produced by the
+    /// xsl:copy copy-namespaces="no" bug fixed in 1.3.5.
+    /// </summary>
+    private bool MatchesElementName(XdmElement el, string? declaredLocalName, string? declaredNamespace)
     {
-        // Simple local name match
-        if (el.LocalName == declaredName)
-            return true;
-        // EQName: extract local part after the closing '}'
-        var closeBrace = declaredName.LastIndexOf('}');
-        if (closeBrace >= 0 && closeBrace < declaredName.Length - 1)
-            return el.LocalName == declaredName[(closeBrace + 1)..];
-        return false;
+        if (declaredLocalName != null)
+        {
+            // EQName: strip Q{uri}local form to bare local part for comparison
+            var localPart = declaredLocalName;
+            var closeBrace = declaredLocalName.LastIndexOf('}');
+            if (closeBrace >= 0 && closeBrace < declaredLocalName.Length - 1)
+                localPart = declaredLocalName[(closeBrace + 1)..];
+            if (el.LocalName != localPart)
+                return false;
+        }
+        if (declaredNamespace != null)
+        {
+            var elNs = _nodeStore?.GetNamespaceUri(el.Namespace) ?? "";
+            if (elNs != declaredNamespace)
+                return false;
+        }
+        return true;
     }
 
     private static bool IsStrictAtomicType(ItemType type) => type is
@@ -18818,7 +18834,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// Only validates strict atomic types to avoid false positives with
     /// string/node/anyURI/untypedAtomic coercion paths.
     /// </summary>
-    internal static void ValidateValueMatchesType(object? value, XdmSequenceType targetType, string errorCode, string contextName)
+    internal void ValidateValueMatchesType(object? value, XdmSequenceType targetType, string errorCode, string contextName)
     {
         // Validate node types: when the target is a node type, non-node values must fail.
         // Only apply to with-param/tunnel-param paths (XTTE0590), not default value paths
@@ -18834,16 +18850,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             // Check single value
             if (value is not object?[])
             {
-                if (value is not XdmNode && value is not ResultTreeFragment)
-                    throw new XsltException($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {value.GetType().Name}");
+                ValidateSingleNodeAgainstType(value, targetType, errorCode, contextName);
                 return;
             }
             // For sequences, check each item
             if (value is object?[] nodeArr)
             {
                 foreach (var item in nodeArr)
-                    if (item != null && item is not XdmNode && item is not ResultTreeFragment)
-                        throw new XsltException($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {item.GetType().Name}");
+                    if (item != null)
+                        ValidateSingleNodeAgainstType(item, targetType, errorCode, contextName);
                 return;
             }
             return;
@@ -18878,6 +18893,67 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         // Single item — check type with promotion rules
         if (!IsTypeCompatible(value, targetType.ItemType))
             throw new XsltException($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {value.GetType().Name}");
+    }
+
+    /// <summary>
+    /// Per XSLT 3.0 §3.7 (sequence-type matching): validates a single value against a node-typed
+    /// declaration, including element/attribute name and namespace constraints (element(QName),
+    /// attribute(QName), document-node(element(QName)), processing-instruction("name")).
+    ///
+    /// The node-type branch of <see cref="ValidateValueMatchesType"/> previously only checked
+    /// "is it a node?" — it accepted strings, ResultTreeFragments, and elements in the wrong
+    /// namespace. That gap was the reason several recent typed-shape bugs surfaced only as
+    /// downstream XPTY0020 axis-step errors instead of XTTE0780 at the construction boundary.
+    /// </summary>
+    private void ValidateSingleNodeAgainstType(object value, XdmSequenceType targetType, string errorCode, string contextName)
+    {
+        // ResultTreeFragment is opaque markup — we accept it for any node type since the
+        // caller will (re)parse on first axis access. Refining ResultTreeFragment further
+        // would force eager parsing of every variable body for the validator's sake.
+        if (value is ResultTreeFragment)
+            return;
+
+        if (value is not XdmNode node)
+            throw new XsltException($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {value.GetType().Name}");
+
+        var matches = (targetType.ItemType, node) switch
+        {
+            (ItemType.Node, _) => true,
+            (ItemType.Element, XdmElement el) =>
+                MatchesElementName(el, targetType.ElementName, targetType.ElementNamespace),
+            (ItemType.Attribute, XdmAttribute attr) =>
+                (targetType.AttributeName == null || attr.LocalName == targetType.AttributeName)
+                && (targetType.AttributeNamespace == null
+                    || (_nodeStore?.GetNamespaceUri(attr.Namespace) ?? "") == targetType.AttributeNamespace),
+            (ItemType.Text, XdmText) => true,
+            (ItemType.Comment, XdmComment) => true,
+            (ItemType.ProcessingInstruction, XdmProcessingInstruction pi) =>
+                targetType.PIName == null || pi.Target == targetType.PIName,
+            (ItemType.Document, XdmDocument doc) =>
+                targetType.DocumentElementName == null
+                || doc.DocumentElementLocalName == targetType.DocumentElementName,
+            _ => false
+        };
+
+        if (!matches)
+        {
+            var what = node switch
+            {
+                XdmElement el => el.Prefix != null
+                    ? $"element {el.Prefix}:{el.LocalName} (Q{{{_nodeStore?.GetNamespaceUri(el.Namespace) ?? ""}}}{el.LocalName})"
+                    : $"element {el.LocalName} in namespace \"{_nodeStore?.GetNamespaceUri(el.Namespace) ?? ""}\"",
+                XdmAttribute attr => $"attribute {attr.LocalName}",
+                XdmText => "text node",
+                XdmComment => "comment",
+                XdmProcessingInstruction pi => $"processing-instruction({pi.Target})",
+                XdmDocument doc => $"document-node(element({doc.DocumentElementLocalName ?? "?"}))",
+                _ => node.GetType().Name
+            };
+            var declared = targetType.ElementName != null
+                ? $"{targetType.ItemType}({(targetType.ElementNamespace != null ? "Q{" + targetType.ElementNamespace + "}" : "")}{targetType.ElementName})"
+                : targetType.ItemType.ToString();
+            throw new XsltException($"{errorCode}: {contextName} requires type {declared} but got {what}");
+        }
     }
 
     /// <summary>
@@ -19716,6 +19792,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 funcResult = WrapInCoercionWrapper(funcResult, func.As);
             }
 
+            // XTTE0780 final gate: catch wrong-shape values that slipped past the per-branch
+            // funcResult assembly. Several recent bugs (xsl:break atomizing an element to a
+            // string, xsl:copy copy-namespaces="no" producing a wrong-namespace element,
+            // function body whose text-only output would have returned a string for an
+            // `as="node()"` declaration) were only detected downstream as XPTY0020 axis errors
+            // because branches that synthesize funcResult from textOutput skipped validation.
+            // Validating once here, after every branch converges, surfaces those mismatches
+            // at the function boundary instead.
+            ValidateFunctionReturnType(funcResult, func);
+
             if (cacheKey != null)
                 _functionCache[cacheKey] = funcResult;
             return funcResult;
@@ -19734,7 +19820,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>
     /// Validates the return value of an xsl:function against its declared as type (XTTE0780).
     /// </summary>
-    private static void ValidateFunctionReturnType(object? result, XsltFunction func)
+    private void ValidateFunctionReturnType(object? result, XsltFunction func)
     {
         if (func.As == null)
             return;

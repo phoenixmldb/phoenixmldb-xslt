@@ -917,6 +917,56 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task Function_return_validator_rejects_wrong_namespace_element()
+    {
+        // Hardening: ValidateValueMatchesType now compares element name AND namespace
+        // against `as="element(Q{ns}local)"`, so a function that produces an element in
+        // the wrong namespace fails XTTE0780 at the function boundary instead of slipping
+        // through to a downstream XPTY0020 axis-step error. This catches the same shape as
+        // the xsl:copy copy-namespaces="no" bug fixed in 1.3.5: the engine produced an
+        // element named "html" but in the null namespace, where the function declared
+        // element(Q{xhtml}html). Previously: silent acceptance + downstream blow-up.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:f="urn:f">
+              <xsl:function name="f:wrong-ns" as="element(Q{urn:expected}root)">
+                <root xmlns=""/>
+              </xsl:function>
+              <xsl:template match="/">
+                <out><xsl:sequence select="f:wrong-ns()"/></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var act = async () => await transformer.TransformAsync("<x/>");
+        var ex = await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>();
+        ex.Which.Message.Should().StartWith("XTTE0780");
+        ex.Which.Message.Should().Contain("urn:expected");
+    }
+
+    [Fact]
+    public async Task Function_return_validator_accepts_correct_namespace_element()
+    {
+        // Companion to Function_return_validator_rejects_wrong_namespace_element: the
+        // hardened validator must NOT reject elements that DO match the declared name and
+        // namespace. (The element is in the correct urn:expected namespace below.)
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:f="urn:f" xmlns:e="urn:expected">
+              <xsl:function name="f:right-ns" as="element(Q{urn:expected}root)">
+                <e:root/>
+              </xsl:function>
+              <xsl:template match="/">
+                <out><xsl:sequence select="f:right-ns()"/></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("e:root");
+    }
+
+    [Fact]
     public async Task Function_with_node_return_type_wraps_text_body_as_text_node()
     {
         // Bug found in Docbook chunk-cleanup f:chunk-title (as="node()*"): when the

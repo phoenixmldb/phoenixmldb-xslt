@@ -9669,26 +9669,26 @@ public sealed class StylesheetParser
             return new XdmSequenceType { ItemType = ItemType.Item, Occurrence = Occurrence.Zero };
         }
 
-        // Handle element(name) or element(name, type) or element(*, type) — named element type test
+        // Handle element(name) or element(name, type) or element(*, type) — named element type test.
+        // Routed through SplitPrefixedName so EQName syntax (Q{ns}local) parses correctly:
+        // the previous local-only split-on-':' handler swallowed the namespace URI's colon
+        // (turning Q{urn:expected}root into ElementName="expected}root" with no namespace).
         if (type.StartsWith("element(", StringComparison.Ordinal) && type.EndsWith(')')  &&
             type != "element()" && type != "element(*)")
         {
             var inner = type[8..^1].Trim();
-            // Split on comma first: element(name, type) or element(*, type)
             var commaIdx = inner.IndexOf(',', StringComparison.Ordinal);
-            if (commaIdx >= 0)
+            var namePart = commaIdx >= 0 ? inner[..commaIdx].Trim() : inner;
+            if (namePart == "*" || string.IsNullOrEmpty(namePart))
+                return new XdmSequenceType { ItemType = ItemType.Element, Occurrence = occurrence };
+            var (localName, nsUri) = SplitPrefixedName(namePart, context);
+            return new XdmSequenceType
             {
-                // element(name, type) or element(*, type) — extract just the name part
-                var namePart = inner[..commaIdx].Trim();
-                // Type annotation is ignored for non-schema-aware processor (all elements are xs:untyped)
-                if (namePart == "*" || string.IsNullOrEmpty(namePart))
-                    return new XdmSequenceType { ItemType = ItemType.Element, Occurrence = occurrence };
-                var localName = namePart.IndexOf(':', StringComparison.Ordinal) is var ci1a && ci1a >= 0 ? namePart[(ci1a + 1)..] : namePart;
-                return new XdmSequenceType { ItemType = ItemType.Element, Occurrence = occurrence, ElementName = localName };
-            }
-            // element(name) — no type annotation
-            var localName1 = inner.IndexOf(':', StringComparison.Ordinal) is var ci1 && ci1 >= 0 ? inner[(ci1 + 1)..] : inner;
-            return new XdmSequenceType { ItemType = ItemType.Element, Occurrence = occurrence, ElementName = localName1 };
+                ItemType = ItemType.Element,
+                Occurrence = occurrence,
+                ElementName = localName,
+                ElementNamespace = nsUri,
+            };
         }
 
         // Handle document-node(element(name)) or document-node(element(name, type)) — document with named element test
@@ -9699,13 +9699,17 @@ public sealed class StylesheetParser
             var commaIdx2 = inner.IndexOf(',', StringComparison.Ordinal);
             if (commaIdx2 >= 0)
                 inner = inner[..commaIdx2].Trim();
-            var localName = inner.IndexOf(':', StringComparison.Ordinal) is var ci2 && ci2 >= 0 ? inner[(ci2 + 1)..] : inner;
-            if (localName != "*" && localName.Length > 0)
+            if (inner == "*" || inner.Length == 0)
+                return new XdmSequenceType { ItemType = ItemType.Document, Occurrence = occurrence };
+            var (docLocal, _) = SplitPrefixedName(inner, context);
+            // XdmSequenceType has no DocumentElementNamespace yet; document-element namespace
+            // matching is a future enhancement (rarely used in real stylesheets).
+            return new XdmSequenceType
             {
-                return new XdmSequenceType { ItemType = ItemType.Document, Occurrence = occurrence, DocumentElementName = localName };
-            }
-            // document-node(element(*)) or document-node(element(*, type)) — just document-node()
-            return new XdmSequenceType { ItemType = ItemType.Document, Occurrence = occurrence };
+                ItemType = ItemType.Document,
+                Occurrence = occurrence,
+                DocumentElementName = docLocal,
+            };
         }
 
         // Handle attribute(name) or attribute(name, type) or attribute(*, type) — named attribute type test
@@ -9714,17 +9718,17 @@ public sealed class StylesheetParser
         {
             var inner = type[10..^1].Trim();
             var commaIdx3 = inner.IndexOf(',', StringComparison.Ordinal);
-            if (commaIdx3 >= 0)
+            var namePart = commaIdx3 >= 0 ? inner[..commaIdx3].Trim() : inner;
+            if (namePart == "*" || string.IsNullOrEmpty(namePart))
+                return new XdmSequenceType { ItemType = ItemType.Attribute, Occurrence = occurrence };
+            var (attrLocal, attrNs) = SplitPrefixedName(namePart, context);
+            return new XdmSequenceType
             {
-                var namePart = inner[..commaIdx3].Trim();
-                if (namePart == "*" || string.IsNullOrEmpty(namePart))
-                    return new XdmSequenceType { ItemType = ItemType.Attribute, Occurrence = occurrence };
-                var localName = namePart.IndexOf(':', StringComparison.Ordinal) is var ci3 && ci3 >= 0 ? namePart[(ci3 + 1)..] : namePart;
-                return new XdmSequenceType { ItemType = ItemType.Attribute, Occurrence = occurrence, AttributeName = localName };
-            }
-            // attribute(name) — no type annotation
-            var localName3 = inner.IndexOf(':', StringComparison.Ordinal) is var ci4 && ci4 >= 0 ? inner[(ci4 + 1)..] : inner;
-            return new XdmSequenceType { ItemType = ItemType.Attribute, Occurrence = occurrence, AttributeName = localName3 };
+                ItemType = ItemType.Attribute,
+                Occurrence = occurrence,
+                AttributeName = attrLocal,
+                AttributeNamespace = attrNs,
+            };
         }
 
         // Handle schema-element(name) — schema-aware element test. The provider
