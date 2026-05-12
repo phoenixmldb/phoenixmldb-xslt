@@ -1753,6 +1753,15 @@ public sealed class XsltTransformEngine
             // Push per-element version for backwards-compatible mode propagation
             if (global.Version != null)
                 context.PushVersion(global.Version);
+            // Push the global declaration's own module URI as the static base URI so
+            // static-base-uri() inside the global's select/body returns the module that
+            // declared it, not the principal stylesheet. (XSLT 3.0 §5.4.2 / fn:static-base-uri.)
+            // Without this, a global xsl:variable in modules/x.xsl saw the principal
+            // stylesheet's URI, causing resolve-uri('templates.xml', sbu) to look one
+            // directory above the module — Martin's Docbook templates.xml report.
+            var globalSbu = XsltTransformEngine.UriString(global.BaseUri);
+            if (globalSbu != null)
+                context.PushStaticBaseUri(globalSbu);
             try
             {
             // If this is a param with an externally-supplied value, use that instead of the default
@@ -2070,9 +2079,27 @@ public sealed class XsltTransformEngine
                         context.GlobalVariables[global.Name] = docNode;
                     }
                     else
-                        context.GlobalVariables[global.Name] = content.Contains('<', StringComparison.Ordinal)
-                            ? new ResultTreeFragment(content)
-                            : (object)content;
+                    {
+                        // For global xsl:variable with as="atomic-type" body, coerce the body's
+                        // text content to the declared type. Without this, the variable was
+                        // bound to the raw STRING (e.g. "2147483647") and downstream comparisons
+                        // like `$depth gt 1` failed with XPTY0004 ("Cannot compare xs:string with
+                        // numeric type"). Found in Docbook xslTNG `vp:section-toc-depth`
+                        // (as="xs:integer" with xsl:choose+xsl:sequence body) — minimal repro:
+                        // `<xsl:variable as="xs:integer"><xsl:sequence select="2147483647"/></xsl:variable>`.
+                        if (DefaultXsltExecutionContext.IsStrictAtomicTypePublic(global.As.ItemType)
+                            && !content.Contains('<', StringComparison.Ordinal))
+                        {
+                            var coerced = DefaultXsltExecutionContext.TryCoerceStringToTypePublic(content, global.As.ItemType);
+                            context.GlobalVariables[global.Name] = coerced ?? (object)content;
+                        }
+                        else
+                        {
+                            context.GlobalVariables[global.Name] = content.Contains('<', StringComparison.Ordinal)
+                                ? new ResultTreeFragment(content)
+                                : (object)content;
+                        }
+                    }
                 }
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
@@ -2110,6 +2137,8 @@ public sealed class XsltTransformEngine
             }
             finally
             {
+                if (globalSbu != null)
+                    context.PopStaticBaseUri();
                 if (global.Version != null)
                     context.PopVersion();
             }
@@ -2135,6 +2164,13 @@ public sealed class XsltTransformEngine
         // Push per-element version for backwards-compatible mode propagation
         if (global.Version != null)
             context.PushVersion(global.Version);
+        // Push the global declaration's own module URI as the static base URI — see
+        // matching comment in InitializeGlobalsAsync. Required for static-base-uri()
+        // inside a global declared in an imported/included module to return the
+        // module's own URI rather than the principal stylesheet's.
+        var globalSbu = XsltTransformEngine.UriString(global.BaseUri);
+        if (globalSbu != null)
+            context.PushStaticBaseUri(globalSbu);
         try
         {
             var externalParams = context._options.InitialParameters;
@@ -2182,6 +2218,8 @@ public sealed class XsltTransformEngine
         }
         finally
         {
+            if (globalSbu != null)
+                context.PopStaticBaseUri();
             if (global.Version != null)
                 context.PopVersion();
         }
@@ -2248,6 +2286,7 @@ public sealed class XsltTransformEngine
                     Content = param.Content,
                     As = param.As,
                     OriginalDeclaration = param,
+                    BaseUri = param.BaseUri,
                     Version = param.Version
                 });
             }
@@ -5473,15 +5512,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                             }
                             else if (param.Content != null)
                             {
-                                // Execute content body as default value
-                                var savedLen = _output.Length;
-                                _temporaryOutputDepth++;
-                                try
-                                { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
-                                finally { _temporaryOutputDepth--; }
-                                var content = _output.ToString(savedLen, _output.Length - savedLen);
-                                _output.Length = savedLen;
-                                object? value = content.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(content) : (object)new Xdm.XsUntypedAtomic(StripXmlMarkup(content));
+                                // Route through the accumulator-isolating helper so xsl:sequence
+                                // inside the default body preserves typed items (nodes, maps, …)
+                                // instead of being serialized to text and re-wrapped as untyped
+                                // atomic. Same shape as the with-param fix for #19.
+                                var value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
                                 if (param.As != null)
                                 {
                                     value = CoerceToType(value, param.As);
@@ -6016,14 +6051,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 else if (param.Content != null)
                 {
-                    var savedLen = _output.Length;
-                    _temporaryOutputDepth++;
-                    try
-                    { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
-                    finally { _temporaryOutputDepth--; }
-                    var content = _output.ToString(savedLen, _output.Length - savedLen);
-                    _output.Length = savedLen;
-                    object? defaultVal = content.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(content) : (object)new Xdm.XsUntypedAtomic(StripXmlMarkup(content));
+                    // Accumulator-isolating evaluation — see comment at the helper definition.
+                    var defaultVal = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
                     if (param.As != null)
                     {
                         defaultVal = CoerceToType(defaultVal, param.As);
@@ -6614,15 +6643,8 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 else if (param.Content != null)
                 {
-                    // Execute content body as default value
-                    var savedLen = _output.Length;
-                    _temporaryOutputDepth++;
-                    try
-                    { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
-                    finally { _temporaryOutputDepth--; }
-                    var content = _output.ToString(savedLen, _output.Length - savedLen);
-                    _output.Length = savedLen;
-                    object? value = content.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(content) : (object)new Xdm.XsUntypedAtomic(StripXmlMarkup(content));
+                    // Accumulator-isolating evaluation — see comment at the helper definition.
+                    var value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
                     if (param.As != null)
                     {
                         value = CoerceToType(value, param.As);
@@ -18663,6 +18685,13 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         or ItemType.Date or ItemType.DateTime or ItemType.Time
         or ItemType.Duration or ItemType.YearMonthDuration or ItemType.DayTimeDuration
         or ItemType.Boolean or ItemType.QName;
+
+    /// <summary>Public alias used by the engine's global-variable initialization path.</summary>
+    internal static bool IsStrictAtomicTypePublic(ItemType type) => IsStrictAtomicType(type);
+
+    /// <summary>Public alias used by the engine's global-variable initialization path.</summary>
+    internal static object? TryCoerceStringToTypePublic(string value, ItemType targetType) =>
+        TryCoerceStringToType(value, targetType);
 
     /// <summary>
     /// Returns true for any atomic type (strict + string/anyURI/untypedAtomic).

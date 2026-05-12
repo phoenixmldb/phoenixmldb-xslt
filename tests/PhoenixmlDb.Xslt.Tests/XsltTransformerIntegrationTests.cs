@@ -2521,6 +2521,101 @@ public class XsltTransformerIntegrationTests
         result.Should().Contain(">books</result>");
     }
 
+    // Regression: static-base-uri() inside an XPath of a global xsl:variable that lives in
+    // an imported module must return the *module's* URI, not the principal stylesheet's.
+    // Discovered via Martin Honnen's Docbook xslTNG report — modules/templates.xsl uses
+    // resolve-uri('templates.xml', static-base-uri()) and was looking one directory above
+    // the module because static-base-uri() returned the importing stylesheet's URI.
+    [Fact]
+    public async Task Static_base_uri_in_global_var_returns_declaring_module_uri()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-sbu-module-{Guid.NewGuid():N}");
+        var modulesDir = Path.Combine(dir, "modules");
+        Directory.CreateDirectory(modulesDir);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(modulesDir, "inc.xsl"), """
+                <xsl:stylesheet version="3.0"
+                                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                  <xsl:variable name="module-sbu" as="xs:string" select="static-base-uri()"/>
+                </xsl:stylesheet>
+                """);
+            var mainPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(mainPath, """
+                <xsl:stylesheet version="3.0"
+                                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                  <xsl:import href="modules/inc.xsl"/>
+                  <xsl:template match="/">
+                    <out><xsl:value-of select="$module-sbu"/></out>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(await File.ReadAllTextAsync(mainPath),
+                baseUri: new Uri(mainPath));
+            var result = await transformer.TransformAsync("<x/>");
+            result.Should().Contain("/modules/inc.xsl</out>");
+            result.Should().NotContain("/main.xsl</out>");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    // Regression: a template's xsl:param with a body default that emits xsl:sequence
+    // must preserve the typed item (here: a map). The naive "evaluate body to text,
+    // re-wrap as untyped atomic" path destroyed maps/arrays/nodes.
+    [Fact]
+    public async Task Template_param_default_body_with_xsl_sequence_preserves_typed_value()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                            xmlns:map="http://www.w3.org/2005/xpath-functions/map">
+              <xsl:template match="/">
+                <xsl:call-template name="t"/>
+              </xsl:template>
+              <xsl:template name="t">
+                <xsl:param name="m" as="map(xs:string, xs:string)">
+                  <xsl:sequence select="map { 'k' : 'v' }"/>
+                </xsl:param>
+                <out><xsl:value-of select="map:get($m, 'k')"/></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain(">v</out>");
+    }
+
+    [Fact]
+    public async Task Template_param_default_body_emits_node_via_apply_templates()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:template match="/">
+                <xsl:apply-templates select="r" mode="m"/>
+              </xsl:template>
+              <xsl:template match="r" mode="m">
+                <xsl:param name="n" as="element()">
+                  <xsl:sequence select="/r/child[1]"/>
+                </xsl:param>
+                <out><xsl:value-of select="local-name($n)"/></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<r><child>hi</child></r>");
+        result.Should().Contain(">child</out>");
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);

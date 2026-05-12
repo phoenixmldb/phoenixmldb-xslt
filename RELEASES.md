@@ -1,5 +1,86 @@
 # Release History
 
+## 1.3.8 (2026-05-12)
+
+### Fix: `static-base-uri()` in a global variable now returns the declaring module's URI
+
+When a global `xsl:variable` or `xsl:param` declared in an imported/included
+module evaluated `static-base-uri()` (directly, or transitively via
+`resolve-uri('foo.xml', static-base-uri())`), the engine returned the
+**principal stylesheet's** URI instead of the URI of the module that
+contained the declaration.
+
+Discovered via Martin Honnen's Docbook xslTNG report on Windows. With the
+URI form already corrected by 1.3.7, the file URI was well-formed but
+pointed at the wrong directory:
+
+```
+WARNING: Can't get default templates from templates.xml:
+  No document could be retrieved for URI 'file:///C:/.../xslt/templates.xml'.
+```
+
+`templates.xml` actually lives at `xslt/modules/templates.xml`. The
+relevant code in `xslt/modules/templates.xsl`:
+
+```xml
+<xsl:variable name="vp:default-templates" as="element()*">
+  <xsl:variable name="uri" as="xs:string" select="
+      if (starts-with($default-templates-uri, '/')) then
+        $default-templates-uri
+      else
+        resolve-uri($default-templates-uri, static-base-uri())"/>
+  …
+```
+
+`$default-templates-uri` defaults to `'templates.xml'`, so the lookup
+hinges on `static-base-uri()` returning the URI of `templates.xsl`
+(`…/xslt/modules/`). The engine was returning `…/xslt/docbook.xsl` (the
+import root), so `resolve-uri` produced `…/xslt/templates.xml` — wrong
+directory by one level.
+
+Fix: push the declaring module's URI onto the static-base-uri stack while
+each global variable's / parameter's `select` or body is being evaluated.
+Applies to both the dependency-ordered eager initialization path and the
+lazy on-demand path used when `GetVariable` discovers a still-pending
+global. `XsltParam` now carries a `BaseUri` (mirroring `XsltVariable`)
+populated from the parser's effective base URI.
+
+Regression test:
+`Static_base_uri_in_global_var_returns_declaring_module_uri` (an imported
+`modules/inc.xsl` whose global `static-base-uri()` is observed from the
+principal stylesheet — must end with `/modules/inc.xsl`, not `/main.xsl`).
+
+### Fix: template-default `xsl:param` body preserves typed items
+
+When a template's `xsl:param` has a body default (no `select` attribute,
+content like `<xsl:sequence select="…"/>`), the engine evaluated it via
+the naive "execute body to output buffer, atomize the text" path. Any
+typed item — node, map, array — was destroyed: the item serialized to
+text, the text was wrapped as `xs:untypedAtomic`, and downstream code
+expecting `as="map(*)"` / `as="element()"` / etc. failed `XPTY0020` on
+the first axis step or map operation.
+
+Three sites were affected:
+- `ApplyTemplatesCoreAsync` (default-binding loop after with-param matching)
+- `ExecuteMatchedTemplateAsync` (apply-imports / next-match dispatch)
+- `CallTemplateAsync` (xsl:call-template)
+
+All three now route through `EvaluateBodyContentToValueAsync` — the same
+helper that fixed the `xsl:next-iteration` with-param case in 1.3.x. The
+helper installs a fresh sequence accumulator around body execution so
+`xsl:sequence` items are captured as typed values; literal text falls
+through to the output buffer as before.
+
+The `xsl:with-param` argument-side path (`EvaluateWithParamAsync`) was
+already accumulator-isolated; this release just brings the matching
+default-side paths in line with it.
+
+Regression tests:
+`Template_param_default_body_with_xsl_sequence_preserves_typed_value`
+(map(*) default body),
+`Template_param_default_body_emits_node_via_apply_templates`
+(element() default body via apply-templates).
+
 ## 1.3.7 (2026-05-12)
 
 ### Windows: `static-base-uri()` no longer returns a bare drive path

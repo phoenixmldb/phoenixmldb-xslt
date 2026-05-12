@@ -3799,6 +3799,7 @@ public sealed class StylesheetParser
             Required = isRequired,
             Tunnel = ParseYesNoBoolean(tunnelAttr, "tunnel", location),
             Static = isStatic,
+            BaseUri = ResolveEffectiveBaseUri(element),
             Version = element.Attribute("version")?.Value
         };
     }

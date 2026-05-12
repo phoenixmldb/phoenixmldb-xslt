@@ -1510,6 +1510,7 @@ public sealed class XsltParam
     public bool Required { get; init; }
     public bool Tunnel { get; init; }
     public bool Static { get; init; }
+    public Uri? BaseUri { get; init; }
     public string? Version { get; init; }
 }
 
