@@ -75,23 +75,49 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
-    /// Converts a Uri to string using OriginalString to avoid .NET's scheme mangling
-    /// on Linux (e.g., "d://tests/" becomes "file:///d://tests/" via ToString()).
-    /// </summary>
-    /// <summary>
-    /// Converts a Uri to string, working around .NET's scheme mangling on Linux
-    /// where single-letter scheme URIs like "d://tests/" become "file:///d://tests/".
-    /// Uses OriginalString only when .NET has incorrectly changed the scheme to "file".
+    /// Converts a Uri to string, distinguishing two cases that look similar through .NET's
+    /// <see cref="Uri"/> API but need opposite handling:
+    /// <list type="bullet">
+    ///   <item><b>Windows drive-letter path</b> (e.g. <c>C:\Users\…\file.xsl</c> or
+    ///         <c>C:/Users/…/file.xsl</c>) — produces <see cref="Uri.Scheme"/> = "file"
+    ///         and <see cref="Uri.OriginalString"/> as the path. We want the proper file
+    ///         URI form (<c>file:///C:/Users/…</c>) so <c>doc()</c> on the other side
+    ///         can recognize and read the file.</item>
+    ///   <item><b>Non-standard scheme URI</b> (e.g. <c>d://tests/</c>) — .NET on Linux
+    ///         mangles this to <c>file:///d://tests/</c> via <see cref="Uri.ToString"/>.
+    ///         We want to preserve <see cref="Uri.OriginalString"/>.</item>
+    /// </list>
+    /// The distinguishing pattern: a Windows drive path starts with one ASCII letter
+    /// then ":" then "\" or "/". A non-standard scheme URI has a multi-char scheme name
+    /// before "://", or uses a single-letter scheme followed by content that doesn't
+    /// look like a drive path. The earlier "any colon means scheme mangling" heuristic
+    /// caught both cases and broke <c>doc()</c> on Windows (Martin Honnen's report:
+    /// <c>localization-base-uri: C:/Users/marti/…/locale/</c> instead of <c>file:///C:/…</c>).
     /// </summary>
     internal static string? UriString(Uri? uri)
     {
         if (uri == null) return null;
-        // Detect .NET scheme mangling: scheme is "file" but original doesn't start with "file:"
-        // and the original contains a colon (so it has its own scheme like "d:" or "g:")
-        if (uri.Scheme == "file" && !uri.OriginalString.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
-            && uri.OriginalString.Contains(':', StringComparison.Ordinal))
-            return uri.OriginalString;
+        if (uri.Scheme == "file" && !uri.OriginalString.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            // Windows drive-letter path: ASCII letter + ":" + ("\" or "/").
+            // Use the canonical file URI form so downstream parsers recognize it.
+            if (LooksLikeWindowsDrivePath(uri.OriginalString))
+                return uri.AbsoluteUri;
+            // Otherwise the original looked like a non-standard URI scheme that .NET
+            // mangled. Preserve OriginalString so the original semantics survive.
+            if (uri.OriginalString.Contains(':', StringComparison.Ordinal))
+                return uri.OriginalString;
+        }
         return uri.ToString();
+    }
+
+    private static bool LooksLikeWindowsDrivePath(string s)
+    {
+        // C:\... or C:/... — exactly one ASCII letter, then ':', then '\' or '/'.
+        if (s.Length < 3) return false;
+        if (!char.IsAsciiLetter(s[0])) return false;
+        if (s[1] != ':') return false;
+        return s[2] == '\\' || s[2] == '/';
     }
 
     private static XQueryExpression ToLiteralExpression(object? value) => value switch
@@ -111,7 +137,7 @@ public sealed class XsltTransformEngine
     public Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options = null)
         => TransformAsync(source, options, null);
 
-    internal async Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options, InMemoryNodeStore? nodeStore)
+    internal async Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
     {
         ArgumentNullException.ThrowIfNull(source);
         options ??= new XsltTransformOptions();
@@ -549,7 +575,7 @@ public sealed class XsltTransformEngine
     /// serialized output. Used by fn:transform with delivery-format='raw'.
     /// Function items, maps, and atomic values are preserved as-is.
     /// </summary>
-    internal async Task<object?> TransformRawAsync(XdmNode source, XsltTransformOptions? options, InMemoryNodeStore? nodeStore)
+    internal async Task<object?> TransformRawAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
     {
         ArgumentNullException.ThrowIfNull(source);
         options ??= new XsltTransformOptions();
@@ -648,7 +674,7 @@ public sealed class XsltTransformEngine
         var doc = new XmlDocument { PreserveWhitespace = true };
         doc.LoadXml(xmlSource);
 
-        var nodeStore = new InMemoryNodeStore();
+        var nodeStore = new XdmInMemoryStore();
         var xdmDoc = ConvertToXdm(doc, nodeStore);
 
         _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
@@ -726,7 +752,7 @@ public sealed class XsltTransformEngine
         }
     }
 
-    internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, InMemoryNodeStore? store = null, string? jsonNodeOutputMethod = null)
+    internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, XdmInMemoryStore? store = null, string? jsonNodeOutputMethod = null)
     {
         if (item == null) return "null";
 
@@ -854,7 +880,7 @@ public sealed class XsltTransformEngine
     /// Serializes an XDM node as XML markup for adaptive output.
     /// For documents and elements, uses the node store for full tree serialization.
     /// </summary>
-    private static string SerializeXdmNodeAsXml(Xdm.Nodes.XdmNode node, InMemoryNodeStore? store = null, bool omitXmlDeclaration = false)
+    private static string SerializeXdmNodeAsXml(Xdm.Nodes.XdmNode node, XdmInMemoryStore? store = null, bool omitXmlDeclaration = false)
     {
         switch (node)
         {
@@ -879,7 +905,7 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// Serializes an XDM document or element node to XML markup using the node store.
     /// </summary>
-    private static string SerializeNodeTreeAsXml(Xdm.Nodes.XdmNode node, InMemoryNodeStore store, bool omitXmlDeclaration = false)
+    private static string SerializeNodeTreeAsXml(Xdm.Nodes.XdmNode node, XdmInMemoryStore store, bool omitXmlDeclaration = false)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -901,7 +927,7 @@ public sealed class XsltTransformEngine
         return sb.ToString();
     }
 
-    private static void SerializeNodeTreeRecursive(Xdm.Nodes.XdmNode node, InMemoryNodeStore store, System.Text.StringBuilder sb)
+    private static void SerializeNodeTreeRecursive(Xdm.Nodes.XdmNode node, XdmInMemoryStore store, System.Text.StringBuilder sb)
     {
         switch (node)
         {
@@ -1021,7 +1047,7 @@ public sealed class XsltTransformEngine
     /// Maps use XPath map{} notation, arrays use [...], strings are unquoted,
     /// and orphan attributes use name="value" format.
     /// </summary>
-    internal static string SerializeItemAdaptive(object? item, InMemoryNodeStore? store = null)
+    internal static string SerializeItemAdaptive(object? item, XdmInMemoryStore? store = null)
     {
         if (item == null) return "";
 
@@ -2436,7 +2462,7 @@ public sealed class XsltTransformEngine
             doc.LoadXml(xmlSource);
         }
 
-        var nodeStore = new InMemoryNodeStore();
+        var nodeStore = new XdmInMemoryStore();
         var xdmDoc = ConvertToXdm(doc, nodeStore, options?.SourceDocumentUri?.ToString());
 
         // Resolve namespace URIs in patterns to NamespaceIds
@@ -2504,7 +2530,7 @@ public sealed class XsltTransformEngine
         // and use="absent" correctly rejects the invocation.
         options.HasSourceDocument = true;
 
-        var nodeStore = new InMemoryNodeStore();
+        var nodeStore = new XdmInMemoryStore();
         _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
 
         // Resolve namespaces in key match patterns
@@ -2652,7 +2678,7 @@ public sealed class XsltTransformEngine
     /// Navigates from a document root to the node specified by a simple XPath expression.
     /// Supports expressions like "/doc", "/doc/child", "/*".
     /// </summary>
-    private static XdmNode? NavigateSourceSelect(XdmDocument doc, string select, InMemoryNodeStore store)
+    private static XdmNode? NavigateSourceSelect(XdmDocument doc, string select, XdmInMemoryStore store)
     {
         var trimmed = select.Trim();
         if (string.IsNullOrEmpty(trimmed) || trimmed == "/")
@@ -2713,7 +2739,7 @@ public sealed class XsltTransformEngine
         return current;
     }
 
-    internal static XdmDocument ConvertToXdm(XmlDocument doc, XsltTransformEngine.InMemoryNodeStore store, string? documentUri = null)
+    internal static XdmDocument ConvertToXdm(XmlDocument doc, XdmInMemoryStore store, string? documentUri = null)
     {
         var docId = store.NextId();
         var docElementId = NodeId.None;
@@ -2758,7 +2784,7 @@ public sealed class XsltTransformEngine
         return docNode;
     }
 
-    private static XdmNode? ConvertXmlNode(XmlNode xmlNode, XsltTransformEngine.InMemoryNodeStore store, NodeId parentId, DocumentId docId, string? documentBaseUri = null)
+    private static XdmNode? ConvertXmlNode(XmlNode xmlNode, XdmInMemoryStore store, NodeId parentId, DocumentId docId, string? documentBaseUri = null)
     {
         switch (xmlNode.NodeType)
         {
@@ -2932,7 +2958,7 @@ public sealed class XsltTransformEngine
     /// Per XSLT spec: a whitespace text node is removed if its parent element matches
     /// strip-space and does NOT match preserve-space (preserve takes priority when both match).
     /// </summary>
-    internal static void StripWhitespaceNodes(XdmDocument doc, List<NameTest> stripSpace, List<NameTest> preserveSpace, XsltTransformEngine.InMemoryNodeStore store)
+    internal static void StripWhitespaceNodes(XdmDocument doc, List<NameTest> stripSpace, List<NameTest> preserveSpace, XdmInMemoryStore store)
     {
         StripWhitespaceRecursive(doc, stripSpace, preserveSpace, store);
 
@@ -2949,7 +2975,7 @@ public sealed class XsltTransformEngine
         doc._stringValue = sb.ToString();
     }
 
-    private static void StripWhitespaceRecursive(XdmNode parent, List<NameTest> stripSpace, List<NameTest> preserveSpace, XsltTransformEngine.InMemoryNodeStore store)
+    private static void StripWhitespaceRecursive(XdmNode parent, List<NameTest> stripSpace, List<NameTest> preserveSpace, XdmInMemoryStore store)
     {
         var children = parent switch
         {
@@ -3027,7 +3053,7 @@ public sealed class XsltTransformEngine
     /// Recomputes only this element's cached _stringValue after strip-space.
     /// Does NOT walk ancestors — callers should handle ancestor recomputation separately.
     /// </summary>
-    private static void RecomputeStringValueLocal(XdmElement elem, XsltTransformEngine.InMemoryNodeStore store)
+    private static void RecomputeStringValueLocal(XdmElement elem, XdmInMemoryStore store)
     {
         var sb = new StringBuilder();
         CollectTextContent(elem, store, sb);
@@ -3038,14 +3064,14 @@ public sealed class XsltTransformEngine
     /// Recomputes the cached _stringValue of an element after children have been modified
     /// (e.g., after strip-space removes whitespace-only text nodes).
     /// </summary>
-    private static void RecomputeStringValue(XdmElement elem, XsltTransformEngine.InMemoryNodeStore store)
+    private static void RecomputeStringValue(XdmElement elem, XdmInMemoryStore store)
     {
         var sb = new StringBuilder();
         CollectTextContent(elem, store, sb);
         elem._stringValue = sb.ToString();
 
         // Also recompute ancestors up to the document root
-        static void RecomputeAncestors(XdmNode node, InMemoryNodeStore s)
+        static void RecomputeAncestors(XdmNode node, XdmInMemoryStore s)
         {
             if (!node.Parent.HasValue || node.Parent.Value == NodeId.None)
                 return;
@@ -3074,7 +3100,7 @@ public sealed class XsltTransformEngine
         RecomputeAncestors(elem, store);
     }
 
-    private static void CollectTextContent(XdmElement elem, XsltTransformEngine.InMemoryNodeStore store, StringBuilder sb)
+    private static void CollectTextContent(XdmElement elem, XdmInMemoryStore store, StringBuilder sb)
     {
         foreach (var childId in elem.Children)
         {
@@ -3163,110 +3189,6 @@ public sealed class XsltTransformEngine
         public readonly void Dispose() => _buffer.Length = _savedLength;
     }
 
-    /// <summary>
-    /// In-memory node store for XSLT processing.
-    /// </summary>
-    internal sealed class InMemoryNodeStore : PhoenixmlDb.XQuery.INodeBuilder
-    {
-        private readonly Dictionary<NodeId, XdmNode> _nodes = new();
-        private ulong _nextId = 1;
-        private readonly Dictionary<string, NamespaceId> _nsToId = new(StringComparer.Ordinal);
-        private readonly Dictionary<NamespaceId, string> _idToNs = new();
-        private uint _nextNsId = 3; // Start after well-known IDs (Xml=1, Xmlns=2)
-
-        public InMemoryNodeStore()
-        {
-            // Pre-register well-known namespaces so their IDs match the hard-coded constants
-            _nsToId["http://www.w3.org/XML/1998/namespace"] = NamespaceId.Xml;     // 1
-            _idToNs[NamespaceId.Xml] = "http://www.w3.org/XML/1998/namespace";
-            _nsToId["http://www.w3.org/2000/xmlns/"] = NamespaceId.Xmlns;           // 2
-            _idToNs[NamespaceId.Xmlns] = "http://www.w3.org/2000/xmlns/";
-        }
-
-        public NodeId NextId() => new(_nextId++);
-        public void Register(XdmNode node) => _nodes[node.Id] = node;
-        public XdmNode? GetNode(NodeId id) => _nodes.GetValueOrDefault(id);
-
-        // INodeBuilder explicit interface implementations (delegate to existing methods)
-        NodeId PhoenixmlDb.XQuery.INodeBuilder.AllocateId() => NextId();
-        void PhoenixmlDb.XQuery.INodeBuilder.RegisterNode(XdmNode node) => Register(node);
-
-        /// <summary>
-        /// Removes a node from the store. Used by streaming execution to free
-        /// temporary nodes after they have been processed.
-        /// </summary>
-        internal void Remove(NodeId id) => _nodes.Remove(id);
-
-        public NamespaceId InternNamespace(string uri)
-        {
-            if (string.IsNullOrEmpty(uri))
-                return NamespaceId.None;
-            if (_nsToId.TryGetValue(uri, out var id))
-                return id;
-            id = new NamespaceId(_nextNsId++);
-            _nsToId[uri] = id;
-            _idToNs[id] = uri;
-            return id;
-        }
-
-        public NamespaceId InternNamespace(string uri, NamespaceId preferredId)
-        {
-            if (string.IsNullOrEmpty(uri))
-                return NamespaceId.None;
-            if (_nsToId.TryGetValue(uri, out var existing))
-                return existing;
-            if (preferredId != NamespaceId.None && !_idToNs.ContainsKey(preferredId))
-            {
-                _nsToId[uri] = preferredId;
-                _idToNs[preferredId] = uri;
-                return preferredId;
-            }
-            return InternNamespace(uri);
-        }
-
-        /// <summary>
-        /// Registers a well-known NamespaceId → URI mapping (does not allocate a new ID).
-        /// </summary>
-        public void RegisterKnownNamespace(NamespaceId id, string uri)
-        {
-            _idToNs.TryAdd(id, uri);
-            _nsToId.TryAdd(uri, id);
-        }
-
-        public string? GetNamespaceUri(NamespaceId id)
-        {
-            if (id == NamespaceId.None)
-                return null;
-            return _idToNs.GetValueOrDefault(id);
-        }
-
-        public IEnumerable<XdmNode> GetAllNodes() => _nodes.Values;
-
-        public IEnumerable<XdmNode> GetChildren(XdmNode node)
-        {
-            var childIds = node switch
-            {
-                XdmDocument doc => doc.Children,
-                XdmElement elem => elem.Children,
-                _ => (IReadOnlyList<NodeId>)[]
-            };
-
-            foreach (var childId in childIds)
-            {
-                if (_nodes.TryGetValue(childId, out var child))
-                    yield return child;
-            }
-        }
-
-        public IEnumerable<XdmAttribute> GetAttributes(XdmElement elem)
-        {
-            foreach (var attrId in elem.Attributes)
-            {
-                if (_nodes.TryGetValue(attrId, out var attr) && attr is XdmAttribute a)
-                    yield return a;
-            }
-        }
-    }
 }
 
 /// <summary>
@@ -3867,7 +3789,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     private readonly Stack<object?> _currentItems = new(); // For XSLT current() function
     private readonly StringBuilder _output;
     internal readonly XsltTransformOptions _options;
-    internal readonly XsltTransformEngine.InMemoryNodeStore? _nodeStore;
+    internal readonly XdmInMemoryStore? _nodeStore;
     private readonly PhoenixmlDb.XQuery.Functions.FunctionLibrary _functionLibrary;
     private readonly XsltDocumentResolver _documentResolver;
     private readonly PhoenixmlDb.XQuery.Security.PolicyEnforcingResolver? _policyResolver;
@@ -4804,7 +4726,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         XdmNode source,
         StringBuilder output,
         XsltTransformOptions options,
-        XsltTransformEngine.InMemoryNodeStore? nodeStore = null,
+        XdmInMemoryStore? nodeStore = null,
         PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider = null)
     {
         _stylesheet = stylesheet;
@@ -11651,7 +11573,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     internal async ValueTask PreComputeAccumulatorsAsync(
         XdmDocument document,
         IReadOnlyList<XsltAccumulator> accumulators,
-        XsltTransformEngine.InMemoryNodeStore nodeStore)
+        XdmInMemoryStore nodeStore)
     {
         _accumulatorValues ??= new();
         _accumulatorComputedDocuments ??= new();
@@ -11695,7 +11617,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         IReadOnlyList<XsltAccumulator> accumulators,
         object?[] currentValues,
         Dictionary<NodeId, (object? before, object? after)>[] nodeValueMaps,
-        XsltTransformEngine.InMemoryNodeStore nodeStore)
+        XdmInMemoryStore nodeStore)
     {
         NodeId nodeId;
         if (node is XdmDocument doc)
@@ -12390,7 +12312,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 };
                 using var xmlReader = XmlReader.Create(fileStream, readerSettings, resolvedUri.AbsoluteUri);
 
-                var streamNodeStore = _nodeStore ?? new XsltTransformEngine.InMemoryNodeStore();
+                var streamNodeStore = _nodeStore ?? new XdmInMemoryStore();
                 _templateIndex.ResolvePatternNamespaces(streamNodeStore.InternNamespace);
 
                 // Resolve accumulators for streaming
@@ -12516,7 +12438,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         var xmlDoc = new XmlDocument { PreserveWhitespace = true };
         xmlDoc.LoadXml(xmlContent);
 
-        var nodeStore = _nodeStore ?? new XsltTransformEngine.InMemoryNodeStore();
+        var nodeStore = _nodeStore ?? new XdmInMemoryStore();
         var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
 
         // Apply xsl:strip-space declarations
@@ -12591,7 +12513,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         return null;
     }
 
-    private static XdmElement? FindElementByXmlIdRecursive(XdmElement element, string id, XsltTransformEngine.InMemoryNodeStore store)
+    private static XdmElement? FindElementByXmlIdRecursive(XdmElement element, string id, XdmInMemoryStore store)
     {
         // Check xml:id attribute
         foreach (var attrId in element.Attributes)
@@ -22355,7 +22277,7 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
 internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolver
 {
     private readonly XsltStylesheet _stylesheet;
-    private readonly XsltTransformEngine.InMemoryNodeStore? _nodeStore;
+    private readonly XdmInMemoryStore? _nodeStore;
     private readonly Dictionary<string, XdmDocument?> _cache = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, List<string>>? _collections;
 
@@ -22368,14 +22290,14 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
     /// <summary>Set of absolute URIs that have been read via doc()/document() during this transformation.</summary>
     internal IReadOnlyCollection<string> ReadDocumentUris => _cache.Keys;
 
-    public XsltDocumentResolver(XsltStylesheet stylesheet, XsltTransformEngine.InMemoryNodeStore? nodeStore)
+    public XsltDocumentResolver(XsltStylesheet stylesheet, XdmInMemoryStore? nodeStore)
     {
         _stylesheet = stylesheet;
         _nodeStore = nodeStore;
     }
 
     /// <summary>The node store used for ID lookups in fragment identifiers.</summary>
-    internal XsltTransformEngine.InMemoryNodeStore? NodeStore => _nodeStore;
+    internal XdmInMemoryStore? NodeStore => _nodeStore;
 
     public void SetCollections(Dictionary<string, List<string>> collections)
     {
@@ -22539,7 +22461,7 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
             var xmlDoc = new XmlDocument { PreserveWhitespace = true };
             xmlDoc.LoadXml(xmlContent);
 
-            var nodeStore = _nodeStore ?? new XsltTransformEngine.InMemoryNodeStore();
+            var nodeStore = _nodeStore ?? new XdmInMemoryStore();
             var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
 
             // Apply xsl:strip-space declarations
@@ -22777,7 +22699,7 @@ internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         };
     }
 
-    private bool DeepEqualElements(XdmElement a, XdmElement b, XsltTransformEngine.InMemoryNodeStore store, StringComparison comparison)
+    private bool DeepEqualElements(XdmElement a, XdmElement b, XdmInMemoryStore store, StringComparison comparison)
     {
         // Compare element names (names always use ordinal comparison)
         if (a.Namespace != b.Namespace || !string.Equals(a.LocalName, b.LocalName, StringComparison.Ordinal))
@@ -22802,7 +22724,7 @@ internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         return DeepEqualChildren(a, b, store, comparison);
     }
 
-    private bool DeepEqualChildren(XdmNode a, XdmNode b, XsltTransformEngine.InMemoryNodeStore store, StringComparison comparison)
+    private bool DeepEqualChildren(XdmNode a, XdmNode b, XdmInMemoryStore store, StringComparison comparison)
     {
         var childrenA = store.GetChildren(a).ToList();
         var childrenB = store.GetChildren(b).ToList();
@@ -23024,7 +22946,7 @@ internal static class SnapshotHelper
     /// <summary>
     /// Deep copy items without ancestor chains (for fn:copy-of).
     /// </summary>
-    public static object? DeepCopyItems(object? input, XsltTransformEngine.InMemoryNodeStore store,
+    public static object? DeepCopyItems(object? input, XdmInMemoryStore store,
         Dictionary<NodeId, NodeId>? nodeMapping = null)
     {
         if (input is null)
@@ -23217,7 +23139,7 @@ internal static class SnapshotHelper
         return targetCopy;
     }
 
-    private static void LinkChild(XdmNode? parent, NodeId childId, XsltTransformEngine.InMemoryNodeStore store)
+    private static void LinkChild(XdmNode? parent, NodeId childId, XdmInMemoryStore store)
     {
         if (parent is XdmDocument doc)
         {
@@ -23254,7 +23176,7 @@ internal static class SnapshotHelper
         }
     }
 
-    private static void ComputeAncestorStringValues(XdmNode? lastAncestorCopy, XdmNode targetCopy, XsltTransformEngine.InMemoryNodeStore store)
+    private static void ComputeAncestorStringValues(XdmNode? lastAncestorCopy, XdmNode targetCopy, XdmInMemoryStore store)
     {
         var targetStringValue = targetCopy.StringValue;
         var current = lastAncestorCopy;
@@ -23273,7 +23195,7 @@ internal static class SnapshotHelper
     }
 
     private static XdmNode? DeepCopyNode(XdmNode node, NodeId parentId, DocumentId docId,
-        XsltTransformEngine.InMemoryNodeStore store, Dictionary<NodeId, NodeId>? nodeMapping = null)
+        XdmInMemoryStore store, Dictionary<NodeId, NodeId>? nodeMapping = null)
     {
         switch (node)
         {
@@ -24305,7 +24227,7 @@ internal sealed class XsltPathFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         return ValueTask.FromResult<object?>(ComputePath(node, _context._nodeStore));
     }
 
-    internal static string ComputePath(XdmNode node, XsltTransformEngine.InMemoryNodeStore? store)
+    internal static string ComputePath(XdmNode node, XdmInMemoryStore? store)
     {
         if (node is XdmDocument)
             return "/";
@@ -24350,7 +24272,7 @@ internal sealed class XsltPathFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             return orphanRoot + "/" + string.Join("/", segments);
     }
 
-    private static string GetSegment(XdmNode node, XsltTransformEngine.InMemoryNodeStore? store)
+    private static string GetSegment(XdmNode node, XdmInMemoryStore? store)
     {
         switch (node)
         {
@@ -24402,7 +24324,7 @@ internal sealed class XsltPathFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
     /// <summary>
     /// Gets the 1-based position of this node among its like-named/like-typed siblings.
     /// </summary>
-    private static int GetSiblingPosition(XdmNode node, XsltTransformEngine.InMemoryNodeStore? store, XdmNodeKind? filterKind = null, string? filterName = null)
+    private static int GetSiblingPosition(XdmNode node, XdmInMemoryStore? store, XdmNodeKind? filterKind = null, string? filterName = null)
     {
         if (store == null || !node.Parent.HasValue)
             return 1;
@@ -24601,7 +24523,7 @@ internal sealed class XsltIdFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         return ValueTask.FromResult<object?>(FindElementsById(arguments[0], doc, _context._nodeStore!));
     }
 
-    internal static object?[] FindElementsById(object? arg, XdmDocument doc, XsltTransformEngine.InMemoryNodeStore store)
+    internal static object?[] FindElementsById(object? arg, XdmDocument doc, XdmInMemoryStore store)
     {
         var idValues = new HashSet<string>(StringComparer.Ordinal);
         CollectIdValues(arg, idValues);
@@ -24644,7 +24566,7 @@ internal sealed class XsltIdFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
     }
 
     private static void WalkForIds(XdmNode node, HashSet<string> ids, List<object?> results,
-        XsltTransformEngine.InMemoryNodeStore store)
+        XdmInMemoryStore store)
     {
         if (node is XdmElement elem)
         {
@@ -24974,7 +24896,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         return ValueTask.FromResult<object?>(sb.ToString());
     }
 
-    internal static XdmElement? ResolveToElement(object? input, XsltTransformEngine.InMemoryNodeStore store)
+    internal static XdmElement? ResolveToElement(object? input, XdmInMemoryStore store)
     {
         if (input is XdmElement el)
             return el;
@@ -24996,7 +24918,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         return null;
     }
 
-    internal static void SerializeJsonElement(XdmElement elem, XsltTransformEngine.InMemoryNodeStore store, System.Text.StringBuilder sb)
+    internal static void SerializeJsonElement(XdmElement elem, XdmInMemoryStore store, System.Text.StringBuilder sb)
     {
         // Elements must be in the http://www.w3.org/2005/xpath-functions namespace
         var localName = elem.LocalName;
@@ -25174,7 +25096,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     /// <summary>
     /// Gets the concatenated text content of an element (ignoring comments and PIs).
     /// </summary>
-    internal static string GetTextContent(XdmElement elem, XsltTransformEngine.InMemoryNodeStore store)
+    internal static string GetTextContent(XdmElement elem, XdmInMemoryStore store)
     {
         var sb = new System.Text.StringBuilder();
         foreach (var childId in elem.Children)
@@ -25189,7 +25111,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     /// <summary>
     /// Gets an attribute value by local name (no namespace).
     /// </summary>
-    internal static string? GetAttributeValue(XdmElement elem, string localName, XsltTransformEngine.InMemoryNodeStore store)
+    internal static string? GetAttributeValue(XdmElement elem, string localName, XdmInMemoryStore store)
     {
         foreach (var attrId in elem.Attributes)
         {
@@ -25368,7 +25290,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     /// <summary>
     /// Validates that an element has no child elements (only text/comments/PIs allowed).
     /// </summary>
-    internal static void ValidateNoElementChildren(XdmElement elem, XsltTransformEngine.InMemoryNodeStore store, string type)
+    internal static void ValidateNoElementChildren(XdmElement elem, XdmInMemoryStore store, string type)
     {
         foreach (var childId in elem.Children)
         {
@@ -25380,7 +25302,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     /// <summary>
     /// Validates that a container element (array/map) has no non-whitespace text content.
     /// </summary>
-    internal static void ValidateNoSignificantText(XdmElement elem, XsltTransformEngine.InMemoryNodeStore store, string type)
+    internal static void ValidateNoSignificantText(XdmElement elem, XdmInMemoryStore store, string type)
     {
         foreach (var childId in elem.Children)
         {
@@ -25392,7 +25314,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     /// <summary>
     /// Validates that only allowed attributes are present on an element.
     /// </summary>
-    internal static void ValidateAttributes(XdmElement elem, XsltTransformEngine.InMemoryNodeStore store, string type, string[] allowed)
+    internal static void ValidateAttributes(XdmElement elem, XdmInMemoryStore store, string type, string[] allowed)
     {
         foreach (var attrId in elem.Attributes)
         {
@@ -25785,7 +25707,7 @@ internal static class JsonToXmlConverter
 {
     private static readonly NamespaceId FnNs = NamespaceId.Fn;
 
-    public static XdmDocument Convert(string json, XsltTransformEngine.InMemoryNodeStore store, bool liberal = false, string duplicates = "use-first", bool escape = false)
+    public static XdmDocument Convert(string json, XdmInMemoryStore store, bool liberal = false, string duplicates = "use-first", bool escape = false)
     {
         using var jsonDoc = System.Text.Json.JsonDocument.Parse(json,
             new System.Text.Json.JsonDocumentOptions { AllowTrailingCommas = liberal, CommentHandling = System.Text.Json.JsonCommentHandling.Skip });
@@ -25809,7 +25731,7 @@ internal static class JsonToXmlConverter
         return doc;
     }
 
-    private static XdmElement ConvertValue(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false, bool escape = false)
+    private static XdmElement ConvertValue(System.Text.Json.JsonElement je, string? key, XdmInMemoryStore store, string duplicates, bool isRoot = false, bool escape = false)
     {
         return je.ValueKind switch
         {
@@ -25826,7 +25748,7 @@ internal static class JsonToXmlConverter
 
     private static readonly IReadOnlyList<NamespaceBinding> FnNsDecl = new[] { new NamespaceBinding("", FnNs) };
 
-    private static XdmElement ConvertObject(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false, bool escape = false)
+    private static XdmElement ConvertObject(System.Text.Json.JsonElement je, string? key, XdmInMemoryStore store, string duplicates, bool isRoot = false, bool escape = false)
     {
         var elemId = store.NextId();
         var children = new List<NodeId>();
@@ -25866,7 +25788,7 @@ internal static class JsonToXmlConverter
         return elem;
     }
 
-    private static XdmElement ConvertArray(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, string duplicates, bool isRoot = false, bool escape = false)
+    private static XdmElement ConvertArray(System.Text.Json.JsonElement je, string? key, XdmInMemoryStore store, string duplicates, bool isRoot = false, bool escape = false)
     {
         var elemId = store.NextId();
         var children = new List<NodeId>();
@@ -25901,7 +25823,7 @@ internal static class JsonToXmlConverter
     /// Creates a fn:string element, adding escaped="true" attribute when the escape option is set
     /// and the JSON string contains backslash escape sequences.
     /// </summary>
-    private static XdmElement CreateStringElement(System.Text.Json.JsonElement je, string? key, XsltTransformEngine.InMemoryNodeStore store, bool isRoot, bool escape)
+    private static XdmElement CreateStringElement(System.Text.Json.JsonElement je, string? key, XdmInMemoryStore store, bool isRoot, bool escape)
     {
         var interpreted = je.GetString() ?? "";
         if (!escape)
@@ -25919,7 +25841,7 @@ internal static class JsonToXmlConverter
         return elem;
     }
 
-    private static XdmElement CreateSimpleElement(string localName, string textValue, string? key, XsltTransformEngine.InMemoryNodeStore store, bool isRoot = false)
+    private static XdmElement CreateSimpleElement(string localName, string textValue, string? key, XdmInMemoryStore store, bool isRoot = false)
     {
         var elemId = store.NextId();
         var attrs = new List<NodeId>();
@@ -25953,7 +25875,7 @@ internal static class JsonToXmlConverter
         return elem;
     }
 
-    private static XdmElement CreateNullElement(string? key, XsltTransformEngine.InMemoryNodeStore store, bool isRoot = false)
+    private static XdmElement CreateNullElement(string? key, XdmInMemoryStore store, bool isRoot = false)
     {
         var elemId = store.NextId();
         var attrs = new List<NodeId>();
@@ -25976,12 +25898,12 @@ internal static class JsonToXmlConverter
         return elem;
     }
 
-    private static void AddKeyAttribute(NodeId parentId, string key, List<NodeId> attrs, XsltTransformEngine.InMemoryNodeStore store)
+    private static void AddKeyAttribute(NodeId parentId, string key, List<NodeId> attrs, XdmInMemoryStore store)
     {
         AddAttribute(parentId, NamespaceId.None, "key", key, attrs, store);
     }
 
-    private static void AddAttribute(NodeId parentId, NamespaceId ns, string localName, string value, List<NodeId> attrs, XsltTransformEngine.InMemoryNodeStore store)
+    private static void AddAttribute(NodeId parentId, NamespaceId ns, string localName, string value, List<NodeId> attrs, XdmInMemoryStore store)
     {
         var attrId = store.NextId();
         var attr = new XdmAttribute
@@ -25997,7 +25919,7 @@ internal static class JsonToXmlConverter
         attrs.Add(attrId);
     }
 
-    private static void EnsureFnNamespace(XsltTransformEngine.InMemoryNodeStore store)
+    private static void EnsureFnNamespace(XdmInMemoryStore store)
     {
         store.RegisterKnownNamespace(FnNs, "http://www.w3.org/2005/xpath-functions");
     }
@@ -26631,7 +26553,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         };
     }
 
-    private static object? ParseResultAsDocument(string xml, XsltTransformEngine.InMemoryNodeStore? store = null)
+    private static object? ParseResultAsDocument(string xml, XdmInMemoryStore? store = null)
     {
         if (string.IsNullOrWhiteSpace(xml))
             return null;
@@ -26640,7 +26562,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             var xmlDoc = new System.Xml.XmlDocument();
             xmlDoc.PreserveWhitespace = true;
             xmlDoc.LoadXml(xml);
-            store ??= new XsltTransformEngine.InMemoryNodeStore();
+            store ??= new XdmInMemoryStore();
             return XsltTransformEngine.ConvertToXdm(xmlDoc, store);
         }
         catch (System.Xml.XmlException)
@@ -26659,7 +26581,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             var xmlDoc = new System.Xml.XmlDocument();
             xmlDoc.PreserveWhitespace = true;
             xmlDoc.LoadXml($"<_wrap_>{xml}</_wrap_>");
-            var nodeStore = new XsltTransformEngine.InMemoryNodeStore();
+            var nodeStore = new XdmInMemoryStore();
             var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore);
             if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
             {

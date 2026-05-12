@@ -639,52 +639,11 @@ public sealed class XsltTransformer
         if (_stylesheet == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
-        var paramDict = new Dictionary<QName, object?>();
-        foreach (var (name, value) in _typedParameters)
-        {
-            paramDict[new QName(NamespaceId.None, name)] = value;
-        }
-
-        var options = new XsltTransformOptions
-        {
-            InitialTemplate = _initialTemplate != null
-                ? ResolveQName(_initialTemplate, _initialTemplateNamespace)
-                : null,
-            InitialMode = _initialMode != null
-                ? ResolveQName(_initialMode, _initialModeNamespace)
-                : null,
-            InitialFunction = _initialFunction != null
-                ? ResolveQName(_initialFunction, _initialFunctionNamespace)
-                : null,
-            InitialFunctionArguments = _initialFunctionArgs,
-            InitialParameters = paramDict,
-            InitialTemplateParameters = _initialTemplateParams,
-            InitialTunnelParameters = _initialTunnelParams,
-            CancellationToken = ct,
-            SourceDocumentUri = _sourceDocumentUri,
-            HasSourceDocument = inputXml != null,
-            SourceSelect = _sourceSelect,
-            InitialModeSelect = _initialModeSelect,
-            Collections = _collections.Count > 0 ? _collections : null,
-            TraceListener = TraceListener,
-            MessageListener = MessageListener,
-            MessageListenerWithLocation = MessageListenerWithLocation,
-            ResourcePolicy = ResourcePolicy,
-            PreloadedResources = PreloadedResources
-        };
+        var options = BuildTransformOptions(hasSource: inputXml != null, rawBox: null, ct: ct);
 
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
-
-        string result;
-        if (inputXml != null)
-        {
-            result = await engine.TransformAsync(inputXml, options).ConfigureAwait(false);
-        }
-        else
-        {
-            // No input — use empty document
-            result = await engine.TransformAsync("<empty/>", options).ConfigureAwait(false);
-        }
+        // No input — use empty document
+        var result = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
 
         // If a handler is set, write secondary results to the provided writers
         if (ResultDocumentHandler != null)
@@ -724,12 +683,210 @@ public sealed class XsltTransformer
         if (_stylesheet == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
+        var rawBox = new RawResultBox();
+        var options = BuildTransformOptions(hasSource: inputXml != null, rawBox: rawBox, ct: ct);
+
+        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        // Engine still produces a serialized output buffer alongside the raw value;
+        // we discard the buffer and return the raw value directly.
+        _ = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
+
+        SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        return rawBox.Value;
+    }
+
+    /// <summary>
+    /// Transforms an <see cref="Xdm.XdmSequence"/> source — pass the typed result of one
+    /// transformation directly into another, without serializing through XML markup.
+    /// The engine reads the sequence's backing <c>Store</c> to navigate any node items.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <paramref name="source"/> is null or empty, the transformation runs without
+    /// a principal source document — appropriate for <c>xsl:initial-template</c> /
+    /// <c>xsl:initial-function</c> invocation. Otherwise the first node item in the
+    /// sequence becomes the principal source.
+    /// </para>
+    /// <para>
+    /// If the sequence contains node items, its <see cref="Xdm.XdmSequence.Store"/> must
+    /// be a compatible <see cref="XdmInMemoryStore"/> — typically a sequence produced
+    /// by a previous call to <see cref="TransformToSequenceAsync(Xdm.XdmSequence?, CancellationToken)"/>.
+    /// </para>
+    /// </remarks>
+    public async Task<string> TransformAsync(Xdm.XdmSequence? source, CancellationToken ct = default)
+    {
+        if (_stylesheet == null)
+            throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
+
+        var (sourceNode, store) = ExtractSourceFromSequence(source);
+        var options = BuildTransformOptions(hasSource: sourceNode != null, rawBox: null, ct: ct);
+
+        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        var result = sourceNode != null
+            ? await engine.TransformAsync(sourceNode, options, store).ConfigureAwait(false)
+            : await engine.TransformAsync("<empty/>", options).ConfigureAwait(false);
+
+        if (ResultDocumentHandler != null)
+        {
+            foreach (var (href, content) in engine.SecondaryResultDocuments)
+            {
+                var writer = ResultDocumentHandler(href);
+                await writer.WriteAsync(content).ConfigureAwait(false);
+                await writer.FlushAsync(ct).ConfigureAwait(false);
+            }
+            SecondaryResultDocuments = new Dictionary<string, string>();
+        }
+        else
+        {
+            SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Transforms an <see cref="Xdm.XdmSequence"/> and returns the raw XDM result wrapped
+    /// in another <see cref="Xdm.XdmSequence"/> that carries the engine's node-store, so
+    /// the result can be passed directly to another <see cref="TransformAsync(Xdm.XdmSequence?, CancellationToken)"/>
+    /// or XQuery call without serialization.
+    /// </summary>
+    public async Task<Xdm.XdmSequence> TransformToSequenceAsync(Xdm.XdmSequence? source, CancellationToken ct = default)
+    {
+        if (_stylesheet == null)
+            throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
+
+        var (sourceNode, sourceStore) = ExtractSourceFromSequence(source);
+        // Use the source's store so result nodes share it; fall back to a fresh one
+        // when the source has no nodes (engine will populate it during execution).
+        var resultStore = sourceStore ?? new XdmInMemoryStore();
+
+        // Set ReturnRawXdm + RawResult so the initial-function path stores its typed
+        // result in the box (otherwise SerializeFunctionResult atomizes it to a string).
+        // The initial-template / initial-mode / default paths use TransformRawAsync's
+        // own sequence-collection path, which already preserves typed values.
+        var rawBox = new RawResultBox();
+        var options = BuildTransformOptions(hasSource: sourceNode != null, rawBox: rawBox, ct: ct);
+
+        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        // Use TransformRawAsync, which sets up sequence collection across ALL invocation
+        // paths (initial-function, initial-template, initial-mode, default apply-templates)
+        // and returns the typed result. The plain TransformAsync path only captures
+        // initial-function results into RawResult, leaving template/mode invocations
+        // stuck on the text-serializer path.
+        var raw = sourceNode != null
+            ? await engine.TransformRawAsync(sourceNode, options, resultStore).ConfigureAwait(false)
+            : await engine.TransformRawAsync("<empty/>", options).ConfigureAwait(false);
+
+        SecondaryResultDocuments = engine.SecondaryResultDocuments;
+
+        // Prefer the explicit RawResult box (initial-function path) when set; otherwise
+        // use TransformRawAsync's return value (template / mode / default paths).
+        var typedResult = rawBox.Value ?? raw;
+
+        // Initial-template / initial-mode / default paths whose templates use plain LRE
+        // (no <xsl:document> wrapper, no xsl:output method=adaptive/json) come back as a
+        // serialized XML string. For the chaining use case the caller wants a navigable
+        // node — re-parse the markup into a fresh XdmDocument backed by `resultStore` so
+        // downstream TransformAsync(XdmSequence) calls can navigate it.
+        if (typedResult is string xml && LooksLikeXml(xml))
+        {
+            var docNode = TryParseToXdmDocument(xml, resultStore);
+            if (docNode != null)
+                typedResult = docNode;
+        }
+
+        // Normalize raw value into an item list. Single item → 1-item sequence;
+        // object?[] → as-is; null → empty sequence.
+        return typedResult switch
+        {
+            null => Xdm.XdmSequence.Empty,
+            object?[] arr => Xdm.XdmSequence.FromEngineResult(arr, resultStore),
+            _ => Xdm.XdmSequence.FromEngineResult(new[] { typedResult }, resultStore),
+        };
+    }
+
+    /// <summary>Heuristic: the result starts with a tag, suggesting XML markup.</summary>
+    private static bool LooksLikeXml(string s)
+    {
+        var i = 0;
+        while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+        return i < s.Length && s[i] == '<';
+    }
+
+    /// <summary>
+    /// Parses serialized XML markup into an <see cref="Xdm.Nodes.XdmDocument"/> registered
+    /// with <paramref name="store"/>. Returns null if parsing fails (the caller falls back
+    /// to keeping the raw string).
+    /// </summary>
+    private static Xdm.Nodes.XdmDocument? TryParseToXdmDocument(string xml, XdmInMemoryStore store)
+    {
+        try
+        {
+            // Wrap in a synthetic root so multi-element fragments parse, then extract
+            // the first child as the result document element.
+            var doc = new System.Xml.XmlDocument { PreserveWhitespace = true };
+            doc.LoadXml($"<_root_>{xml}</_root_>");
+            var firstChild = doc.DocumentElement?.FirstChild;
+            if (firstChild == null)
+                return null;
+
+            // Re-load just the first child as a standalone document so ConvertToXdm
+            // produces a clean XdmDocument with that element as document-element.
+            var inner = new System.Xml.XmlDocument { PreserveWhitespace = true };
+            inner.LoadXml(firstChild.OuterXml);
+            return Engine.XsltTransformEngine.ConvertToXdm(inner, store);
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Pulls the first node item out of a sequence (to use as principal source) and
+    /// the store backing the sequence's node items. Returns (null, null) for null
+    /// or empty input — the transformation will run source-less.
+    /// </summary>
+    private static (Xdm.Nodes.XdmNode? node, XdmInMemoryStore? store) ExtractSourceFromSequence(Xdm.XdmSequence? source)
+    {
+        if (source is null || source.IsEmpty)
+            return (null, null);
+
+        Xdm.Nodes.XdmNode? firstNode = null;
+        for (var i = 0; i < source.Count; i++)
+        {
+            if (source[i] is Xdm.Nodes.XdmNode n)
+            {
+                firstNode = n;
+                break;
+            }
+        }
+        if (firstNode == null)
+            return (null, null);
+
+        if (source.Store is XdmInMemoryStore store)
+            return (firstNode, store);
+
+        // Sequence carries node items but the store is missing or of an incompatible
+        // type. The engine needs the matching store to navigate the node's children.
+        throw new InvalidOperationException(
+            "XdmSequence contains node items but Store is null or not an XdmInMemoryStore. " +
+            "Construct the sequence via XsltTransformer.TransformToSequenceAsync (which carries " +
+            "the engine's store) or via XdmSequence.OfNode(node, store) with a matching store.");
+    }
+
+    /// <summary>
+    /// Builds the <see cref="XsltTransformOptions"/> from the transformer's current
+    /// configuration (parameters, initial-template / mode / function selection, listeners,
+    /// resource policy, preloaded resources). Centralized so the four <c>TransformAsync</c>
+    /// / <c>TransformToValueAsync</c> overloads stay in sync as new options are added.
+    /// </summary>
+    private XsltTransformOptions BuildTransformOptions(bool hasSource, RawResultBox? rawBox, CancellationToken ct)
+    {
         var paramDict = new Dictionary<QName, object?>();
         foreach (var (name, value) in _typedParameters)
             paramDict[new QName(NamespaceId.None, name)] = value;
 
-        var rawBox = new RawResultBox();
-        var options = new XsltTransformOptions
+        return new XsltTransformOptions
         {
             InitialTemplate = _initialTemplate != null
                 ? ResolveQName(_initialTemplate, _initialTemplateNamespace)
@@ -746,7 +903,7 @@ public sealed class XsltTransformer
             InitialTunnelParameters = _initialTunnelParams,
             CancellationToken = ct,
             SourceDocumentUri = _sourceDocumentUri,
-            HasSourceDocument = inputXml != null,
+            HasSourceDocument = hasSource,
             SourceSelect = _sourceSelect,
             InitialModeSelect = _initialModeSelect,
             Collections = _collections.Count > 0 ? _collections : null,
@@ -755,17 +912,9 @@ public sealed class XsltTransformer
             MessageListenerWithLocation = MessageListenerWithLocation,
             ResourcePolicy = ResourcePolicy,
             PreloadedResources = PreloadedResources,
-            ReturnRawXdm = true,
-            RawResult = rawBox
+            ReturnRawXdm = rawBox != null,
+            RawResult = rawBox ?? new RawResultBox(),
         };
-
-        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
-        // Engine still produces a serialized output buffer alongside the raw value;
-        // we discard the buffer and return the raw value directly.
-        _ = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
-
-        SecondaryResultDocuments = engine.SecondaryResultDocuments;
-        return rawBox.Value;
     }
 
     /// <summary>

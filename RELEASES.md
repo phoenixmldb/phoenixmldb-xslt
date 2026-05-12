@@ -1,5 +1,88 @@
 # Release History
 
+## 1.3.7 (2026-05-12)
+
+### Windows: `static-base-uri()` no longer returns a bare drive path
+
+`UriString` had a workaround for .NET's URI scheme mangling (e.g. `d://tests/`
+gets normalized to `file:///d://tests/`). The detection — "scheme is file
+AND original doesn't start with `file:` AND original contains `:`" — also
+matched **Windows drive paths** (`C:\Users\…` or `C:/Users/…`), so on
+Windows `static-base-uri()` returned the path form instead of the proper
+`file:///C:/Users/…` URI.
+
+Manifested in Martin's Docbook xslTNG run:
+```
+[fn:trace] localization-base-uri: C:/Users/marti/…/locale/
+xsl:message: WARNING: Can't get default templates from templates.xml: 
+  No document could be retrieved for URI 'C:/Users/marti/…/xslt/templates.xml'.
+```
+
+Fix: distinguish drive-letter paths (`[A-Za-z]:[/\]`) from non-standard
+URI schemes by inspecting `OriginalString`. Drive paths now return the
+canonical `AbsoluteUri` form (`file:///C:/...`); the existing handling
+for non-standard schemes (`d://tests/` etc.) is preserved.
+
+### New: chaining API — pass typed XDM values between transformations
+
+Two new overloads on `XsltTransformer` let callers chain transformations
+without round-tripping through serialized XML markup:
+
+```csharp
+// Run, get a typed sequence back (atomic, node, or mixed)
+var step1 = await t1.TransformToSequenceAsync(input);
+
+// Feed that sequence directly into the next transformer
+var step2 = await t2.TransformAsync(step1);
+```
+
+The sequence carries the engine's `XdmInMemoryStore` so the receiving
+transformer can navigate any node items without re-parsing.
+
+**New public types**:
+
+- `PhoenixmlDb.Xslt.XdmInMemoryStore` (promoted from internal
+  `InMemoryNodeStore`) — implements `INodeBuilder` / `INodeStore` /
+  `INodeProvider`. Lets external code construct or consume an XSLT
+  engine's XDM tree.
+- `PhoenixmlDb.Xdm.XdmSequence` (in `PhoenixmlDb.Core 1.1.2`) — Saxon-style
+  ordered sequence wrapper that carries a backing store for its node
+  items. See Core release notes.
+
+**New facade methods**:
+
+- `Task<string> TransformAsync(XdmSequence?)` — accept a sequence
+  (single node, atomic value, or any sequence) as the principal source.
+  Null/empty runs source-less.
+- `Task<XdmSequence> TransformToSequenceAsync(XdmSequence?)` — return
+  the typed XDM result wrapped in a sequence that carries the engine's
+  store, ready to feed into another transformation.
+
+**Implementation notes**:
+
+- Backed by the engine's existing `TransformRawAsync` path, which sets
+  up sequence collection across all invocation forms (initial-function,
+  initial-template, initial-mode, default apply-templates) and preserves
+  typed values where possible.
+- For initial-template / default-mode invocations whose templates use
+  plain LREs (no `xsl:document` wrapper, no `xsl:output method="adaptive"`),
+  the engine still produces serialized markup — `TransformToSequenceAsync`
+  re-parses that into a navigable `XdmDocument` so the receiving
+  transformer sees a node, not a string.
+- Defensive guard: `TransformAsync(XdmSequence)` throws
+  `InvalidOperationException` if the sequence has node items but no
+  matching store, instead of silently producing empty output.
+
+Regression tests:
+`TransformAsync_chains_XdmSequence_between_two_transformations`,
+`TransformAsync_with_null_XdmSequence_runs_source_less`,
+`TransformAsync_rejects_XdmSequence_with_node_but_no_store`,
+`TransformToSequenceAsync_via_initial_function_preserves_atomic_value`.
+
+Full XSLT suite 380/380. Docbook xslTNG samples + 5/7 test articles
+unchanged in byte-for-byte output (this release is purely additive on
+the public API; no engine-semantics changes).
+
 ## 1.3.6 (2026-05-12)
 
 ### Three Docbook xslTNG fixes — 5/7 test articles now pass (was 1/7)

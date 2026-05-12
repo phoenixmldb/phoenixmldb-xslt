@@ -17,7 +17,7 @@ internal sealed class StreamingXmlProcessor
     private readonly XsltStylesheet _stylesheet;
     private readonly TemplateIndex _templateIndex;
     private readonly DefaultXsltExecutionContext _context;
-    private readonly XsltTransformEngine.InMemoryNodeStore _nodeStore;
+    private readonly XdmInMemoryStore _nodeStore;
     private readonly QName? _mode;
     private ulong _nextNodeId = 1_000_000; // High start to avoid collision with tree nodes
 
@@ -36,7 +36,7 @@ internal sealed class StreamingXmlProcessor
         XsltStylesheet stylesheet,
         TemplateIndex templateIndex,
         DefaultXsltExecutionContext context,
-        XsltTransformEngine.InMemoryNodeStore nodeStore,
+        XdmInMemoryStore nodeStore,
         QName? mode,
         IReadOnlyList<XsltAccumulator>? accumulators = null,
         IReadOnlyList<StreamWatcher>? watchers = null)

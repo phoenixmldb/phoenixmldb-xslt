@@ -917,6 +917,113 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task TransformToSequenceAsync_via_initial_function_preserves_atomic_value()
+    {
+        // Initial-function path: a function returns a typed value (xs:integer) and
+        // TransformToSequenceAsync wraps it in a single-item sequence preserving
+        // the type — no string round-trip, no validator complaints.
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:f="urn:f" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:function name="f:answer" as="xs:integer"><xsl:sequence select="42"/></xsl:function>
+            </xsl:stylesheet>
+            """);
+        t.SetInitialFunction("answer", namespaceUri: "urn:f");
+
+        var seq = await t.TransformToSequenceAsync(null);
+        seq.IsEmpty.Should().BeFalse();
+        seq.Count.Should().Be(1);
+        seq.Head.Should().Be(42L);
+    }
+
+    [Fact]
+    public async Task TransformAsync_chains_XdmSequence_between_two_transformations()
+    {
+        // The full Saxon-style chaining use case Martin asked about: t1 returns a
+        // node via initial-template, the resulting XdmSequence carries the engine's
+        // node-store, and t2 navigates that node directly without serializing
+        // through XML markup.
+        var t1 = new XsltTransformer();
+        await t1.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template name="entry">
+                <wrapped><a>hello</a></wrapped>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        t1.SetInitialTemplate("entry");
+
+        var step1 = await t1.TransformToSequenceAsync(null);
+        step1.IsEmpty.Should().BeFalse();
+        step1.AsSingleNode().Should().NotBeNull("the wrapped element is a single node");
+        step1.Store.Should().NotBeNull("a node-bearing sequence must carry its store");
+
+        var t2 = new XsltTransformer();
+        await t2.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/wrapped">
+                <out><xsl:value-of select="a"/></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await t2.TransformAsync(step1);
+        result.Should().Contain(">hello<");
+    }
+
+    [Fact]
+    public async Task TransformAsync_with_null_XdmSequence_runs_source_less()
+    {
+        // Mirrors the existing string-overload behavior: passing null/empty source
+        // runs initial-template / initial-function without a principal source document.
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template name="xsl:initial-template">
+                <hi/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        t.SetInitialTemplate("initial-template", namespaceUri: "http://www.w3.org/1999/XSL/Transform");
+        var result = await t.TransformAsync((PhoenixmlDb.Xdm.XdmSequence?)null);
+        result.Should().Contain("<hi");
+    }
+
+    [Fact]
+    public async Task TransformAsync_rejects_XdmSequence_with_node_but_no_store()
+    {
+        // Defensive: if a caller hands us a sequence that has node items but no
+        // matching store, we can't navigate the children — fail clearly at the
+        // boundary instead of silently producing empty output.
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/"><out/></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        // Construct an "orphan" XdmElement with no backing store. The sequence's
+        // public OfNode requires a store argument, so we use FromEngineResult to
+        // simulate the misuse path.
+        var orphanNode = new PhoenixmlDb.Xdm.Nodes.XdmElement
+        {
+            Id = new PhoenixmlDb.Core.NodeId(1),
+            Document = PhoenixmlDb.Core.DocumentId.None,
+            Parent = PhoenixmlDb.Core.NodeId.None,
+            LocalName = "orphan",
+            Namespace = PhoenixmlDb.Core.NamespaceId.None,
+            Attributes = [],
+            Children = [],
+            NamespaceDeclarations = [],
+        };
+        var bogus = PhoenixmlDb.Xdm.XdmSequence.FromEngineResult(new object?[] { orphanNode }, store: null);
+
+        var act = async () => await t.TransformAsync(bogus);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*XdmSequence contains node items but Store is null*");
+    }
+
+    [Fact]
     public async Task Global_variable_with_named_element_type_binds_to_element_not_doc()
     {
         // Bug found in Docbook chunk-cleanup name-style locale lookup: a global
@@ -2004,7 +2111,7 @@ public class XsltTransformerIntegrationTests
     // Bug: `$patterns => serialize(map { 'method': 'adaptive' })` from inside an XSLT stylesheet
     // produced JSON output (`{"k":"text"}`) instead of adaptive (`map{"k":<elem/>}`). Two
     // causes: (1) Serialize2Function only routed through XQueryResultSerializer when
-    // NodeProvider was XdmDocumentStore — XSLT uses its own InMemoryNodeStore; (2) the
+    // NodeProvider was XdmDocumentStore — XSLT uses its own XdmInMemoryStore; (2) the
     // fallback SerializeItem path always used SerializeMapAsJson regardless of the requested
     // method. Reported by Martin Honnen against the Schxslt2 transpile workflow.
 

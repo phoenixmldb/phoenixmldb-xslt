@@ -38,7 +38,7 @@ internal sealed class StreamingNodeContext
     /// Creates an XdmElement from this streaming context for template matching
     /// and expression evaluation. The node is minimal — no children, no siblings.
     /// </summary>
-    public XdmElement ToXdmElement(XsltTransformEngine.InMemoryNodeStore store)
+    public XdmElement ToXdmElement(XdmInMemoryStore store)
     {
         var nsId = store.InternNamespace(NamespaceUri);
         var attrIds = new List<NodeId>();
