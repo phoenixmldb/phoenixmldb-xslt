@@ -1754,13 +1754,18 @@ public sealed class XsltTransformEngine
                 try
                 {
                 // Check if this is a sequence type that needs accumulator.
-                // Include element() and attribute() types regardless of occurrence since
-                // they need proper XDM node creation via sequence accumulator.
-                // Text, PI, Comment are handled correctly by the non-sequence path
-                // (text → XdmText, PI/Comment → RTF → XDM).
+                // Include element() and attribute() types regardless of occurrence — and
+                // regardless of whether the type was named (element(foo)) or unconstrained
+                // (element()) — since they need proper XDM node creation via the sequence
+                // accumulator. The earlier `ElementName == null` guard skipped the accumulator
+                // path for *named* element types, which then fell to the no-as RTF path and
+                // bound the variable to a ResultTreeFragment (a document wrapper). Downstream
+                // path steps like `$locale/l:group` then saw a document-node and looked for
+                // `l:group` children of the document — which there are none of, so the lookup
+                // returned the empty sequence. Found in Docbook chunk-cleanup name-style
+                // localization (`as="element(l:l10n)"` global).
                 var needsNodeOrphan = global.As != null &&
-                    global.As.ItemType is ItemType.Element or ItemType.Attribute or ItemType.Node &&
-                    global.As.ElementName == null;
+                    global.As.ItemType is ItemType.Element or ItemType.Attribute or ItemType.Node;
                 // Map / array / function / record items must come through the accumulator so
                 // xsl:map / xsl:array constructions land as the live Dictionary or List object,
                 // not as their JSON-serialized text form (the default top-level fallback path).
@@ -13093,6 +13098,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     else
                         value = capturedAccumulator.ToArray();
                 }
+                // When `as=` allows the empty sequence and the body produced no content
+                // (no text and no accumulator items), the value MUST be the empty sequence,
+                // not the empty string. Without this guard, an `xsl:variable as="xs:string?"`
+                // wrapping an `xsl:for-each` whose body never fires ended up bound to "" —
+                // and `empty($style)` then returned false, masking the no-match path.
+                // Found in Docbook info.xsl personname → name-style lookup, where the empty
+                // string blocked the apply-templates m:gentext fallback that would have
+                // produced "first-last" from the locale.
+                else if (content.Length == 0
+                    && (capturedAccumulator is null || capturedAccumulator.Count == 0)
+                    && instruction.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
+                    value = null;
                 else
                     value = content.Contains('<', StringComparison.Ordinal)
                         ? new ResultTreeFragment(content, varBaseUri)
@@ -19790,6 +19807,34 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 && func.As.FunctionParameterTypes != null)
             {
                 funcResult = WrapInCoercionWrapper(funcResult, func.As);
+            }
+
+            // String → atomic coercion at function boundary (Saxon-compatible). When the
+            // function body produces a string (typically via `xsl:number` or `xsl:value-of`)
+            // and the declared return is a strict atomic type (xs:integer, xs:double, …),
+            // attempt to cast it. Per XSLT 3.0 spec the body's text result is treated as
+            // untypedAtomic, which casts to the target. Without this, the function-body
+            // chain in Docbook fp:number (`as="xs:integer?"` whose body is
+            // `<xsl:apply-templates select="$node" mode="mp:label-number"/>` and the
+            // matching templates use `<xsl:number/>`) returns the formatted string and the
+            // tightened validator now rejects it as XTTE0780.
+            if (funcResult is string fs && func.As != null && IsStrictAtomicType(func.As.ItemType))
+            {
+                var coerced = TryCoerceStringToType(fs, func.As.ItemType);
+                if (coerced != null)
+                    funcResult = coerced;
+            }
+            else if (funcResult is object?[] resultArr && func.As != null && IsStrictAtomicType(func.As.ItemType))
+            {
+                for (var i = 0; i < resultArr.Length; i++)
+                {
+                    if (resultArr[i] is string sStr)
+                    {
+                        var coerced = TryCoerceStringToType(sStr, func.As.ItemType);
+                        if (coerced != null)
+                            resultArr[i] = coerced;
+                    }
+                }
             }
 
             // XTTE0780 final gate: catch wrong-shape values that slipped past the per-branch

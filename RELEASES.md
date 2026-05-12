@@ -1,5 +1,64 @@
 # Release History
 
+## 1.3.6 (2026-05-12)
+
+### Three Docbook xslTNG fixes — 5/7 test articles now pass (was 1/7)
+
+After cutting 1.3.5, ran the full Docbook xslTNG 2.8.0 test corpus and
+found three more bugs that were stopping every sample with a `<personname>`
+in `db:info`. With these three landed, article.001/002/004/016/018 all
+produce clean HTML; only article.003/005 still fail (different root
+cause — string-vs-numeric general comparison).
+
+**1) Global `xsl:variable as="element(name)"` binds to the element, not a doc.**
+
+The global-var binding's `needsNodeOrphan` check required `ElementName == null`,
+so NAMED element types (`element(l:l10n)`) skipped the sequence-accumulator
+path and fell through to the no-as RTF construction. Downstream `$locale/l:group`
+then looked for `l:group` children of the document wrapper and found none.
+
+Found in Docbook chunk-cleanup name-style locale lookup. Removing the
+`ElementName == null` guard routes named element types through the
+accumulator like the unnamed `element()` form already did.
+
+Regression test:
+`Global_variable_with_named_element_type_binds_to_element_not_doc`.
+
+**2) Local `xsl:variable as="xs:string?"` with empty body is the empty sequence.**
+
+When the body executed (e.g. `xsl:for-each` over an empty selection)
+but produced no items, the variable was bound to the empty STRING `""`
+instead of the empty SEQUENCE `()`. `empty($style)` returned false,
+masking the no-match path that should have fallen through to the
+locale lookup. Found in Docbook info.xsl personname `name-style` chain.
+
+Fix: in the no-`as=` body path, when content is empty AND no accumulator
+items AND occurrence allows empty (`?` or `*`), bind to `null`.
+
+Regression test:
+`Local_variable_optional_atomic_with_empty_body_is_empty_sequence`.
+
+**3) Function returning string for `as="xs:integer?"` casts at boundary.**
+
+Saxon-compatible function-conversion: when a function's body produces a
+string (typically via `xsl:number` or `xsl:value-of`) and the declared
+return type is a strict atomic type (xs:integer, xs:double, etc.), cast
+the string before final validation. Without this, the tightened XTTE0780
+validator rejected the string return; Docbook `fp:number` (which routes
+through `<xsl:number/>` in matched templates) failed on every numbered
+article.
+
+Fix: in `CallXsltFunctionAsync`, after every result-determination
+branch converges, attempt `TryCoerceStringToType` for string-to-atomic
+when the declared type is a strict atomic. Sequences are coerced
+element-wise.
+
+Regression test:
+`Function_return_string_coerces_to_declared_atomic_type`.
+
+Full XSLT suite 376/376 (was 373); Docbook xslTNG 2.8.0 cleanly handles
+samples/article.xml plus 5 of 7 test corpus articles.
+
 ## 1.3.5 (2026-05-11)
 
 ### `as=` validator now enforces element name AND namespace

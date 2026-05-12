@@ -917,6 +917,96 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task Global_variable_with_named_element_type_binds_to_element_not_doc()
+    {
+        // Bug found in Docbook chunk-cleanup name-style locale lookup: a global
+        // xsl:variable declared `as="element(l:l10n)"` whose body constructed an
+        // l:l10n LRE was binding to a document-node wrapping the element instead
+        // of the element itself. Downstream `$locale/l:group` then looked for
+        // l:group children of the document — none exist, lookup returned empty,
+        // and personname rendering failed with "Invalid name style: ".
+        //
+        // Root cause: the global-var binding's `needsNodeOrphan` check required
+        // `ElementName == null`, so NAMED element types fell to the no-as RTF
+        // path. Removing that guard routes them through the sequence accumulator
+        // like unnamed `element()` already did.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:l="urn:l">
+              <xsl:variable name="locale" as="element(l:l10n)">
+                <l:l10n><l:group name="g"/></l:l10n>
+              </xsl:variable>
+              <xsl:template match="/">
+                <result is-elem="{$locale instance of element()}"
+                        name="{local-name($locale)}"
+                        gcount="{count($locale/l:group)}"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("is-elem=\"true\"");
+        result.Should().Contain("name=\"l10n\"");
+        result.Should().Contain("gcount=\"1\"");
+    }
+
+    [Fact]
+    public async Task Local_variable_optional_atomic_with_empty_body_is_empty_sequence()
+    {
+        // Bug found in Docbook info.xsl personname → name-style lookup. An
+        // `xsl:variable as="xs:string?"` whose body executes (via xsl:for-each
+        // or xsl:choose) but produces no items was bound to the empty STRING
+        // ("") instead of the empty SEQUENCE (). `empty($style)` then returned
+        // false, masking the no-match path that should have triggered the
+        // localization fallback.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:template match="/">
+                <xsl:variable name="probe" as="xs:string?">
+                  <xsl:for-each select="()">
+                    <xsl:sequence select="."/>
+                  </xsl:for-each>
+                </xsl:variable>
+                <result is-empty="{empty($probe)}" len="{string-length($probe)}"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("is-empty=\"true\"");
+    }
+
+    [Fact]
+    public async Task Function_return_string_coerces_to_declared_atomic_type()
+    {
+        // Saxon-compatible function-conversion: a function declared `as="xs:integer?"`
+        // whose body produces a string (typically via xsl:number / xsl:value-of
+        // through apply-templates) gets the string cast to the target atomic type
+        // at the function boundary. Without this, the tightened XTTE0780 validator
+        // rejects the string and Docbook's fp:number (which formats numbers via
+        // xsl:number in matched templates) raises an error on every numbered
+        // article.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:f="urn:f" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:function name="f:str-to-int" as="xs:integer?">
+                <xsl:param name="x"/>
+                <xsl:value-of select="$x"/>
+              </xsl:function>
+              <xsl:template match="/">
+                <xsl:variable name="r" select="f:str-to-int('42')"/>
+                <result value="{$r}" is-int="{$r instance of xs:integer}"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("value=\"42\"");
+        result.Should().Contain("is-int=\"true\"");
+    }
+
+    [Fact]
     public async Task Function_return_validator_rejects_wrong_namespace_element()
     {
         // Hardening: ValidateValueMatchesType now compares element name AND namespace
