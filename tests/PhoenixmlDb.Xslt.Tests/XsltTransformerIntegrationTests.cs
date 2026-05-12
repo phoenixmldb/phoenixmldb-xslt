@@ -852,6 +852,71 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task Copy_with_copy_namespaces_no_preserves_elements_own_namespace()
+    {
+        // Per XSLT 3.0 §11.10.1 + §5.7.3.4 namespace fixup: copy-namespaces="no" lets
+        // the engine drop the source's *additional* namespace bindings, but the binding
+        // that defines the copy's *own* namespace must be preserved — otherwise the copy
+        // ends up in the wrong namespace and downstream path-step matchers can't find it.
+        // Our impl unconditionally skipped all namespace bindings, dumping default-ns
+        // elements into the null namespace. Found via Docbook mp:remove-ghosts which
+        // broke the entire chunk-output dispatch (`/h:html/h:html` matched nothing).
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:h="http://www.w3.org/1999/xhtml" xmlns:m="urn:m"
+                            expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="copied" as="document-node()">
+                  <xsl:document>
+                    <xsl:apply-templates select="*" mode="m:cn"/>
+                  </xsl:document>
+                </xsl:variable>
+                <result name="{$copied/*/local-name()}" ns="{$copied/*/namespace-uri()}"
+                        h-html-count="{count($copied/h:html)}"/>
+              </xsl:template>
+              <xsl:template match="*" mode="m:cn">
+                <xsl:copy copy-namespaces="no">
+                  <xsl:apply-templates select="node()" mode="m:cn"/>
+                </xsl:copy>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync(
+            "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>x</body></html>");
+        result.Should().Contain("ns=\"http://www.w3.org/1999/xhtml\"");
+        result.Should().Contain("h-html-count=\"1\"");
+    }
+
+    [Fact]
+    public async Task Html_serializer_skips_duplicate_content_type_meta()
+    {
+        // Per XSLT 3.0 §27.6.4 (HTML/XHTML output): the serializer adds a Content-Type
+        // meta only when one isn't already present in the head. Our InsertContentTypeMeta
+        // unconditionally inserted one, producing a duplicate when the stylesheet emitted
+        // its own (e.g. Docbook TNG's XHTML-style `<meta http-equiv="Content-Type" …/>`).
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="html" include-content-type="yes"/>
+              <xsl:template match="/">
+                <html>
+                  <head>
+                    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+                    <title>x</title>
+                  </head>
+                  <body>x</body>
+                </html>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await transformer.TransformAsync("<x/>");
+        var metaCount = System.Text.RegularExpressions.Regex.Count(
+            result, "http-equiv=\"Content-Type\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        metaCount.Should().Be(1, "stylesheet already emitted a Content-Type meta; serializer must not duplicate it");
+    }
+
+    [Fact]
     public async Task Function_with_node_return_type_wraps_text_body_as_text_node()
     {
         // Bug found in Docbook chunk-cleanup f:chunk-title (as="node()*"): when the

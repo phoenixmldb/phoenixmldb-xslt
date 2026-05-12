@@ -2,6 +2,43 @@
 
 ## 1.3.5 (2026-05-11)
 
+### `xsl:copy copy-namespaces="no"` preserves the element's own namespace
+
+Per XSLT 3.0 §11.10.1 + §5.7.3.4 (namespace fixup), `copy-namespaces="no"`
+lets the engine drop the source's *additional* namespace bindings, but
+the binding that defines the copy's *own* namespace must be preserved —
+otherwise the copy ends up in the wrong namespace and downstream
+path-step matchers can no longer find it.
+
+Our implementation skipped the entire namespace-bindings block when
+`copy-namespaces="no"`, dumping default-namespaced elements into the
+null namespace. Found in Docbook `mp:remove-ghosts` (whose only job is
+stripping `@ghost:*` attributes), which silently re-namespaced every
+xhtml element and broke the entire chunk-output dispatch — `/h:html/h:html`
+matched zero nodes, so the engine fell back to "sequence the whole
+input", producing a doubled `<html><html>…</html></html>` output.
+
+Fix: when `copy-namespaces="no"`, still register the element's own
+namespace binding before namespace fixup runs.
+
+Regression test:
+`XsltTransformerIntegrationTests.Copy_with_copy_namespaces_no_preserves_elements_own_namespace`.
+
+### HTML serializer no longer duplicates `Content-Type` meta
+
+Per XSLT 3.0 §27.6.4 (HTML/XHTML output): the serializer adds a
+`<meta http-equiv="Content-Type" …>` only if one isn't already present in
+the head. `InsertContentTypeMeta` inserted unconditionally, so a
+stylesheet that emitted its own meta (e.g. Docbook TNG's XHTML-style
+`<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />`)
+ended up with two of them.
+
+Fix: scan the head's content for an existing `Content-Type` meta tag
+before inserting, and skip the insertion when one is found.
+
+Regression test:
+`XsltTransformerIntegrationTests.Html_serializer_skips_duplicate_content_type_meta`.
+
 ### `xsl:function as="node()*"` wraps plain-text body output as text node
 
 `CallXsltFunctionAsync`'s text-output branch only parsed function output

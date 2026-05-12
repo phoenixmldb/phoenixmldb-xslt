@@ -9299,12 +9299,21 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         emittedPrefixes.Add(prefix);
                         copyNsBindings[prefix] = uri;
                     }
-                    if (!string.IsNullOrEmpty(elem.Prefix) && !emittedPrefixes.Contains(elem.Prefix))
-                    {
-                        var elemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
-                        if (!string.IsNullOrEmpty(elemNsUri))
-                            copyNsBindings[elem.Prefix] = elemNsUri;
-                    }
+                }
+                // Per XSLT 3.0 §11.10.1 (xsl:copy) + §5.7.3.4 (Namespace Fixup): even with
+                // copy-namespaces="no" the element's *own* namespace must be preserved —
+                // the spec only lets us drop the source's *additional* namespace bindings,
+                // not the binding that defines the copy's name. Without this, an element
+                // copied with copy-namespaces="no" loses its namespace and downstream
+                // path-step matchers (`/h:html`) can no longer find it. Found in Docbook
+                // mp:remove-ghosts (`<xsl:copy copy-namespaces="no">…`) which dropped
+                // xhtml-namespaced elements into the null namespace, breaking the entire
+                // chunk-output dispatch.
+                {
+                    var prefix = elem.Prefix ?? "";
+                    var elemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
+                    if (!string.IsNullOrEmpty(elemNsUri) && !emittedPrefixes.Contains(prefix))
+                        copyNsBindings[prefix] = elemNsUri;
                 }
 
                 // Use attribute collection mode like CreateElementAsync (push for nesting)
@@ -19268,7 +19277,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         else
             metaElement = $"<meta http-equiv=\"Content-Type\" content=\"{content}\">";
 
-        // Find <head> or <head ...> tags and insert meta as first child
+        // Find <head> or <head ...> tags and insert meta as first child.
+        // Per XSLT 3.0 §27.6.4 (HTML/XHTML output): the serializer adds a Content-Type
+        // meta only if one is not already present in the head. Without this check,
+        // a stylesheet that emits its own meta (e.g. Docbook TNG's XHTML-style
+        // `<meta http-equiv="Content-Type" content="…" />`) ends up with two of them.
         var result = output;
         var searchFrom = 0;
         while (true)
@@ -19286,14 +19299,66 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var closeTag = result.IndexOf('>', afterName);
                 if (closeTag >= 0 && result[closeTag - 1] != '/') // not self-closing
                 {
-                    result = result.Insert(closeTag + 1, metaElement);
-                    searchFrom = closeTag + 1 + metaElement.Length;
+                    // Locate the matching </head> and search the head's content for an
+                    // existing Content-Type meta. If found, skip insertion for this head.
+                    var endHead = result.IndexOf("</head", closeTag + 1, StringComparison.OrdinalIgnoreCase);
+                    var headContent = endHead > 0
+                        ? result.AsSpan(closeTag + 1, endHead - closeTag - 1)
+                        : result.AsSpan(closeTag + 1);
+                    if (!ContainsContentTypeMeta(headContent))
+                    {
+                        result = result.Insert(closeTag + 1, metaElement);
+                        searchFrom = closeTag + 1 + metaElement.Length;
+                        continue;
+                    }
+                    searchFrom = endHead > 0 ? endHead : result.Length;
                     continue;
                 }
             }
             searchFrom = afterName;
         }
         return result;
+    }
+
+    /// <summary>
+    /// Scans a run of head content for an existing http-equiv="Content-Type" meta tag
+    /// (case-insensitive). Used to suppress duplicate insertion by InsertContentTypeMeta.
+    /// </summary>
+    private static bool ContainsContentTypeMeta(ReadOnlySpan<char> headContent)
+    {
+        var i = 0;
+        while (i < headContent.Length)
+        {
+            var lt = headContent.Slice(i).IndexOf('<');
+            if (lt < 0) break;
+            i += lt;
+            // Match <meta (case-insensitive) followed by whitespace or end
+            if (i + 5 <= headContent.Length
+                && (headContent[i + 1] == 'm' || headContent[i + 1] == 'M')
+                && (headContent[i + 2] == 'e' || headContent[i + 2] == 'E')
+                && (headContent[i + 3] == 't' || headContent[i + 3] == 'T')
+                && (headContent[i + 4] == 'a' || headContent[i + 4] == 'A')
+                && (i + 5 == headContent.Length || headContent[i + 5] == ' '
+                    || headContent[i + 5] == '\t' || headContent[i + 5] == '\n'
+                    || headContent[i + 5] == '\r' || headContent[i + 5] == '/'
+                    || headContent[i + 5] == '>'))
+            {
+                var gt = headContent.Slice(i).IndexOf('>');
+                if (gt < 0) break;
+                var tag = headContent.Slice(i, gt + 1);
+                // Look for http-equiv="Content-Type" or http-equiv='Content-Type'
+                // (HTML attributes are case-insensitive; values per spec are too).
+                if (tag.IndexOf("http-equiv", StringComparison.OrdinalIgnoreCase) >= 0
+                    && tag.IndexOf("Content-Type", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+                i += gt + 1;
+                continue;
+            }
+            i++;
+        }
+        return false;
     }
 
     /// <summary>
