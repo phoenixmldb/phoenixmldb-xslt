@@ -3929,6 +3929,32 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     internal bool _streamingDeferReadOnNextIteration;
 
     /// <summary>
+    /// One entry on <see cref="_streamingDeferredExecutions"/>. Captures everything
+    /// needed to run a template body at the parent EndElement event with watcher
+    /// results substituted into consuming aggregates.
+    /// </summary>
+    internal sealed class DeferredStreamingExecution
+    {
+        public required Ast.XsltTemplate Template;
+        public required object Element;          // the matched node (XdmElement)
+        public required QName? Mode;
+        public required int Position;
+        public required int ParentDepth;          // streaming reader depth where this fired
+        public required IReadOnlyList<StreamWatcher> Watchers;
+        public IReadOnlyList<StreamWatcher>? PriorActiveWatchers;
+    }
+
+    /// <summary>
+    /// Stack of templates whose bodies were deferred because they contain consuming
+    /// aggregates (count(*), sum(*), etc.). Watchers accumulate as the streaming
+    /// processor reads the matched element's children; on the parent EndElement,
+    /// the body is executed with <see cref="_activeStreamWatchers"/> set so the
+    /// existing TryResolveFromWatchers path substitutes accumulated values into the
+    /// expressions.
+    /// </summary>
+    internal readonly Stack<DeferredStreamingExecution> _streamingDeferredExecutions = new();
+
+    /// <summary>
     /// Try to resolve an expression (or its sub-expressions) from watcher results.
     /// Handles direct matches and map constructors with watcher entry values.
     /// </summary>
@@ -6209,7 +6235,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     /// <summary>
     /// Matches and executes a template for a streaming node.
-    /// Returns true if the matched template suppressed the node (empty body = no output).
+    /// Returns true if the matched template suppressed the node (empty body = no output)
+    /// OR if execution was deferred — in either case the streaming processor should
+    /// treat children as suppressed (no template execution; watchers and accumulators
+    /// still fire).
     /// </summary>
     internal async ValueTask<bool> MatchAndExecuteStreamingNodeAsync(XdmNode node, QName? mode, int position)
     {
@@ -6218,11 +6247,33 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         PushContextItem(node, position, 0);
         PushCurrentItem(node);
         PushScope();
+        var pushedScope = true;
         try
         {
             var template = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext());
             if (template != null)
             {
+                // Pre-scan template body for consuming aggregates (count(*), sum(*), …).
+                // If found AND the body doesn't itself call apply-templates (which would
+                // consume children directly), DEFER body execution to parent EndElement
+                // so watchers can accumulate the consuming-expression results first.
+                // Without this deferral, the body evaluates count(*) before any children
+                // have been read and gets 0.
+                if (_activeStreamingReader != null
+                    && node is Xdm.Nodes.XdmElement deferredElem
+                    && TryBuildDeferredExecution(template, deferredElem, mode, position) is { } deferredEntry)
+                {
+                    _streamingDeferredExecutions.Push(deferredEntry);
+                    deferredEntry.PriorActiveWatchers = _activeStreamWatchers;
+                    _activeStreamWatchers = deferredEntry.Watchers;
+                    // Pop the temporary scope/context — the real ones will be re-pushed
+                    // when the deferred body executes at parent EndElement.
+                    PopScope(); pushedScope = false;
+                    PopCurrentItem();
+                    PopContextItem();
+                    return true; // signal suppression so processor skips child template execution
+                }
+
                 // An empty template body in streaming mode means "suppress this element"
                 // — skip the element and all its children. Return true so the streaming
                 // processor can skip child events.
@@ -6284,11 +6335,134 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
         finally
         {
+            if (pushedScope)
+            {
+                PopScope();
+                PopCurrentItem();
+                PopContextItem();
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Pre-scans <paramref name="template"/>'s body for consuming aggregates that
+    /// require deferred execution. Returns a deferred-execution entry when:
+    /// <list type="bullet">
+    ///   <item>The body has at least one aggregate over a consuming expression
+    ///         (count(*), sum(*), string-join(*/text(),', '), etc.); AND</item>
+    ///   <item>The body does NOT contain xsl:apply-templates (which would itself
+    ///         consume children — incompatible with deferral).</item>
+    /// </list>
+    /// Returns null when deferral isn't applicable; the caller falls through to
+    /// the immediate-execution path.
+    /// </summary>
+    private DeferredStreamingExecution? TryBuildDeferredExecution(
+        Ast.XsltTemplate template, Xdm.Nodes.XdmElement element, QName? mode, int position)
+    {
+        if (_activeStreamingReader == null) return null;
+        var scanner = new StreamingExpressionScanner();
+        var watchers = scanner.Scan(template.Body);
+        if (watchers.Count == 0) return null;
+        if (BodyContainsApplyTemplates(template.Body)) return null;
+        return new DeferredStreamingExecution
+        {
+            Template = template,
+            Element = element,
+            Mode = mode,
+            Position = position,
+            ParentDepth = _activeStreamingReader.Depth,
+            Watchers = watchers
+        };
+    }
+
+    /// <summary>
+    /// Recursively walks an XsltSequenceConstructor to detect xsl:apply-templates.
+    /// Used by <see cref="TryBuildDeferredExecution"/> to disqualify deferral when
+    /// the body would consume children itself (deferral is only safe when the body
+    /// is purely output + consuming-aggregate evaluations).
+    /// </summary>
+    private static bool BodyContainsApplyTemplates(Ast.XsltSequenceConstructor? body)
+    {
+        if (body == null) return false;
+        foreach (var insn in body.Instructions)
+        {
+            if (insn is Ast.XsltApplyTemplates) return true;
+            if (insn is Ast.XsltSequenceConstructor child && BodyContainsApplyTemplates(child)) return true;
+            if (insn is Ast.XsltLiteralResultElement lre && BodyContainsApplyTemplates(lre.Content)) return true;
+            if (insn is Ast.XsltIf ifInsn && BodyContainsApplyTemplates(ifInsn.Then)) return true;
+            if (insn is Ast.XsltChoose choose)
+            {
+                foreach (var w in choose.When)
+                    if (BodyContainsApplyTemplates(w.Body)) return true;
+                if (BodyContainsApplyTemplates(choose.Otherwise)) return true;
+            }
+            if (insn is Ast.XsltCopy copy && BodyContainsApplyTemplates(copy.Content)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Executes a deferred template body at the parent's EndElement. Called by
+    /// <see cref="StreamingXmlProcessor"/> after watcher accumulation completes.
+    /// Restores context/scope as if the template were running fresh, executes
+    /// the body (consuming-aggregate sub-expressions resolve to the watcher values
+    /// via <see cref="TryResolveFromWatchers"/>), then restores the prior
+    /// <see cref="_activeStreamWatchers"/> so nested deferred executions stack
+    /// cleanly.
+    /// </summary>
+    internal async ValueTask ExecuteDeferredAsync(DeferredStreamingExecution entry)
+    {
+        PushContextItem(entry.Element, entry.Position, 0);
+        PushCurrentItem(entry.Element);
+        PushScope();
+        var savedTemplate = _currentTemplate;
+        var savedMode = _currentMode;
+        _currentTemplate = entry.Template;
+        _currentMode = entry.Mode;
+        try
+        {
+            // Bind template parameters with defaults (mirrors MatchAndExecuteStreamingNodeAsync)
+            foreach (var param in entry.Template.Parameters)
+            {
+                if (param.Select != null)
+                {
+                    var defaultVal = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                    if (param.As != null)
+                        defaultVal = CoerceToType(defaultVal, param.As);
+                    SetVariable(param.Name, defaultVal);
+                }
+                else
+                {
+                    SetVariable(param.Name, "");
+                }
+            }
+            if (entry.Template.Version != null)
+                _effectiveVersionStack.Push(entry.Template.Version);
+            if (entry.Template.DefaultCollation != null)
+                _defaultCollationStack.Push(entry.Template.DefaultCollation);
+            if (entry.Template.BaseUri != null)
+                _staticBaseUriStack.Push(XsltTransformEngine.UriString(entry.Template.BaseUri)!);
+            try
+            {
+                await entry.Template.Body.ExecuteAsync(this).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (entry.Template.BaseUri != null) _staticBaseUriStack.Pop();
+                if (entry.Template.DefaultCollation != null) _defaultCollationStack.Pop();
+                if (entry.Template.Version != null) _effectiveVersionStack.Pop();
+            }
+        }
+        finally
+        {
+            _currentTemplate = savedTemplate;
+            _currentMode = savedMode;
             PopScope();
             PopCurrentItem();
             PopContextItem();
+            _activeStreamWatchers = entry.PriorActiveWatchers;
         }
-        return false;
     }
 
     private async ValueTask ApplyBuiltInDeepCopyAsync(object node, QName? mode, List<XsltWithParam> withParams)

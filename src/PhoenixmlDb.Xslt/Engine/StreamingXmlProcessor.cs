@@ -152,6 +152,22 @@ internal sealed class StreamingXmlProcessor
                             };
                             var skipXdm = skipCtx.ToXdmElement(_nodeStore);
                             await FireAccumulatorRulesAsync(skipXdm, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
+                            // Fire stream watchers in the suppressed branch too — when a
+                            // parent template was deferred (consuming aggregates pending
+                            // execution at parent EndElement), child elements feed the
+                            // watchers but don't fire their own templates. Without this
+                            // the count(*) / sum(*) etc. would never accumulate.
+                            if (_watchers != null || _context._activeStreamWatchers != null)
+                            {
+                                Dictionary<string, string>? skipAttrDict = null;
+                                if (skipAttrs.Count > 0)
+                                {
+                                    skipAttrDict = new Dictionary<string, string>(skipAttrs.Count);
+                                    foreach (var attr in skipAttrs)
+                                        skipAttrDict[attr.LocalName] = attr.StringValue ?? "";
+                                }
+                                FireWatchers(skipCtx.LocalName, skipAttrDict, null);
+                            }
                             if (!isEmptyElement)
                             {
                                 ancestorStack.Push(skipCtx);
@@ -160,6 +176,8 @@ internal sealed class StreamingXmlProcessor
                             else
                             {
                                 await FireAccumulatorRulesAsync(skipXdm, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
+                                if (_watchers != null || _context._activeStreamWatchers != null)
+                                    FireWatchersEndElement(skipCtx.LocalName);
                                 CleanupStreamingNode(skipCtx);
                             }
                             break;
@@ -275,6 +293,21 @@ internal sealed class StreamingXmlProcessor
                             // Pop ancestor name for watcher path matching
                             if (_ancestorNames.Count > 0)
                                 _ancestorNames.RemoveAt(_ancestorNames.Count - 1);
+
+                            // Deferred-template execution: if a template firing for this
+                            // element was deferred (consuming aggregates accumulated via
+                            // watchers), execute the body NOW with watcher results
+                            // available for substitution. Done BEFORE
+                            // CleanupStreamingNode so the element is still registered.
+                            if (_context._streamingDeferredExecutions.Count > 0)
+                            {
+                                var topDeferred = _context._streamingDeferredExecutions.Peek();
+                                if (topDeferred.ParentDepth == closingContext.Depth)
+                                {
+                                    _context._streamingDeferredExecutions.Pop();
+                                    await _context.ExecuteDeferredAsync(topDeferred).ConfigureAwait(false);
+                                }
+                            }
 
                             // Check if we're closing a suppressed element
                             var wasSuppressedElement = suppressionDepth >= 0 && closingContext.Depth == suppressionDepth;
@@ -515,9 +548,20 @@ internal sealed class StreamingXmlProcessor
     /// </summary>
     private void FireWatchers(string elementName, IReadOnlyDictionary<string, string>? attributes, string? textContent)
     {
-        if (_watchers == null) return;
+        // Fire both constructor-time watchers (xsl:source-document path) and dynamic
+        // watchers registered per-template-firing (streamable-mode deferred-body path).
+        // The xsl:source-document path stores the same list in both slots; reference
+        // equality detects that and avoids double-counting.
+        FireWatchersFromList(_watchers, elementName, attributes, textContent);
+        if (!ReferenceEquals(_context._activeStreamWatchers, _watchers))
+            FireWatchersFromList(_context._activeStreamWatchers, elementName, attributes, textContent);
+    }
 
-        foreach (var watcher in _watchers)
+    private void FireWatchersFromList(IReadOnlyList<StreamWatcher>? watchers, string elementName, IReadOnlyDictionary<string, string>? attributes, string? textContent)
+    {
+        if (watchers == null) return;
+
+        foreach (var watcher in watchers)
         {
             // Check for subtree collection in progress
             if (watcher.IsCollectingSubtree)
@@ -551,9 +595,15 @@ internal sealed class StreamingXmlProcessor
     /// </summary>
     private void FireWatchersEndElement(string localName)
     {
-        if (_watchers == null) return;
+        FireEndElementOnList(_watchers, localName);
+        if (!ReferenceEquals(_context._activeStreamWatchers, _watchers))
+            FireEndElementOnList(_context._activeStreamWatchers, localName);
+    }
 
-        foreach (var watcher in _watchers)
+    private static void FireEndElementOnList(IReadOnlyList<StreamWatcher>? watchers, string localName)
+    {
+        if (watchers == null) return;
+        foreach (var watcher in watchers)
         {
             if (watcher.IsCollectingSubtree)
             {
@@ -568,9 +618,15 @@ internal sealed class StreamingXmlProcessor
     /// </summary>
     private void FireWatchersText(string textValue)
     {
-        if (_watchers == null) return;
+        FireTextOnList(_watchers, textValue);
+        if (!ReferenceEquals(_context._activeStreamWatchers, _watchers))
+            FireTextOnList(_context._activeStreamWatchers, textValue);
+    }
 
-        foreach (var watcher in _watchers)
+    private static void FireTextOnList(IReadOnlyList<StreamWatcher>? watchers, string textValue)
+    {
+        if (watchers == null) return;
+        foreach (var watcher in watchers)
         {
             if (watcher.IsCollectingSubtree)
             {
