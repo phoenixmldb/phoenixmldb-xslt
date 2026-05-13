@@ -5863,7 +5863,7 @@ public sealed class StylesheetParser
         // When expand-text is active and the text contains TVT expressions, parse as TVT
         if (expandText && value.Contains('{', StringComparison.Ordinal))
         {
-            var avt = ParseAvt(value, element);
+            var avt = ParseAvtFromText(value, element);
             // If the AVT resolved to just a single literal, keep as plain text
             if (avt.Parts.Count == 1 && avt.Parts[0] is AvtLiteral)
             {
@@ -7561,7 +7561,7 @@ public sealed class StylesheetParser
     {
         if (expandText && value.Contains('{', StringComparison.Ordinal))
         {
-            var avt = ParseAvt(value, context);
+            var avt = ParseAvtFromText(value, context);
             // If the AVT is just a single literal (no expressions), use the literal's
             // decoded value (with empty TVT expressions like {} stripped)
             if (avt.Parts.Count == 1 && avt.Parts[0] is AvtLiteral lit)
@@ -7586,7 +7586,23 @@ public sealed class StylesheetParser
         // token, not to the start of the attribute. Multi-line AVTs are handled by
         // counting newlines in the prefix.
         var (avtBaseLine, avtBaseCol, moduleUri) = ComputeAvtBasePosition(sourceAttribute);
+        return ParseAvtCore(value, context, avtBaseLine, avtBaseCol, moduleUri);
+    }
 
+    /// <summary>
+    /// D3: parse an AVT-style template that comes from element text content rather
+    /// than an attribute value (e.g. expand-text=yes TVT). Uses the first descendant
+    /// <see cref="XText"/>'s IXmlLineInfo to seed the base position so inner-expression
+    /// errors carry the right file (line, col).
+    /// </summary>
+    private XsltAttributeValueTemplate ParseAvtFromText(string value, XElement context)
+    {
+        var (line, col, module) = ComputeTextBasePosition(context);
+        return ParseAvtCore(value, context, line, col, module);
+    }
+
+    private XsltAttributeValueTemplate ParseAvtCore(string value, XElement context, int avtBaseLine, int avtBaseCol, string? moduleUri)
+    {
         var parts = new List<AvtPart>();
         var current = 0;
 
@@ -7681,6 +7697,27 @@ public sealed class StylesheetParser
             attrName = prefix + ":" + attrName;
         var valueStartCol = li.LinePosition + attrName.Length + 2;
         return (li.LineNumber, valueStartCol, attribute.Parent?.BaseUri);
+    }
+
+    /// <summary>
+    /// D3 helper: compute the file-absolute base position for an AVT/TVT that comes
+    /// from element text content. Uses the first descendant <see cref="XText"/>'s
+    /// IXmlLineInfo. When the element has multiple text-node children (e.g.
+    /// interrupted by xsl:value-of), only the first text node's position is used —
+    /// inner-expression positions for later text nodes will be off but at least
+    /// land in the same file/line range; full multi-text accuracy is a follow-up.
+    /// </summary>
+    private static (int Line, int Column, string? ModuleUri) ComputeTextBasePosition(XElement element)
+    {
+        foreach (var node in element.Nodes())
+        {
+            if (node is XText t && t is System.Xml.IXmlLineInfo tli && tli.HasLineInfo())
+                return (tli.LineNumber, tli.LinePosition, element.BaseUri);
+        }
+        // Fallback to element's own start position
+        if (element is System.Xml.IXmlLineInfo eli && eli.HasLineInfo())
+            return (eli.LineNumber, eli.LinePosition, element.BaseUri);
+        return (0, 0, element.BaseUri);
     }
 
     /// <summary>

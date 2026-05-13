@@ -2726,6 +2726,38 @@ public class XsltTransformerIntegrationTests
             $"absolute column should land inside the AVT inner expression. Got col={col}, message={ex.Message}");
     }
 
+    // Phase D3 source-location audit: errors raised from XPath inside an
+    // XSLT 4.0 / TVT inline `{...}` expression in element text content (e.g.
+    // <xsl:text expand-text="yes">prefix-{bad-fn()}</xsl:text>) should pin to
+    // the brace position within the text node, not to the start of the element.
+    [Fact]
+    public async Task XPath_runtime_error_in_inline_TVT_expression_pins_to_text_position()
+    {
+        // The xsl:text element starts on line 3. The text content begins after the
+        // opening tag (`>` at column ~50). Inside the text "Hello {index-of((1,2,3), ())}",
+        // the inner expression starts after "Hello {" — column ~57 of line 3.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <out><xsl:text expand-text="yes">Hello {index-of((1,2,3), ())}</xsl:text></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await transformer.TransformAsync("<x/>"));
+        // Demand col ≥ 50 — well past the line's indent and the `<out>` tag,
+        // landing somewhere inside the text-content TVT.
+        var match = System.Text.RegularExpressions.Regex.Match(
+            ex.ToString(), @"\[(?:.+:)?\d+:(\d+)\]|\[line\s+\d+,\s*col\s+(\d+)\]");
+        match.Success.Should().BeTrue($"formatted message should contain a (line, col) pair. Got: {ex.Message}");
+        var colStr = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
+        var col = int.Parse(colStr, System.Globalization.CultureInfo.InvariantCulture);
+        col.Should().BeGreaterThan(40,
+            $"absolute column should land inside the inline TVT expression. Got col={col}, message={ex.Message}");
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
