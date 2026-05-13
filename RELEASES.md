@@ -1,5 +1,89 @@
 # Release History
 
+## 1.3.10 (2026-05-13)
+
+### Fix: `TransformToValueAsync` returns typed map/array from initial-template (Martin Honnen report)
+
+`TransformToValueAsync` returned `null` for both map-producing
+`initial-template` invocations and array-producing apply-templates runs,
+even though the equivalent CLI commands produced the right JSON output.
+
+Root cause: `ReturnRawXdm` was only honored by the `InitialFunction`
+code path. For initial-template / apply-templates with output method
+`json`/`adaptive`/`csv`, the engine's JSON serialization branch called
+`EndSequenceCollection()` to grab the typed items, serialized them to
+JSON text, and discarded the typed list — so `RawResult.Value` stayed
+null and `TransformToValueAsync` returned its default null.
+
+Fix: in the JSON-output branch, when `ReturnRawXdm` is set, capture
+the typed items into `RawResult.Value` BEFORE serialization (single
+item → that item; multi → `object?[]`; empty → `null`). Same shape
+contract as the existing `InitialFunction` path.
+
+Regression tests:
+- `TransformToValueAsync_returns_typed_map_from_initial_template_with_json_output`
+- `TransformToValueAsync_returns_typed_array_from_apply_templates_with_json_output`
+
+### Source-location audit Phase D + E: actionable LSP diagnostics
+
+Builds on the 1.3.9 Phase A/B/C foundation. Errors raised from XPath
+embedded in XSLT now report file-absolute `(line, col)` pinned to the
+offending token, not to the start of the containing XSLT element.
+Required for an LSP server to squiggle the right span.
+
+**D1 + D5 — file-absolute coordinates for embedded XPath**
+- `ParseExpr` accepts an optional source `XAttribute`. When supplied,
+  every parsed sub-expression's `SourceLocation` is shifted from
+  XPath-relative to file-absolute via the new `WalkExpressions` post-order
+  visitor. Multi-line XPath expressions are handled too: only the first
+  XPath line gets the value-start column offset; subsequent lines use the
+  file column directly (matches XML attribute-value continuation).
+- 51 `ParseExpr` call sites in `StylesheetParser` now thread the source
+  attribute (45 of the `xxxAttr.Value` form + 6 of the
+  `element.Attribute("name")!.Value` form).
+
+**D2 — AVT inner-expression positions**
+- `ParseAvt` now takes an optional source attribute. Per-inner-expression
+  base position is computed from `OffsetToLineColumn` (newline counter
+  inside the AVT text) plus the AVT's value-start column. Every `{…}`
+  inner XPath is parsed via the new `ParseExprAt(line, col, moduleUri)`
+  overload so its sub-expression locations land at the brace, not the
+  attribute start.
+- 41 `ParseAvt` call sites threaded.
+
+**D3 — TVT inner expressions in element text content**
+- New `ParseAvtFromText` overload uses the first descendant `XText`'s
+  IXmlLineInfo as the base position. Handles `<xsl:text expand-text="yes">`
+  and other text-content TVT cases.
+- Refactored: `ParseAvtCore(value, ctx, baseLine, baseCol, moduleUri)`
+  is the shared backend; the attribute and text-content overloads
+  feed into it.
+
+**D4 — module-URI completeness verification**
+- Already covered by D1's per-node Module stamping + the existing
+  `LoadOptions.SetBaseUri` on import/include paths. Added regression test:
+  errors raised from XPath inside an imported `modules/inc.xsl` carry
+  the imported module's URI in `XQueryException.Module`, not the
+  principal stylesheet's.
+
+**D6 — streamability checker audit**
+- All 12 `throw new XsltException(...)` sites in `StreamabilityChecker.cs`
+  already pass `location`. No sweep needed.
+
+**D7 + D8 — pulled in via new XQuery 1.3.6 dependency**
+- `SourceLocation.Length` computed property and documented coordinate
+  conventions; `XQueryException.RelatedLocations` for dual-location
+  errors. See PhoenixmlDb.XQuery 1.3.6 release notes.
+
+**Phase E — LSP-readiness verification suite**
+- New `SourceLocationLspReadinessTests` (7 tests) covers each
+  (XSLT element shape × error site) combination across D1-D5,
+  asserting structural properties (expected source line, column past
+  element start, correct module URI). Catches regressions in either
+  the typed `Line`/`Column` properties or the formatted-message path.
+
+XSLT suite 397/397. Bumps `PhoenixmlDb.XQuery` dep to 1.3.6.
+
 ## 1.3.9 (2026-05-12)
 
 ### Source-location audit: 122 runtime-error sites now carry `(module, line, col)`
