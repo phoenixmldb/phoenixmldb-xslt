@@ -4034,47 +4034,19 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     /// </remarks>
     internal SourceLocation? CurrentInstructionLocation => _currentInstructionLocation;
 
-    /// <summary>
-    /// Pushes <paramref name="location"/> as the current instruction location for the
-    /// scope of the returned value; disposing it restores the prior location. A null
-    /// push is a no-op so callers don't need to null-check before pushing.
-    /// </summary>
-    internal LocationScope PushInstructionLocation(SourceLocation? location)
+    private readonly Stack<SourceLocation?> _locationStack = new();
+
+    /// <inheritdoc/>
+    public override void PushInstructionLocation(SourceLocation location)
     {
-        if (location is null) return new LocationScope(this, null, false);
-        var prior = _currentInstructionLocation;
+        _locationStack.Push(_currentInstructionLocation);
         _currentInstructionLocation = location;
-        return new LocationScope(this, prior, true);
     }
 
-    /// <summary>
-    /// Disposable scope returned by <see cref="PushInstructionLocation"/>. Restores the
-    /// prior location on <see cref="Dispose"/>. Regular struct (not <c>ref struct</c>)
-    /// so it can live in async-iterator state machines.
-    /// </summary>
-#pragma warning disable CA1815 // override Equals — equality on a use-once disposable scope is meaningless
-    internal struct LocationScope : IDisposable
-#pragma warning restore CA1815
+    /// <inheritdoc/>
+    public override void PopInstructionLocation()
     {
-        private readonly DefaultXsltExecutionContext _ctx;
-        private readonly SourceLocation? _prior;
-        private readonly bool _pushed;
-        private bool _disposed;
-
-        internal LocationScope(DefaultXsltExecutionContext ctx, SourceLocation? prior, bool pushed)
-        {
-            _ctx = ctx;
-            _prior = prior;
-            _pushed = pushed;
-            _disposed = false;
-        }
-
-        public void Dispose()
-        {
-            if (_disposed || !_pushed) return;
-            _ctx._currentInstructionLocation = _prior;
-            _disposed = true;
-        }
+        _currentInstructionLocation = _locationStack.Count > 0 ? _locationStack.Pop() : null;
     }
 
     /// <summary>
@@ -4201,7 +4173,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     {
         _ct.ThrowIfCancellationRequested();
         if (_maxOutputSize > 0 && _output.Length > _maxOutputSize)
-            throw new XsltException(
+            throw Error(
                 $"XTRE0000: Output size limit exceeded ({_output.Length:N0} characters > {_maxOutputSize:N0} limit). " +
                 "The transformation may contain an infinite loop or produce excessively large output.");
     }
@@ -5129,12 +5101,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         // XTDE0640: Detect circular references — if this global is currently being evaluated,
         // accessing it means we have a circular dependency (e.g., param → key → param).
         if (_globalsBeingEvaluated.Contains(name))
-            throw new XsltException($"XTDE0640: Circular reference detected while evaluating global variable/parameter ${name.LocalName}");
+            throw Error($"XTDE0640: Circular reference detected while evaluating global variable/parameter ${name.LocalName}");
         // Also check circularity via prefix fallback matching
         foreach (var beingEvaluated in _globalsBeingEvaluated)
         {
             if (VariableNameMatches(beingEvaluated, name))
-                throw new XsltException($"XTDE0640: Circular reference detected while evaluating global variable/parameter ${name.LocalName}");
+                throw Error($"XTDE0640: Circular reference detected while evaluating global variable/parameter ${name.LocalName}");
         }
 
         // Fallback: XPath parser creates QNames with NamespaceId.None for prefixed/EQName names
@@ -5146,7 +5118,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 return result;
         }
 
-        throw new XsltException($"XPST0008: Variable ${name.LocalName} not defined");
+        throw Error($"XPST0008: Variable ${name.LocalName} not defined");
     }
 
     /// <summary>
@@ -5509,7 +5481,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                             next = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext(), next);
                         }
                         if (next != null && TemplateIndex.EffectivePriority(next) == TemplateIndex.EffectivePriority(template))
-                            throw new XsltException($"XTDE0540: Multiple template rules match the node in a mode with on-multiple-match='fail'");
+                            throw Error($"XTDE0540: Multiple template rules match the node in a mode with on-multiple-match='fail'");
                     }
                 }
 
@@ -5567,7 +5539,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                             }
                             else if (param.Required)
                             {
-                                throw new XsltException($"Required parameter ${param.Name.LocalName} not supplied");
+                                throw Error($"Required parameter ${param.Name.LocalName} not supplied");
                             }
                             else if (param.Select != null)
                             {
@@ -5603,7 +5575,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                                 // the parameter is effectively required — raise XTDE0700.
                                 if (param.As != null && param.As.Occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore
                                     && IsStrictAtomicType(param.As.ItemType))
-                                    throw new XsltException($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
+                                    throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
                                 else if (param.As != null && param.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
                                     SetVariable(param.Name, null);
                                 else
@@ -5774,7 +5746,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     {
         // XTTE3100: typed="yes" mode disallows untyped nodes in built-in templates
         if (node is XdmElement or XdmDocument && IsTypedMode(mode))
-            throw new XsltException("XTTE3100: Built-in template rule invoked for an untyped node in a mode with typed='yes'");
+            throw Error("XTTE3100: Built-in template rule invoked for an untyped node in a mode with typed='yes'");
 
         var behavior = GetOnNoMatchBehavior(mode);
 
@@ -6136,7 +6108,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     // No select, no content, no caller value: default is empty sequence.
                     if (param.As != null && param.As.Occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore
                         && IsStrictAtomicType(param.As.ItemType))
-                        throw new XsltException($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
+                        throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
                     else if (param.As != null && param.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
                         SetVariable(param.Name, null);
                     else
@@ -6614,11 +6586,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 template = currentTemplate.OriginalTemplate;
             }
             if (template == null)
-                throw new XsltException("XTDE3058: xsl:original invoked but no overridden template is available");
+                throw Error("XTDE3058: xsl:original invoked but no overridden template is available");
         }
         else if (!_stylesheet.NamedTemplates.TryGetValue(name, out template))
         {
-            throw new XsltException($"Named template '{name.LocalName}' not found");
+            throw Error($"Named template '{name.LocalName}' not found");
         }
 
         // Pre-evaluate ALL with-param values in the CALLING context before pushing scope.
@@ -6698,7 +6670,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 else if (param.Required)
                 {
-                    throw new XsltException($"Required parameter ${param.Name.LocalName} not supplied");
+                    throw Error($"Required parameter ${param.Name.LocalName} not supplied");
                 }
                 else if (param.Select != null)
                 {
@@ -6728,7 +6700,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     // No select, no content, no with-param: default is empty sequence.
                     if (param.As != null && param.As.Occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore
                         && IsStrictAtomicType(param.As.ItemType))
-                        throw new XsltException($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
+                        throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
                     else if (param.As != null && param.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
                         SetVariable(param.Name, null);
                     else
@@ -6745,9 +6717,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     var matchingParam = template.Parameters.FirstOrDefault(p => p.Name.Equals(wp.Name));
                     if (matchingParam == null)
-                        throw new XsltException($"XTSE0680: Parameter '{wp.Name.LocalName}' is not declared in the called template '{name.LocalName}'");
+                        throw Error($"XTSE0680: Parameter '{wp.Name.LocalName}' is not declared in the called template '{name.LocalName}'");
                     if (matchingParam.Tunnel)
-                        throw new XsltException($"XTSE0680: Non-tunnel parameter '{wp.Name.LocalName}' in xsl:call-template does not match tunnel parameter in template '{name.LocalName}'");
+                        throw Error($"XTSE0680: Non-tunnel parameter '{wp.Name.LocalName}' in xsl:call-template does not match tunnel parameter in template '{name.LocalName}'");
                 }
             }
 
@@ -6847,11 +6819,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         CheckResourceLimits();
         // XTDE0560: apply-imports requires a current template rule
         if (_currentTemplate == null)
-            throw new XsltException("XTDE0560: xsl:apply-imports can only be used when there is a current template rule");
+            throw Error("XTDE0560: xsl:apply-imports can only be used when there is a current template rule");
         var node = ContextItem;
         // XTDE0560: apply-imports requires a context item (fails when context-item use="absent")
         if (node == null || ReferenceEquals(node, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
-            throw new XsltException("XTDE0560: xsl:apply-imports requires a context item, but the context item is absent");
+            throw Error("XTDE0560: xsl:apply-imports requires a context item, but the context item is absent");
 
         // apply-imports searches only templates from imported stylesheets
         // (lower precedence than the module containing the current template).
@@ -6947,12 +6919,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         CheckResourceLimits();
         // XTDE0560: next-match requires a current template rule
         if (_currentTemplate == null)
-            throw new XsltException("XTDE0560: xsl:next-match can only be used when there is a current template rule");
+            throw Error("XTDE0560: xsl:next-match can only be used when there is a current template rule");
         var node = ContextItem;
         // XTDE0560: next-match requires a context item (fails when context-item use="absent")
         if (node == null || ReferenceEquals(node, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
         {
-            throw new XsltException("XTDE0560: xsl:next-match requires a context item, but the context item is absent");
+            throw Error("XTDE0560: xsl:next-match requires a context item, but the context item is absent");
         }
 
         var nextTemplate = _templateIndex.FindMatchingTemplate(node, _currentMode, CreateMatchContext(), _currentTemplate);
@@ -7385,9 +7357,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         if (key == null || (key is object[] keyArr && keyArr.Length == 0)
                             || (key is IEnumerable<object?> keySeq && !keySeq.Any()))
-                            throw new XsltException("XTTE1100: The group-adjacent expression must return a single atomic value; it returned an empty sequence");
+                            throw Error("XTTE1100: The group-adjacent expression must return a single atomic value; it returned an empty sequence");
                         if (key is object[] multiArr && multiArr.Length > 1)
-                            throw new XsltException("XTTE1100: The group-adjacent expression must return a single atomic value; it returned a sequence of " + multiArr.Length + " items");
+                            throw Error("XTTE1100: The group-adjacent expression must return a single atomic value; it returned a sequence of " + multiArr.Length + " items");
                     }
                     var keyStr = GroupingKeyString(key);
                     if (groupList.Count == 0 || adjacentComparer.Compare(keyStr, currentKeyStr!) != 0)
@@ -7774,7 +7746,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 // XTDE3530: When rollback-output="no" and output has been committed,
                 // recovery is not possible — the output state cannot be rolled back.
-                throw new XsltException("XTDE3530: Recovery from a dynamic error is not possible because rollback-output='no' and output has already been written");
+                throw Error("XTDE3530: Recovery from a dynamic error is not possible because rollback-output='no' and output has already been written");
             }
 
             var errorCode = ex is XQuery.Execution.XQueryRuntimeException xqEx ? xqEx.ErrorCode
@@ -8401,7 +8373,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0820: Reject empty or invalid element names
         if (string.IsNullOrEmpty(name))
-            throw new XsltException("XTDE0820: The effective value of the 'name' attribute of xsl:element is a zero-length string");
+            throw Error("XTDE0820: The effective value of the 'name' attribute of xsl:element is a zero-length string");
         try
         {
             // Verify the computed name is a valid QName (prefix:local or just local)
@@ -8418,7 +8390,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
         catch (System.Xml.XmlException)
         {
-            throw new XsltException($"XTDE0820: The effective value of the 'name' attribute of xsl:element ('{name}') is not a valid QName");
+            throw Error($"XTDE0820: The effective value of the 'name' attribute of xsl:element ('{name}') is not a valid QName");
         }
 
         string? nsUri = null;
@@ -8457,7 +8429,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 else
                 {
                     // XTDE0830: Prefixed name with no namespace attribute and undeclared prefix
-                    throw new XsltException($"XTDE0830: The prefix '{prefix}' in the element name '{name}' is not declared in any in-scope namespace declaration");
+                    throw Error($"XTDE0830: The prefix '{prefix}' in the element name '{name}' is not declared in any in-scope namespace declaration");
                 }
             }
             else
@@ -8473,7 +8445,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0835: Element namespace must not be the xmlns namespace
         if (nsUri == "http://www.w3.org/2000/xmlns/")
-            throw new XsltException("XTDE0835: The namespace URI 'http://www.w3.org/2000/xmlns/' is not allowed for xsl:element");
+            throw Error("XTDE0835: The namespace URI 'http://www.w3.org/2000/xmlns/' is not allowed for xsl:element");
 
         // Build namespace bindings for this element
         var elemNsBindings = new Dictionary<string, string>();
@@ -8684,10 +8656,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0850: Validate attribute name is a valid QName
         if (string.IsNullOrEmpty(name))
-            throw new XsltException("XTDE0850: The effective value of the 'name' attribute of xsl:attribute is a zero-length string");
+            throw Error("XTDE0850: The effective value of the 'name' attribute of xsl:attribute is a zero-length string");
         // XTDE0855: The name "xmlns" without a namespace attribute is not allowed
         if (name == "xmlns" && instruction.Namespace == null)
-            throw new XsltException("XTDE0855: The attribute name 'xmlns' is not allowed on xsl:attribute without a namespace attribute");
+            throw Error("XTDE0855: The attribute name 'xmlns' is not allowed on xsl:attribute without a namespace attribute");
         try
         {
             var colonIdx = name.IndexOf(':', StringComparison.Ordinal);
@@ -8703,7 +8675,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         }
         catch (System.Xml.XmlException)
         {
-            throw new XsltException($"XTDE0850: The effective value of the 'name' attribute of xsl:attribute ('{name}') is not a valid QName");
+            throw Error($"XTDE0850: The effective value of the 'name' attribute of xsl:attribute ('{name}') is not a valid QName");
         }
 
         // XTDE0860: Prefixed name with no namespace attribute — prefix must be declared
@@ -8716,7 +8688,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 // The xml prefix is always implicitly bound to http://www.w3.org/XML/1998/namespace
                 string? prefixNsUri = null;
                 if (prefix != "xml" && !instruction.InScopeNamespaces.TryGetValue(prefix, out prefixNsUri))
-                    throw new XsltException($"XTDE0860: The prefix '{prefix}' in the attribute name '{name}' is not declared in any in-scope namespace declaration");
+                    throw Error($"XTDE0860: The prefix '{prefix}' in the attribute name '{name}' is not declared in any in-scope namespace declaration");
                 // Emit namespace declaration for the prefix if not already in scope
                 // Skip when accumulating XDM nodes — the attribute node stores namespace info natively
                 if (_sequenceAccumulator == null && prefix != "xml" && prefixNsUri != null && !IsNamespaceInScope(prefix, prefixNsUri))
@@ -8740,7 +8712,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             explicitNsUri = await EvaluateAvtAsync(instruction.Namespace).ConfigureAwait(false);
             // XTDE0865: Attribute namespace must not be the xmlns namespace
             if (explicitNsUri == "http://www.w3.org/2000/xmlns/")
-                throw new XsltException("XTDE0865: The namespace URI 'http://www.w3.org/2000/xmlns/' is not allowed for xsl:attribute");
+                throw Error("XTDE0865: The namespace URI 'http://www.w3.org/2000/xmlns/' is not allowed for xsl:attribute");
             // When namespace="" is explicit, the attribute is in no namespace and any prefix is discarded
             if (explicitNsUri != null && explicitNsUri.Length == 0)
             {
@@ -8927,7 +8899,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (_primaryOutputClaimedByResultDocument && _resultDocumentRedirectDepth == 0
             && _temporaryOutputDepth == 0 && _textContentDepth == 0
             && !string.IsNullOrWhiteSpace(value))
-            throw new XsltException("XTDE1490: Cannot write to the primary output destination — it has already been written by an explicit xsl:result-document");
+            throw Error("XTDE1490: Cannot write to the primary output destination — it has already been written by an explicit xsl:result-document");
 
         // In text output mode (method="text" result-document), protect text content from
         // StripXmlMarkup by sentinel-escaping < > & chars. Only actual XML markup (generated
@@ -9162,7 +9134,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     nonNullItems.Add(item);
             }
             if (nonNullItems.Count > 1)
-                throw new XsltException("XTTE3180: xsl:copy with select attribute must select at most one item");
+                throw Error("XTTE3180: xsl:copy with select attribute must select at most one item");
             foreach (var item in nonNullItems)
             {
                 PushContextItem(item, 1, 1);
@@ -9180,7 +9152,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         var node = ContextItem;
         if (node == null || ReferenceEquals(node, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
-            throw new XsltException("XTTE0945: xsl:copy has no context item");
+            throw Error("XTTE0945: xsl:copy has no context item");
         await CopySingleItemAsync(node, instruction).ConfigureAwait(false);
     }
 
@@ -9621,7 +9593,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 foreach (var accName in _stylesheet.Accumulators.Keys)
                 {
                     if (!IsAccumulatorApplicableForCopy(accName))
-                        throw new XsltException($"XTDE3362: Accumulator '{accName.LocalName}' is not applicable to the source tree (not listed in use-accumulators for the initial mode)");
+                        throw Error($"XTDE3362: Accumulator '{accName.LocalName}' is not applicable to the source tree (not listed in use-accumulators for the initial mode)");
                 }
             }
         }
@@ -9901,7 +9873,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             // so cycles through LRE elements (which create new call frames) are caught
             if (!_activeAttributeSets.Add(attrSetName))
             {
-                throw new XsltException($"XTDE0640: Circular reference in attribute set '{attrSetName}'");
+                throw Error($"XTDE0640: Circular reference in attribute set '{attrSetName}'");
             }
 
             try
@@ -10385,9 +10357,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     {
         // XTDE0450: Maps and function items cannot be serialized as element/document content
         if (result is IDictionary<object, object?>)
-            throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
+            throw Error("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
         if (result is PhoenixmlDb.XQuery.Ast.XQueryFunction)
-            throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a function item");
+            throw Error("XTDE0450: An item in a sequence used as the content of an element or document node is a function item");
         // XSLT 3.0 §5.7.2: Arrays in content sequences are flattened — members extracted recursively
         if (result is List<object?> arrayList)
         {
@@ -10658,10 +10630,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         { System.Xml.XmlConvert.VerifyNCName(name); }
         catch (System.Xml.XmlException)
         {
-            throw new XsltException($"XTDE0890: The effective value of the 'name' attribute of xsl:processing-instruction ('{name}') is not a valid NCName");
+            throw Error($"XTDE0890: The effective value of the 'name' attribute of xsl:processing-instruction ('{name}') is not a valid NCName");
         }
         if (string.Equals(name, "xml", StringComparison.OrdinalIgnoreCase))
-            throw new XsltException($"XTDE0890: The name '{name}' is not allowed as a processing instruction target");
+            throw Error($"XTDE0890: The name '{name}' is not allowed as a processing instruction target");
 
         string value;
         if (instruction.Select != null)
@@ -10734,14 +10706,14 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0920: Name must be a valid NCName (and not "xmlns")
         if (string.Equals(prefix, "xmlns", StringComparison.Ordinal))
-            throw new XsltException("XTDE0920: The name 'xmlns' is not allowed as the prefix for xsl:namespace");
+            throw Error("XTDE0920: The name 'xmlns' is not allowed as the prefix for xsl:namespace");
         if (!string.IsNullOrEmpty(prefix))
         {
             try
             { System.Xml.XmlConvert.VerifyNCName(prefix); }
             catch (System.Xml.XmlException)
             {
-                throw new XsltException($"XTDE0920: The effective value of the 'name' attribute of xsl:namespace ('{prefix}') is not a valid NCName");
+                throw Error($"XTDE0920: The effective value of the 'name' attribute of xsl:namespace ('{prefix}') is not a valid NCName");
             }
         }
 
@@ -10770,19 +10742,19 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0930: The namespace URI must not be empty when a prefix is specified
         if (!string.IsNullOrEmpty(prefix) && string.IsNullOrEmpty(uri))
-            throw new XsltException($"XTDE0930: The string value of the xsl:namespace node is a zero-length string, but a prefix ('{prefix}') was specified");
+            throw Error($"XTDE0930: The string value of the xsl:namespace node is a zero-length string, but a prefix ('{prefix}') was specified");
 
         // XTDE0925: xml namespace rules
         if (string.Equals(prefix, "xml", StringComparison.Ordinal)
             && !string.Equals(uri, "http://www.w3.org/XML/1998/namespace", StringComparison.Ordinal))
-            throw new XsltException("XTDE0925: Prefix 'xml' must be bound to 'http://www.w3.org/XML/1998/namespace'");
+            throw Error("XTDE0925: Prefix 'xml' must be bound to 'http://www.w3.org/XML/1998/namespace'");
         if (!string.Equals(prefix, "xml", StringComparison.Ordinal)
             && string.Equals(uri, "http://www.w3.org/XML/1998/namespace", StringComparison.Ordinal))
-            throw new XsltException("XTDE0925: Only the prefix 'xml' can be bound to 'http://www.w3.org/XML/1998/namespace'");
+            throw Error("XTDE0925: Only the prefix 'xml' can be bound to 'http://www.w3.org/XML/1998/namespace'");
 
         // XTDE0905: The namespace URI must be valid and not the xmlns namespace
         if (string.Equals(uri, "http://www.w3.org/2000/xmlns/", StringComparison.Ordinal))
-            throw new XsltException("XTDE0905: The namespace URI 'http://www.w3.org/2000/xmlns/' is not allowed");
+            throw Error("XTDE0905: The namespace URI 'http://www.w3.org/2000/xmlns/' is not allowed");
         // XTDE0905: Namespace URI must be a valid xs:anyURI. Use Uri.TryCreate(Absolute)
         // which is permissive (accepts IRI chars like | and "). For relative URIs, accept
         // anything that doesn't have multiple # delimiters (only one fragment allowed).
@@ -10792,17 +10764,17 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             // Check for multiple # characters (invalid fragment syntax)
             var firstHash = uri.IndexOf('#', StringComparison.Ordinal);
             if (firstHash >= 0 && uri.AsSpan(firstHash + 1).Contains('#'))
-                throw new XsltException($"XTDE0905: The namespace URI '{uri}' is not a valid URI");
+                throw Error($"XTDE0905: The namespace URI '{uri}' is not a valid URI");
         }
 
         // XTDE0420: Cannot add namespace to a document node
         if (_documentNodeDepth > 0 && !_attributeCollecting)
-            throw new XsltException("XTDE0420: Cannot add a namespace node to a document node");
+            throw Error("XTDE0420: Cannot add a namespace node to a document node");
 
         // XTDE0440: Cannot define a default namespace when the element is in no namespace
         if (string.IsNullOrEmpty(prefix) && !string.IsNullOrEmpty(uri)
             && _outputElementHasNsStack.Count > 0 && !_outputElementHasNsStack.Peek())
-            throw new XsltException($"XTDE0440: Cannot define a default namespace ('{uri}') when the element being constructed is in no namespace");
+            throw Error($"XTDE0440: Cannot define a default namespace ('{uri}') when the element being constructed is in no namespace");
 
         // XTDE0430: Duplicate namespace nodes with same prefix but different URIs
         var nsPrefix = prefix ?? "";
@@ -10810,7 +10782,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         {
             var currentBindings = _xslNamespaceBindings.Peek();
             if (currentBindings.TryGetValue(nsPrefix, out var existingUri) && existingUri != uri)
-                throw new XsltException($"XTDE0430: Two namespace nodes with the same prefix '{nsPrefix}' have different namespace URIs ('{existingUri}' and '{uri}')");
+                throw Error($"XTDE0430: Two namespace nodes with the same prefix '{nsPrefix}' have different namespace URIs ('{existingUri}' and '{uri}')");
             currentBindings[nsPrefix] = uri;
         }
 
@@ -11186,7 +11158,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     {
         // XTDE1480: Cannot use result-document in temporary output state (e.g., inside a variable)
         if (_temporaryOutputDepth > 0)
-            throw new XsltException("XTDE1480: It is a dynamic error to evaluate xsl:result-document in temporary output state (e.g., within a variable or parameter)");
+            throw Error("XTDE1480: It is a dynamic error to evaluate xsl:result-document in temporary output state (e.g., within a variable or parameter)");
 
         // XTDE1460: Validate format attribute and find matching output declaration
         XsltOutput? matchedOutput = null;
@@ -11202,7 +11174,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     matchedOutput = _stylesheet.Outputs.FirstOrDefault(o =>
                         o.Name != null && o.Name.Value.Namespace == resolved.Namespace && o.Name.Value.LocalName == resolved.LocalName);
                     if (matchedOutput == null)
-                        throw new XsltException($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') does not match any xsl:output declaration");
+                        throw Error($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') does not match any xsl:output declaration");
                 }
                 else
                 {
@@ -11219,7 +11191,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                         else
                         {
-                            throw new XsltException($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') is not a valid EQName");
+                            throw Error($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') is not a valid EQName");
                         }
                     }
                     else if (formatName.Contains(':', StringComparison.Ordinal))
@@ -11235,7 +11207,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                         else
                         {
-                            throw new XsltException($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') references undeclared prefix '{prefix}'");
+                            throw Error($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') references undeclared prefix '{prefix}'");
                         }
                     }
                     else
@@ -11246,7 +11218,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                         catch (System.Xml.XmlException)
                         {
-                            throw new XsltException($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') is not a valid EQName");
+                            throw Error($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') is not a valid EQName");
                         }
                     }
 
@@ -11274,7 +11246,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                     }
                     if (matchedOutput == null)
-                        throw new XsltException($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') does not match any xsl:output declaration");
+                        throw Error($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') does not match any xsl:output declaration");
                 }
             }
         }
@@ -11327,7 +11299,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         throw new XsltException($"XTDE1500: Cannot write to URI '{effectiveHref}' — it was read during this transformation", instruction.Location);
                 }
             }
-            catch (UriFormatException ex) { throw new XsltException($"XTDE1400: Invalid URI in xsl:result-document href: {ex.Message}"); }
+            catch (UriFormatException ex) { throw Error($"XTDE1400: Invalid URI in xsl:result-document href: {ex.Message}"); }
         }
 
         // Evaluate omit-xml-declaration from xsl:result-document (AVT)
@@ -11571,7 +11543,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 }
 
                 if (MaxResultDocuments > 0 && _secondaryResultDocuments.Count >= MaxResultDocuments)
-                    throw new XsltException($"XTDE1490: Maximum number of secondary result documents ({MaxResultDocuments}) exceeded. " +
+                    throw Error($"XTDE1490: Maximum number of secondary result documents ({MaxResultDocuments}) exceeded. " +
                         "Set MaxResultDocuments on XsltTransformer to increase the limit.");
                 ValidateResultDocumentContent(instruction, secondaryContent);
                 _secondaryResultDocuments[effectiveHref] = secondaryContent;
@@ -12055,7 +12027,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         // XTDE3400: Detect cyclic dependency — accumulator-after called for an accumulator
         // whose end-phase rule is currently being evaluated at this node
         if (isAfter && _evaluatingAccEndPhase?.Contains((accumulatorName, nodeId)) == true)
-            throw new XsltException($"XTDE3400: Cyclic dependency detected in accumulator '{accumulatorName}' at the current node");
+            throw Error($"XTDE3400: Cyclic dependency detected in accumulator '{accumulatorName}' at the current node");
 
         return nodeValues.TryGetValue(nodeId, out var value) ? value : null;
     }
@@ -12289,7 +12261,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 foreach (var accName in _stylesheet.Accumulators.Keys)
                 {
                     if (!IsAccumulatorApplicableForCopy(accName))
-                        throw new XsltException($"XTDE3362: Accumulator '{accName.LocalName}' is not applicable to the source tree (not listed in use-accumulators for the initial mode)");
+                        throw Error($"XTDE3362: Accumulator '{accName.LocalName}' is not applicable to the source tree (not listed in use-accumulators for the initial mode)");
                 }
             }
         }
@@ -12383,12 +12355,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 // No base URI — try as absolute or throw
                 resolvedUri = new Uri(hrefForResolve, UriKind.RelativeOrAbsolute);
                 if (!resolvedUri.IsAbsoluteUri)
-                    throw new XsltException($"FODC0005: Cannot resolve relative URI '{href}' — no base URI available");
+                    throw Error($"FODC0005: Cannot resolve relative URI '{href}' — no base URI available");
             }
         }
         catch (UriFormatException ex)
         {
-            throw new XsltException($"FODC0005: Invalid URI '{href}': {ex.Message}");
+            throw Error($"FODC0005: Invalid URI '{href}': {ex.Message}");
         }
 
         // If streamable="yes", use XmlReader-based streaming instead of full tree loading
@@ -12483,11 +12455,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
             catch (System.IO.FileNotFoundException)
             {
-                throw new XsltException($"FODC0002: Document not found: '{resolvedUri}'");
+                throw Error($"FODC0002: Document not found: '{resolvedUri}'");
             }
             catch (System.IO.IOException ex)
             {
-                throw new XsltException($"FODC0002: Error loading document '{resolvedUri}': {ex.Message}");
+                throw Error($"FODC0002: Error loading document '{resolvedUri}': {ex.Message}");
             }
 
             return; // Skip the full-tree path
@@ -12514,16 +12486,16 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else
             {
-                throw new XsltException($"FODC0002: Cannot resolve document URI '{resolvedUri}' — only file:// URIs are supported");
+                throw Error($"FODC0002: Cannot resolve document URI '{resolvedUri}' — only file:// URIs are supported");
             }
         }
         catch (System.IO.FileNotFoundException)
         {
-            throw new XsltException($"FODC0002: Document not found: '{resolvedUri}'");
+            throw Error($"FODC0002: Document not found: '{resolvedUri}'");
         }
         catch (System.IO.IOException ex)
         {
-            throw new XsltException($"FODC0002: Error loading document '{resolvedUri}': {ex.Message}");
+            throw Error($"FODC0002: Error loading document '{resolvedUri}': {ex.Message}");
         }
 
         // Parse and convert to XDM
@@ -12669,7 +12641,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             if (terminateStr is "yes" or "true" or "1")
                 shouldTerminate = true;
             else if (terminateStr is not ("no" or "false" or "0"))
-                throw new XsltException($"XTDE0030: The effective value of the terminate attribute ('{terminateStr}') is not a valid xs:boolean value (yes|no|true|false|1|0)");
+                throw Error($"XTDE0030: The effective value of the terminate attribute ('{terminateStr}') is not a valid xs:boolean value (yes|no|true|false|1|0)");
         }
 
         var msgLine = instruction.Location?.Line ?? 0;
@@ -12681,7 +12653,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (shouldTerminate)
         {
-            throw new XsltException($"Transformation terminated: {message}");
+            throw Error($"Transformation terminated: {message}");
         }
     }
 
@@ -12705,7 +12677,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 message = "Assertion failed";
             }
 
-            throw new XsltException($"{errorCode}: {message}");
+            throw Error($"{errorCode}: {message}");
         }
     }
 
@@ -13007,9 +12979,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 if (occurrence == Occurrence.ExactlyOne || occurrence == Occurrence.ZeroOrOne)
                 {
                     if (occurrence == Occurrence.ExactlyOne && sequenceItems.Count != 1)
-                        throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
                     if (occurrence == Occurrence.ZeroOrOne && sequenceItems.Count > 1)
-                        throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
                     // Unwrap single item so variable value is not an array
                     value = sequenceItems.Count == 1 ? sequenceItems[0] : null;
                 }
@@ -13165,7 +13137,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var isEmpty = value == null || (value is object?[] emptyArr && emptyArr.All(i => i == null))
                     || (value is string s && s.Length == 0);
                 if (!isEmpty)
-                    throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type empty-sequence()");
+                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type empty-sequence()");
                 goto doneValidation; // skip remaining type checks
             }
 
@@ -13181,9 +13153,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
                 // Cardinality check
                 if (occurrence == Occurrence.ExactlyOne && flatItems.Length != 1)
-                    throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
                 if (occurrence == Occurrence.ZeroOrOne && flatItems.Length > 1)
-                    throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
 
                 // Item type check (if not generic node()/item())
                 if (targetType is not ItemType.Node and not ItemType.Item)
@@ -13208,7 +13180,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                             _ => false
                         };
                         if (!matches)
-                            throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                            throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
                     }
                 }
             }
@@ -13230,7 +13202,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     _ => false
                 };
                 if (!matches)
-                    throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
             }
 
             if (!isNodeType)
@@ -13283,7 +13255,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                     else
                     {
-                        throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
                     }
                 }
 
@@ -13301,7 +13273,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     item != null && !CanCoerceToItemType(item, targetType));
                 if (hasTypeMismatch)
                 {
-                    throw new XsltException($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
                 }
 
                 // Coerce values to target type: atomize XDM nodes, apply numeric promotion, etc.
@@ -13349,7 +13321,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (instruction.Required)
         {
-            throw new XsltException($"Required parameter ${instruction.Name.LocalName} not supplied");
+            throw Error($"Required parameter ${instruction.Name.LocalName} not supplied");
         }
 
         object? value;
@@ -14247,7 +14219,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             if (ex is PhoenixmlDb.XQuery.Execution.XQueryRuntimeException { ErrorCode: "XPST0008" }
                 && _globalsBeingEvaluated.Count > 0)
             {
-                throw new XsltException($"XTDE0640: Circular reference detected while evaluating global variable/parameter (predicate references a global that is currently being initialized)");
+                throw Error($"XTDE0640: Circular reference detected while evaluating global variable/parameter (predicate references a global that is currently being initialized)");
             }
             return false;
         }
@@ -15380,12 +15352,12 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (selectResult is IList<object?> seq)
         {
             if (seq.Count > 1)
-                throw new XsltException("XPTY0004: The select expression of xsl:analyze-string must return a single xs:string value, got a sequence of " + seq.Count + " items");
+                throw Error("XPTY0004: The select expression of xsl:analyze-string must return a single xs:string value, got a sequence of " + seq.Count + " items");
             selectResult = seq.Count == 1 ? seq[0] : null;
         }
         if (selectResult is int or long or double or float or decimal or bool
             or DateTimeOffset or DateOnly or TimeOnly or TimeSpan or byte or short)
-            throw new XsltException("XPTY0004: The select expression of xsl:analyze-string must return a single xs:string value, got " + selectResult!.GetType().Name);
+            throw Error("XPTY0004: The select expression of xsl:analyze-string must return a single xs:string value, got " + selectResult!.GetType().Name);
 
         var input = StringValueOf(selectResult);
         var pattern = await EvaluateAvtAsync(instruction.Regex).ConfigureAwait(false);
@@ -15397,7 +15369,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         foreach (var ch in flags)
         {
             if (ch is not ('s' or 'm' or 'i' or 'x' or 'q'))
-                throw new XsltException($"XTDE1145: Invalid flag '{ch}' in xsl:analyze-string flags attribute. Valid flags are: s, m, i, x, q");
+                throw Error($"XTDE1145: Invalid flag '{ch}' in xsl:analyze-string flags attribute. Valid flags are: s, m, i, x, q");
         }
 
         var regexOptions = System.Text.RegularExpressions.RegexOptions.None;
@@ -15708,11 +15680,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         {
             var order = mk.Order != null ? await EvaluateAvtAsync(mk.Order).ConfigureAwait(false) : "ascending";
             if (order != "ascending" && order != "descending")
-                throw new XsltException($"XTDE2210: Invalid value '{order}' for order attribute on xsl:merge-key (must be 'ascending' or 'descending')");
+                throw Error($"XTDE2210: Invalid value '{order}' for order attribute on xsl:merge-key (must be 'ascending' or 'descending')");
             keyOrders.Add(order);
             var dataType = mk.DataType != null ? await EvaluateAvtAsync(mk.DataType).ConfigureAwait(false) : "text";
             if (dataType != "text" && dataType != "number")
-                throw new XsltException($"XTDE2210: Invalid value '{dataType}' for data-type attribute on xsl:merge-key (must be 'text' or 'number')");
+                throw Error($"XTDE2210: Invalid value '{dataType}' for data-type attribute on xsl:merge-key (must be 'text' or 'number')");
             keyDataTypes.Add(dataType);
         }
 
@@ -15725,10 +15697,10 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 var mk2 = sourceKeys2[ki];
                 var order2 = mk2.Order != null ? await EvaluateAvtAsync(mk2.Order).ConfigureAwait(false) : "ascending";
                 if (order2 != keyOrders[ki])
-                    throw new XsltException($"XTDE2210: Merge key order differs across sources: '{keyOrders[ki]}' vs '{order2}'");
+                    throw Error($"XTDE2210: Merge key order differs across sources: '{keyOrders[ki]}' vs '{order2}'");
                 var dt2 = mk2.DataType != null ? await EvaluateAvtAsync(mk2.DataType).ConfigureAwait(false) : "text";
                 if (dt2 != keyDataTypes[ki])
-                    throw new XsltException($"XTDE2210: Merge key data-type differs across sources: '{keyDataTypes[ki]}' vs '{dt2}'");
+                    throw Error($"XTDE2210: Merge key data-type differs across sources: '{keyDataTypes[ki]}' vs '{dt2}'");
             }
         }
 
@@ -15758,14 +15730,14 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                                 if (keyVal is object?[] keyArr)
                                 {
                                     if (keyArr.Length > 1)
-                                        throw new XsltException("XTTE1020: The value of a merge key must be a single atomic value");
+                                        throw Error("XTTE1020: The value of a merge key must be a single atomic value");
                                     keyVal = keyArr.Length == 1 ? keyArr[0] : null;
                                 }
                                 else if (keyVal is IEnumerable<object> keySeq && keyVal is not string && keyVal is not Xdm.Nodes.XdmNode)
                                 {
                                     var keyList = keySeq.ToList();
                                     if (keyList.Count > 1)
-                                        throw new XsltException("XTTE1020: The value of a merge key must be a single atomic value");
+                                        throw Error("XTTE1020: The value of a merge key must be a single atomic value");
                                     keyVal = keyList.Count == 1 ? keyList[0] : null;
                                 }
                             }
@@ -15800,7 +15772,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     var cmp = CompareMergeKeys(keysForSource[ki - 1], keysForSource[ki], keyOrders, keyDataTypes);
                     if (cmp > 0)
-                        throw new XsltException($"XTDE2220: Merge source '{currentSource.Name ?? ("source " + si)}' is not correctly sorted at item {ki + 1}");
+                        throw Error($"XTDE2220: Merge source '{currentSource.Name ?? ("source " + si)}' is not correctly sorted at item {ki + 1}");
                 }
             }
 
@@ -15916,11 +15888,11 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         {
             var order = mk.Order != null ? await EvaluateAvtAsync(mk.Order).ConfigureAwait(false) : "ascending";
             if (order != "ascending" && order != "descending")
-                throw new XsltException($"XTDE2210: Invalid value '{order}' for order attribute on xsl:merge-key (must be 'ascending' or 'descending')");
+                throw Error($"XTDE2210: Invalid value '{order}' for order attribute on xsl:merge-key (must be 'ascending' or 'descending')");
             orders.Add(order);
             var dataType = mk.DataType != null ? await EvaluateAvtAsync(mk.DataType).ConfigureAwait(false) : "text";
             if (dataType != "text" && dataType != "number")
-                throw new XsltException($"XTDE2210: Invalid value '{dataType}' for data-type attribute on xsl:merge-key (must be 'text' or 'number')");
+                throw Error($"XTDE2210: Invalid value '{dataType}' for data-type attribute on xsl:merge-key (must be 'text' or 'number')");
             dataTypes.Add(dataType);
         }
 
@@ -16089,7 +16061,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 foreach (var kvp in mapItem)
                 {
                     if (map.ContainsKey(kvp.Key))
-                        throw new XsltException($"XTDE3365: Duplicate key '{kvp.Key}' in xsl:map");
+                        throw Error($"XTDE3365: Duplicate key '{kvp.Key}' in xsl:map");
                     map[kvp.Key] = kvp.Value;
                 }
             }
@@ -16102,14 +16074,14 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 // Same, but already wrapped as a text-node item.
             }
             else if (item != null)
-                throw new XsltException($"XTTE3375: The content of xsl:map must consist entirely of xsl:map-entry instructions; found non-map content (got {item.GetType().Name}: {item})");
+                throw Error($"XTTE3375: The content of xsl:map must consist entirely of xsl:map-entry instructions; found non-map content (got {item.GetType().Name}: {item})");
         }
 
         // Add the completed map to the output
         if (_sequenceAccumulator != null)
             AppendToSeqAccumulator(map);
         else if (_outputNsScopes.Count > 0)
-            throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
+            throw Error("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
         else
         {
             // Top-level map: serialize as JSON text per XSLT 3.0 §20 adaptive/JSON output
@@ -16121,7 +16093,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     {
         // Evaluate the key (xsl:map-entry key is an XPath expression, not an AVT)
         var keyVal = await EvaluateAsync(instruction.Key).ConfigureAwait(false);
-        object key = keyVal ?? throw new XsltException("XTDE3365: Map entry key must not be empty");
+        object key = keyVal ?? throw Error("XTDE3365: Map entry key must not be empty");
 
         // Evaluate the value
         object? value = null;
@@ -16169,7 +16141,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             var map = _mapBuildStack.Peek();
             // XTDE3365: duplicate key
             if (map.ContainsKey(key))
-                throw new XsltException($"XTDE3365: Duplicate key '{key}' in xsl:map");
+                throw Error($"XTDE3365: Duplicate key '{key}' in xsl:map");
             map[key] = value;
         }
         else
@@ -16207,7 +16179,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     public override async ValueTask CreateArrayMemberAsync(XsltArrayMember instruction)
     {
         if (_arrayBuildStack.Count == 0)
-            throw new XsltException("XTDE0450: xsl:array-member must appear within xsl:array");
+            throw Error("XTDE0450: xsl:array-member must appear within xsl:array");
 
         var array = _arrayBuildStack.Peek();
 
@@ -16282,7 +16254,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
 
             if (map.ContainsKey(name))
-                throw new XsltException($"XTDE3365: Duplicate key '{name}' in xsl:record");
+                throw Error($"XTDE3365: Duplicate key '{name}' in xsl:record");
             map[name] = value;
         }
 
@@ -16290,7 +16262,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (_sequenceAccumulator != null)
             AppendToSeqAccumulator(map);
         else if (_outputNsScopes.Count > 0)
-            throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
+            throw Error("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
     }
 
     public override async ValueTask WherePopulatedAsync(XsltWherePopulated instruction)
@@ -17504,7 +17476,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         || instruction.ExcludeResultPrefixes.Contains("#all")
                         || _stylesheet.ExcludeResultPrefixes.Contains(elemPrefix);
                     if (!prefixWasExcluded)
-                        throw new XsltException($"XTDE0430: Namespace node with prefix '{elemPrefix}' and URI '{xslUri}' conflicts with the element's own namespace binding '{elemPrefix}' → '{elemNsUri}'");
+                        throw Error($"XTDE0430: Namespace node with prefix '{elemPrefix}' and URI '{xslUri}' conflicts with the element's own namespace binding '{elemPrefix}' → '{elemNsUri}'");
 
                     var newPfx = GenerateUniquePrefix(elemPrefix);
                     elemName = $"{newPfx}:{elemLocalName}";
@@ -17708,7 +17680,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     && !string.Equals(collations[i], "http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive", StringComparison.Ordinal)
                     && !string.Equals(collations[i], "http://www.w3.org/2013/collation/UCA", StringComparison.Ordinal)
                     && !collations[i]!.StartsWith("http://www.w3.org/2013/collation/UCA?", StringComparison.Ordinal))
-                    throw new XsltException($"XTDE1035: Unknown collation URI '{collations[i]}'");
+                    throw Error($"XTDE1035: Unknown collation URI '{collations[i]}'");
             }
         }
 
@@ -17748,7 +17720,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                         if (IsBackwardsCompatible)
                             raw = multiKey[0];
                         else
-                            throw new XsltException($"XTTE1020: Sort key value is a sequence of {multiKey.Length} items; a single value is required");
+                            throw Error($"XTTE1020: Sort key value is a sequence of {multiKey.Length} items; a single value is required");
                     }
                     keys[i] = raw;
                 }
@@ -18264,15 +18236,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Cardinality check
         if (occurrence == Occurrence.Zero && nonNullCount != 0)
-            throw new XsltException($"XTTE0505: Template{locInfo} return value does not match declared type empty-sequence(): expected zero items, got {nonNullCount}");
+            throw Error($"XTTE0505: Template{locInfo} return value does not match declared type empty-sequence(): expected zero items, got {nonNullCount}");
         if (occurrence == Occurrence.Zero)
             return; // empty-sequence() — no item type check needed
         if (occurrence == Occurrence.ExactlyOne && nonNullCount != 1)
-            throw new XsltException($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected exactly one item, got {nonNullCount}");
+            throw Error($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected exactly one item, got {nonNullCount}");
         if (occurrence == Occurrence.ZeroOrOne && nonNullCount > 1)
-            throw new XsltException($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected zero or one item, got {nonNullCount}");
+            throw Error($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected zero or one item, got {nonNullCount}");
         if (occurrence == Occurrence.OneOrMore && nonNullCount == 0)
-            throw new XsltException($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected one or more items, got 0");
+            throw Error($"XTTE0505: Template{locInfo} return value does not match declared type {template.As.ItemType}: expected one or more items, got 0");
 
         // Item type check — for atomic types, attempt coercion from string (function conversion rules)
         if (isAtomicTarget)
@@ -18319,7 +18291,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 else if (IsStrictlyIncompatible(sv, targetType))
                 {
                     // Only raise error for clearly invalid conversions (e.g., "hello" → xs:double)
-                    throw new XsltException($"XTTE0505: Template{locInfo} return value '{sv}' cannot be cast to declared type {template.As.ItemType}");
+                    throw Error($"XTTE0505: Template{locInfo} return value '{sv}' cannot be cast to declared type {template.As.ItemType}");
                 }
                 // else: conversion failed but might be due to unsupported features (e.g., negative years);
                 // pass the string value through to maintain previous behavior
@@ -18352,7 +18324,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     var valuePreview = item is string vs ? $"\"{(vs.Length > 80 ? vs[..80] + "…" : vs)}\"" : item.ToString() ?? "(null)";
                     if (valuePreview.Length > 100) valuePreview = valuePreview[..100] + "…";
-                    throw new XsltException($"XTTE0505: Template{locInfo} return value item of type {item.GetType().Name} does not match declared type {template.As.ItemType}; value={valuePreview}");
+                    throw Error($"XTTE0505: Template{locInfo} return value item of type {item.GetType().Name} does not match declared type {template.As.ItemType}; value={valuePreview}");
                 }
             }
         }
@@ -18882,7 +18854,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             if (value == null)
             {
                 if (targetType.Occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore)
-                    throw new XsltException($"{errorCode}: {contextName} requires a node but the empty sequence was supplied");
+                    throw Error($"{errorCode}: {contextName} requires a node but the empty sequence was supplied");
                 return;
             }
             // Check single value
@@ -18910,7 +18882,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (value == null)
         {
             if (targetType.Occurrence == Occurrence.ExactlyOne || targetType.Occurrence == Occurrence.OneOrMore)
-                throw new XsltException($"{errorCode}: {contextName} requires a value of type {targetType.ItemType} but the empty sequence was supplied");
+                throw Error($"{errorCode}: {contextName} requires a value of type {targetType.ItemType} but the empty sequence was supplied");
             return;
         }
 
@@ -18918,19 +18890,19 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if (value is object?[] arr)
         {
             if (arr.Length == 0 && (targetType.Occurrence == Occurrence.ExactlyOne || targetType.Occurrence == Occurrence.OneOrMore))
-                throw new XsltException($"{errorCode}: {contextName} requires a value of type {targetType.ItemType} but the empty sequence was supplied");
+                throw Error($"{errorCode}: {contextName} requires a value of type {targetType.ItemType} but the empty sequence was supplied");
 
             foreach (var item in arr)
             {
                 if (item != null && !IsTypeCompatible(item, targetType.ItemType))
-                    throw new XsltException($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {item.GetType().Name}");
+                    throw Error($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {item.GetType().Name}");
             }
             return;
         }
 
         // Single item — check type with promotion rules
         if (!IsTypeCompatible(value, targetType.ItemType))
-            throw new XsltException($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {value.GetType().Name}");
+            throw Error($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {value.GetType().Name}");
     }
 
     /// <summary>
@@ -18952,7 +18924,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             return;
 
         if (value is not XdmNode node)
-            throw new XsltException($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {value.GetType().Name}");
+            throw Error($"{errorCode}: {contextName} requires type {targetType.ItemType} but got {value.GetType().Name}");
 
         var matches = (targetType.ItemType, node) switch
         {
@@ -18990,7 +18962,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             var declared = targetType.ElementName != null
                 ? $"{targetType.ItemType}({(targetType.ElementNamespace != null ? "Q{" + targetType.ElementNamespace + "}" : "")}{targetType.ElementName})"
                 : targetType.ItemType.ToString();
-            throw new XsltException($"{errorCode}: {contextName} requires type {declared} but got {what}");
+            throw Error($"{errorCode}: {contextName} requires type {declared} but got {what}");
         }
     }
 
@@ -19006,7 +18978,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         switch (template.ContextItemUse)
         {
             case ContextItemUse.Required when isAbsent:
-                throw new XsltException("XTTE3090: The template requires a context item, but none has been supplied");
+                throw Error("XTTE3090: The template requires a context item, but none has been supplied");
             case ContextItemUse.Absent:
                 // Context item will be made absent within the template body (handled at call site)
                 return false;
@@ -19037,7 +19009,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     // the template executes as if the context item were absent.
                     return true;
                 }
-                throw new XsltException("XTTE0590: The context item does not match the required type declared by xsl:context-item");
+                throw Error("XTTE0590: The context item does not match the required type declared by xsl:context-item");
             }
         }
         return false;
@@ -19175,9 +19147,9 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0450: Maps and function items cannot be added to element/document content
         if (value is IDictionary<object, object?>)
-            throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
+            throw Error("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
         if (value is PhoenixmlDb.XQuery.Ast.XQueryFunction)
-            throw new XsltException("XTDE0450: An item in a sequence used as the content of an element or document node is a function item");
+            throw Error("XTDE0450: An item in a sequence used as the content of an element or document node is a function item");
         // XSLT 3.0 §5.7.2: Arrays are flattened — serialize each member
         if (value is List<object?> arrayList)
         {
@@ -19607,7 +19579,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
         _recursionDepth++;
         if (_recursionDepth > MaxRecursionDepth)
-            throw new XsltException($"Maximum recursion depth ({MaxRecursionDepth}) exceeded in function '{func.Name.LocalName}'");
+            throw Error($"Maximum recursion depth ({MaxRecursionDepth}) exceeded in function '{func.Name.LocalName}'");
 
         _currentXsltFunctionStack.Push(func);
         PushScope();

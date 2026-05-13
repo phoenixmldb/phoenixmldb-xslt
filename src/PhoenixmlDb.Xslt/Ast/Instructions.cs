@@ -71,6 +71,7 @@ public sealed class XsltSequenceConstructor : XsltInstruction
             // Fast path: no conditional instructions
             foreach (var instruction in Instructions)
             {
+                if (instruction.Location != null) context.PushInstructionLocation(instruction.Location);
                 if (instruction.Version != null) context.PushVersion(instruction.Version);
                 if (instruction.DefaultCollation != null) context.PushCollation(instruction.DefaultCollation);
                 if (instruction.StaticBaseUri != null) context.PushStaticBaseUri(instruction.StaticBaseUri);
@@ -83,6 +84,7 @@ public sealed class XsltSequenceConstructor : XsltInstruction
                     if (instruction.StaticBaseUri != null) context.PopStaticBaseUri();
                     if (instruction.DefaultCollation != null) context.PopCollation();
                     if (instruction.Version != null) context.PopVersion();
+                    if (instruction.Location != null) context.PopInstructionLocation();
                 }
             }
             return;
@@ -97,11 +99,12 @@ public sealed class XsltSequenceConstructor : XsltInstruction
             {
                 if (instruction is not XsltOnEmpty)
                 {
+                    if (instruction.Location != null) context.PushInstructionLocation(instruction.Location);
                     if (instruction.Version != null) context.PushVersion(instruction.Version);
                     if (instruction.DefaultCollation != null) context.PushCollation(instruction.DefaultCollation);
                     if (instruction.StaticBaseUri != null) context.PushStaticBaseUri(instruction.StaticBaseUri);
                     try { await instruction.ExecuteAsync(context).ConfigureAwait(false); }
-                    finally { if (instruction.StaticBaseUri != null) context.PopStaticBaseUri(); if (instruction.DefaultCollation != null) context.PopCollation(); if (instruction.Version != null) context.PopVersion(); }
+                    finally { if (instruction.StaticBaseUri != null) context.PopStaticBaseUri(); if (instruction.DefaultCollation != null) context.PopCollation(); if (instruction.Version != null) context.PopVersion(); if (instruction.Location != null) context.PopInstructionLocation(); }
                 }
             }
             bool wasPopulated = context.EndContentTracking();
@@ -117,7 +120,7 @@ public sealed class XsltSequenceConstructor : XsltInstruction
                         if (instruction.DefaultCollation != null) context.PushCollation(instruction.DefaultCollation);
                         if (instruction.StaticBaseUri != null) context.PushStaticBaseUri(instruction.StaticBaseUri);
                         try { await instruction.ExecuteAsync(context).ConfigureAwait(false); }
-                        finally { if (instruction.StaticBaseUri != null) context.PopStaticBaseUri(); if (instruction.DefaultCollation != null) context.PopCollation(); if (instruction.Version != null) context.PopVersion(); }
+                        finally { if (instruction.StaticBaseUri != null) context.PopStaticBaseUri(); if (instruction.DefaultCollation != null) context.PopCollation(); if (instruction.Version != null) context.PopVersion(); if (instruction.Location != null) context.PopInstructionLocation(); }
                     }
                 }
             }
@@ -1283,6 +1286,16 @@ public abstract class XsltExecutionContext
 
     /// <summary>Pop the most recent static base URI override.</summary>
     public virtual void PopStaticBaseUri() { }
+
+    /// <summary>
+    /// Push the source location of the currently-executing instruction so any error
+    /// raised during its evaluation auto-attaches the right (module, line, column).
+    /// Default no-op for contexts that don't track location.
+    /// </summary>
+    public virtual void PushInstructionLocation(SourceLocation location) { }
+
+    /// <summary>Pop the most recent instruction location.</summary>
+    public virtual void PopInstructionLocation() { }
 
     /// <summary>Gets the current default collation URI, or null for codepoint.</summary>
     public virtual string? DefaultCollation => null;

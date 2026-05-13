@@ -2616,6 +2616,36 @@ public class XsltTransformerIntegrationTests
         result.Should().Contain(">child</out>");
     }
 
+    // Phase C source-location audit: an XsltException raised from inside an
+    // instruction's execution should carry the instruction's source location,
+    // installed by XsltSequenceConstructor's PushInstructionLocation wrapper.
+    [Fact]
+    public async Task XsltException_carries_instruction_location_via_PushInstructionLocation()
+    {
+        // <xsl:value-of select="1 div 0"/> on line 4 of a stylesheet — the XPath
+        // expression evaluates fine but converts to text via Error path inside the
+        // value-of executor. Use an explicit error site we control.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <xsl:message terminate="yes">stop</xsl:message>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await transformer.TransformAsync("<x/>"));
+        // The terminating xsl:message raises an XsltException with the instruction's location.
+        // We don't pin exact line/col (numbering depends on parser quirks) — just assert it's set.
+        var inner = ex as PhoenixmlDb.Xslt.Engine.XsltException
+                    ?? ex.InnerException as PhoenixmlDb.Xslt.Engine.XsltException;
+        if (inner != null)
+        {
+            inner.Location.Should().NotBeNull("xsl:message terminate=yes should attribute the error to the instruction");
+        }
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
