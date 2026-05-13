@@ -2646,6 +2646,52 @@ public class XsltTransformerIntegrationTests
         }
     }
 
+    // Phase D1 source-location audit: errors raised from XPath embedded in an XSLT
+    // attribute value should carry an absolute (file-line, file-col) pinning the
+    // squiggle to the offending token, not to the start of the XSLT element. This
+    // is what LSP needs to highlight the right span.
+    [Fact]
+    public async Task XPath_runtime_error_in_select_attribute_pins_to_attribute_value_position()
+    {
+        // fn:index-of with empty $search raises XPTY0004 from SequenceFunctions —
+        // a Phase B–covered site that flows through FunctionCallOperator's PushLocation.
+        // The select attribute starts well past column 30 of line 3, so the formatted
+        // message should report a column ≥ 30 once the D1 shift fires.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:template match="/">
+                <xsl:variable name="v" select="index-of((1,2,3), ())"/>
+                <out><xsl:value-of select="$v"/></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await transformer.TransformAsync("<x/>"));
+        // Walk to find the underlying XQueryException carrying the divide-by-zero.
+        Exception? cur = ex;
+        PhoenixmlDb.XQuery.Functions.XQueryException? xq = null;
+        while (cur != null)
+        {
+            if (cur is PhoenixmlDb.XQuery.Functions.XQueryException q) { xq = q; break; }
+            cur = cur.InnerException;
+        }
+        // The select attribute starts at column ~50 of line 3 (after the indent +
+        // `<xsl:variable name="v" as="xs:integer" select="`). The formatted message
+        // is either `[module:line:col]` or `[line N, col M]` depending on whether a
+        // Module URI was set. Either way, demand the column is ≥ 30 — strong
+        // evidence the file-absolute shift fired (a non-shifted xpath-relative
+        // column would be ≤ 7 for "1 idiv 0").
+        var match = System.Text.RegularExpressions.Regex.Match(
+            ex.ToString(), @"\[(?:.+:)?\d+:(\d+)\]|\[line\s+\d+,\s*col\s+(\d+)\]");
+        match.Success.Should().BeTrue($"formatted message should contain a (line, col) pair. Got: {ex.Message}");
+        var colStr = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
+        var col = int.Parse(colStr, System.Globalization.CultureInfo.InvariantCulture);
+        col.Should().BeGreaterThan(30,
+            $"absolute column should land inside the select attribute value, not at the start of the element. Got col={col}, message={ex.Message}");
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);

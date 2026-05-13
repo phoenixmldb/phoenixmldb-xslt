@@ -3709,7 +3709,7 @@ public sealed class StylesheetParser
             throw new XsltException("XTSE0620: An xsl:variable element must not have both a select attribute and non-empty content", location);
 
         _nsContext = prevContext;
-        var selectExpr = selectAttr != null ? ParseExpr(selectAttr.Value) : null;
+        var selectExpr = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null;
 
         // XPST0008: A global variable must not reference itself in its own select expression
         // (XSLT 3.0 §9.9.2: the scope of a global variable excludes its own definition)
@@ -3794,7 +3794,7 @@ public sealed class StylesheetParser
         {
             Name = name,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = ParseContentBody(element, selectAttr),
             Required = isRequired,
             Tunnel = ParseYesNoBoolean(tunnelAttr, "tunnel", location),
@@ -4035,7 +4035,7 @@ public sealed class StylesheetParser
         {
             Name = name,
             Match = match,
-            Use = useAttr != null ? ParseExpr(useAttr.Value) : null,
+            Use = useAttr != null ? ParseExpr(useAttr.Value, useAttr) : null,
             UseContent = useAttr == null && element.HasElements
                 ? ParseSequenceConstructor(element)
                 : null,
@@ -4423,7 +4423,7 @@ public sealed class StylesheetParser
             {
                 Match = match,
                 Phase = phase == "end" ? AccumulatorPhase.End : AccumulatorPhase.Start,
-                Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+                Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
                 Content = selectAttr == null && child.HasElements
                     ? ParseSequenceConstructor(child)
                     : null
@@ -4927,7 +4927,7 @@ public sealed class StylesheetParser
         return new XsltApplyTemplates
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Mode = mode,
             UseCurrentMode = useCurrentMode,
             Sorts = sorts,
@@ -5020,7 +5020,7 @@ public sealed class StylesheetParser
 
     private XsltForEach ParseForEach(XElement element, SourceLocation? location)
     {
-        var select = ParseExpr(element.Attribute("select")!.Value);
+        var select = ParseExpr(element.Attribute("select")!.Value, element.Attribute("select"));
 
         var sorts = new List<XsltSort>();
         var bodyInstructions = new List<XsltInstruction>();
@@ -5081,7 +5081,7 @@ public sealed class StylesheetParser
 
     private XsltForEachGroup ParseForEachGroup(XElement element, SourceLocation? location)
     {
-        var select = ParseExpr(element.Attribute("select")!.Value);
+        var select = ParseExpr(element.Attribute("select")!.Value, element.Attribute("select"));
         var groupByAttr = element.Attribute("group-by");
         var groupAdjacentAttr = element.Attribute("group-adjacent");
         var groupStartingWithAttr = element.Attribute("group-starting-with");
@@ -5153,8 +5153,8 @@ public sealed class StylesheetParser
         {
             Location = location,
             Select = select,
-            GroupBy = groupByAttr != null ? ParseExpr(groupByAttr.Value) : null,
-            GroupAdjacent = groupAdjacentAttr != null ? ParseExpr(groupAdjacentAttr.Value) : null,
+            GroupBy = groupByAttr != null ? ParseExpr(groupByAttr.Value, groupByAttr) : null,
+            GroupAdjacent = groupAdjacentAttr != null ? ParseExpr(groupAdjacentAttr.Value, groupAdjacentAttr) : null,
             GroupStartingWith = groupStartingWithAttr != null ? ParsePattern(groupStartingWithAttr.Value, element) : null,
             GroupEndingWith = groupEndingWithAttr != null ? ParsePattern(groupEndingWithAttr.Value, element) : null,
             Collation = collationAttr != null ? ParseAvt(collationAttr.Value, element) : null,
@@ -5166,7 +5166,7 @@ public sealed class StylesheetParser
 
     private XsltIterate ParseIterate(XElement element, SourceLocation? location)
     {
-        var select = ParseExpr(element.Attribute("select")!.Value);
+        var select = ParseExpr(element.Attribute("select")!.Value, element.Attribute("select"));
 
         var parameters = new List<XsltParam>();
         XsltSequenceConstructor? onCompletion = null;
@@ -5193,7 +5193,7 @@ public sealed class StylesheetParser
                         var seqInstr = new XsltSequence
                         {
                             Location = GetSourceLocation(child),
-                            Select = ParseExpr(selectAttr.Value)
+                            Select = ParseExpr(selectAttr.Value, selectAttr)
                         };
                         onCompletion = new XsltSequenceConstructor { Instructions = new List<XsltInstruction> { seqInstr } };
                     }
@@ -5280,7 +5280,7 @@ public sealed class StylesheetParser
     {
         var testAttr = element.Attribute("test")
             ?? throw new XsltException("XTSE0010: xsl:if requires a 'test' attribute", location);
-        var test = ParseExpr(testAttr.Value);
+        var test = ParseExpr(testAttr.Value, testAttr);
 
         return new XsltIf
         {
@@ -5317,7 +5317,7 @@ public sealed class StylesheetParser
                 var savedNsCtx = _nsContext;
                 _nsContext = child;
                 XQueryExpression test;
-                try { test = ParseExpr(testAttr.Value); }
+                try { test = ParseExpr(testAttr.Value, testAttr); }
                 finally { _nsContext = savedNsCtx; }
                 whens.Add(new XsltWhen
                 {
@@ -5415,7 +5415,7 @@ public sealed class StylesheetParser
                     ?? throw new XsltException("XTSE0010: xsl:when requires a 'test' attribute", location);
                 whens.Add(new Ast.XsltWhen
                 {
-                    Test = ParseExpr(testAttr.Value),
+                    Test = ParseExpr(testAttr.Value, testAttr),
                     Body = ParseSequenceConstructor(child)
                 });
             }
@@ -5436,7 +5436,7 @@ public sealed class StylesheetParser
         return new Ast.XsltSwitch
         {
             Location = location,
-            Select = ParseExpr(selectAttr.Value),
+            Select = ParseExpr(selectAttr.Value, selectAttr),
             When = whens,
             Otherwise = otherwise
         };
@@ -5453,7 +5453,7 @@ public sealed class StylesheetParser
         return new Ast.XsltForEachMember
         {
             Location = location,
-            Select = ParseExpr(selectAttr.Value),
+            Select = ParseExpr(selectAttr.Value, selectAttr),
             Body = ParseSequenceConstructor(element)
         };
     }
@@ -5523,7 +5523,7 @@ public sealed class StylesheetParser
                     catches.Add(new XsltCatch
                     {
                         Errors = errors,
-                        SelectExpression = catchSelectAttr != null ? ParseExpr(catchSelectAttr.Value) : null,
+                        SelectExpression = catchSelectAttr != null ? ParseExpr(catchSelectAttr.Value, catchSelectAttr) : null,
                         Body = catchSelectAttr == null ? ParseSequenceConstructor(child) : null
                     });
                     catchElements.Add(child);
@@ -5575,7 +5575,7 @@ public sealed class StylesheetParser
         return new XsltTry
         {
             Location = location,
-            SelectExpression = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            SelectExpression = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Body = selectAttr == null ? (bodyContent ?? new XsltSequenceConstructor { Instructions = [] }) : null,
             Catches = catches,
             Rollback = rollbackAttr?.Value != "no"
@@ -5839,7 +5839,7 @@ public sealed class StylesheetParser
             Location = location,
             Name = name,
             Namespace = namespaceAttr != null ? ParseAvt(namespaceAttr.Value, element) : null,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.Nodes().Any()
                 ? ParseSequenceConstructor(element)
                 : null,
@@ -5895,7 +5895,7 @@ public sealed class StylesheetParser
         return new XsltValueOf
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = hasContent ? ParseSequenceConstructor(element) : null,
             // null means "use default" — in ValueOfAsync, default is " " for select, "" for content,
             // and in 1.0 backwards-compatible mode, first-value semantics are used instead.
@@ -5948,7 +5948,7 @@ public sealed class StylesheetParser
         return new XsltCopy
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             CopyNamespaces = ParseYesNo(copyNamespacesAttr),
             InheritNamespaces = ParseYesNo(inheritNamespacesAttr),
             UseAttributeSets = useAttributeSets,
@@ -5979,7 +5979,7 @@ public sealed class StylesheetParser
         if (selectAttr == null)
             throw new XsltException("XTSE0010: xsl:copy-of requires a select attribute", location);
 
-        var select = ParseExpr(selectAttr.Value);
+        var select = ParseExpr(selectAttr.Value, selectAttr);
         var copyNamespacesAttr = element.Attribute("copy-namespaces");
         var copyAccumulatorsAttr = element.Attribute("copy-accumulators");
         var validationAttr = element.Attribute("validation");
@@ -6037,7 +6037,7 @@ public sealed class StylesheetParser
         return new XsltSequence
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = hasContentForParsing
                 ? ParseSequenceConstructor(element)
                 : null
@@ -6054,7 +6054,7 @@ public sealed class StylesheetParser
         return new XsltComment
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.Nodes().Any()
                 ? ParseSequenceConstructor(element)
                 : null
@@ -6073,7 +6073,7 @@ public sealed class StylesheetParser
         {
             Location = location,
             Name = name,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.Nodes().Any()
                 ? ParseSequenceConstructor(element)
                 : null
@@ -6092,7 +6092,7 @@ public sealed class StylesheetParser
         {
             Location = location,
             Name = name,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.Nodes().Any()
                 ? ParseSequenceConstructor(element)
                 : null
@@ -6356,7 +6356,7 @@ public sealed class StylesheetParser
         return new XsltMessage
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
             Terminate = terminateAttr?.Value is "yes" or "true" or "1",
             TerminateAvt = isTerminateAvt ? ParseAvt(terminateAttr!.Value, element) : null,
@@ -6366,7 +6366,7 @@ public sealed class StylesheetParser
 
     private XsltAssert ParseAssert(XElement element, SourceLocation? location)
     {
-        var test = ParseExpr(element.Attribute("test")!.Value);
+        var test = ParseExpr(element.Attribute("test")!.Value, element.Attribute("test"));
         var selectAttr = element.Attribute("select");
         var errorCodeAttr = element.Attribute("error-code");
 
@@ -6374,7 +6374,7 @@ public sealed class StylesheetParser
         {
             Location = location,
             Test = test,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.HasElements
                 ? ParseSequenceConstructor(element)
                 : null,
@@ -6397,7 +6397,7 @@ public sealed class StylesheetParser
             Location = location,
             Name = name,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = ParseContentBody(element, selectAttr),
             BaseUri = ResolveEffectiveBaseUri(element)
         };
@@ -6416,7 +6416,7 @@ public sealed class StylesheetParser
             Location = location,
             Name = name,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = ParseContentBody(element, selectAttr),
             Required = requiredAttr?.Value == "yes",
             Tunnel = ParseYesNoBoolean(tunnelAttr, "tunnel", location)
@@ -6467,8 +6467,8 @@ public sealed class StylesheetParser
         return new XsltNumber
         {
             Location = location,
-            Value = valueAttr != null ? ParseExpr(valueAttr.Value) : null,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Value = valueAttr != null ? ParseExpr(valueAttr.Value, valueAttr) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Level = levelAttr?.Value switch
             {
                 "single" => NumberLevel.Single,
@@ -6535,7 +6535,7 @@ public sealed class StylesheetParser
         return new XsltPerformSort
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Sorts = sorts,
             Content = contentInstructions.Count > 0
                 ? new XsltSequenceConstructor { Instructions = contentInstructions }
@@ -6545,7 +6545,7 @@ public sealed class StylesheetParser
 
     private XsltAnalyzeString ParseAnalyzeString(XElement element, SourceLocation? location)
     {
-        var select = ParseExpr(element.Attribute("select")!.Value);
+        var select = ParseExpr(element.Attribute("select")!.Value, element.Attribute("select"));
         var regex = ParseAvt(element.Attribute("regex")!.Value, element);
         var flagsAttr = element.Attribute("flags");
 
@@ -6624,7 +6624,7 @@ public sealed class StylesheetParser
         return new XsltBreak
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.HasElements
                 ? ParseSequenceConstructor(element)
                 : null
@@ -6842,9 +6842,9 @@ public sealed class StylesheetParser
         {
             Name = nameAttr?.Value,
             Location = location,
-            Select = ParseExpr(selectAttr.Value),
-            ForEachItem = forEachItemAttr != null ? ParseExpr(forEachItemAttr.Value) : null,
-            ForEachSource = forEachSourceAttr != null ? ParseExpr(forEachSourceAttr.Value) : null,
+            Select = ParseExpr(selectAttr.Value, selectAttr),
+            ForEachItem = forEachItemAttr != null ? ParseExpr(forEachItemAttr.Value, forEachItemAttr) : null,
+            ForEachSource = forEachSourceAttr != null ? ParseExpr(forEachSourceAttr.Value, forEachSourceAttr) : null,
             SortBeforeMerge = sortBeforeMergeAttr != null
                 ? ParseYesNo(sortBeforeMergeAttr) ?? throw new XsltException($"XTSE0020: Invalid value '{sortBeforeMergeAttr.Value}' for sort-before-merge attribute (must be yes/no/true/false/0/1)", location)
                 : false,
@@ -6875,7 +6875,7 @@ public sealed class StylesheetParser
         XsltSequenceConstructor? content = null;
         if (selectAttr != null)
         {
-            select = ParseExpr(selectAttr.Value);
+            select = ParseExpr(selectAttr.Value, selectAttr);
         }
         else if (element.HasElements || element.Nodes().Any(n => n is XText t && !string.IsNullOrWhiteSpace(t.Value)))
         {
@@ -6939,7 +6939,7 @@ public sealed class StylesheetParser
 
     private XsltMapEntry ParseMapEntry(XElement element, SourceLocation? location)
     {
-        var key = ParseExpr(element.Attribute("key")!.Value);
+        var key = ParseExpr(element.Attribute("key")!.Value, element.Attribute("key"));
         var selectAttr = element.Attribute("select");
 
         // XTSE3280: xsl:map-entry with select must not have content other than xsl:fallback
@@ -6959,7 +6959,7 @@ public sealed class StylesheetParser
         {
             Location = location,
             Key = key,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = ParseContentBody(element, selectAttr)
         };
     }
@@ -6980,7 +6980,7 @@ public sealed class StylesheetParser
         return new XsltArrayMember
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.HasElements
                 ? ParseSequenceConstructor(element)
                 : null
@@ -7305,7 +7305,7 @@ public sealed class StylesheetParser
         _nsContext = prevContext;
         return new XsltSort
         {
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = selectAttr == null && element.HasElements ? ParseSequenceConstructor(element) : null,
             Lang = langAttr != null ? ParseAvt(langAttr.Value, element) : null,
             Order = orderAttr != null ? ParseAvt(orderAttr.Value, element) : null,
@@ -7343,7 +7343,7 @@ public sealed class StylesheetParser
             {
                 Name = name,
                 As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
-                Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+                Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
                 Content = selectAttr == null && element.Nodes().Any()
                     ? ParseSequenceConstructor(element)
                     : null,
@@ -9216,15 +9216,172 @@ public sealed class StylesheetParser
     /// Parses an XPath expression using the current namespace context (_nsContext).
     /// This is the primary method for parsing expressions within XSLT instructions.
     /// </summary>
-    private XQueryExpression ParseExpr(string expression)
+    /// <remarks>
+    /// When <paramref name="sourceAttribute"/> is supplied, the parser shifts every
+    /// sub-expression's <see cref="SourceLocation"/> from being xpath-string-relative
+    /// (line/col within the inline XPath text) to being XSLT-file-absolute. This is
+    /// the Phase D1 source-location-audit fix: prior to this, an error inside
+    /// <c>select="foo[bad-syntax"</c> would report the column WITHIN the XPath
+    /// (e.g. 14), not the column in the actual stylesheet (e.g. 35) — useless for
+    /// LSP diagnostics that need to squiggle the offending token.
+    /// </remarks>
+    private XQueryExpression ParseExpr(string expression, System.Xml.Linq.XAttribute? sourceAttribute = null)
     {
         var expr = _expressionParser.Parse(expression);
         if (_nsContext != null)
         {
             ResolveExpressionNamespaces(expr, _nsContext);
-            AttachXsltSourceLocation(expr, _nsContext);
+            // When sourceAttribute is supplied, the more-precise shift below sets both
+            // Module and absolute file coordinates on every sub-expression; the legacy
+            // AttachXsltSourceLocation only stamps Module on the top-level expression
+            // and leaves child line/col xpath-relative.
+            if (sourceAttribute == null)
+                AttachXsltSourceLocation(expr, _nsContext);
         }
+        if (sourceAttribute != null)
+            ShiftExpressionLocationsToFileAbsolute(expr, sourceAttribute);
         return expr;
+    }
+
+    /// <summary>
+    /// Shifts every <see cref="SourceLocation"/> on the parsed expression tree from
+    /// XPath-string-relative coordinates to absolute coordinates within the source
+    /// XSLT file. The XPath text begins inside an attribute value; the value's start
+    /// position is computed from the attribute's <see cref="System.Xml.IXmlLineInfo"/>
+    /// plus the attribute name length and the <c>="</c> delimiter (3 chars).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Line offset (D5): XPaths can span multiple lines (rare but legal). Line N within
+    /// the XPath maps to file line <c>(attr-line + N - 1)</c>. Column on line 1 of
+    /// the XPath gets the value's start column added; subsequent lines start at
+    /// column 1 of the file (no offset), which matches XML attribute-value continuation.
+    /// </para>
+    /// <para>
+    /// Column conventions: ANTLR (used by the XQuery parser) reports columns 0-based;
+    /// <see cref="System.Xml.IXmlLineInfo"/> reports them 1-based. We treat the
+    /// <see cref="SourceLocation.Column"/> stored on parsed expressions as ANTLR's
+    /// 0-based form and add the 1-based attribute-value start column directly — the
+    /// off-by-one cancels out for line-1 columns since ANTLR's "first character" is 0
+    /// while the attribute value's "first character" is at 1-based column N.
+    /// </para>
+    /// </remarks>
+    private static void ShiftExpressionLocationsToFileAbsolute(
+        XQueryExpression expr, System.Xml.Linq.XAttribute attribute)
+    {
+        if (attribute is not System.Xml.IXmlLineInfo li || !li.HasLineInfo()) return;
+        var attrLine = li.LineNumber;
+        // Position of the first character of the attribute value:
+        //   attr-name + '="' = name.Length + 2 chars after the attribute name's start column.
+        // The attribute's reported LinePosition points at the attribute name; add the
+        // name length plus the '="' delimiter.
+        var attrName = attribute.Name.LocalName;
+        if (!string.IsNullOrEmpty(attribute.Name.NamespaceName)
+            && attribute.Parent?.GetPrefixOfNamespace(attribute.Name.Namespace) is { Length: > 0 } prefix)
+            attrName = prefix + ":" + attrName;
+        var valueStartColumn = li.LinePosition + attrName.Length + 2;
+
+        var moduleUri = attribute.Parent?.BaseUri;
+        WalkExpressions(expr, node =>
+        {
+            if (node.Location is not { } loc) return;
+            // Line: ANTLR is 1-based for line as well. XPath line 1 → attrLine.
+            var fileLine = attrLine + loc.Line - 1;
+            // Column: only line 1 of the XPath gets the value-start offset. For line N>1,
+            // the XPath continues at column 1 of the next file line (no offset).
+            var fileCol = loc.Line == 1 ? valueStartColumn + loc.Column : loc.Column;
+            node.Location = loc with { Line = fileLine, Column = fileCol, Module = string.IsNullOrEmpty(moduleUri) ? loc.Module : moduleUri };
+        });
+    }
+
+    /// <summary>
+    /// Walks an XQuery expression tree and applies <paramref name="visit"/> to every
+    /// node. Mirrors the structure of <see cref="ResolveExpressionNamespaces"/> /
+    /// <see cref="ContainsVariableReference"/> but factored as a generic post-order walk.
+    /// </summary>
+    private static void WalkExpressions(XQueryExpression expr, Action<XQueryExpression> visit)
+    {
+        visit(expr);
+        switch (expr)
+        {
+            case BinaryExpression be:
+                WalkExpressions(be.Left, visit);
+                WalkExpressions(be.Right, visit);
+                break;
+            case UnaryExpression ue:
+                WalkExpressions(ue.Operand, visit);
+                break;
+            case PathExpression pe:
+                if (pe.InitialExpression != null) WalkExpressions(pe.InitialExpression, visit);
+                foreach (var s in pe.Steps) WalkExpressions(s, visit);
+                break;
+            case StepExpression se:
+                foreach (var p in se.Predicates) WalkExpressions(p, visit);
+                break;
+            case FilterExpression fe:
+                WalkExpressions(fe.Primary, visit);
+                foreach (var p in fe.Predicates) WalkExpressions(p, visit);
+                break;
+            case IfExpression ie:
+                WalkExpressions(ie.Condition, visit);
+                WalkExpressions(ie.Then, visit);
+                if (ie.Else != null) WalkExpressions(ie.Else, visit);
+                break;
+            case FunctionCallExpression fc:
+                foreach (var a in fc.Arguments) WalkExpressions(a, visit);
+                break;
+            case SequenceExpression seq:
+                foreach (var i in seq.Items) WalkExpressions(i, visit);
+                break;
+            case InstanceOfExpression inst:
+                WalkExpressions(inst.Expression, visit);
+                break;
+            case CastExpression cast:
+                WalkExpressions(cast.Expression, visit);
+                break;
+            case CastableExpression castable:
+                WalkExpressions(castable.Expression, visit);
+                break;
+            case TreatExpression treat:
+                WalkExpressions(treat.Expression, visit);
+                break;
+            case SimpleMapExpression sme:
+                WalkExpressions(sme.Left, visit);
+                WalkExpressions(sme.Right, visit);
+                break;
+            case StringConcatExpression sce:
+                foreach (var o in sce.Operands) WalkExpressions(o, visit);
+                break;
+            case RangeExpression re:
+                WalkExpressions(re.Start, visit);
+                WalkExpressions(re.End, visit);
+                break;
+            case ArrowExpression ae:
+                WalkExpressions(ae.Expression, visit);
+                WalkExpressions(ae.FunctionCall, visit);
+                break;
+            case InlineFunctionExpression ife:
+                if (ife.Body != null) WalkExpressions(ife.Body, visit);
+                break;
+            case DynamicFunctionCallExpression dfc:
+                WalkExpressions(dfc.FunctionExpression, visit);
+                foreach (var a in dfc.Arguments) WalkExpressions(a, visit);
+                break;
+            case FlworExpression flwor:
+                foreach (var clause in flwor.Clauses)
+                {
+                    if (clause is ForClause forClause)
+                        foreach (var b in forClause.Bindings) WalkExpressions(b.Expression, visit);
+                    else if (clause is LetClause letClause)
+                        foreach (var b in letClause.Bindings) WalkExpressions(b.Expression, visit);
+                    else if (clause is WhereClause whereClause)
+                        WalkExpressions(whereClause.Condition, visit);
+                    else if (clause is OrderByClause orderBy)
+                        foreach (var s in orderBy.OrderSpecs) WalkExpressions(s.Expression, visit);
+                }
+                WalkExpressions(flwor.ReturnExpression, visit);
+                break;
+        }
     }
 
     /// <summary>
@@ -10022,7 +10179,7 @@ public sealed class StylesheetParser
         return new XsltOnEmpty
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null
         };
     }
@@ -10076,11 +10233,11 @@ public sealed class StylesheetParser
         return new XsltEvaluate
         {
             Location = location,
-            Xpath = ParseExpr(xpathAttr.Value),
-            ContextItem = contextItemAttr != null ? ParseExpr(contextItemAttr.Value) : null,
+            Xpath = ParseExpr(xpathAttr.Value, xpathAttr),
+            ContextItem = contextItemAttr != null ? ParseExpr(contextItemAttr.Value, contextItemAttr) : null,
             BaseUri = baseUriAttr != null ? ParseAvt(baseUriAttr.Value, element) : null,
-            NamespaceContext = nsContextAttr != null ? ParseExpr(nsContextAttr.Value) : null,
-            WithParamsExpr = withParamsAttr != null ? ParseExpr(withParamsAttr.Value) : null,
+            NamespaceContext = nsContextAttr != null ? ParseExpr(nsContextAttr.Value, nsContextAttr) : null,
+            WithParamsExpr = withParamsAttr != null ? ParseExpr(withParamsAttr.Value, withParamsAttr) : null,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
             EvaluateDefaultCollation = collationAttr?.Value,
             WithParams = withParams,
@@ -10096,7 +10253,7 @@ public sealed class StylesheetParser
         return new XsltOnNonEmpty
         {
             Location = location,
-            Select = selectAttr != null ? ParseExpr(selectAttr.Value) : null,
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
             Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null
         };
     }
