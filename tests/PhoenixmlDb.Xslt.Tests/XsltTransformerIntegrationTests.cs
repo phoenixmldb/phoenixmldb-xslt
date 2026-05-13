@@ -2692,6 +2692,40 @@ public class XsltTransformerIntegrationTests
             $"absolute column should land inside the select attribute value, not at the start of the element. Got col={col}, message={ex.Message}");
     }
 
+    // Phase D2 source-location audit: errors raised from XPath inside an AVT
+    // (Attribute Value Template) inner expression like `href="prefix-{bad-fn()}-suffix"`
+    // should pin to the position of the inner expression, not the start of the attribute.
+    [Fact]
+    public async Task XPath_runtime_error_in_AVT_inner_expression_pins_to_brace_position()
+    {
+        // The AVT lives in `select="…"` (D1 path) for simplicity; the inner expression
+        // is `index-of((1,2,3), ())` which raises XPTY0004 at runtime. Wrapped inside
+        // an xsl:value-of select that itself isn't an AVT — but the AVT case is in
+        // attributes like `href="x-{bad}"`. Use xsl:element name for that.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <xsl:element name="prefix-{string-length(index-of((1,2,3), ()))}-suffix"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await transformer.TransformAsync("<x/>"));
+        // The xsl:element starts on line 3 with indent. The `name=` attribute begins
+        // around column 18, the value at column 25, and the `{` is at offset 7 within
+        // the value → file column ~32. The inner expression starts at column 33.
+        // Demand col ≥ 33 — clear evidence the AVT-inner-expression shift fired.
+        var match = System.Text.RegularExpressions.Regex.Match(
+            ex.ToString(), @"\[(?:.+:)?\d+:(\d+)\]|\[line\s+\d+,\s*col\s+(\d+)\]");
+        match.Success.Should().BeTrue($"formatted message should contain a (line, col) pair. Got: {ex.Message}");
+        var colStr = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
+        var col = int.Parse(colStr, System.Globalization.CultureInfo.InvariantCulture);
+        col.Should().BeGreaterThan(33,
+            $"absolute column should land inside the AVT inner expression. Got col={col}, message={ex.Message}");
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
