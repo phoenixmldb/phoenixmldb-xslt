@@ -2809,6 +2809,63 @@ public class XsltTransformerIntegrationTests
         }
     }
 
+    // Martin Honnen report (2026-05-13): TransformToValueAsync returned null for
+    // map- and array-producing initial-template invocations even though the CLI
+    // command produced the correct JSON. Root cause: ReturnRawXdm was only honored
+    // by the InitialFunction path; the JSON-output collection in
+    // initial-template / apply-templates paths discarded the typed items after
+    // serializing them to JSON text.
+    [Fact]
+    public async Task TransformToValueAsync_returns_typed_map_from_initial_template_with_json_output()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xsl:output method="json" indent="no"/>
+              <xsl:template name="xsl:initial-template" as="map(xs:string, item()*)">
+                <xsl:sequence select="map { 'name': 'item 1', 'value': [1, 2, 3] }"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        transformer.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
+
+        var result = await transformer.TransformToValueAsync((string?)null);
+
+        result.Should().NotBeNull("an initial-template returning a map must surface as a non-null value");
+        result.Should().BeAssignableTo<System.Collections.IDictionary>(
+            $"the typed result should be a map (Dictionary). Got: {result?.GetType().FullName}");
+    }
+
+    [Fact]
+    public async Task TransformToValueAsync_returns_typed_array_from_apply_templates_with_json_output()
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="json" indent="no"/>
+              <xsl:template match="/items">
+                <xsl:sequence select="
+                  for $i in item return
+                    if ($i/@kind = 'name')
+                      then map { 'name': string($i) }
+                      else map { 'value': xs:double($i) }
+                "/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var input = "<items><item kind='name'>a</item><item kind='value'>1.5</item></items>";
+        var result = await transformer.TransformToValueAsync(input);
+
+        result.Should().NotBeNull("an apply-templates run producing a map sequence must surface as a non-null value");
+        // Multiple maps → object?[]
+        result.Should().BeAssignableTo<object?[]>(
+            $"multiple-item sequence result should be an object?[]. Got: {result?.GetType().FullName}");
+        ((object?[])result!).Length.Should().Be(2);
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);

@@ -399,6 +399,22 @@ public sealed class XsltTransformEngine
         if (isJsonOutput)
         {
             var jsonItems = context.EndSequenceCollection();
+            // When TransformToValueAsync was called (ReturnRawXdm = true), capture the
+            // typed items into the raw-result box BEFORE serialization. Without this,
+            // initial-template / apply-templates invocations that produce maps or arrays
+            // returned null from TransformToValueAsync — only the InitialFunction path
+            // populated RawResult. (Martin Honnen's report: TransformToValueAsync on a
+            // map/array-producing initial-template returned empty even though the CLI
+            // produced the right JSON.)
+            if (options.ReturnRawXdm)
+            {
+                options.RawResult.Value = jsonItems.Count switch
+                {
+                    0 => null,
+                    1 => jsonItems[0],
+                    _ => jsonItems.ToArray()
+                };
+            }
             // Also capture any text content that was written to outputBuilder
             var textContent = outputBuilder.ToString();
             outputBuilder.Clear();
