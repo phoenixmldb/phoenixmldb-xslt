@@ -75,10 +75,29 @@ internal sealed class StreamingXmlProcessor
         // Set streaming execution flag so built-in templates skip child recursion
         var previousStreamingFlag = _context._isStreamingExecution;
         _context._isStreamingExecution = true;
+        // Expose the active reader on the context so streaming-aware operators
+        // (notably xsl:for-each-group) can drive it directly during template
+        // execution. Cleared on exit so non-streaming runs don't see a stale handle.
+        var previousStreamingReader = _context._activeStreamingReader;
+        _context._activeStreamingReader = reader;
+        var previousStreamingCt = _context._activeStreamingCancellationToken;
+        _context._activeStreamingCancellationToken = ct;
         try
         {
-            while (await reader.ReadAsync().ConfigureAwait(false))
+            while (true)
             {
+                // Streaming-aware operators (e.g. xsl:for-each-group) may consume an
+                // event from the reader that we still need to process. They set
+                // _streamingDeferReadOnNextIteration so we skip our own ReadAsync and
+                // process whatever the reader is currently positioned on.
+                if (_context._streamingDeferReadOnNextIteration)
+                {
+                    _context._streamingDeferReadOnNextIteration = false;
+                }
+                else if (!await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    break;
+                }
                 ct.ThrowIfCancellationRequested();
 
                 switch (reader.NodeType)
@@ -378,6 +397,8 @@ internal sealed class StreamingXmlProcessor
         finally
         {
             _context._isStreamingExecution = previousStreamingFlag;
+            _context._activeStreamingReader = previousStreamingReader;
+            _context._activeStreamingCancellationToken = previousStreamingCt;
         }
     }
 

@@ -3917,6 +3917,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     internal IReadOnlyList<StreamWatcher>? _activeStreamWatchers;
 
     /// <summary>
+    /// Set by streaming-aware operators (notably xsl:for-each-group) when they consumed
+    /// an event from <see cref="_activeStreamingReader"/> that the
+    /// <see cref="StreamingXmlProcessor"/> still needs to process. The processor checks
+    /// this flag at the top of its event loop; if true, it skips its own
+    /// <c>ReadAsync</c> and processes the current reader position, then clears the flag.
+    /// Use case: for-each-group consumes the parent's EndElement to detect end-of-children;
+    /// the processor still needs to do its EndElement bookkeeping (pop ancestor stack,
+    /// fire end-phase accumulators, write deferred close tag).
+    /// </summary>
+    internal bool _streamingDeferReadOnNextIteration;
+
+    /// <summary>
     /// Try to resolve an expression (or its sub-expressions) from watcher results.
     /// Handles direct matches and map constructors with watcher entry values.
     /// </summary>
@@ -7210,6 +7222,20 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         ResolvePatternNamespacesLocal(instruction.GroupStartingWith);
         ResolvePatternNamespacesLocal(instruction.GroupEndingWith);
 
+        // Streaming for-each-group: when inside a streamable template with the active
+        // XmlReader available, drive the reader directly instead of pre-evaluating
+        // select. Currently handles the two patterns Martin Honnen reported against
+        // 1.3.10 — group-starting-with and group-adjacent — for select="*" or
+        // similar child-axis expressions. group-by needs full materialization (later).
+        if (_isStreamingExecution && _activeStreamingReader != null
+            && (instruction.GroupStartingWith != null
+                || instruction.GroupEndingWith != null
+                || instruction.GroupAdjacent != null))
+        {
+            await ForEachGroupStreamingAsync(instruction).ConfigureAwait(false);
+            return;
+        }
+
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
         var items = result switch
         {
@@ -7476,6 +7502,269 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Streaming implementation of xsl:for-each-group. Drives the active XmlReader
+    /// directly, building one full XdmElement subtree per child element event,
+    /// applying the grouping logic (group-starting-with / group-ending-with /
+    /// group-adjacent), and firing the body per group with current-group() bound
+    /// to the buffered items.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Group accumulation buffers the items of the CURRENT group only — group-by
+    /// (which needs all items materialized for cross-group aggregation) falls back
+    /// to the non-streaming path; this method handles only the three single-pass
+    /// patterns. The body executes with <see cref="_isStreamingExecution"/>
+    /// temporarily cleared so apply-templates over current-group() uses normal
+    /// (non-streaming) semantics on the buffered XdmNodes — without that toggle,
+    /// the shallow-copy fallback would push to <see cref="_streamingOpenElements"/>
+    /// and corrupt close-tag bookkeeping.
+    /// </para>
+    /// <para>
+    /// End-of-children detection: when an EndElement event at the parent's depth
+    /// fires, this method has consumed it but the StreamingXmlProcessor still needs
+    /// to do its own EndElement bookkeeping (pop ancestor stack, close deferred
+    /// tag). We set <see cref="_streamingDeferReadOnNextIteration"/> so the
+    /// processor skips its next ReadAsync and processes the position we already
+    /// reached.
+    /// </para>
+    /// </remarks>
+    private async ValueTask ForEachGroupStreamingAsync(XsltForEachGroup instruction)
+    {
+        var reader = _activeStreamingReader!;
+        var ct = _activeStreamingCancellationToken;
+        // Reader is currently positioned just past the parent's StartElement.
+        // The parent's depth is reader.Depth (children appear at parent.Depth + 1
+        // when we read them). We stop when we see an EndElement at parent.Depth
+        // (the parent's own EndElement).
+        var parentDepth = reader.Depth;
+
+        var currentGroup = new List<object>();
+        object? currentKey = null;
+        var firstItem = true;
+
+        // Helper: build a full XdmElement subtree starting from the current
+        // StartElement event. Consumes events through the matching EndElement.
+        async ValueTask<Xdm.Nodes.XdmElement> ReadElementSubtreeAsync()
+        {
+            // Use the streaming node store and the same minimal-builder approach
+            // as StreamingNodeContext, but with full child content materialised.
+            var startDepth = reader.Depth;
+            var startName = reader.LocalName;
+            var startNs = reader.NamespaceURI;
+            var startPrefix = reader.Prefix;
+            var startId = new NodeId(_nextStreamGroupNodeId++);
+            var attrIds = new List<NodeId>();
+
+            // Intern the namespace
+            var nsId = !string.IsNullOrEmpty(startNs)
+                ? _nodeStore!.InternNamespace(startNs)
+                : NamespaceId.None;
+
+            // Collect attributes
+            if (reader.HasAttributes)
+            {
+                for (int i = 0; i < reader.AttributeCount; i++)
+                {
+                    reader.MoveToAttribute(i);
+                    if (reader.Prefix == "xmlns" || (reader.Prefix.Length == 0 && reader.LocalName == "xmlns"))
+                        continue; // namespace decl, skip
+                    var attrNsId = !string.IsNullOrEmpty(reader.NamespaceURI)
+                        ? _nodeStore!.InternNamespace(reader.NamespaceURI)
+                        : NamespaceId.None;
+                    var attrId = new NodeId(_nextStreamGroupNodeId++);
+                    var attrNode = new Xdm.Nodes.XdmAttribute
+                    {
+                        Id = attrId,
+                        Document = DocumentId.None,
+                        Parent = startId,
+                        LocalName = reader.LocalName,
+                        Namespace = attrNsId,
+                        Prefix = string.IsNullOrEmpty(reader.Prefix) ? null : reader.Prefix,
+                        Value = reader.Value
+                    };
+                    _nodeStore!.Register(attrNode);
+                    attrIds.Add(attrId);
+                }
+                reader.MoveToElement();
+            }
+
+            var children = new List<NodeId>();
+
+            // Read events until matching EndElement (or empty self-close)
+            if (!reader.IsEmptyElement)
+            {
+                while (await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == startDepth)
+                        break;
+                    switch (reader.NodeType)
+                    {
+                        case System.Xml.XmlNodeType.Element:
+                        {
+                            var child = await ReadElementSubtreeAsync().ConfigureAwait(false);
+                            child.Parent = startId;
+                            children.Add(child.Id);
+                            break;
+                        }
+                        case System.Xml.XmlNodeType.Text:
+                        case System.Xml.XmlNodeType.CDATA:
+                        case System.Xml.XmlNodeType.SignificantWhitespace:
+                        case System.Xml.XmlNodeType.Whitespace:
+                        {
+                            var textId = new NodeId(_nextStreamGroupNodeId++);
+                            var textNode = new Xdm.Nodes.XdmText
+                            {
+                                Id = textId,
+                                Document = DocumentId.None,
+                                Parent = startId,
+                                Value = reader.Value
+                            };
+                            _nodeStore!.Register(textNode);
+                            children.Add(textId);
+                            break;
+                        }
+                        // Comments and PIs in streamed content: ignored for grouping purposes.
+                    }
+                }
+            }
+
+            var elem = new Xdm.Nodes.XdmElement
+            {
+                Id = startId,
+                Document = DocumentId.None,
+                Parent = NodeId.None,
+                LocalName = startName,
+                Namespace = nsId,
+                Prefix = string.IsNullOrEmpty(startPrefix) ? null : startPrefix,
+                Children = children,
+                Attributes = attrIds,
+                NamespaceDeclarations = Array.Empty<NamespaceBinding>()
+            };
+            _nodeStore!.Register(elem);
+            return elem;
+        }
+
+        // Helper: flush the current group through the body
+        async ValueTask FlushAsync()
+        {
+            if (currentGroup.Count == 0) return;
+            var savedStreaming = _isStreamingExecution;
+            _isStreamingExecution = false; // body iterates buffered items, not the stream
+            PushContextItem(currentGroup[0], 1, 1);
+            PushCurrentItem(currentGroup[0]);
+            PushScope();
+            SetVariable(new QName(NamespaceId.None, "current-group"), currentGroup);
+            // current-grouping-key is bound only for group-by/group-adjacent
+            SetVariable(new QName(NamespaceId.None, "current-grouping-key"),
+                instruction.GroupAdjacent != null ? currentKey : null);
+            var savedTemplate = _currentTemplate;
+            _currentTemplate = null; // current template rule is absent inside for-each-group
+            try
+            {
+                await instruction.Body.ExecuteAsync(this).ConfigureAwait(false);
+            }
+            finally
+            {
+                _currentTemplate = savedTemplate;
+                PopScope();
+                PopCurrentItem();
+                PopContextItem();
+                _isStreamingExecution = savedStreaming;
+            }
+        }
+
+        // Drive the reader through the parent's children
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == parentDepth)
+            {
+                // Reached the parent's EndElement. We've consumed it but the processor
+                // still needs to do its own EndElement bookkeeping — signal it.
+                _streamingDeferReadOnNextIteration = true;
+                break;
+            }
+
+            if (reader.NodeType != System.Xml.XmlNodeType.Element)
+                continue; // text/whitespace/comment between children are not selected by *
+
+            // Build full subtree for this child element
+            var child = await ReadElementSubtreeAsync().ConfigureAwait(false);
+
+            // Apply grouping decision
+            if (instruction.GroupStartingWith != null)
+            {
+                var matches = MatchesPattern(child, instruction.GroupStartingWith);
+                if (matches || firstItem)
+                {
+                    await FlushAsync().ConfigureAwait(false);
+                    currentGroup = new List<object>();
+                }
+                currentGroup.Add(child);
+                firstItem = false;
+            }
+            else if (instruction.GroupEndingWith != null)
+            {
+                currentGroup.Add(child);
+                if (MatchesPattern(child, instruction.GroupEndingWith))
+                {
+                    await FlushAsync().ConfigureAwait(false);
+                    currentGroup = new List<object>();
+                }
+                firstItem = false;
+            }
+            else // GroupAdjacent
+            {
+                // Evaluate the key expression with the child as context item
+                PushContextItem(child, currentGroup.Count + 1, 0);
+                object? key;
+                try
+                {
+                    key = await EvaluateAsync(instruction.GroupAdjacent!).ConfigureAwait(false);
+                }
+                finally
+                {
+                    PopContextItem();
+                }
+                if (firstItem)
+                {
+                    currentKey = key;
+                    firstItem = false;
+                }
+                else if (!GroupAdjacentKeysEqual(currentKey, key))
+                {
+                    await FlushAsync().ConfigureAwait(false);
+                    currentGroup = new List<object>();
+                    currentKey = key;
+                }
+                currentGroup.Add(child);
+            }
+        }
+
+        // Final flush
+        await FlushAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Streaming-group node-id allocator. Sits above the principal source's id range
+    /// and below <see cref="StreamingXmlProcessor"/>'s allocator (1_000_000) by enough
+    /// margin that practical streams don't collide. Reset on each group flush would be
+    /// nice but the buffered nodes outlive the loop iteration, so we just monotonically
+    /// increment.
+    /// </summary>
+    private ulong _nextStreamGroupNodeId = 5_000_000;
+
+    /// <summary>Equality on group-adjacent keys: simple string-coerced comparison.</summary>
+    private static bool GroupAdjacentKeysEqual(object? a, object? b)
+    {
+        if (a == null && b == null) return true;
+        if (a == null || b == null) return false;
+        return Equals(a, b) || string.Equals(StringValueOf(a), StringValueOf(b), StringComparison.Ordinal);
     }
 
     private bool MatchesPattern(object item, XsltPattern pattern)
@@ -9386,8 +9675,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 savedScope.Dispose();
                 _outputLogicalStart = savedLogicalStart;
 
-                // Build output element name (with prefix if present)
-                var elemName = elem.Prefix != null ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName;
+                // Build output element name (with prefix if present).
+                // Treat empty-string prefix the same as null — an empty prefix means
+                // "no prefix", not "use the colon with no name". Without this guard,
+                // serialization produced ":body" for the body element when xsl:copy
+                // hit an element with an empty Prefix string. Same fix shape as the
+                // shallow-copy path in ApplyBuiltInShallowCopyAsync.
+                var elemName = !string.IsNullOrEmpty(elem.Prefix)
+                    ? $"{elem.Prefix}:{elem.LocalName}"
+                    : elem.LocalName;
 
                 // Build namespace declaration string, skipping already-in-scope
                 var nsDecls = new StringBuilder();
@@ -9422,7 +9718,21 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     _output.Append(attrValue);
                     _output.Append('"');
                 }
-                if (content.Length > 0)
+                if (_isStreamingExecution && _activeStreamingReader != null)
+                {
+                    // Streaming mode: leave the element open and push onto the
+                    // deferred-close stack so StreamingXmlProcessor closes it when
+                    // the source element's EndElement event fires. Mirrors the
+                    // built-in shallow-copy path. Without this, xsl:copy would emit
+                    // <body>buffered</body> immediately and the processor's
+                    // subsequent child events (h1, p, …) would leak out as siblings
+                    // of body. Reported by Martin Honnen against 1.3.10
+                    // (group-starting-with / group-adjacent in streamable mode).
+                    _output.Append('>');
+                    _output.Append(content);
+                    _streamingOpenElements.Push(elemName);
+                }
+                else if (content.Length > 0)
                 {
                     _output.Append('>');
                     _output.Append(content);
