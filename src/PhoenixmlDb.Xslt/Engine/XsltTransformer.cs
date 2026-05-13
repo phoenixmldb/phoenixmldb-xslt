@@ -5396,6 +5396,21 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
 
+        // Streaming interception inside a template body: when we're already inside
+        // the streaming processor's pass and apply-templates is called on a
+        // consuming select (children of the current node), drive the reader directly
+        // to consume each child event, fire templates inline, and stop at the parent's
+        // EndElement. This makes the body of a user template see the correct ordering
+        // (`<pre/> apply-templates <post/>` puts `<post/>` AFTER processed children,
+        // not before). Without this, apply-templates returned immediately, `<post/>`
+        // emitted, then the processor's outer loop read the children as siblings.
+        if (_isStreamingExecution && _activeStreamingReader != null
+            && IsConsumingChildSelect(select))
+        {
+            await ApplyTemplatesStreamingAsync(mode, withParams).ConfigureAwait(false);
+            return;
+        }
+
         // Get nodes to process
         IEnumerable<object> nodes;
         if (select != null)
@@ -7056,6 +7071,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         List<XsltSort> sorts,
         XsltSequenceConstructor body)
     {
+        // Streaming: when inside a streamable template with a consuming child-axis
+        // select, drive the reader directly instead of pre-evaluating select.
+        // Mirrors the apply-templates streaming intercept above. Sorts are not
+        // applicable in this path (a sort would force materialization, defeating
+        // streaming) — fall back to the buffered impl if sorts are present.
+        if (_isStreamingExecution && _activeStreamingReader != null
+            && sorts.Count == 0 && IsConsumingChildSelect(select))
+        {
+            await ForEachStreamingAsync(body).ConfigureAwait(false);
+            return;
+        }
+
         // Fast path for range expressions (1 to N) without sorts — avoid boxing N integers
         if (select is PhoenixmlDb.XQuery.Ast.RangeExpression rangeExpr && sorts.Count == 0)
         {
@@ -7505,6 +7532,354 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// Returns true when <paramref name="select"/> consumes the children of the current
+    /// context node — i.e., it would, in non-streaming mode, evaluate to the result of
+    /// the <c>child::</c> axis. Used to route streaming-aware operators
+    /// (apply-templates, for-each, for-each-group, iterate) to a reader-driven
+    /// implementation. Conservative: only matches the common cases (null = default
+    /// children, single child-axis step, child step wrapped in a PathExpression).
+    /// </summary>
+    private static bool IsConsumingChildSelect(XQueryExpression? select)
+    {
+        if (select == null) return true; // null select = default children
+        // Single child-axis step
+        if (select is PhoenixmlDb.XQuery.Ast.StepExpression step
+            && step.Axis == PhoenixmlDb.XQuery.Ast.Axis.Child
+            && step.Predicates.Count == 0)
+            return true;
+        // PathExpression with single child-axis step and no initial expression
+        if (select is PhoenixmlDb.XQuery.Ast.PathExpression path
+            && path.InitialExpression == null
+            && path.Steps.Count == 1
+            && path.Steps[0] is PhoenixmlDb.XQuery.Ast.StepExpression s2
+            && s2.Axis == PhoenixmlDb.XQuery.Ast.Axis.Child
+            && s2.Predicates.Count == 0)
+            return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Streaming implementation of xsl:apply-templates over the children of the
+    /// current context node. Drives <see cref="_activeStreamingReader"/> directly,
+    /// firing templates inline as each child element arrives, until the parent's
+    /// EndElement event signals end-of-children. Sets
+    /// <see cref="_streamingDeferReadOnNextIteration"/> so the streaming processor's
+    /// outer loop can process the EndElement itself (close any deferred parent tag).
+    /// </summary>
+    private async ValueTask ApplyTemplatesStreamingAsync(QName? mode, List<XsltWithParam> withParams)
+    {
+        var reader = _activeStreamingReader!;
+        var ct = _activeStreamingCancellationToken;
+        var parentDepth = reader.Depth;
+        var position = 0;
+
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == parentDepth)
+            {
+                _streamingDeferReadOnNextIteration = true;
+                break;
+            }
+
+            switch (reader.NodeType)
+            {
+                case System.Xml.XmlNodeType.Element:
+                {
+                    var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                    position++;
+                    // Fire matching template (or default rule) inline, same path the main
+                    // streaming processor uses. Pop any deferred element close on the way
+                    // out — element template body's shallow-copy / xsl:copy may have pushed.
+                    await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
+                    // After the template runs, the deferred-close stack may contain the
+                    // element's open tag (if shallow-copy / xsl:copy was used). Close it
+                    // now, since we already consumed the element's full subtree.
+                    if (_streamingOpenElements.Count > 0)
+                    {
+                        var qn = _streamingOpenElements.Pop();
+                        WriteStreamingEndTag(qn);
+                    }
+                    break;
+                }
+                case System.Xml.XmlNodeType.Text:
+                case System.Xml.XmlNodeType.CDATA:
+                case System.Xml.XmlNodeType.SignificantWhitespace:
+                {
+                    // Apply templates to text node — default rule copies text to output
+                    var textNode = new Xdm.Nodes.XdmText
+                    {
+                        Id = new NodeId(_nextStreamGroupNodeId++),
+                        Document = DocumentId.None,
+                        Value = reader.Value
+                    };
+                    _nodeStore!.Register(textNode);
+                    position++;
+                    await MatchAndExecuteStreamingNodeAsync(textNode, mode, position).ConfigureAwait(false);
+                    break;
+                }
+                // Comments and PIs skipped — they're not matched by the default rule
+                // for templating in this engine; out of scope for first cut.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Streaming implementation of xsl:for-each over the children of the current node.
+    /// Drives <see cref="_activeStreamingReader"/> directly: for each child element,
+    /// builds a full subtree, binds it as the focus, and runs the body. Sorts are
+    /// not supported in this path (the caller falls back to the buffered impl).
+    /// </summary>
+    private async ValueTask ForEachStreamingAsync(XsltSequenceConstructor body)
+    {
+        var reader = _activeStreamingReader!;
+        var ct = _activeStreamingCancellationToken;
+        var parentDepth = reader.Depth;
+        var savedTemplate = _currentTemplate;
+        _currentTemplate = null; // current template rule is absent inside xsl:for-each
+        var position = 0;
+        try
+        {
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == parentDepth)
+                {
+                    _streamingDeferReadOnNextIteration = true;
+                    break;
+                }
+                if (reader.NodeType != System.Xml.XmlNodeType.Element) continue;
+
+                var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                position++;
+                PushContextItem(elem, position, 0);
+                PushCurrentItem(elem);
+                PushScope();
+                // Body iterates a buffered XdmElement — suspend streaming-execution
+                // so shallow-copy / xsl:copy inside the body use normal close-tag emission.
+                var savedStreaming = _isStreamingExecution;
+                _isStreamingExecution = false;
+                try
+                {
+                    await body.ExecuteAsync(this).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _isStreamingExecution = savedStreaming;
+                    PopScope();
+                    PopCurrentItem();
+                    PopContextItem();
+                }
+            }
+        }
+        finally
+        {
+            _currentTemplate = savedTemplate;
+        }
+    }
+
+    /// <summary>
+    /// Streaming implementation of xsl:iterate. Drives the reader, runs the body
+    /// per child element, handles xsl:next-iteration state updates and xsl:break.
+    /// Initial-params are bound once before the loop; xsl:next-iteration's
+    /// xsl:with-param bindings overwrite them on each iteration. xsl:on-completion
+    /// runs after the last item (or on early break — same as non-streaming impl).
+    /// </summary>
+    private async ValueTask IterateStreamingAsync(XsltIterate instruction)
+    {
+        var reader = _activeStreamingReader!;
+        var ct = _activeStreamingCancellationToken;
+        var parentDepth = reader.Depth;
+
+        // Bind initial iteration parameters once
+        PushScope();
+        foreach (var param in instruction.Params)
+        {
+            object? value;
+            if (param.Select != null)
+                value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+            else if (param.Content != null)
+                value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
+            else
+                value = null;
+            SetVariable(param.Name, value);
+        }
+
+        var brokeOut = false;
+        var position = 0;
+        try
+        {
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == parentDepth)
+                {
+                    _streamingDeferReadOnNextIteration = true;
+                    break;
+                }
+                if (reader.NodeType != System.Xml.XmlNodeType.Element) continue;
+
+                var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                position++;
+                PushContextItem(elem, position, 0);
+                PushCurrentItem(elem);
+                var savedStreaming = _isStreamingExecution;
+                _isStreamingExecution = false; // body iterates a buffered element
+                try
+                {
+                    await instruction.Body.ExecuteAsync(this).ConfigureAwait(false);
+                }
+                catch (BreakException)
+                {
+                    brokeOut = true;
+                    break;
+                }
+                catch (NextIterationException next)
+                {
+                    // Evaluate all next-iteration with-param values BEFORE writing them,
+                    // so params don't see each other's new values during evaluation.
+                    var newValues = new List<(QName Name, object? Value)>();
+                    foreach (var p in next.WithParams)
+                    {
+                        object? value;
+                        if (p.Select != null)
+                            value = await EvaluateAsync(p.Select).ConfigureAwait(false);
+                        else if (p.Content != null)
+                            value = await EvaluateBodyContentToValueAsync(p.Content).ConfigureAwait(false);
+                        else
+                            value = null;
+                        newValues.Add((p.Name, value));
+                    }
+                    foreach (var (name, value) in newValues)
+                        SetVariable(name, value);
+                }
+                finally
+                {
+                    _isStreamingExecution = savedStreaming;
+                    PopCurrentItem();
+                    PopContextItem();
+                }
+            }
+
+            // xsl:on-completion fires after the loop unless an outer xsl:break
+            // explicitly suppressed it (BreakException reaches the outer loop).
+            // Streaming mirrors the non-streaming policy: on-completion fires when
+            // either we exhausted the input naturally OR an inner break exited early.
+            if (instruction.OnCompletion != null)
+            {
+                _ = brokeOut; // brokeOut tracked for parity; on-completion fires either way
+                await instruction.OnCompletion.ExecuteAsync(this).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            PopScope();
+        }
+    }
+
+    /// <summary>
+    /// Reads a full element subtree from the streaming reader starting at the current
+    /// StartElement event, building a complete <see cref="Xdm.Nodes.XdmElement"/> with
+    /// attributes and child element / text content. Consumes events through the
+    /// matching EndElement. Used by both <see cref="ApplyTemplatesStreamingAsync"/> and
+    /// <see cref="ForEachGroupStreamingAsync"/>.
+    /// </summary>
+    private async ValueTask<Xdm.Nodes.XdmElement> ReadStreamingElementForDispatchAsync(
+        System.Xml.XmlReader reader, CancellationToken ct)
+    {
+        var startDepth = reader.Depth;
+        var startName = reader.LocalName;
+        var startNs = reader.NamespaceURI;
+        var startPrefix = reader.Prefix;
+        var startId = new NodeId(_nextStreamGroupNodeId++);
+        var attrIds = new List<NodeId>();
+        var nsId = !string.IsNullOrEmpty(startNs)
+            ? _nodeStore!.InternNamespace(startNs)
+            : NamespaceId.None;
+
+        if (reader.HasAttributes)
+        {
+            for (int i = 0; i < reader.AttributeCount; i++)
+            {
+                reader.MoveToAttribute(i);
+                if (reader.Prefix == "xmlns" || (reader.Prefix.Length == 0 && reader.LocalName == "xmlns"))
+                    continue;
+                var attrNsId = !string.IsNullOrEmpty(reader.NamespaceURI)
+                    ? _nodeStore!.InternNamespace(reader.NamespaceURI)
+                    : NamespaceId.None;
+                var attrId = new NodeId(_nextStreamGroupNodeId++);
+                var attrNode = new Xdm.Nodes.XdmAttribute
+                {
+                    Id = attrId,
+                    Document = DocumentId.None,
+                    Parent = startId,
+                    LocalName = reader.LocalName,
+                    Namespace = attrNsId,
+                    Prefix = string.IsNullOrEmpty(reader.Prefix) ? null : reader.Prefix,
+                    Value = reader.Value
+                };
+                _nodeStore!.Register(attrNode);
+                attrIds.Add(attrId);
+            }
+            reader.MoveToElement();
+        }
+
+        var children = new List<NodeId>();
+        if (!reader.IsEmptyElement)
+        {
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == startDepth)
+                    break;
+                switch (reader.NodeType)
+                {
+                    case System.Xml.XmlNodeType.Element:
+                    {
+                        var child = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                        child.Parent = startId;
+                        children.Add(child.Id);
+                        break;
+                    }
+                    case System.Xml.XmlNodeType.Text:
+                    case System.Xml.XmlNodeType.CDATA:
+                    case System.Xml.XmlNodeType.SignificantWhitespace:
+                    case System.Xml.XmlNodeType.Whitespace:
+                    {
+                        var textId = new NodeId(_nextStreamGroupNodeId++);
+                        var textNode = new Xdm.Nodes.XdmText
+                        {
+                            Id = textId,
+                            Document = DocumentId.None,
+                            Parent = startId,
+                            Value = reader.Value
+                        };
+                        _nodeStore!.Register(textNode);
+                        children.Add(textId);
+                        break;
+                    }
+                }
+            }
+        }
+
+        var elem = new Xdm.Nodes.XdmElement
+        {
+            Id = startId,
+            Document = DocumentId.None,
+            Parent = NodeId.None,
+            LocalName = startName,
+            Namespace = nsId,
+            Prefix = string.IsNullOrEmpty(startPrefix) ? null : startPrefix,
+            Children = children,
+            Attributes = attrIds,
+            NamespaceDeclarations = Array.Empty<NamespaceBinding>()
+        };
+        _nodeStore!.Register(elem);
+        return elem;
+    }
+
+    /// <summary>
     /// Streaming implementation of xsl:for-each-group. Drives the active XmlReader
     /// directly, building one full XdmElement subtree per child element event,
     /// applying the grouping logic (group-starting-with / group-ending-with /
@@ -7855,6 +8230,17 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask IterateAsync(XsltIterate instruction)
     {
+        // Streaming: when inside a streamable template with a consuming child-axis
+        // select, drive the reader directly. State passing via xsl:next-iteration
+        // mirrors the non-streaming impl (NextIterationException carries the new
+        // param bindings).
+        if (_isStreamingExecution && _activeStreamingReader != null
+            && IsConsumingChildSelect(instruction.Select))
+        {
+            await IterateStreamingAsync(instruction).ConfigureAwait(false);
+            return;
+        }
+
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
 
         // Use lazy enumeration when possible to avoid materializing large sequences.
