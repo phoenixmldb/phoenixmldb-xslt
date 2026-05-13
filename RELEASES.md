@@ -1,5 +1,39 @@
 # Release History
 
+## 1.3.11 (2026-05-13)
+
+### Fix: `fn:transform` from XQuery now honors `initial-function` + `function-params` (Martin Honnen report)
+
+`XsltTransformProvider` (the bridge that lets XQuery's `fn:transform()`
+drive an XSLT stylesheet) only read `initial-template` and `initial-mode`
+from the options map — it ignored `initial-function` and
+`function-params`. Calls like:
+
+```xquery
+transform(map {
+  'stylesheet-node' : $xslt,
+  'initial-function' : QName('http://example.com/mf', 'evaluate'),
+  'function-params' : [$context, $expr],
+  'delivery-format' : 'raw'
+})?output
+```
+
+fell through to the default apply-templates path with no source document
+and returned an empty `?output`, even though the underlying engine and
+the `TransformToValueAsync` C# API both supported the call shape.
+
+Fix: provider now reads `initial-function` (as `xs:QName`) and
+`function-params` (as an array), wires them through
+`SetInitialFunction` / `AddInitialFunctionArgument`, and the existing
+`delivery-format='raw'` branch surfaces the typed result.
+
+Regression test:
+`XsltTransformProvider_honors_initial_function_with_raw_delivery_returning_boolean`
+— invokes the provider directly with Martin's exact options shape and
+asserts `?output` is `true` (typed `xs:boolean`), not empty.
+
+XSLT suite 398/398 (was 397, +1 Martin regression).
+
 ## 1.3.10 (2026-05-13)
 
 ### Fix: `TransformToValueAsync` returns typed map/array from initial-template (Martin Honnen report)

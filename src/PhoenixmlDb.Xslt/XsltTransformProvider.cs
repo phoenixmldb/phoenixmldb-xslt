@@ -28,6 +28,14 @@ public sealed class XsltTransformProvider : ITransformProvider
         var deliveryFormat = GetStringOption(options, "delivery-format") ?? "document";
         var initialTemplate = GetStringOption(options, "initial-template");
         var initialMode = GetStringOption(options, "initial-mode");
+        // initial-function is a QName (xs:QName per spec); function-params is an array.
+        // Used by Saxon-style fn:transform invocations that target an xsl:function rather
+        // than apply-templates / a named template. Without these the provider would fall
+        // through to the default apply-templates path with no source — Martin Honnen's
+        // report: fn:transform with initial-function returned empty ?output even with
+        // delivery-format='raw'.
+        var initialFunctionQName = GetOption(options, "initial-function") as QName?;
+        var functionParamsRaw = GetOption(options, "function-params");
         var sourceNode = GetOption(options, "source-node");
         var staticParamsMap = GetOption(options, "static-params") as IDictionary<object, object?>;
 
@@ -110,11 +118,26 @@ public sealed class XsltTransformProvider : ITransformProvider
         var transformer = new XsltTransformer();
         await transformer.LoadStylesheetAsync(stylesheetXml, baseUri, staticParams).ConfigureAwait(false);
 
-        // Set initial template / mode
+        // Set initial template / mode / function
         if (initialTemplate != null)
             transformer.SetInitialTemplate(initialTemplate);
         if (initialMode != null)
             transformer.SetInitialMode(initialMode);
+        if (initialFunctionQName is { } funcQName)
+        {
+            var nsUri = !string.IsNullOrEmpty(funcQName.ExpandedNamespace)
+                ? funcQName.ExpandedNamespace
+                : null;
+            transformer.SetInitialFunction(funcQName.LocalName, nsUri);
+            // function-params is an XDM array — represented as List<object?> in our XDM
+            // surface but coming through the map constructor it can also arrive as
+            // object?[]. Walk it positionally and feed each element to the engine.
+            if (functionParamsRaw is System.Collections.IList list)
+            {
+                foreach (var item in list)
+                    transformer.AddInitialFunctionArgument(item);
+            }
+        }
 
         // Set static-params as runtime parameters too
         if (staticParamsMap != null)

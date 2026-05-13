@@ -2866,6 +2866,59 @@ public class XsltTransformerIntegrationTests
         ((object?[])result!).Length.Should().Be(2);
     }
 
+    // Martin Honnen second report (2026-05-13): fn:transform from XQuery with
+    // initial-function + delivery-format='raw' returned an empty ?output. Root
+    // cause: XsltTransformProvider only honored 'initial-template' / 'initial-mode'
+    // from the options map; it never read 'initial-function' or 'function-params',
+    // so the engine fell through to the default apply-templates path with no
+    // source — yielding nothing.
+    [Fact]
+    public async Task XsltTransformProvider_honors_initial_function_with_raw_delivery_returning_boolean()
+    {
+        var stylesheet = """
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                            xmlns:mf="http://example.com/mf">
+              <xsl:function name="mf:evaluate" as="item()*" visibility="public">
+                <xsl:param name="context-item" as="item()"/>
+                <xsl:param name="xpath-expression" as="xs:string"/>
+                <xsl:evaluate context-item="$context-item" xpath="$xpath-expression"/>
+              </xsl:function>
+            </xsl:stylesheet>
+            """;
+
+        var provider = new PhoenixmlDb.Xslt.XsltTransformProvider();
+
+        // Build a fake QueryExecutionContext with a node store, parallel to what XQuery would supply.
+        var nodeStore = new PhoenixmlDb.Xslt.XdmInMemoryStore();
+        using var qec = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+            new PhoenixmlDb.Core.ContainerId(1),
+            nodeProvider: nodeStore);
+
+        var options = new Dictionary<object, object?>
+        {
+            ["stylesheet-text"] = stylesheet,
+            ["initial-function"] = new PhoenixmlDb.Core.QName(
+                PhoenixmlDb.Core.NamespaceId.None, "evaluate", "mf")
+            { ExpandedNamespace = "http://example.com/mf" },
+            ["function-params"] = new object?[] { "any-context", ". = 'any-context'" },
+            ["delivery-format"] = "raw"
+        };
+
+        var result = await ((PhoenixmlDb.XQuery.Functions.ITransformProvider)provider)
+            .TransformAsync(options, qec);
+
+        result.Should().NotBeNull();
+        var resultMap = result as IDictionary<object, object?>;
+        resultMap.Should().NotBeNull("provider returns a result map per fn:transform spec");
+        resultMap!.Should().ContainKey("output");
+        var output = resultMap!["output"];
+        output.Should().NotBeNull("delivery-format='raw' with initial-function must surface the typed value, not empty");
+        output.Should().Be(true,
+            $"the function returns xsl:evaluate(. = 'any-context'), which equals true. Got: {output} ({output?.GetType().Name})");
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
