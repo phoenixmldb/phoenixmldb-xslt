@@ -1,5 +1,49 @@
 # Release History
 
+## 1.3.9 (2026-05-12)
+
+### Source-location audit: 122 runtime-error sites now carry `(module, line, col)`
+
+Foundation for upcoming LSP work — XSLT side. Mirrors the 1.3.5 work in
+`PhoenixmlDb.XQuery` (now required as 1.3.5).
+
+**Infrastructure on `XsltExecutionContext`:**
+- New virtual `PushInstructionLocation(SourceLocation)` and
+  `PopInstructionLocation()` (default no-op). Mirrors the existing
+  `PushVersion` / `PushCollation` / `PushStaticBaseUri` API.
+- `DefaultXsltExecutionContext` overrides them with a real
+  `Stack<SourceLocation?>`.
+- `Error(msg)` and `Error(msg, inner)` factories on the runtime context
+  that auto-attach the current instruction location to `XsltException`.
+
+**Wiring:**
+- `XsltSequenceConstructor.ExecuteAsync` now wraps every instruction's
+  execution with `PushInstructionLocation` / `PopInstructionLocation`,
+  alongside the existing version/collation/base-URI stacks. Covers the
+  three execution paths: no-conditional fast path, on-empty single-pass,
+  on-non-empty two-pass.
+
+**Sweep:** 122 bare `throw new XsltException("...")` sites in
+`DefaultXsltExecutionContext` converted to `throw Error("...")`. Only
+the 1-arg sites without explicit location info were swept; multi-arg
+sites that already pass an instruction's location were left alone, and
+sites in static helpers (where the instance `Error` method isn't
+reachable) were build-iteratively reverted.
+
+**What this means for callers:** runtime errors raised by the XSLT
+engine now populate `XsltException.Location` with the
+currently-executing instruction's `(module, line, col)`. Existing
+callers that don't read `Location` are unaffected.
+
+**Compatibility:** purely additive. Sites not yet swept (deeper static
+helpers, parser-side errors, streamability-checker errors) retain their
+prior behavior. No public API changed.
+
+Regression test:
+`XsltException_carries_instruction_location_via_PushInstructionLocation`
+(an `xsl:message terminate=yes` raises an exception whose `Location`
+is set to the message instruction's source position).
+
 ## 1.3.8 (2026-05-12)
 
 ### Fix: `static-base-uri()` in a global variable now returns the declaring module's URI
