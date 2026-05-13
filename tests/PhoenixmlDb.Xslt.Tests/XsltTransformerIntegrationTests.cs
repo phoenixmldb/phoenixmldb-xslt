@@ -2758,6 +2758,57 @@ public class XsltTransformerIntegrationTests
             $"absolute column should land inside the inline TVT expression. Got col={col}, message={ex.Message}");
     }
 
+    // Phase D4 source-location audit: an error raised from XPath inside an imported
+    // module should carry the IMPORTED module's URI in its Location.Module, not the
+    // principal stylesheet's. Same lens as the 1.3.8 static-base-uri() module-awareness
+    // fix, generalized to runtime errors via the D1-D3 location-shift machinery.
+    [Fact]
+    public async Task XPath_runtime_error_in_imported_module_carries_imported_module_uri()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-d4-module-uri-{Guid.NewGuid():N}");
+        var modulesDir = Path.Combine(dir, "modules");
+        Directory.CreateDirectory(modulesDir);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(modulesDir, "inc.xsl"), """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+                  <xsl:variable name="bad" select="index-of((1,2,3), ())"/>
+                </xsl:stylesheet>
+                """);
+            var mainPath = Path.Combine(dir, "main.xsl");
+            await File.WriteAllTextAsync(mainPath, """
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+                  <xsl:import href="modules/inc.xsl"/>
+                  <xsl:template match="/">
+                    <out><xsl:value-of select="$bad"/></out>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(await File.ReadAllTextAsync(mainPath),
+                baseUri: new Uri(mainPath));
+            var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
+                await transformer.TransformAsync("<x/>"));
+            // Walk to the underlying XQueryException
+            Exception? cur = ex;
+            PhoenixmlDb.XQuery.Functions.XQueryException? xq = null;
+            while (cur != null)
+            {
+                if (cur is PhoenixmlDb.XQuery.Functions.XQueryException q) { xq = q; break; }
+                cur = cur.InnerException;
+            }
+            xq.Should().NotBeNull("the chained exception should be an XQueryException");
+            xq!.Module.Should().NotBeNull("imported-module errors must carry the imported module URI");
+            xq.Module.Should().EndWith("/modules/inc.xsl",
+                $"Module should point at the imported file (modules/inc.xsl), not the principal (main.xsl). Got: {xq.Module}");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
