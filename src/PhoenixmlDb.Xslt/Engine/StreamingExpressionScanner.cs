@@ -56,9 +56,12 @@ internal sealed class StreamingExpressionScanner
                 ScanExpression(copyOf.Select);
                 break;
 
-            case XsltForEach forEach:
-                if (forEach.Select != null)
-                    ScanExpression(forEach.Select);
+            // xsl:for-each drives its own streaming via ForEachStreamingAsync; don't
+            // register its select as a Sequence watcher. Body may still contain
+            // consuming aggregates over non-consuming subexpressions, but in
+            // streaming mode the body executes per-item with the current child as
+            // context — leave that to the operator.
+            case XsltForEach:
                 break;
 
             case XsltIf ifInsn:
@@ -84,6 +87,45 @@ internal sealed class StreamingExpressionScanner
             // Literal result elements have Content that may contain consuming instructions
             case XsltLiteralResultElement lre:
                 ScanInstructions(lre.Content);
+                break;
+
+            // xsl:copy in streaming mode keeps its open tag deferred; recurse into
+            // its content so consuming aggregates nested inside surface to the watcher
+            // registry (Martin's pattern: <xsl:copy><xsl:fork><count/></xsl:fork></xsl:copy>).
+            case XsltCopy copy:
+                if (copy.Content != null) ScanInstructions(copy.Content);
+                break;
+
+            // xsl:fork: each prong (sequence body, for-each-group, result-document)
+            // may contain consuming aggregates. Scanner walks them all so the
+            // surrounding template body's deferred execution picks them up via
+            // the watcher list; after children stream, prong bodies execute with
+            // accumulated values substituted.
+            case XsltFork fork:
+                foreach (var seq in fork.Sequences)
+                    ScanInstructions(seq);
+                foreach (var feg in fork.ForEachGroups)
+                {
+                    if (feg.Body != null) ScanInstructions(feg.Body);
+                }
+                foreach (var rd in fork.ResultDocuments)
+                {
+                    if (rd.Content != null) ScanInstructions(rd.Content);
+                }
+                break;
+
+            // xsl:where-populated and on-empty/on-non-empty wrap bodies that may
+            // include consuming sub-expressions.
+            case XsltWherePopulated wp:
+                ScanInstructions(wp.Content);
+                break;
+            case XsltOnEmpty oe:
+                if (oe.Content != null) ScanInstructions(oe.Content);
+                if (oe.Select != null) ScanExpression(oe.Select);
+                break;
+            case XsltOnNonEmpty one:
+                if (one.Content != null) ScanInstructions(one.Content);
+                if (one.Select != null) ScanExpression(one.Select);
                 break;
 
             // Skip xsl:apply-templates and xsl:iterate — handled by existing streaming

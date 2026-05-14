@@ -193,15 +193,25 @@ public sealed class XsltTransformer
     /// <returns>A completed task. The stylesheet is parsed synchronously.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="stylesheetXml"/> is <c>null</c>.</exception>
     /// <exception cref="XsltException">The stylesheet contains syntax errors or invalid XSLT constructs.</exception>
-    public Task LoadStylesheetAsync(string stylesheetXml, Uri? baseUri = null,
+    public async Task LoadStylesheetAsync(string stylesheetXml, Uri? baseUri = null,
         Dictionary<string, string>? staticParams = null,
         Dictionary<string, List<(string? Version, string FilePath)>>? packageCatalog = null)
     {
         ArgumentNullException.ThrowIfNull(stylesheetXml);
+
+        // Pre-fetch HTTP-resolved xsl:import / xsl:include hrefs into the preload cache
+        // BEFORE invoking the synchronous parser. The parser's import resolver consults
+        // the cache first; with everything pre-fetched, it never hits the sync HTTP
+        // fallback that throws "Cannot wait on monitors" on Blazor WebAssembly.
+        // Skip when the host hasn't asked for HTTP imports (no http(s) refs present →
+        // walker is cheap; trivially-malformed XML is swallowed and surfaces via the parser).
+        var effectivePreload = PreloadedResources ?? new PreloadedResources();
+        await HttpImportPreloader.PreloadHttpImportsAsync(stylesheetXml, baseUri, effectivePreload).ConfigureAwait(false);
+
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources }
-            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources };
+            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload }
+            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload };
         _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
         ResolveSchemaImports(_stylesheet, baseUri);
         // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
@@ -220,7 +230,6 @@ public sealed class XsltTransformer
                     _typedParameters[name] = ParseExternalParamValue(value);
             }
         }
-        return Task.CompletedTask;
     }
 
     /// <summary>

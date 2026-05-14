@@ -1,3 +1,4 @@
+using System.Text;
 using System.Xml;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.Xdm;
@@ -256,6 +257,30 @@ internal sealed class StreamingXmlProcessor
                         var wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
                             .ConfigureAwait(false);
 
+                        // Subtree-buffer fallback: MatchAndExecute consumed the entire
+                        // element subtree from the reader (snapshot()/copy-of() needed an
+                        // in-memory tree). Skip ancestor push — no matching EndElement event
+                        // will arrive — and fire End-phase accumulators / watchers manually,
+                        // mirroring the self-closing-element path.
+                        if (_context._streamingSubtreeBufferConsumed)
+                        {
+                            _context._streamingSubtreeBufferConsumed = false;
+                            await FireAccumulatorRulesAsync(xdmElem, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
+                            if (_watchers != null
+                                || _context._activeStreamWatchers != null
+                                || _pendingTextWatcherMatches.Count > 0)
+                            {
+                                FireWatchersEndElement(current.LocalName);
+                            }
+                            if (_context._streamingOpenElements.Count > 0)
+                            {
+                                var qname = _context._streamingOpenElements.Pop();
+                                _context.WriteStreamingEndTag(qname);
+                            }
+                            CleanupStreamingNode(current);
+                            break;
+                        }
+
                         if (!isEmptyElement)
                         {
                             ancestorStack.Push(current);
@@ -270,9 +295,14 @@ internal sealed class StreamingXmlProcessor
                             // Self-closing: fire end-phase rules, close any deferred tag, then clean up
                             await FireAccumulatorRulesAsync(xdmElem, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
 
-                            // Fire watchers for end of self-closing element
-                            if (_watchers != null)
+                            // Fire watchers for end of self-closing element (constructor-time
+                            // + dynamic + pending-text-content matches).
+                            if (_watchers != null
+                                || _context._activeStreamWatchers != null
+                                || _pendingTextWatcherMatches.Count > 0)
+                            {
                                 FireWatchersEndElement(current.LocalName);
+                            }
 
                             if (_context._streamingOpenElements.Count > 0)
                             {
@@ -322,9 +352,16 @@ internal sealed class StreamingXmlProcessor
                             if (closingNode != null)
                                 await FireAccumulatorRulesAsync(closingNode, closingContext.NodeId, AccumulatorPhase.End).ConfigureAwait(false);
 
-                            // Fire watchers for end element (subtree tracking)
-                            if (_watchers != null)
+                            // Fire watchers for end element (subtree tracking AND
+                            // pending-text-content match completion). Must run for
+                            // dynamic watchers + pending matches too, not just the
+                            // constructor-time _watchers.
+                            if (_watchers != null
+                                || _context._activeStreamWatchers != null
+                                || _pendingTextWatcherMatches.Count > 0)
+                            {
                                 FireWatchersEndElement(closingContext.LocalName);
+                            }
 
                             // Write the deferred closing tag for elements opened by shallow-copy.
                             // Skip this for suppressed elements — they never wrote an open tag.
@@ -356,9 +393,16 @@ internal sealed class StreamingXmlProcessor
                         };
                         _nodeStore.Register(textNode);
 
-                        // Fire stream watchers for text content
-                        if (_watchers != null)
+                        // Fire stream watchers for text content (constructor-time +
+                        // dynamic _activeStreamWatchers + accumulate into any pending
+                        // text-content matches so sum/string-join over text-content
+                        // elements get their values).
+                        if (_watchers != null
+                            || _context._activeStreamWatchers != null
+                            || _pendingTextWatcherMatches.Count > 0)
+                        {
                             FireWatchersText(textValue);
+                        }
 
                         // Fire accumulator rules for text nodes (always, even if suppressed)
                         await FireAccumulatorRulesAsync(textNode, textNodeId, AccumulatorPhase.Start).ConfigureAwait(false);
@@ -546,6 +590,24 @@ internal sealed class StreamingXmlProcessor
     /// <summary>
     /// Fires watchers for element start events.
     /// </summary>
+    /// <summary>
+    /// One pending element-match — created at StartElement when a watcher needs
+    /// the element's text content (ValueAttribute == null). Text events between
+    /// the start and matching EndElement append to <see cref="TextBuffer"/>;
+    /// on EndElement, the watcher is fired once with the accumulated text and
+    /// the entry removed.
+    /// </summary>
+    private sealed class PendingTextWatcherMatch
+    {
+        public required StreamWatcher Watcher;
+        public required int Depth;
+        public required string ElementName;
+        public Dictionary<string, string>? Attributes;
+        public StringBuilder TextBuffer = new();
+    }
+
+    private readonly List<PendingTextWatcherMatch> _pendingTextWatcherMatches = [];
+
     private void FireWatchers(string elementName, IReadOnlyDictionary<string, string>? attributes, string? textContent)
     {
         // Fire both constructor-time watchers (xsl:source-document path) and dynamic
@@ -574,10 +636,27 @@ internal sealed class StreamingXmlProcessor
             // Check element path match
             if (watcher.PathMatcher.Matches(_ancestorNames, elementName))
             {
-                watcher.OnElementMatch(elementName, attributes, textContent);
+                if (watcher.ValueAttribute == null && WatcherNeedsTextContent(watcher))
+                {
+                    // Defer the OnElementMatch until EndElement so accumulated text
+                    // content from intervening Text events is available. Without
+                    // this, sum(n) / string-join(n, ',') over text-content elements
+                    // never receive the text and aggregate to null/empty.
+                    _pendingTextWatcherMatches.Add(new PendingTextWatcherMatch
+                    {
+                        Watcher = watcher,
+                        Depth = _ancestorNames.Count,
+                        ElementName = elementName,
+                        Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null
+                    });
+                }
+                else
+                {
+                    watcher.OnElementMatch(elementName, attributes, textContent);
+                }
             }
 
-            // Check attribute match
+            // Check attribute match — attribute values are known at StartElement
             var attrName = watcher.PathMatcher.MatchesAttribute(_ancestorNames, elementName);
             if (attrName != null && attributes != null)
             {
@@ -591,10 +670,37 @@ internal sealed class StreamingXmlProcessor
     }
 
     /// <summary>
+    /// Returns true when the watcher's aggregation reads element text content
+    /// (and therefore needs deferral until EndElement). Count alone doesn't need
+    /// text — only the value-consuming aggregations do.
+    /// </summary>
+    private static bool WatcherNeedsTextContent(StreamWatcher watcher) => watcher.Aggregation switch
+    {
+        WatcherAggregation.Sum or WatcherAggregation.Max or WatcherAggregation.Min
+            or WatcherAggregation.Avg or WatcherAggregation.StringJoin
+            or WatcherAggregation.Sequence or WatcherAggregation.Snapshot => true,
+        _ => false
+    };
+
+    /// <summary>
     /// Fires watchers for end element events (subtree tracking).
     /// </summary>
     private void FireWatchersEndElement(string localName)
     {
+        // Fire any pending text-content watcher matches whose element ends here.
+        // entry.Depth was recorded at StartElement BEFORE the matching element was
+        // pushed onto _ancestorNames. By the time we reach EndElement, the matching
+        // element has been pushed and then popped, so _ancestorNames.Count is back
+        // to that same starting depth. Walk backwards to allow safe in-place removal.
+        var pendingDepth = _ancestorNames.Count;
+        for (var i = _pendingTextWatcherMatches.Count - 1; i >= 0; i--)
+        {
+            var entry = _pendingTextWatcherMatches[i];
+            if (entry.Depth != pendingDepth || entry.ElementName != localName) continue;
+            entry.Watcher.OnElementMatch(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
+            _pendingTextWatcherMatches.RemoveAt(i);
+        }
+
         FireEndElementOnList(_watchers, localName);
         if (!ReferenceEquals(_context._activeStreamWatchers, _watchers))
             FireEndElementOnList(_context._activeStreamWatchers, localName);
@@ -618,6 +724,20 @@ internal sealed class StreamingXmlProcessor
     /// </summary>
     private void FireWatchersText(string textValue)
     {
+        // Append text to any pending text-content watcher matches whose element
+        // is currently open (depth matches the current ancestor depth + 1, since
+        // text events appear at child-of-element level).
+        if (_pendingTextWatcherMatches.Count > 0)
+        {
+            var textDepth = _ancestorNames.Count;
+            foreach (var entry in _pendingTextWatcherMatches)
+            {
+                // Accumulate text from all descendants of the matched element
+                // (XPath string-value of an element concatenates all descendant text).
+                if (entry.Depth <= textDepth)
+                    entry.TextBuffer.Append(textValue);
+            }
+        }
         FireTextOnList(_watchers, textValue);
         if (!ReferenceEquals(_context._activeStreamWatchers, _watchers))
             FireTextOnList(_context._activeStreamWatchers, textValue);

@@ -63,6 +63,21 @@ public sealed class XdmInMemoryStore : INodeBuilder
     /// </summary>
     internal void Remove(NodeId id) => _nodes.Remove(id);
 
+    /// <summary>
+    /// Returns the next NodeId that would be allocated, without consuming it.
+    /// Used by callers that need to hand the value to an allocator (e.g.
+    /// <c>XmlDocumentParser</c>) before reserving the range via
+    /// <see cref="AdvanceNextIdBy"/>.
+    /// </summary>
+    internal NodeId PeekNextId() => new(_nextId);
+
+    /// <summary>
+    /// Advances the internal NodeId counter by <paramref name="count"/>.
+    /// Used after an external allocator (e.g. <c>XmlDocumentParser</c>) has
+    /// claimed a contiguous range starting at <see cref="PeekNextId"/>.
+    /// </summary>
+    internal void AdvanceNextIdBy(ulong count) => _nextId += count;
+
     public NamespaceId InternNamespace(string uri)
     {
         if (string.IsNullOrEmpty(uri))

@@ -901,7 +901,7 @@ public sealed class XsltTransformEngine
         switch (node)
         {
             case Xdm.Nodes.XdmAttribute attr:
-                return $"{(attr.Prefix != null ? attr.Prefix + ":" : "")}{attr.LocalName}=\"{attr.Value}\"";
+                return $"{(!string.IsNullOrEmpty(attr.Prefix) ? attr.Prefix + ":" : "")}{attr.LocalName}=\"{attr.Value}\"";
             case Xdm.Nodes.XdmComment comment:
                 return $"<!--{comment.StringValue}-->";
             case Xdm.Nodes.XdmProcessingInstruction pi:
@@ -1073,7 +1073,7 @@ public sealed class XsltTransformEngine
             {
                 // Orphan attribute: name="value" format
                 var sb = new StringBuilder();
-                if (attr.Prefix != null)
+                if (!string.IsNullOrEmpty(attr.Prefix))
                 {
                     sb.Append(attr.Prefix);
                     sb.Append(':');
@@ -3929,6 +3929,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
     internal bool _streamingDeferReadOnNextIteration;
 
     /// <summary>
+    /// Set by <see cref="MatchAndExecuteStreamingNodeAsync"/> when the matched
+    /// template required snapshot()/copy-of() of the matched subtree, so the
+    /// engine consumed events from <see cref="_activeStreamingReader"/> via
+    /// <c>ReadSubtree()</c>, parsed them into an in-memory XdmElement, and ran
+    /// the body against that buffered tree. The processor checks this flag
+    /// after MatchAndExecute returns: when set it skips ancestor-stack push
+    /// and fires End-phase accumulator + watcher events manually (the matching
+    /// EndElement event was consumed by ReadSubtree and won't arrive separately).
+    /// </summary>
+    internal bool _streamingSubtreeBufferConsumed;
+
+    /// <summary>
     /// One entry on <see cref="_streamingDeferredExecutions"/>. Captures everything
     /// needed to run a template body at the parent EndElement event with watcher
     /// results substituted into consuming aggregates.
@@ -6253,6 +6265,25 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             var template = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext());
             if (template != null)
             {
+                // Pre-scan template body for snapshot()/copy-of() of the matched subtree.
+                // If found, the body needs an in-memory XdmElement (XPath cannot deliver
+                // a buffered subtree from the streaming reader). Consume the subtree via
+                // XmlReader.ReadSubtree(), parse it into an XdmDocument fragment, and
+                // run the body against the parsed root. The processor sees
+                // _streamingSubtreeBufferConsumed and skips the now-impossible EndElement
+                // bookkeeping (ReadSubtree already advanced the parent reader past it).
+                if (_activeStreamingReader != null
+                    && node is Xdm.Nodes.XdmElement bufElem
+                    && StreamingSubtreeBufferDetector.RequiresSubtreeBuffer(template.Body))
+                {
+                    await ExecuteWithBufferedSubtreeAsync(template, bufElem, mode, position).ConfigureAwait(false);
+                    PopScope(); pushedScope = false;
+                    PopCurrentItem();
+                    PopContextItem();
+                    _streamingSubtreeBufferConsumed = true;
+                    return true;
+                }
+
                 // Pre-scan template body for consuming aggregates (count(*), sum(*), …).
                 // If found AND the body doesn't itself call apply-templates (which would
                 // consume children directly), DEFER body execution to parent EndElement
@@ -6374,6 +6405,80 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
             ParentDepth = _activeStreamingReader.Depth,
             Watchers = watchers
         };
+    }
+
+    /// <summary>
+    /// Streaming-mode fallback for templates whose body uses snapshot()/copy-of()
+    /// of the matched subtree. Consumes the current element and all its descendants
+    /// from <see cref="_activeStreamingReader"/> via <c>ReadSubtree()</c>, parses
+    /// the events into an in-memory <see cref="XdmDocument"/> fragment, and runs
+    /// the template body against the parsed root. The processor's main loop sees
+    /// <see cref="_streamingSubtreeBufferConsumed"/> and skips the matching
+    /// EndElement bookkeeping (already consumed by ReadSubtree).
+    /// </summary>
+    private async ValueTask ExecuteWithBufferedSubtreeAsync(
+        Ast.XsltTemplate template, Xdm.Nodes.XdmElement element, QName? mode, int position)
+    {
+        var reader = _activeStreamingReader!;
+        Xdm.Nodes.XdmElement bufferedRoot;
+        if (_nodeStore != null)
+        {
+            // Walk reader events directly into XdmElement/XdmAttribute/XdmText
+            // — no string serialize-then-parse round-trip. The materializer leaves
+            // the reader positioned at the matched EndElement (or on the empty
+            // element if self-closing); the processor's main loop reads past it
+            // on the next iteration, so we do NOT set _streamingDeferReadOnNextIteration
+            // here (unlike the prior ReadOuterXml path, which advanced too far).
+            bufferedRoot = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore, new DocumentId(0))
+                           ?? element;
+        }
+        else
+        {
+            bufferedRoot = element;
+        }
+
+        var savedTemplate = _currentTemplate;
+        var savedMode = _currentMode;
+        _currentTemplate = template;
+        _currentMode = mode;
+
+        PushContextItem(bufferedRoot, position, 1);
+        PushCurrentItem(bufferedRoot);
+        PushScope();
+
+        foreach (var param in template.Parameters)
+        {
+            if (param.Select != null)
+            {
+                var defaultVal = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                if (param.As != null)
+                    defaultVal = CoerceToType(defaultVal, param.As);
+                SetVariable(param.Name, defaultVal);
+            }
+            else
+            {
+                SetVariable(param.Name, "");
+            }
+        }
+
+        if (template.Version != null) _effectiveVersionStack.Push(template.Version);
+        if (template.DefaultCollation != null) _defaultCollationStack.Push(template.DefaultCollation);
+        if (template.BaseUri != null) _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
+        try
+        {
+            await template.Body.ExecuteAsync(this).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (template.BaseUri != null) _staticBaseUriStack.Pop();
+            if (template.DefaultCollation != null) _defaultCollationStack.Pop();
+            if (template.Version != null) _effectiveVersionStack.Pop();
+            _currentTemplate = savedTemplate;
+            _currentMode = savedMode;
+            PopScope();
+            PopCurrentItem();
+            PopContextItem();
+        }
     }
 
     /// <summary>
@@ -10398,7 +10503,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                 }
 
-                var attrName = copyPrefix != null ? $"{copyPrefix}:{attr.LocalName}" : attr.LocalName;
+                var attrName = !string.IsNullOrEmpty(copyPrefix) ? $"{copyPrefix}:{attr.LocalName}" : attr.LocalName;
                 target.Append(' ');
                 target.Append(attrName);
                 target.Append("=\"");
@@ -10867,7 +10972,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
             case XdmElement elem:
             {
-                var eName = elem.Prefix != null ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName;
+                var eName = !string.IsNullOrEmpty(elem.Prefix) ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName;
                 _output.Append('<');
                 _output.Append(eName);
 
@@ -10921,7 +11026,7 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
                 if (!nsBindings.ContainsKey(""))
                 {
                     var needsUndeclaration = false;
-                    if (elem.Prefix == null)
+                    if (string.IsNullOrEmpty(elem.Prefix))
                     {
                         // Unprefixed element in null namespace — always undeclare
                         var elemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
@@ -16893,25 +16998,45 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
         if ((b is XsDateTime or XsDate or XsTime or DateTimeOffset) && a is not XsDateTime and not XsDate and not XsTime and not DateTimeOffset)
             throw new XsltException($"XTTE2230: Merge key values are not comparable: {a.GetType().Name} vs {b.GetType().Name}");
 
-        // Fall back to string comparison
-        var aStr = a.ToString() ?? "";
-        var bStr = b.ToString() ?? "";
+        // Fall back to string comparison — atomize XDM nodes so attribute/element
+        // selects produce string values (not "PhoenixmlDb.Xdm.Nodes.XdmAttribute").
+        var aStr = AtomizeMergeKeyToString(a);
+        var bStr = AtomizeMergeKeyToString(b);
         return string.Compare(aStr, bStr, StringComparison.Ordinal);
     }
 
     private static bool IsMergeKeyNumeric(object? v) => v is long or int or double or float or decimal;
 
-    private static double ToDouble(object? v) => v switch
+    private static string AtomizeMergeKeyToString(object v) => v switch
     {
-        long l => l,
-        int i => i,
-        double d => d,
-        float f => f,
-        decimal m => (double)m,
-        string s => double.TryParse(s, System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.InvariantCulture, out var r) ? r : double.NaN,
-        _ => double.NaN
+        Xdm.Nodes.XdmNode n => n.StringValue,
+        XsUntypedAtomic ua => ua.Value,
+        _ => v.ToString() ?? string.Empty
     };
+
+    private static double ToDouble(object? v)
+    {
+        // Merge keys are typically XDM atomic values, but a path-step select
+        // (e.g. select="@n") delivers a node — atomize before parsing or every
+        // node compares equal under data-type="number" (NaN==NaN==no-op),
+        // collapsing the K-way merge into a single group.
+        switch (v)
+        {
+            case long l: return l;
+            case int i: return i;
+            case double d: return d;
+            case float f: return f;
+            case decimal m: return (double)m;
+            case string s when TryParseDouble(s, out var sr): return sr;
+            case Xdm.Nodes.XdmNode n when TryParseDouble(n.StringValue, out var nr): return nr;
+            case XsUntypedAtomic ua when TryParseDouble(ua.Value, out var uar): return uar;
+            default: return double.NaN;
+        }
+    }
+
+    private static bool TryParseDouble(string s, out double r) =>
+        double.TryParse(s, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out r);
 
     public override async ValueTask CreateMapAsync(XsltMap instruction)
     {
@@ -18511,13 +18636,18 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     private async ValueTask<string> EvaluateAvtAsync(XsltAttributeValueTemplate avt)
     {
+        // Fast paths for the common case: most AVTs are either a single literal
+        // (e.g. <foo bar="baz"/>) or a single expression (<foo bar="{$x}"/>).
+        // Skipping the StringBuilder removes allocation pressure on large workloads:
+        // ProjectToReport hits 24K AVT evals at ~18-20µs each, where most are 1-part.
+        var parts = avt.Parts;
+        if (parts.Count == 0) return string.Empty;
+        if (parts.Count == 1)
+            return await parts[0].EvaluateAsync(this).ConfigureAwait(false);
+
         var sb = new StringBuilder();
-
-        foreach (var part in avt.Parts)
-        {
+        foreach (var part in parts)
             sb.Append(await part.EvaluateAsync(this).ConfigureAwait(false));
-        }
-
         return sb.ToString();
     }
 
@@ -21223,7 +21353,14 @@ internal sealed class XsltCurrentMergeGroupFunction : PhoenixmlDb.XQuery.Ast.XQu
         IReadOnlyList<object?> arguments, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         if (_context.TryGetVariable(new QName(NamespaceId.None, "current-merge-group"), out var group) && group != null)
+        {
+            // Same shape as current-group(): unwrap List<object> to object?[] so
+            // FunctionCallOperator yields items individually rather than treating
+            // the whole list as a single XDM array item (path navigation breaks).
+            if (group is List<object> list)
+                return ValueTask.FromResult<object?>(list.ToArray());
             return ValueTask.FromResult<object?>(group);
+        }
 
         throw new XsltException("XTDE3480: current-merge-group() called when there is no current merge group");
     }
@@ -21244,7 +21381,11 @@ internal sealed class XsltCurrentMergeGroup1Function : PhoenixmlDb.XQuery.Ast.XQ
         var sourceName = arguments[0]?.ToString();
         if (sourceName != null &&
             _context.TryGetVariable(new QName(NamespaceId.None, $"current-merge-group:{sourceName}"), out var group) && group != null)
+        {
+            if (group is List<object> list)
+                return ValueTask.FromResult<object?>(list.ToArray());
             return ValueTask.FromResult<object?>(group);
+        }
 
         // XTDE3490: source name not recognized
         throw new XsltException($"XTDE3490: current-merge-group() source name '{sourceName}' does not match any xsl:merge-source");

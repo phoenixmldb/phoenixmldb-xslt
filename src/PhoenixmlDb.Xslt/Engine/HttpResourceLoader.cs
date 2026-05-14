@@ -71,6 +71,30 @@ internal static class HttpResourceLoader
             throw new System.IO.IOException($"HTTP request for '{uri}' timed out: {ex.Message}", ex);
         }
     }
+
+    /// <summary>
+    /// Async sibling of <see cref="GetStringSync"/>. Used by the async pre-walker
+    /// in <c>LoadStylesheetAsync</c> to populate <see cref="PreloadedResources"/>
+    /// before invoking the synchronous parser, so WASM hosts never hit the
+    /// sync-over-async wait path that throws "Cannot wait on monitors".
+    /// </summary>
+    public static async Task<string> GetStringAsync(Uri uri, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _client.GetAsync(uri, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new System.IO.IOException($"HTTP request for '{uri}' failed: {ex.Message}", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new System.IO.IOException($"HTTP request for '{uri}' timed out: {ex.Message}", ex);
+        }
+    }
 }
 
 /// <summary>
@@ -107,5 +131,30 @@ internal static class HttpDocumentLoader
         var response = _client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
         response.EnsureSuccessStatusCode();
         return response.Content.ReadAsStreamAsync().GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Async sibling of <see cref="OpenRead"/>. Used by the LoadStylesheetAsync
+    /// pre-walker to populate <see cref="PreloadedResources"/> with documents
+    /// referenced via static <c>doc('uri-literal')</c> / <c>document('uri-literal')</c>
+    /// calls — same pattern as the xsl:import preloader, fetched as a string
+    /// (the runtime's fn:doc cache stores text and re-parses on read).
+    /// </summary>
+    public static async Task<string> GetStringAsync(Uri uri, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _client.GetAsync(uri, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new System.IO.IOException($"HTTP request for '{uri}' failed: {ex.Message}", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new System.IO.IOException($"HTTP request for '{uri}' timed out: {ex.Message}", ex);
+        }
     }
 }

@@ -6848,6 +6848,9 @@ public sealed class StylesheetParser
             SortBeforeMerge = sortBeforeMergeAttr != null
                 ? ParseYesNo(sortBeforeMergeAttr) ?? throw new XsltException($"XTSE0020: Invalid value '{sortBeforeMergeAttr.Value}' for sort-before-merge attribute (must be yes/no/true/false/0/1)", location)
                 : false,
+            Streamable = streamableAttr != null
+                ? ParseYesNo(streamableAttr) ?? false
+                : false,
             MergeKeys = mergeKeys,
             UseAccumulators = useAccumulators
         };
