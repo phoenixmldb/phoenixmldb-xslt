@@ -125,8 +125,15 @@ public sealed class XsltTransformProvider : ITransformProvider
             transformer.SetInitialMode(initialMode);
         if (initialFunctionQName is { } funcQName)
         {
-            var nsUri = !string.IsNullOrEmpty(funcQName.ExpandedNamespace)
-                ? funcQName.ExpandedNamespace
+            // fn:QName(uri, qname) populates RuntimeNamespace, not ExpandedNamespace
+            // (the latter is reserved for parser-time EQName Q{uri}local syntax).
+            // ResolvedNamespace returns whichever is set — required so
+            // QName('http://example.com/mf','foo') from XQuery resolves correctly
+            // when used as fn:transform's initial-function key. Without this fall-through,
+            // the namespace gets dropped and the function lookup hits XTDE0041 even
+            // though the function is registered under the right namespace.
+            var nsUri = !string.IsNullOrEmpty(funcQName.ResolvedNamespace)
+                ? funcQName.ResolvedNamespace
                 : null;
             transformer.SetInitialFunction(funcQName.LocalName, nsUri);
             // function-params is an XDM array — represented as List<object?> in our XDM
