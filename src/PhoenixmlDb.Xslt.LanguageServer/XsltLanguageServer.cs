@@ -25,7 +25,14 @@ public sealed class XsltLanguageServer
 
     [JsonRpcMethod("initialize")]
     public InitializeResult Initialize(object? _) =>
-        new(new ServerCapabilities { TextDocumentSync = 1 });
+        new(new ServerCapabilities { TextDocumentSync = 1, DocumentSymbolProvider = true });
+
+    [JsonRpcMethod("textDocument/documentSymbol")]
+    public DocumentSymbol[] DocumentSymbol(DocumentSymbolParams p)
+    {
+        if (!_buffers.TryGetValue(p.TextDocument.Uri, out var buf)) return Array.Empty<DocumentSymbol>();
+        return Handlers.DocumentSymbolHandler.Handle(buf);
+    }
 
     [JsonRpcMethod("initialized")]
     public void Initialized(object? _) { }

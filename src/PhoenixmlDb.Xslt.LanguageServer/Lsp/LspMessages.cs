@@ -54,7 +54,29 @@ public sealed record ServerCapabilities
 {
     [JsonPropertyName("textDocumentSync")]
     public int TextDocumentSync { get; init; } = 1;
+
+    [JsonPropertyName("documentSymbolProvider")]
+    public bool DocumentSymbolProvider { get; init; }
 }
 
 public sealed record InitializeResult(
     [property: JsonPropertyName("capabilities")] ServerCapabilities Capabilities);
+
+// Plan 28 additions
+public sealed record DocumentSymbol(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("kind")] int Kind,
+    [property: JsonPropertyName("range")] Range Range,
+    [property: JsonPropertyName("selectionRange")] Range SelectionRange);
+
+public sealed record DocumentSymbolParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument);
+
+public static class SymbolKind
+{
+    public const int Function = 12;
+    public const int Variable = 13;
+    public const int Class = 5;
+    public const int Module = 2;
+    public const int Method = 6;
+}
