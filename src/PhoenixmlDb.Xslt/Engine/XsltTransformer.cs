@@ -27420,6 +27420,8 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var postProcessFn = GetOption(options, "post-process") as PhoenixmlDb.XQuery.Ast.XQueryFunction;
         var initialTemplate = GetQNameOption(options, "initial-template");
         var initialMode = GetQNameOption(options, "initial-mode");
+        var initialFunctionQName = GetQNameOption(options, "initial-function");
+        var functionParamsRaw = GetOption(options, "function-params");
         var sourceNode = GetOption(options, "source-node");
         var initialMatchSelection = GetOption(options, "initial-match-selection");
         var staticParamsMap = GetOption(options, "static-params") as IDictionary<object, object?>;
@@ -27452,6 +27454,30 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             // Load the stylesheet content from the resolved URI
             if (baseUri != null && baseUri.IsFile)
                 stylesheetXml = await System.IO.File.ReadAllTextAsync(baseUri.LocalPath).ConfigureAwait(false);
+            else if (baseUri != null && (baseUri.Scheme == Uri.UriSchemeHttp || baseUri.Scheme == Uri.UriSchemeHttps))
+            {
+                // HTTP(S) stylesheet-location: consult preload cache first, then fetch.
+                // Previously this hit File.ReadAllTextAsync(resolvedUri) which on Linux/WASM
+                // mangled "https://host/..." into "/https:/host/..." (Path normalization
+                // collapsed the double slash) and threw FileNotFoundException — Martin
+                // Honnen's Docbook-on-Blazor fn:transform repro.
+                var preloaded = _context._options.PreloadedResources;
+                if (preloaded != null && preloaded.TryGet(baseUri, out var preloadedContent))
+                {
+                    stylesheetXml = preloadedContent;
+                }
+                else if (OperatingSystem.IsBrowser())
+                {
+                    throw new XsltException(
+                        $"FOXT0001: Cannot fetch stylesheet '{baseUri}' on Blazor WebAssembly: " +
+                        "synchronous HTTP I/O is not supported. Pre-fetch the stylesheet " +
+                        "asynchronously and pass it through PreloadedResources to LoadStylesheetAsync.");
+                }
+                else
+                {
+                    stylesheetXml = await HttpResourceLoader.GetStringAsync(baseUri).ConfigureAwait(false);
+                }
+            }
             else if (baseUri != null)
                 stylesheetXml = await System.IO.File.ReadAllTextAsync(resolvedUri).ConfigureAwait(false);
             else
@@ -27504,12 +27530,14 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             throw new XsltException("FOXT0001: No stylesheet specified (stylesheet-location, stylesheet-node, stylesheet-text, or package-name required)");
         }
 
-        // Parse the stylesheet, passing static-params if provided
+        // Parse the stylesheet, passing static-params if provided. Forward
+        // PreloadedResources so xsl:imports inside the dynamically-loaded
+        // stylesheet also benefit from the host's pre-fetched cache (WASM).
         var exprParser = new PhoenixmlDb.Xslt.XQueryExpressionParser();
         var catalog2 = _context._stylesheet.PackageCatalog;
         var parser = catalog2 != null
-            ? new StylesheetParser(exprParser, catalog2)
-            : new StylesheetParser(exprParser);
+            ? new StylesheetParser(exprParser, catalog2) { PreloadedResources = _context._options.PreloadedResources }
+            : new StylesheetParser(exprParser) { PreloadedResources = _context._options.PreloadedResources };
         Dictionary<string, string>? externalStaticParams = null;
         if (staticParamsMap != null)
         {
@@ -27549,10 +27577,39 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             }
         }
 
+        // initial-function: extract function-params (XDM array → IList) and pass to engine.
+        // Mirrors XsltTransformProvider's path used when fn:transform is invoked from
+        // XQuery — the XSLT-internal path was previously dropping these on the floor,
+        // so calling fn:transform with initial-function from inside an XSLT silently
+        // returned empty (Martin Honnen 2026-05-15 follow-up to #60).
+        //
+        // fn:QName(uri, localName) creates a QName with NamespaceId.None and only
+        // ResolvedNamespace populated. The engine's function lookup keys on QName
+        // equality, which uses the interned NamespaceId — so we must re-intern the
+        // namespace via StylesheetParser to match the registered function key.
+        QName? resolvedInitialFunction = initialFunctionQName;
+        if (initialFunctionQName is { } ifq && !string.IsNullOrEmpty(ifq.ResolvedNamespace))
+        {
+            var nsId = StylesheetParser.ResolveNamespaceUri(ifq.ResolvedNamespace);
+            if (nsId != ifq.Namespace)
+            {
+                resolvedInitialFunction = new QName(nsId, ifq.LocalName, ifq.Prefix)
+                { ExpandedNamespace = ifq.ExpandedNamespace, RuntimeNamespace = ifq.RuntimeNamespace };
+            }
+        }
+        var initialFunctionArgs = new List<object?>();
+        if (resolvedInitialFunction != null && functionParamsRaw is System.Collections.IList paramList)
+        {
+            foreach (var item in paramList)
+                initialFunctionArgs.Add(item);
+        }
+
         var transformOptions = new XsltTransformOptions
         {
             InitialTemplate = initialTemplate,
             InitialMode = initialMode,
+            InitialFunction = resolvedInitialFunction,
+            InitialFunctionArguments = initialFunctionArgs,
             HasSourceDocument = hasSource,
             InitialModeSelect = initialModeSelect,
             InitialParameters = initialParams,

@@ -2919,6 +2919,70 @@ public class XsltTransformerIntegrationTests
             $"the function returns xsl:evaluate(. = 'any-context'), which equals true. Got: {output} ({output?.GetType().Name})");
     }
 
+    // Martin Honnen follow-up (2026-05-15): the same fn:transform call works from
+    // XQuery (XsltTransformProvider) but returns empty when issued from an
+    // XSLT stylesheet. Root cause: XsltTransformFunction (the XSLT-internal path)
+    // also dropped 'initial-function' / 'function-params' from the options map.
+    [Fact]
+    public async Task FnTransform_from_xslt_honors_initial_function_with_raw_delivery()
+    {
+        // Inner stylesheet exposes a function that returns the value of an XPath.
+        var innerXsl = """
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                            xmlns:mf="http://example.com/mf">
+              <xsl:function name="mf:evaluate" as="item()*" visibility="public">
+                <xsl:param name="context-item" as="item()"/>
+                <xsl:param name="xpath-expression" as="xs:string"/>
+                <xsl:evaluate context-item="$context-item" xpath="$xpath-expression"/>
+              </xsl:function>
+            </xsl:stylesheet>
+            """;
+
+        var tmp = System.IO.Path.GetTempFileName();
+        var innerPath = System.IO.Path.ChangeExtension(tmp, ".xsl");
+        System.IO.File.Move(tmp, innerPath);
+        await System.IO.File.WriteAllTextAsync(innerPath, innerXsl);
+        try
+        {
+            // Outer stylesheet: from xsl:template, call fn:transform with initial-function.
+            var outerXsl = $$"""
+                <xsl:stylesheet version="3.0"
+                                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                  <xsl:template name="xsl:initial-template">
+                    <xsl:sequence
+                      select="transform(
+                                map {
+                                  'stylesheet-location' : '{{innerPath.Replace("\\", "/")}}',
+                                  'initial-function' : QName('http://example.com/mf', 'evaluate'),
+                                  'function-params' : ['hello', '. = ''hello'''],
+                                  'delivery-format' : 'raw'
+                                }
+                              )?output"/>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """;
+
+            var transformer = new PhoenixmlDb.Xslt.XsltTransformer();
+            await transformer.LoadStylesheetAsync(outerXsl);
+            var serialized = await transformer.TransformAsync((string?)null);
+
+            // fn:transform with delivery-format='raw' returns the boolean true,
+            // which xsl:sequence emits and the outer serializer renders as "true".
+            // Before the fix the inner fn:transform silently dropped initial-function
+            // and returned an empty map → ?output was empty → outer output was empty.
+            serialized.Should().NotBeNullOrWhiteSpace(
+                "fn:transform from inside XSLT must honor initial-function, not silently return empty");
+            serialized.Should().Contain("true", $"inner mf:evaluate('hello', '. = ''hello''') must yield true. Got: {serialized}");
+        }
+        finally
+        {
+            try { System.IO.File.Delete(innerPath); } catch { }
+        }
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
