@@ -57,7 +57,19 @@ public sealed record ServerCapabilities
 
     [JsonPropertyName("documentSymbolProvider")]
     public bool DocumentSymbolProvider { get; init; }
+
+    [JsonPropertyName("signatureHelpProvider")]
+    public SignatureHelpOptions? SignatureHelpProvider { get; init; }
+
+    [JsonPropertyName("definitionProvider")]
+    public bool DefinitionProvider { get; init; }
+
+    [JsonPropertyName("referencesProvider")]
+    public bool ReferencesProvider { get; init; }
 }
+
+public sealed record SignatureHelpOptions(
+    [property: JsonPropertyName("triggerCharacters")] string[] TriggerCharacters);
 
 public sealed record InitializeResult(
     [property: JsonPropertyName("capabilities")] ServerCapabilities Capabilities);
@@ -80,3 +92,30 @@ public static class SymbolKind
     public const int Module = 2;
     public const int Method = 6;
 }
+
+// Plan 29 additions
+
+public sealed record TextDocumentPositionParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument,
+    [property: JsonPropertyName("position")] Position Position);
+
+public sealed record SignatureInformation(
+    [property: JsonPropertyName("label")] string Label,
+    [property: JsonPropertyName("documentation")] string? Documentation);
+
+public sealed record SignatureHelp(
+    [property: JsonPropertyName("signatures")] SignatureInformation[] Signatures,
+    [property: JsonPropertyName("activeSignature")] int ActiveSignature,
+    [property: JsonPropertyName("activeParameter")] int ActiveParameter);
+
+public sealed record Location(
+    [property: JsonPropertyName("uri")] string Uri,
+    [property: JsonPropertyName("range")] Range Range);
+
+public sealed record ReferenceContext(
+    [property: JsonPropertyName("includeDeclaration")] bool IncludeDeclaration);
+
+public sealed record ReferenceParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument,
+    [property: JsonPropertyName("position")] Position Position,
+    [property: JsonPropertyName("context")] ReferenceContext? Context);

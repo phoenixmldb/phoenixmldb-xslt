@@ -25,13 +25,41 @@ public sealed class XsltLanguageServer
 
     [JsonRpcMethod("initialize")]
     public InitializeResult Initialize(object? _) =>
-        new(new ServerCapabilities { TextDocumentSync = 1, DocumentSymbolProvider = true });
+        new(new ServerCapabilities
+        {
+            TextDocumentSync = 1,
+            DocumentSymbolProvider = true,
+            SignatureHelpProvider = new SignatureHelpOptions(TriggerCharacters: ["(", ","]),
+            DefinitionProvider = true,
+            ReferencesProvider = true,
+        });
 
     [JsonRpcMethod("textDocument/documentSymbol")]
     public DocumentSymbol[] DocumentSymbol(DocumentSymbolParams p)
     {
         if (!_buffers.TryGetValue(p.TextDocument.Uri, out var buf)) return Array.Empty<DocumentSymbol>();
         return Handlers.DocumentSymbolHandler.Handle(buf);
+    }
+
+    [JsonRpcMethod("textDocument/signatureHelp")]
+    public SignatureHelp? SignatureHelp(TextDocumentPositionParams p)
+    {
+        if (!_buffers.TryGetValue(p.TextDocument.Uri, out var buf)) return null;
+        return Handlers.SignatureHelpHandler.Handle(buf, p.Position);
+    }
+
+    [JsonRpcMethod("textDocument/definition")]
+    public Location? Definition(TextDocumentPositionParams p)
+    {
+        if (!_buffers.TryGetValue(p.TextDocument.Uri, out var buf)) return null;
+        return Handlers.DefinitionHandler.Handle(buf, p.Position);
+    }
+
+    [JsonRpcMethod("textDocument/references")]
+    public Location[] References(ReferenceParams p)
+    {
+        if (!_buffers.TryGetValue(p.TextDocument.Uri, out var buf)) return Array.Empty<Location>();
+        return Handlers.ReferencesHandler.Handle(buf, p.Position);
     }
 
     [JsonRpcMethod("initialized")]
