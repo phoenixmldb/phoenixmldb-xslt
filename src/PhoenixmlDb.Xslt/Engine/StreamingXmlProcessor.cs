@@ -380,6 +380,11 @@ internal sealed class StreamingXmlProcessor
                     case XmlNodeType.Text:
                     case XmlNodeType.CDATA:
                     case XmlNodeType.SignificantWhitespace:
+                    // Whitespace-only text between sibling elements is still a text
+                    // node and must flow through unless an xsl:strip-space rule removes
+                    // it. Without this case the streaming identity transform silently
+                    // drops indentation (Martin Honnen 2026-05-18).
+                    case XmlNodeType.Whitespace:
                     {
                         var textValue = reader.Value;
 

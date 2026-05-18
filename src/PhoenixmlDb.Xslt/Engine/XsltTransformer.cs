@@ -627,10 +627,23 @@ public sealed class XsltTransformEngine
             var funcKey = (funcName, arity);
             if (!_stylesheet.Functions.TryGetValue(funcKey, out var func))
                 throw new XsltException($"XTDE0041: No public stylesheet function '{funcName.LocalName}' with arity {arity}");
-            var result = await context.CallXsltFunctionAsync(func, options.InitialFunctionArguments).ConfigureAwait(false);
-            if (options.ReturnRawXdm)
-                options.RawResult.Value = result;
-            else
+            // Translate XdmNode arguments into this engine's node store so XPath/xsl:evaluate
+            // inside the function can navigate them (string-value, child axes, etc.).
+            // Without this, a node passed across fn:transform's engine boundary reaches
+            // the function as an opaque reference — name() works but string() returns ""
+            // because the inner store can't resolve the foreign Children NodeIds
+            // (Martin Honnen 2026-05-18, fn:transform with initial-function +
+            // xsl:evaluate context-item passing a node from the outer engine).
+            IReadOnlyList<object?> translatedArgs = TranslateNodeArgumentsToLocalStore(
+                options.InitialFunctionArguments, context._nodeStore);
+            var result = await context.CallXsltFunctionAsync(func, translatedArgs).ConfigureAwait(false);
+            // Always preserve the raw function result through RawResult so callers can
+            // surface the typed XDM value (xs:boolean, map, function, etc.) instead of
+            // the text-serialized form (Martin Honnen 2026-05-18: fn:transform with
+            // delivery-format='raw' and an XSLT-internal initial-function call was
+            // returning the string "false" where the function returned xs:boolean true).
+            options.RawResult.Value = result;
+            if (!options.ReturnRawXdm)
                 context.SerializeFunctionResult(result, outputBuilder);
         }
         else if (options.InitialTemplate != null || (!options.HasSourceDocument && _stylesheet.NamedTemplates.Keys.Any(k => k.LocalName == "initial-template")))
@@ -673,9 +686,73 @@ public sealed class XsltTransformEngine
             return rawItems.Count == 1 ? rawItems[0] : rawItems.ToArray();
         }
 
+        // InitialFunction returned a single raw XDM value (booleans, maps, function items,
+        // arrays, etc.) — surface it directly so type identity isn't lost to text
+        // serialization. The InitialFunction branch sets RawResult unconditionally.
+        if (options.InitialFunction != null && options.RawResult.Value != null)
+            return options.RawResult.Value;
+
         // Fallback: if no sequence items but text was generated, return the text
         var text = outputBuilder.ToString();
         return !string.IsNullOrEmpty(text) ? text : null;
+    }
+
+    /// <summary>
+    /// Wrapper for an XdmNode argument crossing fn:transform's engine boundary.
+    /// The outer engine serializes the node to XML; the inner engine re-parses
+    /// into its own node store so XPath/xsl:evaluate inside the called function
+    /// can navigate children, compute string-value, etc.
+    /// </summary>
+    internal sealed record CrossStoreNodeRef(string Xml, bool IsElement);
+
+    /// <summary>
+    /// Returns a copy of <paramref name="args"/> with any <see cref="CrossStoreNodeRef"/>
+    /// arguments re-parsed into <paramref name="store"/>. Non-wrapped arguments pass
+    /// through unchanged.
+    /// </summary>
+#pragma warning disable CA1859
+    private static List<object?> TranslateNodeArgumentsToLocalStore(
+        IReadOnlyList<object?> args, XdmInMemoryStore? store)
+#pragma warning restore CA1859
+    {
+        if (store == null || args.Count == 0)
+            return args is List<object?> list ? list : new List<object?>(args);
+        bool anyWrapped = false;
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i] is CrossStoreNodeRef) { anyWrapped = true; break; }
+        }
+        if (!anyWrapped) return args is List<object?> list ? list : new List<object?>(args);
+        var translated = new List<object?>(args.Count);
+        foreach (var arg in args)
+        {
+            if (arg is CrossStoreNodeRef wrapped)
+                translated.Add(ReparseCrossStoreNode(wrapped, store));
+            else
+                translated.Add(arg);
+        }
+        return translated;
+    }
+
+    private static object? ReparseCrossStoreNode(CrossStoreNodeRef wrapped, XdmInMemoryStore store)
+    {
+        if (string.IsNullOrEmpty(wrapped.Xml)) return null;
+        try
+        {
+            var doc = new XmlDocument { PreserveWhitespace = true };
+            doc.LoadXml(wrapped.Xml);
+            var localDoc = ConvertToXdm(doc, store);
+            if (wrapped.IsElement && localDoc.DocumentElement.HasValue)
+            {
+                var rootId = localDoc.DocumentElement.Value;
+                return (object?)(store.GetNode(rootId) as Xdm.Nodes.XdmElement) ?? localDoc;
+            }
+            return localDoc;
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -27583,6 +27660,14 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // so calling fn:transform with initial-function from inside an XSLT silently
         // returned empty (Martin Honnen 2026-05-15 follow-up to #60).
         //
+        // XdmNode arguments are serialized to XML here using the OUTER engine's node
+        // store (this is the only place we still have access to it). The inner engine's
+        // TransformRawAsync recognises the CrossStoreNodeRef wrapper and re-parses the
+        // XML into its own node store, so xsl:evaluate / XPath inside the function can
+        // navigate the node (Martin Honnen 2026-05-18: string($context-item) was
+        // returning empty because the foreign node's child NodeIds didn't resolve in
+        // the inner store).
+        //
         // fn:QName(uri, localName) creates a QName with NamespaceId.None and only
         // ResolvedNamespace populated. The engine's function lookup keys on QName
         // equality, which uses the interned NamespaceId — so we must re-intern the
@@ -27601,7 +27686,19 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         if (resolvedInitialFunction != null && functionParamsRaw is System.Collections.IList paramList)
         {
             foreach (var item in paramList)
-                initialFunctionArgs.Add(item);
+            {
+                if (item is Xdm.Nodes.XdmElement or Xdm.Nodes.XdmDocument)
+                {
+                    // Wrap with the outer engine's XML serialization. The inner engine
+                    // unwraps and re-parses into its own node store.
+                    var xml = _context.SerializeXdmNodeToXml((Xdm.Nodes.XdmNode)item);
+                    initialFunctionArgs.Add(new XsltTransformEngine.CrossStoreNodeRef(xml, IsElement: item is Xdm.Nodes.XdmElement));
+                }
+                else
+                {
+                    initialFunctionArgs.Add(item);
+                }
+            }
         }
 
         var transformOptions = new XsltTransformOptions
