@@ -257,7 +257,14 @@ public sealed class XsltTransformEngine
             if (func.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
                 throw new XsltException(
                     $"XTDE0041: Stylesheet function '{funcName.LocalName}' is not public");
-            var result = await context.CallXsltFunctionAsync(func, options.InitialFunctionArguments).ConfigureAwait(false);
+            // Mirror the TransformRawAsync path (line ~637): if any args arrived as
+            // CrossStoreNodeRef wrappers (outer XQuery passed nodes across the engine
+            // boundary), re-parse into this engine's node store so xsl:evaluate can
+            // navigate children/attributes. Without this they reach the function as
+            // opaque CrossStoreNodeRef items and xpath axis steps throw XPTY0020.
+            IReadOnlyList<object?> initialFuncArgs = TranslateNodeArgumentsToLocalStore(
+                options.InitialFunctionArguments, context._nodeStore);
+            var result = await context.CallXsltFunctionAsync(func, initialFuncArgs).ConfigureAwait(false);
             if (options.ReturnRawXdm)
             {
                 // delivery-format='raw' from fn:transform: callers want the typed XDM

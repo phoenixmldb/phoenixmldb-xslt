@@ -158,7 +158,27 @@ public sealed class XsltTransformProvider : ITransformProvider
             if (functionParamsRaw is System.Collections.IList list)
             {
                 foreach (var item in list)
-                    transformer.AddInitialFunctionArgument(item);
+                {
+                    // Node arguments live in the XQuery-side store; their child/attribute
+                    // NodeIds don't resolve in the inner XSLT engine's store. Mirror the
+                    // in-engine path (XsltTransformer line ~27690): serialize to XML and
+                    // wrap as CrossStoreNodeRef so the inner engine re-parses into its
+                    // own store. Without this, xsl:evaluate against a passed-in node
+                    // appears typed correctly but child/* navigation returns empty
+                    // (Martin's Schematron repro after the namespace-id fix).
+                    if (item is Xdm.Nodes.XdmElement or Xdm.Nodes.XdmDocument)
+                    {
+                        var xml = SerializeNode((Xdm.Nodes.XdmNode)item, nodeStore);
+                        transformer.AddInitialFunctionArgument(
+                            new Engine.XsltTransformEngine.CrossStoreNodeRef(
+                                xml,
+                                IsElement: item is Xdm.Nodes.XdmElement));
+                    }
+                    else
+                    {
+                        transformer.AddInitialFunctionArgument(item);
+                    }
+                }
             }
         }
 
