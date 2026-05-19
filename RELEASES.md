@@ -1,5 +1,45 @@
 # Release History
 
+## 1.3.17 (2026-05-19)
+
+### `fn:transform` HTTP `stylesheet-location` now fetched, not File.ReadAllText'd (Martin Honnen WASM repro)
+
+`XsltTransformProvider` (the bridge used when XQuery's `fn:transform()`
+calls into XSLT) only handled `file://` URIs in its stylesheet-location
+branch. `http(s)://` URIs fell through to a fallback that
+`Path.Combine`'d the URL onto the static base and called
+`File.ReadAllTextAsync` — produced `FileNotFoundException` for
+`https://host/…` (Path normalization collapses the double slash). The
+in-engine `XsltTransformFunction` already had HTTP handling; this brings
+the public `ITransformProvider` to parity. Blazor browsers still get a
+clear "synchronous HTTP I/O is not supported" message instead of a
+mangled path.
+
+### `fn:transform` initial-function node arguments now re-anchored in inner store
+
+When `fn:transform` is called with `function-params` that include
+`XdmElement`/`XdmDocument` items from the outer XQuery store, the inner
+XSLT engine couldn't navigate them — children/attributes resolve via
+NodeIds that only exist in the originating store. The function-param
+arrived typed correctly (`instance of element()` returned true) but
+`name()` was the only thing that worked; `string-value`, axis steps,
+and `xsl:evaluate`'s context-item were all empty.
+
+Mirroring the in-engine path: serialize XdmElement/XdmDocument args to
+XML and wrap as `CrossStoreNodeRef`. The receiving side
+(`TranslateNodeArgumentsToLocalStore`) re-parses into its own
+`XdmInMemoryStore` so XPath can walk the tree. Applied on both the
+public `XsltTransformProvider.TransformAsync` path and the engine's
+direct `CallXsltFunctionAsync` path at line 260 (which previously
+passed `options.InitialFunctionArguments` straight through without
+translation, leaving the wrapper visible to xsl:evaluate as an opaque
+item that tripped XPTY0020).
+
+### XTSE0080 diagnostic includes the function name
+
+The reserved-namespace error now names the offending function:
+`XTSE0080: The name of stylesheet function 'mf:evaluate' is in a reserved namespace`.
+
 ## 1.3.11 (2026-05-13)
 
 ### Fix: `fn:transform` from XQuery now honors `initial-function` + `function-params` (Martin Honnen report)

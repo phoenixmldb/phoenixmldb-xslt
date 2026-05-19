@@ -6,7 +6,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.3.16</Version>
+    <Version>1.3.17</Version>
+    <PackageReleaseNotes>
+      fn:transform with stylesheet-location of an http(s):// URI is now fetched, not File.ReadAllText'd (Martin Honnen WASM repro).
+      Node arguments to initial-function are now wrapped as CrossStoreNodeRef and re-parsed in the inner engine's store on both the in-engine and public ITransformProvider paths so xsl:evaluate can navigate them (Martin Honnen Schematron repro).
+      XTSE0080 diagnostic now includes the offending function QName.
+      See RELEASES.md for full notes.
+    </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-all</AnalysisLevel>
