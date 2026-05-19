@@ -3854,7 +3854,7 @@ public sealed class StylesheetParser
             || name.Namespace == NamespaceId.Map
             || name.Namespace == NamespaceId.Array
             || name.Namespace == NamespaceId.Math)
-            throw new XsltException($"XTSE0080: The name of a stylesheet function must not be in a reserved namespace", location);
+            throw new XsltException($"XTSE0080: The name of stylesheet function '{name}' is in a reserved namespace", location);
 
         // XTSE0020: Validate attribute values
         var overrideAttr = element.Attribute("override");
