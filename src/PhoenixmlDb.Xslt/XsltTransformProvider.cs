@@ -210,7 +210,13 @@ public sealed class XsltTransformProvider : ITransformProvider
             // xs:boolean from xsl:evaluate, where ?output came back empty under both
             // 'document' and 'serialized' because the boolean's serialization
             // ("true"/"false") didn't reparse to a useful XDM document.
-            resultMap["output"] = await transformer.TransformToValueAsync(inputXml).ConfigureAwait(false);
+            var rawValue = await transformer.TransformToValueAsync(inputXml).ConfigureAwait(false);
+            // The engine wraps any XdmNode/XdmDocument items in raw-delivery results as
+            // CrossStoreNodeRef so we can re-anchor them in the XQuery store here —
+            // inner-store NodeIds don't resolve outside (Martin Honnen: subtrees came
+            // back as <root/> instead of <root>text</root>, path() walked stale Parent
+            // chains, and multi-hop env:evaluate lost child navigation entirely).
+            resultMap["output"] = ReanchorCrossStoreResult(rawValue, nodeStore as INodeBuilder);
         }
         else
         {
@@ -254,6 +260,60 @@ public sealed class XsltTransformProvider : ITransformProvider
     {
         options.TryGetValue(key, out var val);
         return val;
+    }
+
+    /// <summary>
+    /// Walks the raw result from <c>TransformToValueAsync</c>, re-parsing any
+    /// <see cref="Engine.XsltTransformEngine.CrossStoreNodeRef"/> wrappers into the
+    /// caller's <paramref name="outerBuilder"/> so the returned nodes carry NodeIds
+    /// that the XQuery side can navigate. Without this, raw-delivery node results
+    /// reach XQuery anchored to the (now-dying) inner XSLT engine's store; outer-side
+    /// child navigation, <c>path()</c>, and serialization all return wrong/empty values.
+    /// </summary>
+    private static object? ReanchorCrossStoreResult(object? value, INodeBuilder? outerBuilder)
+    {
+        if (value is null || outerBuilder is null) return value;
+        if (value is Engine.XsltTransformEngine.CrossStoreNodeRef wrapped)
+            return ReanchorOne(wrapped, outerBuilder);
+        if (value is object?[] arr)
+        {
+            var anyWrapped = false;
+            for (var i = 0; i < arr.Length; i++)
+            {
+                if (arr[i] is Engine.XsltTransformEngine.CrossStoreNodeRef) { anyWrapped = true; break; }
+            }
+            if (!anyWrapped) return arr;
+            var result = new object?[arr.Length];
+            for (var i = 0; i < arr.Length; i++)
+            {
+                result[i] = arr[i] is Engine.XsltTransformEngine.CrossStoreNodeRef w
+                    ? ReanchorOne(w, outerBuilder)
+                    : arr[i];
+            }
+            return result;
+        }
+        return value;
+    }
+
+    private static object? ReanchorOne(Engine.XsltTransformEngine.CrossStoreNodeRef wrapped, INodeBuilder builder)
+    {
+        if (string.IsNullOrEmpty(wrapped.Xml)) return null;
+        try
+        {
+            var doc = new System.Xml.XmlDocument { PreserveWhitespace = true };
+            doc.LoadXml(wrapped.Xml);
+            var localDoc = PhoenixmlDb.XQuery.Functions.ParseXmlFunction.ConvertToXdm(doc, builder);
+            if (wrapped.IsElement && localDoc.DocumentElement is { } rootId
+                && builder is INodeStore store && store.GetNode(rootId) is XdmElement rootElem)
+            {
+                return rootElem;
+            }
+            return localDoc;
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
     }
 
     private static string StringValueOf(object? value)

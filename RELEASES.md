@@ -1,5 +1,49 @@
 # Release History
 
+## 1.3.18 (2026-05-19)
+
+### `fn:transform` raw-delivery node results re-anchored in caller's store (Martin Honnen follow-up)
+
+Closes three related symptoms Martin reported after 1.3.17 landed, all rooted
+in the same lifecycle gap: `fn:transform` with `delivery-format='raw'` returned
+`XdmNode` values whose `Children` / `Parent` `NodeId`s were allocated in the
+inner XSLT engine's `XdmInMemoryStore` — which is discarded once the engine's
+`TransformAsync` returns. From the caller's vantage:
+
+- Subtree serialization stripped descendants: a returned element walked as
+  `<root/>` instead of `<root>This is an example.</root>` because the outer
+  store couldn't resolve the child text node's `NodeId`.
+- `path()` walked a garbage ancestor chain like
+  `/Q{…}schema[1]/@queryBinding/Q{}root[1]` because the returned element's
+  `Parent` `NodeId` happened to collide with an unrelated node in the outer
+  store (the `.sch` file's `@queryBinding`).
+- Multi-hop `env:evaluate` (XQuery Schematron impl): the second hop's
+  context-item appeared correctly typed but child navigation returned empty,
+  so the report-test `. = 'This is an example.'` atomized to `""` and the
+  `<svrl:successful-report>` was silently dropped.
+
+Fix has two halves:
+
+1. **Engine** — at the four places `RawResult.Value` / the engine's return is
+   set on a raw-delivery path (InitialFunction in both `TransformAsync(string)`
+   and `TransformRawAsync`, the JSON sequence-collection path, and the
+   `rawItems` collection fallback), node items are now run through a new
+   `WrapNodesForCrossStoreTransport` helper that uses
+   `context.SerializeXdmNodeToXml(node)` to capture the subtree as XML while
+   the inner store is still alive, then substitutes a `CrossStoreNodeRef`.
+2. **`XsltTransformProvider`** — after `TransformToValueAsync` returns, a new
+   `ReanchorCrossStoreResult` walks the value (handles bare wrappers and
+   `object?[]` sequences), feeds each `CrossStoreNodeRef.Xml` through
+   `ParseXmlFunction.ConvertToXdm(..., builder)` with the caller's
+   `INodeBuilder` (the outer XQuery store), and substitutes the freshly
+   re-anchored `XdmElement` / `XdmDocument` into `resultMap["output"]`.
+
+Two non-fixed cosmetic issues observed in the same output: redundant
+`xmlns:` declarations on every child element (Schematron-pipeline
+serialization detail, separate item), and the existing `path()` form for
+no-namespace elements (`/Q{}root[1]`) which is correct per XPath but visually
+verbose compared to Saxon's `/root[1]`. Neither blocks Martin's workflow.
+
 ## 1.3.17 (2026-05-19)
 
 ### `fn:transform` HTTP `stylesheet-location` now fetched, not File.ReadAllText'd (Martin Honnen WASM repro)

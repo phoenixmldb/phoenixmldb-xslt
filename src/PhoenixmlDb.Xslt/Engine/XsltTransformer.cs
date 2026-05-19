@@ -272,7 +272,9 @@ public sealed class XsltTransformEngine
                 // path that would otherwise stringify and lose the type. Found in Martin
                 // Honnen's testing of fn:transform with initial-function returning
                 // xs:boolean from xsl:evaluate.
-                options.RawResult.Value = result;
+                // Wrap any node items as CrossStoreNodeRef so the caller can re-anchor
+                // them in its store — inner-store NodeIds don't resolve outside.
+                options.RawResult.Value = WrapNodesForCrossStoreTransport(result, context);
             }
             else
             {
@@ -415,12 +417,13 @@ public sealed class XsltTransformEngine
             // produced the right JSON.)
             if (options.ReturnRawXdm)
             {
-                options.RawResult.Value = jsonItems.Count switch
+                object? rawValue = jsonItems.Count switch
                 {
                     0 => null,
                     1 => jsonItems[0],
                     _ => jsonItems.ToArray()
                 };
+                options.RawResult.Value = WrapNodesForCrossStoreTransport(rawValue, context);
             }
             // Also capture any text content that was written to outputBuilder
             var textContent = outputBuilder.ToString();
@@ -649,7 +652,7 @@ public sealed class XsltTransformEngine
             // the text-serialized form (Martin Honnen 2026-05-18: fn:transform with
             // delivery-format='raw' and an XSLT-internal initial-function call was
             // returning the string "false" where the function returned xs:boolean true).
-            options.RawResult.Value = result;
+            options.RawResult.Value = WrapNodesForCrossStoreTransport(result, context);
             if (!options.ReturnRawXdm)
                 context.SerializeFunctionResult(result, outputBuilder);
         }
@@ -687,15 +690,18 @@ public sealed class XsltTransformEngine
         var rawItems = context.EndSequenceCollection();
         SecondaryResultDocuments = context.SecondaryResults;
 
-        // If sequence items were collected, return them
+        // If sequence items were collected, return them. Wrap any node items so they
+        // survive the trip out of the inner store (caller re-anchors).
         if (rawItems.Count > 0)
         {
-            return rawItems.Count == 1 ? rawItems[0] : rawItems.ToArray();
+            object? raw = rawItems.Count == 1 ? rawItems[0] : rawItems.ToArray();
+            return WrapNodesForCrossStoreTransport(raw, context);
         }
 
         // InitialFunction returned a single raw XDM value (booleans, maps, function items,
         // arrays, etc.) — surface it directly so type identity isn't lost to text
-        // serialization. The InitialFunction branch sets RawResult unconditionally.
+        // serialization. The InitialFunction branch sets RawResult unconditionally
+        // (already wrapped above when set).
         if (options.InitialFunction != null && options.RawResult.Value != null)
             return options.RawResult.Value;
 
@@ -739,6 +745,38 @@ public sealed class XsltTransformEngine
                 translated.Add(arg);
         }
         return translated;
+    }
+
+    /// <summary>
+    /// Wraps any <see cref="Xdm.Nodes.XdmElement"/> / <see cref="Xdm.Nodes.XdmDocument"/>
+    /// items in <paramref name="value"/> as <see cref="CrossStoreNodeRef"/>s, serialized
+    /// via <paramref name="context"/> so the inner engine's store can be walked while it
+    /// is still live. The caller (e.g. <c>XsltTransformProvider</c>) re-anchors into its
+    /// own store before handing the result back to the user.
+    ///
+    /// Without this wrap, raw-delivery node results carry Children/Parent NodeIds from
+    /// the now-dying inner store: outer-side serialization yields stripped subtrees
+    /// (Martin Honnen: <c>&lt;root/&gt;</c> instead of <c>&lt;root&gt;text&lt;/root&gt;</c>),
+    /// and <c>path()</c> walks the wrong ancestor chain when Parent NodeIds collide with
+    /// unrelated nodes in the outer store.
+    /// </summary>
+    internal static object? WrapNodesForCrossStoreTransport(object? value, DefaultXsltExecutionContext context)
+    {
+        if (value is null) return null;
+        if (value is Xdm.Nodes.XdmElement or Xdm.Nodes.XdmDocument)
+        {
+            var node = (Xdm.Nodes.XdmNode)value;
+            var xml = context.SerializeXdmNodeToXml(node);
+            return new CrossStoreNodeRef(xml, IsElement: node is Xdm.Nodes.XdmElement);
+        }
+        if (value is object?[] arr)
+        {
+            var wrapped = new object?[arr.Length];
+            for (var i = 0; i < arr.Length; i++)
+                wrapped[i] = WrapNodesForCrossStoreTransport(arr[i], context);
+            return wrapped;
+        }
+        return value;
     }
 
     private static object? ReparseCrossStoreNode(CrossStoreNodeRef wrapped, XdmInMemoryStore store)

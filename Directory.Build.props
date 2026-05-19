@@ -6,11 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.3.17</Version>
+    <Version>1.3.18</Version>
     <PackageReleaseNotes>
-      fn:transform with stylesheet-location of an http(s):// URI is now fetched, not File.ReadAllText'd (Martin Honnen WASM repro).
-      Node arguments to initial-function are now wrapped as CrossStoreNodeRef and re-parsed in the inner engine's store on both the in-engine and public ITransformProvider paths so xsl:evaluate can navigate them (Martin Honnen Schematron repro).
-      XTSE0080 diagnostic now includes the offending function QName.
+      Raw-delivery node results from fn:transform are now re-anchored in the caller's store (Martin Honnen Schematron repro): subtrees survive serialization (was `&lt;root/&gt;`), path() walks the correct ancestor chain (was a garbage path crossing into the schema document), and multi-hop env:evaluate works (the successful-report is no longer dropped).
       See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
