@@ -72,6 +72,22 @@ public sealed class XsltTransformProvider : ITransformProvider
 
             if (baseUri != null && baseUri.IsFile)
                 stylesheetXml = await File.ReadAllTextAsync(baseUri.LocalPath).ConfigureAwait(false);
+            else if (baseUri != null && (baseUri.Scheme == Uri.UriSchemeHttp || baseUri.Scheme == Uri.UriSchemeHttps))
+            {
+                // HTTP(S) stylesheet-location: previously fell through to the file-path
+                // branch which Path.Combine'd the URL onto staticBase and called
+                // File.ReadAllTextAsync — produced FileNotFoundException for "https:/..."
+                // (Path normalization collapses the double slash). Martin Honnen's WASM
+                // repro. Mirrors Engine/XsltTransformer.cs:27534.
+                if (OperatingSystem.IsBrowser())
+                {
+                    throw new XQueryException("FOXT0001",
+                        $"Cannot fetch stylesheet '{baseUri}' on Blazor WebAssembly: " +
+                        "synchronous HTTP I/O is not supported. Pre-fetch the stylesheet " +
+                        "asynchronously and pass it through stylesheet-text instead.");
+                }
+                stylesheetXml = await PhoenixmlDb.Xslt.Engine.HttpResourceLoader.GetStringAsync(baseUri).ConfigureAwait(false);
+            }
             else
             {
                 var dir = staticBase != null

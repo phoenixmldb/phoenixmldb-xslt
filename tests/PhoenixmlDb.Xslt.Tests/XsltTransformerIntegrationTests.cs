@@ -2983,6 +2983,71 @@ public class XsltTransformerIntegrationTests
         }
     }
 
+    // Martin Honnen WASM repro: fn:transform with stylesheet-location set to an HTTP(S)
+    // URI mangled the URL into a file path ("https:/host/..." after Path normalization)
+    // and threw FileNotFoundException. XsltTransformProvider only honored file:// URIs;
+    // the HTTP branch lived in the in-engine XsltTransformFunction but was missing from
+    // the public provider used for XQuery's fn:transform.
+    [Fact]
+#pragma warning disable CA2000 // listener disposed in finally
+    public async Task XsltTransformProvider_stylesheet_location_over_http_is_fetched_not_read_as_file()
+    {
+        using var listener = new System.Net.HttpListener();
+        var port = GetFreeTcpPort();
+        var prefix = $"http://localhost:{port}/";
+        listener.Prefixes.Add(prefix);
+        listener.Start();
+#pragma warning restore CA2000
+
+        const string remoteXsl = """
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template name="go"><out>fetched-over-http</out></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var serverTask = Task.Run(async () =>
+        {
+            var ctx = await listener.GetContextAsync();
+            var bytes = System.Text.Encoding.UTF8.GetBytes(remoteXsl);
+            ctx.Response.ContentType = "application/xml";
+            ctx.Response.ContentLength64 = bytes.Length;
+            await ctx.Response.OutputStream.WriteAsync(bytes);
+            ctx.Response.OutputStream.Close();
+        });
+
+        try
+        {
+            var provider = new PhoenixmlDb.Xslt.XsltTransformProvider();
+            var nodeStore = new PhoenixmlDb.Xslt.XdmInMemoryStore();
+            using var qec = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+                new PhoenixmlDb.Core.ContainerId(1),
+                nodeProvider: nodeStore);
+
+            var options = new Dictionary<object, object?>
+            {
+                ["stylesheet-location"] = prefix + "remote.xsl",
+                ["initial-template"] = "go"
+            };
+
+            var result = await ((PhoenixmlDb.XQuery.Functions.ITransformProvider)provider)
+                .TransformAsync(options, qec);
+
+            result.Should().NotBeNull("HTTP stylesheet-location must be fetched, not File.ReadAllText'd");
+            var resultMap = result as IDictionary<object, object?>;
+            resultMap.Should().NotBeNull();
+            resultMap!.Should().ContainKey("output");
+            var output = resultMap!["output"]?.ToString() ?? "";
+            output.Should().Contain("fetched-over-http",
+                $"the remote stylesheet's initial template must run. Got: {output}");
+        }
+        finally
+        {
+            listener.Stop();
+            try { await serverTask; } catch { /* listener stopped */ }
+        }
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
