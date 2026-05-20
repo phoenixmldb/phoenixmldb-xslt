@@ -339,6 +339,15 @@ try
         await Console.Error.WriteLineAsync(
             $"  total:   {totalSw.Elapsed.TotalMilliseconds,8:F1} ms")
             .ConfigureAwait(true);
+        // Memory footprint — Martin Honnen specifically wants this for comparing
+        // streamed vs non-streamed transforms. Mirrors xquery4's --timing memory line.
+        var proc = System.Diagnostics.Process.GetCurrentProcess();
+        proc.Refresh();
+        var peakBytes = proc.PeakWorkingSet64;
+        var allocBytes = GC.GetTotalAllocatedBytes(precise: false);
+        await Console.Error.WriteLineAsync(
+            $"  memory:  peak={FormatBytes(peakBytes)}  allocated={FormatBytes(allocBytes)}")
+            .ConfigureAwait(true);
     }
 
     return 0;
@@ -403,6 +412,17 @@ catch (Exception ex)
     }
 
     throw;
+}
+
+static string FormatBytes(long bytes)
+{
+    const double KiB = 1024d;
+    const double MiB = KiB * 1024d;
+    const double GiB = MiB * 1024d;
+    if (bytes >= GiB) return $"{bytes / GiB:F2} GiB";
+    if (bytes >= MiB) return $"{bytes / MiB:F2} MiB";
+    if (bytes >= KiB) return $"{bytes / KiB:F2} KiB";
+    return $"{bytes} B";
 }
 
 static (string Name, string? Namespace) ResolveCliQName(string qname)
