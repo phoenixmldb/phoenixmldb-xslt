@@ -3156,6 +3156,170 @@ public class XsltTransformerIntegrationTests
         }
     }
 
+    // fn:load-xquery-module called from inside an XSLT stylesheet's XPath. XSLT's
+    // expression parser delegates to XQuery's function library, so this should work
+    // as transparently as any other fn:* function — guard against the registration
+    // chain regressing.
+    [Fact]
+    public async Task fn_load_xquery_module_callable_from_xslt_xpath()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-load-xqm-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var modulePath = Path.Combine(dir, "lib.xqm");
+        var libUri = new Uri(modulePath).AbsoluteUri;
+        try
+        {
+            await File.WriteAllTextAsync(modulePath, """
+                xquery version "3.1";
+                module namespace lib = "http://example.com/lib";
+
+                declare function lib:greet($who as xs:string) as xs:string {
+                  "hello, " || $who
+                };
+                """);
+
+            var xsl = $$"""
+                <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
+                                xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                  <xsl:template name="xsl:initial-template">
+                    <xsl:variable name="m"
+                                  select="load-xquery-module(
+                                            'http://example.com/lib',
+                                            map { 'location-hints' : '{{libUri}}' })"/>
+                    <xsl:variable name="greet"
+                                  select="$m?functions?(QName('http://example.com/lib','greet'))?(1)"/>
+                    <out><xsl:value-of select="$greet('Martin')"/></out>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """;
+
+            var transformer = new XsltTransformer();
+            await transformer.LoadStylesheetAsync(xsl);
+            var serialized = await transformer.TransformAsync((string?)null);
+
+            serialized.Should().Contain("hello, Martin",
+                $"fn:load-xquery-module from XSLT XPath must return a callable function. Got: {serialized}");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    // Schematron round-trip via Martin Honnen's sxq-saxon-env pipeline. Exercises
+    // the full chain: XQuery imports a Schematron-on-XSLT module that internally
+    // builds a stylesheet from a direct element constructor, passes both the
+    // schema's @test attribute (a string) and the document context (a node)
+    // through fn:transform, and round-trips the typed result back. This catches
+    // the namespace-id collision (#71), cross-store function-param wrapping (#73),
+    // and the raw-delivery result re-anchor (#74) all in one test.
+    [Fact]
+    public async Task schematron_via_sxq_saxon_env_validates_basic_test11()
+    {
+        // The [ModuleInitializer] in PhoenixmlDb.Xslt only fires when an XSLT type is
+        // JIT'd; in this test we drive the engine via XQuery so we wire the provider
+        // explicitly (same pattern as the xquery4 CLI).
+        PhoenixmlDb.XQuery.Functions.TransformFunction.Provider ??=
+            new PhoenixmlDb.Xslt.XsltTransformProvider();
+
+        var testDataDir = Path.Combine(AppContext.BaseDirectory, "TestData", "schematron");
+        Directory.Exists(testDataDir).Should().BeTrue(
+            $"Schematron test data should be copied to output. Got: {testDataDir}");
+
+        // Run the validation. sxq is imported from the test data directory (its
+        // relative `import module ... at "environment-saxon.xqm"` resolves against
+        // sxq's own base URI). Inputs are loaded by relative path against the
+        // query's static base.
+        var query = """
+            import module namespace sqx = "http://dmaus.name/ns/2026/sxq" at "sxq-saxon-env.xqm";
+            sqx:validate(
+              doc('basic-test11.sch')/*,
+              doc('sample1.xml'),
+              '#ALL',
+              map{})
+            """;
+
+        var env = new PhoenixmlDb.XQuery.XdmDocumentStore();
+        var engine = new PhoenixmlDb.XQuery.Execution.QueryEngine(
+            nodeProvider: env, documentResolver: env);
+        // Static base URI tells the module resolver where to look for the sxq .xqm.
+        var baseUri = new Uri(testDataDir + "/").AbsoluteUri;
+        var compiled = engine.Compile(query, new PhoenixmlDb.XQuery.Execution.CompilationOptions
+        {
+            BaseUri = baseUri
+        });
+        compiled.Success.Should().BeTrue(
+            $"compilation should succeed. Errors: {string.Join("; ", compiled.Errors.Select(e => e.Message))}");
+
+        using var ctx = engine.CreateContext(staticBaseUri: compiled.BaseUri);
+        var items = new List<object?>();
+        await foreach (var item in compiled.ExecutionPlan!.ExecuteAsync(ctx))
+            items.Add(item);
+
+        // Serialize the result to inspect the SVRL output.
+        items.Should().HaveCount(1, "sqx:validate returns a single svrl:schematron-output element");
+        var svrl = items[0] as PhoenixmlDb.Xdm.Nodes.XdmElement;
+        svrl.Should().NotBeNull();
+
+        var sb = new System.Text.StringBuilder();
+        SerializeNodeTree(svrl!, env, sb);
+        var output = sb.ToString();
+
+        // Schema asserts `@*` (false → failed-assert fires) and reports
+        // `. = 'This is an example.'` (true → successful-report fires).
+        output.Should().Contain("failed-assert",
+            $"basic-test11.sch asserts @* on <root>, which has no attributes → failed-assert. Got: {output}");
+        output.Should().Contain("root has no attributes.", $"Got: {output}");
+        output.Should().Contain("successful-report",
+            $"basic-test11.sch reports `. = 'This is an example.'` on <root>, whose text value matches → successful-report. Got: {output}");
+        output.Should().Contain("root element has value 'This is an example.'", $"Got: {output}");
+        output.Should().Contain("location=\"/Q{}root[1]\"",
+            $"path() on the matched node should yield the no-namespace root, not a corrupt chain. Got: {output}");
+    }
+
+    private static void SerializeNodeTree(PhoenixmlDb.Xdm.Nodes.XdmElement elem,
+        PhoenixmlDb.XQuery.INodeStore store, System.Text.StringBuilder sb)
+    {
+        var qname = string.IsNullOrEmpty(elem.Prefix)
+            ? elem.LocalName
+            : $"{elem.Prefix}:{elem.LocalName}";
+        sb.Append('<').Append(qname);
+        foreach (var nsDecl in elem.NamespaceDeclarations)
+        {
+            var nsUri = store.GetNamespaceUri(nsDecl.Namespace) ?? "";
+            if (string.IsNullOrEmpty(nsDecl.Prefix))
+                sb.Append(" xmlns=\"").Append(nsUri).Append('"');
+            else
+                sb.Append(" xmlns:").Append(nsDecl.Prefix).Append("=\"").Append(nsUri).Append('"');
+        }
+        foreach (var attrId in elem.Attributes)
+        {
+            if (store.GetNode(attrId) is PhoenixmlDb.Xdm.Nodes.XdmAttribute attr)
+            {
+                var aName = string.IsNullOrEmpty(attr.Prefix)
+                    ? attr.LocalName
+                    : $"{attr.Prefix}:{attr.LocalName}";
+                sb.Append(' ').Append(aName).Append("=\"").Append(attr.Value).Append('"');
+            }
+        }
+        var hasKids = false;
+        foreach (var childId in elem.Children)
+        {
+            if (!hasKids) { sb.Append('>'); hasKids = true; }
+            switch (store.GetNode(childId))
+            {
+                case PhoenixmlDb.Xdm.Nodes.XdmElement childElem:
+                    SerializeNodeTree(childElem, store, sb);
+                    break;
+                case PhoenixmlDb.Xdm.Nodes.XdmText t:
+                    sb.Append(t.Value);
+                    break;
+            }
+        }
+        if (hasKids) sb.Append("</").Append(qname).Append('>');
+        else sb.Append("/>");
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
