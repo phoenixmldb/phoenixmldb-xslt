@@ -6,9 +6,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.3.19</Version>
+    <Version>1.3.20</Version>
     <PackageReleaseNotes>
-      fn:transform now accepts a 'source-location' map entry (Saxon extension + XPath 4.0 draft) — pass a URI string instead of building an XdmNode. file://, http(s)://, and relative-to-static-base forms are all resolved; HTTP fetches use the existing HttpResourceLoader.
+      xslt CLI '--timing' now reports peak working set and total allocated bytes alongside parse/compile/transform timings (parity with the xquery4 CLI). No library code changes from 1.3.19.
+      CPM bump: PhoenixmlDb.XQuery 1.3.13 → 1.3.14 picks up the fn:load-xquery-module transitively-imported function fix, library-module decimal-format scoping, and three QT3 fixes.
       See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>

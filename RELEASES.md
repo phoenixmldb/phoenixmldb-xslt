@@ -1,5 +1,38 @@
 # Release History
 
+## 1.3.20 (2026-05-20)
+
+### `xslt` CLI `--timing` now reports memory (Martin Honnen)
+
+Brings the `xslt` CLI to parity with the `xquery4` CLI's `--timing` output by
+appending a `memory:` line with peak working-set bytes and total managed
+allocations alongside the parse/compile/transform breakdown:
+
+```
+  parse:     12 ms
+  compile:   47 ms
+  transform: 134 ms
+  memory:    peak=86.3 MB  allocated=1.2 GB
+```
+
+No library code changes from 1.3.19.
+
+### CPM bump: PhoenixmlDb.XQuery 1.3.13 → 1.3.14
+
+Picks up:
+
+* `fn:load-xquery-module` closures evaluate body in *captured* static context,
+  so transitively-imported functions (e.g. f1:foo invoked from f2:bar) resolve
+  correctly when called from outer XSLT. Verified on Martin's
+  `load-module-with-import1.xsl` repro.
+* Library-module `decimal-format` declarations now propagate to the importing
+  module's runtime `DecimalFormats`, fixing `FODF1280` for `format-number(…,
+  "lib:euro")` inside lib:* functions.
+* Three QT3 fixes: cross-module declaration visibility (#57), general
+  comparison `untypedAtomic` → `xs:QName` cast (GenCompEq-22), and
+  `element()` / `attribute()` kind-test EQName preservation
+  (K2-DirectConElemNamespace-78).
+
 ## 1.3.19 (2026-05-20)
 
 ### `fn:transform` accepts `source-location` (Martin Honnen / XPath 4.0 draft)
