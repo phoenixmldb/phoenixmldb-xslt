@@ -3048,6 +3048,114 @@ public class XsltTransformerIntegrationTests
         }
     }
 
+    // Martin Honnen feature request 2026-05-20: Saxon (and the XPath 4.0 draft) supports
+    // a 'source-location' option in the fn:transform map as an alternative to source-node,
+    // letting the engine fetch the principal input from a URI. Without this you can't run
+    // a streamed transform from XQuery without first loading the entire document.
+    [Fact]
+    public async Task XsltTransformProvider_source_location_with_file_uri_loads_input()
+    {
+        var tmpXsl = System.IO.Path.GetTempFileName();
+        var tmpXml = System.IO.Path.GetTempFileName();
+        var xslPath = System.IO.Path.ChangeExtension(tmpXsl, ".xsl");
+        var xmlPath = System.IO.Path.ChangeExtension(tmpXml, ".xml");
+        System.IO.File.Move(tmpXsl, xslPath);
+        System.IO.File.Move(tmpXml, xmlPath);
+        await System.IO.File.WriteAllTextAsync(xslPath, """
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <xsl:template match="/"><out>got: <xsl:value-of select="root/text()"/></out></xsl:template>
+            </xsl:stylesheet>
+            """);
+        await System.IO.File.WriteAllTextAsync(xmlPath, "<root>via-source-location</root>");
+        try
+        {
+            var provider = new PhoenixmlDb.Xslt.XsltTransformProvider();
+            var nodeStore = new PhoenixmlDb.Xslt.XdmInMemoryStore();
+            using var qec = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+                new PhoenixmlDb.Core.ContainerId(1),
+                nodeProvider: nodeStore);
+
+            var options = new Dictionary<object, object?>
+            {
+                ["stylesheet-location"] = xslPath,
+                ["source-location"] = xmlPath
+            };
+
+            var result = await ((PhoenixmlDb.XQuery.Functions.ITransformProvider)provider)
+                .TransformAsync(options, qec);
+
+            var resultMap = result as IDictionary<object, object?>;
+            resultMap.Should().NotBeNull();
+            resultMap!.Should().ContainKey("output");
+            var output = resultMap!["output"]?.ToString() ?? "";
+            output.Should().Contain("via-source-location",
+                $"source-location must load the document and feed it as the principal input. Got: {output}");
+        }
+        finally
+        {
+            try { System.IO.File.Delete(xslPath); } catch { }
+            try { System.IO.File.Delete(xmlPath); } catch { }
+        }
+    }
+
+    [Fact]
+#pragma warning disable CA2000 // listener disposed in finally
+    public async Task XsltTransformProvider_source_location_over_http_is_fetched()
+    {
+        using var listener = new System.Net.HttpListener();
+        var port = GetFreeTcpPort();
+        var prefix = $"http://localhost:{port}/";
+        listener.Prefixes.Add(prefix);
+        listener.Start();
+#pragma warning restore CA2000
+
+        const string remoteXml = "<root>fetched-via-http</root>";
+        const string xsl = """
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <xsl:template match="/"><out><xsl:value-of select="root/text()"/></out></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var serverTask = Task.Run(async () =>
+        {
+            var ctx = await listener.GetContextAsync();
+            var bytes = System.Text.Encoding.UTF8.GetBytes(remoteXml);
+            ctx.Response.ContentType = "application/xml";
+            ctx.Response.ContentLength64 = bytes.Length;
+            await ctx.Response.OutputStream.WriteAsync(bytes);
+            ctx.Response.OutputStream.Close();
+        });
+
+        try
+        {
+            var provider = new PhoenixmlDb.Xslt.XsltTransformProvider();
+            var nodeStore = new PhoenixmlDb.Xslt.XdmInMemoryStore();
+            using var qec = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+                new PhoenixmlDb.Core.ContainerId(1),
+                nodeProvider: nodeStore);
+
+            var options = new Dictionary<object, object?>
+            {
+                ["stylesheet-text"] = xsl,
+                ["source-location"] = prefix + "doc.xml"
+            };
+
+            var result = await ((PhoenixmlDb.XQuery.Functions.ITransformProvider)provider)
+                .TransformAsync(options, qec);
+
+            var resultMap = result as IDictionary<object, object?>;
+            resultMap.Should().NotBeNull();
+            var output = resultMap!["output"]?.ToString() ?? "";
+            output.Should().Contain("fetched-via-http",
+                $"source-location with http:// URI must be fetched, not File.ReadAllText'd. Got: {output}");
+        }
+        finally
+        {
+            listener.Stop();
+            try { await serverTask; } catch { /* listener stopped */ }
+        }
+    }
+
     private static int GetFreeTcpPort()
     {
         using var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);

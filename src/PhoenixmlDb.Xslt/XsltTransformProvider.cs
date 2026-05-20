@@ -37,6 +37,13 @@ public sealed class XsltTransformProvider : ITransformProvider
         var initialFunctionQName = GetOption(options, "initial-function") as QName?;
         var functionParamsRaw = GetOption(options, "function-params");
         var sourceNode = GetOption(options, "source-node");
+        // source-location: alternative to source-node carrying a URI string. Per Saxon
+        // (https://www.saxonica.com/html/documentation12/functions/fn/transform.html)
+        // and the XPath 4.0 draft (qt4cg.org function spec), the principal input is
+        // loaded from the URI — enabling streaming when the engine can read the
+        // document in document order. We resolve relative URIs against the caller's
+        // static base URI just like stylesheet-location does.
+        var sourceLocation = GetStringOption(options, "source-location");
         var staticParamsMap = GetOption(options, "static-params") as IDictionary<object, object?>;
 
         // Unwrap single-item arrays (from map constructor)
@@ -192,10 +199,54 @@ public sealed class XsltTransformProvider : ITransformProvider
             }
         }
 
-        // Serialize source node to XML string for the transformer
+        // Resolve the principal input.
+        // Precedence: source-node beats source-location when both are supplied (Saxon
+        // behaviour — the spec is silent on this). source-location fetches the URI
+        // and feeds the XML to the transformer; relative URIs resolve against the
+        // caller's static base URI (mirrors the stylesheet-location branch above).
         string? inputXml = null;
         if (sourceNode is XdmNode srcNode)
+        {
             inputXml = SerializeNode(srcNode, nodeStore);
+        }
+        else if (sourceLocation != null)
+        {
+            var staticBase = context.StaticBaseUri;
+            Uri? resolved = null;
+            if (Uri.TryCreate(sourceLocation, UriKind.Absolute, out var absSrc))
+            {
+                resolved = absSrc;
+            }
+            else if (staticBase != null && Uri.TryCreate(staticBase, UriKind.Absolute, out var sb))
+            {
+                resolved = new Uri(sb, sourceLocation);
+            }
+
+            if (resolved == null)
+            {
+                // Plain relative path with no static base — read as file path.
+                inputXml = await File.ReadAllTextAsync(Path.GetFullPath(sourceLocation)).ConfigureAwait(false);
+            }
+            else if (resolved.IsFile)
+            {
+                inputXml = await File.ReadAllTextAsync(resolved.LocalPath).ConfigureAwait(false);
+            }
+            else if (resolved.Scheme == Uri.UriSchemeHttp || resolved.Scheme == Uri.UriSchemeHttps)
+            {
+                if (OperatingSystem.IsBrowser())
+                {
+                    throw new XQueryException("FOXT0001",
+                        $"Cannot fetch source from '{resolved}' on Blazor WebAssembly: " +
+                        "synchronous HTTP I/O is not supported. Pre-fetch and pass via source-node instead.");
+                }
+                inputXml = await Engine.HttpResourceLoader.GetStringAsync(resolved).ConfigureAwait(false);
+            }
+            else
+            {
+                throw new XQueryException("FOXT0001",
+                    $"source-location: unsupported URI scheme '{resolved.Scheme}'");
+            }
+        }
 
         // Build result map
         var resultMap = new Dictionary<object, object?>();

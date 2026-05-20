@@ -1,5 +1,34 @@
 # Release History
 
+## 1.3.19 (2026-05-20)
+
+### `fn:transform` accepts `source-location` (Martin Honnen / XPath 4.0 draft)
+
+Saxon's `fn:transform` accepts a `source-location` map entry as an alternative
+to `source-node` — a URI string pointing at the principal input. This is also
+in the [XPath 4.0 function draft](https://qt4cg.org/specifications/xpath-functions-40/Overview.html#func-transform)
+and is what enables streamed transforms from XQuery without materialising the
+whole input as an `XdmNode` first.
+
+`XsltTransformProvider` now reads `source-location`, resolves the URI against
+the caller's static base URI (relative URIs work the way they do in Saxon and
+in the existing `stylesheet-location` branch), and feeds the loaded XML to
+the transformer. Schemes handled:
+
+- `file://` or any URI whose `IsFile` is true → `File.ReadAllTextAsync` on the
+  local path.
+- `http://` / `https://` → `HttpResourceLoader.GetStringAsync`. On Blazor
+  WebAssembly we raise a clear `FOXT0001` instead of attempting blocking I/O.
+- Bare relative paths with no static base → resolved against the current
+  working directory, then read as a file.
+
+Precedence: `source-node` beats `source-location` when both are supplied (the
+spec is silent; this matches Saxon).
+
+Two regression tests added (`XsltTransformProvider_source_location_with_file_uri_loads_input`
+and `XsltTransformProvider_source_location_over_http_is_fetched`) — the HTTP
+test spins up an in-process `HttpListener`.
+
 ## 1.3.18 (2026-05-19)
 
 ### `fn:transform` raw-delivery node results re-anchored in caller's store (Martin Honnen follow-up)

@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.3.18</Version>
+    <Version>1.3.19</Version>
     <PackageReleaseNotes>
-      Raw-delivery node results from fn:transform are now re-anchored in the caller's store (Martin Honnen Schematron repro): subtrees survive serialization (was `&lt;root/&gt;`), path() walks the correct ancestor chain (was a garbage path crossing into the schema document), and multi-hop env:evaluate works (the successful-report is no longer dropped).
+      fn:transform now accepts a 'source-location' map entry (Saxon extension + XPath 4.0 draft) — pass a URI string instead of building an XdmNode. file://, http(s)://, and relative-to-static-base forms are all resolved; HTTP fetches use the existing HttpResourceLoader.
       See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
