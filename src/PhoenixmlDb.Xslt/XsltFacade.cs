@@ -782,16 +782,28 @@ public sealed class XsltTransformer
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
         var (sourceNode, sourceStore) = ExtractSourceFromSequence(source);
+        // When the sequence's head item isn't a node (typical for JSON-chained
+        // workflows where the previous transform yielded a map / array via
+        // parse-json), feed it to the engine as the *initial context item*
+        // instead of substituting an <empty/> placeholder. Without this the
+        // map gets discarded and the next stylesheet's `match="."` template
+        // sees the placeholder document — lookups on a document trip
+        // "Lookup requires a map or array, got XdmDocument".
+        var (nonNodeHead, nonNodeStore) = sourceNode == null
+            ? ExtractNonNodeHeadFromSequence(source)
+            : (null, null);
         // Use the source's store so result nodes share it; fall back to a fresh one
         // when the source has no nodes (engine will populate it during execution).
-        var resultStore = sourceStore ?? new XdmInMemoryStore();
+        var resultStore = sourceStore ?? nonNodeStore ?? new XdmInMemoryStore();
 
         // Set ReturnRawXdm + RawResult so the initial-function path stores its typed
         // result in the box (otherwise SerializeFunctionResult atomizes it to a string).
         // The initial-template / initial-mode / default paths use TransformRawAsync's
         // own sequence-collection path, which already preserves typed values.
         var rawBox = new RawResultBox();
-        var options = BuildTransformOptions(hasSource: sourceNode != null, rawBox: rawBox, ct: ct);
+        var options = BuildTransformOptions(
+            hasSource: sourceNode != null || nonNodeHead != null,
+            rawBox: rawBox, ct: ct);
 
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
         // Use TransformRawAsync, which sets up sequence collection across ALL invocation
@@ -799,9 +811,13 @@ public sealed class XsltTransformer
         // and returns the typed result. The plain TransformAsync path only captures
         // initial-function results into RawResult, leaving template/mode invocations
         // stuck on the text-serializer path.
-        var raw = sourceNode != null
-            ? await engine.TransformRawAsync(sourceNode, options, resultStore).ConfigureAwait(false)
-            : await engine.TransformRawAsync("<empty/>", options).ConfigureAwait(false);
+        object? raw;
+        if (sourceNode != null)
+            raw = await engine.TransformRawAsync(sourceNode, options, resultStore).ConfigureAwait(false);
+        else if (nonNodeHead != null)
+            raw = await engine.TransformRawWithInitialContextItemAsync(nonNodeHead, options, resultStore).ConfigureAwait(false);
+        else
+            raw = await engine.TransformRawAsync("<empty/>", options).ConfigureAwait(false);
 
         SecondaryResultDocuments = engine.SecondaryResultDocuments;
 
@@ -899,6 +915,21 @@ public sealed class XsltTransformer
             "XdmSequence contains node items but Store is null or not an XdmInMemoryStore. " +
             "Construct the sequence via XsltTransformer.TransformToSequenceAsync (which carries " +
             "the engine's store) or via XdmSequence.OfNode(node, store) with a matching store.");
+    }
+
+    /// <summary>
+    /// Returns the head item of <paramref name="source"/> when it isn't an
+    /// <see cref="Xdm.Nodes.XdmNode"/> — typically a map, array, atomic value or
+    /// function-item produced by a previous transform's <c>parse-json</c> /
+    /// <c>map:*</c> / <c>array:*</c> call. The caller routes node items through
+    /// <see cref="ExtractSourceFromSequence(Xdm.XdmSequence?)"/> instead.
+    /// </summary>
+    private static (object? item, XdmInMemoryStore? store) ExtractNonNodeHeadFromSequence(Xdm.XdmSequence? source)
+    {
+        if (source is null || source.IsEmpty) return (null, null);
+        var head = source[0];
+        if (head is Xdm.Nodes.XdmNode) return (null, null);
+        return (head, source.Store as XdmInMemoryStore);
     }
 
     /// <summary>

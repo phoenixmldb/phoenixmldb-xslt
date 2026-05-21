@@ -803,6 +803,98 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// Transforms a string XML source with raw delivery.
     /// </summary>
+    /// <summary>
+    /// Raw transform whose initial context item is an arbitrary XDM item — typically
+    /// a map or array produced by a previous transform's <c>parse-json</c> call,
+    /// chained back in via <see cref="XsltTransformer.TransformToSequenceAsync"/>.
+    /// The XSLT data model allows the context item to be any item, but the engine
+    /// surface previously required a source node, which silently lost non-node
+    /// inputs (Martin Honnen 2026-05-21 JSON-chaining repro: lookup on
+    /// XdmDocument because the map was replaced with a synthetic <c>&lt;empty/&gt;</c>).
+    /// </summary>
+    internal async Task<object?> TransformRawWithInitialContextItemAsync(
+        object initialContextItem,
+        XsltTransformOptions? options,
+        XdmInMemoryStore nodeStore)
+    {
+        ArgumentNullException.ThrowIfNull(initialContextItem);
+        ArgumentNullException.ThrowIfNull(nodeStore);
+        options ??= new XsltTransformOptions();
+
+        // Synthetic empty XdmDocument satisfies the executor's constructor (it always
+        // wants *some* node to seed the context stack); the real focus is pushed below.
+        var syntheticDocId = nodeStore.NextId();
+        var syntheticDoc = new XdmDocument
+        {
+            Id = syntheticDocId,
+            Document = new DocumentId(0),
+            Children = [],
+            BaseUri = options.SourceDocumentUri?.AbsoluteUri
+        };
+        nodeStore.Register(syntheticDoc);
+
+        var outputBuilder = new StringBuilder();
+        var context = new DefaultXsltExecutionContext(
+            _stylesheet,
+            _templateIndex,
+            syntheticDoc,
+            outputBuilder,
+            options,
+            nodeStore,
+            _schemaProvider);
+
+        // Globals init with absent focus — same as the no-source path.
+        context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+        await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
+        context.PopContextItem();
+
+        foreach (var (name, value) in options.InitialParameters)
+            context.GlobalVariables[name] = value;
+
+        // Replace the constructor's synthetic-doc focus with the caller's actual item.
+        // PopContextItem first drops the synthetic doc that the constructor seeded.
+        context.PopContextItem();
+        context.PushContextItem(initialContextItem, 1, 1);
+
+        context.BeginSequenceCollection();
+        try
+        {
+            if (options.InitialTemplate != null
+                || (!options.HasSourceDocument && _stylesheet.NamedTemplates.Keys.Any(k => k.LocalName == "initial-template")))
+            {
+                var initialTemplate = options.InitialTemplate
+                    ?? _stylesheet.NamedTemplates.Keys.First(k => k.LocalName == "initial-template");
+                if (_stylesheet.IsPackage
+                    && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
+                    && rawTmpl.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
+                    throw new XsltException($"XTDE0040: Initial template '{initialTemplate.LocalName}' is not public");
+                await context.CallTemplateAsync(initialTemplate, []).ConfigureAwait(false);
+            }
+            else
+            {
+                var effectiveInitialMode = options.InitialMode ?? new QName(NamespaceId.None, "");
+                // ContextItemExpression.Instance evaluates to '.' — the supplied item.
+                await context.ApplyTemplatesAsync(
+                    ContextItemExpression.Instance,
+                    effectiveInitialMode, [], []).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            context.PopContextItem();
+        }
+
+        var rawItems = context.EndSequenceCollection();
+        SecondaryResultDocuments = context.SecondaryResults;
+
+        if (rawItems.Count > 0)
+        {
+            object? raw = rawItems.Count == 1 ? rawItems[0] : rawItems.ToArray();
+            return WrapNodesForCrossStoreTransport(raw, context);
+        }
+        return outputBuilder.Length > 0 ? outputBuilder.ToString() : null;
+    }
+
     internal async Task<object?> TransformRawAsync(string xmlSource, XsltTransformOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(xmlSource);
