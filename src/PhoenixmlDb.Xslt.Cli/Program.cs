@@ -151,6 +151,11 @@ try
     // first and then transformed in non-streaming mode.
     string? inputXml = null;
     string? sourcePath = null;
+    // Tracks whether the streaming engine was used for this run — set inside the
+    // SourceFile branch once we know the source kind and whether the stylesheet
+    // is streamable. Drives the post-transform dispatch (e.g. skipping
+    // secondary-result-document writes that the streaming engine doesn't produce).
+    bool ranStreaming = false;
     if (options.SourceFile != null)
     {
         var sourceSw = Stopwatch.StartNew();
@@ -198,16 +203,26 @@ try
             transformer.SetSourceDocumentUri(new Uri(sourcePath));
         }
 
+        // Auto-stream when the stylesheet declares a streamable mode and the source is a
+        // local file — the engine already supports streaming for these inputs, so the
+        // CLI shouldn't make users remember --stream. --no-stream opts out; --stream is
+        // unchanged (explicit opt-in still works for non-streamable stylesheets if the
+        // user wants to try, with the existing fallback behaviour).
+        bool effectiveStream = options.Stream
+            || (!options.NoStream && sourcePath != null && transformer.HasStreamableMode);
+
         // Streaming requires a local file (we hand the path to File.OpenRead). When the
         // source is HTTP it has already been read into inputXml above; fall through to
         // the in-memory transform path.
-        if (options.Stream && sourcePath != null)
+        if (effectiveStream && sourcePath != null)
         {
+            ranStreaming = true;
             sourceSw.Stop();
             if (options.Timing)
             {
+                var streamLabel = options.Stream ? "streaming" : "auto-streaming";
                 await Console.Error.WriteLineAsync(
-                    $"  source:  {sourceSw.Elapsed.TotalMilliseconds,8:F1} ms  (streaming)")
+                    $"  source:  {sourceSw.Elapsed.TotalMilliseconds,8:F1} ms  ({streamLabel})")
                     .ConfigureAwait(true);
             }
 
@@ -275,8 +290,9 @@ try
             inputXml = null;
     }
 
-    // Run the transformation (non-streaming path)
-    if (!options.Stream || options.SourceFile == null)
+    // Run the transformation (non-streaming path) — unless the streaming dispatch
+    // above already produced output.
+    if (!ranStreaming)
     {
         var transformSw = Stopwatch.StartNew();
         var result = await transformer.TransformAsync(inputXml).ConfigureAwait(true);
@@ -307,7 +323,7 @@ try
     }
 
     // Write secondary result documents (non-streaming path only)
-    if (!options.Stream && transformer.SecondaryResultDocuments.Count > 0)
+    if (!ranStreaming && transformer.SecondaryResultDocuments.Count > 0)
     {
         var baseDir = options.OutputDir ?? (options.OutputFile != null
             ? Path.GetDirectoryName(Path.GetFullPath(options.OutputFile))
@@ -469,7 +485,12 @@ static void PrintUsage()
           --timing           Show parse/compile/transform timing breakdown
           --trace            Log template matching, function calls, built-in rules
           --dry-run          Parse and compile only, do not execute
-          --stream           Use streaming for large files (lower memory usage)
+          --stream           Force streaming for the source. Auto-selected for file
+                             inputs when the stylesheet declares a streamable mode;
+                             use this flag to force streaming on other stylesheets
+                             (with the existing fallback if the body isn't streamable).
+          --no-stream        Disable auto-streaming. Forces the in-memory tree path
+                             even when the stylesheet declares a streamable mode.
           -v, --verbose      Show detailed error information
           -h, --help         Show this help message
           --version          Show version information
@@ -511,6 +532,9 @@ file sealed class CliOptions
     public bool Trace { get; init; }
     public bool DryRun { get; init; }
     public bool Stream { get; init; }
+    /// <summary>True if the user passed <c>--no-stream</c> to opt out of
+    /// auto-streaming on a streamable stylesheet.</summary>
+    public bool NoStream { get; init; }
     public bool ShowHelp { get; init; }
     public bool ShowVersion { get; init; }
     public bool Verbose { get; init; }
@@ -528,6 +552,7 @@ file sealed class CliOptions
         var trace = false;
         var dryRun = false;
         var stream = false;
+        var noStream = false;
         var showHelp = false;
         var showVersion = false;
         var verbose = false;
@@ -590,6 +615,9 @@ file sealed class CliOptions
                 case "--stream":
                     stream = true;
                     break;
+                case "--no-stream":
+                    noStream = true;
+                    break;
                 case "-v" or "--verbose":
                     verbose = true;
                     break;
@@ -626,6 +654,7 @@ file sealed class CliOptions
             Trace = trace,
             DryRun = dryRun,
             Stream = stream,
+            NoStream = noStream,
             ShowHelp = showHelp,
             ShowVersion = showVersion,
             Verbose = verbose

@@ -132,6 +132,24 @@ public sealed class XsltTransformer
     public int MaxResultDocuments { get; set; } = 1000;
 
     /// <summary>
+    /// True when the loaded stylesheet declares at least one streamable mode (either an
+    /// explicit <c>&lt;xsl:mode streamable="yes"/&gt;</c> declaration or a streamable
+    /// default mode). The CLI uses this signal to auto-select the streaming
+    /// transform path for file inputs — non-streamable stylesheets always run on the
+    /// materialising path. Returns false if no stylesheet is loaded yet.
+    /// </summary>
+    public bool HasStreamableMode
+    {
+        get
+        {
+            if (_stylesheet == null) return false;
+            foreach (var mode in _stylesheet.Modes.Values)
+                if (mode.Streamable) return true;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Optional resource security policy. When set, controls which URIs the stylesheet can access
     /// via <c>doc()</c>, <c>unparsed-text()</c>, <c>collection()</c>, <c>xsl:result-document</c>,
     /// and <c>xsl:import</c>/<c>xsl:include</c>.
