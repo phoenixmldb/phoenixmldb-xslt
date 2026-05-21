@@ -103,6 +103,64 @@ public class StreamingMergeTests
     }
 
     [Fact]
+    public async Task Merge_streaming_two_for_each_source_files_kway_merges_pre_sorted_inputs()
+    {
+        // Drive xsl:merge through the streaming runtime: each merge-source uses
+        // for-each-source + streamable="yes" + select="item". The XmlReader path
+        // walks each file's child::item without materialising the document.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "xsl-merge-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            var aPath = System.IO.Path.Combine(tempDir, "a.xml");
+            var bPath = System.IO.Path.Combine(tempDir, "b.xml");
+            await System.IO.File.WriteAllTextAsync(aPath, "<a><item n=\"1\"/><item n=\"3\"/><item n=\"5\"/></a>");
+            await System.IO.File.WriteAllTextAsync(bPath, "<b><item n=\"2\"/><item n=\"4\"/><item n=\"6\"/></b>");
+
+            // The select expression on each merge-source is the *child* of the
+            // for-each-source document — i.e. <a> / <b>. The classifier requires
+            // a single child-axis name test, which matches "item".
+            var aUri = new System.Uri(aPath).AbsoluteUri;
+            var bUri = new System.Uri(bPath).AbsoluteUri;
+            var stylesheet = $$"""
+                <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+                    <xsl:template match="/root">
+                        <out>
+                            <xsl:merge>
+                                <xsl:merge-source streamable="yes" for-each-source="'{{aUri}}'" select="item">
+                                    <xsl:merge-key select="@n" data-type="number"/>
+                                </xsl:merge-source>
+                                <xsl:merge-source streamable="yes" for-each-source="'{{bUri}}'" select="item">
+                                    <xsl:merge-key select="@n" data-type="number"/>
+                                </xsl:merge-source>
+                                <xsl:merge-action>
+                                    <g k="{current-merge-key()}"/>
+                                </xsl:merge-action>
+                            </xsl:merge>
+                        </out>
+                    </xsl:template>
+                </xsl:stylesheet>
+                """;
+
+            var result = await Run(stylesheet, "<root/>");
+
+            // K-way merge produces interleaved sorted output.
+            var k1 = result.IndexOf("k=\"1\"", System.StringComparison.Ordinal);
+            var k2 = result.IndexOf("k=\"2\"", System.StringComparison.Ordinal);
+            var k3 = result.IndexOf("k=\"3\"", System.StringComparison.Ordinal);
+            var k6 = result.IndexOf("k=\"6\"", System.StringComparison.Ordinal);
+            k1.Should().BeGreaterThan(0, $"actual={result}");
+            k2.Should().BeGreaterThan(k1, $"merge order broken (k2 not after k1). actual={result}");
+            k3.Should().BeGreaterThan(k2, $"merge order broken (k3 not after k2). actual={result}");
+            k6.Should().BeGreaterThan(k3, $"actual={result}");
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(tempDir, recursive: true); } catch (System.IO.IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task Merge_groups_equal_keys_into_single_action()
     {
         // Both sources contribute item with n="2" — current-merge-group should yield both.

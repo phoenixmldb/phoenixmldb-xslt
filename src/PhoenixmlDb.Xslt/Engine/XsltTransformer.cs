@@ -3956,7 +3956,7 @@ internal sealed class TemplateIndex
 /// <summary>
 /// Default implementation of XSLT execution context.
 /// </summary>
-internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
+internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 {
     internal readonly XsltStylesheet _stylesheet;
     private readonly TemplateIndex _templateIndex;
@@ -16680,6 +16680,15 @@ internal sealed class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask MergeAsync(XsltMerge instruction)
     {
+        // Fast path: all sources are streamable + use for-each-source + select is a
+        // single child-axis step. Run the K-way merge over per-URI XmlReader pulls
+        // so we never materialize the full input documents.
+        if (XsltMergeStreaming.CanStreamMerge(instruction))
+        {
+            await MergeAsyncStreaming(instruction).ConfigureAwait(false);
+            return;
+        }
+
         // Step 1: Collect items from each merge source
         var sourceSequences = new List<List<object>>();
 
