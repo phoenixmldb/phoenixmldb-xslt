@@ -3330,4 +3330,68 @@ public class XsltTransformerIntegrationTests
     }
 
     #endregion
+
+    // Transitive-import closure case (Martin 2026-05-21 load-module repro).
+    // XSLT loads module2 via fn:load-xquery-module; module2 imports module1.
+    // When the closure for f2:bar is invoked from outer XSLT, the body's call
+    // to f1:foo must resolve against module2's captured function library, not
+    // the caller's. Pre-fix: f1:foo was unknown in the outer context.
+    [Fact]
+    public async Task fn_load_xquery_module_transitive_import_resolves_in_closure()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"xslt-load-xqm-transitive-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var module1Path = Path.Combine(dir, "module1.xquery");
+            var module2Path = Path.Combine(dir, "module2.xquery");
+            await File.WriteAllTextAsync(module1Path, """
+                module namespace f1 = "http://example.com/f1";
+                declare %public function f1:foo() as xs:string {
+                  "Hello World"
+                };
+                """);
+            await File.WriteAllTextAsync(module2Path, """
+                module namespace f2 = "http://example.com/f2";
+                import module namespace f1 = "http://example.com/f1" at "module1.xquery";
+                declare %public function f2:bar($input as xs:string) as xs:string {
+                  f1:foo() || ': ' || $input
+                };
+                """);
+            var module2Uri = new Uri(module2Path).AbsoluteUri;
+
+            var xsl = $$"""
+                <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                    xmlns:f2="http://example.com/f2"
+                    exclude-result-prefixes="xs f2"
+                    version="3.0">
+                  <xsl:param name="input" as="xs:string" select="'John Doe'"/>
+                  <xsl:variable name="module2" as="map(*)"
+                                select="load-xquery-module(
+                                          'http://example.com/f2',
+                                          map { 'location-hints' : '{{module2Uri}}' })"/>
+                  <xsl:variable name="f2:bar" as="function(*)"
+                                select="$module2?functions(xs:QName('f2:bar'))?1"/>
+                  <xsl:output method="adaptive"/>
+                  <xsl:template name="xsl:initial-template" match="/">
+                    <xsl:sequence select="$f2:bar($input)"/>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """;
+
+            var transformer = new XsltTransformer();
+            transformer.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
+            await transformer.LoadStylesheetAsync(xsl);
+            var serialized = await transformer.TransformAsync((string?)null);
+
+            serialized.Should().Contain("Hello World: John Doe",
+                $"f2:bar's body calls f1:foo from a transitively-imported module; closure must " +
+                $"preserve module2's static context including its function library. Got: {serialized}");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
 }
