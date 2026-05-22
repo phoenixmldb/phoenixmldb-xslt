@@ -1,5 +1,25 @@
 # Release History
 
+## 1.3.21 (2026-05-22)
+
+### JSON serializer conformance fixes (CPM bump to PhoenixmlDb.XQuery 1.3.15)
+
+No XSLT library code changes from 1.3.20. The XQuery dependency pin moves
+1.3.14 → 1.3.15, picking up five JSON serializer fixes that bring the W3C
+QT3 `method-json` suite from 64/74 to 73/74 (98.6%):
+
+* Character maps now apply per-character inside JSON string content (not as
+  a global Replace on final output), with mapped characters bypassing
+  further JSON escaping — matches XSLT/XQuery Serialization 3.1 §11.4.
+* Per-string Unicode normalisation moved inside `EscapeJsonString` so
+  char-map replacements survive without re-normalisation.
+* `json-node-output-method` now parsed from parameter-document maps and
+  propagated into `SerializationOptions`.
+* `XdmText` nodes embedded in JSON output character-reference-encode
+  literal `#xD` as `&#13;` per XML 1.0 §2.11 end-of-line handling.
+
+XSLT result-document JSON output picks this up automatically.
+
 ## 1.3.20 (2026-05-20)
 
 ### `xslt` CLI `--timing` now reports memory (Martin Honnen)
