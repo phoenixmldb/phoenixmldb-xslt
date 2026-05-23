@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.3.21</Version>
+    <Version>1.3.22</Version>
     <PackageReleaseNotes>
-      No library code changes from 1.3.20. CPM bump: PhoenixmlDb.XQuery 1.3.14 → 1.3.15 picks up the JSON serializer conformance fixes (per-character character maps inside string content, json-node-output-method from parameter-document, CR-in-text-node escaping, NFC normalisation order). QT3 method-json suite improves from 64/74 to 73/74.
+      Fix: XsltTransformer.TransformAsync(XdmSequence) silently discarded non-node head items (typically maps/arrays produced by parse-json in a previous transform) and substituted a synthetic empty document, causing "Lookup requires a map or array, got XdmDocument" in the consumer stylesheet. Now mirrors TransformToSequenceAsync's non-node-head handling and threads the item through as the initial context. Martin Honnen 2026-05-23 JSON-chaining repro.
       See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>

@@ -1,5 +1,38 @@
 # Release History
 
+## 1.3.22 (2026-05-23)
+
+### Fix: `TransformAsync(XdmSequence)` preserves map/array head across JSON-chained transforms (Martin Honnen)
+
+`XsltTransformer.TransformAsync(XdmSequence)` silently discarded non-node
+head items and substituted a synthetic empty document, causing the
+consumer stylesheet's `match="."` template to see an `XdmDocument`
+instead of the map produced by `parse-json` in the previous transform.
+`?key` lookups then tripped:
+
+```
+XQueryRuntimeException: Lookup requires a map or array, got XdmDocument
+```
+
+`TransformToSequenceAsync` already handled this case (fix shipped in
+1.3.20); the string-returning `TransformAsync(XdmSequence)` overload
+was missed and continued to fall back to
+`engine.TransformAsync("<empty/>", options)`.
+
+Now `TransformAsync(XdmSequence)` mirrors `TransformToSequenceAsync`'s
+non-node-head handling, threading the head as the initial context item
+via `TransformRawWithInitialContextItemAsync`. For Martin's repro
+(parse-json → consume-with-lookups), the consumer now correctly
+serializes the lookup-derived output XML.
+
+Regression test in `tests/PhoenixmlDb.Xslt.Tests/JsonChainingTests.cs::
+TwoStage_TransformAsyncStringOverload_PreservesMapAcrossChain`.
+
+For JSON-output-method workflows where the consumer produces a typed
+map/array intended for further chaining, use `TransformToSequenceAsync`
+— `TransformAsync`'s string return type can only faithfully represent
+serialized output.
+
 ## 1.3.21 (2026-05-22)
 
 ### JSON serializer conformance fixes (CPM bump to PhoenixmlDb.XQuery 1.3.15)

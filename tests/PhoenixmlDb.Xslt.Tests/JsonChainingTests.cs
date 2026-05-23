@@ -74,4 +74,62 @@ public sealed class JsonChainingTests
         stringValue.Should().Contain("30");
         stringValue.Should().Contain("New York");
     }
+
+    /// <summary>
+    /// Same chain as <see cref="TwoStage_ParseJsonThenLookupInSecondTransform"/> but calls
+    /// the string-returning <c>TransformAsync(XdmSequence)</c> overload on stage 2 instead
+    /// of <c>TransformToSequenceAsync</c>. Martin Honnen 2026-05-23: the
+    /// <c>TransformToSequenceAsync</c> fix landed but <c>TransformAsync(XdmSequence)</c>
+    /// still threw "Lookup requires a map or array, got XdmDocument" because it fell
+    /// back to <c>engine.TransformAsync("&lt;empty/&gt;", options)</c> when the sequence
+    /// had no node head, discarding the map.
+    /// </summary>
+    [Fact]
+    public async Task TwoStage_TransformAsyncStringOverload_PreservesMapAcrossChain()
+    {
+        const string parseStage = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="adaptive"/>
+              <xsl:param name="json" as="xs:string"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:sequence select="parse-json($json)"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        const string consumeStage = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:output method="xml" indent="no"/>
+              <xsl:template match=".">
+                <person>
+                  <name>{?name}</name>
+                  <age>{?age}</age>
+                  <city>{?city}</city>
+                </person>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        const string jsonSample = """
+            { "name": "John", "age": 30, "city": "New York" }
+            """;
+
+        var parser = new XsltTransformer();
+        parser.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
+        await parser.LoadStylesheetAsync(parseStage);
+        parser.SetParameter("json", jsonSample);
+        var parsed = await parser.TransformToSequenceAsync((XdmSequence?)null);
+
+        var consumer = new XsltTransformer();
+        await consumer.LoadStylesheetAsync(consumeStage);
+
+        // Pre-fix this threw XQueryRuntimeException. Post-fix it returns the
+        // serialized <person> XML.
+        var result = await consumer.TransformAsync(parsed);
+
+        result.Should().Contain("<person>");
+        result.Should().Contain("John");
+        result.Should().Contain("30");
+        result.Should().Contain("New York");
+    }
 }

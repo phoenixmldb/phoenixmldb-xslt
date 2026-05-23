@@ -745,13 +745,51 @@ public sealed class XsltTransformer
         if (_stylesheet == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
-        var (sourceNode, store) = ExtractSourceFromSequence(source);
-        var options = BuildTransformOptions(hasSource: sourceNode != null, rawBox: null, ct: ct);
+        var (sourceNode, sourceStore) = ExtractSourceFromSequence(source);
+        // Mirror TransformToSequenceAsync's non-node-head handling. When the
+        // sequence's head item isn't a node (typical JSON-chained workflow where
+        // the previous transform yielded a map / array via parse-json), feed it
+        // as the *initial context item* instead of substituting <empty/>.
+        // Without this the map/array is discarded and the next stylesheet's
+        // match="." template sees the placeholder document — lookups on a
+        // document trip "Lookup requires a map or array, got XdmDocument".
+        // (Martin Honnen JSON-chaining repro 2026-05-23.)
+        var (nonNodeHead, nonNodeStore) = sourceNode == null
+            ? ExtractNonNodeHeadFromSequence(source)
+            : (null, null);
+        var store = sourceStore ?? nonNodeStore ?? new XdmInMemoryStore();
+        var options = BuildTransformOptions(
+            hasSource: sourceNode != null || nonNodeHead != null,
+            rawBox: null, ct: ct);
 
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
-        var result = sourceNode != null
-            ? await engine.TransformAsync(sourceNode, options, store).ConfigureAwait(false)
-            : await engine.TransformAsync("<empty/>", options).ConfigureAwait(false);
+        string result;
+        if (sourceNode != null)
+        {
+            result = await engine.TransformAsync(sourceNode, options, store).ConfigureAwait(false);
+        }
+        else if (nonNodeHead != null)
+        {
+            // TransformRawWithInitialContextItemAsync threads the head as the
+            // initial focus and runs the templates. For stylesheets whose
+            // templates produce serialized output via literal result elements
+            // (Martin's scenario), it returns the outputBuilder text as a
+            // string. For stylesheets that produce typed sequences intended for
+            // chaining (maps, arrays, atomic values), use
+            // TransformToSequenceAsync instead — TransformAsync's string return
+            // type can only faithfully represent serialized output.
+            var raw = await engine.TransformRawWithInitialContextItemAsync(nonNodeHead, options, store).ConfigureAwait(false);
+            result = raw switch
+            {
+                null => string.Empty,
+                string s => s,
+                _ => raw.ToString() ?? string.Empty
+            };
+        }
+        else
+        {
+            result = await engine.TransformAsync("<empty/>", options).ConfigureAwait(false);
+        }
 
         if (ResultDocumentHandler != null)
         {
