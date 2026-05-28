@@ -30,6 +30,9 @@ internal sealed class StreamingXmlProcessor
     // Stream watchers for consuming sub-expression evaluation
     private readonly IReadOnlyList<StreamWatcher>? _watchers;
 
+    // For-each subscriptions: bodies dispatched per matching element on the stream
+    private readonly IReadOnlyList<ForEachSubscription>? _subscriptions;
+
     // Ancestor element names for watcher path matching (outermost first)
     private readonly List<string> _ancestorNames = [];
 
@@ -40,7 +43,8 @@ internal sealed class StreamingXmlProcessor
         XdmInMemoryStore nodeStore,
         QName? mode,
         IReadOnlyList<XsltAccumulator>? accumulators = null,
-        IReadOnlyList<StreamWatcher>? watchers = null)
+        IReadOnlyList<StreamWatcher>? watchers = null,
+        IReadOnlyList<ForEachSubscription>? subscriptions = null)
     {
         _stylesheet = stylesheet;
         _templateIndex = templateIndex;
@@ -49,6 +53,7 @@ internal sealed class StreamingXmlProcessor
         _mode = mode;
         _accumulators = accumulators ?? Array.Empty<XsltAccumulator>();
         _watchers = watchers;
+        _subscriptions = subscriptions;
     }
 
     /// <summary>
@@ -252,6 +257,72 @@ internal sealed class StreamingXmlProcessor
                                     attrDict[attr.LocalName] = attr.StringValue ?? "";
                             }
                             FireWatchers(current.LocalName, attrDict, null);
+                        }
+
+                        // Dispatch for-each subscriptions whose path matches this element.
+                        // Multiple subscriptions may match the same element; materialize the
+                        // subtree once and execute each matching body against the snapshot.
+                        // Materialization advances the reader past the matching EndElement
+                        // (same semantics as the buffered-subtree fallback below), so we
+                        // also fire End-phase accumulators/watchers and short-circuit.
+                        if (_subscriptions != null && _subscriptions.Count > 0)
+                        {
+                            List<ForEachSubscription>? matched = null;
+                            foreach (var sub in _subscriptions)
+                            {
+                                if (sub.PathMatcher.Matches(_ancestorNames, current.LocalName))
+                                {
+                                    (matched ??= new List<ForEachSubscription>()).Add(sub);
+                                }
+                            }
+                            if (matched != null)
+                            {
+                                // Materialize the current element subtree from the live reader.
+                                // Reader is left at the matching EndElement (or still on the
+                                // empty element) — same contract as ExecuteWithBufferedSubtreeAsync.
+                                var snapshot = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore, new DocumentId(0));
+                                if (snapshot != null)
+                                {
+                                    // Body executes against a buffered snapshot, not the live
+                                    // reader — temporarily clear the streaming flag so descendant
+                                    // navigation uses the normal in-memory path.
+                                    var prevStreaming = _context._isStreamingExecution;
+                                    _context._isStreamingExecution = false;
+                                    try
+                                    {
+                                        foreach (var sub in matched)
+                                        {
+                                            _context.PushContextItem(snapshot, 1, 1);
+                                            _context.PushCurrentItem(snapshot);
+                                            try
+                                            {
+                                                await sub.Body.ExecuteAsync(_context).ConfigureAwait(false);
+                                            }
+                                            finally
+                                            {
+                                                _context.PopCurrentItem();
+                                                _context.PopContextItem();
+                                            }
+                                        }
+                                    }
+                                    finally
+                                    {
+                                        _context._isStreamingExecution = prevStreaming;
+                                    }
+
+                                    // Fire end-phase accumulators/watchers manually since the
+                                    // EndElement event was consumed by Materialize.
+                                    await FireAccumulatorRulesAsync(xdmElem, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
+                                    if (_watchers != null
+                                        || _context._activeStreamWatchers != null
+                                        || _pendingTextWatcherMatches.Count > 0)
+                                    {
+                                        FireWatchersEndElement(current.LocalName);
+                                    }
+                                    CleanupStreamingNode(current);
+                                    break;
+                                }
+                            }
                         }
 
                         var wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
