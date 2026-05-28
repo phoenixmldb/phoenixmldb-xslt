@@ -33,6 +33,12 @@ internal sealed class StreamingXmlProcessor
     // For-each subscriptions: bodies dispatched per matching element on the stream
     private readonly IReadOnlyList<ForEachSubscription>? _subscriptions;
 
+    // When true, this processor was invoked solely to dispatch for-each subscriptions
+    // (no xsl:apply-templates in the source-document body). In that mode, non-matching
+    // elements and stray text/whitespace nodes must NOT trigger default template
+    // matching — the user only asked to iterate the subscribed paths.
+    private readonly bool _subscriptionDispatchOnly;
+
     // Ancestor element names for watcher path matching (outermost first)
     private readonly List<string> _ancestorNames = [];
 
@@ -44,7 +50,8 @@ internal sealed class StreamingXmlProcessor
         QName? mode,
         IReadOnlyList<XsltAccumulator>? accumulators = null,
         IReadOnlyList<StreamWatcher>? watchers = null,
-        IReadOnlyList<ForEachSubscription>? subscriptions = null)
+        IReadOnlyList<ForEachSubscription>? subscriptions = null,
+        bool subscriptionDispatchOnly = false)
     {
         _stylesheet = stylesheet;
         _templateIndex = templateIndex;
@@ -54,6 +61,7 @@ internal sealed class StreamingXmlProcessor
         _accumulators = accumulators ?? Array.Empty<XsltAccumulator>();
         _watchers = watchers;
         _subscriptions = subscriptions;
+        _subscriptionDispatchOnly = subscriptionDispatchOnly;
     }
 
     /// <summary>
@@ -325,8 +333,19 @@ internal sealed class StreamingXmlProcessor
                             }
                         }
 
-                        var wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
-                            .ConfigureAwait(false);
+                        // In subscription-dispatch-only mode the source-document body has
+                        // no xsl:apply-templates — non-subscribed elements must not trigger
+                        // the default template machinery (which would emit text children).
+                        bool wasSuppressed;
+                        if (_subscriptionDispatchOnly)
+                        {
+                            wasSuppressed = false;
+                        }
+                        else
+                        {
+                            wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
+                                .ConfigureAwait(false);
+                        }
 
                         // Subtree-buffer fallback: MatchAndExecute consumed the entire
                         // element subtree from the reader (snapshot()/copy-of() needed an
@@ -483,8 +502,10 @@ internal sealed class StreamingXmlProcessor
                         // Fire accumulator rules for text nodes (always, even if suppressed)
                         await FireAccumulatorRulesAsync(textNode, textNodeId, AccumulatorPhase.Start).ConfigureAwait(false);
 
-                        // Only match templates if not inside a suppressed subtree
-                        if (suppressionDepth < 0)
+                        // Only match templates if not inside a suppressed subtree.
+                        // Skip entirely in subscription-dispatch-only mode (no apply-templates
+                        // exists; default text rule would otherwise leak whitespace).
+                        if (suppressionDepth < 0 && !_subscriptionDispatchOnly)
                         {
                             await _context.MatchAndExecuteStreamingNodeAsync(textNode, _mode, 1)
                                 .ConfigureAwait(false);

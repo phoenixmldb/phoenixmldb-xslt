@@ -13702,12 +13702,25 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
                 // Pre-scan for consuming expressions that need stream watchers
                 var scanner = new StreamingExpressionScanner();
-                var watchers = instruction.Content != null ? scanner.Scan(instruction.Content) : [];
+                var scanResult = instruction.Content != null
+                    ? scanner.ScanWithSubscriptions(instruction.Content)
+                    : default;
+                var watchers = scanResult.Watchers ?? (IReadOnlyList<StreamWatcher>)Array.Empty<StreamWatcher>();
+                var subscriptions = scanResult.Subscriptions ?? (IReadOnlyList<ForEachSubscription>)Array.Empty<ForEachSubscription>();
+
+                // Subscription-dispatch-only: subscriptions exist AND the body has no
+                // xsl:apply-templates (so the default template machinery shouldn't fire
+                // on non-subscribed elements/text during the streaming pass).
+                bool subscriptionOnly = subscriptions.Count > 0
+                    && instruction.Content != null
+                    && !ContentContainsApplyTemplates(instruction.Content);
 
                 var processor = new StreamingXmlProcessor(
                     _stylesheet, _templateIndex, this, streamNodeStore, _currentMode,
                     streamAccumulators.Count > 0 ? streamAccumulators : null,
-                    watchers.Count > 0 ? watchers : null);
+                    watchers.Count > 0 ? watchers : null,
+                    subscriptions.Count > 0 ? subscriptions : null,
+                    subscriptionOnly);
 
                 // Push a synthetic document node as context so the content body can execute
                 var syntheticDocId = new NodeId(999_999);
@@ -13733,23 +13746,30 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
                 try
                 {
-                    // If watchers exist but no xsl:apply-templates will trigger the streaming
-                    // pass, run ProcessAsync now so watcher results are available when the
-                    // content body evaluates variable select expressions.
-                    if (watchers.Count > 0 && instruction.Content != null
+                    // If watchers/subscriptions exist but no xsl:apply-templates will trigger
+                    // the streaming pass, run ProcessAsync now so watcher results are
+                    // available when the content body evaluates variable select expressions
+                    // (and so subscription for-each bodies execute per-match during the
+                    // forward pass).
+                    bool processorRanForSubscriptions = false;
+                    if ((watchers.Count > 0 || subscriptions.Count > 0) && instruction.Content != null
                         && !ContentContainsApplyTemplates(instruction.Content))
                     {
                         _activeStreamingProcessor = null;
                         _activeStreamingReader = null;
                         await processor.ProcessAsync(xmlReader, _options.CancellationToken).ConfigureAwait(false);
+                        processorRanForSubscriptions = subscriptions.Count > 0;
                     }
 
-                    if (instruction.Content != null)
+                    if (instruction.Content != null && !processorRanForSubscriptions)
                     {
                         // Execute the Content body (typically xsl:apply-templates or xsl:iterate).
                         // When ApplyTemplatesAsync is invoked within the Content body and the
                         // streaming processor is active, it triggers the streaming processor
                         // to read the document via XmlReader in a forward pass.
+                        // Skipped when subscriptions ran: the for-each body was already
+                        // dispatched per-match during ProcessAsync; re-executing it would
+                        // double-process against the synthetic empty document.
                         await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
                     }
                 }

@@ -200,6 +200,29 @@ internal static class StreamingSubtreeMaterializer
                 : frame.NamespaceDeclarations.ToImmutableArray(),
             Parent = frame.Parent
         };
+        // Precompute _stringValue from registered text descendants so
+        // xsl:value-of select="." against a materialized snapshot returns the
+        // expected concatenated string. Children are finalized bottom-up
+        // (EndElement → Finalize), so child elements already have _stringValue set.
+        if (frame.Children.Count > 0)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var childId in frame.Children)
+            {
+                var child = store.GetNode(childId);
+                switch (child)
+                {
+                    case XdmText t: sb.Append(t.Value); break;
+                    case XdmElement ce: sb.Append(ce.StringValue); break;
+                    // Comments and PIs contribute nothing to element string value
+                }
+            }
+            elem._stringValue = sb.ToString();
+        }
+        else
+        {
+            elem._stringValue = string.Empty;
+        }
         store.Register(elem);
         return elem;
     }
