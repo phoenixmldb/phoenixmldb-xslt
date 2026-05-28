@@ -683,7 +683,8 @@ internal sealed class StreamingXmlProcessor
     {
         WatcherAggregation.Sum or WatcherAggregation.Max or WatcherAggregation.Min
             or WatcherAggregation.Avg or WatcherAggregation.StringJoin
-            or WatcherAggregation.Sequence or WatcherAggregation.Snapshot => true,
+            or WatcherAggregation.Sequence or WatcherAggregation.Snapshot
+            or WatcherAggregation.Head => true,
         _ => false
     };
 

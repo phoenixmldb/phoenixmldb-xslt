@@ -4243,6 +4243,94 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         return (false, null);
     }
+
+    /// <summary>
+    /// Attempts to resolve a single expression to a scalar object using only
+    /// watcher results and literal values — no streaming context needed.
+    /// Returns (true, value) if the expression can be fully resolved this way.
+    /// </summary>
+    private static (bool Resolved, object? Value) TryResolveExprFromWatchers(
+        PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
+        IReadOnlyList<StreamWatcher> watchers)
+    {
+        // Direct watcher match
+        var watcherMatch = TryResolveFromWatchers(expr, watchers);
+        if (watcherMatch.Resolved) return watcherMatch;
+
+        // Literal values are always resolvable
+        switch (expr)
+        {
+            case PhoenixmlDb.XQuery.Ast.StringLiteral sl: return (true, sl.Value);
+            case PhoenixmlDb.XQuery.Ast.IntegerLiteral il: return (true, il.Value);
+            case PhoenixmlDb.XQuery.Ast.DoubleLiteral dl: return (true, dl.Value);
+            case PhoenixmlDb.XQuery.Ast.BooleanLiteral bl: return (true, bl.Value);
+        }
+
+        // Sequence of literals: e.g., ('a', 'b', 'c') — evaluable without context
+        if (expr is PhoenixmlDb.XQuery.Ast.SequenceExpression seqExpr)
+        {
+            var allResolved = true;
+            var items = new List<object?>();
+            foreach (var item in seqExpr.Items)
+            {
+                var (itemResolved, itemVal) = TryResolveExprFromWatchers(item, watchers);
+                if (!itemResolved) { allResolved = false; break; }
+                items.Add(itemVal);
+            }
+            if (allResolved)
+                return (true, items.Count == 1 ? items[0] : items.ToArray());
+        }
+
+        return (false, null);
+    }
+
+    /// <summary>
+    /// Attempts to evaluate a function call by resolving all its arguments from
+    /// stream watchers or literals, then invoking the function directly.
+    /// Returns (true, value) if all arguments were resolvable; (false, null) otherwise.
+    ///
+    /// This handles consuming sub-expressions used as arguments to non-consuming
+    /// functions — e.g., translate(head(//AUTHOR), ' ', '_') in an AVT attribute name.
+    /// </summary>
+    private async ValueTask<(bool Resolved, object? Value)> TryEvaluateFunctionWithWatcherArgs(
+        PhoenixmlDb.XQuery.Ast.FunctionCallExpression fcall,
+        IReadOnlyList<StreamWatcher> watchers)
+    {
+        // Resolve each argument; give up if any can't be resolved
+        var args = new object?[fcall.Arguments.Count];
+        for (var i = 0; i < fcall.Arguments.Count; i++)
+        {
+            var (resolved, val) = TryResolveExprFromWatchers(fcall.Arguments[i], watchers);
+            if (!resolved) return (false, null);
+            args[i] = val;
+        }
+
+        // Only handle standard library functions (fn: or unqualified namespace).
+        // User-defined XSLT functions (any other namespace) require the full XSLT execution
+        // context and cannot be invoked with the minimal execContext here.
+        var ns = fcall.Name.Namespace;
+        if (ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn && ns != NamespaceId.None)
+            return (false, null);
+
+        // Look up the function in the function library and invoke it
+        var fn = _functionLibrary.Resolve(fcall.Name, fcall.Arguments.Count);
+        if (fn == null) return (false, null);
+
+        // Build a minimal execution context for the function invocation
+        using var execContext = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+            container: default,
+            functions: _functionLibrary,
+            nodeProvider: _nodeStore,
+            documentResolver: null,
+            schemaProvider: _schemaProvider,
+            namespaceResolver: null);
+        execContext.DefaultCollation = DefaultCollation;
+        execContext.StaticBaseUri = StaticBaseUri;
+
+        var result = await fn.InvokeAsync(args, execContext).ConfigureAwait(false);
+        return (true, result);
+    }
+
     internal Dictionary<QName, GlobalDeclaration>? _pendingGlobals; // Lazy global init: declarations not yet evaluated
     private bool _lastResultWasAtomic; // Track adjacent atomic values for space separation
     private string? _itemSeparatorOverride; // When set, overrides default space separator between sequence items
@@ -9242,6 +9330,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var watcherResult = TryResolveFromWatchers(expr, _activeStreamWatchers);
             if (watcherResult.Resolved)
                 return watcherResult.Value;
+
+            // For function calls where all arguments are resolvable from watchers or literals,
+            // evaluate them directly to avoid losing watcher values inside the XQuery plan.
+            // This handles patterns like translate(head(//AUTHOR), ' ', '_') in AVT contexts.
+            if (expr is FunctionCallExpression fcall && fcall.Arguments.Count > 0)
+            {
+                var fnResult = await TryEvaluateFunctionWithWatcherArgs(fcall, _activeStreamWatchers).ConfigureAwait(false);
+                if (fnResult.Resolved)
+                    return fnResult.Value;
+            }
         }
 
         // Resolve NamespaceUri → ResolvedNamespace on NameTests using node store

@@ -128,6 +128,15 @@ internal sealed class StreamingExpressionScanner
                 if (one.Select != null) ScanExpression(one.Select);
                 break;
 
+            // xsl:attribute: the name and namespace AVTs may contain consuming expressions
+            // (e.g., name="{translate(head(//AUTHOR), ' ', '_')}")
+            case XsltAttribute attr:
+                ScanAvt(attr.Name);
+                if (attr.Namespace != null) ScanAvt(attr.Namespace);
+                if (attr.Select != null) ScanExpression(attr.Select);
+                if (attr.Content != null) ScanInstructions(attr.Content);
+                break;
+
             // Skip xsl:apply-templates and xsl:iterate — handled by existing streaming
             case XsltApplyTemplates:
             case XsltIterate:
@@ -145,6 +154,15 @@ internal sealed class StreamingExpressionScanner
     {
         foreach (var insn in body.Instructions)
             ScanInstruction(insn);
+    }
+
+    private void ScanAvt(XsltAttributeValueTemplate avt)
+    {
+        foreach (var part in avt.Parts)
+        {
+            if (part is AvtExpression avtExpr)
+                ScanExpression(avtExpr.Expression);
+        }
     }
 
     /// <summary>
@@ -171,6 +189,24 @@ internal sealed class StreamingExpressionScanner
                             : null
                     });
                     return; // Don't recurse into recognized aggregation
+                }
+                break;
+
+            // fn:head(path) — capture only the first matched item as a scalar.
+            // This handles consuming expressions like head(//AUTHOR) in AVT attribute
+            // name/namespace positions where a single string value is required.
+            case FunctionCallExpression fcHead when IsHeadFunction(fcHead):
+                var headPathInfo = ExtractPathFromArgument(fcHead.Arguments[0]);
+                if (headPathInfo != null)
+                {
+                    _watchers.Add(new StreamWatcher
+                    {
+                        SourceExpression = expr,
+                        PathMatcher = new StreamPathMatcher(headPathInfo.Value.Path),
+                        Aggregation = WatcherAggregation.Head,
+                        ValueAttribute = headPathInfo.Value.Attribute
+                    });
+                    return;
                 }
                 break;
 
@@ -279,6 +315,13 @@ internal sealed class StreamingExpressionScanner
     {
         return fc.Name.LocalName is "snapshot" or "copy-of"
             && fc.Arguments.Count >= 1;
+    }
+
+    private static bool IsHeadFunction(FunctionCallExpression fc)
+    {
+        return fc.Name.LocalName == "head"
+            && fc.Arguments.Count == 1
+            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
     }
 
     private static bool IsDownwardPath(PathExpression path)

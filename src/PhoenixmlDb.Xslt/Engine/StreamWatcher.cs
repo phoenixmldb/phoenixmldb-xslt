@@ -17,7 +17,11 @@ internal enum WatcherAggregation
     Avg,
     StringJoin,
     Snapshot,
-    Sequence
+    Sequence,
+    /// <summary>
+    /// Returns only the first matched item as a scalar (used for fn:head(path) patterns).
+    /// </summary>
+    Head
 }
 
 /// <summary>
@@ -185,6 +189,17 @@ internal sealed class StreamWatcher
                     _items.Add(textContent);
                 }
                 break;
+
+            case WatcherAggregation.Head:
+                // Only capture the first match; subsequent matches are ignored.
+                if (_items.Count == 0)
+                {
+                    var headVal = ValueAttribute != null
+                        ? attributes?.GetValueOrDefault(ValueAttribute)
+                        : textContent;
+                    if (headVal != null) _items.Add(headVal);
+                }
+                break;
         }
     }
 
@@ -241,6 +256,8 @@ internal sealed class StreamWatcher
             WatcherAggregation.StringJoin => string.Join(Separator ?? "", _strings),
             WatcherAggregation.Sequence => _items.Count > 0 ? _items.ToArray() : Array.Empty<object>(),
             WatcherAggregation.Snapshot => _snapshots.Count > 0 ? _snapshots.ToArray() : Array.Empty<XdmNode>(),
+            // Head returns the first item as a scalar (or null if none matched)
+            WatcherAggregation.Head => _items.Count > 0 ? _items[0] : null,
             _ => null
         };
     }
