@@ -6283,18 +6283,25 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
                 // Execute user templates for matched attributes using attribute collection
                 // so xsl:attribute instructions produce proper attributes, not text content.
-                // Must save/clear _output because XTDE0410 check uses _output.Length > 0.
                 // Non-attribute output from templates (e.g. elements) becomes child content.
                 var templateChildContent = string.Empty;
                 if (templateMatches.Count > 0)
                 {
                     _collectedAttributesStack.Push(new StringBuilder());
                     var scope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+                    // Reset _outputLogicalStart to the scope's start so the XTDE0410 check
+                    // ("attribute after children") uses the correct baseline. Without this, the
+                    // check compares _output.Length against the default value of 0, which causes
+                    // a false positive when there is already content in _output from ancestor
+                    // elements (e.g. shallow-copy of parent elements in streaming mode).
+                    var savedLogicalStartForAttrTemplate = _outputLogicalStart;
+                    _outputLogicalStart = scope.SavedLength;
                     foreach (var (matchedTemplate, matchedAttr) in templateMatches)
                     {
                         await ExecuteMatchedTemplateAsync(matchedTemplate, matchedAttr, mode, withParams)
                             .ConfigureAwait(false);
                     }
+                    _outputLogicalStart = savedLogicalStartForAttrTemplate;
                     var collectedAttrs = _collectedAttributesStack.Pop();
                     templateChildContent = scope.GetWritten();
                     scope.Dispose();
