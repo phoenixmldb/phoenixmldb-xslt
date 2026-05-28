@@ -11,22 +11,37 @@ namespace PhoenixmlDb.Xslt.Engine;
 internal sealed class StreamingExpressionScanner
 {
     private readonly List<StreamWatcher> _watchers = [];
+    private readonly List<ForEachSubscription> _subscriptions = [];
+
+    /// <summary>
+    /// Result of <see cref="ScanWithSubscriptions"/> — watchers for consuming
+    /// aggregations plus per-item subscriptions for streamable xsl:for-each.
+    /// </summary>
+    public readonly record struct ScanResult(
+        IReadOnlyList<StreamWatcher> Watchers,
+        IReadOnlyList<ForEachSubscription> Subscriptions);
 
     /// <summary>
     /// Scans the content body of an xsl:source-document instruction.
     /// Returns the list of watchers needed for the streaming pass.
     /// </summary>
     public IReadOnlyList<StreamWatcher> Scan(XsltSequenceConstructor? body)
+        => ScanWithSubscriptions(body).Watchers;
+
+    /// <summary>
+    /// Scans the content body of an xsl:source-document instruction.
+    /// Returns both the watchers for consuming aggregates and the
+    /// subscriptions for streamable xsl:for-each instructions.
+    /// </summary>
+    public ScanResult ScanWithSubscriptions(XsltSequenceConstructor? body)
     {
         _watchers.Clear();
-        if (body == null) return _watchers;
-
-        foreach (var instruction in body.Instructions)
+        _subscriptions.Clear();
+        if (body != null)
         {
-            ScanInstruction(instruction);
+            ScanInstructions(body);
         }
-
-        return _watchers;
+        return new ScanResult(_watchers.ToArray(), _subscriptions.ToArray());
     }
 
     private void ScanInstruction(XsltInstruction instruction)
@@ -56,12 +71,13 @@ internal sealed class StreamingExpressionScanner
                 ScanExpression(copyOf.Select);
                 break;
 
-            // xsl:for-each drives its own streaming via ForEachStreamingAsync; don't
-            // register its select as a Sequence watcher. Body may still contain
-            // consuming aggregates over non-consuming subexpressions, but in
-            // streaming mode the body executes per-item with the current child as
-            // context — leave that to the operator.
-            case XsltForEach:
+            // xsl:for-each inside an xsl:source-document streamable body: if the
+            // select is a simple absolute child-axis path and there are no sorts,
+            // we can register a ForEachSubscription so the streaming processor
+            // dispatches the body per matched start element. Anything more
+            // complex falls back to the buffered path.
+            case XsltForEach forEach:
+                TryRegisterForEachSubscription(forEach);
                 break;
 
             case XsltIf ifInsn:
@@ -401,5 +417,55 @@ internal sealed class StreamingExpressionScanner
     private static string? ExtractStringLiteral(XQueryExpression expr)
     {
         return expr is StringLiteral sl ? sl.Value : null;
+    }
+
+    /// <summary>
+    /// Registers a <see cref="ForEachSubscription"/> for an <c>xsl:for-each</c>
+    /// whose select expression is a simple absolute child-axis path and which
+    /// has no xsl:sort children. Otherwise leaves the for-each to the buffered
+    /// execution path.
+    /// </summary>
+    private void TryRegisterForEachSubscription(XsltForEach forEach)
+    {
+        // Sorts force materialization — bail out, the buffered path handles it.
+        if (forEach.Sorts.Count > 0) return;
+
+        var pathMatcher = TryBuildAbsoluteChildPathMatcher(forEach.Select);
+        if (pathMatcher == null) return;
+
+        _subscriptions.Add(new ForEachSubscription
+        {
+            SourceInstruction = forEach,
+            PathMatcher = pathMatcher,
+            Body = forEach.Body,
+        });
+    }
+
+    /// <summary>
+    /// Builds a <see cref="StreamPathMatcher"/> from an XPath expression when
+    /// (and only when) the expression is an absolute path consisting purely of
+    /// child-axis name-test steps with no predicates. Returns null for any
+    /// other shape (descendant axes, attribute axes, predicates, kind tests,
+    /// function-call wrappers, variable-rooted paths, etc.) so the buffered
+    /// execution path can handle it.
+    /// </summary>
+    private static StreamPathMatcher? TryBuildAbsoluteChildPathMatcher(XQueryExpression select)
+    {
+        if (select is not PathExpression path) return null;
+        if (!path.IsAbsolute) return null;
+        if (path.InitialExpression != null) return null;
+        if (path.Steps.Count == 0) return null;
+
+        var parts = new List<string>(path.Steps.Count);
+        foreach (var step in path.Steps)
+        {
+            if (step.Axis != Axis.Child) return null;
+            if (step.Predicates.Count > 0) return null;
+            if (step.NodeTest is not NameTest nameTest) return null;
+            if (nameTest.IsLocalNameWildcard || nameTest.IsNamespaceWildcard) return null;
+            parts.Add(nameTest.LocalName);
+        }
+
+        return new StreamPathMatcher(string.Join("/", parts));
     }
 }
