@@ -1,4 +1,5 @@
 using System.IO;
+using System.Xml;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.XQuery.Parser;
@@ -1056,12 +1057,61 @@ public sealed class XsltTransformer
     }
 
     /// <summary>
+    /// Streams XML from a <see cref="Stream"/> and writes the serialized primary result
+    /// incrementally to a <see cref="TextWriter"/>. Requires the stylesheet's initial mode
+    /// to be streamable; otherwise an <see cref="XsltException"/> is thrown by the engine.
+    /// </summary>
+    /// <remarks>
+    /// Cancellation is not transactional — content already delivered to <paramref name="output"/>
+    /// before cancellation cannot be retracted.
+    /// </remarks>
+    public async Task TransformAsync(Stream inputXml, TextWriter output, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(inputXml);
+        ArgumentNullException.ThrowIfNull(output);
+        if (_stylesheet == null)
+            throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
+
+        var readerSettings = new XmlReaderSettings
+        {
+            DtdProcessing = AllowDtdProcessing ? DtdProcessing.Parse : DtdProcessing.Ignore,
+            Async = true,
+            CloseInput = false,
+        };
+        using var xmlReader = XmlReader.Create(inputXml, readerSettings,
+            _sourceDocumentUri?.AbsoluteUri ?? "");
+
+        var options = BuildTransformOptions(hasSource: true, rawBox: null, ct: ct);
+        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        await engine.TransformAsync(xmlReader, output, options).ConfigureAwait(false);
+
+        // Surface secondary results to the facade, mirroring the buffered TransformAsync overloads.
+        SecondaryResultDocuments = engine.SecondaryResultDocuments;
+    }
+
+    /// <summary>
     /// Transforms XML from a <see cref="Stream"/> and writes to a <see cref="Stream"/>.
+    /// When the loaded stylesheet's initial mode is streamable, the input stream is fed
+    /// directly to the streaming engine without an intervening <c>ReadToEndAsync</c>,
+    /// bounding peak memory. Non-streaming stylesheets retain the original buffered path.
     /// </summary>
     public async Task TransformAsync(Stream inputXml, Stream output, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(inputXml);
         ArgumentNullException.ThrowIfNull(output);
+
+        if (_stylesheet != null && IsInitialModeStreamable())
+        {
+            var streamingWriter = new StreamWriter(output, leaveOpen: true);
+            await using (streamingWriter.ConfigureAwait(false))
+            {
+                await TransformAsync(inputXml, (TextWriter)streamingWriter, ct).ConfigureAwait(false);
+                await streamingWriter.FlushAsync(ct).ConfigureAwait(false);
+            }
+            return;
+        }
+
+        // Non-streaming path keeps the existing buffered behavior.
         using var reader = new StreamReader(inputXml, leaveOpen: true);
         var writer = new StreamWriter(output, leaveOpen: true);
         await using (writer.ConfigureAwait(false))
@@ -1069,6 +1119,15 @@ public sealed class XsltTransformer
             await TransformAsync(reader, writer, ct).ConfigureAwait(false);
             await writer.FlushAsync(ct).ConfigureAwait(false);
         }
+    }
+
+    private bool IsInitialModeStreamable()
+    {
+        if (_stylesheet == null) return false;
+        var key = _initialMode != null
+            ? ResolveQName(_initialMode, _initialModeNamespace)
+            : new QName(NamespaceId.None, "");
+        return _stylesheet.Modes.TryGetValue(key, out var mode) && mode.Streamable;
     }
 
     /// <summary>

@@ -2787,10 +2787,71 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// Returns true when <paramref name="initialMode"/> (or the default mode, when null)
+    /// resolves to a declared streamable mode in the loaded stylesheet. Used by the facade
+    /// to decide whether the streaming fast path applies.
+    /// </summary>
+    internal bool IsInitialModeStreamable(QName? initialMode = null)
+    {
+        var key = initialMode ?? new QName(NamespaceId.None, "");
+        return _stylesheet.Modes.TryGetValue(key, out var mode) && mode.Streamable;
+    }
+
+    /// <summary>
+    /// Streams an XML input from an <see cref="XmlReader"/> through the stylesheet and
+    /// writes the serialized result incrementally to <paramref name="output"/>. Only valid
+    /// when the stylesheet's initial mode is streamable; otherwise throws.
+    /// </summary>
+    /// <remarks>
+    /// Cancellation is not transactional: if the caller cancels mid-stream, partial output
+    /// already delivered to <paramref name="output"/> is not recoverable. Post-processing
+    /// of the result (indentation, XML declaration, doctype, BOM, escape-uri-attributes)
+    /// requires the full output buffer and is NOT applied on this path — the raw
+    /// per-event serialized output is what reaches the caller's writer.
+    /// </remarks>
+    public async Task TransformAsync(XmlReader input, TextWriter output, XsltTransformOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(output);
+
+        var initialModeKey = options?.InitialMode ?? new QName(NamespaceId.None, "");
+        if (!_stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) || !initialModeDecl.Streamable)
+            throw new XsltException(
+                "TransformAsync(XmlReader, TextWriter) requires a streamable initial mode. " +
+                "For non-streaming transforms use TransformAsync(string) or TransformAsync(XdmNode).");
+
+        var outputBuilder = new StringBuilder();
+        await TransformStreamingCoreAsync(input, outputBuilder, output, options).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Transforms an XML string using streaming execution (XmlReader-based forward pass).
     /// Used when the initial mode is declared as streamable="yes".
     /// </summary>
     private async Task<string> TransformStreamingAsync(string xmlSource, XsltTransformOptions? options)
+    {
+        using var stringReader = new System.IO.StringReader(xmlSource);
+        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = true };
+        using var xmlReader = XmlReader.Create(stringReader, settings,
+            options?.SourceDocumentUri?.AbsoluteUri ?? "");
+        var sb = new StringBuilder();
+        await TransformStreamingCoreAsync(xmlReader, sb, outputSink: null, options).ConfigureAwait(false);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Core streaming pass shared by <see cref="TransformStreamingAsync(string, XsltTransformOptions?)"/>
+    /// and <see cref="TransformAsync(XmlReader, TextWriter, XsltTransformOptions?)"/>. The caller
+    /// owns the <see cref="XmlReader"/> lifetime and the result <see cref="StringBuilder"/>.
+    /// When <paramref name="outputSink"/> is non-null, the execution context drains the builder
+    /// to the sink at each event boundary; result post-processing (which requires the full
+    /// buffer) is then skipped because it cannot apply to an incrementally-delivered stream.
+    /// </summary>
+    private async Task TransformStreamingCoreAsync(
+        XmlReader inputReader,
+        StringBuilder outputBuilder,
+        TextWriter? outputSink,
+        XsltTransformOptions? options)
     {
         options ??= new XsltTransformOptions();
 
@@ -2837,7 +2898,6 @@ public sealed class XsltTransformEngine
         };
         nodeStore.Register(syntheticDoc);
 
-        var outputBuilder = new StringBuilder();
         var context = new DefaultXsltExecutionContext(
             _stylesheet,
             _templateIndex,
@@ -2845,6 +2905,32 @@ public sealed class XsltTransformEngine
             outputBuilder,
             options,
             nodeStore);
+
+        // Attach the optional external sink BEFORE global initialization and the streaming
+        // pass so DrainStreamingOutputAsync at every event boundary flushes incrementally
+        // and bounds peak buffered output.
+        context._streamingOutputSink = outputSink;
+
+        // For sink-driven streaming, post-processing (indentation, XML declaration, doctype,
+        // BOM, escape-uri-attributes) cannot be applied because it requires the full buffer.
+        // We emit an XML declaration up-front (when the output declaration requires one) so
+        // callers consuming the writer get a well-formed prologue.
+        if (outputSink != null)
+        {
+            var prologDecl = _stylesheet.Outputs.FirstOrDefault();
+            if (prologDecl != null &&
+                (prologDecl.EffectiveMethod == OutputMethod.Xml || prologDecl.EffectiveMethod == OutputMethod.Xhtml) &&
+                prologDecl.OmitXmlDeclaration != true)
+            {
+                var encoding = prologDecl.Encoding ?? "UTF-8";
+                var version = prologDecl.Version ?? "1.0";
+                var decl = $"<?xml version=\"{version}\" encoding=\"{encoding}\"";
+                if (prologDecl.Standalone.HasValue)
+                    decl += prologDecl.Standalone.Value ? " standalone=\"yes\"" : " standalone=\"no\"";
+                decl += "?>";
+                await outputSink.WriteAsync(decl).ConfigureAwait(false);
+            }
+        }
 
         // In streaming mode, global variables are initialized with absent focus because
         // the source document has not been read yet. The streaming processor provides
@@ -2873,12 +2959,6 @@ public sealed class XsltTransformEngine
         if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && options.HasSourceDocument)
             throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a source document was provided");
 
-        // Stream with XmlReader
-        using var stringReader = new System.IO.StringReader(xmlSource);
-        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = true };
-        using var xmlReader = XmlReader.Create(stringReader, settings,
-            options.SourceDocumentUri?.AbsoluteUri ?? "");
-
         // Resolve applicable accumulators for the streaming pass
         var streamingAccumulators = _stylesheet.Accumulators.Count > 0
             ? _stylesheet.Accumulators.Values.ToList()
@@ -2887,13 +2967,22 @@ public sealed class XsltTransformEngine
         var processor = new StreamingXmlProcessor(
             _stylesheet, _templateIndex, context, nodeStore, options.InitialMode,
             streamingAccumulators);
-        await processor.ProcessAsync(xmlReader, options.CancellationToken)
+        await processor.ProcessAsync(inputReader, options.CancellationToken)
             .ConfigureAwait(false);
 
-        var output = outputBuilder.ToString();
+        // Final drain — anything emitted after the last event-boundary drain.
+        await context.DrainStreamingOutputAsync(options.CancellationToken).ConfigureAwait(false);
 
-        // Apply serialization post-processing (same as non-streaming path)
+        // Surface secondary results to the engine regardless of sink mode.
         SecondaryResultDocuments = context.SecondaryResults;
+
+        // Sink path: post-processing (indentation / decl / doctype / BOM / escape-uri) cannot
+        // be applied to incrementally-delivered output, so we leave the builder empty and
+        // return — the sink has already received everything.
+        if (outputSink != null)
+            return;
+
+        var output = outputBuilder.ToString();
 
         // Apply indentation for streaming output
         var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
@@ -2940,7 +3029,10 @@ public sealed class XsltTransformEngine
             output = EscapeUriAttributes(output);
         }
 
-        return output;
+        // Replace the builder's contents with the post-processed output so the calling
+        // wrapper sees the same string the original method returned.
+        outputBuilder.Clear();
+        outputBuilder.Append(output);
     }
 
     /// <summary>

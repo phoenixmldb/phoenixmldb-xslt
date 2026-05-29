@@ -34,7 +34,7 @@ public sealed class StreamingOutputDrainTests
         var transformer = new XsltTransformer();
         await transformer.LoadStylesheetAsync(stylesheet);
 
-        var sink = new IncrementalObservingWriter();
+        using var sink = new IncrementalObservingWriter();
         using var inputStream = new MemoryStream(Encoding.UTF8.GetBytes(inputXml));
         await transformer.TransformAsync(inputStream, sink);
         await sink.FlushAsync();
