@@ -235,4 +235,35 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("<out><PRICE>4.95</PRICE><PRICE>6.58</PRICE></out>",
             because: "the body's name(..) must see PRICE (the materialized parent element) not BOOKS");
     }
+
+    /// <summary>
+    /// Bug regression: xsl:variable as="element()*" content was not populating
+    /// XdmElement._stringValue, so value-of select="." on the variable's elements
+    /// returned the empty string. The fix is in ReadXdmElementFromReader.
+    /// This bug surfaced under cy-008 (mixed-sequence streaming with $extra prefix)
+    /// but is general — not streaming-specific.
+    /// </summary>
+    [Fact]
+    public async Task VariableAsElementSequence_ValueOfDot_ReturnsTextContent()
+    {
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:variable name="extra" as="element()*">
+                  <PRICE>100.00</PRICE>
+                  <PRICE>101.00</PRICE>
+                </xsl:variable>
+                <xsl:for-each select="$extra">
+                  <xsl:value-of select="."/>
+                  <xsl:text>;</xsl:text>
+                </xsl:for-each>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, "<a/>", "stub.xml");
+        result.Trim().Should().Be("100.00;101.00;",
+            because: "XdmElement.StringValue must reflect the descendant text content for variable-constructed elements");
+    }
 }

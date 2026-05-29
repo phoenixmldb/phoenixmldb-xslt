@@ -5076,6 +5076,29 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             Children = childIds,
             NamespaceDeclarations = nsDecls.Count > 0 ? nsDecls.ToArray() : XdmElement.EmptyNamespaceDeclarations,
         };
+        // Precompute _stringValue bottom-up from child text and (already-finalized)
+        // child element string values. Mirrors StreamingSubtreeMaterializer.FinalizeFrame
+        // and XmlDocumentParser. Without this, value-of select="." on a variable-
+        // constructed element (XdmElement.StringValue is non-lazy) returns "".
+        if (childIds.Count > 0)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var childId in childIds)
+            {
+                var child = _nodeStore.GetNode(childId);
+                switch (child)
+                {
+                    case XdmText t: sb.Append(t.Value); break;
+                    case XdmElement ce: sb.Append(ce.StringValue); break;
+                    // Comments and PIs contribute nothing to element string value.
+                }
+            }
+            elem._stringValue = sb.ToString();
+        }
+        else
+        {
+            elem._stringValue = string.Empty;
+        }
         _nodeStore.Register(elem);
         return elem;
     }
