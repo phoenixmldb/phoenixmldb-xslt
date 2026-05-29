@@ -1,3 +1,5 @@
+using PhoenixmlDb.XQuery.Ast;
+
 namespace PhoenixmlDb.Xslt.Engine;
 
 /// <summary>
@@ -19,4 +21,26 @@ internal sealed class ForEachSubscription
 
     /// <summary>Sequence constructor body executed once per match.</summary>
     public required Ast.XsltSequenceConstructor Body { get; init; }
+
+    /// <summary>
+    /// Grounded operands appearing BEFORE the streamable path in the for-each select.
+    /// Each is evaluated as a separate for-each iteration before the streaming pass starts.
+    /// </summary>
+    public IReadOnlyList<XQueryExpression> PrefixItems { get; init; }
+        = System.Array.Empty<XQueryExpression>();
+
+    /// <summary>
+    /// Grounded operands appearing AFTER the streamable path. Each is evaluated as a
+    /// separate for-each iteration after the streaming pass completes.
+    /// </summary>
+    public IReadOnlyList<XQueryExpression> SuffixItems { get; init; }
+        = System.Array.Empty<XQueryExpression>();
+
+    /// <summary>
+    /// True when the streamable path's last step is <c>text()</c>. When set, the
+    /// processor materializes the element matched by the earlier steps and dispatches
+    /// the body once per text-node child (in document order) with the text node as the
+    /// context item, instead of dispatching once per element snapshot.
+    /// </summary>
+    public bool TextNodeTail { get; init; }
 }
