@@ -13745,6 +13745,59 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// Evaluates the given grounded operands as for-each iterations against the
+    /// subscription body. Each operand expression is evaluated in the current
+    /// execution context; the resulting items are iterated in document order and
+    /// the subscription's body is executed once per item with the item pushed as
+    /// the context item and the xsl:current() item. Used to drain
+    /// <see cref="ForEachSubscription.PrefixItems"/> before, and
+    /// <see cref="ForEachSubscription.SuffixItems"/> after, the streaming pass
+    /// for mixed-sequence xsl:for-each selects.
+    /// </summary>
+    private async ValueTask ExecuteForEachSubscriptionItemsAsync(
+        ForEachSubscription sub,
+        IReadOnlyList<XQueryExpression> items)
+    {
+        if (items.Count == 0) return;
+        foreach (var itemExpr in items)
+        {
+            var result = await EvaluateAsync(itemExpr).ConfigureAwait(false);
+            IEnumerable<object> seq = result switch
+            {
+                IEnumerable<object> s => s,
+                object obj => [obj],
+                _ => []
+            };
+            var list = seq.ToList();
+            var position = 0;
+            foreach (var item in list)
+            {
+                CheckResourceLimits();
+                position++;
+                var effectiveItem = item is ResultTreeFragment rtf && _nodeStore != null
+                    ? (object?)ParseResultTreeFragment(rtf) ?? item
+                    : item;
+                PushContextItem(effectiveItem, position, list.Count);
+                PushCurrentItem(effectiveItem);
+                PushScope();
+                var savedTemplate = _currentTemplate;
+                _currentTemplate = null;
+                try
+                {
+                    await sub.Body.ExecuteAsync(this).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _currentTemplate = savedTemplate;
+                    PopScope();
+                    PopCurrentItem();
+                    PopContextItem();
+                }
+            }
+        }
+    }
+
     public override async ValueTask SourceDocumentAsync(XsltSourceDocument instruction)
     {
         // Deferred XTSE3430 streamability error — throw at runtime instead of parse time
@@ -13877,7 +13930,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         _activeStreamingProcessor = null;
                         _activeStreamingReader = null;
+
+                        // Mixed-sequence prefix: grounded operands appearing BEFORE the
+                        // streamable path in the for-each select. Evaluate each and
+                        // dispatch the body per item, in document order, BEFORE the
+                        // streaming pass starts.
+                        foreach (var sub in subscriptions)
+                        {
+                            if (sub.PrefixItems.Count > 0)
+                                await ExecuteForEachSubscriptionItemsAsync(sub, sub.PrefixItems).ConfigureAwait(false);
+                        }
+
                         await processor.ProcessAsync(xmlReader, _options.CancellationToken).ConfigureAwait(false);
+
+                        // Mixed-sequence suffix: same as prefix but after streaming.
+                        foreach (var sub in subscriptions)
+                        {
+                            if (sub.SuffixItems.Count > 0)
+                                await ExecuteForEachSubscriptionItemsAsync(sub, sub.SuffixItems).ConfigureAwait(false);
+                        }
+
                         processorRanForSubscriptions = subscriptions.Count > 0;
                     }
 
