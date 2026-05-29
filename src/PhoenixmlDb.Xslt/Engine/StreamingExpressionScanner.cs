@@ -420,51 +420,141 @@ internal sealed class StreamingExpressionScanner
 
     /// <summary>
     /// Registers a <see cref="ForEachSubscription"/> for an <c>xsl:for-each</c>
-    /// whose select expression is a simple absolute child-axis path and which
-    /// has no xsl:sort children. Otherwise leaves the for-each to the buffered
-    /// execution path.
+    /// whose select expression is either a simple absolute child-axis path or
+    /// a comma sequence of grounded operands surrounding a single streamable
+    /// path. Otherwise leaves the for-each to the buffered execution path.
     /// </summary>
     private void TryRegisterForEachSubscription(XsltForEach forEach)
     {
-        // Sorts force materialization — bail out, the buffered path handles it.
         if (forEach.Sorts.Count > 0) return;
 
-        var pathMatcher = TryBuildAbsoluteChildPathMatcher(forEach.Select);
-        if (pathMatcher == null) return;
+        if (!TryDecomposeForEachSelect(forEach.Select, out var prefix, out var path, out var textNodeTail, out var suffix))
+            return;
 
         _subscriptions.Add(new ForEachSubscription
         {
             SourceInstruction = forEach,
-            PathMatcher = pathMatcher,
+            PathMatcher = path,
             Body = forEach.Body,
+            PrefixItems = prefix,
+            SuffixItems = suffix,
+            TextNodeTail = textNodeTail,
         });
     }
 
     /// <summary>
-    /// Builds a <see cref="StreamPathMatcher"/> from an XPath expression when
-    /// (and only when) the expression is an absolute path consisting purely of
-    /// child-axis name-test steps with no predicates. Returns null for any
-    /// other shape (descendant axes, attribute axes, predicates, kind tests,
-    /// function-call wrappers, variable-rooted paths, etc.) so the buffered
-    /// execution path can handle it.
+    /// Recognizes <paramref name="select"/> as either a single streamable absolute
+    /// child-axis path (with optional text() KindTest at the last step) OR a comma
+    /// sequence with exactly one streamable path operand surrounded by zero or more
+    /// "grounded" operands (literals, variable refs).
     /// </summary>
-    private static StreamPathMatcher? TryBuildAbsoluteChildPathMatcher(XQueryExpression select)
+    private static bool TryDecomposeForEachSelect(
+        XQueryExpression select,
+        out IReadOnlyList<XQueryExpression> prefix,
+        out StreamPathMatcher path,
+        out bool textNodeTail,
+        out IReadOnlyList<XQueryExpression> suffix)
     {
+        prefix = Array.Empty<XQueryExpression>();
+        suffix = Array.Empty<XQueryExpression>();
+        path = null!;
+        textNodeTail = false;
+
+        var singleMatcher = TryBuildPathMatcher(select, out textNodeTail);
+        if (singleMatcher != null)
+        {
+            path = singleMatcher;
+            return true;
+        }
+        textNodeTail = false;
+
+        // AST uses SequenceExpression with Items property for comma sequences.
+        if (select is not SequenceExpression seq) return false;
+        var operands = seq.Items;
+        if (operands == null || operands.Count < 2) return false;
+
+        int streamableIndex = -1;
+        for (int i = 0; i < operands.Count; i++)
+        {
+            var inner = TryBuildPathMatcher(operands[i], out var innerTail);
+            if (inner == null) continue;
+            if (streamableIndex >= 0) return false; // more than one streamable operand
+            streamableIndex = i;
+            path = inner;
+            textNodeTail = innerTail;
+        }
+        if (streamableIndex < 0) return false;
+
+        for (int i = 0; i < operands.Count; i++)
+        {
+            if (i == streamableIndex) continue;
+            if (!IsGroundedForStreaming(operands[i])) return false;
+        }
+
+        var prefixArr = new XQueryExpression[streamableIndex];
+        for (int i = 0; i < streamableIndex; i++) prefixArr[i] = operands[i];
+        var suffixArr = new XQueryExpression[operands.Count - streamableIndex - 1];
+        for (int i = streamableIndex + 1; i < operands.Count; i++) suffixArr[i - streamableIndex - 1] = operands[i];
+        prefix = prefixArr;
+        suffix = suffixArr;
+        return true;
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> can be evaluated outside the streaming pass
+    /// without consuming the source stream. Conservatively accepts literals and
+    /// variable refs; rejects PathExpression and anything else.
+    /// </summary>
+    private static bool IsGroundedForStreaming(XQueryExpression expr)
+    {
+        return expr switch
+        {
+            IntegerLiteral or DecimalLiteral or DoubleLiteral or StringLiteral or BooleanLiteral => true,
+            VariableReference => true,
+            PathExpression => false,
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Builds a <see cref="StreamPathMatcher"/> from an XPath expression when
+    /// it is an absolute path consisting purely of child-axis name-test steps
+    /// with no predicates, optionally ending in a <c>text()</c> KindTest
+    /// (signaled via <paramref name="textNodeTail"/>). Returns null for any
+    /// other shape so the buffered execution path can handle it.
+    /// </summary>
+    private static StreamPathMatcher? TryBuildPathMatcher(XQueryExpression select, out bool textNodeTail)
+    {
+        textNodeTail = false;
         if (select is not PathExpression path) return null;
         if (!path.IsAbsolute) return null;
         if (path.InitialExpression != null) return null;
         if (path.Steps.Count == 0) return null;
 
         var parts = new List<string>(path.Steps.Count);
-        foreach (var step in path.Steps)
+        for (int i = 0; i < path.Steps.Count; i++)
         {
+            var step = path.Steps[i];
             if (step.Axis != Axis.Child) return null;
             if (step.Predicates.Count > 0) return null;
+
+            // text() KindTest is acceptable only as the LAST step.
+            if (i == path.Steps.Count - 1
+                && step.NodeTest is KindTest kindTest
+                && kindTest.Kind == XdmNodeKind.Text
+                && kindTest.Name == null
+                && kindTest.TypeName == null)
+            {
+                textNodeTail = true;
+                break;
+            }
+
             if (step.NodeTest is not NameTest nameTest) return null;
             if (nameTest.IsLocalNameWildcard || nameTest.IsNamespaceWildcard) return null;
             parts.Add(nameTest.LocalName);
         }
 
+        if (parts.Count == 0) return null;
         return new StreamPathMatcher(string.Join("/", parts));
     }
 }
