@@ -4093,6 +4093,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     // because outer content makes `_output.Length > 0`.
     private int _outputLogicalStart;
 
+    /// <summary>
+    /// Optional external sink for incremental streaming output. When non-null, the
+    /// <see cref="StreamingXmlProcessor"/> calls <see cref="DrainStreamingOutputAsync"/>
+    /// at each safe event boundary to flush <see cref="_output"/> here and reset its
+    /// length to zero, bounding peak memory for large streamed transforms. The sink is
+    /// only meaningful when the context is driving a streaming transform; non-streaming
+    /// callers leave it null.
+    /// </summary>
+    internal TextWriter? _streamingOutputSink;
+
     // When a template/function body is being captured for `as=` type-checking, we have two
     // parallel output channels: `_output` (LREs, text) and `_sequenceAccumulator`
     // (xsl:attribute, xsl:sequence, xsl:document). To recover document order at result
@@ -5211,6 +5221,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _scopes.Push(new Scope());
         _contextItems.Push(source);
         _contextPositions.Push((1, 1));
+    }
+
+    /// <summary>
+    /// Drains <c>_output</c> to <see cref="_streamingOutputSink"/> and resets its
+    /// length to zero. Caller is responsible for invoking this only at points where
+    /// no <see cref="XsltTransformEngine.ScopedOutputBuffer"/> is open — typically at
+    /// the top of each <see cref="StreamingXmlProcessor.ProcessAsync"/> loop iteration,
+    /// before reading the next XML event. No-op when no sink is attached or the
+    /// buffer is empty.
+    /// </summary>
+    internal async ValueTask DrainStreamingOutputAsync(CancellationToken ct)
+    {
+        if (_streamingOutputSink == null) return;
+        if (_output.Length == 0) return;
+        var chunk = _output.ToString();
+        _output.Clear();
+        _outputLogicalStart = 0;
+        await _streamingOutputSink.WriteAsync(chunk.AsMemory(), ct).ConfigureAwait(false);
     }
 
     /// <summary>
