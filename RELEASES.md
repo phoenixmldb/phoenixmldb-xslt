@@ -1,19 +1,46 @@
 # Release History
 
-## Unreleased
+## 1.3.23 (2026-05-29)
 
-- **Streaming output memory** — engine drains `_output` at each streaming
-  event boundary; new `TransformAsync(XmlReader, TextWriter)` and
-  `TransformAsync(Stream, TextWriter)` entry points stream the result
-  incrementally. Peak working-set delta for a 1M-item streaming identity
-  transform measured at **~20 MiB** (vs. ~hundreds of MiB to multi-GiB
-  previously). The 97 GiB allocation total reported on the 10M-item case
-  is dominated by per-event node-store churn — addressed separately.
-- **Streaming input** — `TransformAsync(Stream, Stream)` no longer buffers
-  the entire input file with `ReadToEndAsync` when the initial mode is
-  streamable; the input `Stream` is wrapped directly by
-  `XmlReader.Create`. Non-streaming transforms keep their existing
-  buffered behavior.
+### New: incremental streaming output + direct stream input (Martin Honnen memory report)
+
+`TransformAsync(XmlReader, TextWriter)` (engine) and `TransformAsync(Stream, TextWriter)`
+(facade) stream the serialized result incrementally to the caller's sink rather than
+buffering the entire result in a `StringBuilder`. The streaming processor drains the
+engine's internal output buffer at each event-loop boundary, so peak working-set delta
+for a 1M-item streamed identity transform measured at **17.2 MiB** (vs. hundreds of MiB
+to multi-GiB before, depending on result size).
+
+`TransformAsync(Stream, Stream)` also gained a fast path: when the stylesheet's initial
+mode is streamable, the input `Stream` is wrapped directly by `XmlReader.Create` instead
+of being fully read into a UTF-16 string via `ReadToEndAsync`. Non-streaming transforms
+keep their existing buffered semantics.
+
+The total allocation figure on very-large streams (~97 GiB for a 10M-item input) is
+dominated by per-event XdmText/XdmAttribute/XdmComment node-store churn and is addressed
+in a separate follow-up.
+
+### New: `xsl:for-each` with absolute streamable paths inside `xsl:source-document`
+
+`<xsl:source-document streamable="yes">` containing `<xsl:for-each select="/path">`
+now drives the streaming pass per-iteration via a new `ForEachSubscription` mechanism
+in the streaming scanner + processor. Previously the for-each evaluated against the
+synthetic empty document and returned no items.
+
+The scanner skips for-each inside `xsl:on-empty`, `xsl:on-non-empty`, and
+`xsl:where-populated` because those wrappers have conditional execution semantics
+that the unconditional subscription dispatch can't honor; those cases fall back to
+the buffered path.
+
+W3C streaming conformance gained +4 tests across `si-copy`, `si-document`,
+`si-element`, `si-LRE` (1681/2358, 71.3%). Critical 100% sets (`sf-deep-equal`,
+`si-attribute`, `si-apply-templates`) held.
+
+### Internal: `StreamingSubtreeMaterializer` precomputes element string-value
+
+Materialized subtrees from the streaming snapshot path now have their `StringValue`
+precomputed bottom-up during finalization. Previously `xsl:value-of select="."` on a
+snapshot returned empty because `XdmElement.StringValue` is non-lazy (`_stringValue ?? ""`).
 
 ## 1.3.22 (2026-05-23)
 
