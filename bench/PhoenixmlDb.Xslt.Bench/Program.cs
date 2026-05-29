@@ -9,6 +9,17 @@ using PhoenixmlDb.Xslt.Bench;
 //             BenchmarkDotNet, just to verify the synthesizer/code path works.
 //             Useful for CI smoke-testing without pulling in a 5-minute bench run.
 
+// "streaming-identity" → measure peak working-set delta for a streamed
+// identity transform on a synthetic N-item document. Headline metric for
+// the streaming output drain work (see RELEASES.md unreleased section).
+//   args: streaming-identity [itemCount]
+if (args.Length > 0 && args[0] == "streaming-identity")
+{
+    var count = args.Length > 1 && int.TryParse(args[1], out var n) ? n : 1_000_000;
+    await StreamingIdentityBench.RunAsync(count);
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "smoke")
 {
     var sizeMb = args.Length > 1 && int.TryParse(args[1], out var s) ? s : 1;

@@ -1,5 +1,20 @@
 # Release History
 
+## Unreleased
+
+- **Streaming output memory** — engine drains `_output` at each streaming
+  event boundary; new `TransformAsync(XmlReader, TextWriter)` and
+  `TransformAsync(Stream, TextWriter)` entry points stream the result
+  incrementally. Peak working-set delta for a 1M-item streaming identity
+  transform measured at **~20 MiB** (vs. ~hundreds of MiB to multi-GiB
+  previously). The 97 GiB allocation total reported on the 10M-item case
+  is dominated by per-event node-store churn — addressed separately.
+- **Streaming input** — `TransformAsync(Stream, Stream)` no longer buffers
+  the entire input file with `ReadToEndAsync` when the initial mode is
+  streamable; the input `Stream` is wrapped directly by
+  `XmlReader.Create`. Non-streaming transforms keep their existing
+  buffered behavior.
+
 ## 1.3.22 (2026-05-23)
 
 ### Fix: `TransformAsync(XdmSequence)` preserves map/array head across JSON-chained transforms (Martin Honnen)
