@@ -304,16 +304,42 @@ internal sealed class StreamingXmlProcessor
                                     {
                                         foreach (var sub in matched)
                                         {
-                                            _context.PushContextItem(snapshot, 1, 1);
-                                            _context.PushCurrentItem(snapshot);
-                                            try
+                                            if (sub.TextNodeTail)
                                             {
-                                                await sub.Body.ExecuteAsync(_context).ConfigureAwait(false);
+                                                // Iterate text-node children of the materialized
+                                                // element. Each text node becomes the context item;
+                                                // the body's parent-axis navigation (`..` or
+                                                // parent::) resolves to the materialized element via
+                                                // the text node's Parent reference (set during
+                                                // materialization).
+                                                foreach (var textChild in EnumerateTextChildren(snapshot))
+                                                {
+                                                    _context.PushContextItem(textChild, 1, 1);
+                                                    _context.PushCurrentItem(textChild);
+                                                    try
+                                                    {
+                                                        await sub.Body.ExecuteAsync(_context).ConfigureAwait(false);
+                                                    }
+                                                    finally
+                                                    {
+                                                        _context.PopCurrentItem();
+                                                        _context.PopContextItem();
+                                                    }
+                                                }
                                             }
-                                            finally
+                                            else
                                             {
-                                                _context.PopCurrentItem();
-                                                _context.PopContextItem();
+                                                _context.PushContextItem(snapshot, 1, 1);
+                                                _context.PushCurrentItem(snapshot);
+                                                try
+                                                {
+                                                    await sub.Body.ExecuteAsync(_context).ConfigureAwait(false);
+                                                }
+                                                finally
+                                                {
+                                                    _context.PopCurrentItem();
+                                                    _context.PopContextItem();
+                                                }
                                             }
                                         }
                                     }
@@ -864,5 +890,19 @@ internal sealed class StreamingXmlProcessor
         foreach (var attr in ctx.Attributes)
             _nodeStore.Remove(attr.NodeId);
         _nodeStore.Remove(ctx.NodeId);
+    }
+
+    /// <summary>
+    /// Enumerates the <see cref="XdmText"/> children of a materialized element in
+    /// document order. Used by TextNodeTail subscriptions so the body iterates
+    /// actual text nodes (with Parent intact) rather than the parent element.
+    /// </summary>
+    private IEnumerable<XdmText> EnumerateTextChildren(XdmElement element)
+    {
+        foreach (var childId in element.Children)
+        {
+            if (_nodeStore.GetNode(childId) is XdmText t)
+                yield return t;
+        }
     }
 }

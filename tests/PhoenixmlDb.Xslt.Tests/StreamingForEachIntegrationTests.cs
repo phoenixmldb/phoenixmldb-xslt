@@ -198,4 +198,41 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("<out><t>4.95</t><t>6.58</t><t>101</t><t>102</t></out>",
             because: "text-node children of matched elements and atomic suffix items must all be iterated in document order");
     }
+
+    /// <summary>
+    /// cy-006 pattern: xsl:for-each select="/path/text()" with body using parent-axis
+    /// navigation `name(..)`. Confirms TextNodeTail actually iterates text NODES (not
+    /// the parent element), so the body's `..` resolves to the materialized owner.
+    /// </summary>
+    [Fact]
+    public async Task ForEach_TextNodeTail_ContextItemIsTextNodeWithParent()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM><PRICE>4.95</PRICE></ITEM>
+              <ITEM><PRICE>6.58</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <out>
+                  <xsl:source-document streamable="yes" href="books.xml">
+                    <xsl:for-each select="/BOOKLIST/BOOKS/ITEM/PRICE/text()">
+                      <xsl:element name="{name(..)}">
+                        <xsl:value-of select="."/>
+                      </xsl:element>
+                    </xsl:for-each>
+                  </xsl:source-document>
+                </out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Be("<out><PRICE>4.95</PRICE><PRICE>6.58</PRICE></out>",
+            because: "the body's name(..) must see PRICE (the materialized parent element) not BOOKS");
+    }
 }
