@@ -100,6 +100,10 @@ internal sealed class StreamingXmlProcessor
         {
             while (true)
             {
+                // Drain any output produced in the previous iteration to the external sink (no-op
+                // unless _streamingOutputSink is set). Safe here because no ScopedOutputBuffer can
+                // be open at the top of the loop — all prior instruction `using` scopes have unwound.
+                await _context.DrainStreamingOutputAsync(ct).ConfigureAwait(false);
                 // Streaming-aware operators (e.g. xsl:for-each-group) may consume an
                 // event from the reader that we still need to process. They set
                 // _streamingDeferReadOnNextIteration so we skip our own ReadAsync and
