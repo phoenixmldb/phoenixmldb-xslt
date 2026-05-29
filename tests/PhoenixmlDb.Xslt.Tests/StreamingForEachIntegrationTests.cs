@@ -123,4 +123,79 @@ public class StreamingForEachIntegrationTests
             "xsl:for-each inside xsl:on-empty must not execute when sibling content is non-empty");
         result.Should().Contain("HEAD;");
     }
+
+    /// <summary>
+    /// cy-010 pattern: xsl:for-each select="100, 101, /BOOKLIST/BOOKS/ITEM/PRICE" inside
+    /// xsl:source-document streamable="yes". Body uses xsl:value-of select="." for grounded
+    /// atomics and a `text()` step on elements. Currently the scanner rejects the
+    /// Comma/SequenceConstructor select expression, so only literals are emitted (if anything).
+    /// </summary>
+    [Fact]
+    public async Task ForEach_MixedSequence_AtomicsAndStreamablePath_EmitsAllInOrder()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM><PRICE>4.95</PRICE></ITEM>
+              <ITEM><PRICE>6.58</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <out>
+                  <xsl:source-document streamable="yes" href="books.xml">
+                    <xsl:for-each select="100, 101, /BOOKLIST/BOOKS/ITEM/PRICE">
+                      <xsl:element name="t">
+                        <xsl:value-of select="if (. instance of element()) then text() else ."/>
+                      </xsl:element>
+                    </xsl:for-each>
+                  </xsl:source-document>
+                </out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Be("<out><t>100</t><t>101</t><t>4.95</t><t>6.58</t></out>",
+            because: "atomic prefix items and streamable element path items must all be iterated in document order");
+    }
+
+    /// <summary>
+    /// cy-007 pattern: xsl:for-each select="/BOOKLIST/BOOKS/ITEM/PRICE/text(), 101, 102".
+    /// Streamable absolute path with text() KindTest tail, followed by grounded atomic
+    /// literals. Body uses xsl:value-of select=".".
+    /// </summary>
+    [Fact]
+    public async Task ForEach_MixedSequence_PathTextNodeTailAndAtomicSuffix_EmitsAllInOrder()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM><PRICE>4.95</PRICE></ITEM>
+              <ITEM><PRICE>6.58</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <out>
+                  <xsl:source-document streamable="yes" href="books.xml">
+                    <xsl:for-each select="/BOOKLIST/BOOKS/ITEM/PRICE/text(), 101, 102">
+                      <xsl:element name="t">
+                        <xsl:value-of select="."/>
+                      </xsl:element>
+                    </xsl:for-each>
+                  </xsl:source-document>
+                </out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Be("<out><t>4.95</t><t>6.58</t><t>101</t><t>102</t></out>",
+            because: "text-node children of matched elements and atomic suffix items must all be iterated in document order");
+    }
 }
