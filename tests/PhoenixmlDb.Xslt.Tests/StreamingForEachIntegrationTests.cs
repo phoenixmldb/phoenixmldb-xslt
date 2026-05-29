@@ -77,4 +77,50 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("10;20;30;",
             "xsl:for-each under streamable xsl:source-document must iterate over streamed nodes");
     }
+
+    /// <summary>
+    /// Regression: xsl:for-each inside xsl:on-empty must NOT fire when the
+    /// surrounding content is non-empty. Before the scanner fix, the streaming
+    /// scanner registered an unconditional ForEachSubscription for the inner
+    /// for-each, causing the on-empty body to execute regardless of the gate.
+    /// </summary>
+    [Fact]
+    public async Task ForEach_InsideOnEmpty_WithNonEmptySiblingContent_DoesNotFire()
+    {
+        var stylesheet = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              version="3.0">
+              <xsl:output method="text"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="books.xml">
+                  <out>
+                    <xsl:text>HEAD;</xsl:text>
+                    <xsl:on-empty>
+                      <xsl:for-each select="/BOOKLIST/BOOKS/ITEM/TITLE">
+                        <xsl:text>SHOULD-NOT-APPEAR;</xsl:text>
+                      </xsl:for-each>
+                    </xsl:on-empty>
+                  </out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var input = """
+            <?xml version="1.0"?>
+            <BOOKLIST>
+              <BOOKS>
+                <ITEM><TITLE>A</TITLE></ITEM>
+                <ITEM><TITLE>B</TITLE></ITEM>
+              </BOOKS>
+            </BOOKLIST>
+            """;
+
+        var result = await TransformWithFile(stylesheet, input, "books.xml");
+
+        result.Should().NotContain("SHOULD-NOT-APPEAR",
+            "xsl:for-each inside xsl:on-empty must not execute when sibling content is non-empty");
+        result.Should().Contain("HEAD;");
+    }
 }

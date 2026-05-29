@@ -130,18 +130,17 @@ internal sealed class StreamingExpressionScanner
                 }
                 break;
 
-            // xsl:where-populated and on-empty/on-non-empty wrap bodies that may
-            // include consuming sub-expressions.
-            case XsltWherePopulated wp:
-                ScanInstructions(wp.Content);
-                break;
-            case XsltOnEmpty oe:
-                if (oe.Content != null) ScanInstructions(oe.Content);
-                if (oe.Select != null) ScanExpression(oe.Select);
-                break;
-            case XsltOnNonEmpty one:
-                if (one.Content != null) ScanInstructions(one.Content);
-                if (one.Select != null) ScanExpression(one.Select);
+            // xsl:where-populated / xsl:on-empty / xsl:on-non-empty have
+            // conditional execution semantics (the body only fires depending on
+            // whether sibling content is empty/non-empty). The streaming-pass
+            // dispatch for ForEachSubscription is unconditional, so registering
+            // a subscription for a for-each inside these wrappers would break
+            // the gate. Skip descending here entirely — the for-each (and any
+            // consuming aggregates inside) fall back to the buffered execution
+            // path that honours the wrapper's semantics.
+            case XsltWherePopulated:
+            case XsltOnEmpty:
+            case XsltOnNonEmpty:
                 break;
 
             // xsl:attribute: the name and namespace AVTs may contain consuming expressions
