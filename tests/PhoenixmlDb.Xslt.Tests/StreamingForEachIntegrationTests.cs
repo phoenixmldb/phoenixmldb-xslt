@@ -266,4 +266,43 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("100.00;101.00;",
             because: "XdmElement.StringValue must reflect the descendant text content for variable-constructed elements");
     }
+
+    /// <summary>
+    /// si-element-247 pattern: xsl:element name="{head(//AUTHOR)}" — the streaming
+    /// consumption is inside the @name AVT of xsl:element. Scanner must walk the
+    /// AVT looking for consuming expressions (mirror XsltAttribute AVT scanning).
+    /// </summary>
+    [Fact]
+    public async Task XsltElement_NameAvt_WithStreamingHead_ResolvesElementName()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST>
+              <BOOKS>
+                <ITEM><AUTHOR>Jane Austen</AUTHOR><TITLE>Pride and Prejudice</TITLE></ITEM>
+                <ITEM><AUTHOR>Mark Twain</AUTHOR><TITLE>Huck Finn</TITLE></ITEM>
+              </BOOKS>
+            </BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="books.xml">
+                  <out>
+                    <xsl:element name="{translate(head(//AUTHOR), ' ', '_')}">value</xsl:element>
+                  </out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        // Conformance assertion is /out/Jane_Austen = 'value' — match that substring.
+        // The streaming pass also emits the streamed text via default template rules
+        // (a pre-existing characteristic of watcher-only source-documents), so we
+        // assert the constructed subtree is present rather than equality.
+        result.Should().Contain("<out><Jane_Austen>value</Jane_Austen></out>",
+            because: "head(//AUTHOR) inside xsl:element/@name AVT must stream the first matching element");
+    }
 }

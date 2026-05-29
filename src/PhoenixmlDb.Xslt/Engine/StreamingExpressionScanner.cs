@@ -152,6 +152,16 @@ internal sealed class StreamingExpressionScanner
                 if (attr.Content != null) ScanInstructions(attr.Content);
                 break;
 
+            // xsl:element: same shape as xsl:attribute — the name and namespace AVTs
+            // may contain consuming expressions (e.g., name="{head(//AUTHOR)}"). The
+            // body (Content) executes after the streaming pass with the AVT
+            // resolved via watcher value substitution at EvaluateAvtAsync time.
+            case XsltElement elem:
+                ScanAvt(elem.Name);
+                if (elem.Namespace != null) ScanAvt(elem.Namespace);
+                ScanInstructions(elem.Content);
+                break;
+
             // Skip xsl:apply-templates and xsl:iterate — handled by existing streaming
             case XsltApplyTemplates:
             case XsltIterate:
