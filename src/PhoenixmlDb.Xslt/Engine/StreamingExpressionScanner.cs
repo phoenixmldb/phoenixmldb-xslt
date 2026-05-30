@@ -280,6 +280,26 @@ internal sealed class StreamingExpressionScanner
                 ScanExpression(bin.Left);
                 ScanExpression(bin.Right);
                 return;
+
+            // SimpleMap (path!cast!cast …) — when the Left is a downward path
+            // AND the Right consists only of per-item atomic-cast / function
+            // applications on the context item (no navigation back into the
+            // streamed node), register a Sequence watcher keyed on the whole
+            // SimpleMap. The watcher rewriter then swaps the SimpleMap for
+            // $__streaming_watcher_N (a sequence of leaf string values), and
+            // the plan re-applies the casts per atomic item. Handles patterns
+            // like /*/*/ITEM/DIMENSIONS!xs:NMTOKENS(.)!xs:decimal(.) where the
+            // tail must surface XPTY0004 on incompatible comparison rather
+            // than short-circuit to empty.
+            case SimpleMapExpression sm when TryExtractSimpleMapWatcherShape(sm) is { } shape:
+                _watchers.Add(new StreamWatcher
+                {
+                    SourceExpression = expr,
+                    PathMatcher = new StreamPathMatcher(shape.Path),
+                    Aggregation = WatcherAggregation.Sequence,
+                    ValueAttribute = shape.Attribute
+                });
+                return;
         }
 
         // Recurse into child expressions for unrecognized patterns
@@ -347,6 +367,81 @@ internal sealed class StreamingExpressionScanner
         return fc.Name.LocalName == "head"
             && fc.Arguments.Count == 1
             && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
+    }
+
+    /// <summary>
+    /// Recognizes a SimpleMap whose deep-left source is a downward PathExpression
+    /// and whose every subsequent step is a per-item atomic operation on the
+    /// context item. Handles chains like <c>path!xs:NMTOKENS(.)!xs:decimal(.)</c>
+    /// where the parser builds left-associative SimpleMap nodes:
+    /// SimpleMap(SimpleMap(path, NMTOKENS(.)), decimal(.)).
+    /// </summary>
+    private static (string Path, string? Attribute)? TryExtractSimpleMapWatcherShape(SimpleMapExpression sm)
+    {
+        // Walk down the Left chain, accumulating tail steps. Every step we
+        // encounter (the Right of each SimpleMap we descend through) must be
+        // a per-item atomic operation on the context item.
+        XQueryExpression current = sm;
+        while (current is SimpleMapExpression mapNode)
+        {
+            if (!IsPerItemAtomicTail(mapNode.Right)) return null;
+            current = mapNode.Left;
+        }
+
+        // The deep-left must be a downward path we can register a watcher on
+        if (current is not PathExpression path || !IsDownwardPath(path))
+            return null;
+
+        return ExtractPathFromExpression(path);
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="tail"/> is safe to re-apply per atomic
+    /// item from a SimpleMap source — i.e. it operates only on the context item
+    /// (<c>.</c>) via atomic casts or built-in fn:/xs: function calls, possibly
+    /// chained through further SimpleMap operators. Rejects anything that
+    /// navigates (PathExpression, attribute access, etc.) because the captured
+    /// items are strings, not nodes.
+    /// </summary>
+    private static bool IsPerItemAtomicTail(XQueryExpression tail)
+    {
+        switch (tail)
+        {
+            case ContextItemExpression:
+                return true;
+            case CastExpression cast:
+                return IsPerItemAtomicTail(cast.Expression);
+            case CastableExpression castable:
+                return IsPerItemAtomicTail(castable.Expression);
+            case TreatExpression treat:
+                return IsPerItemAtomicTail(treat.Expression);
+            case InstanceOfExpression inst:
+                return IsPerItemAtomicTail(inst.Expression);
+            case FunctionCallExpression fc:
+                // Allow fn:/xs: constructor and library function calls whose
+                // arguments are themselves per-item atomic. xs:NMTOKENS(.),
+                // xs:decimal(.), fn:upper-case(.), etc.
+                var ns = fc.Name.Namespace;
+                if (ns != NamespaceId.None
+                    && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
+                    && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+                    return false;
+                foreach (var arg in fc.Arguments)
+                {
+                    if (!IsPerItemAtomicTail(arg)) return false;
+                }
+                return true;
+            case SimpleMapExpression sm:
+                return IsPerItemAtomicTail(sm.Left) && IsPerItemAtomicTail(sm.Right);
+            case StringLiteral:
+            case IntegerLiteral:
+            case DoubleLiteral:
+            case DecimalLiteral:
+            case BooleanLiteral:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static bool IsDownwardPath(PathExpression path)

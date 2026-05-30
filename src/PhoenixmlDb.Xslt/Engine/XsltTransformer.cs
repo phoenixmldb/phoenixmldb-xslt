@@ -4450,6 +4450,226 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return (true, result);
     }
 
+    private static bool IsGeneralComparison(BinaryOperator op)
+        => op is BinaryOperator.GeneralEqual or BinaryOperator.GeneralNotEqual
+              or BinaryOperator.GeneralLessThan or BinaryOperator.GeneralLessOrEqual
+              or BinaryOperator.GeneralGreaterThan or BinaryOperator.GeneralGreaterOrEqual;
+
+    /// <summary>
+    /// When a general-comparison expression has one operand that is a
+    /// SimpleMap watcher source (e.g. <c>/path!xs:NMTOKENS(.)!xs:decimal(.)</c>),
+    /// re-apply the SimpleMap's tail (Right) against each item the watcher
+    /// captured during the streaming pass, then run the general comparison
+    /// against the other operand. This surfaces type errors (XPTY0004) that
+    /// the optimizer/plan would otherwise mask by re-evaluating the streamable
+    /// path against the synthetic empty document and short-circuiting to false.
+    /// </summary>
+    private async ValueTask<(bool Resolved, object? Value)> TryEvaluateGeneralCompWithSimpleMapWatcherAsync(
+        BinaryExpression cmp,
+        IReadOnlyList<StreamWatcher> watchers)
+    {
+        StreamWatcher? leftWatcher = null;
+        StreamWatcher? rightWatcher = null;
+        foreach (var w in watchers)
+        {
+            if (w.SourceExpression is not SimpleMapExpression) continue;
+            if (ReferenceEquals(cmp.Left, w.SourceExpression)) leftWatcher = w;
+            if (ReferenceEquals(cmp.Right, w.SourceExpression)) rightWatcher = w;
+        }
+        if (leftWatcher == null && rightWatcher == null) return (false, null);
+
+        var leftItems = leftWatcher != null
+            ? await ApplySimpleMapTailAsync((SimpleMapExpression)leftWatcher.SourceExpression, leftWatcher.GetResult()).ConfigureAwait(false)
+            : await EvaluateToListAsync(cmp.Left).ConfigureAwait(false);
+        var rightItems = rightWatcher != null
+            ? await ApplySimpleMapTailAsync((SimpleMapExpression)rightWatcher.SourceExpression, rightWatcher.GetResult()).ConfigureAwait(false)
+            : await EvaluateToListAsync(cmp.Right).ConfigureAwait(false);
+
+        return (true, RunGeneralComparison(cmp.Operator, leftItems, rightItems));
+    }
+
+    /// <summary>
+    /// Evaluates each per-item tail step of a watched SimpleMap against the
+    /// watcher's captured items, in the same left-to-right order that
+    /// <c>a!b!c</c> would: apply <c>b</c> to each captured item (flattening),
+    /// then apply <c>c</c> to each result, etc.
+    /// </summary>
+    private async ValueTask<List<object?>> ApplySimpleMapTailAsync(SimpleMapExpression sm, object? sourceItems)
+    {
+        // Walk down the Left chain to collect tail-step Rights in order.
+        // SimpleMap(SimpleMap(path, R1), R2) ⇒ [R1, R2].
+        var tailSteps = new List<XQueryExpression>();
+        XQueryExpression current = sm;
+        while (current is SimpleMapExpression mapNode)
+        {
+            tailSteps.Add(mapNode.Right);
+            current = mapNode.Left;
+        }
+        tailSteps.Reverse();
+
+        var working = NormalizeToList(sourceItems);
+        foreach (var step in tailSteps)
+        {
+            var next = new List<object?>();
+            for (var i = 0; i < working.Count; i++)
+            {
+                PushContextItem(working[i], i + 1, working.Count);
+                try
+                {
+                    var stepResult = await EvaluateAsync(step).ConfigureAwait(false);
+                    AppendFlattened(next, stepResult);
+                }
+                finally
+                {
+                    PopContextItem();
+                }
+            }
+            working = next;
+        }
+        return working;
+    }
+
+    private async ValueTask<List<object?>> EvaluateToListAsync(XQueryExpression expr)
+    {
+        var v = await EvaluateAsync(expr).ConfigureAwait(false);
+        var list = new List<object?>();
+        AppendFlattened(list, v);
+        return list;
+    }
+
+    private static List<object?> NormalizeToList(object? value)
+    {
+        var list = new List<object?>();
+        AppendFlattened(list, value);
+        return list;
+    }
+
+    private static void AppendFlattened(List<object?> list, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                return;
+            case string:
+            case XdmNode:
+                list.Add(value);
+                return;
+            case object?[] arr:
+                foreach (var it in arr) AppendFlattened(list, it);
+                return;
+            case System.Collections.IEnumerable seq:
+                foreach (var it in seq) AppendFlattened(list, it);
+                return;
+            default:
+                list.Add(value);
+                return;
+        }
+    }
+
+    /// <summary>
+    /// Runs XPath general comparison between two atomized item lists. Raises
+    /// XPTY0004 when atomic types are incompatible (e.g. xs:decimal vs
+    /// xs:string with non-numeric content). Empty operand ⇒ false per spec.
+    /// </summary>
+    private static bool RunGeneralComparison(BinaryOperator op, List<object?> left, List<object?> right)
+    {
+        if (left.Count == 0 || right.Count == 0) return false;
+        foreach (var l in left)
+        {
+            foreach (var r in right)
+            {
+                if (CompareAtomic(op, l, r)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool CompareAtomic(BinaryOperator op, object? left, object? right)
+    {
+        // Promote untyped strings to numeric if the other side is numeric.
+        // Mirrors XPath 3.0 general comparison rules.
+        var leftP = left;
+        var rightP = right;
+        if (leftP is string ls && rightP is not string && IsWatcherNumeric(rightP))
+        {
+            if (!TryParseWatcherNumber(ls, out leftP))
+                throw new PhoenixmlDb.XQuery.Functions.XQueryException("XPTY0004",
+                    $"Cannot compare xs:string '{ls}' with numeric type — value is not a valid number");
+        }
+        else if (rightP is string rs && leftP is not string && IsWatcherNumeric(leftP))
+        {
+            if (!TryParseWatcherNumber(rs, out rightP))
+                throw new PhoenixmlDb.XQuery.Functions.XQueryException("XPTY0004",
+                    $"Cannot compare xs:string '{rs}' with numeric type — value is not a valid number");
+        }
+
+        // Numeric vs numeric
+        if (IsWatcherNumeric(leftP) && IsWatcherNumeric(rightP))
+        {
+            var ld = ToWatcherDouble(leftP!);
+            var rd = ToWatcherDouble(rightP!);
+            return op switch
+            {
+                BinaryOperator.GeneralEqual => ld == rd,
+                BinaryOperator.GeneralNotEqual => ld != rd,
+                BinaryOperator.GeneralLessThan => ld < rd,
+                BinaryOperator.GeneralLessOrEqual => ld <= rd,
+                BinaryOperator.GeneralGreaterThan => ld > rd,
+                BinaryOperator.GeneralGreaterOrEqual => ld >= rd,
+                _ => false
+            };
+        }
+
+        // String vs string
+        if (leftP is string lstr && rightP is string rstr)
+        {
+            var cmp = string.CompareOrdinal(lstr, rstr);
+            return op switch
+            {
+                BinaryOperator.GeneralEqual => cmp == 0,
+                BinaryOperator.GeneralNotEqual => cmp != 0,
+                BinaryOperator.GeneralLessThan => cmp < 0,
+                BinaryOperator.GeneralLessOrEqual => cmp <= 0,
+                BinaryOperator.GeneralGreaterThan => cmp > 0,
+                BinaryOperator.GeneralGreaterOrEqual => cmp >= 0,
+                _ => false
+            };
+        }
+
+        // Fallback: equality via Equals
+        return op switch
+        {
+            BinaryOperator.GeneralEqual => Equals(leftP, rightP),
+            BinaryOperator.GeneralNotEqual => !Equals(leftP, rightP),
+            _ => throw new PhoenixmlDb.XQuery.Functions.XQueryException("XPTY0004",
+                $"Cannot compare {leftP?.GetType().Name} with {rightP?.GetType().Name}")
+        };
+    }
+
+    private static bool IsWatcherNumeric(object? v)
+        => v is int or long or double or float or decimal;
+
+    private static double ToWatcherDouble(object v) => v switch
+    {
+        int i => i,
+        long l => l,
+        double d => d,
+        float f => f,
+        decimal dc => (double)dc,
+        _ => throw new InvalidOperationException()
+    };
+
+    private static bool TryParseWatcherNumber(string s, out object? result)
+    {
+        if (double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+        {
+            result = d;
+            return true;
+        }
+        result = null;
+        return false;
+    }
+
     internal Dictionary<QName, GlobalDeclaration>? _pendingGlobals; // Lazy global init: declarations not yet evaluated
     private bool _lastResultWasAtomic; // Track adjacent atomic values for space separation
     private string? _itemSeparatorOverride; // When set, overrides default space separator between sequence items
@@ -9506,6 +9726,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var fnResult = await TryEvaluateFunctionWithWatcherArgs(fcall, _activeStreamWatchers).ConfigureAwait(false);
                 if (fnResult.Resolved)
                     return fnResult.Value;
+            }
+
+            // General comparison whose operand is a watched SimpleMap source —
+            // e.g. (/*/*/ITEM/DIMENSIONS!xs:NMTOKENS(.)!xs:decimal(.)) = $s.
+            // The plan-level path inside the SimpleMap re-evaluates against
+            // the synthetic empty doc and short-circuits to false. Instead,
+            // substitute the watcher's captured items into the SimpleMap by
+            // re-running its tail (Right) per item with the item as context,
+            // then run a general comparison against the other operand. This
+            // surfaces XPTY0004 from the tail casts rather than masking it.
+            if (expr is BinaryExpression cmp
+                && IsGeneralComparison(cmp.Operator))
+            {
+                var compResult = await TryEvaluateGeneralCompWithSimpleMapWatcherAsync(cmp, _activeStreamWatchers).ConfigureAwait(false);
+                if (compResult.Resolved)
+                    return compResult.Value;
             }
         }
 
