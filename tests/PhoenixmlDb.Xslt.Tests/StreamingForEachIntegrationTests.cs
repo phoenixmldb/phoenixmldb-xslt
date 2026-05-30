@@ -385,4 +385,42 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("<out><e>-15.00</e><e>-5.00</e><e>101</e><e>102</e></out>",
             because: "fn:data() around a streamable attribute path must be unwrapped so the path drives streaming");
     }
+
+    /// <summary>
+    /// sf-subsequence-002 pattern: xsl:copy-of select="subsequence(copy-of(/path), start)"
+    /// inside xsl:source-document streamable="yes". The streaming pass accumulates the
+    /// matched elements into a Sequence/Snapshot watcher; after the pass, subsequence()
+    /// slices and copy-of emits.
+    /// </summary>
+    [Fact]
+    public async Task XsltCopyOf_SubsequenceCopyOfPath_StreamsAndSlices()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM><PRICE>1.00</PRICE></ITEM>
+              <ITEM><PRICE>2.00</PRICE></ITEM>
+              <ITEM><PRICE>3.00</PRICE></ITEM>
+              <ITEM><PRICE>4.00</PRICE></ITEM>
+              <ITEM><PRICE>5.00</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:strip-space elements="*"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="books.xml">
+                  <out>
+                    <xsl:copy-of select="subsequence(copy-of(/BOOKLIST/BOOKS/ITEM/PRICE), 3)"/>
+                  </out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Be("<out><PRICE>3.00</PRICE><PRICE>4.00</PRICE><PRICE>5.00</PRICE></out>",
+            because: "subsequence(copy-of(path), 3) must accumulate streamed elements and emit items from index 3 onwards");
+    }
 }

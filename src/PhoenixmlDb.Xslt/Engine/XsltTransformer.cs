@@ -4351,7 +4351,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// watcher results and literal values — no streaming context needed.
     /// Returns (true, value) if the expression can be fully resolved this way.
     /// </summary>
-    private static (bool Resolved, object? Value) TryResolveExprFromWatchers(
+    private (bool Resolved, object? Value) TryResolveExprFromWatchers(
         PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
         IReadOnlyList<StreamWatcher> watchers)
     {
@@ -4366,6 +4366,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             case PhoenixmlDb.XQuery.Ast.IntegerLiteral il: return (true, il.Value);
             case PhoenixmlDb.XQuery.Ast.DoubleLiteral dl: return (true, dl.Value);
             case PhoenixmlDb.XQuery.Ast.BooleanLiteral bl: return (true, bl.Value);
+            // Variable references: look up via XSLT scope (globals + lexical scopes).
+            // Needed so subsequence(copy-of(/path), $start, $length) resolves the
+            // grounded integer parameters when the inner watcher provides the seq.
+            case PhoenixmlDb.XQuery.Ast.VariableReference vref:
+                try
+                {
+                    var val = GetVariable(vref.Name);
+                    return (true, val);
+                }
+                catch (XsltException)
+                {
+                    return (false, null);
+                }
+                catch (KeyNotFoundException)
+                {
+                    return (false, null);
+                }
         }
 
         // Sequence of literals: e.g., ('a', 'b', 'c') — evaluable without context
@@ -13904,10 +13921,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var watchers = scanResult.Watchers ?? (IReadOnlyList<StreamWatcher>)Array.Empty<StreamWatcher>();
                 var subscriptions = scanResult.Subscriptions ?? (IReadOnlyList<ForEachSubscription>)Array.Empty<ForEachSubscription>();
 
-                // Subscription-dispatch-only: subscriptions exist AND the body has no
-                // xsl:apply-templates (so the default template machinery shouldn't fire
-                // on non-subscribed elements/text during the streaming pass).
-                bool subscriptionOnly = subscriptions.Count > 0
+                // Subscription-dispatch-only: subscriptions OR watchers exist AND the
+                // body has no xsl:apply-templates (so the default template machinery
+                // shouldn't fire on non-subscribed/non-watched elements/text during
+                // the streaming pass — only the accumulation/dispatch driven by the
+                // scanned instructions should run).
+                bool subscriptionOnly = (subscriptions.Count > 0 || watchers.Count > 0)
                     && instruction.Content != null
                     && !ContentContainsApplyTemplates(instruction.Content);
 

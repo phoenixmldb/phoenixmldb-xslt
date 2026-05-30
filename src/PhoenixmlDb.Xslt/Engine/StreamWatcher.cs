@@ -143,6 +143,18 @@ internal sealed class StreamWatcher
     private readonly List<StreamXmlEvent> _subtreeEvents = [];
 
     /// <summary>
+    /// Records a materialized element node for Snapshot/Sequence watchers, alongside
+    /// the string capture in <see cref="_items"/>. Used when downstream consumers
+    /// (xsl:copy-of, subsequence over copy-of, etc.) need real <see cref="XdmNode"/>
+    /// references rather than atomized string values.
+    /// </summary>
+    public void OnLeafElementCaptured(XdmNode element)
+    {
+        if (Aggregation is WatcherAggregation.Snapshot or WatcherAggregation.Sequence)
+            _snapshots.Add(element);
+    }
+
+    /// <summary>
     /// Called when a matching element is encountered during the streaming pass.
     /// </summary>
     public void OnElementMatch(string elementName, IReadOnlyDictionary<string, string>? attributes, string? textContent)
@@ -188,6 +200,11 @@ internal sealed class StreamWatcher
                 {
                     _items.Add(textContent);
                 }
+                // The streaming processor calls OnLeafElementMatch separately for
+                // Snapshot/Sequence watchers when a full XdmElement is needed
+                // (e.g. xsl:copy-of select="subsequence(copy-of(/path), 3)"). The
+                // captured-element path coexists with the string path above so
+                // existing consumers (value-of/string-join) still see strings.
                 break;
 
             case WatcherAggregation.Head:
@@ -254,8 +271,21 @@ internal sealed class StreamWatcher
             WatcherAggregation.Min => _min.HasValue ? _min.Value : null,
             WatcherAggregation.Avg => _count > 0 ? _sum / _count : null,
             WatcherAggregation.StringJoin => string.Join(Separator ?? "", _strings),
-            WatcherAggregation.Sequence => _items.Count > 0 ? _items.ToArray() : Array.Empty<object>(),
-            WatcherAggregation.Snapshot => _snapshots.Count > 0 ? _snapshots.ToArray() : Array.Empty<XdmNode>(),
+            // Prefer materialized element nodes when present AND every match
+            // produced one (1:1 with _items). Mixed cases — nested-element or
+            // attribute paths skip materialization — fall back to atomized
+            // strings used by value-of / string-join consumers.
+            WatcherAggregation.Sequence => _snapshots.Count > 0 && _snapshots.Count == _items.Count
+                ? _snapshots.Cast<object>().ToArray()
+                : (_items.Count > 0 ? _items.ToArray() : Array.Empty<object>()),
+            // Snapshot falls back to Array.Empty<XdmNode>() (the prior contract)
+            // rather than the atomized strings, so consumers that rely on the
+            // node-typed empty result (e.g. sf-snapshot-0101b's deep-equal
+            // against a real doc) don't see a sudden type change when
+            // materialization skips a nested-element match.
+            WatcherAggregation.Snapshot => _snapshots.Count > 0 && _snapshots.Count == _items.Count
+                ? _snapshots.Cast<object>().ToArray()
+                : Array.Empty<XdmNode>(),
             // Head returns the first item as a scalar (or null if none matched)
             WatcherAggregation.Head => _items.Count > 0 ? _items[0] : null,
             _ => null
