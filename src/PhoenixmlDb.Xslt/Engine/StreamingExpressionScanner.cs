@@ -548,6 +548,16 @@ internal sealed class StreamingExpressionScanner
         textNodeTail = false;
         attributeName = null;
         predicates = Array.Empty<XQueryExpression>();
+        // Peek through fn:data(path) — for untyped nodes, data() returns the string value
+        // which equals what value-of/sequence emits for the node directly, so unwrapping
+        // is semantically safe when the body just reads the context item.
+        if (select is FunctionCallExpression dataCall
+            && dataCall.Name.LocalName == "data"
+            && dataCall.Arguments.Count == 1
+            && (dataCall.Name.Namespace == NamespaceId.None || dataCall.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+        {
+            select = dataCall.Arguments[0];
+        }
         if (select is not PathExpression path) return null;
         // Accept either absolute (/path) or relative-from-root (path) when no initial
         // expression is set. Source-document body's implicit context item is the

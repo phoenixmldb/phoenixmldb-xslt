@@ -345,4 +345,44 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("<out><value>-15.00</value><value>-5.00</value></out>",
             because: "relative path, predicate on the matched element, and attribute-axis tail must all be honored");
     }
+
+    /// <summary>
+    /// cy-002 pattern: xsl:for-each select="data(account/transaction[@value &lt; 0]/@value), 101, 102".
+    /// fn:data() wraps the streamable path; for untyped attributes data() yields the
+    /// string value, which equals what xsl:value-of on the attribute would emit — so
+    /// the scanner unwraps data(path) and treats it as path.
+    /// </summary>
+    [Fact]
+    public async Task XsltForEach_DataWrappedStreamablePath_MixedSequence_EmitsAtomized()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <account>
+              <transaction value="-15.00"/>
+              <transaction value="6.42"/>
+              <transaction value="-5.00"/>
+              <transaction value="100.00"/>
+            </account>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <out>
+                  <xsl:source-document streamable="yes" href="txns.xml">
+                    <xsl:for-each select="data(account/transaction[@value &lt; 0]/@value), 101, 102">
+                      <xsl:element name="e">
+                        <xsl:value-of select="."/>
+                      </xsl:element>
+                    </xsl:for-each>
+                  </xsl:source-document>
+                </out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "txns.xml");
+        result.Trim().Should().Be("<out><e>-15.00</e><e>-5.00</e><e>101</e><e>102</e></out>",
+            because: "fn:data() around a streamable attribute path must be unwrapped so the path drives streaming");
+    }
 }
