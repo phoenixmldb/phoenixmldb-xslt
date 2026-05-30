@@ -423,4 +423,32 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("<out><PRICE>3.00</PRICE><PRICE>4.00</PRICE><PRICE>5.00</PRICE></out>",
             because: "subsequence(copy-of(path), 3) must accumulate streamed elements and emit items from index 3 onwards");
     }
+
+    /// <summary>
+    /// si-value-of-027 / sf-copy-of-027 pattern: descendant::n with nested same-name
+    /// elements. Streaming must visit each n in document order, both outer and inner.
+    /// </summary>
+    [Fact]
+    public async Task CrawlingDescendant_NestedSameName_StreamsAllMatches()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <a><n><n>1</n><n>2</n><n>3</n></n></a>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="recurse.xml">
+                  <out><xsl:value-of select="descendant::n"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "recurse.xml");
+        // Outer n string-value is "123" (concatenation), then each inner n -> 1, 2, 3
+        result.Trim().Should().Be("<out>123 1 2 3</out>",
+            because: "descendant::n streaming must yield outer n (string-value '123') plus each inner n");
+    }
 }

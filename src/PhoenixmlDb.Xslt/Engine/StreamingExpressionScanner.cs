@@ -479,6 +479,7 @@ internal sealed class StreamingExpressionScanner
             {
                 case PathExpression pathExpr:
                     // PathExpression has steps — iterate
+                    bool pendingDescendant = false;
                     foreach (var step in pathExpr.Steps)
                     {
                         if (step.Axis == Axis.Attribute)
@@ -489,13 +490,38 @@ internal sealed class StreamingExpressionScanner
                         else if (step.Axis == Axis.Child)
                         {
                             if (step.NodeTest is NameTest nameTest)
+                            {
+                                if (pendingDescendant)
+                                {
+                                    parts.Add("**");
+                                    pendingDescendant = false;
+                                }
                                 parts.Add(nameTest.LocalName);
+                            }
                         }
                         else if (step.Axis == Axis.DescendantOrSelf)
                         {
                             // For // (descendant-or-self::node()/child::X),
-                            // we use the child step name only
+                            // mark that the following child step is at any depth.
+                            pendingDescendant = true;
                             continue;
+                        }
+                        else if (step.Axis == Axis.Descendant)
+                        {
+                            // descendant::X — match X at any depth below the
+                            // current context. Encode the "any-depth" marker
+                            // before the name step so the path matcher walks
+                            // ancestors loosely for this segment.
+                            if (step.NodeTest is NameTest descNameTest)
+                            {
+                                parts.Add("**");
+                                parts.Add(descNameTest.LocalName);
+                                pendingDescendant = false;
+                            }
+                            else
+                            {
+                                return null;
+                            }
                         }
                         else
                         {

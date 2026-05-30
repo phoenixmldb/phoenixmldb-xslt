@@ -791,6 +791,33 @@ internal sealed class StreamingXmlProcessor
         // back to the existing string-capture path so we don't synthesize a bogus
         // outer leaf that contains the concatenated descendant text.
         public bool HasChildElement;
+        // For Sequence/Snapshot aggregations, the slot was reserved at
+        // StartElement to preserve XPath document order across nested matches
+        // (descendant axis with same-name elements). -1 means no reservation
+        // (other aggregations append at EndElement).
+        public int ReservedSlot = -1;
+        // Subtree builder stack for Snapshot/Sequence watchers — root is the
+        // matched element, each push is a nested child element. Filled during
+        // FireWatchers/FireWatchersEndElement/FireWatchersText. On the matching
+        // EndElement the root is popped and materialized to a real XdmElement
+        // tree so copy-of(descendant::x) yields actual nested nodes rather
+        // than collapsing to a leaf with concatenated descendant text.
+        public Stack<SubtreeBuilderFrame>? SubtreeStack;
+    }
+
+    private sealed class SubtreeBuilderFrame
+    {
+        public required string LocalName;
+        public Dictionary<string, string>? Attributes;
+        public List<XdmNode> Children = [];
+        public StringBuilder PendingText = new();
+
+        public void FlushPendingText(Func<string, XdmText> textFactory)
+        {
+            if (PendingText.Length == 0) return;
+            Children.Add(textFactory(PendingText.ToString()));
+            PendingText.Clear();
+        }
     }
 
     private readonly List<PendingTextWatcherMatch> _pendingTextWatcherMatches = [];
@@ -818,7 +845,21 @@ internal sealed class StreamingXmlProcessor
         if (_pendingTextWatcherMatches.Count > 0)
         {
             foreach (var pending in _pendingTextWatcherMatches)
+            {
                 pending.HasChildElement = true;
+                // Push a child frame onto any active subtree builder so the
+                // nested element is captured in the materialized tree.
+                if (pending.SubtreeStack is { Count: > 0 } stack)
+                {
+                    var top = stack.Peek();
+                    top.FlushPendingText(MakeStreamingText);
+                    stack.Push(new SubtreeBuilderFrame
+                    {
+                        LocalName = elementName,
+                        Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null
+                    });
+                }
+            }
         }
 
         foreach (var watcher in watchers)
@@ -840,12 +881,29 @@ internal sealed class StreamingXmlProcessor
                     // content from intervening Text events is available. Without
                     // this, sum(n) / string-join(n, ',') over text-content elements
                     // never receive the text and aggregate to null/empty.
+                    // For Sequence/Snapshot, reserve a slot now so outer matches
+                    // (descendant axis with nested same-name) sit before their
+                    // inner matches in document order.
+                    var reservedSlot = -1;
+                    Stack<SubtreeBuilderFrame>? subtreeStack = null;
+                    if (watcher.Aggregation is WatcherAggregation.Sequence or WatcherAggregation.Snapshot)
+                    {
+                        reservedSlot = watcher.ReserveSequenceSlot();
+                        subtreeStack = new Stack<SubtreeBuilderFrame>();
+                        subtreeStack.Push(new SubtreeBuilderFrame
+                        {
+                            LocalName = elementName,
+                            Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null
+                        });
+                    }
                     _pendingTextWatcherMatches.Add(new PendingTextWatcherMatch
                     {
                         Watcher = watcher,
                         Depth = _ancestorNames.Count,
                         ElementName = elementName,
-                        Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null
+                        Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null,
+                        ReservedSlot = reservedSlot,
+                        SubtreeStack = subtreeStack
                     });
                 }
                 else
@@ -892,23 +950,64 @@ internal sealed class StreamingXmlProcessor
         // element has been pushed and then popped, so _ancestorNames.Count is back
         // to that same starting depth. Walk backwards to allow safe in-place removal.
         var pendingDepth = _ancestorNames.Count;
+
+        // First pass: for any pending match that has a non-root frame on its
+        // subtree stack, the closing element is a nested child — flush its
+        // pending text, materialize a real XdmElement, pop, and append the
+        // materialized child to the new top frame. This must run for ALL open
+        // pending matches (including ones whose root has not yet closed).
+        foreach (var entry in _pendingTextWatcherMatches)
+        {
+            if (entry.SubtreeStack is not { Count: > 1 } stack) continue;
+            var top = stack.Peek();
+            // Frame's LocalName should match the closing element when our
+            // tracking is in sync — defensive check guards against mismatches.
+            if (top.LocalName != localName) continue;
+            top.FlushPendingText(MakeStreamingText);
+            stack.Pop();
+            var materialized = MaterializeSubtreeFrame(top);
+            var parent = stack.Peek();
+            parent.FlushPendingText(MakeStreamingText);
+            parent.Children.Add(materialized);
+        }
+
         for (var i = _pendingTextWatcherMatches.Count - 1; i >= 0; i--)
         {
             var entry = _pendingTextWatcherMatches[i];
             if (entry.Depth != pendingDepth || entry.ElementName != localName) continue;
-            entry.Watcher.OnElementMatch(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
-            // For Snapshot/Sequence watchers on a leaf element (no child elements
-            // appeared during the match window), also capture a materialized
-            // XdmElement so xsl:copy-of consumers (e.g.
-            // subsequence(copy-of(/path), N)) get real element nodes rather than
-            // atomized strings. Nested elements would lose structure if collapsed
-            // into a leaf, so they continue to use the string capture path.
-            if (!entry.HasChildElement
-                && entry.Watcher.ValueAttribute == null
+            if (entry.ReservedSlot >= 0)
+            {
+                entry.Watcher.FillSequenceSlot(entry.ReservedSlot, entry.Attributes, entry.TextBuffer.ToString());
+            }
+            else
+            {
+                entry.Watcher.OnElementMatch(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
+            }
+            // Snapshot/Sequence materialization. For leaf elements (no child
+            // elements appeared during the match window) the fast path builds
+            // a minimal text-only element. For nested matches the subtree
+            // builder has captured the full tree — materialize that.
+            if (entry.Watcher.ValueAttribute == null
                 && entry.Watcher.Aggregation is WatcherAggregation.Snapshot or WatcherAggregation.Sequence)
             {
-                var elem = MaterializeLeafElement(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
-                entry.Watcher.OnLeafElementCaptured(elem);
+                XdmNode? materialized = null;
+                if (!entry.HasChildElement)
+                {
+                    materialized = MaterializeLeafElement(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
+                }
+                else if (entry.SubtreeStack is { Count: 1 } rootStack)
+                {
+                    var rootFrame = rootStack.Pop();
+                    rootFrame.FlushPendingText(MakeStreamingText);
+                    materialized = MaterializeSubtreeFrame(rootFrame);
+                }
+                if (materialized != null)
+                {
+                    if (entry.ReservedSlot >= 0)
+                        entry.Watcher.FillSnapshotSlot(entry.ReservedSlot, materialized);
+                    else
+                        entry.Watcher.OnLeafElementCaptured(materialized);
+                }
             }
             _pendingTextWatcherMatches.RemoveAt(i);
         }
@@ -947,7 +1046,15 @@ internal sealed class StreamingXmlProcessor
                 // Accumulate text from all descendants of the matched element
                 // (XPath string-value of an element concatenates all descendant text).
                 if (entry.Depth <= textDepth)
+                {
                     entry.TextBuffer.Append(textValue);
+                    // Mirror the text into the subtree builder so materialized
+                    // copy-of(descendant::x) preserves real text-node children.
+                    if (entry.SubtreeStack is { Count: > 0 } stack)
+                    {
+                        stack.Peek().PendingText.Append(textValue);
+                    }
+                }
             }
         }
         FireTextOnList(_watchers, textValue);
@@ -1034,6 +1141,87 @@ internal sealed class StreamingXmlProcessor
             NamespaceDeclarations = XdmElement.EmptyNamespaceDeclarations
         };
         elem._stringValue = textContent ?? string.Empty;
+        _nodeStore.Register(elem);
+        return elem;
+    }
+
+    private XdmText MakeStreamingText(string value)
+    {
+        var id = _nodeStore.NextId();
+        var t = new XdmText
+        {
+            Id = id,
+            Document = new DocumentId(0),
+            Value = value
+        };
+        _nodeStore.Register(t);
+        return t;
+    }
+
+    /// <summary>
+    /// Materializes a <see cref="SubtreeBuilderFrame"/> (and its already-built
+    /// children) into a real <see cref="XdmElement"/> registered in the node
+    /// store. Used by Snapshot/Sequence watchers when copy-of(descendant::x)
+    /// must yield element nodes with nested structure (sf-copy-of-027:
+    /// outer &lt;n&gt; contains inner &lt;n&gt; children).
+    /// </summary>
+    private XdmElement MaterializeSubtreeFrame(SubtreeBuilderFrame frame)
+    {
+        var documentId = new DocumentId(0);
+        var elemId = _nodeStore.NextId();
+
+        var attrIds = new List<NodeId>();
+        if (frame.Attributes != null)
+        {
+            foreach (var (k, v) in frame.Attributes)
+            {
+                var attrId = _nodeStore.NextId();
+                var attr = new XdmAttribute
+                {
+                    Id = attrId,
+                    Document = documentId,
+                    Namespace = _nodeStore.InternNamespace(string.Empty),
+                    LocalName = k,
+                    Prefix = null,
+                    Value = v,
+                    Parent = elemId
+                };
+                _nodeStore.Register(attr);
+                attrIds.Add(attrId);
+            }
+        }
+
+        var childIds = new List<NodeId>();
+        var stringValue = new StringBuilder();
+        foreach (var child in frame.Children)
+        {
+            // Re-parent child node — the builder created nodes without a parent,
+            // so finalize their Parent reference now that the element id is known.
+            if (child is XdmElement childElem)
+            {
+                childElem.Parent = elemId;
+                stringValue.Append(childElem.StringValue);
+            }
+            else if (child is XdmText childText)
+            {
+                childText.Parent = elemId;
+                stringValue.Append(childText.Value);
+            }
+            childIds.Add(child.Id);
+        }
+
+        var elem = new XdmElement
+        {
+            Id = elemId,
+            Document = documentId,
+            Namespace = _nodeStore.InternNamespace(string.Empty),
+            LocalName = frame.LocalName,
+            Prefix = null,
+            Attributes = attrIds.Count == 0 ? XdmElement.EmptyAttributes : attrIds,
+            Children = childIds.Count == 0 ? XdmElement.EmptyChildren : childIds,
+            NamespaceDeclarations = XdmElement.EmptyNamespaceDeclarations
+        };
+        elem._stringValue = stringValue.ToString();
         _nodeStore.Register(elem);
         return elem;
     }

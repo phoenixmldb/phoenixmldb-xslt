@@ -58,16 +58,40 @@ internal sealed class StreamPathMatcher
 
         if (_steps.Length == 1) return true;
 
-        // Match remaining steps against ancestor stack (from bottom up)
-        var stackIdx = ancestorStack.Count - 1;
-        for (var stepIdx = _steps.Length - 2; stepIdx >= 0; stepIdx--)
+        return MatchAncestors(_steps, _steps.Length - 2, ancestorStack, ancestorStack.Count - 1);
+    }
+
+    /// <summary>
+    /// Walks the step list backward against the ancestor stack. A "**" step is a
+    /// descendant-axis marker that consumes zero or more ancestor entries, so the
+    /// match becomes nondeterministic at that position — we try the shortest
+    /// alignment first and fall back to deeper skips.
+    /// </summary>
+    private static bool MatchAncestors(string[] steps, int stepIdx, IReadOnlyList<string> ancestorStack, int stackIdx)
+    {
+        while (stepIdx >= 0)
         {
+            var step = steps[stepIdx];
+            if (step == "**")
+            {
+                // Descendant marker: match zero or more ancestor names. Recurse
+                // for each possible alignment of the next concrete step.
+                if (stepIdx == 0) return true; // unbounded left edge — anything above is fine
+                var nextStep = steps[stepIdx - 1];
+                for (var i = stackIdx; i >= 0; i--)
+                {
+                    if (nextStep == "**" || nextStep == ancestorStack[i] || nextStep == "*")
+                    {
+                        if (MatchAncestors(steps, stepIdx - 2, ancestorStack, i - 1)) return true;
+                    }
+                }
+                return false;
+            }
             if (stackIdx < 0) return false;
-            var step = _steps[stepIdx];
             if (step != ancestorStack[stackIdx] && step != "*") return false;
+            stepIdx--;
             stackIdx--;
         }
-
         return true;
     }
 
@@ -85,13 +109,8 @@ internal sealed class StreamPathMatcher
         var elementSteps = _steps[..^1];
         if (elementSteps[^1] != currentElementName && elementSteps[^1] != "*") return null;
 
-        var stackIdx = ancestorStack.Count - 1;
-        for (var stepIdx = elementSteps.Length - 2; stepIdx >= 0; stepIdx--)
-        {
-            if (stackIdx < 0) return null;
-            if (elementSteps[stepIdx] != ancestorStack[stackIdx] && elementSteps[stepIdx] != "*") return null;
-            stackIdx--;
-        }
+        if (!MatchAncestors(elementSteps, elementSteps.Length - 2, ancestorStack, ancestorStack.Count - 1))
+            return null;
 
         return lastStep[1..]; // Strip the @ prefix
     }
@@ -152,6 +171,54 @@ internal sealed class StreamWatcher
     {
         if (Aggregation is WatcherAggregation.Snapshot or WatcherAggregation.Sequence)
             _snapshots.Add(element);
+    }
+
+    /// <summary>
+    /// Fills the materialized-element snapshot for a previously reserved slot.
+    /// Mirrors <see cref="FillSequenceSlot"/> for the XdmNode parallel array.
+    /// Expands <c>_snapshots</c> as needed so it can be indexed by slot.
+    /// </summary>
+    public void FillSnapshotSlot(int index, XdmNode element)
+    {
+        if (Aggregation is not (WatcherAggregation.Snapshot or WatcherAggregation.Sequence)) return;
+        if (index < 0) return;
+        while (_snapshots.Count <= index)
+            _snapshots.Add(null!);
+        _snapshots[index] = element;
+    }
+
+    /// <summary>
+    /// Reserves a slot in the items list at the current end (document order
+    /// position) and returns its index. Used when an element MATCHES at
+    /// StartElement but its text-content value cannot be known until
+    /// EndElement (e.g., a non-leaf match under descendant axis). Subsequent
+    /// inner matches that resolve sooner will get later indices, preserving
+    /// XPath document order.
+    /// </summary>
+    public int ReserveSequenceSlot()
+    {
+        if (Aggregation is not (WatcherAggregation.Sequence or WatcherAggregation.Snapshot
+            or WatcherAggregation.Sum or WatcherAggregation.Max or WatcherAggregation.Min
+            or WatcherAggregation.Avg or WatcherAggregation.StringJoin))
+            return -1;
+        _items.Add(string.Empty);
+        return _items.Count - 1;
+    }
+
+    /// <summary>
+    /// Fills a previously reserved sequence slot with the element's resolved
+    /// text/attribute value. Mirrors the Sequence/Snapshot branch of
+    /// <see cref="OnElementMatch"/> but writes by index instead of appending.
+    /// </summary>
+    public void FillSequenceSlot(int index, IReadOnlyDictionary<string, string>? attributes, string? textContent)
+    {
+        if (index < 0 || index >= _items.Count) return;
+        string? value;
+        if (ValueAttribute != null && attributes != null)
+            value = attributes.GetValueOrDefault(ValueAttribute);
+        else
+            value = textContent;
+        _items[index] = value ?? string.Empty;
     }
 
     /// <summary>
