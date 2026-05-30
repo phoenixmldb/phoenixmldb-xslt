@@ -304,6 +304,60 @@ internal sealed class StreamingXmlProcessor
                                     {
                                         foreach (var sub in matched)
                                         {
+                                            // Evaluate predicates (if any) against the snapshot.
+                                            // Skip dispatch if any predicate is false.
+                                            if (sub.Predicates.Count > 0)
+                                            {
+                                                bool allPass = true;
+                                                _context.PushContextItem(snapshot, 1, 1);
+                                                _context.PushCurrentItem(snapshot);
+                                                try
+                                                {
+                                                    foreach (var pred in sub.Predicates)
+                                                    {
+                                                        if (!await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false))
+                                                        {
+                                                            allPass = false;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                finally
+                                                {
+                                                    _context.PopCurrentItem();
+                                                    _context.PopContextItem();
+                                                }
+                                                if (!allPass) continue;
+                                            }
+
+                                            if (sub.AttributeName != null)
+                                            {
+                                                // Find the named attribute on the snapshot. Skip if missing.
+                                                PhoenixmlDb.Xdm.Nodes.XdmAttribute? matchedAttr = null;
+                                                foreach (var attrId in snapshot.Attributes)
+                                                {
+                                                    if (_nodeStore.GetNode(attrId) is PhoenixmlDb.Xdm.Nodes.XdmAttribute xa
+                                                        && xa.LocalName == sub.AttributeName)
+                                                    {
+                                                        matchedAttr = xa;
+                                                        break;
+                                                    }
+                                                }
+                                                if (matchedAttr == null) continue;
+                                                _context.PushContextItem(matchedAttr, 1, 1);
+                                                _context.PushCurrentItem(matchedAttr);
+                                                try
+                                                {
+                                                    await sub.Body.ExecuteAsync(_context).ConfigureAwait(false);
+                                                }
+                                                finally
+                                                {
+                                                    _context.PopCurrentItem();
+                                                    _context.PopContextItem();
+                                                }
+                                                continue;
+                                            }
+
                                             if (sub.TextNodeTail)
                                             {
                                                 // Iterate text-node children of the materialized

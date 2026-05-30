@@ -43,4 +43,18 @@ internal sealed class ForEachSubscription
     /// context item, instead of dispatching once per element snapshot.
     /// </summary>
     public bool TextNodeTail { get; init; }
+
+    /// <summary>
+    /// When set, the matched element's named attribute is pushed as the context item
+    /// for the body (rather than the element itself). Maps to xsl:for-each select
+    /// expressions ending in /@attrname.
+    /// </summary>
+    public string? AttributeName { get; init; }
+
+    /// <summary>
+    /// When non-empty, predicates to evaluate against the matched element's snapshot.
+    /// Body only dispatches if ALL predicates evaluate to true.
+    /// </summary>
+    public IReadOnlyList<XQueryExpression> Predicates { get; init; }
+        = System.Array.Empty<XQueryExpression>();
 }

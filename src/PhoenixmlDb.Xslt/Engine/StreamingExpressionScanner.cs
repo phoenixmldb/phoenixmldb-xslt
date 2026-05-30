@@ -438,7 +438,7 @@ internal sealed class StreamingExpressionScanner
     {
         if (forEach.Sorts.Count > 0) return;
 
-        if (!TryDecomposeForEachSelect(forEach.Select, out var prefix, out var path, out var textNodeTail, out var suffix))
+        if (!TryDecomposeForEachSelect(forEach.Select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates))
             return;
 
         _subscriptions.Add(new ForEachSubscription
@@ -449,6 +449,8 @@ internal sealed class StreamingExpressionScanner
             PrefixItems = prefix,
             SuffixItems = suffix,
             TextNodeTail = textNodeTail,
+            AttributeName = attributeName,
+            Predicates = predicates,
         });
     }
 
@@ -463,20 +465,26 @@ internal sealed class StreamingExpressionScanner
         out IReadOnlyList<XQueryExpression> prefix,
         out StreamPathMatcher path,
         out bool textNodeTail,
-        out IReadOnlyList<XQueryExpression> suffix)
+        out IReadOnlyList<XQueryExpression> suffix,
+        out string? attributeName,
+        out IReadOnlyList<XQueryExpression> predicates)
     {
         prefix = Array.Empty<XQueryExpression>();
         suffix = Array.Empty<XQueryExpression>();
         path = null!;
         textNodeTail = false;
+        attributeName = null;
+        predicates = Array.Empty<XQueryExpression>();
 
-        var singleMatcher = TryBuildPathMatcher(select, out textNodeTail);
+        var singleMatcher = TryBuildPathMatcher(select, out textNodeTail, out attributeName, out predicates);
         if (singleMatcher != null)
         {
             path = singleMatcher;
             return true;
         }
         textNodeTail = false;
+        attributeName = null;
+        predicates = Array.Empty<XQueryExpression>();
 
         // AST uses SequenceExpression with Items property for comma sequences.
         if (select is not SequenceExpression seq) return false;
@@ -486,12 +494,14 @@ internal sealed class StreamingExpressionScanner
         int streamableIndex = -1;
         for (int i = 0; i < operands.Count; i++)
         {
-            var inner = TryBuildPathMatcher(operands[i], out var innerTail);
+            var inner = TryBuildPathMatcher(operands[i], out var innerTail, out var innerAttr, out var innerPreds);
             if (inner == null) continue;
             if (streamableIndex >= 0) return false; // more than one streamable operand
             streamableIndex = i;
             path = inner;
             textNodeTail = innerTail;
+            attributeName = innerAttr;
+            predicates = innerPreds;
         }
         if (streamableIndex < 0) return false;
 
@@ -533,23 +543,50 @@ internal sealed class StreamingExpressionScanner
     /// (signaled via <paramref name="textNodeTail"/>). Returns null for any
     /// other shape so the buffered execution path can handle it.
     /// </summary>
-    private static StreamPathMatcher? TryBuildPathMatcher(XQueryExpression select, out bool textNodeTail)
+    private static StreamPathMatcher? TryBuildPathMatcher(XQueryExpression select, out bool textNodeTail, out string? attributeName, out IReadOnlyList<XQueryExpression> predicates)
     {
         textNodeTail = false;
+        attributeName = null;
+        predicates = Array.Empty<XQueryExpression>();
         if (select is not PathExpression path) return null;
-        if (!path.IsAbsolute) return null;
-        if (path.InitialExpression != null) return null;
+        // Accept either absolute (/path) or relative-from-root (path) when no initial
+        // expression is set. Source-document body's implicit context item is the
+        // document root, so relative paths have the same semantics as absolute.
+        if (!path.IsAbsolute && path.InitialExpression != null) return null;
         if (path.Steps.Count == 0) return null;
 
         var parts = new List<string>(path.Steps.Count);
         for (int i = 0; i < path.Steps.Count; i++)
         {
             var step = path.Steps[i];
+            bool isLastStep = i == path.Steps.Count - 1;
+
+            // Allow Axis.Attribute on the LAST step with a NameTest, signaling the
+            // processor to dispatch the matched element's attribute by that name.
+            if (isLastStep && step.Axis == Axis.Attribute)
+            {
+                if (step.NodeTest is not NameTest attrName) return null;
+                if (attrName.IsLocalNameWildcard || attrName.IsNamespaceWildcard) return null;
+                if (step.Predicates.Count > 0) return null; // predicates on the attribute step itself — skip
+                attributeName = attrName.LocalName;
+                break;
+            }
+
             if (step.Axis != Axis.Child) return null;
-            if (step.Predicates.Count > 0) return null;
+
+            // Predicates: only allowed on the step that supplies the matched element
+            // context — i.e., the last step OR the step immediately before an
+            // attribute-tail step. Reject predicates on any earlier step.
+            if (step.Predicates.Count > 0)
+            {
+                bool isLastElementStep = isLastStep
+                    || (i == path.Steps.Count - 2 && path.Steps[i + 1].Axis == Axis.Attribute);
+                if (!isLastElementStep) return null;
+                predicates = step.Predicates;
+            }
 
             // text() KindTest is acceptable only as the LAST step.
-            if (i == path.Steps.Count - 1
+            if (isLastStep
                 && step.NodeTest is KindTest kindTest
                 && kindTest.Kind == XdmNodeKind.Text
                 && kindTest.Name == null

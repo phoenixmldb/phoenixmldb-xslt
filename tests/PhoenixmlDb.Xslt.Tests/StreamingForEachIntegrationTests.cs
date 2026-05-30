@@ -305,4 +305,44 @@ public class StreamingForEachIntegrationTests
         result.Should().Contain("<out><Jane_Austen>value</Jane_Austen></out>",
             because: "head(//AUTHOR) inside xsl:element/@name AVT must stream the first matching element");
     }
+
+    /// <summary>
+    /// cy-001 pattern: xsl:for-each select="account/transaction[@value &lt; 0]/@value".
+    /// Three orthogonal extensions exercised: relative-from-root path, predicate on
+    /// the last element step (reads attributes of matched element), attribute-axis
+    /// tail step.
+    /// </summary>
+    [Fact]
+    public async Task XsltForEach_RelativePathPredicateAttributeTail_StreamsMatchingAttributes()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <account>
+              <transaction value="-15.00"/>
+              <transaction value="6.42"/>
+              <transaction value="-5.00"/>
+              <transaction value="100.00"/>
+            </account>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <out>
+                  <xsl:source-document streamable="yes" href="txns.xml">
+                    <xsl:for-each select="account/transaction[@value &lt; 0]/@value">
+                      <xsl:element name="value">
+                        <xsl:value-of select="."/>
+                      </xsl:element>
+                    </xsl:for-each>
+                  </xsl:source-document>
+                </out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "txns.xml");
+        result.Trim().Should().Be("<out><value>-15.00</value><value>-5.00</value></out>",
+            because: "relative path, predicate on the matched element, and attribute-axis tail must all be honored");
+    }
 }
