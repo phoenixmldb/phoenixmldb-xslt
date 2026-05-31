@@ -4365,7 +4365,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             case PhoenixmlDb.XQuery.Ast.StringLiteral sl: return (true, sl.Value);
             case PhoenixmlDb.XQuery.Ast.IntegerLiteral il: return (true, il.Value);
             case PhoenixmlDb.XQuery.Ast.DoubleLiteral dl: return (true, dl.Value);
+            case PhoenixmlDb.XQuery.Ast.DecimalLiteral decL: return (true, decL.Value);
             case PhoenixmlDb.XQuery.Ast.BooleanLiteral bl: return (true, bl.Value);
+            case PhoenixmlDb.XQuery.Ast.EmptySequence: return (true, Array.Empty<object?>());
             // Variable references: look up via XSLT scope (globals + lexical scopes).
             // Needed so subsequence(copy-of(/path), $start, $length) resolves the
             // grounded integer parameters when the inner watcher provides the seq.
@@ -4383,6 +4385,46 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     return (false, null);
                 }
+        }
+
+        // Named function reference: e.g., f:test#1 or fn:lower-case#1.
+        // Resolve directly via the function library so higher-order calls like
+        // filter(copy-of(/path), f:test#1) and fold-right(seq, 0, f:add#2)
+        // can pass the all-args-resolvable gate without re-entering the eval
+        // pipeline (which would crawl the synthetic empty document).
+        if (expr is PhoenixmlDb.XQuery.Ast.NamedFunctionRef nfr)
+        {
+            var func = _functionLibrary.Resolve(nfr.Name, nfr.Arity);
+            if (func == null) return (false, null);
+            // Match NamedFunctionRefOperator: variadic functions get wrapped so they
+            // expose the requested arity to the dynamic caller.
+            object item = func.IsVariadic
+                ? new PhoenixmlDb.XQuery.Execution.VariadicFunctionRefItem(func, nfr.Arity)
+                : func;
+            return (true, item);
+        }
+
+        // Inline function expression: e.g., function($x) { $x + 1 }.
+        // Materialise as an InlineFunctionItem with a minimal captured context so
+        // the closure remains invokable by the HOF that receives it.
+        if (expr is PhoenixmlDb.XQuery.Ast.InlineFunctionExpression ife)
+        {
+            // The captured context is owned by the InlineFunctionItem closure for its
+            // lifetime — it cannot be disposed eagerly here.
+#pragma warning disable CA2000
+            var capturedContext = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+                container: default,
+                functions: _functionLibrary,
+                nodeProvider: _nodeStore,
+                documentResolver: null,
+                schemaProvider: _schemaProvider,
+                namespaceResolver: null);
+#pragma warning restore CA2000
+            capturedContext.DefaultCollation = DefaultCollation;
+            capturedContext.StaticBaseUri = StaticBaseUri;
+            var inlineItem = new PhoenixmlDb.XQuery.Execution.InlineFunctionItem(
+                ife.Parameters, ife.Body, capturedContext, ife.ReturnType);
+            return (true, inlineItem);
         }
 
         // Sequence of literals: e.g., ('a', 'b', 'c') — evaluable without context

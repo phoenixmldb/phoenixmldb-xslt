@@ -531,4 +531,72 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Contain("CAT=\"H\"",
             because: "streaming aggregation must apply motionless attribute predicate so zero-or-one sees exactly 1 item");
     }
+
+    [Fact]
+    public async Task Filter_StreamedSnapshotArg_WithUserFunctionRef_RetainsItems()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM><PRICE>1.00</PRICE></ITEM>
+              <ITEM><PRICE>16.47</PRICE></ITEM>
+              <ITEM><PRICE>9.95</PRICE></ITEM>
+              <ITEM><PRICE>16.47</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:f="urn:test" xmlns:xs="http://www.w3.org/2001/XMLSchema"
+              exclude-result-prefixes="f xs">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:function name="f:test" as="xs:boolean">
+                <xsl:param name="p" as="element()"/>
+                <xsl:sequence select="string-length(string($p)) > 4"/>
+              </xsl:function>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="books.xml">
+                  <out><xsl:copy-of select="filter(copy-of(/BOOKLIST/BOOKS/ITEM/PRICE), f:test#1)"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Be("<out><PRICE>16.47</PRICE><PRICE>16.47</PRICE></out>",
+            because: "user-defined f:test#1 must be resolved as a function-item and invoked over the snapshot watcher's accumulated elements");
+    }
+
+    [Fact]
+    public async Task FoldRight_StreamedPath_WithUserFunctionRef_SumsValues()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM><PRICE>10.0</PRICE></ITEM>
+              <ITEM><PRICE>20.0</PRICE></ITEM>
+              <ITEM><PRICE>30.0</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:f="urn:test" xmlns:xs="http://www.w3.org/2001/XMLSchema"
+              exclude-result-prefixes="f xs">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:function name="f:add" as="xs:double">
+                <xsl:param name="a" as="xs:double"/>
+                <xsl:param name="b" as="xs:double"/>
+                <xsl:sequence select="$a + $b"/>
+              </xsl:function>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="books.xml">
+                  <out><xsl:value-of select="fold-right(./BOOKLIST/BOOKS/ITEM/PRICE/data(), 0.0, f:add#2)"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Be("<out>60</out>",
+            because: "user-defined f:add#2 must be resolved as a function-item and used as the fold-right combiner");
+    }
 }
