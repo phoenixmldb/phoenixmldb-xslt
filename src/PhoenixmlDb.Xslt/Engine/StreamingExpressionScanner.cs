@@ -235,8 +235,13 @@ internal sealed class StreamingExpressionScanner
                 }
                 break;
 
-            // Bare downward path — collect as Sequence
-            case PathExpression path when IsDownwardPath(path):
+            // Bare downward path — collect as Sequence. When the path pins the
+            // matched element to its first occurrence via a [1] positional predicate
+            // (e.g. /BOOKLIST/BOOKS/ITEM[1]/@CAT), the watcher captures only the
+            // first match (Head semantics) so downstream non-streaming consumers
+            // — like fn:string-join's separator argument — see a single item
+            // rather than the whole sequence.
+            case PathExpression path when IsDownwardPath(path) && !HasUnsupportedPredicate(path):
                 var seqPath = ExtractPathFromExpression(path);
                 if (seqPath != null)
                 {
@@ -244,7 +249,9 @@ internal sealed class StreamingExpressionScanner
                     {
                         SourceExpression = expr,
                         PathMatcher = new StreamPathMatcher(seqPath.Value.Path),
-                        Aggregation = WatcherAggregation.Sequence,
+                        Aggregation = HasFirstItemPositionalPredicate(path)
+                            ? WatcherAggregation.Head
+                            : WatcherAggregation.Sequence,
                         ValueAttribute = seqPath.Value.Attribute
                     });
                     return;
@@ -453,6 +460,53 @@ internal sealed class StreamingExpressionScanner
                 return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Returns true when any step on the path carries a predicate the watcher
+    /// can't model. The only predicate currently understood is a numeric literal
+    /// <c>[1]</c> on the last element step (head semantics).
+    /// </summary>
+    private static bool HasUnsupportedPredicate(PathExpression path)
+    {
+        for (var i = 0; i < path.Steps.Count; i++)
+        {
+            var step = path.Steps[i];
+            if (step.Predicates.Count == 0) continue;
+            // Only allow [1] on the last element step (i.e. the step before any trailing @attr)
+            var isLastElementStep = i == path.Steps.Count - 1
+                || (i == path.Steps.Count - 2 && path.Steps[^1].Axis == Axis.Attribute);
+            if (!isLastElementStep) return true;
+            if (step.Predicates.Count != 1) return true;
+            if (!IsFirstPositionPredicate(step.Predicates[0])) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Returns true when the path ends with a <c>[1]</c> predicate on its last
+    /// element step (so a watcher should capture only the first match).
+    /// </summary>
+    private static bool HasFirstItemPositionalPredicate(PathExpression path)
+    {
+        if (path.Steps.Count == 0) return false;
+        // Last element step is either the final step, or the one before a trailing @attr step.
+        var lastElemIdx = path.Steps[^1].Axis == Axis.Attribute && path.Steps.Count >= 2
+            ? path.Steps.Count - 2
+            : path.Steps.Count - 1;
+        var step = path.Steps[lastElemIdx];
+        return step.Predicates.Count == 1 && IsFirstPositionPredicate(step.Predicates[0]);
+    }
+
+    private static bool IsFirstPositionPredicate(XQueryExpression pred)
+    {
+        return pred switch
+        {
+            IntegerLiteral il when il.LongValue == 1 => true,
+            DecimalLiteral dl when dl.Value == 1m => true,
+            DoubleLiteral dbl when dbl.Value == 1.0 => true,
+            _ => false,
+        };
     }
 
     /// <summary>
