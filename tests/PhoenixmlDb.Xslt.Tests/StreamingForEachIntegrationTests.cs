@@ -451,4 +451,30 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("<out>123 1 2 3</out>",
             because: "descendant::n streaming must yield outer n (string-value '123') plus each inner n");
     }
+
+    [Fact]
+    public async Task XsltCopy_StreamableSelect_MultipleItems_RaisesXtte3180()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <root><a/><b/></root>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <out>
+                  <xsl:source-document streamable="yes" href="root.xml">
+                    <xsl:copy select="/*/*"/>
+                  </xsl:source-document>
+                </out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        Func<Task> act = () => TransformWithFile(stylesheet, inputXml, "root.xml");
+        (await act.Should().ThrowAsync<Exception>())
+            .Which.Message.Should().Contain("XTTE3180",
+                because: "xsl:copy/@select selecting multiple items must raise XTTE3180");
+    }
 }

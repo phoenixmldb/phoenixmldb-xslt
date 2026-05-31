@@ -10808,6 +10808,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _currentInstructionLocation = instruction.Location ?? _currentInstructionLocation;
         if (instruction.Select != null)
         {
+            // XSLT 3.0 §5.6: xsl:copy/@select must select at most one item.
+            // In streaming context, the select expression may evaluate against the
+            // synthetic empty document (returning zero items even though the streamed
+            // input would yield many), masking the cardinality violation. Detect this
+            // statically and raise XTTE3180 regardless of runtime result. Note: this
+            // check uses _activeStreamingProcessor (rather than _isStreamingExecution)
+            // because the streaming-execution flag is only set inside the processor
+            // pass; with bare xsl:copy bodies (no apply-templates/watchers) the
+            // processor never runs but we still want to enforce the cardinality rule.
+            if (_activeStreamingProcessor != null && SelectMayReturnMultipleItems(instruction.Select))
+                throw Error("XTTE3180: xsl:copy with select attribute must select at most one item");
+
             // XSLT 3.0: xsl:copy with select — evaluate and copy each item
             var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
             var items = result is object?[] arr ? arr : new[] { result };
@@ -10839,6 +10851,61 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (node == null || ReferenceEquals(node, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
             throw Error("XTTE0945: xsl:copy has no context item");
         await CopySingleItemAsync(node, instruction).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Heuristic static cardinality check for an xsl:copy/@select expression in
+    /// streaming context. Returns true ONLY for absolute paths (rooted at /) whose
+    /// step shape provably yields more than one item — these can't be rescued by
+    /// streaming subtree materialization the way relative paths can, so the runtime
+    /// cardinality check would otherwise miss them (the absolute path evaluates
+    /// against the synthetic empty document and silently returns zero items,
+    /// masking XTTE3180). Relative paths (e.g. inner <c>xsl:copy select="*"</c>)
+    /// run against a real per-element context provided by the streaming subtree
+    /// machinery and remain caught by the runtime nonNullItems.Count check.
+    /// </summary>
+    private static bool SelectMayReturnMultipleItems(XQueryExpression expr)
+    {
+        if (expr is not PathExpression path) return false;
+        if (!path.IsAbsolute) return false;
+        if (path.Steps.Count == 0) return false;
+        // First step: from a document node, a child-axis step yields at most the
+        // single document element (e.g. /* or /root each pin to one). However a
+        // descendant-axis first step (// or descendant::) can fan out immediately.
+        var first = path.Steps[0];
+        if (first.Axis is Axis.Descendant or Axis.DescendantOrSelf or Axis.Following or Axis.Preceding
+            && StepMayReturnMultipleItems(first))
+            return true;
+        for (var i = 1; i < path.Steps.Count; i++)
+        {
+            if (StepMayReturnMultipleItems(path.Steps[i]))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool StepMayReturnMultipleItems(StepExpression step)
+    {
+        // A positional predicate [n] (numeric literal) pins to a single item.
+        foreach (var pred in step.Predicates)
+        {
+            if (pred is IntegerLiteral or DecimalLiteral or DoubleLiteral)
+                return false;
+        }
+
+        // Axes that can yield > 1 node: child, descendant, descendant-or-self,
+        // following, following-sibling, preceding, preceding-sibling, attribute (wildcard).
+        // Self/parent always yield ≤ 1. Attribute with named test yields ≤ 1.
+        return step.Axis switch
+        {
+            Axis.Child or Axis.Descendant or Axis.DescendantOrSelf
+                or Axis.Following or Axis.FollowingSibling
+                or Axis.Preceding or Axis.PrecedingSibling => true,
+            Axis.Attribute => step.NodeTest is NameTest nt
+                ? (nt.IsLocalNameWildcard || nt.IsNamespaceWildcard)
+                : true,
+            _ => false,
+        };
     }
 
     private async ValueTask CopySingleItemAsync(object? node, XsltCopy instruction)
