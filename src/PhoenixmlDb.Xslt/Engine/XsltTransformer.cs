@@ -4415,37 +4415,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         PhoenixmlDb.XQuery.Ast.FunctionCallExpression fcall,
         IReadOnlyList<StreamWatcher> watchers)
     {
-        // Resolve each argument: prefer watcher/literal substitution; otherwise
-        // pre-evaluate the argument expression directly when it is "grounded" —
-        // i.e. it doesn't navigate into the streamed subtree (no absolute path,
-        // no expression matching a watcher's source). Lets non-trivial grounded
-        // operands like `(1 to 3)!string()` participate alongside a watcher-
-        // resolved sibling argument (e.g. string-join(grounded, streamed-path)).
+        // Resolve each argument; give up if any can't be resolved
         var args = new object?[fcall.Arguments.Count];
         for (var i = 0; i < fcall.Arguments.Count; i++)
         {
-            var arg = fcall.Arguments[i];
-            var (resolved, val) = TryResolveExprFromWatchers(arg, watchers);
-            if (resolved)
-            {
-                args[i] = val;
-                continue;
-            }
-            if (!ExpressionReferencesStream(arg, watchers))
-            {
-                var savedWatchers = _activeStreamWatchers;
-                _activeStreamWatchers = null;
-                try
-                {
-                    args[i] = await EvaluateAsync(arg).ConfigureAwait(false);
-                }
-                finally
-                {
-                    _activeStreamWatchers = savedWatchers;
-                }
-                continue;
-            }
-            return (false, null);
+            var (resolved, val) = TryResolveExprFromWatchers(fcall.Arguments[i], watchers);
+            if (!resolved) return (false, null);
+            args[i] = val;
         }
 
         // Only handle standard library functions (fn: or unqualified namespace).
@@ -4472,70 +4448,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         var result = await fn.InvokeAsync(args, execContext).ConfigureAwait(false);
         return (true, result);
-    }
-
-    /// <summary>
-    /// Returns true when <paramref name="expr"/> (or any sub-expression) either
-    /// matches a registered stream watcher's source expression, or contains an
-    /// absolute PathExpression. Such expressions cannot be safely pre-evaluated
-    /// during the watcher-substitution pass — they must go through the streaming
-    /// machinery or watcher result substitution to see the right values.
-    /// </summary>
-    private static bool ExpressionReferencesStream(
-        PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
-        IReadOnlyList<StreamWatcher> watchers)
-    {
-        foreach (var w in watchers)
-        {
-            if (ReferenceEquals(expr, w.SourceExpression))
-                return true;
-        }
-        switch (expr)
-        {
-            case PhoenixmlDb.XQuery.Ast.PathExpression p when p.IsAbsolute:
-                return true;
-            case PhoenixmlDb.XQuery.Ast.PathExpression p:
-                if (p.InitialExpression != null && ExpressionReferencesStream(p.InitialExpression, watchers))
-                    return true;
-                foreach (var step in p.Steps)
-                {
-                    foreach (var pred in step.Predicates)
-                        if (ExpressionReferencesStream(pred, watchers))
-                            return true;
-                }
-                return false;
-            case PhoenixmlDb.XQuery.Ast.FunctionCallExpression fc:
-                foreach (var a in fc.Arguments)
-                    if (ExpressionReferencesStream(a, watchers))
-                        return true;
-                return false;
-            case PhoenixmlDb.XQuery.Ast.BinaryExpression bin:
-                return ExpressionReferencesStream(bin.Left, watchers)
-                    || ExpressionReferencesStream(bin.Right, watchers);
-            case PhoenixmlDb.XQuery.Ast.UnaryExpression un:
-                return ExpressionReferencesStream(un.Operand, watchers);
-            case PhoenixmlDb.XQuery.Ast.SequenceExpression seq:
-                foreach (var it in seq.Items)
-                    if (ExpressionReferencesStream(it, watchers))
-                        return true;
-                return false;
-            case PhoenixmlDb.XQuery.Ast.SimpleMapExpression sm:
-                return ExpressionReferencesStream(sm.Left, watchers)
-                    || ExpressionReferencesStream(sm.Right, watchers);
-            case PhoenixmlDb.XQuery.Ast.CastExpression ce:
-                return ExpressionReferencesStream(ce.Expression, watchers);
-            case PhoenixmlDb.XQuery.Ast.TreatExpression te:
-                return ExpressionReferencesStream(te.Expression, watchers);
-            case PhoenixmlDb.XQuery.Ast.InstanceOfExpression io:
-                return ExpressionReferencesStream(io.Expression, watchers);
-            case PhoenixmlDb.XQuery.Ast.IfExpression ie:
-                return ExpressionReferencesStream(ie.Condition, watchers)
-                    || ExpressionReferencesStream(ie.Then, watchers)
-                    || (ie.Else != null && ExpressionReferencesStream(ie.Else, watchers));
-            // Variables, literals, context item — safe to pre-evaluate.
-            default:
-                return false;
-        }
     }
 
     private static bool IsGeneralComparison(BinaryOperator op)

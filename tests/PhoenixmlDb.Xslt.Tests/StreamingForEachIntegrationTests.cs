@@ -477,30 +477,4 @@ public class StreamingForEachIntegrationTests
             .Which.Message.Should().Contain("XTTE3180",
                 because: "xsl:copy/@select selecting multiple items must raise XTTE3180");
     }
-
-    [Fact]
-    public async Task StringJoin_StreamedAttributeSeparator_UsesAttributeValue()
-    {
-        var inputXml = """
-            <?xml version="1.0"?>
-            <BOOKLIST><BOOKS>
-              <ITEM CAT="MMP"><PRICE>1.00</PRICE></ITEM>
-              <ITEM CAT="OTHER"/>
-            </BOOKS></BOOKLIST>
-            """;
-        var stylesheet = """
-            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
-              <xsl:template name="xsl:initial-template">
-                <xsl:source-document streamable="yes" href="books.xml">
-                  <out><xsl:value-of select="string-join((1 to 3)!string(), /BOOKLIST/BOOKS/ITEM[1]/@CAT)"/></out>
-                </xsl:source-document>
-              </xsl:template>
-            </xsl:stylesheet>
-            """;
-
-        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
-        result.Trim().Should().Be("<out>1MMP2MMP3</out>",
-            because: "the streamed attribute @CAT from the first ITEM must serve as the join separator");
-    }
 }
