@@ -195,7 +195,7 @@ internal sealed class StreamingXmlProcessor
                             {
                                 await FireAccumulatorRulesAsync(skipXdm, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
                                 if (_watchers != null || _context._activeStreamWatchers != null)
-                                    FireWatchersEndElement(skipCtx.LocalName);
+                                    await FireWatchersEndElement(skipCtx.LocalName).ConfigureAwait(false);
                                 CleanupStreamingNode(skipCtx);
                             }
                             break;
@@ -409,7 +409,7 @@ internal sealed class StreamingXmlProcessor
                                         || _context._activeStreamWatchers != null
                                         || _pendingTextWatcherMatches.Count > 0)
                                     {
-                                        FireWatchersEndElement(current.LocalName);
+                                        await FireWatchersEndElement(current.LocalName).ConfigureAwait(false);
                                     }
                                     CleanupStreamingNode(current);
                                     break;
@@ -444,7 +444,7 @@ internal sealed class StreamingXmlProcessor
                                 || _context._activeStreamWatchers != null
                                 || _pendingTextWatcherMatches.Count > 0)
                             {
-                                FireWatchersEndElement(current.LocalName);
+                                await FireWatchersEndElement(current.LocalName).ConfigureAwait(false);
                             }
                             if (_context._streamingOpenElements.Count > 0)
                             {
@@ -475,7 +475,7 @@ internal sealed class StreamingXmlProcessor
                                 || _context._activeStreamWatchers != null
                                 || _pendingTextWatcherMatches.Count > 0)
                             {
-                                FireWatchersEndElement(current.LocalName);
+                                await FireWatchersEndElement(current.LocalName).ConfigureAwait(false);
                             }
 
                             if (_context._streamingOpenElements.Count > 0)
@@ -534,7 +534,7 @@ internal sealed class StreamingXmlProcessor
                                 || _context._activeStreamWatchers != null
                                 || _pendingTextWatcherMatches.Count > 0)
                             {
-                                FireWatchersEndElement(closingContext.LocalName);
+                                await FireWatchersEndElement(closingContext.LocalName).ConfigureAwait(false);
                             }
 
                             // Write the deferred closing tag for elements opened by shallow-copy.
@@ -875,7 +875,13 @@ internal sealed class StreamingXmlProcessor
             // Check element path match
             if (watcher.PathMatcher.Matches(_ancestorNames, elementName))
             {
-                if (watcher.ValueAttribute == null && WatcherNeedsTextContent(watcher))
+                // When predicates are present we MUST defer to EndElement so the
+                // matched element can be materialized for predicate evaluation
+                // — otherwise Count/Sum/etc. would commit before we know whether
+                // the predicate accepts the item.
+                bool defer = watcher.ValueAttribute == null
+                    && (WatcherNeedsTextContent(watcher) || watcher.Predicates.Count > 0);
+                if (defer)
                 {
                     // Defer the OnElementMatch until EndElement so accumulated text
                     // content from intervening Text events is available. Without
@@ -889,6 +895,18 @@ internal sealed class StreamingXmlProcessor
                     if (watcher.Aggregation is WatcherAggregation.Sequence or WatcherAggregation.Snapshot)
                     {
                         reservedSlot = watcher.ReserveSequenceSlot();
+                    }
+                    // Build a subtree stack whenever we will need to materialize
+                    // the matched element — either because the consumer wants
+                    // the snapshot (Sequence/Snapshot) OR because we have to
+                    // evaluate motionless predicates that may navigate into
+                    // descendants. Without this stack, Count/Sum/etc. with a
+                    // predicate would see materialized == null at EndElement
+                    // and silently fall through unfiltered.
+                    bool needSubtree = watcher.Aggregation is WatcherAggregation.Sequence or WatcherAggregation.Snapshot
+                        || watcher.Predicates.Count > 0;
+                    if (needSubtree)
+                    {
                         subtreeStack = new Stack<SubtreeBuilderFrame>();
                         subtreeStack.Push(new SubtreeBuilderFrame
                         {
@@ -942,7 +960,7 @@ internal sealed class StreamingXmlProcessor
     /// <summary>
     /// Fires watchers for end element events (subtree tracking).
     /// </summary>
-    private void FireWatchersEndElement(string localName)
+    private async ValueTask FireWatchersEndElement(string localName)
     {
         // Fire any pending text-content watcher matches whose element ends here.
         // entry.Depth was recorded at StartElement BEFORE the matching element was
@@ -975,22 +993,18 @@ internal sealed class StreamingXmlProcessor
         {
             var entry = _pendingTextWatcherMatches[i];
             if (entry.Depth != pendingDepth || entry.ElementName != localName) continue;
-            if (entry.ReservedSlot >= 0)
+
+            // Materialize FIRST when predicates are present (or when the
+            // Sequence/Snapshot path needs it anyway) so predicates can be
+            // evaluated against a real XdmNode. The materialized element is
+            // then reused both for predicate evaluation and (for
+            // Sequence/Snapshot) slot population — we never materialize twice.
+            XdmNode? materialized = null;
+            bool needMaterialize = entry.Watcher.Predicates.Count > 0
+                || (entry.Watcher.ValueAttribute == null
+                    && entry.Watcher.Aggregation is WatcherAggregation.Snapshot or WatcherAggregation.Sequence);
+            if (needMaterialize)
             {
-                entry.Watcher.FillSequenceSlot(entry.ReservedSlot, entry.Attributes, entry.TextBuffer.ToString());
-            }
-            else
-            {
-                entry.Watcher.OnElementMatch(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
-            }
-            // Snapshot/Sequence materialization. For leaf elements (no child
-            // elements appeared during the match window) the fast path builds
-            // a minimal text-only element. For nested matches the subtree
-            // builder has captured the full tree — materialize that.
-            if (entry.Watcher.ValueAttribute == null
-                && entry.Watcher.Aggregation is WatcherAggregation.Snapshot or WatcherAggregation.Sequence)
-            {
-                XdmNode? materialized = null;
                 if (!entry.HasChildElement)
                 {
                     materialized = MaterializeLeafElement(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
@@ -1001,13 +1015,68 @@ internal sealed class StreamingXmlProcessor
                     rootFrame.FlushPendingText(MakeStreamingText);
                     materialized = MaterializeSubtreeFrame(rootFrame);
                 }
-                if (materialized != null)
+            }
+
+            // Evaluate motionless predicates against the materialized snapshot.
+            // Mirrors ForEachSubscription's evaluation block in the streaming
+            // dispatch path. If any predicate is false, the matched element is
+            // dropped from the aggregation entirely.
+            bool predicatesPass = true;
+            if (entry.Watcher.Predicates.Count > 0 && materialized != null)
+            {
+                var prevStreaming = _context._isStreamingExecution;
+                _context._isStreamingExecution = false;
+                _context.PushContextItem(materialized, 1, 1);
+                _context.PushCurrentItem(materialized);
+                try
                 {
-                    if (entry.ReservedSlot >= 0)
-                        entry.Watcher.FillSnapshotSlot(entry.ReservedSlot, materialized);
-                    else
-                        entry.Watcher.OnLeafElementCaptured(materialized);
+                    foreach (var pred in entry.Watcher.Predicates)
+                    {
+                        if (!await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false))
+                        {
+                            predicatesPass = false;
+                            break;
+                        }
+                    }
                 }
+                finally
+                {
+                    _context.PopCurrentItem();
+                    _context.PopContextItem();
+                    _context._isStreamingExecution = prevStreaming;
+                }
+            }
+
+            if (!predicatesPass)
+            {
+                // Discard the reserved slot if any, and skip slot population /
+                // numeric / string-join accumulation. _pendingTextWatcherMatches
+                // still needs to be removed at loop end.
+                if (entry.ReservedSlot >= 0)
+                    entry.Watcher.DiscardSequenceSlot(entry.ReservedSlot);
+                _pendingTextWatcherMatches.RemoveAt(i);
+                continue;
+            }
+
+            if (entry.ReservedSlot >= 0)
+            {
+                entry.Watcher.FillSequenceSlot(entry.ReservedSlot, entry.Attributes, entry.TextBuffer.ToString());
+            }
+            else
+            {
+                entry.Watcher.OnElementMatch(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
+            }
+            // Snapshot/Sequence: fill the materialized-element slot we just
+            // produced for predicate evaluation (or, when there were no
+            // predicates, that we materialized purely for downstream consumers).
+            if (entry.Watcher.ValueAttribute == null
+                && entry.Watcher.Aggregation is WatcherAggregation.Snapshot or WatcherAggregation.Sequence
+                && materialized != null)
+            {
+                if (entry.ReservedSlot >= 0)
+                    entry.Watcher.FillSnapshotSlot(entry.ReservedSlot, materialized);
+                else
+                    entry.Watcher.OnLeafElementCaptured(materialized);
             }
             _pendingTextWatcherMatches.RemoveAt(i);
         }

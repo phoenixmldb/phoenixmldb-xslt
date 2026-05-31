@@ -209,6 +209,7 @@ internal sealed class StreamingExpressionScanner
                         PathMatcher = new StreamPathMatcher(pathInfo.Value.Path),
                         Aggregation = aggType,
                         ValueAttribute = pathInfo.Value.Attribute,
+                        Predicates = pathInfo.Value.Predicates,
                         Separator = aggType == WatcherAggregation.StringJoin && fc.Arguments.Count > 1
                             ? ExtractStringLiteral(fc.Arguments[1])
                             : null
@@ -229,7 +230,8 @@ internal sealed class StreamingExpressionScanner
                         SourceExpression = expr,
                         PathMatcher = new StreamPathMatcher(headPathInfo.Value.Path),
                         Aggregation = WatcherAggregation.Head,
-                        ValueAttribute = headPathInfo.Value.Attribute
+                        ValueAttribute = headPathInfo.Value.Attribute,
+                        Predicates = headPathInfo.Value.Predicates
                     });
                     return;
                 }
@@ -245,7 +247,8 @@ internal sealed class StreamingExpressionScanner
                         SourceExpression = expr,
                         PathMatcher = new StreamPathMatcher(seqPath.Value.Path),
                         Aggregation = WatcherAggregation.Sequence,
-                        ValueAttribute = seqPath.Value.Attribute
+                        ValueAttribute = seqPath.Value.Attribute,
+                        Predicates = seqPath.Value.Predicates
                     });
                     return;
                 }
@@ -261,7 +264,8 @@ internal sealed class StreamingExpressionScanner
                         SourceExpression = expr,
                         PathMatcher = new StreamPathMatcher(snapPath.Value.Path),
                         Aggregation = WatcherAggregation.Snapshot,
-                        ValueAttribute = snapPath.Value.Attribute
+                        ValueAttribute = snapPath.Value.Attribute,
+                        Predicates = snapPath.Value.Predicates
                     });
                     return;
                 }
@@ -297,7 +301,8 @@ internal sealed class StreamingExpressionScanner
                     SourceExpression = expr,
                     PathMatcher = new StreamPathMatcher(shape.Path),
                     Aggregation = WatcherAggregation.Sequence,
-                    ValueAttribute = shape.Attribute
+                    ValueAttribute = shape.Attribute,
+                    Predicates = shape.Predicates
                 });
                 return;
         }
@@ -376,7 +381,7 @@ internal sealed class StreamingExpressionScanner
     /// where the parser builds left-associative SimpleMap nodes:
     /// SimpleMap(SimpleMap(path, NMTOKENS(.)), decimal(.)).
     /// </summary>
-    private static (string Path, string? Attribute)? TryExtractSimpleMapWatcherShape(SimpleMapExpression sm)
+    private static ExtractedPath? TryExtractSimpleMapWatcherShape(SimpleMapExpression sm)
     {
         // Walk down the Left chain, accumulating tail steps. Every step we
         // encounter (the Right of each SimpleMap we descend through) must be
@@ -459,18 +464,24 @@ internal sealed class StreamingExpressionScanner
     /// Extracts a simple path string from an XPath expression.
     /// Returns null if the expression is too complex to decompose.
     /// </summary>
-    private static (string Path, string? Attribute)? ExtractPathFromArgument(XQueryExpression expr)
+    internal readonly record struct ExtractedPath(
+        string Path,
+        string? Attribute,
+        IReadOnlyList<XQueryExpression> Predicates);
+
+    private static ExtractedPath? ExtractPathFromArgument(XQueryExpression expr)
     {
         return ExtractPathFromExpression(expr);
     }
 
-    private static (string Path, string? Attribute)? ExtractPathFromExpression(XQueryExpression expr)
+    private static ExtractedPath? ExtractPathFromExpression(XQueryExpression expr)
     {
         // Walk the path expression to build a simple "a/b/c" or "a/b/@attr" string.
         // This handles the common cases: child steps and attribute access.
         // Complex expressions (predicates, descendant-or-self) fall through to null.
         var parts = new List<string>();
         string? attribute = null;
+        IReadOnlyList<XQueryExpression> predicates = Array.Empty<XQueryExpression>();
 
         var current = expr;
         while (current != null)
@@ -478,10 +489,30 @@ internal sealed class StreamingExpressionScanner
             switch (current)
             {
                 case PathExpression pathExpr:
-                    // PathExpression has steps — iterate
+                    // PathExpression has steps — iterate. Predicates are only
+                    // permitted on the LAST element step (or the element step
+                    // immediately before an attribute tail). Any earlier step
+                    // carrying predicates is rejected — the streaming matcher
+                    // would otherwise silently ignore them and accumulate
+                    // unfiltered items (sf-zero-or-one-005/006 failure mode).
                     bool pendingDescendant = false;
-                    foreach (var step in pathExpr.Steps)
+                    int lastElementStepIdx = -1;
+                    for (int si = pathExpr.Steps.Count - 1; si >= 0; si--)
                     {
+                        if (pathExpr.Steps[si].Axis != Axis.Attribute)
+                        {
+                            lastElementStepIdx = si;
+                            break;
+                        }
+                    }
+                    for (int si = 0; si < pathExpr.Steps.Count; si++)
+                    {
+                        var step = pathExpr.Steps[si];
+                        // Predicates on non-terminal element steps were silently
+                        // dropped by the previous implementation; preserving that
+                        // shape here avoids unintended scanner rejections. Only
+                        // the last-element-step predicate is captured below for
+                        // runtime filtering.
                         if (step.Axis == Axis.Attribute)
                         {
                             if (step.NodeTest is NameTest attrNameTest)
@@ -497,6 +528,10 @@ internal sealed class StreamingExpressionScanner
                                     pendingDescendant = false;
                                 }
                                 parts.Add(nameTest.LocalName);
+                            }
+                            if (si == lastElementStepIdx && step.Predicates.Count > 0)
+                            {
+                                predicates = step.Predicates;
                             }
                         }
                         else if (step.Axis == Axis.DescendantOrSelf)
@@ -522,6 +557,10 @@ internal sealed class StreamingExpressionScanner
                             {
                                 return null;
                             }
+                            if (si == lastElementStepIdx && step.Predicates.Count > 0)
+                            {
+                                predicates = step.Predicates;
+                            }
                         }
                         else
                         {
@@ -541,7 +580,7 @@ internal sealed class StreamingExpressionScanner
         }
 
         if (parts.Count == 0) return null;
-        return (string.Join("/", parts), attribute);
+        return new ExtractedPath(string.Join("/", parts), attribute, predicates);
     }
 
     private static string? ExtractStringLiteral(XQueryExpression expr)

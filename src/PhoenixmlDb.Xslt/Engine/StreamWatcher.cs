@@ -147,6 +147,15 @@ internal sealed class StreamWatcher
     /// </summary>
     public string? Separator { get; init; }
 
+    /// <summary>
+    /// When non-empty, predicates to evaluate against the matched element's
+    /// snapshot before counting/accumulating. Mirrors
+    /// <see cref="ForEachSubscription.Predicates"/>: items that fail any
+    /// predicate are dropped from the aggregation.
+    /// </summary>
+    public IReadOnlyList<XQueryExpression> Predicates { get; init; }
+        = Array.Empty<XQueryExpression>();
+
     // Accumulation state
     private long _count;
     private double _sum;
@@ -342,21 +351,92 @@ internal sealed class StreamWatcher
             // produced one (1:1 with _items). Mixed cases — nested-element or
             // attribute paths skip materialization — fall back to atomized
             // strings used by value-of / string-join consumers.
-            WatcherAggregation.Sequence => _snapshots.Count > 0 && _snapshots.Count == _items.Count
-                ? _snapshots.Cast<object>().ToArray()
-                : (_items.Count > 0 ? _items.ToArray() : Array.Empty<object>()),
+            WatcherAggregation.Sequence => BuildSequenceResult(),
             // Snapshot falls back to Array.Empty<XdmNode>() (the prior contract)
             // rather than the atomized strings, so consumers that rely on the
             // node-typed empty result (e.g. sf-snapshot-0101b's deep-equal
             // against a real doc) don't see a sudden type change when
             // materialization skips a nested-element match.
-            WatcherAggregation.Snapshot => _snapshots.Count > 0 && _snapshots.Count == _items.Count
-                ? _snapshots.Cast<object>().ToArray()
-                : Array.Empty<XdmNode>(),
+            WatcherAggregation.Snapshot => BuildSnapshotResult(),
             // Head returns the first item as a scalar (or null if none matched)
             WatcherAggregation.Head => _items.Count > 0 ? _items[0] : null,
             _ => null
         };
+    }
+
+    private object[] BuildSequenceResult()
+    {
+        var (items, snaps) = CompactSlots();
+        if (snaps.Length > 0 && snaps.Length == items.Length)
+            return snaps.Cast<object>().ToArray();
+        return items.Length > 0 ? items : Array.Empty<object>();
+    }
+
+    private object[] BuildSnapshotResult()
+    {
+        var (items, snaps) = CompactSlots();
+        if (snaps.Length > 0 && snaps.Length == items.Length)
+            return snaps.Cast<object>().ToArray();
+        return Array.Empty<XdmNode>();
+    }
+
+    /// <summary>
+    /// Discards a previously reserved slot when a predicate filtered the element
+    /// out at EndElement. Replaces the slot with a tombstone so document-order
+    /// indices for items added after this one (e.g. inner descendant matches)
+    /// remain stable; <see cref="GetResult"/> filters tombstones out.
+    /// </summary>
+    public void DiscardSequenceSlot(int index)
+    {
+        if (index < 0 || index >= _items.Count) return;
+        _items[index] = _slotTombstone;
+        if (_snapshots.Count > index)
+            _snapshots[index] = null!;
+    }
+
+    /// <summary>
+    /// Sentinel object that marks a sequence slot as filtered-out by a predicate.
+    /// Distinguishable from string values so <see cref="GetResult"/> can compact
+    /// the result array.
+    /// </summary>
+    private static readonly object _slotTombstone = new();
+
+    /// <summary>
+    /// Removes any tombstoned slots from the accumulator arrays. Called from
+    /// <see cref="GetResult"/> for aggregations that materialize per-item.
+    /// </summary>
+    private (object[] items, XdmNode[] snapshots) CompactSlots()
+    {
+        var items = new List<object>(_items.Count);
+        var snaps = new List<XdmNode>(_snapshots.Count);
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (ReferenceEquals(_items[i], _slotTombstone)) continue;
+            items.Add(_items[i]);
+            if (i < _snapshots.Count && _snapshots[i] != null)
+                snaps.Add(_snapshots[i]);
+        }
+        return (items.ToArray(), snaps.ToArray());
+    }
+
+    /// <summary>
+    /// Rolls back a numeric/string accumulation when a predicate filters an
+    /// element after <see cref="OnElementMatch"/> already committed it (for the
+    /// non-deferred fast path). Subtracts the contribution from sum/avg/count
+    /// and is a no-op for max/min (we can't reliably retract those; the engine
+    /// only uses this path when the watcher uses ReserveSequenceSlot).
+    /// </summary>
+    public void RollbackNumericContribution(double value)
+    {
+        if (Aggregation is WatcherAggregation.Sum or WatcherAggregation.Avg)
+        {
+            _sum -= value;
+            if (_count > 0) _count--;
+        }
+        else if (Aggregation is WatcherAggregation.Count)
+        {
+            if (_count > 0) _count--;
+        }
     }
 
     /// <summary>

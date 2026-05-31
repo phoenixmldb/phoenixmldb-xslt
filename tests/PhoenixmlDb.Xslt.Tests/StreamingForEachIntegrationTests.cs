@@ -477,4 +477,58 @@ public class StreamingForEachIntegrationTests
             .Which.Message.Should().Contain("XTTE3180",
                 because: "xsl:copy/@select selecting multiple items must raise XTTE3180");
     }
+
+    [Fact]
+    public async Task Count_StreamingPathWithAttrPredicate_FiltersCorrectly()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM CAT="H"><PRICE>1.00</PRICE></ITEM>
+              <ITEM CAT="M"><PRICE>2.00</PRICE></ITEM>
+              <ITEM CAT="L"><PRICE>3.00</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="books.xml">
+                  <out><xsl:value-of select="count(/BOOKLIST/BOOKS/ITEM[@CAT='H'])"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Be("<out>1</out>",
+            because: "count must apply motionless attribute predicate to filter ITEMs");
+    }
+
+    [Fact]
+    public async Task ZeroOrOne_StreamingPathWithAttrPredicate_FiltersCorrectly()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM CAT="H"><PRICE>1.00</PRICE></ITEM>
+              <ITEM CAT="M"><PRICE>2.00</PRICE></ITEM>
+              <ITEM CAT="L"><PRICE>3.00</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="books.xml">
+                  <out><xsl:copy-of select="zero-or-one(/BOOKLIST/BOOKS/ITEM[@CAT='H'])"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Contain("CAT=\"H\"",
+            because: "streaming aggregation must apply motionless attribute predicate so zero-or-one sees exactly 1 item");
+    }
 }
