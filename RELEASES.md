@@ -1,5 +1,46 @@
 # Release History
 
+## 1.4.0 (2026-06-01)
+
+W3C XSLT 3.0 streaming conformance jumped from **71.3% → 80.5% (1681 → 1898 tests passing)** via a sustained scanner/processor/engine push. **24 commits** across the streaming pipeline. **11 new W3C streaming sets reached 100%**: si-element, si-LRE, si-value-of, si-copy, si-document, sf-copy-of, sf-fold-right, sf-zero-or-one, sf-innermost, plus all six sx-GeneralComp-* variants.
+
+### Streaming for-each inside `xsl:source-document`
+
+`<xsl:for-each select="...">` inside `<xsl:source-document streamable="yes">` now drives the streaming pass via a new `ForEachSubscription` mechanism. Supports:
+
+- Absolute child-axis paths (`/BOOKLIST/BOOKS/ITEM/PRICE`)
+- Relative-from-root paths (`account/transaction/...`)
+- Mixed sequences (`100, 101, /path` or `data(/path/@attr), 101, 102`)
+- `text()` KindTest at the path tail
+- Attribute axis tail (`/path/@attr`) with the matched attribute pushed as context
+- Predicates on the last element step (`transaction[@value < 0]`)
+- `fn:data()` unwrap around the path
+
+Conditional wrappers (`xsl:on-empty`, `xsl:on-non-empty`, `xsl:where-populated`) correctly suppress subscription dispatch — for-each inside falls back to the buffered path that honours the wrapper's gate.
+
+### Streaming watcher infrastructure
+
+- Scanner descends `xsl:element/@name` and `xsl:attribute/@name`/`@namespace` AVTs for consuming expressions (e.g., `head(//AUTHOR)`).
+- Scanner recognises `SimpleMapExpression(downward-path, per-item-atomic-casts)` for `path!xs:NMTOKENS(.)!xs:decimal(.)` patterns — closes all 6 sx-GeneralComp streaming sets.
+- Scanner recognises `descendant::name` axis (crawling traversal) with nested same-name elements.
+- Scanner recognises `snapshot(streamable-path)//tail` — closes sf-innermost and cascades into ~30 other tests across multiple sets.
+- Scanner recognises positional `[1]` predicate for Head watcher.
+- Scanner extracts grounded operands (literals, variable refs) from mixed comma sequences.
+- Watcher resolver in `TryResolveExprFromWatchers` handles `NamedFunctionRef` and `InlineFunctionExpression` so higher-order functions (`filter`, `fold-right`) work with user `f:` function arguments.
+- Aggregation watchers honour motionless predicates on the last element step (e.g., `zero-or-one(/path/ITEM[@CAT='H'])`).
+- Processor materialises leaf and subtree element snapshots so `copy-of`/`snapshot` accumulators yield real `XdmElement` trees.
+- Processor dispatches text-node children separately when the path tail is `text()`, preserving `..` parent navigation.
+
+### Engine fixes
+
+- `XdmElement._stringValue` is now populated by the `xsl:variable as="element()*"` construction path (was returning empty for `value-of select="."` on variable-constructed elements).
+- `xsl:copy/@select` selecting more than one item raises `XTTE3180` per XSLT 3.0 §5.6.
+- Streaming subtree materialiser precomputes element string-value bottom-up so `value-of` on snapshot elements works.
+
+### Dependencies
+
+- CPM pin bumped to `PhoenixmlDb.XQuery 1.4.1` (was 1.3.15) — picks up the QT3 production sweep fixes (EQName parser, deep-equal collation, fn:format-number isolation, module copy-namespaces scoping, XPTY0004 for date/time comparisons, function(*) matches map/array, etc.).
+
 ## 1.3.23 (2026-05-29)
 
 ### New: incremental streaming output + direct stream input (Martin Honnen memory report)
