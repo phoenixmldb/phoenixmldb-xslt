@@ -4446,6 +4446,92 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// Walks an expression tree and substitutes any watched sub-expression
+    /// (by reference identity against <paramref name="watchers"/>) with a
+    /// <see cref="VariableReference"/> to the synthetic
+    /// <c>$__streaming_watcher_N</c> binding. Returns the original
+    /// <paramref name="expr"/> unchanged when no watched node is found anywhere
+    /// inside, so the plan cache stays warm for non-streaming hot paths.
+    /// Handles only the AST shapes that matter for current streaming patterns
+    /// (PathExpression with InitialExpression and FunctionCallExpression args);
+    /// other shapes are returned unchanged but their children are still walked
+    /// when descending through the recognised shapes.
+    /// </summary>
+    private static XQueryExpression RewriteWithWatcherVariables(
+        PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
+        IReadOnlyList<StreamWatcher> watchers)
+    {
+        // Direct match: replace the whole node with $__streaming_watcher_N.
+        for (var wi = 0; wi < watchers.Count; wi++)
+        {
+            if (ReferenceEquals(expr, watchers[wi].SourceExpression))
+            {
+                return new PhoenixmlDb.XQuery.Ast.VariableReference
+                {
+                    Name = new QName(NamespaceId.None, $"__streaming_watcher_{wi}")
+                };
+            }
+        }
+
+        switch (expr)
+        {
+            case PhoenixmlDb.XQuery.Ast.PathExpression pe:
+            {
+                var initial = pe.InitialExpression;
+                XQueryExpression? newInitial = null;
+                if (initial != null)
+                {
+                    var rw = RewriteWithWatcherVariables(initial, watchers);
+                    if (!ReferenceEquals(rw, initial)) newInitial = rw;
+                }
+                // Steps may carry predicates with watched sub-expressions; for
+                // the current shape (snapshot(path)//tail/@attr) predicates are
+                // not exercised, so leave them as-is to avoid touching shape
+                // we have no test coverage for. If a future shape needs it,
+                // extend here.
+                if (newInitial == null) return expr;
+                return new PhoenixmlDb.XQuery.Ast.PathExpression
+                {
+                    IsAbsolute = pe.IsAbsolute,
+                    InitialExpression = newInitial,
+                    Steps = pe.Steps,
+                };
+            }
+
+            case PhoenixmlDb.XQuery.Ast.FunctionCallExpression fc:
+            {
+                XQueryExpression[]? newArgs = null;
+                for (var i = 0; i < fc.Arguments.Count; i++)
+                {
+                    var orig = fc.Arguments[i];
+                    var rw = RewriteWithWatcherVariables(orig, watchers);
+                    if (!ReferenceEquals(rw, orig))
+                    {
+                        if (newArgs == null)
+                        {
+                            newArgs = new XQueryExpression[fc.Arguments.Count];
+                            for (var j = 0; j < i; j++) newArgs[j] = fc.Arguments[j];
+                        }
+                        newArgs[i] = rw;
+                    }
+                    else if (newArgs != null)
+                    {
+                        newArgs[i] = orig;
+                    }
+                }
+                if (newArgs == null) return expr;
+                return new PhoenixmlDb.XQuery.Ast.FunctionCallExpression
+                {
+                    Name = fc.Name,
+                    Arguments = newArgs,
+                };
+            }
+        }
+
+        return expr;
+    }
+
+    /// <summary>
     /// Attempts to evaluate a function call by resolving all its arguments from
     /// stream watchers or literals, then invoking the function directly.
     /// Returns (true, value) if all arguments were resolvable; (false, null) otherwise.
@@ -9784,6 +9870,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var compResult = await TryEvaluateGeneralCompWithSimpleMapWatcherAsync(cmp, _activeStreamWatchers).ConfigureAwait(false);
                 if (compResult.Resolved)
                     return compResult.Value;
+            }
+
+            // Last-resort substitution: if the expression contains a watched
+            // sub-expression strictly *inside* it (e.g. snapshot(/chapter) deep
+            // within innermost(snapshot(/chapter)//section)/@id), rewrite the
+            // watched sub-expression to a synthetic $__streaming_watcher_N
+            // variable reference and re-evaluate. The XQuery engine then runs
+            // naturally against the materialised subtree without re-touching
+            // the now-closed stream.
+            var rewritten = RewriteWithWatcherVariables(expr, _activeStreamWatchers);
+            if (!ReferenceEquals(rewritten, expr))
+            {
+                return await EvaluateAsync(rewritten).ConfigureAwait(false);
             }
         }
 

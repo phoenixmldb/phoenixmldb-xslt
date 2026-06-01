@@ -326,6 +326,19 @@ internal sealed class StreamingExpressionScanner
                 foreach (var item in seq.Items)
                     ScanExpression(item);
                 break;
+            // PathExpression with a non-step InitialExpression (e.g.,
+            // snapshot(/chapter)//section) — recurse into the initial part so
+            // an inner snapshot/copy-of of a streamable path can be picked up
+            // by the snapshot watcher branch. The Steps themselves can't
+            // independently drive a watcher here (their context is the
+            // InitialExpression's value, not the document root), but the
+            // body-eval AST rewriter substitutes the watched initial with a
+            // synthetic variable reference so the Steps execute naturally
+            // against the materialised subtree.
+            case PathExpression pe:
+                if (pe.InitialExpression != null && pe.InitialExpression is not ContextItemExpression)
+                    ScanExpression(pe.InitialExpression);
+                break;
             case FlworExpression flwor:
                 // The for clause source may be consuming
                 foreach (var clause in flwor.Clauses)
@@ -451,6 +464,15 @@ internal sealed class StreamingExpressionScanner
 
     private static bool IsDownwardPath(PathExpression path)
     {
+        // A non-step InitialExpression (e.g., snapshot(/chapter)//section) means
+        // the steps don't navigate from the streamable document root — the
+        // scanner must NOT register a sequence matcher keyed off the Steps
+        // alone (it would silently match unrelated elements in the stream).
+        // ContextItemExpression is an exception: it's equivalent to no initial
+        // (the body's implicit context is the document root). The recursion
+        // through ScanChildExpressions handles the inner watch for other shapes.
+        if (path.InitialExpression != null && path.InitialExpression is not ContextItemExpression)
+            return false;
         // A path is "downward" if it uses only child/descendant/descendant-or-self/attribute axes
         foreach (var step in path.Steps)
         {

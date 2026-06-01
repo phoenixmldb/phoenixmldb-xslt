@@ -333,6 +333,43 @@ public class StreamingExpressionTests
     }
 
     // ================================================================
+    // sf-innermost-001: innermost(snapshot(/chapter)//section)/@id
+    // ================================================================
+
+    [Fact]
+    public async Task Innermost_SnapshotOfStreamablePath_WithDescendantTail()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <chapter>
+              <section id="1">
+                <section id="1.1"/>
+                <section id="1.2">
+                  <section id="1.2.1"/>
+                  <section id="1.2.2"/>
+                </section>
+                <section id="1.3"/>
+              </section>
+            </chapter>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:strip-space elements="*"/>
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="recursive.xml">
+                  <out><xsl:value-of select="innermost(snapshot(/chapter)//section)/@id"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "recursive.xml");
+        result.Trim().Should().Be("<out>1.1 1.2.1 1.2.2 1.3</out>",
+            because: "snapshot of streamable path + descendant tail must capture chapter subtree then select innermost sections");
+    }
+
+    // ================================================================
     // Verify non-streaming still works (no regression)
     // ================================================================
 
