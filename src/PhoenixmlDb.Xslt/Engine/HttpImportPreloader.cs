@@ -37,6 +37,69 @@ internal static class HttpImportPreloader
     private static readonly System.Text.RegularExpressions.Regex DocCallPattern =
         new(@"\b(?:doc|document)\s*\(\s*['""](https?://[^'""#\s]+)", System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    // Matches fn:transform(...) with a map containing 'stylesheet-location':'http(s)://...'.
+    // DocBook xslTNG chains its pipeline modules via this pattern (the $v:standard-transforms
+    // map): each module is loaded dynamically rather than via xsl:import. Without picking
+    // those URLs up here, the host (Blazor WASM) can't pre-fetch the modules and the runtime
+    // falls through to sync HTTP → "Cannot wait on monitors" — Martin Honnen 2026-06-01.
+    // Quote style and the prefix on transform() are independent; key/value gap is permissive.
+    // Note: only catches literal-URL forms — computed URIs (variable refs, concat) still
+    // require manual PreloadedResources population.
+    private static readonly System.Text.RegularExpressions.Regex TransformStylesheetLocationPattern =
+        new(@"\b(?:fn:)?transform\s*\([^)]*?['""]stylesheet-location['""]\s*:\s*['""](https?://[^'""#\s]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+    /// <summary>
+    /// Walks the stylesheet XML and returns every HTTP(S) URL the preloader would consider
+    /// fetching: <c>xsl:import</c>/<c>xsl:include</c> hrefs, <c>doc()</c>/<c>document()</c>
+    /// literal URIs, and <c>fn:transform(map{'stylesheet-location':'...'})</c> URIs.
+    /// Used by tests; the runtime preloader uses <see cref="PreloadHttpImportsAsync"/> which
+    /// also fetches.
+    /// </summary>
+    internal static HashSet<Uri> DiscoverHttpUrls(string rootStylesheetXml, Uri? rootBaseUri)
+    {
+        var result = new HashSet<Uri>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        DiscoverRecursive(rootStylesheetXml, rootBaseUri, result, visited);
+        return result;
+    }
+
+    private static void DiscoverRecursive(string xml, Uri? baseUri, HashSet<Uri> result, HashSet<string> visited)
+    {
+        XDocument doc;
+        try { doc = XDocument.Parse(xml, LoadOptions.None); }
+        catch (System.Xml.XmlException) { return; }
+
+        var hrefs = doc.Descendants()
+            .Where(e => e.Name.Namespace == XsltNs
+                        && (e.Name.LocalName == "import" || e.Name.LocalName == "include"))
+            .Select(e => e.Attribute("href")?.Value)
+            .Where(h => !string.IsNullOrEmpty(h))
+            .Cast<string>();
+
+        foreach (var href in hrefs)
+        {
+            if (!Uri.TryCreate(baseUri, href, out var resolved)) continue;
+            if (resolved.Scheme is not ("http" or "https")) continue;
+            if (!visited.Add(resolved.AbsoluteUri)) continue;
+            result.Add(resolved);
+        }
+
+        foreach (System.Text.RegularExpressions.Match m in DocCallPattern.Matches(xml))
+        {
+            if (!Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var u)) continue;
+            if (u.Scheme is not ("http" or "https")) continue;
+            if (visited.Add(u.AbsoluteUri)) result.Add(u);
+        }
+
+        foreach (System.Text.RegularExpressions.Match m in TransformStylesheetLocationPattern.Matches(xml))
+        {
+            if (!Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var u)) continue;
+            if (u.Scheme is not ("http" or "https")) continue;
+            if (visited.Add(u.AbsoluteUri)) result.Add(u);
+        }
+    }
+
     private static async Task WalkAsync(
         string xml,
         Uri? baseUri,
@@ -93,6 +156,26 @@ internal static class HttpImportPreloader
                 resources.Add(docUri, docContent);
             }
             catch (System.IO.IOException) { /* runtime will surface the FODC0002 error */ }
+        }
+
+        // fn:transform(map{'stylesheet-location':'http://...'}) — DocBook xslTNG dispatches
+        // its pipeline modules via this pattern rather than xsl:import. WASM can't perform
+        // sync HTTP, so pre-fetch literal-URL forms here. The fetched module is itself an
+        // XSLT stylesheet — recurse so its own imports / nested transform() calls are also
+        // preloaded. Martin Honnen 2026-06-01.
+        foreach (System.Text.RegularExpressions.Match m in TransformStylesheetLocationPattern.Matches(xml))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var xslUri)) continue;
+            if (!visited.Add(xslUri.AbsoluteUri)) continue;
+            if (resources.TryGet(xslUri, out _)) continue;
+
+            string xslContent;
+            try { xslContent = await HttpResourceLoader.GetStringAsync(xslUri, ct).ConfigureAwait(false); }
+            catch (System.IO.IOException) { continue; }
+
+            resources.Add(xslUri, xslContent);
+            await WalkAsync(xslContent, xslUri, resources, visited, ct).ConfigureAwait(false);
         }
     }
 }

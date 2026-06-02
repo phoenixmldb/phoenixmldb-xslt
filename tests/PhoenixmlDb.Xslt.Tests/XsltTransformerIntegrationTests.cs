@@ -2496,6 +2496,200 @@ public class XsltTransformerIntegrationTests
         result.Should().Contain("<greeting>hello</greeting>");
     }
 
+    // Reproducer for Martin Honnen's DocBook xslTNG WASM regression: DocBook XSLT uses
+    // nested xsl:import chains with relative URIs under an https:// base. The CLI works
+    // but Blazor WebAssembly fails with "No template for X" (unhandled.xsl fires),
+    // suggesting the deeper imports never reach the compiled stylesheet via the
+    // PreloadedResources cache.
+    [Fact]
+    public async Task PreloadedResources_satisfies_nested_xsl_import_3_levels_relative_uri()
+    {
+        var mainUri    = new Uri("https://example.invalid/docbook/main.xsl");
+        var level1Uri  = new Uri("https://example.invalid/docbook/modules/level1.xsl");
+        var level2Uri  = new Uri("https://example.invalid/docbook/modules/level2.xsl");
+
+        const string mainXsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import href="modules/level1.xsl"/>
+              <xsl:template match="/"><xsl:apply-templates/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        const string level1Xsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import href="level2.xsl"/>
+            </xsl:stylesheet>
+            """;
+        const string level2Xsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="p"><handled>p-was-matched</handled></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var preloaded = new PreloadedResources();
+        preloaded.Add(mainUri,   mainXsl);
+        preloaded.Add(level1Uri, level1Xsl);
+        preloaded.Add(level2Uri, level2Xsl);
+
+        var transformer = new XsltTransformer { PreloadedResources = preloaded };
+        await transformer.LoadStylesheetAsync(mainXsl, mainUri);
+        var result = await transformer.TransformAsync("<p/>");
+        result.Should().Contain("<handled>p-was-matched</handled>");
+    }
+
+    [Fact]
+    public async Task PreloadedResources_satisfies_nested_xsl_include_3_levels_relative_uri()
+    {
+        var mainUri    = new Uri("https://example.invalid/docbook/main.xsl");
+        var level1Uri  = new Uri("https://example.invalid/docbook/modules/level1.xsl");
+        var level2Uri  = new Uri("https://example.invalid/docbook/modules/level2.xsl");
+
+        const string mainXsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:include href="modules/level1.xsl"/>
+              <xsl:template match="/"><xsl:apply-templates/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        const string level1Xsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:include href="level2.xsl"/>
+            </xsl:stylesheet>
+            """;
+        const string level2Xsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="p"><handled>p-was-matched</handled></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var preloaded = new PreloadedResources();
+        preloaded.Add(mainUri,   mainXsl);
+        preloaded.Add(level1Uri, level1Xsl);
+        preloaded.Add(level2Uri, level2Xsl);
+
+        var transformer = new XsltTransformer { PreloadedResources = preloaded };
+        await transformer.LoadStylesheetAsync(mainXsl, mainUri);
+        var result = await transformer.TransformAsync("<p/>");
+        result.Should().Contain("<handled>p-was-matched</handled>");
+    }
+
+    [Fact]
+    public async Task PreloadedResources_satisfies_nested_xsl_import_3_levels_absolute_uri()
+    {
+        var mainUri    = new Uri("https://example.invalid/docbook/main.xsl");
+        var level1Uri  = new Uri("https://example.invalid/docbook/modules/level1.xsl");
+        var level2Uri  = new Uri("https://example.invalid/docbook/modules/level2.xsl");
+
+        var mainXsl = $"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import href="{level1Uri}"/>
+              <xsl:template match="/"><xsl:apply-templates/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var level1Xsl = $"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import href="{level2Uri}"/>
+            </xsl:stylesheet>
+            """;
+        const string level2Xsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="p"><handled>p-was-matched</handled></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var preloaded = new PreloadedResources();
+        preloaded.Add(mainUri,   mainXsl);
+        preloaded.Add(level1Uri, level1Xsl);
+        preloaded.Add(level2Uri, level2Xsl);
+
+        var transformer = new XsltTransformer { PreloadedResources = preloaded };
+        await transformer.LoadStylesheetAsync(mainXsl, mainUri);
+        var result = await transformer.TransformAsync("<p/>");
+        result.Should().Contain("<handled>p-was-matched</handled>");
+    }
+
+    // Test that the base URI for resolving an xsl:import inside an imported module
+    // is the IMPORTED module's URI (sub/sub.xsl), not the principal stylesheet's.
+    // i.e. sub.xsl's `<xsl:import href="lib.xsl"/>` must resolve to /sub/lib.xsl.
+    [Fact]
+    public async Task PreloadedResources_xsl_import_inside_imported_module_uses_module_base_uri()
+    {
+        var mainUri = new Uri("https://a.invalid/main.xsl");
+        var subUri  = new Uri("https://a.invalid/sub/sub.xsl");
+        var libUri  = new Uri("https://a.invalid/sub/lib.xsl");      // correct resolution
+        var wrongLibUri = new Uri("https://a.invalid/lib.xsl");      // wrong resolution
+
+        var mainXsl = $"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import href="{subUri}"/>
+              <xsl:template match="/"><xsl:apply-templates/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        const string subXsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:import href="lib.xsl"/>
+            </xsl:stylesheet>
+            """;
+        const string libXsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="p"><resolved>sub-base</resolved></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var preloaded = new PreloadedResources();
+        preloaded.Add(mainUri, mainXsl);
+        preloaded.Add(subUri,  subXsl);
+        preloaded.Add(libUri,  libXsl);
+        // Deliberately DO NOT add wrongLibUri — if the engine resolves against the wrong
+        // base URI, the preload miss will surface the bug.
+
+        var transformer = new XsltTransformer { PreloadedResources = preloaded };
+        await transformer.LoadStylesheetAsync(mainXsl, mainUri);
+        var result = await transformer.TransformAsync("<p/>");
+        result.Should().Contain("<resolved>sub-base</resolved>");
+    }
+
+    // Reproducer: DocBook xslTNG drives a pipeline by calling fn:transform() with
+    // map { 'stylesheet-location' : '...some https url...' } from inside a top-level
+    // stylesheet. XsltTransformProvider's stylesheet-location branch goes straight to
+    // HttpResourceLoader.GetStringAsync (which throws on WASM) and the inner transformer
+    // is created without PreloadedResources, so even a successful fetch wouldn't help
+    // any further imports the inner stylesheet declares.
+    [Fact]
+    public async Task PreloadedResources_satisfies_fn_transform_stylesheet_location_without_network()
+    {
+        var mainUri  = new Uri("https://example.invalid/docbook/main.xsl");
+        var innerUri = new Uri("https://example.invalid/docbook/inner.xsl");
+
+        var mainXsl = $$"""
+            <xsl:stylesheet version="3.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:map="http://www.w3.org/2005/xpath-functions/map">
+              <xsl:template match="/">
+                <xsl:variable name="r" select="transform(
+                    map {
+                      'stylesheet-location' : '{{innerUri}}',
+                      'source-node'         : .,
+                      'delivery-format'     : 'serialized'
+                    })"/>
+                <wrap><xsl:value-of select="$r?output"/></wrap>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        const string innerXsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/"><inner>fired</inner></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var preloaded = new PreloadedResources();
+        preloaded.Add(mainUri,  mainXsl);
+        preloaded.Add(innerUri, innerXsl);
+
+        var transformer = new XsltTransformer { PreloadedResources = preloaded };
+        await transformer.LoadStylesheetAsync(mainXsl, mainUri);
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("fired");
+    }
+
     [Fact]
     public async Task PreloadedResources_satisfies_fn_doc_over_http_without_network()
     {
@@ -3393,5 +3587,65 @@ public class XsltTransformerIntegrationTests
         {
             try { Directory.Delete(dir, recursive: true); } catch { }
         }
+    }
+
+    // Bug 1: fn:transform() with stylesheet-location must consult PreloadedResources rather
+    // than synchronously hitting HTTP — Martin Honnen's DocBook xslTNG WASM regression.
+    // DocBook chains pipeline modules via fn:transform(map{'stylesheet-location':'http://...'}),
+    // and Blazor WebAssembly can't park a thread on a monitor wait, so the sync HTTP fallback
+    // throws. This test verifies the cache is honoured.
+    [Fact]
+    public async Task XQueryFnTransform_StylesheetLocation_ConsultsPreloadedResources()
+    {
+        var stylesheetUri = new Uri("https://example.invalid/preloaded/inner.xsl");
+        const string innerXsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/"><got>preloaded</got></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var preloaded = new PreloadedResources();
+        preloaded.Add(stylesheetUri, innerXsl);
+
+        // Driver XSLT that uses fn:transform with stylesheet-location to dispatch to the
+        // preloaded inner stylesheet (DocBook TNG pattern: $v:standard-transforms map).
+        var driverXsl = $$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema"
+              xmlns:map="http://www.w3.org/2005/xpath-functions/map">
+              <xsl:template match="/" xpath-default-namespace="">
+                <xsl:variable name="result" as="map(*)"
+                  select="transform(map { 'stylesheet-location': '{{stylesheetUri}}', 'source-node': . })"/>
+                <xsl:copy-of select="$result?output"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var transformer = new XsltTransformer { PreloadedResources = preloaded };
+        await transformer.LoadStylesheetAsync(driverXsl, new Uri("https://example.invalid/driver.xsl"));
+        var result = await transformer.TransformAsync("<x/>");
+        result.Should().Contain("<got>preloaded</got>",
+            because: "fn:transform with stylesheet-location must use PreloadedResources rather than synchronously hitting HTTP");
+    }
+
+    // Bug 2: HttpImportPreloader's pre-walker only recognised doc()/document() literal URLs.
+    // DocBook TNG also uses fn:transform(map{'stylesheet-location':'http://...'}) to chain
+    // pipeline modules — those URLs never got into the auto-preload discovery set.
+    [Fact]
+    public void HttpImportPreloader_AutoSeeds_FnTransform_StylesheetLocation_Url()
+    {
+        var stylesheetUri = new Uri("https://example.invalid/discovered/inner.xsl");
+        var driverXsl = $$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:map="http://www.w3.org/2005/xpath-functions/map">
+              <xsl:template match="/">
+                <xsl:sequence select="transform(map { 'stylesheet-location': '{{stylesheetUri}}', 'source-node': . })?output"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var discovered = HttpImportPreloader.DiscoverHttpUrls(driverXsl, new Uri("https://example.invalid/driver.xsl"));
+        discovered.Should().Contain(stylesheetUri,
+            because: "the import-walker must seed fn:transform stylesheet-location URLs alongside doc()/document() ones");
     }
 }

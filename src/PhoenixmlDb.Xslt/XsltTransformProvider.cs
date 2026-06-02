@@ -14,6 +14,21 @@ namespace PhoenixmlDb.Xslt;
 /// </summary>
 public sealed class XsltTransformProvider : ITransformProvider
 {
+    /// <summary>
+    /// Optional pre-fetched contents for URIs that <c>stylesheet-location</c> would otherwise
+    /// need to fetch over HTTP synchronously. Required on Blazor WebAssembly which cannot
+    /// block the calling thread for sync HTTP — without this, fn:transform from XQuery hits
+    /// <see cref="Engine.HttpResourceLoader.GetStringAsync"/> and throws FOXT0001.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors the engine-internal fn:transform path (XsltTransformer.cs:28485-28505) which
+    /// consults <see cref="PreloadedResources"/> via <c>_context._options.PreloadedResources</c>.
+    /// Set this on the singleton registered as <see cref="PhoenixmlDb.XQuery.Functions.TransformFunction.Provider"/>
+    /// before running queries that call fn:transform with a stylesheet-location URI.
+    /// Martin Honnen 2026-06-01: DocBook xslTNG fn:transform-from-XQuery failed on WASM.
+    /// </remarks>
+    public PreloadedResources? PreloadedResources { get; set; }
+
     /// <inheritdoc/>
     public async ValueTask<object?> TransformAsync(
         IDictionary<object, object?> options,
@@ -81,19 +96,28 @@ public sealed class XsltTransformProvider : ITransformProvider
                 stylesheetXml = await File.ReadAllTextAsync(baseUri.LocalPath).ConfigureAwait(false);
             else if (baseUri != null && (baseUri.Scheme == Uri.UriSchemeHttp || baseUri.Scheme == Uri.UriSchemeHttps))
             {
-                // HTTP(S) stylesheet-location: previously fell through to the file-path
-                // branch which Path.Combine'd the URL onto staticBase and called
-                // File.ReadAllTextAsync — produced FileNotFoundException for "https:/..."
-                // (Path normalization collapses the double slash). Martin Honnen's WASM
-                // repro. Mirrors Engine/XsltTransformer.cs:27534.
-                if (OperatingSystem.IsBrowser())
+                // HTTP(S) stylesheet-location: consult preload cache first, then fetch.
+                // Mirrors Engine/XsltTransformer.cs:28485-28505 — the XQuery-side mirror
+                // previously went straight to HttpResourceLoader and bypassed the cache,
+                // so fn:transform-from-XQuery threw FOXT0001 on Blazor WASM even when the
+                // host had supplied the stylesheet via PreloadedResources.
+                // Martin Honnen 2026-06-01: DocBook xslTNG WASM regression.
+                if (PreloadedResources is { } preloaded && preloaded.TryGet(baseUri, out var preloadedContent))
+                {
+                    stylesheetXml = preloadedContent;
+                }
+                else if (OperatingSystem.IsBrowser())
                 {
                     throw new XQueryException("FOXT0001",
                         $"Cannot fetch stylesheet '{baseUri}' on Blazor WebAssembly: " +
                         "synchronous HTTP I/O is not supported. Pre-fetch the stylesheet " +
-                        "asynchronously and pass it through stylesheet-text instead.");
+                        "asynchronously and pass it through PreloadedResources on " +
+                        "XsltTransformProvider (or supply stylesheet-text directly).");
                 }
-                stylesheetXml = await PhoenixmlDb.Xslt.Engine.HttpResourceLoader.GetStringAsync(baseUri).ConfigureAwait(false);
+                else
+                {
+                    stylesheetXml = await PhoenixmlDb.Xslt.Engine.HttpResourceLoader.GetStringAsync(baseUri).ConfigureAwait(false);
+                }
             }
             else
             {
