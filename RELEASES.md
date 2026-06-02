@@ -1,5 +1,32 @@
 # Release History
 
+## 1.4.1 (2026-06-01)
+
+### Fix: Blazor WebAssembly DocBook XSLT regression (Martin Honnen)
+
+DocBook TNG pipelines running under Blazor WebAssembly were broken in 1.4.0
+with errors like `Transformation terminated: No template for X` (from DocBook's
+own `unhandled.xsl` `<xsl:message terminate="yes">`). CLI 1.4.0 worked fine for
+the same example. Two related bugs contributed:
+
+1. **`XsltTransformProvider.LoadStylesheetAsync` bypassed `PreloadedResources`.**
+   The XQuery-side `fn:transform()` provider went straight to
+   `HttpResourceLoader.GetStringAsync` for the `stylesheet-location` URL. On
+   WASM (where sync-over-async HTTP isn't supported) this throws FOXT0001,
+   making the dynamically-invoked DocBook module fail to load. Now mirrors the
+   engine-internal pattern at `XsltTransformer.cs:28485-28505` — consults
+   `PreloadedResources` first.
+2. **`HttpImportPreloader`'s pre-walker missed `fn:transform()` URLs.** The
+   walker only matched literal `doc()` / `document()` calls. DocBook TNG uses
+   `transform(map{'stylesheet-location':'http://...'})` to chain its pipeline
+   modules. Those URLs were never seeded into the auto-preload set, so a host
+   relying on the walker to know what to fetch missed the pipeline modules.
+   Walker now also recognises `(fn:)?transform()` with literal-URL
+   `stylesheet-location`.
+
+Net effect: DocBook XSLT pipelines under Blazor WebAssembly resume working with
+the same explicit-preload pattern that worked before 1.4.0.
+
 ## 1.4.0 (2026-06-01)
 
 W3C XSLT 3.0 streaming conformance jumped from **71.3% → 80.5% (1681 → 1898 tests passing)** via a sustained scanner/processor/engine push. **24 commits** across the streaming pipeline. **11 new W3C streaming sets reached 100%**: si-element, si-LRE, si-value-of, si-copy, si-document, sf-copy-of, sf-fold-right, sf-zero-or-one, sf-innermost, plus all six sx-GeneralComp-* variants.

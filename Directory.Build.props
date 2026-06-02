@@ -6,13 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <PackageReleaseNotes>
-      W3C XSLT 3.0 streaming conformance lifted from 71.3% to 80.5% (1681 to 1898 tests passing) across 24 commits. 11 new streaming test sets reach 100%: si-element, si-LRE, si-value-of, si-copy, si-document, sf-copy-of, sf-fold-right, sf-zero-or-one, sf-innermost, and all six sx-GeneralComp variants.
-      New streaming for-each support inside xsl:source-document: absolute and relative-from-root paths, mixed sequences (literals + path), text() KindTest tail, attribute-axis tail with attribute as context item, last-step predicates, fn:data() unwrap. Conditional wrappers (xsl:on-empty / xsl:on-non-empty / xsl:where-populated) correctly suppress subscription dispatch.
-      New streaming watcher recognitions: xsl:element/@name AVT consuming expressions, SimpleMapExpression(path, per-item-atomic-casts), descendant axis with nested same-name elements, snapshot(streamable-path)//tail, positional [1] head predicate, NamedFunctionRef and InlineFunctionExpression arguments for higher-order functions, motionless last-step predicates on aggregation watchers.
-      Engine fixes: XdmElement._stringValue populated by xsl:variable as=element() path (value-of of variable-constructed elements no longer empty); xsl:copy/@select raises XTTE3180 on multi-item selection; streaming subtree materializer precomputes string-value bottom-up.
-      Bumps PhoenixmlDb.XQuery dependency to 1.4.1 (QT3 production sweep fixes: EQName parser, deep-equal collation, format-number isolation, module copy-namespaces scoping, XPTY0004 for incompatible-type comparisons, function(*) matches map/array, plus more).
+      Fix: Blazor WebAssembly DocBook XSLT regression (Martin Honnen 2026-06-01). Two related issues prevented DocBook TNG pipelines from running under WASM: the XQuery-side fn:transform provider (XsltTransformProvider) bypassed PreloadedResources and tried synchronous HTTP fetch (FOXT0001); and the HttpImportPreloader walker only seeded URLs from doc()/document() calls, missing DocBook's fn:transform(map{'stylesheet-location':'http://...'}) pipeline pattern. Both fixed.
       See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
