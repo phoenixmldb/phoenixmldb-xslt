@@ -1,5 +1,27 @@
 # Release History
 
+## 1.4.2 (2026-06-04)
+
+Two Martin Honnen 2026-06-04 reports fixed, plus continued streaming conformance gains and a small perf improvement.
+
+### Fix: `xsl:output method="json" indent="yes"` honored
+
+The JSON serializer was emitting compact output regardless of `indent="yes"`. `SerializeItemAsJson` now threads an indent flag and current depth through its recursive map/array/object-sequence branches, emitting pretty-printed JSON with two-space indentation when the output declaration requests it. The XQuery side (`XQueryResultSerializer.SerializeAsJson`) already had this wired; only the XSLT path was missing.
+
+### Fix: `xsl:for-each-group group-by` under streaming mode
+
+A template body-level `<xsl:for-each-group select="item!copy-of()" group-by="category">` under `<xsl:mode streamable="yes"/>` was emitting `{}` followed by raw text content of each item. `StreamingSubtreeBufferDetector` only recognized for-each-group nested inside `xsl:fork`; bare for-each-group at template body level fell into the default case and never materialized the matched subtree. The detector now requests a subtree buffer when `xsl:for-each-group` has `group-by` and a select expression that navigates the matched subtree. The existing `_streamingSubtreeBufferConsumed` path picks this up and the non-streaming `group-by` branch evaluates correctly against the buffered element.
+
+Native streaming `group-by` inside `ForEachGroupStreamingAsync` remains a deferred follow-up; the buffer-fallback resolves the reported case and any group-by-over-downward-axis pattern that fits in memory.
+
+### Streaming conformance: +69 since 1.4.1
+
+`StreamingExpressionScanner` now recognizes `outermost(downward-path)` and `innermost(downward-path)` wrapping a SimpleMap with a grounded per-item constructor RHS. The matched nodes materialize as a Snapshot watcher; the wrapping SimpleMap evaluates against the materialized result. Closes ~26 tests across `sf-empty`, `sf-exists`, `sf-not`, `sf-boolean` plus a cascade in adjacent sets. Conformance moved from 1898/2358 to 1967/2358 (83.4%).
+
+### Perf: `XdmText` pooled in streaming processor
+
+`StreamingXmlProcessor` now reuses `XdmText` instances across the per-event Register/Remove cycle via a small instance-scoped pool. Reduces allocation by ~2.2% on a 1M-item streamed identity transform. Snapshot materialization and body-capture paths bypass the pool so captured snapshots never alias pooled instances.
+
 ## 1.4.1 (2026-06-01)
 
 ### Fix: Blazor WebAssembly DocBook XSLT regression (Martin Honnen)

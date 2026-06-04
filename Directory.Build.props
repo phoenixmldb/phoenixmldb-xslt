@@ -6,9 +6,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.1</Version>
+    <Version>1.4.2</Version>
     <PackageReleaseNotes>
-      Fix: Blazor WebAssembly DocBook XSLT regression (Martin Honnen 2026-06-01). Two related issues prevented DocBook TNG pipelines from running under WASM: the XQuery-side fn:transform provider (XsltTransformProvider) bypassed PreloadedResources and tried synchronous HTTP fetch (FOXT0001); and the HttpImportPreloader walker only seeded URLs from doc()/document() calls, missing DocBook's fn:transform(map{'stylesheet-location':'http://...'}) pipeline pattern. Both fixed.
+      Two Martin Honnen 2026-06-04 reports fixed.
+      Fix: xsl:output method='json' indent='yes' now emits pretty-printed JSON (was emitting compact regardless). SerializeItemAsJson threads an indent flag through its recursive calls.
+      Fix: xsl:for-each-group with group-by under streaming mode no longer emits empty {} + raw text leak. StreamingSubtreeBufferDetector now recognizes for-each-group at template body level (not just inside xsl:fork) and requests a subtree buffer for group-by patterns over the matched subtree.
+      Conformance: streaming sweep 1898 → 1967 / 2358 (+69 since 1.4.1) via cluster-1 outermost/innermost recognition.
+      Perf: minor reduction in GC churn via XdmText pool in StreamingXmlProcessor.
       See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
