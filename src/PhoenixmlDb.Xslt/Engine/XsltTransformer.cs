@@ -446,8 +446,11 @@ public sealed class XsltTransformEngine
                 {
                 var allowDupNames = principalOutput?.AllowDuplicateNames == true;
                 var jsonNodeMethod = principalOutput?.JsonNodeOutputMethod;
+                // Honor xsl:output indent="yes" for json output method.
+                var jsonIndent = effectiveMethod == OutputMethod.Json
+                    && (principalOutput?.Indent == true);
                 if (jsonItems.Count == 1)
-                    outputBuilder.Append(SerializeItemAsJson(jsonItems[0], effectiveMethod == OutputMethod.Adaptive, allowDupNames, nodeStore, jsonNodeMethod));
+                    outputBuilder.Append(SerializeItemAsJson(jsonItems[0], effectiveMethod == OutputMethod.Adaptive, allowDupNames, nodeStore, jsonNodeMethod, jsonIndent));
                 else
                 {
                     // Multiple items: for adaptive, separate with newlines; for json, wrap in array
@@ -466,8 +469,10 @@ public sealed class XsltTransformEngine
                         for (int i = 0; i < jsonItems.Count; i++)
                         {
                             if (i > 0) outputBuilder.Append(',');
-                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], false, allowDupNames, nodeStore, jsonNodeMethod));
+                            if (jsonIndent) { outputBuilder.Append('\n'); outputBuilder.Append("  "); }
+                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], false, allowDupNames, nodeStore, jsonNodeMethod, jsonIndent, 1));
                         }
+                        if (jsonIndent && jsonItems.Count > 0) outputBuilder.Append('\n');
                         outputBuilder.Append(']');
                     }
                 }
@@ -982,9 +987,17 @@ public sealed class XsltTransformEngine
         }
     }
 
-    internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, XdmInMemoryStore? store = null, string? jsonNodeOutputMethod = null)
+    internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, XdmInMemoryStore? store = null, string? jsonNodeOutputMethod = null, bool indent = false, int depth = 0)
     {
         if (item == null) return "null";
+
+        // Indent only applies to JSON method (not adaptive). When indenting, expand
+        // braces/brackets across lines with two-space indentation per depth level.
+        var doIndent = indent && !adaptive;
+        var newline = doIndent ? "\n" : "";
+        var innerPad = doIndent ? new string(' ', (depth + 1) * 2) : "";
+        var outerPad = doIndent ? new string(' ', depth * 2) : "";
+        var colonSep = doIndent ? ": " : ":";
 
         switch (item)
         {
@@ -1001,11 +1014,19 @@ public sealed class XsltTransformEngine
                     if (!adaptive && !allowDuplicateNames && !seenKeys.Add(keyStr))
                         throw new XsltException($"SERE0022: Duplicate key '{keyStr}' in JSON map serialization");
                     if (!first) sb.Append(',');
+                    sb.Append(newline);
+                    if (doIndent) sb.Append(innerPad);
                     first = false;
                     sb.Append('"');
                     sb.Append(JsonEscapeString(keyStr));
-                    sb.Append("\":");
-                    sb.Append(SerializeItemAsJson(value, adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
+                    sb.Append('"');
+                    sb.Append(colonSep);
+                    sb.Append(SerializeItemAsJson(value, adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 1));
+                }
+                if (!first)
+                {
+                    sb.Append(newline);
+                    if (doIndent) sb.Append(outerPad);
                 }
                 sb.Append('}');
                 return sb.ToString();
@@ -1017,24 +1038,38 @@ public sealed class XsltTransformEngine
                 for (int i = 0; i < array.Count; i++)
                 {
                     if (i > 0) sb.Append(',');
+                    sb.Append(newline);
+                    if (doIndent) sb.Append(innerPad);
                     // Array members that are sequences (object?[]) need flattening
                     if (array[i] is object?[] memberSeq)
                     {
                         if (memberSeq.Length == 1)
-                            sb.Append(SerializeItemAsJson(memberSeq[0], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
+                            sb.Append(SerializeItemAsJson(memberSeq[0], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 1));
                         else
                         {
                             sb.Append('[');
                             for (int j = 0; j < memberSeq.Length; j++)
                             {
                                 if (j > 0) sb.Append(',');
-                                sb.Append(SerializeItemAsJson(memberSeq[j], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
+                                sb.Append(newline);
+                                if (doIndent) sb.Append(new string(' ', (depth + 2) * 2));
+                                sb.Append(SerializeItemAsJson(memberSeq[j], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 2));
+                            }
+                            if (memberSeq.Length > 0)
+                            {
+                                sb.Append(newline);
+                                if (doIndent) sb.Append(new string(' ', (depth + 1) * 2));
                             }
                             sb.Append(']');
                         }
                     }
                     else
-                        sb.Append(SerializeItemAsJson(array[i], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
+                        sb.Append(SerializeItemAsJson(array[i], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 1));
+                }
+                if (array.Count > 0)
+                {
+                    sb.Append(newline);
+                    if (doIndent) sb.Append(outerPad);
                 }
                 sb.Append(']');
                 return sb.ToString();
@@ -1061,13 +1096,20 @@ public sealed class XsltTransformEngine
             case object?[] seq:
             {
                 // Sequence — serialize items
-                if (seq.Length == 1) return SerializeItemAsJson(seq[0], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod);
+                if (seq.Length == 1) return SerializeItemAsJson(seq[0], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth);
                 var sb = new StringBuilder();
                 sb.Append('[');
                 for (int i = 0; i < seq.Length; i++)
                 {
                     if (i > 0) sb.Append(',');
-                    sb.Append(SerializeItemAsJson(seq[i], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod));
+                    sb.Append(newline);
+                    if (doIndent) sb.Append(innerPad);
+                    sb.Append(SerializeItemAsJson(seq[i], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 1));
+                }
+                if (seq.Length > 0)
+                {
+                    sb.Append(newline);
+                    if (doIndent) sb.Append(outerPad);
                 }
                 sb.Append(']');
                 return sb.ToString();
@@ -13419,16 +13461,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
                     if (jsonItems.Count > 0)
                     {
+                        var rdJsonIndent = (resultIndent ?? matchedOutput?.Indent) == true;
                         if (jsonItems.Count == 1)
-                            _output.Append(XsltTransformEngine.SerializeItemAsJson(jsonItems[0], false, allowDupNames));
+                            _output.Append(XsltTransformEngine.SerializeItemAsJson(jsonItems[0], false, allowDupNames, indent: rdJsonIndent));
                         else
                         {
                             _output.Append('[');
                             for (int i = 0; i < jsonItems.Count; i++)
                             {
                                 if (i > 0) _output.Append(',');
-                                _output.Append(XsltTransformEngine.SerializeItemAsJson(jsonItems[i], false, allowDupNames));
+                                if (rdJsonIndent) { _output.Append('\n'); _output.Append("  "); }
+                                _output.Append(XsltTransformEngine.SerializeItemAsJson(jsonItems[i], false, allowDupNames, indent: rdJsonIndent, depth: 1));
                             }
+                            if (rdJsonIndent) _output.Append('\n');
                             _output.Append(']');
                         }
                     }

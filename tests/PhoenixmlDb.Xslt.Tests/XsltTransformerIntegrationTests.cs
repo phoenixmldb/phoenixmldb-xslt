@@ -196,6 +196,37 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task JsonOutput_WithIndentYes_EmitsIndentedJson()
+    {
+        // Martin Honnen 2026-06-04: xsl:output method="json" indent="yes" was
+        // ignored and emitted compact JSON. It should pretty-print.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="json" indent="yes"/>
+              <xsl:template match="/">
+                <xsl:map>
+                  <xsl:map-entry key="'a'" select="array { 1, 2, 3 }"/>
+                  <xsl:map-entry key="'b'" select="map { 'x' : 'y' }"/>
+                </xsl:map>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<root/>");
+
+        // Multi-line, indented
+        result.Should().Contain("\n").And.Contain("  ");
+        // Compact form should NOT be present
+        result.Should().NotContain("\"a\":[1,2,3]");
+        // Shape: object with two keys, array values are expanded
+        result.Trim().Should().StartWith("{").And.EndWith("}");
+        result.Should().Contain("\"a\": [");
+        result.Should().Contain("\"b\": {");
+        result.Should().Contain("\"x\": \"y\"");
+    }
+
+    [Fact]
     public async Task Output_omit_xml_declaration_yes()
     {
         var transformer = new XsltTransformer();
