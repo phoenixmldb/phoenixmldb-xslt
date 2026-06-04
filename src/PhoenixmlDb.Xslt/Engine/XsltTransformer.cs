@@ -4526,6 +4526,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     Arguments = newArgs,
                 };
             }
+
+            // SimpleMap: descend into Left so a watched LHS (e.g.
+            // outermost(//PRICE) inside `outermost(//PRICE) ! string(.)`) gets
+            // replaced with $__streaming_watcher_N. The Right is a per-item
+            // expression that runs against each materialized item — leave it
+            // unchanged so per-item context evaluation works naturally.
+            case PhoenixmlDb.XQuery.Ast.SimpleMapExpression sme:
+            {
+                var newLeft = RewriteWithWatcherVariables(sme.Left, watchers);
+                if (ReferenceEquals(newLeft, sme.Left)) return expr;
+                return new PhoenixmlDb.XQuery.Ast.SimpleMapExpression
+                {
+                    Left = newLeft,
+                    Right = sme.Right,
+                    IsPathStep = sme.IsPathStep,
+                };
+            }
         }
 
         return expr;

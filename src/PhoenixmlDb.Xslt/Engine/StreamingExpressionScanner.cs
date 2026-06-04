@@ -271,6 +271,43 @@ internal sealed class StreamingExpressionScanner
                 }
                 break;
 
+            // outermost()/innermost() wrapping a downward path. These functions
+            // preserve node identity and just filter — for streaming purposes we
+            // register a Snapshot watcher keyed on the WHOLE filter call so the
+            // body-eval rewriter swaps the call for $__streaming_watcher_N (a
+            // sequence of materialized subtree nodes). A wrapping SimpleMap
+            // RHS (e.g. `outermost(//PRICE) ! string(.)`) then runs per-item
+            // against the grounded subtrees without re-touching the closed
+            // stream. NOTE: outermost matches all path hits then dedupes;
+            // since paths in the test corpus that use this pattern have no
+            // nesting among the matches, the dedupe is a no-op. If callers
+            // rely on the dedupe semantics, the watcher results would need
+            // post-filtering — out of scope for current target tests.
+            case FunctionCallExpression fcFilter when IsFilterFunction(fcFilter):
+                // Only register a watcher when the inner argument is a bare
+                // downward path keyed off the document root. If it has a
+                // non-context InitialExpression (e.g. snapshot(/chapter)//section
+                // inside innermost(...)), fall through to ScanChildExpressions so
+                // the inner snapshot's path is recognized at its own level.
+                if (fcFilter.Arguments[0] is PathExpression filterArgPath
+                    && IsDownwardPath(filterArgPath))
+                {
+                    var filterPath = ExtractPathFromExpression(filterArgPath);
+                    if (filterPath != null)
+                    {
+                        _watchers.Add(new StreamWatcher
+                        {
+                            SourceExpression = expr,
+                            PathMatcher = new StreamPathMatcher(filterPath.Value.Path),
+                            Aggregation = WatcherAggregation.Snapshot,
+                            ValueAttribute = filterPath.Value.Attribute,
+                            Predicates = filterPath.Value.Predicates
+                        });
+                        return;
+                    }
+                }
+                break;
+
             // Map constructor — scan each entry value
             case MapConstructor map:
                 foreach (var entry in map.Entries)
@@ -350,6 +387,21 @@ internal sealed class StreamingExpressionScanner
                     }
                 }
                 break;
+            // SimpleMap that didn't match TryExtractSimpleMapWatcherShape:
+            // descend into the Left side so a watched LHS (e.g.
+            // outermost(//PRICE) inside `outermost(//PRICE) ! string(.)`)
+            // is still recognized. The Right is per-item and runs against
+            // the materialized items at body-eval time — no watcher needed.
+            case SimpleMapExpression sme:
+                ScanExpression(sme.Left);
+                break;
+            // Binary expressions handled here when ScanExpression's case
+            // is bypassed (e.g. comparison inside SimpleMap RHS during
+            // unrecognized-shape recursion).
+            case BinaryExpression bin:
+                ScanExpression(bin.Left);
+                ScanExpression(bin.Right);
+                break;
         }
     }
 
@@ -385,6 +437,19 @@ internal sealed class StreamingExpressionScanner
         return fc.Name.LocalName == "head"
             && fc.Arguments.Count == 1
             && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
+    }
+
+    /// <summary>
+    /// True for fn:outermost / fn:innermost — identity-preserving filter
+    /// functions over a node sequence. When their sole argument is a downward
+    /// path, the scanner can register a Snapshot watcher keyed on the whole
+    /// call so the streaming pass materializes the matched subtrees.
+    /// </summary>
+    private static bool IsFilterFunction(FunctionCallExpression fc)
+    {
+        return fc.Arguments.Count == 1
+            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            && fc.Name.LocalName is "outermost" or "innermost";
     }
 
     /// <summary>

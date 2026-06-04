@@ -599,4 +599,30 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("<out>60</out>",
             because: "user-defined f:add#2 must be resolved as a function-item and used as the fold-right combiner");
     }
+
+    [Fact]
+    public async Task Outermost_SimpleMap_GroundedConstructor_InPredicateFn()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <BOOKLIST><BOOKS>
+              <ITEM><PRICE>1.00</PRICE></ITEM>
+              <ITEM><PRICE>2.00</PRICE></ITEM>
+            </BOOKS></BOOKLIST>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="books.xml">
+                  <out><xsl:value-of select="exists(outermost(//PRICE) ! string(.))"/>;<xsl:value-of select="empty(outermost(//PRICE) ! string(.))"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformWithFile(stylesheet, inputXml, "books.xml");
+        result.Trim().Should().Be("<out>true;false</out>",
+            because: "outermost(//PRICE) yields PRICE elements; SimpleMap with string(.) RHS produces non-empty sequence; exists()=true, empty()=false");
+    }
 }
