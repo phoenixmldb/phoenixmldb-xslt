@@ -80,6 +80,17 @@ internal static class StreamingSubtreeBufferDetector
                 if (ExpressionUsesSnapshot(fe.Select)) return true;
                 return RequiresSubtreeBuffer(fe.Body);
 
+            case XsltForEachGroup feg:
+                // group-starting-with / group-ending-with / group-adjacent have a
+                // streaming dispatch in ForEachGroupStreamingAsync. group-by does
+                // not, and falls through to the non-streaming branch which needs
+                // the matched subtree materialized. Request a subtree buffer when
+                // group-by is in play and the select expression navigates the
+                // matched subtree (bare ., relative downward path, or copy-of()).
+                if (feg.GroupBy != null && TouchesMatchedSubtree(feg.Select)) return true;
+                if (ExpressionUsesSnapshot(feg.Select)) return true;
+                return RequiresSubtreeBuffer(feg.Body);
+
             case XsltLiteralResultElement lre:
                 return RequiresSubtreeBuffer(lre.Content);
 
@@ -94,6 +105,13 @@ internal static class StreamingSubtreeBufferDetector
                 foreach (var rd in fk.ResultDocuments)
                     if (rd.Content != null && RequiresSubtreeBuffer(rd.Content)) return true;
                 return false;
+
+            case XsltMap m:
+                return m.Content != null && RequiresSubtreeBuffer(m.Content);
+
+            case XsltMapEntry me:
+                if (me.Select != null && ExpressionUsesSnapshot(me.Select)) return true;
+                return me.Content != null && RequiresSubtreeBuffer(me.Content);
 
             case XsltWherePopulated wp:
                 return RequiresSubtreeBuffer(wp.Content);
@@ -172,6 +190,17 @@ internal static class StreamingSubtreeBufferDetector
             // snapshot()/copy-of() of an already-grounded subtree (rare nesting)
             case FunctionCallExpression fc when IsSnapshotOrCopyOf(fc):
                 return fc.Arguments.Count > 0 && TouchesMatchedSubtree(fc.Arguments[0]);
+
+            // a ! b (or a / b parsed as SimpleMap) — the streaming context flows
+            // through the left-hand operand, so the whole expression touches the
+            // matched subtree iff the left side does. e.g. item!copy-of(),
+            // item!(name) — common shapes inside xsl:for-each-group select.
+            case SimpleMapExpression sm:
+                return TouchesMatchedSubtree(sm.Left);
+
+            // (expr) — parenthesised forms wrap into a single-item sequence.
+            case SequenceExpression seq when seq.Items.Count == 1:
+                return TouchesMatchedSubtree(seq.Items[0]);
 
             default:
                 return false;

@@ -625,4 +625,59 @@ public class StreamingForEachIntegrationTests
         result.Trim().Should().Be("<out>true;false</out>",
             because: "outermost(//PRICE) yields PRICE elements; SimpleMap with string(.) RHS produces non-empty sequence; exists()=true, empty()=false");
     }
+
+    /// <summary>
+    /// Regression: streamable xsl:for-each-group with group-by at template body
+    /// level used to fall through StreamingSubtreeBufferDetector's default case,
+    /// causing the matched subtree to never materialize. for-each-group then
+    /// evaluated against the empty streaming context (0 groups) and the default
+    /// text-template leaked subsequent text events into output, producing "{}"
+    /// followed by raw text. Martin Honnen report 2026-06-04.
+    /// </summary>
+    [Fact]
+    public async Task ForEachGroup_GroupBy_StreamableWithCopyOf_GroupsCorrectly()
+    {
+        var inputXml = """
+            <?xml version="1.0"?>
+            <root>
+              <item><name>item 1</name><category>D</category></item>
+              <item><name>item 2</name><category>D</category></item>
+              <item><name>item 3</name><category>C</category></item>
+              <item><name>item 4</name><category>B</category></item>
+              <item><name>item 5</name><category>C</category></item>
+              <item><name>item 6</name><category>B</category></item>
+              <item><name>item 7</name><category>D</category></item>
+              <item><name>item 8</name><category>A</category></item>
+              <item><name>item 9</name><category>B</category></item>
+              <item><name>item 10</name><category>A</category></item>
+            </root>
+            """;
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:mode streamable="yes"/>
+              <xsl:output method="json"/>
+              <xsl:template match="root">
+                <xsl:map>
+                  <xsl:for-each-group select="item!copy-of()" group-by="category">
+                    <xsl:map-entry key="current-grouping-key()" select="array { current-group() ! map { 'name' : string(name) } }"/>
+                  </xsl:for-each-group>
+                </xsl:map>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(stylesheet);
+        var result = await transformer.TransformAsync(inputXml);
+        // JSON output — verify each category appears with correct items.
+        // Use Contain rather than Be because key ordering isn't guaranteed.
+        result.Should().Contain("\"A\"");
+        result.Should().Contain("\"B\"");
+        result.Should().Contain("\"C\"");
+        result.Should().Contain("\"D\"");
+        result.Should().Contain("item 1").And.Contain("item 10");
+        // The bug was: raw text dump after {} — make sure result is a single JSON value.
+        result.Trim().Should().StartWith("{").And.EndWith("}");
+        result.Should().NotContain("item 1\n").And.NotContain("\nA\n");
+    }
 }
