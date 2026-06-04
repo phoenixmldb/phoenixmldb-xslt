@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Xml;
 using PhoenixmlDb.Core;
@@ -562,14 +563,17 @@ internal sealed class StreamingXmlProcessor
                     {
                         var textValue = reader.Value;
 
-                        // Text nodes in streaming: create temporary text node, match templates
+                        // Text nodes in streaming: create temporary text node, match templates.
+                        // We pool XdmText instances here to avoid per-event GC churn on
+                        // long-running streamed transforms (10M-item identity allocated 97 GiB
+                        // before pooling). The instance is returned to the pool at the
+                        // matching _nodeStore.Remove below. Safe because:
+                        //   - Watchers consume textValue (string), not the XdmText reference.
+                        //   - StreamingSubtreeMaterializer constructs its own XdmText copies.
+                        //   - Template bodies push/pop context-item stacks within this loop body;
+                        //     the node is unreferenced before we reach Remove.
                         var textNodeId = new NodeId(_nextNodeId++);
-                        var textNode = new XdmText
-                        {
-                            Id = textNodeId,
-                            Document = new DocumentId(0),
-                            Value = textValue
-                        };
+                        var textNode = AcquirePooledText(textNodeId, textValue);
                         _nodeStore.Register(textNode);
 
                         // Fire stream watchers for text content (constructor-time +
@@ -600,6 +604,7 @@ internal sealed class StreamingXmlProcessor
 
                         // Clean up
                         _nodeStore.Remove(textNodeId);
+                        ReleasePooledText(textNode);
                         break;
                     }
 
@@ -1307,5 +1312,50 @@ internal sealed class StreamingXmlProcessor
             if (_nodeStore.GetNode(childId) is XdmText t)
                 yield return t;
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // XdmText pool — reuses instances across the per-event Register/Remove
+    // cycle to cut GC churn during long-running streamed transforms.
+    // Instance-scoped; bounded; mutated via UnsafeAccessor since XdmText's
+    // properties are init-only on the public surface.
+    // ---------------------------------------------------------------------
+
+    private const int MaxPooledTextNodes = 64;
+    private readonly Stack<XdmText> _textPool = new(MaxPooledTextNodes);
+    private static readonly DocumentId StreamingDocumentId = new(0);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_Id")]
+    private static extern void SetXdmNodeId(XdmNode node, NodeId value);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_Value")]
+    private static extern void SetXdmTextValue(XdmText node, string value);
+
+    private XdmText AcquirePooledText(NodeId id, string value)
+    {
+        if (_textPool.TryPop(out var pooled))
+        {
+            SetXdmNodeId(pooled, id);
+            SetXdmTextValue(pooled, value);
+            // Parent is `set` on XdmNode (not init) — reset in case a prior caller stamped it.
+            pooled.Parent = null;
+            return pooled;
+        }
+        return new XdmText
+        {
+            Id = id,
+            Document = StreamingDocumentId,
+            Value = value
+        };
+    }
+
+    private void ReleasePooledText(XdmText node)
+    {
+        if (_textPool.Count >= MaxPooledTextNodes) return;
+        // Clear potentially-large string reference so the pooled slot doesn't
+        // pin the previous text content alive while idle.
+        SetXdmTextValue(node, string.Empty);
+        node.Parent = null;
+        _textPool.Push(node);
     }
 }
