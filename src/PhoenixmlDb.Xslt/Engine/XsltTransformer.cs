@@ -407,77 +407,7 @@ public sealed class XsltTransformEngine
         // For JSON/Adaptive output: collect sequence items and serialize as JSON
         if (isJsonOutput)
         {
-            var jsonItems = context.EndSequenceCollection();
-            // When TransformToValueAsync was called (ReturnRawXdm = true), capture the
-            // typed items into the raw-result box BEFORE serialization. Without this,
-            // initial-template / apply-templates invocations that produce maps or arrays
-            // returned null from TransformToValueAsync — only the InitialFunction path
-            // populated RawResult. (Martin Honnen's report: TransformToValueAsync on a
-            // map/array-producing initial-template returned empty even though the CLI
-            // produced the right JSON.)
-            if (options.ReturnRawXdm)
-            {
-                object? rawValue = jsonItems.Count switch
-                {
-                    0 => null,
-                    1 => jsonItems[0],
-                    _ => jsonItems.ToArray()
-                };
-                options.RawResult.Value = WrapNodesForCrossStoreTransport(rawValue, context);
-            }
-            // Also capture any text content that was written to outputBuilder
-            var textContent = outputBuilder.ToString();
-            outputBuilder.Clear();
-            if (!string.IsNullOrEmpty(textContent) && jsonItems.Count == 0)
-            {
-                // Text content only — for adaptive, output as-is
-                outputBuilder.Append(textContent);
-            }
-            else if (jsonItems.Count > 0)
-            {
-                var effectiveMethod = principalOutput?.EffectiveMethod ?? OutputMethod.Json;
-
-                // CSV serialization (XSLT 4.0)
-                if (effectiveMethod == OutputMethod.Csv)
-                {
-                    outputBuilder.Append(SerializeAsCsv(jsonItems));
-                }
-                else
-                {
-                var allowDupNames = principalOutput?.AllowDuplicateNames == true;
-                var jsonNodeMethod = principalOutput?.JsonNodeOutputMethod;
-                // Honor xsl:output indent="yes" for json output method.
-                var jsonIndent = effectiveMethod == OutputMethod.Json
-                    && (principalOutput?.Indent == true);
-                if (jsonItems.Count == 1)
-                    outputBuilder.Append(SerializeItemAsJson(jsonItems[0], effectiveMethod == OutputMethod.Adaptive, allowDupNames, nodeStore, jsonNodeMethod, jsonIndent));
-                else
-                {
-                    // Multiple items: for adaptive, separate with newlines; for json, wrap in array
-                    if (effectiveMethod == OutputMethod.Adaptive)
-                    {
-                        for (int i = 0; i < jsonItems.Count; i++)
-                        {
-                            if (i > 0) outputBuilder.Append('\n');
-                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], true, allowDupNames, nodeStore, jsonNodeMethod));
-                        }
-                    }
-                    else
-                    {
-                        // JSON method with multiple items — serialize as array
-                        outputBuilder.Append('[');
-                        for (int i = 0; i < jsonItems.Count; i++)
-                        {
-                            if (i > 0) outputBuilder.Append(',');
-                            if (jsonIndent) { outputBuilder.Append('\n'); outputBuilder.Append("  "); }
-                            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], false, allowDupNames, nodeStore, jsonNodeMethod, jsonIndent, 1));
-                        }
-                        if (jsonIndent && jsonItems.Count > 0) outputBuilder.Append('\n');
-                        outputBuilder.Append(']');
-                    }
-                }
-                } // close CSV else
-            }
+            FinalizeJsonOutput(context, outputBuilder, principalOutput, nodeStore, options);
         }
 
         // Capture secondary result documents from this transform
@@ -985,6 +915,79 @@ public sealed class XsltTransformEngine
         {
             sb.Append(value);
         }
+    }
+
+    /// <summary>
+    /// Drains the JSON sequence-collection accumulator on <paramref name="context"/> and
+    /// serializes its items into <paramref name="outputBuilder"/> per the principal
+    /// xsl:output declaration's method/indent/allow-duplicate-names settings. Used by
+    /// both the non-streaming and streaming transform entry points so they share
+    /// identical JSON/Adaptive/CSV emission — without this shared path, the streaming
+    /// path fell through to <c>CreateMapAsync</c>'s no-accumulator branch which serialized
+    /// in adaptive mode (unquoted strings, no indent). Reported by Martin Honnen.
+    /// </summary>
+    internal static void FinalizeJsonOutput(
+        DefaultXsltExecutionContext context,
+        StringBuilder outputBuilder,
+        XsltOutput? principalOutput,
+        XdmInMemoryStore? nodeStore,
+        XsltTransformOptions options)
+    {
+        var jsonItems = context.EndSequenceCollection();
+        if (options.ReturnRawXdm)
+        {
+            object? rawValue = jsonItems.Count switch
+            {
+                0 => null,
+                1 => jsonItems[0],
+                _ => jsonItems.ToArray()
+            };
+            options.RawResult.Value = WrapNodesForCrossStoreTransport(rawValue, context);
+        }
+        var textContent = outputBuilder.ToString();
+        outputBuilder.Clear();
+        if (!string.IsNullOrEmpty(textContent) && jsonItems.Count == 0)
+        {
+            outputBuilder.Append(textContent);
+            return;
+        }
+        if (jsonItems.Count == 0)
+            return;
+
+        var effectiveMethod = principalOutput?.EffectiveMethod ?? OutputMethod.Json;
+        if (effectiveMethod == OutputMethod.Csv)
+        {
+            outputBuilder.Append(SerializeAsCsv(jsonItems));
+            return;
+        }
+
+        var allowDupNames = principalOutput?.AllowDuplicateNames == true;
+        var jsonNodeMethod = principalOutput?.JsonNodeOutputMethod;
+        var jsonIndent = effectiveMethod == OutputMethod.Json
+            && (principalOutput?.Indent == true);
+        if (jsonItems.Count == 1)
+        {
+            outputBuilder.Append(SerializeItemAsJson(jsonItems[0], effectiveMethod == OutputMethod.Adaptive, allowDupNames, nodeStore, jsonNodeMethod, jsonIndent));
+            return;
+        }
+        if (effectiveMethod == OutputMethod.Adaptive)
+        {
+            for (int i = 0; i < jsonItems.Count; i++)
+            {
+                if (i > 0) outputBuilder.Append('\n');
+                outputBuilder.Append(SerializeItemAsJson(jsonItems[i], true, allowDupNames, nodeStore, jsonNodeMethod));
+            }
+            return;
+        }
+        outputBuilder.Append('[');
+        for (int i = 0; i < jsonItems.Count; i++)
+        {
+            if (i > 0) outputBuilder.Append(',');
+            if (jsonIndent) { outputBuilder.Append('\n'); outputBuilder.Append("  "); }
+            outputBuilder.Append(SerializeItemAsJson(jsonItems[i], false, allowDupNames, nodeStore, jsonNodeMethod, jsonIndent, 1));
+        }
+        if (jsonIndent && jsonItems.Count > 0) outputBuilder.Append('\n');
+        outputBuilder.Append(']');
     }
 
     internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, XdmInMemoryStore? store = null, string? jsonNodeOutputMethod = null, bool indent = false, int depth = 0)
@@ -3006,6 +3009,17 @@ public sealed class XsltTransformEngine
             ? _stylesheet.Accumulators.Values.ToList()
             : null;
 
+        // For JSON/Adaptive/CSV output, mirror the non-streaming TransformAsync path:
+        // collect top-level items via the sequence accumulator so xsl:map/xsl:array
+        // build typed XDM values that FinalizeJsonOutput serializes once at the end.
+        // Without this, top-level CreateMapAsync sees a null accumulator and falls
+        // through to its adaptive-text branch (unquoted string values, no indent).
+        // Reported by Martin Honnen against streamed JSON output.
+        var streamingPrincipalOutput = _stylesheet.Outputs.FirstOrDefault();
+        var isStreamingJsonOutput = streamingPrincipalOutput?.EffectiveMethod is OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv;
+        if (isStreamingJsonOutput)
+            context.BeginSequenceCollection();
+
         var processor = new StreamingXmlProcessor(
             _stylesheet, _templateIndex, context, nodeStore, options.InitialMode,
             streamingAccumulators);
@@ -3014,6 +3028,9 @@ public sealed class XsltTransformEngine
 
         // Final drain — anything emitted after the last event-boundary drain.
         await context.DrainStreamingOutputAsync(options.CancellationToken).ConfigureAwait(false);
+
+        if (isStreamingJsonOutput)
+            FinalizeJsonOutput(context, outputBuilder, streamingPrincipalOutput, nodeStore, options);
 
         // Surface secondary results to the engine regardless of sink mode.
         SecondaryResultDocuments = context.SecondaryResults;
@@ -18258,6 +18275,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         var array = new List<object?>();
         _arrayBuildStack.Push(array);
+        // Per XSLT 4.0 §22, every top-level item produced by the body becomes a member
+        // of the new array. Redirect the sequence accumulator to `array` so items
+        // emitted by xsl:map / xsl:sequence / atomic value-of inside the body land
+        // directly as array members. Without this, those items leaked to whatever
+        // outer accumulator was active and the array itself ended up empty (or with
+        // only xsl:array-member contributions). Reported by Martin Honnen via the
+        // streamed-JSON repro: the wrapping xsl:map-entry's value gathered the inner
+        // maps plus an empty trailing [].
+        var savedAccumulator = _sequenceAccumulator;
+        _sequenceAccumulator = array;
         try
         {
             if (instruction.Content != null)
@@ -18265,6 +18292,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         finally
         {
+            _sequenceAccumulator = savedAccumulator;
             _arrayBuildStack.Pop();
         }
 

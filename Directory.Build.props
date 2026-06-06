@@ -6,13 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.2</Version>
+    <Version>1.4.3</Version>
     <PackageReleaseNotes>
-      Two Martin Honnen 2026-06-04 reports fixed.
-      Fix: xsl:output method='json' indent='yes' now emits pretty-printed JSON (was emitting compact regardless). SerializeItemAsJson threads an indent flag through its recursive calls.
-      Fix: xsl:for-each-group with group-by under streaming mode no longer emits empty {} + raw text leak. StreamingSubtreeBufferDetector now recognizes for-each-group at template body level (not just inside xsl:fork) and requests a subtree buffer for group-by patterns over the matched subtree.
-      Conformance: streaming sweep 1898 → 1967 / 2358 (+69 since 1.4.1) via cluster-1 outermost/innermost recognition.
-      Perf: minor reduction in GC churn via XdmText pool in StreamingXmlProcessor.
+      Two Martin Honnen 2026-06-06 reports fixed.
+      Fix: streamed JSON output now quotes string values and honors indent='yes'. TransformStreamingCoreAsync begins sequence collection and routes through a shared FinalizeJsonOutput helper, instead of falling into CreateMapAsync's adaptive-mode no-accumulator branch which dropped quotes and ignored indent.
+      Fix: xsl:array body no longer leaks a stray empty [] at the end. CreateArrayAsync now redirects _sequenceAccumulator to the array under construction, so top-level body items become array members per XSLT 4.0 §22. Affects both streaming and non-streaming paths.
       See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>

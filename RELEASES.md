@@ -1,5 +1,21 @@
 # Release History
 
+## 1.4.3 (2026-06-06)
+
+Two Martin Honnen 2026-06-06 reports fixed.
+
+### Fix: streamed JSON output — string values now quoted
+
+When `xsl:output method="json"` was driving a streaming transform, top-level `xsl:map` constructs were emitted with unquoted string values — `{"name":item 1}` instead of `{"name":"item 1"}` — producing invalid JSON. Root cause: `TransformStreamingCoreAsync` never called `BeginSequenceCollection`, so the streaming path's top-level `CreateMapAsync` fell into its no-accumulator branch which called `SerializeItemAsJson(map, adaptive: true)` — adaptive mode is by design quote-stripping. The non-streaming entry point set up sequence collection at the start and called the proper finalizer at the end; the streaming entry didn't. Both paths now share a single `FinalizeJsonOutput` helper that honors the output declaration's `method`, `indent`, `allow-duplicate-names`, and `json-node-output-method`.
+
+### Fix: streamed JSON output — `indent="yes"` honored
+
+Same root cause as above. Once the streaming entry point routes through `FinalizeJsonOutput`, the existing indent-threading inside `SerializeItemAsJson` (added in 1.4.2 for the non-streaming case) takes effect for streaming output too.
+
+### Fix: stray empty array at end of `xsl:array` content
+
+A wrapping `xsl:map-entry` containing `<xsl:array><xsl:for-each ...><xsl:map>...</xsl:map></xsl:for-each></xsl:array>` emitted an extra `[]` member at the end of the array — `[map1, map2, map3, []]`. `CreateArrayAsync` was not redirecting `_sequenceAccumulator` to the array under construction, so top-level items produced by the body (xsl:map, xsl:sequence, atomic value-of) leaked to the outer accumulator and the array itself ended up empty (only xsl:array-member contributions reached it). Per XSLT 4.0 §22, every top-level item produced by the body becomes a member of the new array. `CreateArrayAsync` now saves the outer accumulator and points it at the new array for the body's execution; `xsl:array-member` continues to write directly to the array peek as before. Affects both streaming and non-streaming paths.
+
 ## 1.4.2 (2026-06-04)
 
 Two Martin Honnen 2026-06-04 reports fixed, plus continued streaming conformance gains and a small perf improvement.
