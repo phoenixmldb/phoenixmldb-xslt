@@ -5,6 +5,7 @@ using PhoenixmlDb.Core;
 using PhoenixmlDb.Xdm;
 using PhoenixmlDb.Xdm.Nodes;
 using PhoenixmlDb.Xslt.Ast;
+using PhoenixmlDb.XQuery.Ast;
 
 namespace PhoenixmlDb.Xslt.Engine;
 
@@ -716,16 +717,25 @@ internal sealed class StreamingXmlProcessor
         if (_accCurrentValues == null || _accNodeValueMaps == null || _accumulators.Count == 0)
             return;
 
+        // Lazy-cache the 5 delegates: method-group conversions allocate fresh delegates
+        // per call, and this method fires once per node during streaming. Captured
+        // `_nodeStore` and `_context` are stable for the lifetime of the processor.
+        _accMatchNodeResolver ??= id => _nodeStore.GetNode(id);
+        _accMatchPredicateEvaluator ??= _context.EvaluatePatternPredicate;
+        _accMatchPositionComputer ??= _context.ComputeNodePosition;
+        _accMatchKeyPatternEvaluator ??= _context.EvaluateKeyPattern;
+        _accMatchIdPatternEvaluator ??= _context.EvaluateIdPattern;
+
         var matchContext = new XsltContext
         {
             CurrentNode = node,
             Position = 1,
             Last = 1,
-            NodeResolver = id => _nodeStore.GetNode(id),
-            PredicateEvaluator = _context.EvaluatePatternPredicate,
-            PositionComputer = _context.ComputeNodePosition,
-            KeyPatternEvaluator = _context.EvaluateKeyPattern,
-            IdPatternEvaluator = _context.EvaluateIdPattern
+            NodeResolver = _accMatchNodeResolver,
+            PredicateEvaluator = _accMatchPredicateEvaluator,
+            PositionComputer = _accMatchPositionComputer,
+            KeyPatternEvaluator = _accMatchKeyPatternEvaluator,
+            IdPatternEvaluator = _accMatchIdPatternEvaluator,
         };
 
         for (var i = 0; i < _accumulators.Count; i++)
@@ -1371,6 +1381,13 @@ internal sealed class StreamingXmlProcessor
     // burns one attribute per source attribute; pooling cuts that churn during
     // long streamed transforms.
     // ---------------------------------------------------------------------
+
+    // Cached match-context delegates for FireAccumulatorRulesAsync. See comment there.
+    private Func<NodeId, XdmNode?>? _accMatchNodeResolver;
+    private Func<object, XQueryExpression, int, int, object?, bool>? _accMatchPredicateEvaluator;
+    private Func<object, NodeTest, object?, (int, int)>? _accMatchPositionComputer;
+    private Func<string, XQueryExpression, object, bool>? _accMatchKeyPatternEvaluator;
+    private Func<XQueryExpression, object, bool>? _accMatchIdPatternEvaluator;
 
     private const int MaxPooledAttributes = 128;
     private readonly Stack<XdmAttribute> _attributePool = new(MaxPooledAttributes);
