@@ -5994,14 +5994,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         foreach (var scope in _scopes)
         {
-            if (scope.Variables.TryGetValue(name, out var value))
+            if (scope.VariablesOrNull is { } vars && vars.TryGetValue(name, out var value))
             {
                 // Handle lazy evaluation: if the value is a LazyValue, evaluate it now
                 if (value is LazyValue lazy)
                 {
                     var evaluated = lazy.GetValueAsync().AsTask().GetAwaiter().GetResult();
                     // Cache the evaluated value for future accesses
-                    scope.Variables[name] = evaluated;
+                    vars[name] = evaluated;
                     return evaluated;
                 }
                 return value;
@@ -6159,7 +6159,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         foreach (var scope in _scopes)
         {
-            if (scope.TunnelParameters.TryGetValue(name, out value))
+            if (scope.TunnelParametersOrNull is { } tunnels && tunnels.TryGetValue(name, out value))
                 return true;
             // Stop at function boundaries — tunnel params don't propagate through functions
             if (scope.IsTunnelBarrier)
@@ -6178,12 +6178,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         foreach (var scope in _scopes)
         {
-            if (scope.Variables.TryGetValue(name, out value))
+            if (scope.VariablesOrNull is { } vars && vars.TryGetValue(name, out value))
             {
                 if (value is LazyValue lazy)
                 {
                     value = lazy.GetValueAsync().AsTask().GetAwaiter().GetResult();
-                    scope.Variables[name] = value;
+                    vars[name] = value;
                 }
                 return true;
             }
@@ -21680,8 +21680,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     private sealed class Scope
     {
-        public Dictionary<QName, object?> Variables { get; } = new();
-        public Dictionary<QName, object?> TunnelParameters { get; } = new();
+        // Lazy-init Variables / TunnelParameters dictionaries: most scopes (e.g. the
+        // shallow-copy identity template fire) bind no variables, so eagerly allocating
+        // two Dictionaries per PushScope burned ~28% of the streaming bench's
+        // post-delegate-cache allocation. Readers use `VariablesOrNull`/`TunnelParametersOrNull`
+        // to short-circuit on empty; the public getters lazy-allocate only on write.
+        private Dictionary<QName, object?>? _variables;
+        private Dictionary<QName, object?>? _tunnelParameters;
+
+        public Dictionary<QName, object?> Variables => _variables ??= new();
+        public Dictionary<QName, object?> TunnelParameters => _tunnelParameters ??= new();
+
+        /// <summary>Returns the backing variables dictionary or <c>null</c> if no variable has been bound.</summary>
+        public Dictionary<QName, object?>? VariablesOrNull => _variables;
+        /// <summary>Returns the backing tunnel-parameter dictionary or <c>null</c> if no parameter has been bound.</summary>
+        public Dictionary<QName, object?>? TunnelParametersOrNull => _tunnelParameters;
+
         public Scope? Parent { get; }
         /// <summary>
         /// When true, tunnel parameter search stops at this scope boundary.
