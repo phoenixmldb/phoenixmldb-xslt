@@ -132,20 +132,21 @@ internal sealed class StreamingXmlProcessor
                         // but still fire accumulators (they must track the full document).
                         if (suppressionDepth >= 0 && elementDepth > suppressionDepth)
                         {
-                            // Build minimal node for accumulator rules
-                            var skipAttrs = new List<StreamingNodeContext>();
-                            var skipNsDecls = new Dictionary<string, string>();
+                            // Build minimal node for accumulator rules. Lazy-alloc the attrs / nsDecls
+                            // collections; most elements have one but not both.
+                            List<StreamingNodeContext>? skipAttrs = null;
+                            Dictionary<string, string>? skipNsDecls = null;
                             if (reader.HasAttributes)
                             {
                                 for (int i = 0; i < reader.AttributeCount; i++)
                                 {
                                     reader.MoveToAttribute(i);
                                     if (reader.Prefix == "xmlns" || (reader.Prefix.Length == 0 && reader.LocalName == "xmlns"))
-                                        skipNsDecls[reader.Prefix == "xmlns" ? reader.LocalName : ""] = reader.Value;
+                                        (skipNsDecls ??= new Dictionary<string, string>(StringComparer.Ordinal))[reader.Prefix == "xmlns" ? reader.LocalName : ""] = reader.Value;
                                     else
                                     {
                                         var skipAttrId = new NodeId(_nextNodeId++);
-                                        skipAttrs.Add(new StreamingNodeContext
+                                        (skipAttrs ??= new List<StreamingNodeContext>()).Add(new StreamingNodeContext
                                         {
                                             NodeKind = XdmNodeKind.Attribute,
                                             LocalName = reader.LocalName,
@@ -180,9 +181,9 @@ internal sealed class StreamingXmlProcessor
                             if (_watchers != null || _context._activeStreamWatchers != null)
                             {
                                 Dictionary<string, string>? skipAttrDict = null;
-                                if (skipAttrs.Count > 0)
+                                if (skipAttrs is { Count: > 0 })
                                 {
-                                    skipAttrDict = new Dictionary<string, string>(skipAttrs.Count);
+                                    skipAttrDict = new Dictionary<string, string>(skipAttrs.Count, StringComparer.Ordinal);
                                     foreach (var attr in skipAttrs)
                                         skipAttrDict[attr.LocalName] = attr.StringValue ?? "";
                                 }
@@ -203,9 +204,12 @@ internal sealed class StreamingXmlProcessor
                             break;
                         }
 
-                        // Collect attributes and namespace declarations
-                        var attrs = new List<StreamingNodeContext>();
-                        var nsDecls = new Dictionary<string, string>();
+                        // Collect attributes and namespace declarations. Lazy-alloc both
+                        // collections — many streamed elements have one but not the other,
+                        // and the per-element empty-dict / empty-list churn was ~17% of
+                        // post-delegate-cache allocations.
+                        List<StreamingNodeContext>? attrs = null;
+                        Dictionary<string, string>? nsDecls = null;
                         if (reader.HasAttributes)
                         {
                             for (int i = 0; i < reader.AttributeCount; i++)
@@ -214,11 +218,11 @@ internal sealed class StreamingXmlProcessor
                                 if (reader.Prefix == "xmlns" || (reader.Prefix.Length == 0 && reader.LocalName == "xmlns"))
                                 {
                                     var prefix = reader.Prefix == "xmlns" ? reader.LocalName : "";
-                                    nsDecls[prefix] = reader.Value;
+                                    (nsDecls ??= new Dictionary<string, string>(StringComparer.Ordinal))[prefix] = reader.Value;
                                 }
                                 else
                                 {
-                                    attrs.Add(new StreamingNodeContext
+                                    (attrs ??= new List<StreamingNodeContext>()).Add(new StreamingNodeContext
                                     {
                                         NodeKind = XdmNodeKind.Attribute,
                                         LocalName = reader.LocalName,
@@ -264,9 +268,9 @@ internal sealed class StreamingXmlProcessor
                         {
                             // Build attribute dictionary for watcher matching
                             Dictionary<string, string>? attrDict = null;
-                            if (attrs.Count > 0)
+                            if (attrs is { Count: > 0 })
                             {
-                                attrDict = new Dictionary<string, string>(attrs.Count);
+                                attrDict = new Dictionary<string, string>(attrs.Count, StringComparer.Ordinal);
                                 foreach (var attr in attrs)
                                     attrDict[attr.LocalName] = attr.StringValue ?? "";
                             }
@@ -1163,8 +1167,11 @@ internal sealed class StreamingXmlProcessor
     {
         // Remove temporary XDM nodes from the node store and return any materialized
         // XdmAttribute instances to the per-processor pool (paired with MaterializeElement).
-        foreach (var attr in ctx.Attributes)
-            _nodeStore.Remove(attr.NodeId);
+        if (ctx.Attributes is { } ctxAttrs)
+        {
+            foreach (var attr in ctxAttrs)
+                _nodeStore.Remove(attr.NodeId);
+        }
         if (ctx.MaterializedAttributes is { } materialized)
         {
             foreach (var attr in materialized)
@@ -1447,22 +1454,28 @@ internal sealed class StreamingXmlProcessor
         List<NodeId>? attrIds = null;
         List<XdmAttribute>? materializedAttrs = null;
 
-        foreach (var attr in ctx.Attributes)
+        if (ctx.Attributes is { } ctxAttrs)
         {
-            var attrNsId = _nodeStore.InternNamespace(attr.NamespaceUri);
-            var xdmAttr = AcquirePooledAttribute(
-                attr.NodeId, attrNsId, attr.LocalName, attr.Prefix, attr.StringValue ?? string.Empty);
-            _nodeStore.Register(xdmAttr);
-            (attrIds ??= new List<NodeId>()).Add(attr.NodeId);
-            (materializedAttrs ??= new List<XdmAttribute>()).Add(xdmAttr);
+            foreach (var attr in ctxAttrs)
+            {
+                var attrNsId = _nodeStore.InternNamespace(attr.NamespaceUri);
+                var xdmAttr = AcquirePooledAttribute(
+                    attr.NodeId, attrNsId, attr.LocalName, attr.Prefix, attr.StringValue ?? string.Empty);
+                _nodeStore.Register(xdmAttr);
+                (attrIds ??= new List<NodeId>()).Add(attr.NodeId);
+                (materializedAttrs ??= new List<XdmAttribute>()).Add(xdmAttr);
+            }
         }
         ctx.MaterializedAttributes = materializedAttrs;
 
         List<NamespaceBinding>? nsBindings = null;
-        foreach (var (prefix, uri) in ctx.NamespaceDeclarations)
+        if (ctx.NamespaceDeclarations is { } ctxNs)
         {
-            (nsBindings ??= new List<NamespaceBinding>())
-                .Add(new NamespaceBinding(prefix, _nodeStore.InternNamespace(uri)));
+            foreach (var (prefix, uri) in ctxNs)
+            {
+                (nsBindings ??= new List<NamespaceBinding>())
+                    .Add(new NamespaceBinding(prefix, _nodeStore.InternNamespace(uri)));
+            }
         }
 
         var elem = new XdmElement

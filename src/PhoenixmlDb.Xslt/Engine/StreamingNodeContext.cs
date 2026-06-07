@@ -19,11 +19,21 @@ internal sealed class StreamingNodeContext
     public string? StringValue { get; set; }
     public NodeId NodeId { get; init; }
 
-    /// <summary>Attributes of the current element (empty for non-elements).</summary>
-    public List<StreamingNodeContext> Attributes { get; init; } = [];
+    /// <summary>
+    /// Attributes of the current element. Null when the element has no attributes —
+    /// callers must treat null the same as empty. Made nullable to skip the
+    /// per-element List allocation on attribute-less elements (very common in
+    /// streamed workloads).
+    /// </summary>
+    public List<StreamingNodeContext>? Attributes { get; init; }
 
-    /// <summary>Namespace declarations on the current element.</summary>
-    public Dictionary<string, string> NamespaceDeclarations { get; init; } = new();
+    /// <summary>
+    /// Namespace declarations on the current element. Null when no <c>xmlns:*</c>
+    /// appears — most elements in a streamed document inherit ns from their parent
+    /// and declare nothing, so allocating an empty Dictionary per element is waste.
+    /// Callers must treat null as empty.
+    /// </summary>
+    public Dictionary<string, string>? NamespaceDeclarations { get; init; }
 
     /// <summary>Parent context (for ancestor axis limited to streaming depth).</summary>
     public StreamingNodeContext? Parent { get; init; }
