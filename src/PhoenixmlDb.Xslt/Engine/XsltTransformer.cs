@@ -6427,7 +6427,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
 
                 // Find matching template
-                var template = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext());
+                XsltTemplate? template;
+                using (var mc = AcquireMatchContext())
+                    template = _templateIndex.FindMatchingTemplate(node, mode, mc.Value);
 
                 // XTDE0540: Check on-multiple-match="fail"
                 if (template != null)
@@ -6439,13 +6441,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         // Check if there's another matching template at the same priority.
                         // Skip union siblings: matching two branches of a union pattern
                         // doesn't count as multiple match (spec bug 30402).
-                        var next = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext(), template);
+                        XsltTemplate? next;
+                        using (var mc = AcquireMatchContext())
+                            next = _templateIndex.FindMatchingTemplate(node, mode, mc.Value, template);
                         while (next != null
                             && template.UnionGroupId != null
                             && next.UnionGroupId == template.UnionGroupId
                             && TemplateIndex.EffectivePriority(next) == TemplateIndex.EffectivePriority(template))
                         {
-                            next = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext(), next);
+                            using var mc2 = AcquireMatchContext();
+                            next = _templateIndex.FindMatchingTemplate(node, mode, mc2.Value, next);
                         }
                         if (next != null && TemplateIndex.EffectivePriority(next) == TemplateIndex.EffectivePriority(template))
                             throw Error($"XTDE0540: Multiple template rules match the node in a mode with on-multiple-match='fail'");
@@ -6744,7 +6749,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         foreach (var attr in _nodeStore.GetAttributes(elemSkip))
                         {
-                            var template = _templateIndex.FindMatchingTemplate(attr, mode, CreateMatchContext());
+                            XsltTemplate? template;
+                            using (var mc = AcquireMatchContext())
+                                template = _templateIndex.FindMatchingTemplate(attr, mode, mc.Value);
                             if (template != null)
                             {
                                 await ExecuteMatchedTemplateAsync(template, attr, mode, withParams)
@@ -6844,7 +6851,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     foreach (var attr in _nodeStore.GetAttributes(elem))
                     {
-                        var template = _templateIndex.FindMatchingTemplate(attr, mode, CreateMatchContext());
+                        XsltTemplate? template;
+                        using (var mc = AcquireMatchContext())
+                            template = _templateIndex.FindMatchingTemplate(attr, mode, mc.Value);
                         if (template != null)
                         {
                             templateMatches.Add((template, attr));
@@ -7155,7 +7164,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var pushedScope = true;
         try
         {
-            var template = _templateIndex.FindMatchingTemplate(node, mode, CreateMatchContext());
+            XsltTemplate? template;
+            using (var mc = AcquireMatchContext())
+                template = _templateIndex.FindMatchingTemplate(node, mode, mc.Value);
             if (template != null)
             {
                 // Pre-scan template body for snapshot()/copy-of() of the matched subtree.
@@ -8044,7 +8055,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // (lower precedence than the module containing the current template).
         // This differs from next-match which searches all templates in priority order.
         var ownerIndex = _templateIndex.FindOwnerIndex(_currentTemplate);
-        var importedTemplate = ownerIndex?.FindImportedTemplate(node, _currentMode, CreateMatchContext());
+        XsltTemplate? importedTemplate;
+        using (var mc = AcquireMatchContext())
+            importedTemplate = ownerIndex?.FindImportedTemplate(node, _currentMode, mc.Value);
 
         if (importedTemplate != null)
         {
@@ -8142,7 +8155,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             throw Error("XTDE0560: xsl:next-match requires a context item, but the context item is absent");
         }
 
-        var nextTemplate = _templateIndex.FindMatchingTemplate(node, _currentMode, CreateMatchContext(), _currentTemplate);
+        XsltTemplate? nextTemplate;
+        using (var mc = AcquireMatchContext())
+            nextTemplate = _templateIndex.FindMatchingTemplate(node, _currentMode, mc.Value, _currentTemplate);
 
         if (nextTemplate != null)
         {
@@ -9318,8 +9333,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         // XSLT 3.0 allows patterns to match atomic values (e.g., ".[. instance of xs:string]")
         // Let the pattern decide if it can match the item type
-        var mc = CreateMatchContext();
-        return pattern.Matches(item, mc);
+        using var mc = AcquireMatchContext();
+        return pattern.Matches(item, mc.Value);
     }
 
     private async Task<List<(object Key, List<object> Items)>> SortGroupsAsync(
@@ -13687,7 +13702,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Ensure cached delegates are populated (mirrors CreateMatchContext).
         // _matchCtxNodeResolver may capture a different nodeStore here, so we
         // build a per-call resolver only if the cached one doesn't already match.
-        if (_matchCtxPredicateEvaluator is null) _ = CreateMatchContext();
+        EnsureMatchCtxDelegates();
         var matchContext = new XsltContext
         {
             CurrentNode = node,
@@ -15887,12 +15902,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                     break;
                             }
 
-                            currentMatches = countPattern.Matches(current, CreateMatchContext(currentPosition, totalMatchingNodeTest));
+                            using var mc = AcquireMatchContext(currentPosition, totalMatchingNodeTest);
+                            currentMatches = countPattern.Matches(current, mc.Value);
                         }
                     }
                     else
                     {
-                        currentMatches = countPattern.Matches(current, CreateMatchContext());
+                        using var mc = AcquireMatchContext();
+                        currentMatches = countPattern.Matches(current, mc.Value);
                     }
 
                     if (currentMatches)
@@ -15912,7 +15929,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                     if (countPattern.MatchesNodeTest(sibling))
                                         nodeTestPosition++;
 
-                                    if (countPattern.Matches(sibling, CreateMatchContext(nodeTestPosition, totalMatchingNodeTest)))
+                                    bool siblingMatches;
+                                    using (var mc = AcquireMatchContext(nodeTestPosition, totalMatchingNodeTest))
+                                        siblingMatches = countPattern.Matches(sibling, mc.Value);
+                                    if (siblingMatches)
                                         count++;
 
                                     if (sibling.Id == current.Id)
@@ -15925,8 +15945,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
                     // Check from pattern AFTER count — a node matching both from and count
                     // should still be counted before the walk stops
-                    if (fromPattern != null && fromPattern.Matches(current, CreateMatchContext()))
-                        break;
+                    if (fromPattern != null)
+                    {
+                        bool fromMatched;
+                        using (var mc = AcquireMatchContext())
+                            fromMatched = fromPattern.Matches(current, mc.Value);
+                        if (fromMatched) break;
+                    }
 
                     if (current.Parent is not { } pid || pid == NodeId.None)
                         break;
@@ -15965,15 +15990,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return;
 
         // Reset count if we hit the from pattern
-        if (fromPattern != null && fromPattern.Matches(node, CreateMatchContext()))
+        if (fromPattern != null)
         {
-            count = 0;
+            bool fromMatched;
+            using (var mc = AcquireMatchContext())
+                fromMatched = fromPattern.Matches(node, mc.Value);
+            if (fromMatched) count = 0;
         }
 
-        if (countPattern.Matches(node, CreateMatchContext()))
-        {
-            count++;
-        }
+        bool countMatched;
+        using (var mc2 = AcquireMatchContext())
+            countMatched = countPattern.Matches(node, mc2.Value);
+        if (countMatched) count++;
 
         if (node.Id == target.Id)
         {
@@ -15991,10 +16019,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 if (attr.Id == target.Id)
                 {
-                    if (fromPattern != null && fromPattern.Matches(attr, CreateMatchContext()))
-                        count = 0;
-                    if (countPattern.Matches(attr, CreateMatchContext()))
-                        count++;
+                    if (fromPattern != null)
+                    {
+                        bool fromAttrMatched;
+                        using (var mc = AcquireMatchContext())
+                            fromAttrMatched = fromPattern.Matches(attr, mc.Value);
+                        if (fromAttrMatched) count = 0;
+                    }
+                    bool countAttrMatched;
+                    using (var mc2 = AcquireMatchContext())
+                        countAttrMatched = countPattern.Matches(attr, mc2.Value);
+                    if (countAttrMatched) count++;
                     done = true;
                     return;
                 }
@@ -16145,7 +16180,31 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private Func<QName, object?>? _matchCtxVariablePatternEvaluator;
     private Func<string, XdmNode?>? _matchCtxDocPatternEvaluator;
 
-    internal XsltContext CreateMatchContext(int position = 0, int size = 0)
+    // Pool of XsltContext instances. Each call to AcquireMatchContext pops one
+    // (or allocates if empty) and stamps the per-call fields; the returned lease
+    // pushes it back to the pool on Dispose. Bounded to keep nested-match cases
+    // from inflating the pool unboundedly.
+    private readonly Stack<XsltContext> _matchCtxPool = new();
+    private const int MaxPooledMatchContexts = 8;
+
+    /// <summary>
+    /// Pooled lease over an <see cref="XsltContext"/>. Dispose returns the context
+    /// to the transformer's pool. Use with `using var lease = AcquireMatchContext();`
+    /// and pass <see cref="Value"/> to <c>Matches</c> / <c>FindMatchingTemplate</c>.
+    /// </summary>
+    internal readonly ref struct MatchContextLease
+    {
+        private readonly DefaultXsltExecutionContext _owner;
+        public readonly XsltContext Value;
+        internal MatchContextLease(DefaultXsltExecutionContext owner, XsltContext value)
+        {
+            _owner = owner;
+            Value = value;
+        }
+        public void Dispose() => _owner.ReleaseMatchContext(Value);
+    }
+
+    private void EnsureMatchCtxDelegates()
     {
         if (_matchCtxPredicateEvaluator is null)
         {
@@ -16157,6 +16216,45 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _matchCtxVariablePatternEvaluator = EvaluateVariablePattern;
             _matchCtxDocPatternEvaluator = EvaluateDocPattern;
         }
+    }
+
+    internal MatchContextLease AcquireMatchContext(int position = 0, int size = 0)
+    {
+        EnsureMatchCtxDelegates();
+        var ctx = _matchCtxPool.TryPop(out var pooled) ? pooled : new XsltContext();
+        ctx.CurrentNode = ContextItem;
+        ctx.Position = position;
+        ctx.Last = size;
+        ctx.MatchedNode = null;
+        ctx.DescendantPositionAncestor = null;
+        ctx.NodeResolver = _matchCtxNodeResolver;
+        ctx.PredicateEvaluator = _matchCtxPredicateEvaluator;
+        ctx.PositionComputer = _matchCtxPositionComputer;
+        ctx.KeyPatternEvaluator = _matchCtxKeyPatternEvaluator;
+        ctx.IdPatternEvaluator = _matchCtxIdPatternEvaluator;
+        ctx.VariablePatternEvaluator = _matchCtxVariablePatternEvaluator;
+        ctx.DocPatternEvaluator = _matchCtxDocPatternEvaluator;
+        return new MatchContextLease(this, ctx);
+    }
+
+    internal void ReleaseMatchContext(XsltContext ctx)
+    {
+        if (_matchCtxPool.Count >= MaxPooledMatchContexts) return;
+        // Clear node references so the pool slot doesn't pin user data while idle.
+        ctx.CurrentNode = null;
+        ctx.MatchedNode = null;
+        ctx.DescendantPositionAncestor = null;
+        _matchCtxPool.Push(ctx);
+    }
+
+    /// <summary>
+    /// Allocating fallback for callsites that can't naturally adopt the lease pattern
+    /// (callers that store the context in a local for cross-method use). Prefer
+    /// <see cref="AcquireMatchContext"/> on hot paths.
+    /// </summary>
+    internal XsltContext CreateMatchContext(int position = 0, int size = 0)
+    {
+        EnsureMatchCtxDelegates();
         return new XsltContext
         {
             CurrentNode = ContextItem,
@@ -23200,7 +23298,10 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             {
                 foreach (var def in keyDef.AllDefinitions)
                 {
-                    if (def.Match.Matches(node, _context.CreateMatchContext()))
+                    bool defMatched;
+                    using (var mc = _context.AcquireMatchContext())
+                        defMatched = def.Match.Matches(node, mc.Value);
+                    if (defMatched)
                     {
                         var useValues = await EvaluateUseExpression(def, node).ConfigureAwait(false);
                         if (isComposite)
@@ -23586,7 +23687,10 @@ internal sealed class XsltKey3Function : PhoenixmlDb.XQuery.Ast.XQueryFunction
         {
             foreach (var def in keyDef.AllDefinitions)
             {
-                if (def.Match.Matches(node, _context.CreateMatchContext()))
+                bool defMatched;
+                using (var mc = _context.AcquireMatchContext())
+                    defMatched = def.Match.Matches(node, mc.Value);
+                if (defMatched)
                 {
                     var useValues = await EvaluateUseExpression(def, node).ConfigureAwait(false);
                     if (isComposite)
