@@ -35,48 +35,10 @@ internal sealed class StreamingNodeContext
     public int Position { get; set; } = 1;
 
     /// <summary>
-    /// Creates an XdmElement from this streaming context for template matching
-    /// and expression evaluation. The node is minimal — no children, no siblings.
+    /// Materialized XdmAttribute instances stashed here so the processor's cleanup path
+    /// can return them to its pool. Populated by <c>MaterializeElement</c>, drained in
+    /// <c>CleanupStreamingNode</c>. Null until materialization runs.
     /// </summary>
-    public XdmElement ToXdmElement(XdmInMemoryStore store)
-    {
-        var nsId = store.InternNamespace(NamespaceUri);
-        var attrIds = new List<NodeId>();
-        var nsBindings = new List<NamespaceBinding>();
+    internal List<XdmAttribute>? MaterializedAttributes { get; set; }
 
-        foreach (var attr in Attributes)
-        {
-            var attrNsId = store.InternNamespace(attr.NamespaceUri);
-            var xdmAttr = new XdmAttribute
-            {
-                Id = attr.NodeId,
-                Document = new DocumentId(0), // Streaming — no real document
-                Namespace = attrNsId,
-                LocalName = attr.LocalName,
-                Prefix = attr.Prefix,
-                Value = attr.StringValue ?? ""
-            };
-            store.Register(xdmAttr);
-            attrIds.Add(attr.NodeId);
-        }
-
-        foreach (var (prefix, uri) in NamespaceDeclarations)
-        {
-            nsBindings.Add(new NamespaceBinding(prefix, store.InternNamespace(uri)));
-        }
-
-        var elem = new XdmElement
-        {
-            Id = NodeId,
-            Document = new DocumentId(0), // Streaming — no real document
-            Namespace = nsId,
-            LocalName = LocalName,
-            Prefix = Prefix,
-            Attributes = attrIds,
-            Children = XdmElement.EmptyChildren,
-            NamespaceDeclarations = nsBindings
-        };
-        store.Register(elem);
-        return elem;
-    }
 }
