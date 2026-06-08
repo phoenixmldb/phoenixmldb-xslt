@@ -147,4 +147,47 @@ public sealed class XdmInMemoryStore : INodeBuilder
                 yield return a;
         }
     }
+
+    /// <summary>
+    /// Allocation-free attribute iteration: returns a struct enumerator that walks
+    /// <see cref="XdmElement.Attributes"/> by index (no boxed IEnumerator) and looks
+    /// up each attribute in the store. Use this on hot paths where the alternative
+    /// is the <see cref="GetAttributes(XdmElement)"/> yield-iterator state machine.
+    /// </summary>
+    public AttributeEnumerator EnumerateAttributes(XdmElement elem) => new(this, elem);
+
+#pragma warning disable CA1815, CA1034 // Equality on enumerators is meaningless; nesting is intentional for ergonomics.
+    public struct AttributeEnumerator
+#pragma warning restore CA1815, CA1034
+    {
+        private readonly XdmInMemoryStore _store;
+        private readonly IReadOnlyList<NodeId> _attrIds;
+        private int _index;
+        private XdmAttribute? _current;
+
+        internal AttributeEnumerator(XdmInMemoryStore store, XdmElement elem)
+        {
+            _store = store;
+            _attrIds = elem.Attributes;
+            _index = -1;
+            _current = null;
+        }
+
+        public readonly XdmAttribute Current => _current!;
+
+        public bool MoveNext()
+        {
+            while (++_index < _attrIds.Count)
+            {
+                if (_store._nodes.TryGetValue(_attrIds[_index], out var n) && n is XdmAttribute a)
+                {
+                    _current = a;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public readonly AttributeEnumerator GetEnumerator() => this;
+    }
 }

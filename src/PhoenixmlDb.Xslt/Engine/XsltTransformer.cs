@@ -6863,17 +6863,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // Apply templates to attributes: attributes with no matching user template
                 // are copied directly (built-in shallow-copy for attributes); attributes with
                 // a matching user template have their template output as child content.
-                var templateMatches = new List<(XsltTemplate template, XdmAttribute attr)>();
+                List<(XsltTemplate template, XdmAttribute attr)>? templateMatches = null;
                 if (_nodeStore != null)
                 {
-                    foreach (var attr in _nodeStore.GetAttributes(elem))
+                    foreach (var attr in _nodeStore.EnumerateAttributes(elem))
                     {
                         XsltTemplate? template;
                         using (var mc = AcquireMatchContext())
                             template = _templateIndex.FindMatchingTemplate(attr, mode, mc.Value);
                         if (template != null)
                         {
-                            templateMatches.Add((template, attr));
+                            (templateMatches ??= new()).Add((template, attr));
                         }
                         else
                         {
@@ -6895,7 +6895,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // so xsl:attribute instructions produce proper attributes, not text content.
                 // Non-attribute output from templates (e.g. elements) becomes child content.
                 var templateChildContent = string.Empty;
-                if (templateMatches.Count > 0)
+                if (templateMatches is { Count: > 0 })
                 {
                     _collectedAttributesStack.Push(new StringBuilder());
                     var scope = new XsltTransformEngine.ScopedOutputBuffer(_output);
