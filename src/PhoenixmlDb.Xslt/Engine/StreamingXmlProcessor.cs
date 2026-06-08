@@ -154,7 +154,7 @@ internal sealed class StreamingXmlProcessor
                                         skipAttrCtx.StringValue = reader.Value;
                                         skipAttrCtx.NodeId = skipAttrId;
                                         skipAttrCtx.Depth = elementDepth + 1;
-                                        (skipAttrs ??= new List<StreamingNodeContext>()).Add(skipAttrCtx);
+                                        (skipAttrs ??= AcquireNodeCtxList()).Add(skipAttrCtx);
                                     }
                                 }
                                 reader.MoveToElement();
@@ -227,7 +227,7 @@ internal sealed class StreamingXmlProcessor
                                     attrCtx.StringValue = reader.Value;
                                     attrCtx.NodeId = new NodeId(_nextNodeId++);
                                     attrCtx.Depth = reader.Depth + 1;
-                                    (attrs ??= new List<StreamingNodeContext>()).Add(attrCtx);
+                                    (attrs ??= AcquireNodeCtxList()).Add(attrCtx);
                                 }
                             }
                             reader.MoveToElement();
@@ -1170,7 +1170,8 @@ internal sealed class StreamingXmlProcessor
                 _nodeStore.Remove(attrCtx.NodeId);
                 ReleaseNodeContext(attrCtx);
             }
-            ctxAttrs.Clear();
+            ReleaseNodeCtxList(ctxAttrs);
+            ctx.Attributes = null;
         }
         _nodeStore.Remove(ctx.NodeId);
 
@@ -1580,6 +1581,18 @@ internal sealed class StreamingXmlProcessor
         if (_xdmAttrListPool.Count >= MaxPooledLists) return;
         list.Clear();
         _xdmAttrListPool.Push(list);
+    }
+
+    private readonly Stack<List<StreamingNodeContext>> _nodeCtxListPool = new(MaxPooledLists);
+
+    private List<StreamingNodeContext> AcquireNodeCtxList() =>
+        _nodeCtxListPool.TryPop(out var pooled) ? pooled : new List<StreamingNodeContext>();
+
+    private void ReleaseNodeCtxList(List<StreamingNodeContext> list)
+    {
+        if (_nodeCtxListPool.Count >= MaxPooledLists) return;
+        list.Clear();
+        _nodeCtxListPool.Push(list);
     }
 
     /// <summary>
