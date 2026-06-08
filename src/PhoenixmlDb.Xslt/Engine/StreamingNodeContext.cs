@@ -51,4 +51,12 @@ internal sealed class StreamingNodeContext
     /// <c>CleanupStreamingNode</c>. Null until materialization runs.
     /// </summary>
     internal List<XdmAttribute>? MaterializedAttributes { get; set; }
+
+    /// <summary>
+    /// The materialized XdmElement that <c>MaterializeElement</c> produced for this
+    /// context, kept here so <c>CleanupStreamingNode</c> can release it to the processor's
+    /// XdmElement pool. Safe to pool under streaming mode — templates may not retain
+    /// non-grounded node references across element boundaries (XSLT 3.0 streaming spec).
+    /// </summary>
+    internal XdmElement? MaterializedElement { get; set; }
 }

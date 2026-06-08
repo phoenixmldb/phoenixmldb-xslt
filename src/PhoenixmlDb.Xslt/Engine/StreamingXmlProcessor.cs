@@ -1159,9 +1159,10 @@ internal sealed class StreamingXmlProcessor
 
     private void CleanupStreamingNode(StreamingNodeContext ctx)
     {
-        // Remove temporary XDM nodes from the node store, return any materialized
-        // XdmAttribute instances to the attribute pool, and return both the inner
-        // attribute contexts and the outer element context to the node-context pool.
+        // Release in this order: remove XDM nodes from the store first (so any
+        // late lookups by NodeId return null before we recycle the underlying
+        // instances), then return XdmAttributes / lists / XdmElement to their pools,
+        // then return inner attribute contexts and the outer element context.
         if (ctx.Attributes is { } ctxAttrs)
         {
             foreach (var attrCtx in ctxAttrs)
@@ -1171,12 +1172,24 @@ internal sealed class StreamingXmlProcessor
             }
             ctxAttrs.Clear();
         }
+        _nodeStore.Remove(ctx.NodeId);
+
+        // Pool the materialized XdmElement and its backing NodeId/XdmAttribute lists.
+        // Capture references before releasing the element (which clears its Attributes).
+        if (ctx.MaterializedElement is { } elem)
+        {
+            // Pool the attrIds list if it's the dynamic one we drew from the pool.
+            if (elem.Attributes is List<NodeId> idList && idList.Count > 0)
+                ReleaseNodeIdList(idList);
+            ReleasePooledElement(elem);
+            ctx.MaterializedElement = null;
+        }
         if (ctx.MaterializedAttributes is { } materialized)
         {
             foreach (var attr in materialized)
                 ReleasePooledAttribute(attr);
+            ReleaseXdmAttrList(materialized);
         }
-        _nodeStore.Remove(ctx.NodeId);
         ReleaseNodeContext(ctx);
     }
 
@@ -1473,6 +1486,102 @@ internal sealed class StreamingXmlProcessor
         _attributePool.Push(attr);
     }
 
+    // ---------------------------------------------------------------------
+    // XdmElement pool. Each MaterializeElement allocated a fresh element; profiling
+    // showed XdmElement at ~17% of post-Scope-pool streaming alloc. Safe under
+    // streaming mode (XSLT 3.0 §19) — templates cannot retain non-grounded node refs
+    // across element boundaries, so reuse via the pool can't be observed externally.
+    // The associated NodeId / XdmAttribute / NamespaceBinding lists are also stashed
+    // and Clear()'d on release so their backing arrays are reused.
+    // ---------------------------------------------------------------------
+
+    private const int MaxPooledElements = 64;
+    private readonly Stack<XdmElement> _elementPool = new(MaxPooledElements);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_Namespace")]
+    private static extern void SetXdmElemNamespace(XdmElement node, NamespaceId value);
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_LocalName")]
+    private static extern void SetXdmElemLocalName(XdmElement node, string value);
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_Prefix")]
+    private static extern void SetXdmElemPrefix(XdmElement node, string? value);
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_Attributes")]
+    private static extern void SetXdmElemAttributes(XdmElement node, IReadOnlyList<NodeId> value);
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_Children")]
+    private static extern void SetXdmElemChildren(XdmElement node, IReadOnlyList<NodeId> value);
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_NamespaceDeclarations")]
+    private static extern void SetXdmElemNamespaceDeclarations(XdmElement node, IReadOnlyList<NamespaceBinding> value);
+
+    private XdmElement AcquirePooledElement(
+        NodeId id, NamespaceId ns, string localName, string? prefix,
+        IReadOnlyList<NodeId> attributes, IReadOnlyList<NamespaceBinding> nsDecls)
+    {
+        if (_elementPool.TryPop(out var pooled))
+        {
+            SetXdmNodeId(pooled, id);
+            SetXdmElemNamespace(pooled, ns);
+            SetXdmElemLocalName(pooled, localName);
+            SetXdmElemPrefix(pooled, prefix);
+            SetXdmElemAttributes(pooled, attributes);
+            SetXdmElemChildren(pooled, XdmElement.EmptyChildren);
+            SetXdmElemNamespaceDeclarations(pooled, nsDecls);
+            pooled.Parent = null;
+            pooled._stringValue = null;
+            return pooled;
+        }
+        return new XdmElement
+        {
+            Id = id,
+            Document = StreamingDocumentId,
+            Namespace = ns,
+            LocalName = localName,
+            Prefix = prefix,
+            Attributes = attributes,
+            Children = XdmElement.EmptyChildren,
+            NamespaceDeclarations = nsDecls,
+        };
+    }
+
+    private void ReleasePooledElement(XdmElement elem)
+    {
+        if (_elementPool.Count >= MaxPooledElements) return;
+        // Drop list refs so the pool slot doesn't pin reusable list backings while idle,
+        // and clear string refs.
+        SetXdmElemLocalName(elem, string.Empty);
+        SetXdmElemPrefix(elem, null);
+        SetXdmElemAttributes(elem, XdmElement.EmptyAttributes);
+        SetXdmElemNamespaceDeclarations(elem, XdmElement.EmptyNamespaceDeclarations);
+        elem.Parent = null;
+        elem._stringValue = null;
+        _elementPool.Push(elem);
+    }
+
+    // Pool of List<NodeId> and List<XdmAttribute> reused inside MaterializeElement.
+    // Lists are cleared on release; their backing array is retained so the next
+    // element with the same/smaller attribute count avoids growing the buffer.
+    private const int MaxPooledLists = 32;
+    private readonly Stack<List<NodeId>> _nodeIdListPool = new(MaxPooledLists);
+    private readonly Stack<List<XdmAttribute>> _xdmAttrListPool = new(MaxPooledLists);
+
+    private List<NodeId> AcquireNodeIdList() =>
+        _nodeIdListPool.TryPop(out var pooled) ? pooled : new List<NodeId>();
+
+    private void ReleaseNodeIdList(List<NodeId> list)
+    {
+        if (_nodeIdListPool.Count >= MaxPooledLists) return;
+        list.Clear();
+        _nodeIdListPool.Push(list);
+    }
+
+    private List<XdmAttribute> AcquireXdmAttrList() =>
+        _xdmAttrListPool.TryPop(out var pooled) ? pooled : new List<XdmAttribute>();
+
+    private void ReleaseXdmAttrList(List<XdmAttribute> list)
+    {
+        if (_xdmAttrListPool.Count >= MaxPooledLists) return;
+        list.Clear();
+        _xdmAttrListPool.Push(list);
+    }
+
     /// <summary>
     /// Materializes a <see cref="StreamingNodeContext"/> into a registered <see cref="XdmElement"/>,
     /// drawing per-attribute <see cref="XdmAttribute"/> instances from the processor's pool.
@@ -1493,12 +1602,14 @@ internal sealed class StreamingXmlProcessor
                 var xdmAttr = AcquirePooledAttribute(
                     attr.NodeId, attrNsId, attr.LocalName, attr.Prefix, attr.StringValue ?? string.Empty);
                 _nodeStore.Register(xdmAttr);
-                (attrIds ??= new List<NodeId>()).Add(attr.NodeId);
-                (materializedAttrs ??= new List<XdmAttribute>()).Add(xdmAttr);
+                (attrIds ??= AcquireNodeIdList()).Add(attr.NodeId);
+                (materializedAttrs ??= AcquireXdmAttrList()).Add(xdmAttr);
             }
         }
         ctx.MaterializedAttributes = materializedAttrs;
 
+        // Namespace declarations are rare in streaming workloads; keep them as a
+        // fresh List for now (no observed alloc pressure post-pool work).
         List<NamespaceBinding>? nsBindings = null;
         if (ctx.NamespaceDeclarations is { } ctxNs)
         {
@@ -1509,17 +1620,11 @@ internal sealed class StreamingXmlProcessor
             }
         }
 
-        var elem = new XdmElement
-        {
-            Id = ctx.NodeId,
-            Document = StreamingDocumentId,
-            Namespace = nsId,
-            LocalName = ctx.LocalName,
-            Prefix = ctx.Prefix,
-            Attributes = (IReadOnlyList<NodeId>?)attrIds ?? XdmElement.EmptyAttributes,
-            Children = XdmElement.EmptyChildren,
-            NamespaceDeclarations = (IReadOnlyList<NamespaceBinding>?)nsBindings ?? XdmElement.EmptyNamespaceDeclarations,
-        };
+        var elem = AcquirePooledElement(
+            ctx.NodeId, nsId, ctx.LocalName, ctx.Prefix,
+            (IReadOnlyList<NodeId>?)attrIds ?? XdmElement.EmptyAttributes,
+            (IReadOnlyList<NamespaceBinding>?)nsBindings ?? XdmElement.EmptyNamespaceDeclarations);
+        ctx.MaterializedElement = elem;
         _nodeStore.Register(elem);
         return elem;
     }
