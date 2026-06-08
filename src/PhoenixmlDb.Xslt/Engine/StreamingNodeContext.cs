@@ -10,36 +10,37 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// the full document tree. Supports element, attribute, text, document,
 /// comment, and processing-instruction node kinds.
 /// </summary>
+/// <remarks>
+/// All properties are mutable so instances can be reused via the processor's
+/// per-event pool. The type is internal and not held across
+/// <c>CleanupStreamingNode</c>, so mutation is safe.
+/// </remarks>
 internal sealed class StreamingNodeContext
 {
-    public XdmNodeKind NodeKind { get; init; }
-    public required string LocalName { get; init; }
-    public required string NamespaceUri { get; init; }
-    public string Prefix { get; init; } = "";
+    public XdmNodeKind NodeKind { get; set; }
+    public string LocalName { get; set; } = "";
+    public string NamespaceUri { get; set; } = "";
+    public string Prefix { get; set; } = "";
     public string? StringValue { get; set; }
-    public NodeId NodeId { get; init; }
+    public NodeId NodeId { get; set; }
 
     /// <summary>
     /// Attributes of the current element. Null when the element has no attributes —
-    /// callers must treat null the same as empty. Made nullable to skip the
-    /// per-element List allocation on attribute-less elements (very common in
-    /// streamed workloads).
+    /// callers must treat null the same as empty.
     /// </summary>
-    public List<StreamingNodeContext>? Attributes { get; init; }
+    public List<StreamingNodeContext>? Attributes { get; set; }
 
     /// <summary>
     /// Namespace declarations on the current element. Null when no <c>xmlns:*</c>
-    /// appears — most elements in a streamed document inherit ns from their parent
-    /// and declare nothing, so allocating an empty Dictionary per element is waste.
-    /// Callers must treat null as empty.
+    /// appears — callers must treat null as empty.
     /// </summary>
-    public Dictionary<string, string>? NamespaceDeclarations { get; init; }
+    public Dictionary<string, string>? NamespaceDeclarations { get; set; }
 
     /// <summary>Parent context (for ancestor axis limited to streaming depth).</summary>
-    public StreamingNodeContext? Parent { get; init; }
+    public StreamingNodeContext? Parent { get; set; }
 
     /// <summary>Depth in the document tree (0 = document, 1 = root element).</summary>
-    public int Depth { get; init; }
+    public int Depth { get; set; }
 
     /// <summary>Position among siblings of the same node kind (1-based).</summary>
     public int Position { get; set; } = 1;
@@ -50,5 +51,4 @@ internal sealed class StreamingNodeContext
     /// <c>CleanupStreamingNode</c>. Null until materialization runs.
     /// </summary>
     internal List<XdmAttribute>? MaterializedAttributes { get; set; }
-
 }

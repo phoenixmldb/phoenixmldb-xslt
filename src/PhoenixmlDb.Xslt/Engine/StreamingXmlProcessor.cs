@@ -146,31 +146,28 @@ internal sealed class StreamingXmlProcessor
                                     else
                                     {
                                         var skipAttrId = new NodeId(_nextNodeId++);
-                                        (skipAttrs ??= new List<StreamingNodeContext>()).Add(new StreamingNodeContext
-                                        {
-                                            NodeKind = XdmNodeKind.Attribute,
-                                            LocalName = reader.LocalName,
-                                            NamespaceUri = reader.NamespaceURI,
-                                            Prefix = reader.Prefix,
-                                            StringValue = reader.Value,
-                                            NodeId = skipAttrId,
-                                            Depth = elementDepth + 1
-                                        });
+                                        var skipAttrCtx = AcquireNodeContext();
+                                        skipAttrCtx.NodeKind = XdmNodeKind.Attribute;
+                                        skipAttrCtx.LocalName = reader.LocalName;
+                                        skipAttrCtx.NamespaceUri = reader.NamespaceURI;
+                                        skipAttrCtx.Prefix = reader.Prefix;
+                                        skipAttrCtx.StringValue = reader.Value;
+                                        skipAttrCtx.NodeId = skipAttrId;
+                                        skipAttrCtx.Depth = elementDepth + 1;
+                                        (skipAttrs ??= new List<StreamingNodeContext>()).Add(skipAttrCtx);
                                     }
                                 }
                                 reader.MoveToElement();
                             }
-                            var skipCtx = new StreamingNodeContext
-                            {
-                                NodeKind = XdmNodeKind.Element,
-                                LocalName = reader.LocalName,
-                                NamespaceUri = reader.NamespaceURI,
-                                Prefix = reader.Prefix,
-                                NodeId = nodeId,
-                                Attributes = skipAttrs,
-                                NamespaceDeclarations = skipNsDecls,
-                                Depth = elementDepth
-                            };
+                            var skipCtx = AcquireNodeContext();
+                            skipCtx.NodeKind = XdmNodeKind.Element;
+                            skipCtx.LocalName = reader.LocalName;
+                            skipCtx.NamespaceUri = reader.NamespaceURI;
+                            skipCtx.Prefix = reader.Prefix;
+                            skipCtx.NodeId = nodeId;
+                            skipCtx.Attributes = skipAttrs;
+                            skipCtx.NamespaceDeclarations = skipNsDecls;
+                            skipCtx.Depth = elementDepth;
                             var skipXdm = MaterializeElement(skipCtx);
                             await FireAccumulatorRulesAsync(skipXdm, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
                             // Fire stream watchers in the suppressed branch too — when a
@@ -222,16 +219,15 @@ internal sealed class StreamingXmlProcessor
                                 }
                                 else
                                 {
-                                    (attrs ??= new List<StreamingNodeContext>()).Add(new StreamingNodeContext
-                                    {
-                                        NodeKind = XdmNodeKind.Attribute,
-                                        LocalName = reader.LocalName,
-                                        NamespaceUri = reader.NamespaceURI,
-                                        Prefix = reader.Prefix,
-                                        StringValue = reader.Value,
-                                        NodeId = new NodeId(_nextNodeId++),
-                                        Depth = reader.Depth + 1
-                                    });
+                                    var attrCtx = AcquireNodeContext();
+                                    attrCtx.NodeKind = XdmNodeKind.Attribute;
+                                    attrCtx.LocalName = reader.LocalName;
+                                    attrCtx.NamespaceUri = reader.NamespaceURI;
+                                    attrCtx.Prefix = reader.Prefix;
+                                    attrCtx.StringValue = reader.Value;
+                                    attrCtx.NodeId = new NodeId(_nextNodeId++);
+                                    attrCtx.Depth = reader.Depth + 1;
+                                    (attrs ??= new List<StreamingNodeContext>()).Add(attrCtx);
                                 }
                             }
                             reader.MoveToElement();
@@ -243,19 +239,17 @@ internal sealed class StreamingXmlProcessor
                         siblingCount++;
                         siblingCountByDepth[elementDepth] = siblingCount;
 
-                        var current = new StreamingNodeContext
-                        {
-                            NodeKind = XdmNodeKind.Element,
-                            LocalName = reader.LocalName,
-                            NamespaceUri = reader.NamespaceURI,
-                            Prefix = reader.Prefix,
-                            NodeId = nodeId,
-                            Attributes = attrs,
-                            NamespaceDeclarations = nsDecls,
-                            Parent = ancestorStack.Count > 0 ? ancestorStack.Peek() : null,
-                            Depth = elementDepth,
-                            Position = siblingCount
-                        };
+                        var current = AcquireNodeContext();
+                        current.NodeKind = XdmNodeKind.Element;
+                        current.LocalName = reader.LocalName;
+                        current.NamespaceUri = reader.NamespaceURI;
+                        current.Prefix = reader.Prefix;
+                        current.NodeId = nodeId;
+                        current.Attributes = attrs;
+                        current.NamespaceDeclarations = nsDecls;
+                        current.Parent = ancestorStack.Count > 0 ? ancestorStack.Peek() : null;
+                        current.Depth = elementDepth;
+                        current.Position = siblingCount;
 
                         // Match and execute template
                         var xdmElem = MaterializeElement(current);
@@ -1165,20 +1159,25 @@ internal sealed class StreamingXmlProcessor
 
     private void CleanupStreamingNode(StreamingNodeContext ctx)
     {
-        // Remove temporary XDM nodes from the node store and return any materialized
-        // XdmAttribute instances to the per-processor pool (paired with MaterializeElement).
+        // Remove temporary XDM nodes from the node store, return any materialized
+        // XdmAttribute instances to the attribute pool, and return both the inner
+        // attribute contexts and the outer element context to the node-context pool.
         if (ctx.Attributes is { } ctxAttrs)
         {
-            foreach (var attr in ctxAttrs)
-                _nodeStore.Remove(attr.NodeId);
+            foreach (var attrCtx in ctxAttrs)
+            {
+                _nodeStore.Remove(attrCtx.NodeId);
+                ReleaseNodeContext(attrCtx);
+            }
+            ctxAttrs.Clear();
         }
         if (ctx.MaterializedAttributes is { } materialized)
         {
             foreach (var attr in materialized)
                 ReleasePooledAttribute(attr);
-            ctx.MaterializedAttributes = null;
         }
         _nodeStore.Remove(ctx.NodeId);
+        ReleaseNodeContext(ctx);
     }
 
     /// <summary>
@@ -1398,6 +1397,38 @@ internal sealed class StreamingXmlProcessor
 
     private const int MaxPooledAttributes = 128;
     private readonly Stack<XdmAttribute> _attributePool = new(MaxPooledAttributes);
+
+    // StreamingNodeContext pool. Per-event allocation churn (~16% of post-XsltContext-pool
+    // streaming bench) was dominated by the per-element context object plus one per-attribute
+    // inner context. Pool both; AcquireNodeContext resets fields, ReleaseNodeContext clears
+    // refs and pushes back to the bounded stack.
+    private const int MaxPooledNodeContexts = 256;
+    private readonly Stack<StreamingNodeContext> _nodeContextPool = new(MaxPooledNodeContexts);
+
+    private StreamingNodeContext AcquireNodeContext()
+    {
+        return _nodeContextPool.TryPop(out var pooled) ? pooled : new StreamingNodeContext();
+    }
+
+    private void ReleaseNodeContext(StreamingNodeContext ctx)
+    {
+        if (_nodeContextPool.Count >= MaxPooledNodeContexts) return;
+        // Clear refs so the pooled slot doesn't pin garbage and an accidental reuse-before-reset
+        // fails loudly instead of silently inheriting stale state.
+        ctx.LocalName = "";
+        ctx.NamespaceUri = "";
+        ctx.Prefix = "";
+        ctx.StringValue = null;
+        ctx.Attributes = null;
+        ctx.NamespaceDeclarations = null;
+        ctx.Parent = null;
+        ctx.MaterializedAttributes = null;
+        ctx.Position = 1;
+        ctx.NodeKind = default;
+        ctx.NodeId = default;
+        ctx.Depth = 0;
+        _nodeContextPool.Push(ctx);
+    }
 
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_Namespace")]
     private static extern void SetXdmAttrNamespace(XdmAttribute node, NamespaceId value);
