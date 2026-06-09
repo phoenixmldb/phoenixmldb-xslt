@@ -1,5 +1,38 @@
 # Release History
 
+## 1.4.4 (2026-06-08)
+
+Profile-driven streaming-allocation overhaul. No behavior or API changes.
+
+### Bench: streaming-identity, 1M items
+
+| | alloc | elapsed | peak RSS |
+|---|---|---|---|
+| 1.4.3 baseline | 3328.6 MiB | 4921 ms | 16 MiB |
+| 1.4.4 | **368.4 MiB** | **3412 ms** | 16 MiB |
+| delta | **−88.9%** | **−30.7%** | flat |
+
+### What changed
+
+`dotnet-trace --profile gc-verbose` plus a small `GCAllocationTick` aggregator on the 1M-item `streaming-identity` bench surfaced a sequence of distinct hotspots. Each was attacked one at a time, with the bench and a re-trace gating the next step.
+
+- **Match-context delegates cached.** `CreateMatchContext()` rebuilt seven `Func<>` delegates on every per-element template-match call (method-group conversions allocate a fresh delegate each call). The seven delegates plus the `XsltContext` instance together accounted for ~55% of the original streaming-identity allocation. Delegates are now built once lazily on the transformer / processor and reused.
+- **XsltContext pooled via lease pattern.** Introduced a `MatchContextLease` ref struct with `Dispose`; 17 callsites (`FindMatchingTemplate`, `FindImportedTemplate`, `pattern.Matches`, etc.) migrated to `using var mc = AcquireMatchContext(...)`. The allocating `CreateMatchContext()` is kept as a fallback for callers that need the context out of scope.
+- **Scope pooled.** `PushScope` / `PopScope` draw from a per-context `Stack<Scope>` (cap 32); the lazy `Variables` / `TunnelParameters` dictionaries are `Clear()`'d in place so variable-heavy scopes reuse their hashtable rather than reallocating.
+- **`Scope.Variables` and `TunnelParameters` lazy-initialized.** Most template fires bind no variables; the eager pair of empty `Dictionary<QName, object?>` per `PushScope` was ~28% of post-delegate-cache alloc. Backing fields are now nullable; readers use new `VariablesOrNull` / `TunnelParametersOrNull` short-circuits in the three hot lookup paths.
+- **`StreamingNodeContext` pooled (element + per-attribute).** Properties switched from `init` to `set` so a single per-processor `Stack<StreamingNodeContext>` (cap 256) can mutate fields on reuse. `CleanupStreamingNode` releases both the inner attribute contexts and the outer element context.
+- **`XdmElement` pooled with backing lists.** `_elementPool` (cap 64) with `UnsafeAccessor` setters for the init-only `Namespace` / `LocalName` / `Prefix` / `Attributes` / `Children` / `NamespaceDeclarations` fields. The `List<NodeId>` attrIds and `List<XdmAttribute>` materializedAttrs are pooled in step, so their backing arrays are reused too. Safe under streaming mode — XSLT 3.0 §19 prohibits streamable templates from retaining non-grounded node refs across element boundaries.
+- **`XdmAttribute` pooled.** Mirrors the existing `XdmText` pool; per-processor `Stack<XdmAttribute>` (cap 128) with `UnsafeAccessor` field setters. `MaterializeElement` stashes the materialized refs on the streaming node context so cleanup can release them.
+- **Per-element collections lazy.** `StreamingNodeContext.Attributes` / `NamespaceDeclarations` are now nullable; `MaterializeElement` and the watcher dict builder treat null as empty. Most elements have one but not both, so the empty-list / empty-dict churn disappears.
+- **`List<StreamingNodeContext>` pooled.** The per-element attribute carrier (plus its backing `T[]`) is now drawn from `_nodeCtxListPool` (cap 32); `Clear()` on release retains the array.
+- **Allocation-free attribute enumeration.** `XdmInMemoryStore.EnumerateAttributes` returns a struct enumerator that walks `elem.Attributes` by index (no boxed `IEnumerator`) and looks up each attribute in the store — replaces the `yield`-iterator state machine on the streaming shallow-copy hot path. The legacy `GetAttributes(IEnumerable<XdmAttribute>)` is kept for non-hot consumers.
+
+### Notes
+
+- Pool reuse is only correct under streaming mode. Non-streaming materialization paths (`MaterializeLeafElement`, `MaterializeSubtreeFrame`, `StreamingSubtreeMaterializer`) still allocate fresh instances — those are intentionally retained.
+- Cumulative output of the 1M-item identity transform is unchanged (30.3 MiB output, byte-identical).
+- 463/463 XSLT unit tests stable across multiple runs.
+
 ## 1.4.3 (2026-06-06)
 
 Two Martin Honnen 2026-06-06 reports fixed.

@@ -6,12 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.3</Version>
+    <Version>1.4.4</Version>
     <PackageReleaseNotes>
-      Two Martin Honnen 2026-06-06 reports fixed.
-      Fix: streamed JSON output now quotes string values and honors indent='yes'. TransformStreamingCoreAsync begins sequence collection and routes through a shared FinalizeJsonOutput helper, instead of falling into CreateMapAsync's adaptive-mode no-accumulator branch which dropped quotes and ignored indent.
-      Fix: xsl:array body no longer leaks a stray empty [] at the end. CreateArrayAsync now redirects _sequenceAccumulator to the array under construction, so top-level body items become array members per XSLT 4.0 §22. Affects both streaming and non-streaming paths.
-      See RELEASES.md for full notes.
+      Streaming allocation overhaul. The 1M-item streaming-identity bench dropped from 3328.6 MiB to 368.4 MiB allocated (-88.9%) and from 4921 ms to 3412 ms (-30.7%); peak RSS stays at 16 MiB. Profile-driven series of pool / cache / laziness wins.
+      Highlights: cache the seven CreateMatchContext delegates and pool the XsltContext itself via a `using var lease = AcquireMatchContext()` pattern (17 call sites migrated); pool XdmElement, XdmAttribute, StreamingNodeContext, Scope, and the per-element NodeId / XdmAttribute / StreamingNodeContext lists; lazy-init Scope.Variables / TunnelParameters and per-element attrs / nsDecls; replace the XdmInMemoryStore.GetAttributes yield-iterator with an allocation-free struct enumerator on hot paths.
+      Pool reuse is safe under XSLT 3.0 streaming mode — streamable templates may not retain non-grounded node refs across element boundaries. Non-streaming paths are unchanged.
+      463/463 XSLT tests green; no behavior changes. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
