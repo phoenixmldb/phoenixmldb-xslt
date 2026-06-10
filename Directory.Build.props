@@ -6,12 +6,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.4</Version>
+    <Version>1.4.5</Version>
     <PackageReleaseNotes>
-      Streaming allocation overhaul. The 1M-item streaming-identity bench dropped from 3328.6 MiB to 368.4 MiB allocated (-88.9%) and from 4921 ms to 3412 ms (-30.7%); peak RSS stays at 16 MiB. Profile-driven series of pool / cache / laziness wins.
-      Highlights: cache the seven CreateMatchContext delegates and pool the XsltContext itself via a `using var lease = AcquireMatchContext()` pattern (17 call sites migrated); pool XdmElement, XdmAttribute, StreamingNodeContext, Scope, and the per-element NodeId / XdmAttribute / StreamingNodeContext lists; lazy-init Scope.Variables / TunnelParameters and per-element attrs / nsDecls; replace the XdmInMemoryStore.GetAttributes yield-iterator with an allocation-free struct enumerator on hot paths.
-      Pool reuse is safe under XSLT 3.0 streaming mode — streamable templates may not retain non-grounded node refs across element boundaries. Non-streaming paths are unchanged.
-      463/463 XSLT tests green; no behavior changes. See RELEASES.md for full notes.
+      XSLT 4.0 ordered maps: xsl:map, map constructors, records, and JSON-object maps now iterate in entry/insertion order as a structural guarantee (backed by the engine's OrderedXdmMap, requires PhoenixmlDb.XQuery 1.4.3). Grouping into a map emits groups in first-seen order, matching the XML-target equivalent — no "don't rely on it" caveat.
+      469/469 XSLT tests green. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>

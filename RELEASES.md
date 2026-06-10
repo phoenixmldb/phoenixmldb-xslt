@@ -1,5 +1,15 @@
 # Release History
 
+## 1.4.5 (2026-06-07)
+
+### XSLT 4.0 ordered maps
+
+`xsl:map` / `xsl:map-entry`, map constructor expressions, `xsl:record`, and JSON-object maps (`fn:parse-json` / `fn:json-to-xml` object results) now iterate in entry/insertion order as a structural guarantee, backed by the engine's `OrderedXdmMap` (requires PhoenixmlDb.XQuery 1.4.3). XSLT 3.0 left map order unspecified; XSLT 4.0 makes it a contract, and PhoenixmlDb now honors it.
+
+Grouping into a map — `xsl:for-each-group` building map entries — emits groups in first-seen order, the same order the XML-target equivalent produced. The "don't write code that relies on map order" caveat no longer applies.
+
+XSLT map key equality is unchanged by this release (only iteration order is now guaranteed). 469/469 XSLT unit tests green.
+
 ## 1.4.4 (2026-06-08)
 
 Profile-driven streaming-allocation overhaul. No behavior or API changes.

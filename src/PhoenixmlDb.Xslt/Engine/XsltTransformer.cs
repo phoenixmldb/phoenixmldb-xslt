@@ -7,6 +7,10 @@ using PhoenixmlDb.Xdm;
 using PhoenixmlDb.Xdm.Nodes;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.Xslt.Ast;
+// XPath 4.0 ordered map: insertion-order iteration as a structural guarantee.
+// xslt keeps its existing default key-equality (pass EqualityComparer<object>.Default
+// at each construction site) — this change is about iteration order only.
+using OrderedXdmMap = PhoenixmlDb.XQuery.Execution.OrderedXdmMap;
 
 namespace PhoenixmlDb.Xslt.Engine;
 
@@ -4375,7 +4379,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
             if (hasWatcherEntries)
             {
-                var map = new Dictionary<object, object?>();
+                var map = new OrderedXdmMap(EqualityComparer<object>.Default);
                 foreach (var entry in mapCtor.Entries)
                 {
                     object? key = entry.Key switch
@@ -4977,7 +4981,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private bool _attributeCollecting => _collectedAttributesStack.Count > 0;
 
     // Map/array construction stacks
-    private readonly Stack<Dictionary<object, object?>> _mapBuildStack = new();
+    private readonly Stack<IDictionary<object, object?>> _mapBuildStack = new();
     private readonly Stack<List<object?>> _arrayBuildStack = new();
 
     // Track current template for next-match/apply-imports
@@ -18287,7 +18291,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask CreateMapAsync(XsltMap instruction)
     {
-        var map = new Dictionary<object, object?>();
+        var map = new OrderedXdmMap(EqualityComparer<object>.Default);
         _mapBuildStack.Push(map);
 
         // XTTE3375: Content of xsl:map must produce only map entries.
@@ -18405,7 +18409,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         else
         {
             // Standalone xsl:map-entry — produce a singleton map
-            var singletonMap = new Dictionary<object, object?> { [key] = value };
+            var singletonMap = new OrderedXdmMap(EqualityComparer<object>.Default) { [key] = value };
             if (_sequenceAccumulator != null)
                 AppendToSeqAccumulator(singletonMap);
             else
@@ -18484,7 +18488,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         // xsl:record produces an XDM map with string keys from xsl:entry children.
         // Each entry has a name (string key) and a value (from select or sequence constructor body).
-        var map = new Dictionary<object, object?>();
+        var map = new OrderedXdmMap(EqualityComparer<object>.Default);
 
         foreach (var (name, valueBody) in instruction.Entries)
         {
@@ -27914,7 +27918,7 @@ internal sealed class XsltXmlToJson2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
     {
         // Validate options map
         var options = arguments[1];
-        if (options is Dictionary<object, object?> map)
+        if (options is IDictionary<object, object?> map)
         {
             if (map.TryGetValue("indent", out var indentVal) && indentVal is not bool)
                 throw new XsltException("XPTY0004: Option 'indent' must be a boolean value");
@@ -28009,7 +28013,7 @@ internal sealed class XsltJsonToXml2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
         var escape = false;
         var duplicates = "use-first";
         var options = arguments[1];
-        if (options is Dictionary<object, object?> map)
+        if (options is IDictionary<object, object?> map)
         {
             // liberal option: must be xs:boolean
             if (map.TryGetValue("liberal", out var liberalVal))
@@ -28369,9 +28373,9 @@ internal sealed class XsltParseJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         };
     }
 
-    private static Dictionary<object, object?> ConvertObject(System.Text.Json.JsonElement je)
+    private static OrderedXdmMap ConvertObject(System.Text.Json.JsonElement je)
     {
-        var map = new Dictionary<object, object?>();
+        var map = new OrderedXdmMap(EqualityComparer<object>.Default);
         foreach (var prop in je.EnumerateObject())
         {
             map[prop.Name] = ConvertJsonToXdm(prop.Value);
@@ -28931,7 +28935,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var isRaw = string.Equals(deliveryFormat, "raw", StringComparison.Ordinal);
 
         // Build result map
-        var resultMap = new Dictionary<object, object?>();
+        var resultMap = new OrderedXdmMap(EqualityComparer<object>.Default);
 
         if (isRaw)
         {

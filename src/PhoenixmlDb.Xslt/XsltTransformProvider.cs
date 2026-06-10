@@ -272,8 +272,8 @@ public sealed class XsltTransformProvider : ITransformProvider
             }
         }
 
-        // Build result map
-        var resultMap = new Dictionary<object, object?>();
+        // Build result map (XPath 4.0 ordered: "output" then secondary result docs in order)
+        var resultMap = new PhoenixmlDb.XQuery.Execution.OrderedXdmMap(EqualityComparer<object>.Default);
 
         if (string.Equals(deliveryFormat, "raw", StringComparison.Ordinal))
         {
