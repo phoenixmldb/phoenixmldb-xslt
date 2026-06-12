@@ -831,7 +831,29 @@ public sealed class XsltTransformEngine
             object? raw = rawItems.Count == 1 ? rawItems[0] : rawItems.ToArray();
             return WrapNodesForCrossStoreTransport(raw, context);
         }
-        return outputBuilder.Length > 0 ? outputBuilder.ToString() : null;
+
+        if (outputBuilder.Length == 0)
+            return null;
+
+        // Apply the SAME output-method post-processing (text strip / html / indentation)
+        // the main TransformAsync path applies — otherwise serialized output produced from
+        // a non-node (e.g. JSON-map) initial context item ignored xsl:output indent="yes"
+        // and came out on a single line (Martin Honnen 2026-06-12).
+        var serialized = outputBuilder.ToString();
+        var rawOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+        if (rawOutputDecl != null)
+        {
+            if (rawOutputDecl.EffectiveMethod == OutputMethod.Text)
+                serialized = DefaultXsltExecutionContext.StripXmlMarkup(serialized);
+            else if (rawOutputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml)
+                serialized = DefaultXsltExecutionContext.PostProcessHtmlOutput(serialized);
+
+            var effectiveIndent = rawOutputDecl.Indent
+                ?? (rawOutputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
+            if (effectiveIndent && rawOutputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
+                serialized = ApplyIndentation(serialized, rawOutputDecl.EffectiveMethod, rawOutputDecl.SuppressIndentation);
+        }
+        return serialized;
     }
 
     internal async Task<object?> TransformRawAsync(string xmlSource, XsltTransformOptions? options = null)
@@ -28383,14 +28405,19 @@ internal sealed class XsltParseJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         return map;
     }
 
-    private static object?[] ConvertArray(System.Text.Json.JsonElement je)
+    private static List<object?> ConvertArray(System.Text.Json.JsonElement je)
     {
+        // Return List<object?> — the engine's XDM array representation (a single item).
+        // Returning object?[] would be treated as a SEQUENCE and flattened by the
+        // function-call machinery, so parse-json('[...]') would lose its array-ness
+        // (Martin Honnen: parse-json($json)?* yielded the flattened members, and a
+        // subsequent ?lookup hit a string → XPTY0004).
         var items = new List<object?>();
         foreach (var item in je.EnumerateArray())
         {
             items.Add(ConvertJsonToXdm(item));
         }
-        return items.ToArray();
+        return items;
     }
 }
 
