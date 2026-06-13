@@ -1,5 +1,22 @@
 # Release History
 
+## 1.4.6 (2026-06-13)
+
+Three engine fixes. No API changes.
+
+### Fix: deeply-recursive stylesheets raise a catchable error instead of crashing the host
+
+A recursive `xsl:function` (or deeply nested apply-templates) expands into many .NET frames per logical call, so runaway recursion could exhaust the native execution stack and abort the hosting process — a `StackOverflowException` is uncatchable in managed code. The engine now probes the remaining stack at each stylesheet-function call and raises a catchable `XTDE0000` (surfaced as `XsltException`) before the hardware limit is reached, so unbounded recursion fails cleanly and the host survives. Intentionally deep recursion can be accommodated by running the transform on a thread with a larger stack.
+
+### Fix: key() matches attribute/text use-values against string lookup keys
+
+`key('k', 'a')` returned no nodes when the key's `use` expression produced an attribute or text value. Such values atomize to `xs:untypedAtomic`, which was not being compared against the `xs:string` lookup key. Untyped use-values are now compared as the lookup value's type (string-to-string here), so keys defined with `use="@attr"` resolve correctly. `xs:anyURI` use-values, promotable to string, are handled the same way.
+
+### Fix: parse-json arrays and indentation on JSON/map-sourced output (Martin Honnen, 2026-06-12)
+
+- `parse-json('[…]')` of a top-level JSON array now yields an `array(*)` rather than a flattened sequence, so array lookup (`?N`) and grouping over the result behave as written.
+- `indent="yes"` now applies when the serialized output is built from a JSON/map initial context item; the `TransformAsync(XdmSequence)` path previously skipped indent post-processing.
+
 ## 1.4.5 (2026-06-07)
 
 ### XSLT 4.0 ordered maps

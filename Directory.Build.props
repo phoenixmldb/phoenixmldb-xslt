@@ -6,10 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.5</Version>
+    <Version>1.4.6</Version>
     <PackageReleaseNotes>
-      XSLT 4.0 ordered maps: xsl:map, map constructors, records, and JSON-object maps now iterate in entry/insertion order as a structural guarantee (backed by the engine's OrderedXdmMap, requires PhoenixmlDb.XQuery 1.4.3). Grouping into a map emits groups in first-seen order, matching the XML-target equivalent — no "don't rely on it" caveat.
-      469/469 XSLT tests green. See RELEASES.md for full notes.
+      Three engine fixes, no API changes. Deeply-recursive stylesheets now raise a catchable XTDE0000 instead of overflowing the native stack and aborting the host process. key() now matches attribute/text use-values (xs:untypedAtomic) against string lookup keys, so keys defined with use="@attr" resolve. parse-json of a top-level JSON array yields array(*) rather than a flattened sequence, and indent="yes" applies to output built from a JSON/map initial context item (Martin Honnen). See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
