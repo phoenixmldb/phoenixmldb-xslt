@@ -5113,6 +5113,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             throw Error(
                 $"XTRE0000: Output size limit exceeded ({_output.Length:N0} characters > {_maxOutputSize:N0} limit). " +
                 "The transformation may contain an infinite loop or produce excessively large output.");
+
+        // Guard the native stack. Deep user recursion (recursive stylesheet functions,
+        // nested apply-templates) expands into ~15 .NET async frames per logical call,
+        // so the physical stack can overflow — an uncatchable StackOverflowException that
+        // aborts the whole process with SIGABRT — long before _recursionDepth reaches
+        // MaxRecursionDepth. Probe the remaining stack and convert exhaustion into a
+        // catchable engine error, mirroring the XQuery engine's
+        // QueryExecutionContext.EnterFunctionCall guard.
+        try
+        {
+            System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
+        }
+        catch (InsufficientExecutionStackException ex)
+        {
+            throw Error(
+                "XTDE0000: The transformation exhausted the execution stack before reaching " +
+                $"the recursion-depth limit ({MaxRecursionDepth}). It may contain unbounded " +
+                "recursion; if the recursion is intentional, run the host on a thread with a larger stack.",
+                ex);
+        }
     }
 
     // Namespace scope tracking for deduplication during serialization
@@ -21907,6 +21927,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _recursionDepth++;
         if (_recursionDepth > MaxRecursionDepth)
             throw Error($"Maximum recursion depth ({MaxRecursionDepth}) exceeded in function '{func.Name.LocalName}'");
+        // Probe the physical stack: recursive stylesheet functions overflow the native
+        // stack (uncatchable SIGABRT) well before _recursionDepth hits the limit above,
+        // because each call burns ~15 async frames. CheckResourceLimits converts that
+        // into a catchable error.
+        CheckResourceLimits();
 
         _currentXsltFunctionStack.Push(func);
         PushScope();

@@ -3679,4 +3679,36 @@ public class XsltTransformerIntegrationTests
         discovered.Should().Contain(stylesheetUri,
             because: "the import-walker must seed fn:transform stylesheet-location URLs alongside doc()/document() ones");
     }
+
+    [Fact]
+    public async Task Unbounded_recursive_function_throws_catchable_error_not_process_crash()
+    {
+        // An unbounded recursive stylesheet function expands into ~15 .NET async frames
+        // per logical call, so the native stack overflows long before the logical
+        // recursion-depth counter trips — a StackOverflowException is uncatchable and
+        // aborts the whole process (SIGABRT). The engine's EnsureSufficientExecutionStack
+        // guard must convert that into a catchable XsltException. The fact that this test
+        // returns at all (rather than killing the test host) is the regression assertion.
+        // The reference to $n after the recursive call prevents tail-call elimination.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                xmlns:f="http://example.com/f">
+              <xsl:function name="f:loop" as="xs:integer">
+                <xsl:param name="n" as="xs:integer"/>
+                <xsl:sequence select="f:loop($n + 1) + $n"/>
+              </xsl:function>
+              <xsl:template match="/">
+                <out><xsl:value-of select="f:loop(0)"/></out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var act = async () => await transformer.TransformAsync("<root/>");
+
+        await act.Should().ThrowAsync<XsltException>(
+            because: "runaway recursion must surface as a catchable engine error, never crash the host");
+    }
 }
