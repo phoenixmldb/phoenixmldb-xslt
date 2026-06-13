@@ -23344,7 +23344,6 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             else if (_context._nodeStore != null)
                 candidates.AddRange(_context._nodeStore.GetAllNodes());
 
-
             // Build index: match nodes and evaluate use expression
             // Iterate all definitions for this key name (supports multiple xsl:key with same name)
             var isComposite = keyDef.Composite;
@@ -23485,6 +23484,22 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
     {
         if (useValue is null || lookupValue is null)
             return useValue is null && lookupValue is null;
+
+        // Normalize untyped-atomic and anyURI wrappers to their underlying string.
+        // A use="@attr" value atomizes to xs:untypedAtomic (a CLR XsUntypedAtomic struct,
+        // not a string), so without this it would never match a string lookup key.
+        // Per XPath key-matching semantics an xs:untypedAtomic use value compares against
+        // the lookup value as though cast to the lookup value's type — string-vs-string
+        // here, and the cast-to-numeric branch below handles the numeric-lookup case.
+        // xs:anyURI is promotable to xs:string, so it is normalized the same way.
+        if (useValue is XsUntypedAtomic useUntyped)
+            useValue = useUntyped.Value;
+        else if (useValue is XsAnyUri useUri)
+            useValue = useUri.Value;
+        if (lookupValue is XsUntypedAtomic lookupUntyped)
+            lookupValue = lookupUntyped.Value;
+        else if (lookupValue is XsAnyUri lookupUri)
+            lookupValue = lookupUri.Value;
 
         var useIsNumeric = IsNumericForKey(useValue);
         var lookupIsNumeric = IsNumericForKey(lookupValue);
