@@ -346,10 +346,12 @@ public sealed class XqtsTestRunner
         // Compile and execute query
         var results = new List<object?>();
 
+        // NOTE: ExecuteAsync(string, ContainerId, object? initialContextItem, CancellationToken).
+        // The token must go to the cancellationToken parameter — passing it positionally as the
+        // 3rd arg made it the initialContextItem and left cancellation/timeout disabled (CA2016).
         await foreach (var item in _engine.ExecuteAsync(
             query,
-            default,
-            token))
+            cancellationToken: token))
         {
             results.Add(item);
 

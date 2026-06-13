@@ -6,6 +6,13 @@
     <!-- PhoenixmlDb -->
     <PackageVersion Include="PhoenixmlDb.Core" Version="1.1.7" />
     <PackageVersion Include="PhoenixmlDb.XQuery" Version="1.4.3" />
+    <!-- Transitive deps of the in-repo PhoenixmlDb.XQuery source (src/PhoenixmlDb.XQuery
+         symlink → canonical phoenixmldb-xquery), which PhoenixmlDb.Conformance.Tests
+         ProjectReferences to run XQTS/XSLT conformance against current source. -->
+    <PackageVersion Include="Antlr4.Runtime.Standard" Version="4.13.1" />
+    <PackageVersion Include="Antlr4BuildTasks" Version="12.14.0" />
+    <PackageVersion Include="Lucene.Net" Version="4.8.0-beta00016" />
+    <PackageVersion Include="Lucene.Net.Analysis.Common" Version="4.8.0-beta00016" />
     <!-- Used only by bench/ — kept here so central package management is consistent -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
     <!-- Testing -->
