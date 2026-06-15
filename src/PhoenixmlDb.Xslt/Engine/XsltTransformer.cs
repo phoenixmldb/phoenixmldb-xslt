@@ -828,6 +828,24 @@ public sealed class XsltTransformEngine
 
         if (rawItems.Count > 0)
         {
+            // When the caller wants a serialized string (TransformAsync, i.e. not the
+            // raw-XDM chaining path used by TransformToSequenceAsync) and the principal
+            // output is a JSON-family method, serialize the collected map / array / atomic
+            // items as JSON rather than returning them raw — otherwise the string facade
+            // ToString()s the result into a CLR type name like
+            // "PhoenixmlDb.XQuery.Execution.OrderedXdmMap" (Martin Honnen 2026-06-14,
+            // JSON input fed through TransformAsync(XdmSequence)).
+            if (!options.ReturnRawXdm)
+            {
+                var jsonOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+                if (jsonOutDecl?.EffectiveMethod is OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv)
+                {
+                    var jsonBuilder = new StringBuilder();
+                    AppendJsonItems(rawItems, jsonBuilder, jsonOutDecl, nodeStore);
+                    return jsonBuilder.ToString();
+                }
+            }
+
             object? raw = rawItems.Count == 1 ? rawItems[0] : rawItems.ToArray();
             return WrapNodesForCrossStoreTransport(raw, context);
         }
@@ -980,6 +998,21 @@ public sealed class XsltTransformEngine
         if (jsonItems.Count == 0)
             return;
 
+        AppendJsonItems(jsonItems, outputBuilder, principalOutput, nodeStore);
+    }
+
+    /// <summary>
+    /// Serializes a non-empty list of JSON-family items (map / array / atomic) into
+    /// <paramref name="outputBuilder"/> per the principal output's method, indent, and
+    /// allow-duplicate-names settings. Shared by <see cref="FinalizeJsonOutput"/> and the
+    /// initial-context-item transform path so both emit identical JSON / Adaptive / CSV.
+    /// </summary>
+    internal static void AppendJsonItems(
+        List<object?> jsonItems,
+        StringBuilder outputBuilder,
+        XsltOutput? principalOutput,
+        XdmInMemoryStore? nodeStore)
+    {
         var effectiveMethod = principalOutput?.EffectiveMethod ?? OutputMethod.Json;
         if (effectiveMethod == OutputMethod.Csv)
         {
@@ -4786,6 +4819,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 return;
             case object?[] arr:
                 foreach (var it in arr) AppendFlattened(list, it);
+                return;
+            // An XDM array is a single item, represented as List<object?>; an XDM map is a
+            // single item, represented as IDictionary. Neither flattens — only a CLR
+            // object?[] (the engine's sequence representation) does. Without these guards a
+            // top-level JSON array/map round-tripped through xsl:sequence was spread into
+            // its members (Martin Honnen 2026-06-14).
+            case List<object?>:
+            case System.Collections.IDictionary:
+                list.Add(value);
                 return;
             case System.Collections.IEnumerable seq:
                 foreach (var it in seq) AppendFlattened(list, it);
@@ -12366,7 +12408,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         foreach (var item in arr)
                             AppendToSeqAccumulator(item);
                     }
-                    else if (result is System.Collections.IEnumerable enumerable && result is not string && result is not XdmNode && result is not IDictionary<object, object?>)
+                    else if (result is System.Collections.IEnumerable enumerable && result is not string && result is not XdmNode && result is not IDictionary<object, object?> && result is not List<object?>)
                     {
                         foreach (var item in enumerable)
                             AppendToSeqAccumulator(item);
