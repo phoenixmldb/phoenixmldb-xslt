@@ -1,5 +1,15 @@
 # Release History
 
+## 1.4.8 (2026-06-14)
+
+Fix (Martin Honnen): JSON array as the context item for `apply-templates`.
+
+Continuing the 1.4.7 JSON-`XdmSequence` work: when a parsed JSON **array** is fed as the initial context item to a stylesheet whose template applies via `apply-templates` (e.g. a named `xsl:initial-template` with `match="."`, common in grouping stylesheets), the array was iterated as its members — the template fired once per member, so `?*` and lookups saw a single map and failed with "Lookup requires a map or array, got String".
+
+`apply-templates` now treats an XDM array (`List<object?>`) and an XDM map (`IDictionary`) as a single item; only the engine's sequence representation (`object?[]`) is iterated. A `for-each-group` grouping pipeline over parsed JSON now produces the expected grouped JSON.
+
+No API changes. Builds against PhoenixmlDb.XQuery 1.4.4.
+
 ## 1.4.7 (2026-06-14)
 
 Fix (Martin Honnen): JSON input round-tripped through `TransformAsync(XdmSequence)`.

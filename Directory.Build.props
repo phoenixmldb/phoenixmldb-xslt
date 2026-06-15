@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.7</Version>
+    <Version>1.4.8</Version>
     <PackageReleaseNotes>
-      Fix (Martin Honnen): JSON map/array values fed to a json-output stylesheet via TransformAsync(XdmSequence) now serialize as JSON instead of emitting a CLR type name, and a top-level JSON array is no longer unwrapped to its first member (xsl:sequence no longer flattens the List&lt;object?&gt; array representation). See RELEASES.md for full notes.
+      Fix (Martin Honnen): a JSON array parsed to an XdmSequence and fed as the context item to apply-templates (e.g. a grouping stylesheet) is now treated as a single array item rather than iterated as its members, so ?* and lookups operate on the whole array. Completes the JSON-XdmSequence round-trip fixes from 1.4.7. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
