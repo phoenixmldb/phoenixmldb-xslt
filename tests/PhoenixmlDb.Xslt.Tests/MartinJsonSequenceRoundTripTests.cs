@@ -82,6 +82,63 @@ public class MartinJsonSequenceRoundTripTests
         result.Should().Contain("item 2");
     }
 
+    private const string ParseStylesheetNamedInit = """
+        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xsl:output method="adaptive"/>
+          <xsl:param name="j" as="xs:string"/>
+          <xsl:template name="xsl:initial-template"><xsl:sequence select="parse-json($j)"/></xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    [Fact]
+    public async Task ApplyTemplates_over_json_array_treats_array_as_single_item()
+    {
+        // Martin Honnen 2026-06-14: the parsed array fed as the initial context item to a
+        // named xsl:initial-template (match=".") was iterated as its 4 members — apply-templates
+        // flattened the List<object?> array — so ?* / lookups operated on a single map.
+        var json = """
+            [
+              { "name": "item 1", "categories": [ "cat 1", "cat 2" ] },
+              { "name": "item 2", "categories": [ "cat 1", "cat 3" ] },
+              { "name": "item 3", "categories": [ "cat 2", "cat 3" ] },
+              { "name": "item 4", "categories": [ "cat 2", "cat 4" ] }
+            ]
+            """;
+        const string group = """
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:mf="http://example.com/mf"
+              exclude-result-prefixes="#all" expand-text="yes">
+              <xsl:function name="mf:group" as="item()*">
+                <xsl:param name="items" as="item()*"/>
+                <xsl:param name="grouping-key-selector" as="function(item()) as item()"/>
+                <xsl:for-each-group select="$items" group-by="$grouping-key-selector(.)">
+                  <xsl:sequence select="map { 'category' : current-grouping-key(), 'items' : array { current-group()?name } }"/>
+                </xsl:for-each-group>
+              </xsl:function>
+              <xsl:output method="json" indent="no"/>
+              <xsl:template match="." name="xsl:initial-template">
+                <xsl:sequence select="array { mf:group(?*, function($item) { $item?categories }) }"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var parser = new XsltTransformer();
+        await parser.LoadStylesheetAsync(ParseStylesheetNamedInit);
+        parser.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
+        parser.SetParameter("j", json);
+        var seq = await parser.TransformToSequenceAsync(null);
+
+        var grouper = new XsltTransformer();
+        await grouper.LoadStylesheetAsync(group);
+        var result = await grouper.TransformAsync(seq);
+
+        result.Should().NotContain("Lookup requires");
+        result.Should().NotContain("OrderedXdmMap");
+        // Each item appears under each of its categories.
+        result.Should().Contain("\"category\":\"cat 1\"").And.Contain("\"category\":\"cat 4\"");
+        result.Should().Contain("item 1").And.Contain("item 4");
+    }
+
     [Fact]
     public async Task JsonObject_input_serializes_as_json_not_typename()
     {

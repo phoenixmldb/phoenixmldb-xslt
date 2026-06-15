@@ -6447,9 +6447,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var result = await EvaluateAsync(select).ConfigureAwait(false);
             nodes = result switch
             {
+                null => [],
+                // An XDM array (List<object?>) or map (IDictionary) is a single item:
+                // apply-templates processes it as one item, it does NOT iterate the
+                // array's members or the map's entries. Everything else that is
+                // IEnumerable<object> (notably object?[], the engine's sequence
+                // representation) is iterated. Without these guards a JSON array fed as
+                // the context item was spread into its members and the template fired
+                // once per member (Martin Honnen 2026-06-14).
+                List<object?> arr => [arr],
+                System.Collections.IDictionary dict => [dict],
                 IEnumerable<object> seq => seq,
-                object obj => [obj],
-                _ => []
+                object obj => [obj]
             };
         }
         else
