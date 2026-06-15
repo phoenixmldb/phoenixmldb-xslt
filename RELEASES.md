@@ -1,5 +1,16 @@
 # Release History
 
+## 1.4.7 (2026-06-14)
+
+Fix (Martin Honnen): JSON input round-tripped through `TransformAsync(XdmSequence)`.
+
+When JSON is parsed to an `XdmSequence` (e.g. via `TransformToSequenceAsync`) and fed to a stylesheet with `xsl:output method="json"` — for example an identity template `<xsl:template match="."><xsl:sequence select="."/></xsl:template>` — the result now serializes as JSON. Previously:
+
+- A map (or array) was returned raw and the string-returning overload rendered it as its CLR type name (`PhoenixmlDb.XQuery.Execution.OrderedXdmMap`). The non-node initial-context-item path now serializes collected map/array/atomic items as JSON when the principal output method is json/adaptive/csv, sharing the same emission as the main transform path.
+- A top-level JSON **array** was unwrapped to its first member. `xsl:sequence` no longer flattens the `List<object?>` array representation (an XDM array is a single item); arrays and maps also no longer flatten in the shared sequence-builder. `?*` over an array now yields its members as JSON rather than a `System.Object[]`.
+
+No API changes. Builds against PhoenixmlDb.XQuery 1.4.4.
+
 ## 1.4.6 (2026-06-13)
 
 Three engine fixes. No API changes.

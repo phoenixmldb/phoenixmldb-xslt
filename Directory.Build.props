@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.6</Version>
+    <Version>1.4.7</Version>
     <PackageReleaseNotes>
-      Three engine fixes, no API changes. Deeply-recursive stylesheets now raise a catchable XTDE0000 instead of overflowing the native stack and aborting the host process. key() now matches attribute/text use-values (xs:untypedAtomic) against string lookup keys, so keys defined with use="@attr" resolve. parse-json of a top-level JSON array yields array(*) rather than a flattened sequence, and indent="yes" applies to output built from a JSON/map initial context item (Martin Honnen). See RELEASES.md for full notes.
+      Fix (Martin Honnen): JSON map/array values fed to a json-output stylesheet via TransformAsync(XdmSequence) now serialize as JSON instead of emitting a CLR type name, and a top-level JSON array is no longer unwrapped to its first member (xsl:sequence no longer flattens the List&lt;object?&gt; array representation). See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
