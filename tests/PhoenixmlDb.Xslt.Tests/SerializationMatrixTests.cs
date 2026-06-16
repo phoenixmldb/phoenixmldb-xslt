@@ -231,4 +231,47 @@ public class SerializationMatrixTests
         // indent="yes" JSON is multi-line.
         result.Should().Contain("\n");
     }
+
+    // ---------------------------------------------------------------------
+    // Buffered streaming path now routes through full finalization (Task 4).
+    // A streamable mode (xsl:mode streamable="yes") drives the input through the
+    // streaming processor; the buffered (non-sink) result must honor indent.
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Buffered streaming delivery path: a stylesheet with a streamable mode transforms
+    /// <paramref name="inputXml"/> via the streaming processor, with the result buffered into a
+    /// string (the non-sink path). Mirrors StreamingCoreOpsTests' Run helper.
+    /// </summary>
+    private static async System.Threading.Tasks.Task<string> Streaming(string stylesheet, string inputXml)
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync(stylesheet);
+        return await t.TransformAsync(inputXml);
+    }
+
+    [Fact]
+    public async Task Streaming_Xml_IndentYes()
+    {
+        const string stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="yes"/>
+              <xsl:mode on-no-match="shallow-copy" streamable="yes"/>
+              <xsl:template match="body">
+                <out>
+                  <xsl:apply-templates select="*"/>
+                </out>
+              </xsl:template>
+              <xsl:template match="item"><v/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Streaming(stylesheet, "<body><item>1</item><item>2</item></body>");
+
+        // Two streamed items each emit a <v/>.
+        System.Text.RegularExpressions.Regex.Count(result, "<v ?/>").Should().Be(2, $"actual={result}");
+        // Prove the buffered streaming path applied indentation: <out> is followed by a
+        // newline and indentation before <v>. Before Task 4 this path applied a bespoke
+        // post-processing subset; it now routes through FinalizeOutput like every other path.
+        result.Should().MatchRegex(@"<out>\s*\n\s+<v ?/>");
+    }
 }

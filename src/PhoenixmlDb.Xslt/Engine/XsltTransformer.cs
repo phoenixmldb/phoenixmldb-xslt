@@ -3120,50 +3120,15 @@ public sealed class XsltTransformEngine
 
         var output = outputBuilder.ToString();
 
-        // Apply indentation for streaming output
+        // Route buffered streaming output through the same full finalization the non-streaming
+        // delivery paths use (TransformAsync, node-source, initial-context-item). Previously this
+        // path applied a bespoke subset (indentation / xml-decl / doctype / BOM / escape-uri) and
+        // omitted text-strip, html method handling, content-type, character maps, and
+        // normalization \u2014 that divergence was the bug. FinalizeOutput only runs the indentation
+        // step for XML/HTML/XHTML methods, so JSON already serialized via FinalizeJsonOutput above
+        // is not re-indented or corrupted.
         var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-        var streamEffectiveIndent = streamOutputDecl?.Indent
-            ?? (streamOutputDecl?.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
-        if (streamOutputDecl != null && streamEffectiveIndent == true &&
-            streamOutputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
-        {
-            output = ApplyIndentation(output, streamOutputDecl.EffectiveMethod, streamOutputDecl.SuppressIndentation);
-        }
-
-        // Emit XML declaration for streaming output
-        if (streamOutputDecl != null &&
-            (streamOutputDecl.EffectiveMethod == OutputMethod.Xml || streamOutputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
-            streamOutputDecl.OmitXmlDeclaration != true &&
-            !output.StartsWith("<?xml", StringComparison.Ordinal))
-        {
-            var encoding = streamOutputDecl.Encoding ?? "UTF-8";
-            var version = streamOutputDecl.Version ?? "1.0";
-            var decl = $"<?xml version=\"{version}\" encoding=\"{encoding}\"";
-            if (streamOutputDecl.Standalone.HasValue)
-                decl += streamOutputDecl.Standalone.Value ? " standalone=\"yes\"" : " standalone=\"no\"";
-            decl += "?>";
-            output = decl + output;
-        }
-
-        // Emit DOCTYPE declaration for streaming output
-        if (streamOutputDecl != null && streamOutputDecl.DoctypeSystem != null)
-        {
-            output = InsertDoctype(output, streamOutputDecl.DoctypePublic, streamOutputDecl.DoctypeSystem);
-        }
-
-        // Prepend UTF-8 BOM when byte-order-mark="yes" (streaming path)
-        if (streamOutputDecl?.ByteOrderMark == true)
-        {
-            output = "\uFEFF" + output;
-        }
-
-        // escape-uri-attributes for streaming HTML/XHTML output
-        if (streamOutputDecl != null &&
-            (streamOutputDecl.EffectiveMethod == OutputMethod.Html || streamOutputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
-            streamOutputDecl.EscapeUriAttributes != false)
-        {
-            output = EscapeUriAttributes(output);
-        }
+        output = FinalizeOutput(output, streamOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
 
         // Replace the builder's contents with the post-processed output so the calling
         // wrapper sees the same string the original method returned.
