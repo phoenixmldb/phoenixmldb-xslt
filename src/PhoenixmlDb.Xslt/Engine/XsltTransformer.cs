@@ -155,6 +155,7 @@ public sealed class XsltTransformEngine
             options,
             nodeStore,
             _schemaProvider);
+        context.Owner = this;
 
         // When there is no source document, the context item is absent during global variable
         // evaluation (XSLT 3.0 §5.4.1: global variables are evaluated with the initial focus).
@@ -438,13 +439,18 @@ public sealed class XsltTransformEngine
     /// </summary>
     internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind)
     {
-        _ = kind;
         if (outputDecl != null)
         {
             if (outputDecl.EffectiveMethod == OutputMethod.Text)
             {
-                // Text output: strip all markup, return only text content
-                output = DefaultXsltExecutionContext.StripXmlMarkup(output);
+                // Text output: strip all markup, return only text content.
+                // The secondary xsl:result-document path (FinalizeKind.ResultDocument) has already
+                // stripped its text content WITHOUT sentinel protection, so re-stripping here would
+                // re-process decoded markup characters and corrupt the output. Skip the strip for
+                // that path; the primary result-document path uses FinalizeKind.Primary (and sentinel
+                // escaping), so it still strips correctly here.
+                if (kind != FinalizeKind.ResultDocument)
+                    output = DefaultXsltExecutionContext.StripXmlMarkup(output);
             }
             else if (outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml)
             {
@@ -571,6 +577,7 @@ public sealed class XsltTransformEngine
             options,
             nodeStore,
             _schemaProvider);
+        context.Owner = this;
 
         if (!options.HasSourceDocument)
             context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
@@ -798,6 +805,7 @@ public sealed class XsltTransformEngine
             options,
             nodeStore,
             _schemaProvider);
+        context.Owner = this;
 
         // Globals init with absent focus — same as the no-source path.
         context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
@@ -3027,6 +3035,7 @@ public sealed class XsltTransformEngine
             outputBuilder,
             options,
             nodeStore);
+        context.Owner = this;
 
         // Attach the optional external sink BEFORE global initialization and the streaming
         // pass so DrainStreamingOutputAsync at every event boundary flushes incrementally
@@ -4243,6 +4252,13 @@ internal sealed class TemplateIndex
 /// </summary>
 internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 {
+    /// <summary>
+    /// The engine that created this context. Used by the xsl:result-document path to route
+    /// secondary-document serialization through the shared <see cref="XsltTransformEngine.FinalizeOutput"/>
+    /// pipeline (the engine owns the character-map application that depends on the stylesheet).
+    /// </summary>
+    internal XsltTransformEngine? Owner { get; set; }
+
     internal readonly XsltStylesheet _stylesheet;
     private readonly TemplateIndex _templateIndex;
     private readonly Stack<Scope> _scopes = new();
@@ -13648,30 +13664,40 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 var secondaryContent = _output.ToString();
 
-                // Apply indentation for secondary result documents
-                // Per XSLT 3.0 §20: default is yes for html/xhtml, no for xml.
-                var effectiveMethod = resultMethod ?? matchedOutput?.EffectiveMethod ?? OutputMethod.Xml;
-                var effectiveIndent = resultIndent ?? matchedOutput?.Indent
-                    ?? (effectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
-                if (effectiveIndent == true &&
-                    effectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
+                // Route secondary result-document serialization through the shared FinalizeOutput
+                // pipeline (text/html post-process, content-type meta, indentation, character maps,
+                // Unicode normalization, xml-decl, doctype, BOM, escape-uri, sentinel restore) so it
+                // gains the same treatment as primary/streaming output instead of a bespoke subset.
+                //
+                // Build a resolved output declaration for this result-document. The result-document's
+                // own attributes (method/indent/omit-xml-declaration) take precedence over its matched
+                // xsl:output (format=), which in turn falls back to the stylesheet's default xsl:output
+                // for doctype/BOM/suppress-indentation/etc. This reproduces the previous effective
+                // method/indent/doctype/BOM resolution exactly while adding the rest of the pipeline.
+                //
+                // Character maps: the previous secondary path applied NO character maps, so we leave
+                // UseCharacterMaps empty and pass no supplementary list, keeping char-map behavior
+                // unchanged (FinalizeOutput's character-map step is a no-op in that case).
+                var rdBaseOutput = matchedOutput ?? _stylesheet.Outputs.FirstOrDefault();
+                var rdOutputDecl = new Ast.XsltOutput
                 {
-                    var effectiveSuppressIndent = matchedOutput?.SuppressIndentation ?? _stylesheet.Outputs.FirstOrDefault()?.SuppressIndentation;
-                    secondaryContent = XsltTransformEngine.ApplyIndentation(secondaryContent, effectiveMethod, effectiveSuppressIndent);
-                }
-
-                // Emit DOCTYPE for secondary result documents
-                var effectiveOutputDecl = matchedOutput ?? _stylesheet.Outputs.FirstOrDefault();
-                if (effectiveOutputDecl?.DoctypeSystem != null)
-                {
-                    secondaryContent = XsltTransformEngine.InsertDoctype(secondaryContent, effectiveOutputDecl.DoctypePublic, effectiveOutputDecl.DoctypeSystem);
-                }
-
-                // Prepend UTF-8 BOM for secondary result documents
-                if (effectiveOutputDecl?.ByteOrderMark == true)
-                {
-                    secondaryContent = "\uFEFF" + secondaryContent;
-                }
+                    Method = resultMethod ?? matchedOutput?.Method,
+                    Indent = resultIndent ?? matchedOutput?.Indent,
+                    OmitXmlDeclaration = resultOmitXmlDecl ?? rdBaseOutput?.OmitXmlDeclaration,
+                    Encoding = rdBaseOutput?.Encoding,
+                    Version = rdBaseOutput?.Version,
+                    Standalone = rdBaseOutput?.Standalone,
+                    DoctypePublic = rdBaseOutput?.DoctypePublic,
+                    DoctypeSystem = rdBaseOutput?.DoctypeSystem,
+                    MediaType = rdBaseOutput?.MediaType,
+                    IncludeContentType = rdBaseOutput?.IncludeContentType,
+                    EscapeUriAttributes = rdBaseOutput?.EscapeUriAttributes,
+                    NormalizationForm = rdBaseOutput?.NormalizationForm,
+                    ByteOrderMark = rdBaseOutput?.ByteOrderMark,
+                    SuppressIndentation = matchedOutput?.SuppressIndentation ?? _stylesheet.Outputs.FirstOrDefault()?.SuppressIndentation,
+                };
+                secondaryContent = Owner!.FinalizeOutput(
+                    secondaryContent, rdOutputDecl, resultDocCharacterMaps: null, XsltTransformEngine.FinalizeKind.ResultDocument);
 
                 if (MaxResultDocuments > 0 && _secondaryResultDocuments.Count >= MaxResultDocuments)
                     throw Error($"XTDE1490: Maximum number of secondary result documents ({MaxResultDocuments}) exceeded. " +

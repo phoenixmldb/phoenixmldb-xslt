@@ -274,4 +274,46 @@ public class SerializationMatrixTests
         // post-processing subset; it now routes through FinalizeOutput like every other path.
         result.Should().MatchRegex(@"<out>\s*\n\s+<v ?/>");
     }
+
+    // ---------------------------------------------------------------------
+    // Result-document path now routes through full finalization (Task 5).
+    // ViaResultDocument wraps innerBody in <xsl:result-document href="">, so the
+    // secondary-document serialization (and the primary-claim path) both flow through
+    // FinalizeOutput. Before Task 5 the result-document path applied a bespoke
+    // indentation/doctype/BOM subset; it now gets the full pipeline.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public async Task ResultDocument_Xml_IndentYes()
+    {
+        // The stylesheet-level <xsl:output method="xml" indent="yes"/> governs the
+        // result-document's serialization; an element tree must come out indented.
+        var result = await ViaResultDocument(
+            "<xsl:output method='xml' indent='yes'/>",
+            "<a><b>1</b><b>2</b></a>");
+
+        result.Should().Contain("<b>1</b>");
+        result.Should().Contain("<b>2</b>");
+        // Prove multi-line indentation: the root element is followed by a newline and indentation
+        // before <b>. (ViaResultDocument's literal result element carries an xmlns:xs declaration,
+        // so the opening tag is "<a ...>" rather than a bare "<a>".)
+        result.Should().MatchRegex(@"<a[ >][^>]*>\s*\n\s+<b>");
+    }
+
+    [Fact]
+    public async Task ResultDocument_Html_IndentDefault()
+    {
+        // HTML method indents by default (no explicit indent attribute).
+        var result = await ViaResultDocument(
+            "<xsl:output method='html'/>",
+            "<html><body><p>x</p></body></html>");
+
+        // ViaResultDocument's literal result element carries an xmlns:xs declaration,
+        // so the opening tag is "<html ...>" rather than a bare "<html>".
+        result.Should().MatchRegex(@"<html[ >]");
+        result.Should().Contain("<p>");
+        result.Should().Contain("x");
+        // HTML method indents by default: nested elements appear on their own indented lines.
+        result.Should().MatchRegex(@"<body>\s*\n\s+<p>");
+    }
 }
