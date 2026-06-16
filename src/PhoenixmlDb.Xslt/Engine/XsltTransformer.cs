@@ -1347,19 +1347,7 @@ public sealed class XsltTransformEngine
     }
 
     private static void AppendEscapedXmlAttribute(System.Text.StringBuilder sb, string value)
-    {
-        foreach (var c in value)
-        {
-            switch (c)
-            {
-                case '&': sb.Append("&amp;"); break;
-                case '"': sb.Append("&quot;"); break;
-                case '<': sb.Append("&lt;"); break;
-                case '>': sb.Append("&gt;"); break;
-                default: sb.Append(c); break;
-            }
-        }
-    }
+        => CharacterEscaper.AppendXmlAttribute(sb, value);
 
     private static void AppendEscapedXmlText(System.Text.StringBuilder sb, string value)
         => CharacterEscaper.AppendXmlText(sb, value);
@@ -21597,16 +21585,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         => CharacterEscaper.EscapeXmlText(text);
 
     private static string EscapeAttributeValue(string value)
-    {
-        return value
-            .Replace("&", "&amp;", StringComparison.Ordinal)
-            .Replace("<", "&lt;", StringComparison.Ordinal)
-            .Replace(">", "&gt;", StringComparison.Ordinal)
-            .Replace("\"", "&quot;", StringComparison.Ordinal)
-            .Replace("\n", "&#xA;", StringComparison.Ordinal)
-            .Replace("\r", "&#xD;", StringComparison.Ordinal)
-            .Replace("\t", "&#x9;", StringComparison.Ordinal);
-    }
+        => CharacterEscaper.EscapeXmlAttribute(value);
 
     private int _nsPrefixCounter;
     private string GenerateNsPrefix(string nsUri)

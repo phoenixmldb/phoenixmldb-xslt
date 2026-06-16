@@ -31,4 +31,35 @@ internal static class CharacterEscaper
         AppendXmlText(sb, value);
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Appends XML attribute-value content, escaping &amp;, &lt;, &gt;, &quot;
+    /// and the whitespace characters that XML attribute-value normalization would
+    /// otherwise collapse (tab, newline, carriage return) as numeric character references.
+    /// </summary>
+    public static void AppendXmlAttribute(StringBuilder sb, string value)
+    {
+        foreach (var c in value)
+        {
+            switch (c)
+            {
+                case '&': sb.Append("&amp;"); break;
+                case '<': sb.Append("&lt;"); break;
+                case '>': sb.Append("&gt;"); break;
+                case '"': sb.Append("&quot;"); break;
+                case '\n': sb.Append("&#xA;"); break;
+                case '\r': sb.Append("&#xD;"); break;
+                case '\t': sb.Append("&#x9;"); break;
+                default: sb.Append(c); break;
+            }
+        }
+    }
+
+    /// <summary>Escapes XML attribute-value content and returns the result as a string.</summary>
+    public static string EscapeXmlAttribute(string value)
+    {
+        var sb = new StringBuilder(value.Length + 16);
+        AppendXmlAttribute(sb, value);
+        return sb.ToString();
+    }
 }

@@ -483,12 +483,7 @@ public sealed class XsltTransformProvider : ITransformProvider
     }
 
     private static string EscapeAttr(string value)
-    {
-        return value
-            .Replace("&", "&amp;", StringComparison.Ordinal)
-            .Replace("\"", "&quot;", StringComparison.Ordinal)
-            .Replace("<", "&lt;", StringComparison.Ordinal);
-    }
+        => CharacterEscaper.EscapeXmlAttribute(value);
 
     private static string EscapeText(string value)
         => CharacterEscaper.EscapeXmlText(value);
