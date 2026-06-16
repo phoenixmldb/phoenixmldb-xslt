@@ -192,4 +192,43 @@ public class SerializationMatrixTests
 
         result.Should().Contain("\"x\"");
     }
+
+    // ---------------------------------------------------------------------
+    // XdmSequence path now routes through full finalization (Task 3).
+    // Proves XML indentation and JSON multi-line output both apply when the
+    // initial context item is a non-node (JSON map/array) sequence.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public async Task XdmSequence_Xml_IndentYes()
+    {
+        // Input [{"x":1}] arrives as an array; ?*?x flattens to the x values.
+        const string stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:output method="xml" indent="yes"/>
+              <xsl:template match="."><out><v>{?*?x}</v></out></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await ViaXdmSequence("""[{"x":1}]""", stylesheet);
+
+        result.Should().Contain("<v>1</v>");
+        // Prove multi-line indentation: <out> is followed by a newline and indentation before <v>.
+        result.Should().MatchRegex(@"<out>\s*\n\s+<v>");
+    }
+
+    [Fact]
+    public async Task XdmSequence_Json_IndentYes()
+    {
+        const string stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="json" indent="yes"/>
+              <xsl:template match="."><xsl:sequence select="."/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await ViaXdmSequence("""[{"x":1},{"x":2}]""", stylesheet);
+
+        result.Should().Contain("\"x\"");
+        // indent="yes" JSON is multi-line.
+        result.Should().Contain("\n");
+    }
 }

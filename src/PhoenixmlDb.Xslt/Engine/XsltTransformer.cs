@@ -859,7 +859,12 @@ public sealed class XsltTransformEngine
                 {
                     var jsonBuilder = new StringBuilder();
                     AppendJsonItems(rawItems, jsonBuilder, jsonOutDecl, nodeStore);
-                    return jsonBuilder.ToString();
+                    var jsonOut = jsonBuilder.ToString();
+                    // Route JSON-family output through full finalization so character-maps /
+                    // normalization / sentinel restore apply. FinalizeOutput only runs the
+                    // indentation step for XML/HTML/XHTML methods, so already-emitted JSON is
+                    // not re-indented or corrupted.
+                    return FinalizeOutput(jsonOut, jsonOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
                 }
             }
 
@@ -870,25 +875,21 @@ public sealed class XsltTransformEngine
         if (outputBuilder.Length == 0)
             return null;
 
-        // Apply the SAME output-method post-processing (text strip / html / indentation)
-        // the main TransformAsync path applies — otherwise serialized output produced from
-        // a non-node (e.g. JSON-map) initial context item ignored xsl:output indent="yes"
-        // and came out on a single line (Martin Honnen 2026-06-12).
         var serialized = outputBuilder.ToString();
-        var rawOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-        if (rawOutputDecl != null)
-        {
-            if (rawOutputDecl.EffectiveMethod == OutputMethod.Text)
-                serialized = DefaultXsltExecutionContext.StripXmlMarkup(serialized);
-            else if (rawOutputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml)
-                serialized = DefaultXsltExecutionContext.PostProcessHtmlOutput(serialized);
 
-            var effectiveIndent = rawOutputDecl.Indent
-                ?? (rawOutputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
-            if (effectiveIndent && rawOutputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
-                serialized = ApplyIndentation(serialized, rawOutputDecl.EffectiveMethod, rawOutputDecl.SuppressIndentation);
-        }
-        return serialized;
+        // The raw-XDM chaining caller (TransformToSequenceAsync, ReturnRawXdm) re-parses
+        // this serialized markup back into a navigable node downstream, so it must receive
+        // the bare markup — full finalization would prepend an XML declaration / DOCTYPE /
+        // BOM that breaks that re-parse. Leave it raw, matching the rawItems branches above.
+        if (options.ReturnRawXdm)
+            return serialized;
+
+        // Route serialized output through the same full finalization the main TransformAsync
+        // path applies — otherwise serialized output produced from a non-node (e.g. JSON-map)
+        // initial context item ignored xsl:output indent="yes", character maps, normalization,
+        // etc. (Martin Honnen 2026-06-12).
+        var rawOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+        return FinalizeOutput(serialized, rawOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
     }
 
     internal async Task<object?> TransformRawAsync(string xmlSource, XsltTransformOptions? options = null)
