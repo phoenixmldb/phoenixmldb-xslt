@@ -62,4 +62,29 @@ internal static class CharacterEscaper
         AppendXmlAttribute(sb, value);
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Appends a single character using JSON string-escaping rules: the JSON short
+    /// escapes for the control characters that have them, \uXXXX for any remaining
+    /// C0 control, and the verbatim character otherwise. Backslash sequences in the
+    /// source (raw escaping, pass-through, or validation) are handled by the caller.
+    /// </summary>
+    public static void AppendJsonEscapedChar(StringBuilder sb, char c)
+    {
+        switch (c)
+        {
+            case '"': sb.Append("\\\""); break;
+            case '\n': sb.Append("\\n"); break;
+            case '\r': sb.Append("\\r"); break;
+            case '\t': sb.Append("\\t"); break;
+            case '\b': sb.Append("\\b"); break;
+            case '\f': sb.Append("\\f"); break;
+            default:
+                if (c < 0x20)
+                    sb.Append("\\u").Append(((int)c).ToString("X4", System.Globalization.CultureInfo.InvariantCulture));
+                else
+                    sb.Append(c);
+                break;
+        }
+    }
 }
