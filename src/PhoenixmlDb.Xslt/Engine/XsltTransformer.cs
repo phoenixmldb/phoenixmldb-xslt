@@ -4839,6 +4839,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// Materializes the result of <c>EvaluateAsync(select)</c> into the items that an
+    /// item-processing instruction iterates over (xsl:for-each, xsl:iterate,
+    /// xsl:for-each-group, xsl:perform-sort, xsl:merge for-each-* — and, analogously,
+    /// xsl:sequence / xsl:apply-templates which handle this inline).
+    /// <para>
+    /// An XDM array (<see cref="List{T}"/> of object?) and an XDM map
+    /// (<see cref="System.Collections.IDictionary"/>) are SINGLE items and are NOT
+    /// flattened into their members/entries; <c>object?[]</c> is the engine's sequence
+    /// representation and is flattened (dropping empty/null slots); any other
+    /// <c>IEnumerable&lt;object&gt;</c> (e.g. a node sequence) is returned as-is.
+    /// </para>
+    /// <para>
+    /// This is ONLY for item-preserving contexts. Atomizing contexts (xsl:value-of,
+    /// xsl:number, string-value) must flatten an array to its members and must not use
+    /// this. Reported by Martin Honnen 2026-06 across xsl:sequence / apply-templates /
+    /// for-each-group; centralized here so the same flatten-the-array bug can't recur.
+    /// </para>
+    /// </summary>
+    internal static IEnumerable<object> SelectResultItems(object? result) => result switch
+    {
+        null => [],
+        string or XdmNode or List<object?> or System.Collections.IDictionary => [result!],
+        object?[] arr => arr.Where(static x => x != null).Cast<object>(),
+        IEnumerable<object> seq => seq,
+        _ => [result],
+    };
+
+    /// <summary>
     /// Runs XPath general comparison between two atomized item lists. Raises
     /// XPTY0004 when atomic types are incompatible (e.g. xs:decimal vs
     /// xs:string with non-numeric content). Empty operand ⇒ false per spec.
@@ -8440,12 +8468,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         var result = await EvaluateAsync(select).ConfigureAwait(false);
-        IEnumerable<object> items = result switch
-        {
-            IEnumerable<object> seq => seq,
-            object obj => [obj],
-            _ => []
-        };
+        // An XDM array/map selected here is a single item to iterate once, not flattened.
+        IEnumerable<object> items = SelectResultItems(result);
 
         if (sorts.Count > 0)
         {
@@ -8565,12 +8589,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
-        var items = result switch
-        {
-            null => new List<object>(),
-            IEnumerable<object> seq => seq.ToList(),
-            _ => new List<object> { result }
-        };
+        // An XDM array/map is a single item to group, not flattened into members/entries.
+        var items = SelectResultItems(result).ToList();
 
         List<(object Key, List<object> Items)>? groupList = null;
 
@@ -9553,6 +9573,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             items = [];
             itemCount = 0;
+        }
+        else if (result is List<object?> or System.Collections.IDictionary)
+        {
+            // An XDM array/map is a single item to iterate, not flattened.
+            items = [result];
+            itemCount = 1;
         }
         else if (result is object?[] arr)
         {
@@ -17563,13 +17589,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (instruction.Select != null)
         {
             var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
-            items = result switch
-            {
-                object?[] arr => arr.Where(x => x != null).Cast<object>(),
-                IEnumerable<object> seq => seq,
-                null => [],
-                object obj => [obj]
-            };
+            // An XDM array/map is a single item to sort, not flattened.
+            items = SelectResultItems(result);
         }
         else if (instruction.Content != null)
         {
@@ -17913,12 +17934,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 // Evaluate for-each-item to get a sequence of items
                 var forEachResult = await EvaluateAsync(source.ForEachItem).ConfigureAwait(false);
-                var forEachItems = forEachResult switch
-                {
-                    null => new List<object>(),
-                    IEnumerable<object> seq => seq.ToList(),
-                    _ => new List<object> { forEachResult }
-                };
+                var forEachItems = SelectResultItems(forEachResult).ToList();
 
                 foreach (var item in forEachItems)
                 {
@@ -17938,12 +17954,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 // Evaluate for-each-source to get URIs, then load each as a document
                 var forEachResult = await EvaluateAsync(source.ForEachSource).ConfigureAwait(false);
-                var forEachItems = forEachResult switch
-                {
-                    null => new List<object>(),
-                    IEnumerable<object> seq => seq.ToList(),
-                    _ => new List<object> { forEachResult }
-                };
+                var forEachItems = SelectResultItems(forEachResult).ToList();
 
                 foreach (var item in forEachItems)
                 {

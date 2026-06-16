@@ -140,6 +140,25 @@ public class MartinJsonSequenceRoundTripTests
     }
 
     [Fact]
+    public async Task ForEach_over_array_iterates_once_treating_array_as_one_item()
+    {
+        // Sweep guard: an XDM array is a single item, so for-each iterates once with
+        // the context item being the whole array (not once per member).
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:output method="text"/>
+              <xsl:template match="/">
+                <xsl:variable name="a" select="[1, 2, 3, 4]"/>
+                <xsl:for-each select="$a">iter[count={count(.)},arr={. instance of array(*)}];</xsl:for-each>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var r = await t.TransformAsync("<x/>");
+        r.Should().Be("iter[count=1,arr=true];");
+    }
+
+    [Fact]
     public async Task JsonObject_input_serializes_as_json_not_typename()
     {
         var json = """{ "name": "item 1", "value": 42 }""";

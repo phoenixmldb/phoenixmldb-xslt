@@ -8,6 +8,8 @@ Continuing the 1.4.7 JSON-`XdmSequence` work: when a parsed JSON **array** is fe
 
 `apply-templates` now treats an XDM array (`List<object?>`) and an XDM map (`IDictionary`) as a single item; only the engine's sequence representation (`object?[]`) is iterated. A `for-each-group` grouping pipeline over parsed JSON now produces the expected grouped JSON.
 
+This release also sweeps the same class of issue across the item-processing instructions: `xsl:for-each`, `xsl:iterate`, `xsl:for-each-group`, `xsl:perform-sort`, and `xsl:merge` (`for-each-item` / `for-each-source`) now treat a selected array/map as a single item rather than flattening it into members/entries (shared `SelectResultItems` helper, alongside the already-fixed `xsl:sequence` and `apply-templates`). Atomizing contexts such as `xsl:value-of` continue to flatten an array to its members, as required.
+
 No API changes. Builds against PhoenixmlDb.XQuery 1.4.4.
 
 ## 1.4.7 (2026-06-14)
