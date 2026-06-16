@@ -14,6 +14,10 @@ Output post-processing (text-strip, HTML handling, indentation, character maps, 
 
 The two JSON emitters — the `method="json"` value serializer and the `fn:xml-to-json` element-tree serializer — now share their primitives: string escaping, newline/indentation, and duplicate-key detection are single-sourced rather than reimplemented per emitter. `fn:xml-to-json` indentation is produced inline during emission; the separate re-indent post-pass that previously reformatted already-serialized JSON has been removed. The two emitters remain distinct where the spec requires it (`xml-to-json` preserves `<number>` lexical form verbatim and raises `FOJS0006` on duplicate keys; the value serializer reformats numeric values and raises `SERE0022`); only the shared mechanics are unified. JSON layout parity (value-method output vs the equivalent `xml-to-json` tree) is covered by the golden matrix.
 
+### Internal: single-sourced character escaping
+
+XML text, XML attribute, and JSON string escaping now flow through one `CharacterEscaper` helper instead of the several near-duplicate copies that had accumulated across the serialization paths. As part of this, attribute-value serialization on every path now escapes tab/newline/carriage-return as numeric character references (`&#x9;`/`&#xA;`/`&#xD;`) — previously two of the paths emitted them literally, where XML attribute-value normalization would have silently collapsed them to spaces on re-read. JSON string escaping keeps its three distinct entry contracts (raw, lenient pass-through, and validating with `FOJS0006`); only the shared per-character escape rules are unified.
+
 No API changes. Builds against PhoenixmlDb.XQuery 1.4.4.
 
 ## 1.4.8 (2026-06-14)
