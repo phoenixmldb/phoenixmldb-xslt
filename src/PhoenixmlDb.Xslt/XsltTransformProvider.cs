@@ -2,6 +2,7 @@ using System.Text;
 using System.Xml;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.Xdm.Nodes;
+using PhoenixmlDb.Xslt.Engine;
 using PhoenixmlDb.XQuery;
 using PhoenixmlDb.XQuery.Functions;
 using XQueryException = PhoenixmlDb.XQuery.Functions.XQueryException;
@@ -490,12 +491,7 @@ public sealed class XsltTransformProvider : ITransformProvider
     }
 
     private static string EscapeText(string value)
-    {
-        return value
-            .Replace("&", "&amp;", StringComparison.Ordinal)
-            .Replace("<", "&lt;", StringComparison.Ordinal)
-            .Replace(">", "&gt;", StringComparison.Ordinal);
-    }
+        => CharacterEscaper.EscapeXmlText(value);
 
     /// <summary>
     /// Parses a result XML string back to an XDM document node using the context's node store,

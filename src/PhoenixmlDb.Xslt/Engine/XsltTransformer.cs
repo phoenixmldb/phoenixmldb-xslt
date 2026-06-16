@@ -1362,18 +1362,7 @@ public sealed class XsltTransformEngine
     }
 
     private static void AppendEscapedXmlText(System.Text.StringBuilder sb, string value)
-    {
-        foreach (var c in value)
-        {
-            switch (c)
-            {
-                case '&': sb.Append("&amp;"); break;
-                case '<': sb.Append("&lt;"); break;
-                case '>': sb.Append("&gt;"); break;
-                default: sb.Append(c); break;
-            }
-        }
-    }
+        => CharacterEscaper.AppendXmlText(sb, value);
 
     internal static string JsonEscapeString(string s)
     {
@@ -21605,12 +21594,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     private static string EscapeText(string text)
-    {
-        return text
-            .Replace("&", "&amp;", StringComparison.Ordinal)
-            .Replace("<", "&lt;", StringComparison.Ordinal)
-            .Replace(">", "&gt;", StringComparison.Ordinal);
-    }
+        => CharacterEscaper.EscapeXmlText(text);
 
     private static string EscapeAttributeValue(string value)
     {
