@@ -27393,24 +27393,93 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        var input = arguments[0];
+        return ValueTask.FromResult<object?>(ToJsonString(arguments[0], _context));
+    }
+
+    /// <summary>
+    /// Core of fn:xml-to-json: resolves the input to the root element of an XML JSON
+    /// representation and serializes it to a (compact) JSON string. Returns null for an
+    /// empty input. Shared by the 1-arg and 2-arg (options) overloads.
+    /// </summary>
+    internal static string? ToJsonString(object? input, DefaultXsltExecutionContext context)
+    {
         if (input is null)
-            return ValueTask.FromResult<object?>(null);
+            return null;
         // XPTY0004: xml-to-json expects a single node, not a sequence
         if (input is object?[] arr && arr.Length > 1)
             throw new XsltException("XPTY0004: A sequence of " + arr.Length + " items is not allowed as the first argument of xml-to-json()");
 
-        var store = _context._nodeStore;
+        var store = context._nodeStore;
         if (store is null)
             throw new XsltException("FOJS0006: xml-to-json requires a node store");
 
         var elem = ResolveToElement(input, store);
         if (elem is null)
-            return ValueTask.FromResult<object?>(null);
+            return null;
 
         var sb = new System.Text.StringBuilder();
         SerializeJsonElement(elem, store, sb);
-        return ValueTask.FromResult<object?>(sb.ToString());
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Re-indents a compact JSON string for fn:xml-to-json with <c>indent: true()</c>.
+    /// Per the serialization spec the exact whitespace is implementation-defined; this
+    /// applies a conventional two-space, one-member-per-line layout. String literals
+    /// (including escapes) are copied verbatim so content is never altered — only the
+    /// inter-token whitespace changes. Empty objects/arrays stay on one line.
+    /// </summary>
+    internal static string ReindentJson(string json)
+    {
+        var sb = new System.Text.StringBuilder(json.Length + json.Length / 4 + 16);
+        var depth = 0;
+        var inString = false;
+        for (var i = 0; i < json.Length; i++)
+        {
+            var c = json[i];
+            if (inString)
+            {
+                sb.Append(c);
+                if (c == '\\' && i + 1 < json.Length)
+                    sb.Append(json[++i]);
+                else if (c == '"')
+                    inString = false;
+                continue;
+            }
+            switch (c)
+            {
+                case '"':
+                    inString = true;
+                    sb.Append(c);
+                    break;
+                case '{':
+                case '[':
+                    sb.Append(c);
+                    if (i + 1 < json.Length && (json[i + 1] == '}' || json[i + 1] == ']'))
+                        sb.Append(json[++i]); // empty {} / []
+                    else
+                    {
+                        depth++;
+                        sb.Append('\n').Append(' ', depth * 2);
+                    }
+                    break;
+                case '}':
+                case ']':
+                    depth--;
+                    sb.Append('\n').Append(' ', depth * 2).Append(c);
+                    break;
+                case ',':
+                    sb.Append(c).Append('\n').Append(' ', depth * 2);
+                    break;
+                case ':':
+                    sb.Append(": ");
+                    break;
+                default:
+                    sb.Append(c);
+                    break;
+            }
+        }
+        return sb.ToString();
     }
 
     internal static XdmElement? ResolveToElement(object? input, XdmInMemoryStore store)
@@ -28040,12 +28109,17 @@ internal sealed class XsltXmlToJson2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        // Validate options map
+        // Validate options map and read the indent option.
         var options = arguments[1];
+        var indent = false;
         if (options is IDictionary<object, object?> map)
         {
-            if (map.TryGetValue("indent", out var indentVal) && indentVal is not bool)
-                throw new XsltException("XPTY0004: Option 'indent' must be a boolean value");
+            if (map.TryGetValue("indent", out var indentVal))
+            {
+                if (indentVal is not bool b)
+                    throw new XsltException("XPTY0004: Option 'indent' must be a boolean value");
+                indent = b;
+            }
             if (map.TryGetValue("validate", out var validateVal))
             {
                 if (validateVal is not bool)
@@ -28055,8 +28129,10 @@ internal sealed class XsltXmlToJson2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
             }
         }
 
-        return new XsltXmlToJsonFunction(_context).InvokeAsync(
-            new object?[] { arguments[0] }, context);
+        var json = XsltXmlToJsonFunction.ToJsonString(arguments[0], _context);
+        if (json is not null && indent)
+            json = XsltXmlToJsonFunction.ReindentJson(json);
+        return ValueTask.FromResult<object?>(json);
     }
 }
 
