@@ -422,6 +422,23 @@ public sealed class XsltTransformEngine
         // Apply output method post-processing
         // When result-document claimed primary output with a named format, use that declaration
         var outputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+        return FinalizeOutput(output, outputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
+    }
+
+    /// <summary>
+    /// Identifies which delivery path invoked <see cref="FinalizeOutput"/>. Later tasks may
+    /// branch on this; the post-processing body is currently identical for all kinds.
+    /// </summary>
+    internal enum FinalizeKind { Primary, ResultDocument, StreamingSink }
+
+    /// <summary>
+    /// Applies the shared serialization post-processing pipeline (text/html post-process,
+    /// content-type meta, indentation, character maps, Unicode normalization, XML declaration,
+    /// doctype, BOM, escape-uri-attributes, sentinel restore) to <paramref name="output"/>.
+    /// </summary>
+    internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind)
+    {
+        _ = kind;
         if (outputDecl != null)
         {
             if (outputDecl.EffectiveMethod == OutputMethod.Text)
@@ -456,7 +473,7 @@ public sealed class XsltTransformEngine
         if (_stylesheet.CharacterMaps.Count > 0)
         {
             var outputMaps = outputDecl?.UseCharacterMaps;
-            var rdMaps = context.PrincipalOutputCharacterMaps;
+            var rdMaps = resultDocCharacterMaps;
             if ((outputMaps != null && outputMaps.Count > 0) || (rdMaps != null && rdMaps.Count > 0))
             {
                 // Build merged list: output maps first, then result-document maps (later ones override)
