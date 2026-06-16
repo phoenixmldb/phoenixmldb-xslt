@@ -1075,6 +1075,18 @@ public sealed class XsltTransformEngine
         outputBuilder.Append(']');
     }
 
+    /// <summary>
+    /// Appends a JSON newline followed by <paramref name="depth"/> levels of two-space
+    /// indentation. Single-sourced so the JSON output method (<see cref="SerializeItemAsJson"/>)
+    /// and the xml-to-json emitter (<c>XsltXmlToJsonFunction.SerializeJsonElement</c>) produce
+    /// byte-identical indented layouts.
+    /// </summary>
+    internal static void AppendJsonNewlineIndent(StringBuilder sb, int depth)
+    {
+        sb.Append('\n');
+        sb.Append(' ', depth * 2);
+    }
+
     internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, XdmInMemoryStore? store = null, string? jsonNodeOutputMethod = null, bool indent = false, int depth = 0)
     {
         if (item == null) return "null";
@@ -1082,9 +1094,6 @@ public sealed class XsltTransformEngine
         // Indent only applies to JSON method (not adaptive). When indenting, expand
         // braces/brackets across lines with two-space indentation per depth level.
         var doIndent = indent && !adaptive;
-        var newline = doIndent ? "\n" : "";
-        var innerPad = doIndent ? new string(' ', (depth + 1) * 2) : "";
-        var outerPad = doIndent ? new string(' ', depth * 2) : "";
         var colonSep = doIndent ? ": " : ":";
 
         switch (item)
@@ -1102,8 +1111,7 @@ public sealed class XsltTransformEngine
                     if (!adaptive && !allowDuplicateNames && !seenKeys.Add(keyStr))
                         throw new XsltException($"SERE0022: Duplicate key '{keyStr}' in JSON map serialization");
                     if (!first) sb.Append(',');
-                    sb.Append(newline);
-                    if (doIndent) sb.Append(innerPad);
+                    if (doIndent) AppendJsonNewlineIndent(sb, depth + 1);
                     first = false;
                     sb.Append('"');
                     sb.Append(JsonEscapeString(keyStr));
@@ -1111,11 +1119,8 @@ public sealed class XsltTransformEngine
                     sb.Append(colonSep);
                     sb.Append(SerializeItemAsJson(value, adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 1));
                 }
-                if (!first)
-                {
-                    sb.Append(newline);
-                    if (doIndent) sb.Append(outerPad);
-                }
+                if (!first && doIndent)
+                    AppendJsonNewlineIndent(sb, depth);
                 sb.Append('}');
                 return sb.ToString();
             }
@@ -1126,8 +1131,7 @@ public sealed class XsltTransformEngine
                 for (int i = 0; i < array.Count; i++)
                 {
                     if (i > 0) sb.Append(',');
-                    sb.Append(newline);
-                    if (doIndent) sb.Append(innerPad);
+                    if (doIndent) AppendJsonNewlineIndent(sb, depth + 1);
                     // Array members that are sequences (object?[]) need flattening
                     if (array[i] is object?[] memberSeq)
                     {
@@ -1139,26 +1143,19 @@ public sealed class XsltTransformEngine
                             for (int j = 0; j < memberSeq.Length; j++)
                             {
                                 if (j > 0) sb.Append(',');
-                                sb.Append(newline);
-                                if (doIndent) sb.Append(new string(' ', (depth + 2) * 2));
+                                if (doIndent) AppendJsonNewlineIndent(sb, depth + 2);
                                 sb.Append(SerializeItemAsJson(memberSeq[j], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 2));
                             }
-                            if (memberSeq.Length > 0)
-                            {
-                                sb.Append(newline);
-                                if (doIndent) sb.Append(new string(' ', (depth + 1) * 2));
-                            }
+                            if (memberSeq.Length > 0 && doIndent)
+                                AppendJsonNewlineIndent(sb, depth + 1);
                             sb.Append(']');
                         }
                     }
                     else
                         sb.Append(SerializeItemAsJson(array[i], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 1));
                 }
-                if (array.Count > 0)
-                {
-                    sb.Append(newline);
-                    if (doIndent) sb.Append(outerPad);
-                }
+                if (array.Count > 0 && doIndent)
+                    AppendJsonNewlineIndent(sb, depth);
                 sb.Append(']');
                 return sb.ToString();
             }
@@ -1190,15 +1187,11 @@ public sealed class XsltTransformEngine
                 for (int i = 0; i < seq.Length; i++)
                 {
                     if (i > 0) sb.Append(',');
-                    sb.Append(newline);
-                    if (doIndent) sb.Append(innerPad);
+                    if (doIndent) AppendJsonNewlineIndent(sb, depth + 1);
                     sb.Append(SerializeItemAsJson(seq[i], adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth + 1));
                 }
-                if (seq.Length > 0)
-                {
-                    sb.Append(newline);
-                    if (doIndent) sb.Append(outerPad);
-                }
+                if (seq.Length > 0 && doIndent)
+                    AppendJsonNewlineIndent(sb, depth);
                 sb.Append(']');
                 return sb.ToString();
             }
@@ -27395,7 +27388,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     /// representation and serializes it to a (compact) JSON string. Returns null for an
     /// empty input. Shared by the 1-arg and 2-arg (options) overloads.
     /// </summary>
-    internal static string? ToJsonString(object? input, DefaultXsltExecutionContext context)
+    internal static string? ToJsonString(object? input, DefaultXsltExecutionContext context, bool indent = false)
     {
         if (input is null)
             return null;
@@ -27412,67 +27405,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             return null;
 
         var sb = new System.Text.StringBuilder();
-        SerializeJsonElement(elem, store, sb);
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// Re-indents a compact JSON string for fn:xml-to-json with <c>indent: true()</c>.
-    /// Per the serialization spec the exact whitespace is implementation-defined; this
-    /// applies a conventional two-space, one-member-per-line layout. String literals
-    /// (including escapes) are copied verbatim so content is never altered — only the
-    /// inter-token whitespace changes. Empty objects/arrays stay on one line.
-    /// </summary>
-    internal static string ReindentJson(string json)
-    {
-        var sb = new System.Text.StringBuilder(json.Length + json.Length / 4 + 16);
-        var depth = 0;
-        var inString = false;
-        for (var i = 0; i < json.Length; i++)
-        {
-            var c = json[i];
-            if (inString)
-            {
-                sb.Append(c);
-                if (c == '\\' && i + 1 < json.Length)
-                    sb.Append(json[++i]);
-                else if (c == '"')
-                    inString = false;
-                continue;
-            }
-            switch (c)
-            {
-                case '"':
-                    inString = true;
-                    sb.Append(c);
-                    break;
-                case '{':
-                case '[':
-                    sb.Append(c);
-                    if (i + 1 < json.Length && (json[i + 1] == '}' || json[i + 1] == ']'))
-                        sb.Append(json[++i]); // empty {} / []
-                    else
-                    {
-                        depth++;
-                        sb.Append('\n').Append(' ', depth * 2);
-                    }
-                    break;
-                case '}':
-                case ']':
-                    depth--;
-                    sb.Append('\n').Append(' ', depth * 2).Append(c);
-                    break;
-                case ',':
-                    sb.Append(c).Append('\n').Append(' ', depth * 2);
-                    break;
-                case ':':
-                    sb.Append(": ");
-                    break;
-                default:
-                    sb.Append(c);
-                    break;
-            }
-        }
+        SerializeJsonElement(elem, store, sb, indent, 0);
         return sb.ToString();
     }
 
@@ -27498,7 +27431,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         return null;
     }
 
-    internal static void SerializeJsonElement(XdmElement elem, XdmInMemoryStore store, System.Text.StringBuilder sb)
+    internal static void SerializeJsonElement(XdmElement elem, XdmInMemoryStore store, System.Text.StringBuilder sb, bool indent = false, int depth = 0)
     {
         // Elements must be in the http://www.w3.org/2005/xpath-functions namespace
         var localName = elem.LocalName;
@@ -27577,8 +27510,10 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                     {
                         if (!first)
                             sb.Append(',');
+                        if (indent)
+                            XsltTransformEngine.AppendJsonNewlineIndent(sb, depth + 1);
                         first = false;
-                        SerializeJsonElement(childElem, store, sb);
+                        SerializeJsonElement(childElem, store, sb, indent, depth + 1);
                     }
                     else if (child is XdmElement childElem2)
                     {
@@ -27586,10 +27521,14 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                         // (namespace IDs may differ in RTF node stores)
                         if (!first)
                             sb.Append(',');
+                        if (indent)
+                            XsltTransformEngine.AppendJsonNewlineIndent(sb, depth + 1);
                         first = false;
-                        SerializeJsonElement(childElem2, store, sb);
+                        SerializeJsonElement(childElem2, store, sb, indent, depth + 1);
                     }
                 }
+                if (!first && indent)
+                    XsltTransformEngine.AppendJsonNewlineIndent(sb, depth);
                 sb.Append(']');
                 break;
             }
@@ -27609,6 +27548,8 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                     {
                         if (!first)
                             sb.Append(',');
+                        if (indent)
+                            XsltTransformEngine.AppendJsonNewlineIndent(sb, depth + 1);
                         first = false;
 
                         // Get the key
@@ -27631,8 +27572,8 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                         else
                             AppendJsonString(key, sb);
                         sb.Append('"');
-                        sb.Append(':');
-                        SerializeJsonElement(childElem, store, sb);
+                        sb.Append(indent ? ": " : ":");
+                        SerializeJsonElement(childElem, store, sb, indent, depth + 1);
                     }
                     else if (child is XdmElement childElem2)
                     {
@@ -27640,6 +27581,8 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                         // (namespace IDs may differ in RTF node stores)
                         if (!first)
                             sb.Append(',');
+                        if (indent)
+                            XsltTransformEngine.AppendJsonNewlineIndent(sb, depth + 1);
                         first = false;
 
                         var key2 = GetAttributeValue(childElem2, "key", store);
@@ -27660,10 +27603,12 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                         else
                             AppendJsonString(key2, sb);
                         sb.Append('"');
-                        sb.Append(':');
-                        SerializeJsonElement(childElem2, store, sb);
+                        sb.Append(indent ? ": " : ":");
+                        SerializeJsonElement(childElem2, store, sb, indent, depth + 1);
                     }
                 }
+                if (!first && indent)
+                    XsltTransformEngine.AppendJsonNewlineIndent(sb, depth);
                 sb.Append('}');
                 break;
             }
@@ -28123,9 +28068,7 @@ internal sealed class XsltXmlToJson2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
             }
         }
 
-        var json = XsltXmlToJsonFunction.ToJsonString(arguments[0], _context);
-        if (json is not null && indent)
-            json = XsltXmlToJsonFunction.ReindentJson(json);
+        var json = XsltXmlToJsonFunction.ToJsonString(arguments[0], _context, indent);
         return ValueTask.FromResult<object?>(json);
     }
 }
