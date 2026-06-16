@@ -91,6 +91,29 @@ public class MartinJsonSequenceRoundTripTests
         """;
 
     [Fact]
+    public async Task CountDot_over_json_array_is_one_not_per_member()
+    {
+        // Martin Honnen: <xsl:template match="." name="xsl:initial-template">
+        //   <xsl:sequence select="count(.)"/> over a parsed JSON array gave [1,1,1,1]
+        // (template fired once per member). Saxon gives 1. Must be a single "1".
+        var json = """[ {"name":"item 1"},{"name":"item 2"},{"name":"item 3"},{"name":"item 4"} ]""";
+        var parser = new XsltTransformer();
+        await parser.LoadStylesheetAsync(ParseStylesheetNamedInit);
+        parser.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
+        parser.SetParameter("j", json);
+        var seq = await parser.TransformToSequenceAsync(null);
+
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="json" indent="yes"/>
+              <xsl:template match="." name="xsl:initial-template"><xsl:sequence select="count(.)"/></xsl:template>
+            </xsl:stylesheet>
+            """);
+        (await t.TransformAsync(seq)).Trim().Should().Be("1");
+    }
+
+    [Fact]
     public async Task ApplyTemplates_over_json_array_treats_array_as_single_item()
     {
         // Martin Honnen 2026-06-14: the parsed array fed as the initial context item to a
