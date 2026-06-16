@@ -1379,26 +1379,8 @@ public sealed class XsltTransformEngine
 
     internal static string JsonEscapeString(string s)
     {
-        var sb = new StringBuilder(s.Length);
-        foreach (var c in s)
-        {
-            switch (c)
-            {
-                case '"': sb.Append("\\\""); break;
-                case '\\': sb.Append("\\\\"); break;
-                case '\n': sb.Append("\\n"); break;
-                case '\r': sb.Append("\\r"); break;
-                case '\t': sb.Append("\\t"); break;
-                case '\b': sb.Append("\\b"); break;
-                case '\f': sb.Append("\\f"); break;
-                default:
-                    if (c < 0x20)
-                        sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"\\u{(int)c:X4}");
-                    else
-                        sb.Append(c);
-                    break;
-            }
-        }
+        var sb = new StringBuilder(s.Length + 8);
+        XsltXmlToJsonFunction.AppendJsonString(s, sb);
         return sb.ToString();
     }
 
