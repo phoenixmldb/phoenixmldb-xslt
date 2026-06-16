@@ -316,4 +316,106 @@ public class SerializationMatrixTests
         // HTML method indents by default: nested elements appear on their own indented lines.
         result.Should().MatchRegex(@"<body>\s*\n\s+<p>");
     }
+
+    // ---------------------------------------------------------------------
+    // Phase 2 / Task 1: JSON-indent LAYOUT parity.
+    //
+    // Two JSON emitters share an indentation layout we are about to single-source:
+    //   A. the method="json" output method (SerializeItemAsJson, inline indent)
+    //   B. fn:xml-to-json with map{'indent':true()} (SerializeJsonElement + ReindentJson)
+    // These cells LOCK that layout so a later refactor consolidating the shared
+    // primitives (string escaper, indentation layout, duplicate-key check) must
+    // reproduce it byte-for-byte. The two outputs are NOT asserted byte-identical
+    // (scalar number text MAY diverge between the emitters by design — out of scope);
+    // instead each is asserted against the SAME structural layout regexes.
+    //
+    // Captured current layout (both emitters, ·=space):
+    //   {
+    //   ··"a":·1,
+    //   ··"arr":·[
+    //   ····1,
+    //   ····2
+    //   ··]
+    //   }
+    // i.e. newline after "{", two-space-per-depth indent, ": " (colon-space) after a
+    // key, array elements one indent deeper, closing "]"/"}" on their own line at the
+    // enclosing indent.
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// FluentAssertions assertions capturing the shared indentation layout produced by both
+    /// JSON emitters for the logical JSON <c>{ "a": 1, "arr": [ 1, 2 ] }</c>. Applied to the
+    /// output of both the json output method (A) and fn:xml-to-json (B) to prove identical
+    /// indentation conventions without diffing scalar text char-by-char.
+    /// </summary>
+    private static void AssertSharedJsonIndentLayout(string json)
+    {
+        // Multi-line.
+        json.Should().Contain("\n");
+        // Opening brace immediately followed by a newline (object opens its own block).
+        json.Should().MatchRegex(@"\{\n");
+        // Key at depth 1 sits on its own line indented two spaces, with ": " colon spacing.
+        json.Should().MatchRegex("\\n  \"a\": ");
+        // Focused colon-spacing assertion: ": " (colon-space), not bare ":".
+        json.Should().Contain("\"a\": ");
+        // Nested array key at depth 1, opening bracket on the same line as the key.
+        json.Should().MatchRegex("\\n  \"arr\": \\[\\n");
+        // Array elements are indented one level deeper (four spaces) on their own lines.
+        json.Should().MatchRegex(@"\n    1,\n");
+        json.Should().MatchRegex(@"\n    2\n");
+        // Closing array bracket on its own line at the enclosing (two-space) indent.
+        json.Should().MatchRegex(@"\n  \]\n");
+        // Closing object brace on its own line at column 0.
+        json.Should().MatchRegex(@"\n\}");
+    }
+
+    /// <summary>
+    /// LAYOUT-LOCK (A): the <c>method="json" indent="yes"</c> output method (emitter A) lays out
+    /// <c>map{'a':1,'arr':array{1,2}}</c> with the shared indentation convention.
+    /// </summary>
+    [Fact]
+    public async Task Json_OutputMethod_Indent_Layout()
+    {
+        const string stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="json" indent="yes"/>
+              <xsl:template match="/"><xsl:sequence select="map{'a':1,'arr':array{1,2}}"/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await NodeSource(stylesheet);
+
+        AssertSharedJsonIndentLayout(result);
+    }
+
+    /// <summary>
+    /// LAYOUT-LOCK (B): fn:xml-to-json with <c>map{'indent':true()}</c> (emitter B, via
+    /// ReindentJson) lays out the equivalent XML-JSON element tree
+    /// (<c>{ "a": 1, "arr": [ 1, 2 ] }</c>) with the SAME indentation convention as emitter A.
+    /// Mirrors MartinXmlToJsonIndentTests' default-namespace + $variable element-tree pattern.
+    /// </summary>
+    [Fact]
+    public async Task Json_XmlToJson_Indent_Layout()
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0"
+                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns="http://www.w3.org/2005/xpath-functions"
+                exclude-result-prefixes="#all" expand-text="yes">
+              <xsl:output method="text"/>
+              <xsl:template match="/" name="xsl:initial-template">
+                <xsl:variable name="tree">
+                  <map>
+                    <number key="a">1</number>
+                    <array key="arr"><number>1</number><number>2</number></array>
+                  </map>
+                </xsl:variable>
+                <xsl:value-of select="$tree => xml-to-json(map{'indent':true()})"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        var result = await t.TransformAsync("<in/>");
+
+        AssertSharedJsonIndentLayout(result);
+    }
 }
