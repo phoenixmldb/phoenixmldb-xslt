@@ -3121,9 +3121,12 @@ public sealed class XsltTransformEngine
         // Surface secondary results to the engine regardless of sink mode.
         SecondaryResultDocuments = context.SecondaryResults;
 
-        // Sink path: post-processing (indentation / decl / doctype / BOM / escape-uri) cannot
-        // be applied to incrementally-delivered output, so we leave the builder empty and
-        // return — the sink has already received everything.
+        // Sink path (FinalizeKind.StreamingSink): the unified FinalizeOutput post-processing
+        // (indentation / decl / doctype / BOM / escape-uri / character maps / normalization)
+        // operates on a fully-buffered string and so cannot apply to output that was already
+        // delivered incrementally to the TextWriter sink. This is the one delivery path that
+        // intentionally does NOT route through FinalizeOutput; secondary results were already
+        // surfaced above, so we leave the builder empty and return.
         if (outputSink != null)
             return;
 
