@@ -1,5 +1,13 @@
 # Release History
 
+## 1.4.9 (2026-06-15)
+
+Fix (Martin Honnen): `fn:xml-to-json` honors the `indent` option.
+
+`xml-to-json($x, map { 'indent': true() })` produced compact, single-line JSON — the two-argument overload validated the `indent` option but ignored it. It now pretty-prints the result (conventional two-space, one-member-per-line layout; the serialization spec leaves exact whitespace implementation-defined). String content and escaping are unchanged, so the indented output parses to the same JSON.
+
+No API changes. Builds against PhoenixmlDb.XQuery 1.4.4.
+
 ## 1.4.8 (2026-06-14)
 
 Fix (Martin Honnen): JSON array as the context item for `apply-templates`.
