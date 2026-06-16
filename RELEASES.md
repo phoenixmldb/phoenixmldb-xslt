@@ -10,6 +10,10 @@ Fix (Martin Honnen): `fn:xml-to-json` honors the `indent` option.
 
 Output post-processing (text-strip, HTML handling, indentation, character maps, Unicode normalization, XML declaration, DOCTYPE, BOM, escape-uri, sentinel restore) now flows through a single `FinalizeOutput` path for every delivery route — node source, `XdmSequence`/initial-context-item, buffered streaming, and `xsl:result-document`. Previously each route applied a divergent subset, which had caused indentation/post-processing to be silently skipped on some paths (e.g. JSON/map input via the `XdmSequence` overload). No behavior change for output that was already correct; the previously-divergent routes now receive the complete, identical treatment. Backed by a golden serialization test matrix (method × delivery-path × indent).
 
+### Internal: shared JSON serialization primitives
+
+The two JSON emitters — the `method="json"` value serializer and the `fn:xml-to-json` element-tree serializer — now share their primitives: string escaping, newline/indentation, and duplicate-key detection are single-sourced rather than reimplemented per emitter. `fn:xml-to-json` indentation is produced inline during emission; the separate re-indent post-pass that previously reformatted already-serialized JSON has been removed. The two emitters remain distinct where the spec requires it (`xml-to-json` preserves `<number>` lexical form verbatim and raises `FOJS0006` on duplicate keys; the value serializer reformats numeric values and raises `SERE0022`); only the shared mechanics are unified. JSON layout parity (value-method output vs the equivalent `xml-to-json` tree) is covered by the golden matrix.
+
 No API changes. Builds against PhoenixmlDb.XQuery 1.4.4.
 
 ## 1.4.8 (2026-06-14)
