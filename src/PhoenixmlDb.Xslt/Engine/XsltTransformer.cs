@@ -1087,6 +1087,11 @@ public sealed class XsltTransformEngine
         sb.Append(' ', depth * 2);
     }
 
+    /// <summary>Records a JSON object key for duplicate detection. Returns false if the key
+    /// was already present (the caller raises its own error: SERE0022 for the json output
+    /// method, FOJS0006 for fn:xml-to-json).</summary>
+    internal static bool TryAddJsonKey(HashSet<string> seen, string key) => seen.Add(key);
+
     internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, XdmInMemoryStore? store = null, string? jsonNodeOutputMethod = null, bool indent = false, int depth = 0)
     {
         if (item == null) return "null";
@@ -1108,7 +1113,7 @@ public sealed class XsltTransformEngine
                 {
                     var keyStr = DefaultXsltExecutionContext.StringValueOf(key);
                     // SERE0022: duplicate key names when allow-duplicate-names is no (default for JSON)
-                    if (!adaptive && !allowDuplicateNames && !seenKeys.Add(keyStr))
+                    if (!adaptive && !allowDuplicateNames && !TryAddJsonKey(seenKeys, keyStr))
                         throw new XsltException($"SERE0022: Duplicate key '{keyStr}' in JSON map serialization");
                     if (!first) sb.Append(',');
                     if (doIndent) AppendJsonNewlineIndent(sb, depth + 1);
@@ -27563,7 +27568,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
 
                         // Duplicate detection uses decoded key values
                         var decodedKey = DecodeJsonKey(key, isEscapedKey);
-                        if (!seenKeys.Add(decodedKey))
+                        if (!XsltTransformEngine.TryAddJsonKey(seenKeys, decodedKey))
                             throw new XsltException($"FOJS0006: Duplicate key in map: '{key}'");
 
                         sb.Append('"');
@@ -27594,7 +27599,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                         var isEscapedKey2 = IsTruthy(escapedKey2);
 
                         var decodedKey2 = DecodeJsonKey(key2, isEscapedKey2);
-                        if (!seenKeys.Add(decodedKey2))
+                        if (!XsltTransformEngine.TryAddJsonKey(seenKeys, decodedKey2))
                             throw new XsltException($"FOJS0006: Duplicate key in map: '{key2}'");
 
                         sb.Append('"');
