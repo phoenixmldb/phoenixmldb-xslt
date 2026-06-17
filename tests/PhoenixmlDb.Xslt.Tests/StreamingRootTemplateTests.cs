@@ -102,4 +102,64 @@ public class StreamingRootTemplateTests
         // The built-in text-only copy must NOT have run.
         r.Should().NotContain("CONTENT", $"actual={r}");
     }
+
+    [Fact]
+    public async Task Streaming_for_each_select_with_trailing_copy_of_step_emits_body()
+    {
+        // Regression (Martin Honnen): a streamable xsl:for-each whose select ends
+        // in a trailing copy-of() step — records/record/copy-of() — parses as a
+        // SimpleMap(path, copy-of()). The streaming scanner previously failed to
+        // recognize this shape, registered no subscription, and produced empty
+        // output (only the XML declaration). Iterating the per-record snapshot is
+        // equivalent to iterating the record element directly, so the body must
+        // run once per record with that record as context.
+        var r = await Run("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+                <xsl:mode streamable="yes"/>
+                <xsl:output method="xml" indent="no"/>
+                <xsl:template match="/">
+                    <xsl:for-each select="records/record/copy-of()">
+                        <record-name><xsl:value-of select="name"/></record-name>
+                        <xsl:sequence select="value"/>
+                    </xsl:for-each>
+                </xsl:template>
+            </xsl:stylesheet>
+            """,
+            "<records>"
+            + "<record><name>record1</name><value>value 1</value></record>"
+            + "<record><name>record2</name><value>value 2</value></record>"
+            + "<record><name>record3</name><value>value 3</value></record>"
+            + "</records>");
+
+        r.Should().Contain("<record-name>record1</record-name>", $"actual={r}");
+        r.Should().Contain("<value>value 1</value>", $"actual={r}");
+        r.Should().Contain("<record-name>record2</record-name>", $"actual={r}");
+        r.Should().Contain("<value>value 2</value>", $"actual={r}");
+        r.Should().Contain("<record-name>record3</record-name>", $"actual={r}");
+        r.Should().Contain("<value>value 3</value>", $"actual={r}");
+    }
+
+    [Fact]
+    public async Task Streaming_for_each_select_with_trailing_snapshot_step_emits_body()
+    {
+        // Same fix exercised through the snapshot() spelling of the trailing step.
+        var r = await Run("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+                <xsl:mode streamable="yes"/>
+                <xsl:output method="xml" indent="no"/>
+                <xsl:template match="/">
+                    <xsl:for-each select="records/record/snapshot()">
+                        <record-name><xsl:value-of select="name"/></record-name>
+                    </xsl:for-each>
+                </xsl:template>
+            </xsl:stylesheet>
+            """,
+            "<records>"
+            + "<record><name>record1</name></record>"
+            + "<record><name>record2</name></record>"
+            + "</records>");
+
+        r.Should().Contain("<record-name>record1</record-name>", $"actual={r}");
+        r.Should().Contain("<record-name>record2</record-name>", $"actual={r}");
+    }
 }

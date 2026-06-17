@@ -432,6 +432,22 @@ internal sealed class StreamingExpressionScanner
             && fc.Arguments.Count >= 1;
     }
 
+    /// <summary>
+    /// True for a zero-argument <c>copy-of()</c> / <c>snapshot()</c> applied per
+    /// item as the RHS of a SimpleMap — i.e. a trailing snapshot step such as the
+    /// <c>copy-of()</c> in <c>records/record/copy-of()</c>. The function takes the
+    /// context item as its implicit argument, so it carries zero explicit arguments
+    /// (distinct from the wrapping <see cref="IsSnapshotFunction"/> form
+    /// <c>copy-of(path)</c>).
+    /// </summary>
+    private static bool IsTrailingSnapshotStep(XQueryExpression expr)
+    {
+        return expr is FunctionCallExpression fc
+            && fc.Arguments.Count == 0
+            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            && fc.Name.LocalName is "snapshot" or "copy-of";
+    }
+
     private static bool IsHeadFunction(FunctionCallExpression fc)
     {
         return fc.Name.LocalName == "head"
@@ -804,6 +820,18 @@ internal sealed class StreamingExpressionScanner
             && (dataCall.Name.Namespace == NamespaceId.None || dataCall.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
         {
             select = dataCall.Arguments[0];
+        }
+        // Peek through a trailing copy-of()/snapshot() step — e.g.
+        // `records/record/copy-of()`. The parser builds this as a SimpleMap whose
+        // Left is the streamable path and whose Right is a zero-argument
+        // copy-of()/snapshot() applied per item (snapshot of the context node).
+        // For a streamable for-each, dispatching the body per matched element with
+        // that element's materialized snapshot as context is exactly what the
+        // streaming subscription already does — so the trailing snapshot step is a
+        // no-op for path-matching purposes and we proceed with the Left path.
+        if (select is SimpleMapExpression simpleMap && IsTrailingSnapshotStep(simpleMap.Right))
+        {
+            select = simpleMap.Left;
         }
         if (select is not PathExpression path) return null;
         // Accept either absolute (/path) or relative-from-root (path) when no initial
