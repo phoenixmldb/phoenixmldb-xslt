@@ -5,7 +5,7 @@
   <ItemGroup>
     <!-- PhoenixmlDb -->
     <PackageVersion Include="PhoenixmlDb.Core" Version="1.1.9" />
-    <PackageVersion Include="PhoenixmlDb.XQuery" Version="1.4.5" />
+    <PackageVersion Include="PhoenixmlDb.XQuery" Version="1.4.6" />
     <!-- Transitive deps of the in-repo PhoenixmlDb.XQuery source (src/PhoenixmlDb.XQuery
          symlink → canonical phoenixmldb-xquery), which PhoenixmlDb.Conformance.Tests
          ProjectReferences to run XQTS/XSLT conformance against current source. -->

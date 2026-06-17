@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.9</Version>
+    <Version>1.4.10</Version>
     <PackageReleaseNotes>
-      Fix (Martin Honnen): fn:xml-to-json now honors the 'indent' option — xml-to-json($x, map { 'indent': true() }) produces indented multi-line JSON instead of a single line. Internal: output serialization is consolidated through one FinalizeOutput pipeline and shared JSON/character-escaping primitives; the character escaper now lives in PhoenixmlDb.Core and is shared with the XQuery engine so both escape identically. Builds against PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.5. See RELEASES.md for full notes.
+      Fix (Martin Honnen): streaming xsl:template match="/" now fires under xsl:mode streamable="yes" (the document-node template was skipped, so a built-in text-only copy ran and element output was lost). Fix (Martin Honnen / DocBook xslTNG): base URI is preserved across temporary-tree copy boundaries and fn:transform result documents, so resolve-uri()/doc() over copied or transformed nodes resolve correctly (was FORG0002). Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>

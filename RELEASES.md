@@ -1,5 +1,17 @@
 # Release History
 
+## 1.4.10 (2026-06-17)
+
+Two Martin Honnen fixes. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6.
+
+### Fix: streaming `xsl:template match="/"` fires under `streamable="yes"`
+
+With `<xsl:mode streamable="yes"/>`, a global `<xsl:template match="/">` never fired — the streaming processor began at the root element and skipped the document node, so the built-in document rule (a text-only copy) ran and all constructed/copied element output was lost. The streaming entry now dispatches the document node to the matching user template and executes its body via the streaming subscription/active-processor machinery, falling back to the built-in crawl when no document-node template matches (existing streaming stylesheets unaffected). Known limitation (tracked follow-up): a `match="/"` body that *wraps* the streamable `xsl:for-each`/`xsl:apply-templates` in an outer constructed element is not yet covered.
+
+### Fix: base URI preserved across temporary-tree copy boundaries (DocBook xslTNG)
+
+`base-uri()` (and the `resolve-uri()`/`doc()` resolution that depends on it) now returns the correct base URI for nodes copied into a temporary tree and for `fn:transform` result documents. Copied nodes preserve their source base URI across the engine's serialize/reparse temp-tree boundary; constructed temp-tree document nodes and `fn:transform` results take a non-null base URI (per XSLT 3.0 §11.9.1). This fixes `FORG0002: The base URI '' is not a valid absolute URI` seen transforming DocBook xslTNG (mediaobject `@fileref` resolution).
+
 ## 1.4.9 (2026-06-15)
 
 Fix (Martin Honnen): `fn:xml-to-json` honors the `indent` option.
