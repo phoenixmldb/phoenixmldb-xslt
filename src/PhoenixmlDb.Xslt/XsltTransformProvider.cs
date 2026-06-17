@@ -231,6 +231,9 @@ public sealed class XsltTransformProvider : ITransformProvider
         // and feeds the XML to the transformer; relative URIs resolve against the
         // caller's static base URI (mirrors the stylesheet-location branch above).
         string? inputXml = null;
+        // Hoisted so the result-base computation below can use the resolved source URI as the
+        // result tree's base when the principal input came from source-location.
+        Uri? resolvedSourceUri = null;
         if (sourceNode is XdmNode srcNode)
         {
             inputXml = SerializeNode(srcNode, nodeStore);
@@ -247,6 +250,7 @@ public sealed class XsltTransformProvider : ITransformProvider
             {
                 resolved = new Uri(sb, sourceLocation);
             }
+            resolvedSourceUri = resolved;
 
             if (resolved == null)
             {
@@ -273,6 +277,21 @@ public sealed class XsltTransformProvider : ITransformProvider
                     $"source-location: unsupported URI scheme '{resolved.Scheme}'");
             }
         }
+
+        // Determine the base URI to stamp on result document nodes (delivery-format='document').
+        // Per XSLT 3.0 a result tree's document node carries a non-null static base URI; without
+        // this the parsed result tree had base-uri(.)='' and DocBook's m:docbook pass (which runs
+        // over the fn:transform result) hit FORG0002 in a downstream fn:resolve-uri.
+        // Precedence: base-output-uri option → source document's base → caller's static base.
+        string? resultBaseUri = GetStringOption(options, "base-output-uri");
+        if (resultBaseUri == null)
+        {
+            if (sourceNode is XdmNode srcBaseNode)
+                resultBaseUri = PhoenixmlDb.XQuery.Functions.BaseUriFunction.ComputeBaseUri(srcBaseNode, nodeStore);
+            else if (sourceLocation != null && resolvedSourceUri != null)
+                resultBaseUri = resolvedSourceUri.AbsoluteUri;
+        }
+        resultBaseUri ??= context.StaticBaseUri;
 
         // Build result map (XPath 4.0 ordered: "output" then secondary result docs in order)
         var resultMap = new PhoenixmlDb.XQuery.Execution.OrderedXdmMap(EqualityComparer<object>.Default);
@@ -307,7 +326,7 @@ public sealed class XsltTransformProvider : ITransformProvider
             {
                 // 'document' default — parse result XML back to XDM document
                 resultMap["output"] = !string.IsNullOrEmpty(result)
-                    ? await ParseResultToXdmAsync(result, nodeStore).ConfigureAwait(false)
+                    ? await ParseResultToXdmAsync(result, nodeStore, resultBaseUri).ConfigureAwait(false)
                     : null;
             }
         }
@@ -318,7 +337,19 @@ public sealed class XsltTransformProvider : ITransformProvider
             if (string.Equals(deliveryFormat, "serialized", StringComparison.Ordinal))
                 resultMap[href] = content;
             else
-                resultMap[href] = await ParseResultToXdmAsync(content, nodeStore).ConfigureAwait(false);
+            {
+                // A secondary result document's base URI is its own (absolute) href, resolved
+                // against the result base when relative.
+                string? secondaryBase = href;
+                if (!Uri.TryCreate(href, UriKind.Absolute, out _)
+                    && resultBaseUri != null
+                    && Uri.TryCreate(resultBaseUri, UriKind.Absolute, out var rbu)
+                    && Uri.TryCreate(rbu, href, out var resolvedHref))
+                {
+                    secondaryBase = resolvedHref.AbsoluteUri;
+                }
+                resultMap[href] = await ParseResultToXdmAsync(content, nodeStore, secondaryBase).ConfigureAwait(false);
+            }
         }
 
         return resultMap;
@@ -493,7 +524,7 @@ public sealed class XsltTransformProvider : ITransformProvider
     /// Parses a result XML string back to an XDM document node using the context's node store,
     /// or returns the string if the node store doesn't support building or the XML is malformed.
     /// </summary>
-    private static async ValueTask<object?> ParseResultToXdmAsync(string xml, INodeStore? nodeStore)
+    private static async ValueTask<object?> ParseResultToXdmAsync(string xml, INodeStore? nodeStore, string? resultBaseUri)
     {
         if (string.IsNullOrWhiteSpace(xml))
             return null;
@@ -514,7 +545,13 @@ public sealed class XsltTransformProvider : ITransformProvider
                     new SimpleExecutionContext(builder)).ConfigureAwait(false);
                 if (result is XdmDocument xdmDoc)
                 {
+                    // Temp/result trees have no document URI, but per XSLT 3.0 the document
+                    // node of a result tree carries the static base URI of the constructing
+                    // instruction (never null). DocBook's fp:run-transforms calls fn:transform
+                    // and runs its m:docbook pass over this tree; a null base produced
+                    // base-uri(.)='' → FORG0002 in fn:resolve-uri downstream.
                     xdmDoc.DocumentUri = null;
+                    xdmDoc.BaseUri = resultBaseUri;
                     return xdmDoc;
                 }
                 return result ?? xml;

@@ -64,6 +64,14 @@ public sealed class XsltTransformEngine
     private readonly TemplateIndex _templateIndex;
     private readonly PhoenixmlDb.XQuery.ISchemaProvider? _schemaProvider;
 
+    // Temp-tree base-URI preservation sentinel. Emitted by the temp-tree serializer only
+    // (gated by _tempTreeSerializeDepth) and always stripped by the reparse, so it never
+    // appears in any user-visible output. See TryEmitBaseSentinel / ReadXdmElementFromReader
+    // / ConvertXmlNode for the round-trip.
+    internal const string BaseSentinelNs = "http://phoenixmldb/internal/base-uri";
+    internal const string BaseSentinelPrefix = "_pxbase_";
+    internal const string BaseSentinelLocalName = "base";
+
     /// <summary>
     /// Secondary result documents from the last transformation, keyed by href URI.
     /// </summary>
@@ -3225,6 +3233,10 @@ public sealed class XsltTransformEngine
                 var elemId = store.NextId();
                 var elemNsId = store.InternNamespace(xmlNode.NamespaceURI ?? "");
 
+                // RECOVER (temp-tree base-URI preservation): capture and drop the sentinel
+                // namespace declaration + attribute, stamping CopySourceBaseUri below.
+                string? recoveredBaseUri = null;
+
                 // Collect all in-scope namespace declarations (including inherited ones)
                 var nsDecls = new List<NamespaceBinding>();
                 var seenPrefixes = new HashSet<string>();
@@ -3235,6 +3247,8 @@ public sealed class XsltTransformEngine
                     {
                         if (kvp.Key == "xml")
                             continue; // Skip xml namespace
+                        if (string.Equals(kvp.Value, BaseSentinelNs, StringComparison.Ordinal))
+                            continue; // drop the sentinel namespace declaration
                         nsDecls.Add(new NamespaceBinding(kvp.Key, store.InternNamespace(kvp.Value)));
                         seenPrefixes.Add(kvp.Key);
                     }
@@ -3249,6 +3263,8 @@ public sealed class XsltTransformEngine
                         }
                         else if (attr.Name.StartsWith("xmlns:", StringComparison.Ordinal))
                         {
+                            if (string.Equals(attr.Value, BaseSentinelNs, StringComparison.Ordinal))
+                                continue; // drop the sentinel namespace declaration
                             var prefix = attr.Name[6..];
                             nsDecls.Add(new NamespaceBinding(prefix, store.InternNamespace(attr.Value)));
                         }
@@ -3264,6 +3280,13 @@ public sealed class XsltTransformEngine
                         // Skip xmlns declarations
                         if (attr.Name == "xmlns" || attr.Name.StartsWith("xmlns:", StringComparison.Ordinal))
                             continue;
+                        // Capture + drop the sentinel attribute (never a real XDM attribute)
+                        if (string.Equals(attr.NamespaceURI, BaseSentinelNs, StringComparison.Ordinal)
+                            && attr.LocalName == BaseSentinelLocalName)
+                        {
+                            recoveredBaseUri = attr.Value;
+                            continue;
+                        }
 
                         var attrId = store.NextId();
                         var isId = (attr.LocalName == "id" && attr.Prefix == "xml")
@@ -3315,6 +3338,7 @@ public sealed class XsltTransformEngine
                     LocalName = xmlNode.LocalName,
                     Prefix = string.IsNullOrEmpty(xmlNode.Prefix) ? null : xmlNode.Prefix,
                     BaseUri = entityBaseUri,
+                    CopySourceBaseUri = recoveredBaseUri,
                     Attributes = attrIds,
                     Children = childIds,
                     NamespaceDeclarations = nsDecls.Count > 0
@@ -5179,6 +5203,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     internal int _serializingElementDepth; // >0 when inside element serialization
     private bool _forceDefaultNsUndeclaration; // inherit-namespaces="no" requires children to emit xmlns=""
 
+    // Base-URI preservation across the temp-tree serialize→reparse boundary.
+    //
+    // Temp trees (xsl:document, as=document-node()/element() variable bodies) serialize
+    // child output to TEXT in _output, then reparse it. Plain XML text carries no
+    // per-node base URI, so a SOURCE element copied into the temp tree loses its base URI
+    // and base-uri() later returns empty. To bridge the gap, the temp-tree serializer
+    // EMITS a sentinel attribute (_pxbase_:base) carrying the source base URI on the root
+    // of each copied subtree whose base differs from the enclosing serialization context;
+    // the reparse RECOVERS it onto XdmNode.CopySourceBaseUri and DROPS the attribute so it
+    // never becomes a real attribute or reaches user-visible output.
+    //
+    // _tempTreeSerializeDepth gates EMIT: it is >0 ONLY while serializing into a buffer
+    // that will be reparsed (temp-tree boundaries). The final-output serializer never
+    // raises it, so the sentinel is structurally impossible to leak into the result.
+    // _serializeBaseContext tracks the base URI currently in effect during serialization
+    // so the sentinel is emitted only on subtree roots where the base actually changes
+    // (descendants inherit and stay silent).
+    private int _tempTreeSerializeDepth; // >0 while serializing content destined for reparse
+    private string? _serializeBaseContext; // base URI currently in effect during temp-tree serialization
+
     // Element name stack for CDATA section serialization
     private readonly Stack<QName> _outputElementStack = new();
     // Track whether the current output element has a namespace (for XTDE0440)
@@ -5533,6 +5577,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Walk attributes, splitting xmlns declarations from real attributes.
         var nsDecls = new List<NamespaceBinding>();
         var attrIds = new List<NodeId>();
+        // RECOVER (temp-tree base-URI preservation): the sentinel attribute round-trips a
+        // source element's base URI through the text serialize→reparse boundary. Capture it
+        // here, stamp it onto CopySourceBaseUri below, and DROP both the attribute and its
+        // namespace declaration so it never becomes a real XDM node or reaches output.
+        string? recoveredBaseUri = null;
         if (reader.HasAttributes)
         {
             for (var i = 0; i < reader.AttributeCount; i++)
@@ -5540,11 +5589,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 reader.MoveToAttribute(i);
                 if (reader.Prefix == "xmlns")
                 {
+                    if (string.Equals(reader.Value, XsltTransformEngine.BaseSentinelNs, StringComparison.Ordinal))
+                        continue; // drop the sentinel namespace declaration
                     nsDecls.Add(new NamespaceBinding(reader.LocalName, _nodeStore.InternNamespace(reader.Value)));
                 }
                 else if (string.IsNullOrEmpty(reader.Prefix) && reader.LocalName == "xmlns")
                 {
                     nsDecls.Add(new NamespaceBinding("", _nodeStore.InternNamespace(reader.Value)));
+                }
+                else if (string.Equals(reader.NamespaceURI, XsltTransformEngine.BaseSentinelNs, StringComparison.Ordinal)
+                    && reader.LocalName == XsltTransformEngine.BaseSentinelLocalName)
+                {
+                    recoveredBaseUri = reader.Value; // drop the sentinel attribute
                 }
                 else
                 {
@@ -5592,6 +5648,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             Attributes = attrIds,
             Children = childIds,
             NamespaceDeclarations = nsDecls.Count > 0 ? nsDecls.ToArray() : XdmElement.EmptyNamespaceDeclarations,
+            CopySourceBaseUri = recoveredBaseUri,
         };
         // Precompute _stringValue bottom-up from child text and (already-finalized)
         // child element string values. Mirrors StreamingSubtreeMaterializer.FinalizeFrame
@@ -6945,6 +7002,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                 }
 
+                // EMIT (temp-tree base-URI preservation): built-in shallow-copy writes the
+                // copied SOURCE element's start tag directly to _output (it does not go through
+                // SerializeNode). When this output is destined for a temp-tree reparse
+                // (_tempTreeSerializeDepth > 0, e.g. an xsl:variable as="document-node()" body),
+                // stamp the source element's base URI as a sentinel so the reparse recovers it
+                // onto CopySourceBaseUri. Mirrors SerializeNode's element case. Context is
+                // restored after the child recursion / close tag below so siblings re-evaluate.
+                var savedShallowCopyBaseContext = _serializeBaseContext;
+                TryEmitBaseSentinel(elem, ref _serializeBaseContext);
+
                 // Apply templates to attributes: attributes with no matching user template
                 // are copied directly (built-in shallow-copy for attributes); attributes with
                 // a matching user template have their template output as child content.
@@ -7018,6 +7085,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (_isStreamingExecution)
                 {
                     _streamingOpenElements.Push(qname);
+                    // Descendants in the streaming loop inherit this subtree's base context;
+                    // restore happens on the matching EndElement is out of scope here, so
+                    // restore now — sentinel already emitted on the open tag above.
+                    _serializeBaseContext = savedShallowCopyBaseContext;
                 }
                 else
                 {
@@ -7032,6 +7103,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         _serializingElementDepth--;
                         _sequenceAccumulator = savedSeqAccumSC;
+                        // Restore base context so following siblings re-evaluate whether their
+                        // own base differs (mirrors SerializeNode's element case).
+                        _serializeBaseContext = savedShallowCopyBaseContext;
                     }
 
                     _output.Append("</");
@@ -11746,6 +11820,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return;
         }
 
+        // XSLT 3.0 §11.9.1: xsl:copy-of preserves the SOURCE element's base URI on the
+        // copied element. When a sequence accumulator is active (e.g. copy-of inside a
+        // variable/param/function body), materialize copied element nodes — serialize,
+        // reparse, orphan, and stamp CopySourceBaseUri — rather than flattening to text,
+        // so a later read-side step can have base-uri() on the copy return the source's
+        // base URI. Mirrors the xsl:copy set-site in CopyAsync. Only engages when the
+        // source has a non-empty computed base URI to preserve; otherwise the normal
+        // text-serialization path below runs unchanged.
+        if (_sequenceAccumulator != null && _nodeStore != null
+            && TryGetCopyOfElements(result, out var copyOfElems))
+        {
+            if (await TryAccumulateCopyOfElementsWithBaseUriAsync(copyOfElems!, copyNs).ConfigureAwait(false))
+                return;
+        }
+
         if (result is ResultTreeFragment rtf)
         {
             // Parse RTF to XDM and serialize through SerializeNode for proper namespace fixup.
@@ -11788,6 +11877,125 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _lastResultWasAtomic = false;
             }
         }
+    }
+
+    /// <summary>
+    /// Extracts the element nodes from an xsl:copy-of result. Returns false unless the
+    /// result is exclusively element node(s) (single element or a sequence of elements).
+    /// Mixed or non-element results fall back to the normal serialization path so this
+    /// base-URI-preserving branch never changes behavior for other node/atomic kinds.
+    /// </summary>
+    private static bool TryGetCopyOfElements(object? result, out List<XdmElement>? elements)
+    {
+        elements = null;
+        if (result is XdmElement single)
+        {
+            elements = new List<XdmElement> { single };
+            return true;
+        }
+        IEnumerable<object?>? items = result switch
+        {
+            object?[] arr => arr,
+            IEnumerable<object?> seq when result is not string => seq,
+            _ => null
+        };
+        if (items == null)
+            return false;
+        var collected = new List<XdmElement>();
+        foreach (var item in items)
+        {
+            if (item is XdmElement e)
+                collected.Add(e);
+            else
+                return false; // not a pure element sequence — defer to normal path
+        }
+        if (collected.Count == 0)
+            return false;
+        elements = collected;
+        return true;
+    }
+
+    /// <summary>
+    /// XSLT 3.0 §11.9.1 write-side: serialize each source element, reparse it into an
+    /// orphaned <see cref="XdmElement"/>, stamp <see cref="XdmNode.CopySourceBaseUri"/>
+    /// from the source's computed base URI, and append to the active sequence accumulator.
+    /// Returns true only if every element was successfully materialized with a non-empty
+    /// source base URI; otherwise returns false (leaving the accumulator untouched) so
+    /// the caller runs the unchanged text-serialization path. Mirrors the xsl:copy
+    /// set-site in <see cref="CopyAsync"/>.
+    /// </summary>
+    private ValueTask<bool> TryAccumulateCopyOfElementsWithBaseUriAsync(List<XdmElement> sourceElems, bool copyNamespaces)
+    {
+        // First pass: compute each source's base URI. Bail (return false) if any is
+        // null/empty so we never partially accumulate then fall through to text.
+        var baseUris = new string?[sourceElems.Count];
+        for (int i = 0; i < sourceElems.Count; i++)
+        {
+            var bu = ComputeSourceBaseUri(sourceElems[i]);
+            if (string.IsNullOrEmpty(bu))
+                return new ValueTask<bool>(false);
+            baseUris[i] = bu;
+        }
+
+        var staged = new List<XdmElement>(sourceElems.Count);
+        for (int i = 0; i < sourceElems.Count; i++)
+        {
+            // Serialize the source element into an isolated buffer, then reparse into an
+            // orphaned XdmElement (same mechanism as the xsl:copy accumulator path).
+            var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+            var savedLogicalStart = _outputLogicalStart;
+            _outputLogicalStart = _output.Length;
+            string elemXml;
+            try
+            {
+                SerializeNode(sourceElems[i], copyNamespaces);
+                elemXml = savedScope.GetWritten();
+            }
+            finally
+            {
+                savedScope.Dispose();
+                _outputLogicalStart = savedLogicalStart;
+            }
+
+            XdmElement? copiedRoot = null;
+            try
+            {
+                var settingsCopy = new System.Xml.XmlReaderSettings
+                {
+                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                    IgnoreWhitespace = false,
+                    IgnoreComments = false,
+                    IgnoreProcessingInstructions = false,
+                };
+                using var stringReaderCopy = new System.IO.StringReader($"<_copy_root_>{elemXml}</_copy_root_>");
+                using var readerCopy = System.Xml.XmlReader.Create(stringReaderCopy, settingsCopy);
+                var copyChildren = new List<object?>();
+                ReadAsBodyChunkChildren(readerCopy, copyChildren);
+                foreach (var child in copyChildren)
+                {
+                    if (child is XdmElement copyElem)
+                    {
+                        copyElem.Parent = null;
+                        // Never overwrite a non-null value (e.g. a nested copy already stamped).
+                        copyElem.CopySourceBaseUri ??= baseUris[i];
+                        copiedRoot = copyElem;
+                        break;
+                    }
+                }
+            }
+            catch (System.Xml.XmlException)
+            {
+                copiedRoot = null;
+            }
+
+            if (copiedRoot == null)
+                return new ValueTask<bool>(false); // reparse failed — let caller fall back to text
+            staged.Add(copiedRoot);
+        }
+
+        foreach (var copiedRoot in staged)
+            AppendToSeqAccumulator(copiedRoot);
+        return new ValueTask<bool>(true);
     }
 
     /// <summary>
@@ -12072,6 +12280,41 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// EMIT side of temp-tree base-URI preservation. When <c>_tempTreeSerializeDepth &gt; 0</c>
+    /// (i.e. serializing into a buffer that will be reparsed) and <paramref name="elem"/>'s
+    /// computed source base URI is non-empty and differs from the enclosing serialization
+    /// context (<paramref name="context"/>), appends the sentinel namespace declaration and
+    /// <c>_pxbase_:base</c> attribute to the just-written start tag and updates
+    /// <paramref name="context"/> to that base URI so descendants of this subtree inherit it
+    /// and do not re-emit. Does nothing during final-output serialization, so the sentinel
+    /// is structurally impossible to leak into the transform result. The reparse step
+    /// (<see cref="ReadXdmElementFromReader"/> / <see cref="XsltTransformEngine.ConvertXmlNode"/>)
+    /// always strips it.
+    /// </summary>
+    private void TryEmitBaseSentinel(XdmElement elem, ref string? context)
+    {
+        if (_tempTreeSerializeDepth <= 0 || _nodeStore == null)
+            return;
+        // Prefer an already-preserved source base URI (set by an earlier copy that hasn't
+        // yet crossed a text boundary); otherwise compute it from the source tree position.
+        var srcBase = elem.CopySourceBaseUri ?? ComputeSourceBaseUri(elem);
+        if (string.IsNullOrEmpty(srcBase) || string.Equals(srcBase, context, StringComparison.Ordinal))
+            return;
+        _output.Append(" xmlns:");
+        _output.Append(XsltTransformEngine.BaseSentinelPrefix);
+        _output.Append("=\"");
+        _output.Append(EscapeAttributeValue(XsltTransformEngine.BaseSentinelNs));
+        _output.Append("\" ");
+        _output.Append(XsltTransformEngine.BaseSentinelPrefix);
+        _output.Append(':');
+        _output.Append(XsltTransformEngine.BaseSentinelLocalName);
+        _output.Append("=\"");
+        _output.Append(EscapeAttributeValue(srcBase));
+        _output.Append('"');
+        context = srcBase;
+    }
+
     private void SerializeNode(object node, bool copyNamespaces = true, bool faithfulNamespaces = false)
     {
         switch (node)
@@ -12220,6 +12463,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                 }
 
+                // EMIT (temp-tree base-URI preservation): when serializing into a buffer that
+                // will be reparsed and this element's source base URI differs from the enclosing
+                // serialization context, append the sentinel xmlns + attribute to the start tag.
+                // Only fires on subtree roots where the base changes; descendants inherit the
+                // updated context and stay silent. Never fires for final-output serialization
+                // (_tempTreeSerializeDepth == 0).
+                var savedBaseContext = _serializeBaseContext;
+                TryEmitBaseSentinel(elem, ref _serializeBaseContext);
+
                 // Serialize children with namespace scope tracking
                 var hasChildren = false;
                 if (_nodeStore != null)
@@ -12240,6 +12492,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 if (!hasChildren)
                     _output.Append("/>");
+                _serializeBaseContext = savedBaseContext;
                 break;
             }
 
@@ -12951,6 +13204,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
 
             _documentNodeDepth++;
+            // EMIT context: content serialized here is captured as text and reparsed below,
+            // so raise the temp-tree depth and seed the serialization base context with this
+            // scope's effective base URI (the same value stamped on the reparsed document).
+            // A SOURCE element copied in whose base differs picks up a base sentinel that the
+            // reparse recovers onto CopySourceBaseUri.
+            _tempTreeSerializeDepth++;
+            var savedDocBaseContext = _serializeBaseContext;
+            _serializeBaseContext = EffectiveBaseUri;
             try
             {
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
@@ -12958,6 +13219,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             finally
             {
                 _documentNodeDepth--;
+                _tempTreeSerializeDepth--;
+                _serializeBaseContext = savedDocBaseContext;
                 _sequenceAccumulator = savedAccumulator;
                 _textContentDepth = savedTextContentDepth;
                 _collectTextAsSequenceItems = savedCollectText;
@@ -14978,10 +15241,30 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _serializingElementDepth = 0;
                 }
                 _temporaryOutputDepth++;
+                // EMIT context (temp-tree base-URI preservation): when the declared type is a
+                // node type whose body is serialized to TEXT and reparsed below (e.g.
+                // as="document-node()" / as="element()*" built via apply-templates or
+                // shallow-copy), raise the temp-tree depth and seed the serialize base context
+                // so a SOURCE element copied in whose base URI differs picks up a base sentinel
+                // that the reparse (ReadAsBodyChunkChildren) recovers onto CopySourceBaseUri.
+                // Mirrors CreateDocumentAsync. Scoped to the body serialization only and
+                // restored in finally, so the sentinel can never reach final output.
+                var raiseTempTreeDepth = _nodeStore != null && isNodeItemType;
+                var savedSeqBaseContext = _serializeBaseContext;
+                if (raiseTempTreeDepth)
+                {
+                    _tempTreeSerializeDepth++;
+                    _serializeBaseContext = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
+                }
                 try
                 { await instruction.Content.ExecuteAsync(this).ConfigureAwait(false); }
                 finally
                 {
+                    if (raiseTempTreeDepth)
+                    {
+                        _tempTreeSerializeDepth--;
+                        _serializeBaseContext = savedSeqBaseContext;
+                    }
                     _temporaryOutputDepth--;
                     _textContentDepth = savedTextDepth2;
                     _attributeContentDepth = savedAttrContentDepth2;
@@ -15104,7 +15387,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                 Parent = NodeId.None,
                                 DocumentElement = docElementId,
                                 Children = children,
-                                DocumentElementLocalName = docElemLocalName2
+                                DocumentElementLocalName = docElemLocalName2,
+                                // XSLT 3.0: a temporary tree's document node takes the static
+                                // base URI of the constructing instruction (never null), so
+                                // constructed descendants inherit a usable base URI for
+                                // resolve-uri()/doc(). Copied descendants still override via
+                                // their preserved CopySourceBaseUri.
+                                BaseUri = seqBaseUri
                             };
                             _nodeStore.Register(docNode);
                             sequenceItems.Add(docNode);
@@ -15130,7 +15419,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                 if (child is XdmNode cn)
                                 {
                                     cn.Parent = null;
-                                    if (seqBaseUri != null)
+                                    // Don't clobber a base URI recovered from the temp-tree base
+                                    // sentinel (a source element copied into the body): that
+                                    // preserved source base must win over the construction base,
+                                    // mirroring the accumulator handling above.
+                                    if (seqBaseUri != null && cn.CopySourceBaseUri == null)
                                         cn.BaseUri = seqBaseUri;
                                 }
                                 sequenceItems.Add(child);
@@ -15269,13 +15562,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     var savedAccDrain = _sequenceAccumulator;
                     _sequenceAccumulator = null;
+                    // EMIT context: this drain serializes accumulator items (which may be
+                    // source-element copies carrying CopySourceBaseUri) to TEXT that becomes
+                    // an RTF and is reparsed below. Raise the temp-tree depth so the base
+                    // sentinel rides through and the reparse recovers CopySourceBaseUri.
+                    var drainBaseUri = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
+                    _tempTreeSerializeDepth++;
+                    var savedDrainBaseContext = _serializeBaseContext;
+                    _serializeBaseContext = drainBaseUri;
                     try
                     {
                         foreach (var item in capturedAccumulator)
                             if (item != null)
                                 SerializeResult(item);
                     }
-                    finally { _sequenceAccumulator = savedAccDrain; }
+                    finally
+                    {
+                        _tempTreeSerializeDepth--;
+                        _serializeBaseContext = savedDrainBaseContext;
+                        _sequenceAccumulator = savedAccDrain;
+                    }
                 }
                 var content = savedScope.GetWritten();
 
@@ -28963,6 +29269,19 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var engine = new XsltTransformEngine(stylesheet);
         var isRaw = string.Equals(deliveryFormat, "raw", StringComparison.Ordinal);
 
+        // Determine the base URI to stamp on result document nodes (delivery-format='document').
+        // Per XSLT 3.0 a result tree's document node carries a non-null static base URI; without
+        // this the parsed result tree had base-uri(.)='' and DocBook's m:docbook pass (which runs
+        // over the in-engine fn:transform result) hit FORG0002 in resolve-uri(@fileref, base-uri(.)).
+        // DocBook's fp:run-transforms calls transform() from *inside* an XSLT stylesheet, so it
+        // runs through this in-engine path — not XsltTransformProvider.
+        // Precedence: base-output-uri option → source node's base → caller's static base.
+        string? resultBaseUri = GetStringOption(options, "base-output-uri");
+        if (resultBaseUri == null && sourceNode is Xdm.Nodes.XdmNode srcBaseNode)
+            resultBaseUri = PhoenixmlDb.XQuery.Functions.BaseUriFunction.ComputeBaseUri(srcBaseNode, _context._nodeStore);
+        if (resultBaseUri == null && context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qecBase)
+            resultBaseUri = qecBase.StaticBaseUri;
+
         // Build result map
         var resultMap = new OrderedXdmMap(EqualityComparer<object>.Default);
 
@@ -29007,7 +29326,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             }
             else
             {
-                resultMap["output"] = !string.IsNullOrEmpty(result) ? ParseResultAsDocument(result, _context._nodeStore) : null;
+                resultMap["output"] = !string.IsNullOrEmpty(result) ? ParseResultAsDocument(result, _context._nodeStore, resultBaseUri) : null;
             }
 
             foreach (var (href, content) in engine.SecondaryResultDocuments)
@@ -29015,7 +29334,19 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                 if (string.Equals(deliveryFormat, "serialized", StringComparison.Ordinal))
                     resultMap[href] = content;
                 else
-                    resultMap[href] = ParseResultAsDocument(content, _context._nodeStore);
+                {
+                    // A secondary result document's base URI is its own (absolute) href,
+                    // resolved against the result base when relative.
+                    string? secondaryBase = href;
+                    if (!Uri.TryCreate(href, UriKind.Absolute, out _)
+                        && resultBaseUri != null
+                        && Uri.TryCreate(resultBaseUri, UriKind.Absolute, out var rbu)
+                        && Uri.TryCreate(rbu, href, out var resolvedHref))
+                    {
+                        secondaryBase = resolvedHref.AbsoluteUri;
+                    }
+                    resultMap[href] = ParseResultAsDocument(content, _context._nodeStore, secondaryBase);
+                }
             }
         }
 
@@ -29052,7 +29383,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         };
     }
 
-    private static object? ParseResultAsDocument(string xml, XdmInMemoryStore? store = null)
+    private static object? ParseResultAsDocument(string xml, XdmInMemoryStore? store = null, string? resultBaseUri = null)
     {
         if (string.IsNullOrWhiteSpace(xml))
             return null;
@@ -29062,7 +29393,13 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             xmlDoc.PreserveWhitespace = true;
             xmlDoc.LoadXml(xml);
             store ??= new XdmInMemoryStore();
-            return XsltTransformEngine.ConvertToXdm(xmlDoc, store);
+            var doc = XsltTransformEngine.ConvertToXdm(xmlDoc, store);
+            // Result trees have no document URI, but per XSLT 3.0 their document node carries
+            // a non-null static base URI. DocBook's m:docbook pass runs over this tree and a
+            // null base produced base-uri(.)='' → FORG0002 in resolve-uri(@fileref, base-uri(.)).
+            if (resultBaseUri != null)
+                doc.BaseUri = resultBaseUri;
+            return doc;
         }
         catch (System.Xml.XmlException)
         {
