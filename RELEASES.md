@@ -18,6 +18,8 @@ The two JSON emitters — the `method="json"` value serializer and the `fn:xml-t
 
 XML text, XML attribute, and JSON string escaping now flow through one `CharacterEscaper` helper instead of the several near-duplicate copies that had accumulated across the serialization paths. As part of this, attribute-value serialization on every path now escapes tab/newline/carriage-return as numeric character references (`&#x9;`/`&#xA;`/`&#xD;`) — previously two of the paths emitted them literally, where XML attribute-value normalization would have silently collapsed them to spaces on re-read. JSON string escaping keeps its three distinct entry contracts (raw, lenient pass-through, and validating with `FOJS0006`); only the shared per-character escape rules are unified.
 
+This `CharacterEscaper` now lives in `PhoenixmlDb.Core` (`PhoenixmlDb.Xdm.Serialization`, Core 1.1.9) and is shared with the XQuery engine, so both engines escape serialized output identically. XSLT output is unchanged by the move. Builds against PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.5.
+
 No API changes. Builds against PhoenixmlDb.XQuery 1.4.4.
 
 ## 1.4.8 (2026-06-14)
