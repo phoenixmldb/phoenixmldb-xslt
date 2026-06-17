@@ -3072,6 +3072,114 @@ public sealed class XsltTransformEngine
         if (isStreamingJsonOutput)
             context.BeginSequenceCollection();
 
+        // Document-node template dispatch (XSLT 3.0 §6.6.1): before the streaming
+        // crawl reaches the root element, the document node (/) must be offered to
+        // user templates. The streaming processor's event loop starts at the first
+        // ELEMENT event and so never dispatches the document node — without this,
+        // a global <xsl:template match="/"> never fires and the built-in document
+        // rule (recurse into children → text-only output) runs instead.
+        //
+        // If a user template matches the synthetic document node, execute its body
+        // using the same subscription mechanism the xsl:source-document streamable
+        // path uses: scan the body for streamable xsl:for-each subscriptions /
+        // consuming watchers, build the processor with them, and (when the body has
+        // no xsl:apply-templates) run the forward pass in subscription-dispatch-only
+        // mode so the for-each bodies dispatch per matching element while the default
+        // template machinery stays inert. When NO user template matches, fall through
+        // to the original behavior so existing streaming stylesheets are unaffected.
+        XsltTemplate? docNodeTemplate;
+        using (var mc = context.AcquireMatchContext())
+            docNodeTemplate = _templateIndex.FindMatchingTemplate(syntheticDoc, options.InitialMode, mc.Value);
+
+        if (docNodeTemplate != null)
+        {
+            var scanner = new StreamingExpressionScanner();
+            var scanResult = scanner.ScanWithSubscriptions(docNodeTemplate.Body);
+            var docWatchers = scanResult.Watchers.Count > 0 ? scanResult.Watchers : null;
+            var docSubscriptions = scanResult.Subscriptions.Count > 0 ? scanResult.Subscriptions : null;
+
+            bool bodyHasApplyTemplates = ContentContainsApplyTemplatesStreaming(docNodeTemplate.Body);
+
+            // Subscription-dispatch-only: the body drives the stream through scanned
+            // for-each subscriptions (or carries no streaming consumption at all, e.g.
+            // a body that only constructs literal result elements). In either case the
+            // default per-element template machinery must stay inert during the pass.
+            bool subscriptionOnly = !bodyHasApplyTemplates;
+
+            var docProcessor = new StreamingXmlProcessor(
+                _stylesheet, _templateIndex, context, nodeStore, options.InitialMode,
+                streamingAccumulators, docWatchers, docSubscriptions, subscriptionOnly);
+
+            // Expose the document node as the focus so the body's grounded expressions
+            // (and the subscription path matchers, which are relative to /) resolve
+            // against the document being streamed.
+            context.PushContextItem(syntheticDoc, 1, 1);
+            var savedDocProcessor = context._activeStreamingProcessor;
+            var savedDocReader = context._activeStreamingReader;
+            var savedDocCt = context._activeStreamingCancellationToken;
+            var savedDocWatchers = context._activeStreamWatchers;
+            context._activeStreamingProcessor = docProcessor;
+            context._activeStreamingReader = inputReader;
+            context._activeStreamingCancellationToken = options.CancellationToken;
+            context._activeStreamWatchers = docWatchers;
+            try
+            {
+                if (subscriptionOnly)
+                {
+                    // The body's for-each subscriptions are dispatched per matching
+                    // element during the forward pass; bodies with no streaming
+                    // consumption (literal-only) execute once before the drain. Mirror
+                    // the source-document subscription-only path: clear the active
+                    // processor/reader so the body's own evaluation doesn't re-trigger
+                    // streaming, run any grounded body instructions, then stream.
+                    context._activeStreamingProcessor = null;
+                    context._activeStreamingReader = null;
+
+                    if (docSubscriptions == null)
+                    {
+                        // Literal-only body (e.g. match="/" producing <ROOTRAN/>):
+                        // execute once; the forward pass below merely drains the reader
+                        // in dispatch-only mode without firing built-in templates.
+                        await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
+                    }
+
+                    await docProcessor.ProcessAsync(inputReader, options.CancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    // The body contains xsl:apply-templates: executing it triggers the
+                    // streaming processor through the active-processor handle, exactly
+                    // as the source-document apply-templates path does.
+                    await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                context._activeStreamingProcessor = savedDocProcessor;
+                context._activeStreamingReader = savedDocReader;
+                context._activeStreamingCancellationToken = savedDocCt;
+                context._activeStreamWatchers = savedDocWatchers;
+                context.PopContextItem();
+            }
+
+            await context.DrainStreamingOutputAsync(options.CancellationToken).ConfigureAwait(false);
+
+            if (isStreamingJsonOutput)
+                FinalizeJsonOutput(context, outputBuilder, streamingPrincipalOutput, nodeStore, options);
+
+            SecondaryResultDocuments = context.SecondaryResults;
+
+            if (outputSink != null)
+                return;
+
+            var docOutput = outputBuilder.ToString();
+            var docOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+            docOutput = FinalizeOutput(docOutput, docOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
+            outputBuilder.Clear();
+            outputBuilder.Append(docOutput);
+            return;
+        }
+
         var processor = new StreamingXmlProcessor(
             _stylesheet, _templateIndex, context, nodeStore, options.InitialMode,
             streamingAccumulators);
@@ -3112,6 +3220,24 @@ public sealed class XsltTransformEngine
         // wrapper sees the same string the original method returned.
         outputBuilder.Clear();
         outputBuilder.Append(output);
+    }
+
+    /// <summary>
+    /// Recursively checks whether a sequence constructor contains an
+    /// <c>xsl:apply-templates</c> instruction. Used by the streaming document-node
+    /// template dispatch to decide whether the body drives the forward pass itself
+    /// (apply-templates) or whether the processor must run in subscription-dispatch-only
+    /// mode. Mirrors the local <c>ContentContainsApplyTemplates</c> helper used by the
+    /// xsl:source-document streamable path.
+    /// </summary>
+    private static bool ContentContainsApplyTemplatesStreaming(Ast.XsltSequenceConstructor body)
+    {
+        foreach (var insn in body.Instructions)
+        {
+            if (insn is Ast.XsltApplyTemplates) return true;
+            if (insn is Ast.XsltSequenceConstructor nested && ContentContainsApplyTemplatesStreaming(nested)) return true;
+        }
+        return false;
     }
 
     /// <summary>
