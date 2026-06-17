@@ -5,6 +5,7 @@ using System.Xml;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.Xdm;
 using PhoenixmlDb.Xdm.Nodes;
+using PhoenixmlDb.Xdm.Serialization;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.Xslt.Ast;
 // XPath 4.0 ordered map: insertion-order iteration as a structural guarantee.

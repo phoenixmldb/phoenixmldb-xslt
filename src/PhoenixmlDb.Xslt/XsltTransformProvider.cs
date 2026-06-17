@@ -2,6 +2,7 @@ using System.Text;
 using System.Xml;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.Xdm.Nodes;
+using PhoenixmlDb.Xdm.Serialization;
 using PhoenixmlDb.Xslt.Engine;
 using PhoenixmlDb.XQuery;
 using PhoenixmlDb.XQuery.Functions;
