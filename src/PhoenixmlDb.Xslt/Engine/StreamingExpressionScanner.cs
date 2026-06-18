@@ -162,6 +162,21 @@ internal sealed class StreamingExpressionScanner
                 ScanInstructions(elem.Content);
                 break;
 
+            // xsl:try is transparent to streaming: its select expression (or body)
+            // runs the consuming expression against the stream exactly as the same
+            // expression would outside a try, with the catch still catching dynamic
+            // errors at runtime. Scan the try's select/body so the consuming
+            // sub-expression registers a watcher keyed on the same expression object
+            // that xsl:try evaluates at runtime (resolved by reference-equality in
+            // TryResolveFromWatchers). The catch clauses are NOT scanned — they only
+            // execute on error, after the stream is closed, against grounded values.
+            case XsltTry tryInsn:
+                if (tryInsn.SelectExpression != null)
+                    ScanExpression(tryInsn.SelectExpression);
+                if (tryInsn.Body != null)
+                    ScanInstructions(tryInsn.Body);
+                break;
+
             // Skip xsl:apply-templates and xsl:iterate — handled by existing streaming
             case XsltApplyTemplates:
             case XsltIterate:
