@@ -171,6 +171,23 @@ internal static class StreamingSubtreeBufferDetector
             case XsltForEachGroup feg:
                 return feg.GroupBy != null;
 
+            // A top-level xsl:iterate appearing directly in a streamable
+            // source-document body (or a match="/" document-node template) has no
+            // document-level streaming dispatch: the engine's streaming xsl:iterate
+            // path only runs when _isStreamingExecution is already set (i.e. inside a
+            // template the streaming processor dispatched). At the document level the
+            // body executes against the synthetic empty document node, so the iterate's
+            // consuming select (account/transaction, /*/transaction, outermost(.//x),
+            // descendant::x, …) evaluates to the empty sequence and the iterate body
+            // never runs — only xsl:on-completion fires, with the initial param values.
+            // Materialize the whole input and run the buffered xsl:iterate, which
+            // evaluates the select against the real document and produces correct output
+            // (xsl:break / xsl:next-iteration / xsl:on-completion all work on the
+            // buffered sequence). Only a grounded select (literal / variable, no input
+            // navigation) can stay on the streaming path.
+            case XsltIterate it:
+                return IterateConsumesInput(it.Select);
+
             case XsltFork fk:
                 foreach (var feg in fk.ForEachGroups)
                     if (feg.GroupBy != null) return true;
@@ -194,6 +211,73 @@ internal static class StreamingSubtreeBufferDetector
 
             default:
                 return false;
+        }
+    }
+
+    /// <summary>
+    /// True when an <c>xsl:iterate</c> select navigates the input document (a path,
+    /// or a function call wrapping a path such as <c>outermost(.//x)</c>) and therefore
+    /// cannot be satisfied by the document-level streaming pass. A grounded select
+    /// (literal sequence, a variable reference, or empty) iterates an in-memory value
+    /// and does not need the input buffered; a null select defaults to the children of
+    /// the context node, which at the document level is the (empty) synthetic node — so
+    /// it too needs the real input.
+    /// </summary>
+    private static bool IterateConsumesInput(XQueryExpression? select)
+    {
+        if (select == null) return true; // default = children of context (the input root)
+        return NavigatesInput(select);
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> reads the streamed input document directly —
+    /// i.e. it contains a path / axis step or a bare context-item reference somewhere in
+    /// its tree. An iterate select built purely from grounded operands (literals, ranges,
+    /// variable references, and functions/operators over those — e.g. <c>tail($words)</c>
+    /// or <c>1 to 200</c>) iterates an already-materialized value and stays on the
+    /// streaming path. A select that navigates the input (<c>account/transaction</c>,
+    /// <c>/*/transaction</c>, <c>outermost(.//gml:posList)</c>, <c>descendant::x</c>) cannot
+    /// be satisfied at the document level and forces whole-input buffering.
+    /// </summary>
+    private static bool NavigatesInput(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case ContextItemExpression:
+            case PathExpression:
+            case StepExpression:
+                return true;
+
+            case IntegerLiteral or DecimalLiteral or DoubleLiteral or StringLiteral or BooleanLiteral:
+            case VariableReference:
+                return false;
+
+            case RangeExpression range:
+                return NavigatesInput(range.Start) || NavigatesInput(range.End);
+
+            case SequenceExpression seq:
+                foreach (var item in seq.Items)
+                    if (NavigatesInput(item)) return true;
+                return false;
+
+            case BinaryExpression bin:
+                return NavigatesInput(bin.Left) || NavigatesInput(bin.Right);
+
+            case UnaryExpression un:
+                return NavigatesInput(un.Operand);
+
+            case FunctionCallExpression fc:
+                foreach (var arg in fc.Arguments)
+                    if (NavigatesInput(arg)) return true;
+                return false;
+
+            case SimpleMapExpression sm:
+                return NavigatesInput(sm.Left) || NavigatesInput(sm.Right);
+
+            // Conservative default: an expression shape we don't model might navigate
+            // the input, so buffer rather than risk an empty-context evaluation.
+            default:
+                return true;
         }
     }
 
