@@ -188,6 +188,26 @@ internal static class StreamingSubtreeBufferDetector
             case XsltIterate it:
                 return IterateConsumesInput(it.Select);
 
+            // A top-level xsl:value-of / xsl:copy-of / xsl:sequence whose select calls an
+            // absorbing higher-order function (fold-left, fold-right) over a sequence that
+            // navigates the input has no document-level streaming dispatch: the streaming
+            // pass evaluates the select against the synthetic empty document node, so the
+            // folded sequence is empty and only the $zero seed survives (sf-fold-left-011/013),
+            // the computed-value forms collapse to nothing (sf-fold-left-015), or the eager
+            // fold over an unread streaming context produces wrong/typed-error results
+            // (sf-fold-left-012/018/019/022/023) or loops on large input (sf-fold-left-016/020/021).
+            // Materialize the whole input and run the buffered evaluation, which atomizes and
+            // folds the real node sequence correctly. A grounded fold argument (literal /
+            // variable, no input navigation) stays on the streaming path.
+            case XsltValueOf vo:
+                return vo.Select != null && SelectFoldsOverInput(vo.Select);
+
+            case XsltCopyOf cof:
+                return SelectFoldsOverInput(cof.Select);
+
+            case XsltSequence sq:
+                return sq.Select != null && SelectFoldsOverInput(sq.Select);
+
             case XsltFork fk:
                 foreach (var feg in fk.ForEachGroups)
                     if (feg.GroupBy != null) return true;
@@ -279,6 +299,60 @@ internal static class StreamingSubtreeBufferDetector
             default:
                 return true;
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> contains a call to an absorbing higher-order
+    /// function (<c>fold-left</c> / <c>fold-right</c>) anywhere in its tree whose folded
+    /// sequence (the first argument) navigates the input. Such a call cannot be satisfied
+    /// by the document-level streaming pass — it has no streaming dispatch and would fold
+    /// over the empty synthetic document node — so it forces whole-input buffering. The
+    /// fold may be nested inside wrapping functions (<c>round(fold-left(…))</c>,
+    /// <c>format-number(fold-left(…), …)</c>, <c>xs:integer(round(fold-left(…)))</c>), so
+    /// the whole select tree is walked. A fold over a grounded sequence (literals,
+    /// variables, ranges) stays on the streaming path.
+    /// </summary>
+    private static bool SelectFoldsOverInput(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case FunctionCallExpression fc:
+                if (IsAbsorbingFold(fc) && fc.Arguments.Count > 0 && NavigatesInput(fc.Arguments[0]))
+                    return true;
+                foreach (var arg in fc.Arguments)
+                    if (SelectFoldsOverInput(arg)) return true;
+                return false;
+
+            case BinaryExpression bin:
+                return SelectFoldsOverInput(bin.Left) || SelectFoldsOverInput(bin.Right);
+
+            case UnaryExpression un:
+                return SelectFoldsOverInput(un.Operand);
+
+            case SequenceExpression seq:
+                foreach (var item in seq.Items)
+                    if (SelectFoldsOverInput(item)) return true;
+                return false;
+
+            case SimpleMapExpression sm:
+                return SelectFoldsOverInput(sm.Left) || SelectFoldsOverInput(sm.Right);
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="fc"/> is the <c>fn:fold-left</c> or <c>fn:fold-right</c>
+    /// higher-order function. These have streamability <c>absorbing</c> on their sequence
+    /// argument: they consume the whole sequence and cannot be driven off the live reader
+    /// at the document level.
+    /// </summary>
+    private static bool IsAbsorbingFold(FunctionCallExpression fc)
+    {
+        return fc.Name.LocalName is "fold-left" or "fold-right"
+            && (fc.Name.Namespace == NamespaceId.None
+                || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
     }
 
     /// <summary>
