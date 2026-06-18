@@ -51,6 +51,20 @@ internal sealed class StreamingXmlProcessor
     // start-tag. Each entry may be null when the ancestor has no attributes.
     private readonly List<IReadOnlyDictionary<string, string>?> _ancestorAttributes = [];
 
+    // Forward sibling positions of each open ancestor, parallel to _ancestorNames
+    // (outermost first). Each entry holds two 1-based positions captured at the
+    // ancestor's start-tag: position among ALL element siblings under its parent
+    // (for a wildcard `*` step), and position among siblings sharing its local name
+    // (for a name test or `*:NCName` namespace wildcard). These let a matched leaf
+    // evaluate a FORWARD-COUNTABLE positional intermediate predicate (e.g.
+    // ITEM[position() lt 4]) by supplying the ancestor's position as the XPath
+    // context position. Maintained at the same push/pop sites as _ancestorNames.
+    private readonly List<(int ElementPos, int NamePos)> _ancestorPositions = [];
+
+    // Scratch buffer for clearing per-name child counters at a closing element's depth
+    // (avoids allocating a removal list per EndElement). Reused across EndElement events.
+    private readonly List<(int Depth, string Name)> _nameCountResetScratch = [];
+
     public StreamingXmlProcessor(
         XsltStylesheet stylesheet,
         TemplateIndex templateIndex,
@@ -86,6 +100,13 @@ internal sealed class StreamingXmlProcessor
         // Key = depth, Value = count of child elements seen so far at that depth
         // under the current parent. Reset when the parent's EndElement is encountered.
         var siblingCountByDepth = new Dictionary<int, int>();
+
+        // Track per-name sibling position: key = (depth, local name), value = count of
+        // child elements of that name seen so far at that depth under the current parent.
+        // Parallels siblingCountByDepth (which counts ALL element children) and is reset
+        // on the parent's EndElement. Drives same-name position() for forward-countable
+        // positional intermediate-step predicates (e.g. ITEM[position() lt 4]).
+        var nameCountByDepth = new Dictionary<(int Depth, string Name), int>();
 
         // When a user template with an empty body matches an element (suppressing it),
         // we must skip all child events until the matching EndElement. Track the depth
@@ -198,6 +219,11 @@ internal sealed class StreamingXmlProcessor
                                 ancestorStack.Push(skipCtx);
                                 _ancestorNames.Add(skipCtx.LocalName);
                                 _ancestorAttributes.Add(BuildAttrDict(skipCtx.Attributes));
+                                // Keep _ancestorPositions parallel. Suppressed subtrees do
+                                // not drive positional intermediate predicates (those run on
+                                // the source-document aggregation path, not under a suppressed
+                                // template), so a 0/0 sentinel suffices here.
+                                _ancestorPositions.Add((0, 0));
                             }
                             else
                             {
@@ -246,6 +272,15 @@ internal sealed class StreamingXmlProcessor
                             siblingCount = 0;
                         siblingCount++;
                         siblingCountByDepth[elementDepth] = siblingCount;
+
+                        // Track per-name sibling position (for same-name position() in
+                        // forward-countable positional intermediate predicates).
+                        var nameKey = (elementDepth, reader.LocalName);
+                        if (!nameCountByDepth.TryGetValue(nameKey, out var nameCount))
+                            nameCount = 0;
+                        nameCount++;
+                        nameCountByDepth[nameKey] = nameCount;
+                        int currentNamePos = nameCount;
 
                         var current = AcquireNodeContext();
                         current.NodeKind = XdmNodeKind.Element;
@@ -468,6 +503,7 @@ internal sealed class StreamingXmlProcessor
                             ancestorStack.Push(current);
                             _ancestorNames.Add(current.LocalName);
                             _ancestorAttributes.Add(BuildAttrDict(current.Attributes));
+                            _ancestorPositions.Add((siblingCount, currentNamePos));
 
                             // If the template had an empty body (suppression), skip all children
                             if (wasSuppressed && suppressionDepth < 0)
@@ -508,6 +544,8 @@ internal sealed class StreamingXmlProcessor
                                 _ancestorNames.RemoveAt(_ancestorNames.Count - 1);
                             if (_ancestorAttributes.Count > 0)
                                 _ancestorAttributes.RemoveAt(_ancestorAttributes.Count - 1);
+                            if (_ancestorPositions.Count > 0)
+                                _ancestorPositions.RemoveAt(_ancestorPositions.Count - 1);
 
                             // Deferred-template execution: if a template firing for this
                             // element was deferred (consuming aggregates accumulated via
@@ -532,6 +570,19 @@ internal sealed class StreamingXmlProcessor
                             // Reset sibling counter for children of this closing element.
                             // Children are at depth = closingContext.Depth + 1.
                             siblingCountByDepth.Remove(closingContext.Depth + 1);
+                            // Reset per-name child counters at that same depth so the next
+                            // parent restarts position() from 1. Entries are sparse (one per
+                            // distinct child name seen under this parent).
+                            if (nameCountByDepth.Count > 0)
+                            {
+                                int childDepth = closingContext.Depth + 1;
+                                _nameCountResetScratch.Clear();
+                                foreach (var key in nameCountByDepth.Keys)
+                                    if (key.Depth == childDepth)
+                                        _nameCountResetScratch.Add(key);
+                                foreach (var key in _nameCountResetScratch)
+                                    nameCountByDepth.Remove(key);
+                            }
                             // Fire end-phase accumulator rules (always, even for suppressed elements)
                             var closingNode = _nodeStore.GetNode(closingContext.NodeId);
                             if (closingNode != null)
@@ -846,6 +897,16 @@ internal sealed class StreamingXmlProcessor
         public required string ElementName;
         public required IReadOnlyDictionary<string, string>? Attributes;
         public required IReadOnlyList<XQueryExpression> Predicates;
+
+        // True when Predicates are FORWARD-COUNTABLE positional filters evaluated
+        // against the ancestor's forward sibling position (see ContextPosition) rather
+        // than its name/attributes. last()-dependent predicates are never captured here.
+        public bool IsPositional;
+        // The ancestor's 1-based forward sibling position, captured at its start-tag —
+        // position among same-name siblings for a name/namespace-wildcard step, or among
+        // ALL element siblings for a `*` step. Supplied as the XPath context position so
+        // position()-based predicates evaluate correctly. Unused when IsPositional is false.
+        public int ContextPosition;
     }
 
     private sealed class SubtreeBuilderFrame
@@ -951,11 +1012,24 @@ internal sealed class StreamingXmlProcessor
                     {
                         int idx = _ancestorNames.Count - ip.AncestorOffset;
                         if (idx < 0 || idx >= _ancestorNames.Count) continue;
+                        // For a forward-countable positional predicate, capture the
+                        // ancestor's running sibling position: among same-name siblings
+                        // for a name/namespace-wildcard step, or among ALL element
+                        // siblings for a `*` step. This is the XPath context position
+                        // supplied to position()-based predicate evaluation at EndElement.
+                        int contextPos = 0;
+                        if (ip.IsPositional && idx < _ancestorPositions.Count)
+                        {
+                            var pos = _ancestorPositions[idx];
+                            contextPos = ip.IsWildcardStep ? pos.ElementPos : pos.NamePos;
+                        }
                         (intermediateAncestors ??= []).Add(new IntermediateAncestorSnapshot
                         {
                             ElementName = _ancestorNames[idx],
                             Attributes = idx < _ancestorAttributes.Count ? _ancestorAttributes[idx] : null,
-                            Predicates = ip.Predicates
+                            Predicates = ip.Predicates,
+                            IsPositional = ip.IsPositional,
+                            ContextPosition = contextPos
                         });
                     }
                 }
@@ -1046,6 +1120,19 @@ internal sealed class StreamingXmlProcessor
             or WatcherAggregation.Avg or WatcherAggregation.StringJoin
             or WatcherAggregation.Sequence or WatcherAggregation.Snapshot
             or WatcherAggregation.Head => true,
+        _ => false
+    };
+
+    /// <summary>
+    /// True when the numeric literal <paramref name="lit"/> equals <paramref name="position"/>
+    /// — used to evaluate a bare positional predicate <c>[N]</c> on an intermediate step as
+    /// <c>position() = N</c>. A non-integral bound (e.g. <c>[2.5]</c>) never selects a position.
+    /// </summary>
+    private static bool NumericLiteralEqualsPosition(XQueryExpression lit, int position) => lit switch
+    {
+        IntegerLiteral i => i.LongValue is { } l && l == position,
+        DecimalLiteral d => d.Value == position,
+        DoubleLiteral db => db.Value == position,
         _ => false
     };
 
@@ -1152,13 +1239,31 @@ internal sealed class StreamingXmlProcessor
                     var ancElem = MaterializeLeafElement(anc.ElementName, anc.Attributes, string.Empty);
                     var prevStreaming = _context._isStreamingExecution;
                     _context._isStreamingExecution = false;
-                    _context.PushContextItem(ancElem, 1, 1);
+                    // For a forward-countable positional predicate, supply the ancestor's
+                    // captured forward sibling position as the XPath context position so
+                    // position()-based comparisons (e.g. position() lt 4) decide correctly.
+                    // Motionless (non-positional) predicates keep the 1/1 context.
+                    int ctxPos = anc.IsPositional ? anc.ContextPosition : 1;
+                    _context.PushContextItem(ancElem, ctxPos, ctxPos);
                     _context.PushCurrentItem(ancElem);
                     try
                     {
                         foreach (var pred in anc.Predicates)
                         {
-                            if (!await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false))
+                            bool ok;
+                            if (anc.IsPositional && pred is IntegerLiteral or DecimalLiteral or DoubleLiteral)
+                            {
+                                // A bare numeric predicate [N] is a positional shorthand
+                                // for position() = N. EvaluateBooleanAsync would instead
+                                // return the literal's effective boolean value (always true
+                                // for non-zero), so compare the position directly here.
+                                ok = NumericLiteralEqualsPosition(pred, anc.ContextPosition);
+                            }
+                            else
+                            {
+                                ok = await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false);
+                            }
+                            if (!ok)
                             {
                                 predicatesPass = false;
                                 break;

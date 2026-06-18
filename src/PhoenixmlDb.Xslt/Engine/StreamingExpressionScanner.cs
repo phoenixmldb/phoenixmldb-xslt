@@ -587,10 +587,23 @@ internal sealed class StreamingExpressionScanner
     /// leaf element (1 = immediate parent). The predicate is evaluated against the
     /// ancestor element (name + attributes) when the leaf matches; only ancestors
     /// whose predicate passes contribute their descendant leaves to the aggregation.
+    /// <para>
+    /// When <see cref="IsPositional"/> is true the predicate(s) are FORWARD-COUNTABLE
+    /// positional filters (e.g. <c>[position() lt 4]</c>, <c>[3]</c>) on the ancestor
+    /// step. They are decidable from the ancestor's running occurrence count as the
+    /// stream descends — the processor supplies the ancestor's forward position as the
+    /// XPath context position when evaluating them. <see cref="IsWildcardStep"/> marks a
+    /// <c>*</c> (any-name) step so the processor counts ALL element siblings; otherwise
+    /// it counts siblings sharing the ancestor's local name (a name test or <c>*:NCName</c>
+    /// namespace wildcard). Predicates depending on <c>last()</c> are NOT forward-countable
+    /// and are never captured here (they stay deferred).
+    /// </para>
     /// </summary>
     internal readonly record struct IntermediatePredicate(
         int AncestorOffset,
-        IReadOnlyList<XQueryExpression> Predicates);
+        IReadOnlyList<XQueryExpression> Predicates,
+        bool IsPositional = false,
+        bool IsWildcardStep = false);
 
     private static ExtractedPath? ExtractPathFromArgument(XQueryExpression expr)
     {
@@ -687,12 +700,31 @@ internal sealed class StreamingExpressionScanner
                                 // than rejecting the whole path — which would otherwise
                                 // suppress the watcher and regress cases that previously
                                 // passed via the unfiltered aggregation.
-                                if (!pathHasDescendantAxis
-                                    && ArePredicatesMotionlessAgainstAncestor(step.Predicates))
+                                //
+                                // Two flavors are captured:
+                                //   (a) MOTIONLESS predicates (e.g. [@CAT='P']) — decidable
+                                //       from the ancestor's name + attributes alone.
+                                //   (b) FORWARD-COUNTABLE POSITIONAL predicates (e.g.
+                                //       [position() lt 4], [3]) — decidable from the
+                                //       ancestor's running occurrence count under its parent,
+                                //       which is known when its start-tag is seen. last()
+                                //       (needs the total) keeps these deferred.
+                                if (!pathHasDescendantAxis)
                                 {
                                     int ancestorOffset = totalElementSteps - elementStepSeen;
-                                    (intermediatePredicates ??= []).Add(
-                                        new IntermediatePredicate(ancestorOffset, step.Predicates));
+                                    bool wildcardStep = step.NodeTest is NameTest nt && nt.IsLocalNameWildcard;
+                                    if (ArePredicatesMotionlessAgainstAncestor(step.Predicates))
+                                    {
+                                        (intermediatePredicates ??= []).Add(
+                                            new IntermediatePredicate(ancestorOffset, step.Predicates));
+                                    }
+                                    else if (ArePredicatesForwardCountablePositional(step.Predicates))
+                                    {
+                                        (intermediatePredicates ??= []).Add(
+                                            new IntermediatePredicate(
+                                                ancestorOffset, step.Predicates,
+                                                IsPositional: true, IsWildcardStep: wildcardStep));
+                                    }
                                 }
                             }
                         }
@@ -771,6 +803,81 @@ internal sealed class StreamingExpressionScanner
             if (!IsMotionlessAncestorExpression(pred)) return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// True when every predicate in <paramref name="preds"/> is a FORWARD-COUNTABLE
+    /// positional filter on an intermediate (ancestor) element step — decidable solely
+    /// from the ancestor's running occurrence count under its parent as the stream
+    /// descends. Accepts:
+    /// <list type="bullet">
+    /// <item>a bare numeric literal <c>[N]</c> (equivalent to <c>position() = N</c>);</item>
+    /// <item>a comparison with <c>position()</c> on one side and a constant numeric
+    /// expression on the other (<c>[position() lt 4]</c>, <c>[position() = 2]</c>,
+    /// <c>[3 ge position()]</c>, value- or general-comparison operators).</item>
+    /// </list>
+    /// Rejects anything mentioning <c>last()</c> (needs the not-yet-known total),
+    /// boolean connectives, multiple predicates that aren't all positional, or any other
+    /// shape. Conservative: unrecognized → false (predicate stays deferred).
+    /// </summary>
+    private static bool ArePredicatesForwardCountablePositional(IReadOnlyList<XQueryExpression> preds)
+    {
+        if (preds.Count == 0) return false;
+        foreach (var pred in preds)
+            if (!IsForwardCountablePositionalPredicate(pred)) return false;
+        return true;
+    }
+
+    private static bool IsForwardCountablePositionalPredicate(XQueryExpression pred)
+    {
+        // Bare numeric literal [N] — a positional shorthand for position() = N.
+        if (pred is IntegerLiteral or DecimalLiteral or DoubleLiteral)
+            return true;
+
+        // A comparison with position() on one side and a constant numeric expression
+        // on the other. The order is irrelevant for forward-countability. last() must
+        // not appear anywhere.
+        if (pred is BinaryExpression bin && IsComparisonOperator(bin.Operator))
+        {
+            bool leftPos = IsPositionCall(bin.Left);
+            bool rightPos = IsPositionCall(bin.Right);
+            if (leftPos == rightPos) return false; // need exactly one position() operand
+            var other = leftPos ? bin.Right : bin.Left;
+            return IsConstantNumericNoLast(other);
+        }
+
+        return false;
+    }
+
+    private static bool IsComparisonOperator(BinaryOperator op) => op is
+        BinaryOperator.Equal or BinaryOperator.NotEqual
+        or BinaryOperator.LessThan or BinaryOperator.LessOrEqual
+        or BinaryOperator.GreaterThan or BinaryOperator.GreaterOrEqual
+        or BinaryOperator.GeneralEqual or BinaryOperator.GeneralNotEqual
+        or BinaryOperator.GeneralLessThan or BinaryOperator.GeneralLessOrEqual
+        or BinaryOperator.GeneralGreaterThan or BinaryOperator.GeneralGreaterOrEqual;
+
+    private static bool IsPositionCall(XQueryExpression expr) =>
+        expr is FunctionCallExpression { Name.LocalName: "position", Arguments.Count: 0 };
+
+    /// <summary>
+    /// True for a numeric constant expression that does not reference position()/last()
+    /// — i.e. a fixed bound the positional predicate is compared against. Permits
+    /// literals, unary +/-, and arithmetic over such constants.
+    /// </summary>
+    private static bool IsConstantNumericNoLast(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case IntegerLiteral or DecimalLiteral or DoubleLiteral:
+                return true;
+            case UnaryExpression u:
+                return IsConstantNumericNoLast(u.Operand);
+            case BinaryExpression b:
+                return IsConstantNumericNoLast(b.Left) && IsConstantNumericNoLast(b.Right);
+            default:
+                return false;
+        }
     }
 
     private static bool IsMotionlessAncestorExpression(XQueryExpression expr)
