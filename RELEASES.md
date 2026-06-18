@@ -1,5 +1,30 @@
 # Release History
 
+## 1.4.11 (2026-06-18)
+
+Streaming correctness. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. No API changes.
+
+### Fix: consuming expressions at the top of a streamable body now stream
+
+When a consuming (input-navigating) expression sits **directly** in a `streamable="yes"` `xsl:source-document` body — or directly in a streamable `xsl:template match="/"` — it had no document-level streaming dispatch: the engine's streaming execution only engaged inside templates reached by the streaming processor, so at the document level the expression was evaluated against an empty synthetic input and produced empty, seed-only, or partial output (and in some cases an eager type error or a non-terminating walk over an unread reader).
+
+These constructs are now recognized at the document level and routed through the engine's whole-input materialization path when — and only when — their operand actually navigates the input (a grounded operand such as a literal, range, or variable stays on the incremental streaming path, so large-input transforms are unaffected). Covered constructs:
+
+- `xsl:try` (a consuming expression in the try body)
+- `xsl:fork` (prongs that re-traverse the input, including `fork` → `for-each-group`)
+- `xsl:iterate` (select navigating the input)
+- `xsl:for-each-group` (population from `group-by`/`group-adjacent`/`group-starting-with`/`group-ending-with` navigating the input)
+- aggregation and higher-order functions over the input — `fold-left`/`fold-right`, `sum`/`count`/`avg`/`max`/`min`/`string-join`, `boolean`/`not`/`exists`/`empty`, `one-or-more`/`exactly-one`/`zero-or-one`
+- expression operators over the input — `treat as`, `instance of`, `castable as`, `union`/`except`/`intersect`, sequence construction `(a, b)`, and the square-array constructor `[ … ]`
+
+### Fix: intermediate-step predicate in streaming aggregation
+
+A predicate on an **ancestor** step of a streamed aggregation path — e.g. `avg(BOOKLIST/BOOKS/ITEM[@CAT='P']/PRICE)`, where the filter is on `ITEM` rather than the matched `PRICE` — was dropped, so the aggregate ran over the unfiltered set. Motionless ancestor predicates (and forward-countable positional ones such as `ITEM[3]` / `ITEM[position() lt 4]`) are now applied during the streaming pass.
+
+### Fix: `xsl:for-each` select ending in `copy-of()`/`snapshot()` (Martin Honnen)
+
+A streamable `xsl:for-each` whose `select` ends in a trailing zero-argument `copy-of()` or `snapshot()` step (e.g. `select="records/record/copy-of()"`) produced no output — the trailing snapshot step is now peeled and the subscription is driven off the head path.
+
 ## 1.4.10 (2026-06-17)
 
 Two Martin Honnen fixes. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6.

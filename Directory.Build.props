@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.10</Version>
+    <Version>1.4.11</Version>
     <PackageReleaseNotes>
-      Fix (Martin Honnen): streaming xsl:template match="/" now fires under xsl:mode streamable="yes" (the document-node template was skipped, so a built-in text-only copy ran and element output was lost). Fix (Martin Honnen / DocBook xslTNG): base URI is preserved across temporary-tree copy boundaries and fn:transform result documents, so resolve-uri()/doc() over copied or transformed nodes resolve correctly (was FORG0002). Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. See RELEASES.md for full notes.
+      Streaming correctness: a consuming expression placed directly in a streamable xsl:source-document body or a streamable xsl:template match="/" now produces correct output across xsl:try, xsl:fork, xsl:iterate, xsl:for-each-group, the aggregation/higher-order functions (fold-left/right, sum/count/avg/max/min, boolean/not/exists/empty, one-or-more and friends), and expression operators (treat as, instance of, union/except/intersect, sequence, square-array constructor) — these document-level constructs previously evaluated against an empty input and returned empty or seed-only results. Also fixes intermediate-step predicates in streaming aggregation (a predicate on an ancestor step is now applied) and an xsl:for-each whose select ends in a copy-of()/snapshot() step. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
