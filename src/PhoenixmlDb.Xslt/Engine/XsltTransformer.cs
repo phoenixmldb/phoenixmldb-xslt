@@ -8636,6 +8636,54 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         List<XsltSort> sorts,
         XsltSequenceConstructor body)
     {
+        // Wrapped (inline-driven) streamable for-each handoff: when this for-each is
+        // the source instruction of an inline-driven subscription registered on the
+        // active streaming processor, and the live reader has not yet been consumed
+        // (the body is running linearly so the enclosing construction has already been
+        // emitted), hand off to the processor's forward pass. It drives the reader,
+        // matches the subscription's path, and dispatches THIS for-each body per match
+        // into the currently-open output. On return, linear execution continues and
+        // emits the construction's close tag — so the wrapper survives. Mirrors the
+        // apply-templates streaming intercept below.
+        if (_activeStreamingProcessor != null && _activeStreamingReader != null
+            && sorts.Count == 0)
+        {
+            var subs = _activeStreamingProcessor.Subscriptions;
+            if (subs != null)
+            {
+                ForEachSubscription? matchSub = null;
+                foreach (var s in subs)
+                {
+                    if (s.InlineDriven && ReferenceEquals(s.SourceInstruction.Body, body))
+                    {
+                        matchSub = s;
+                        break;
+                    }
+                }
+                if (matchSub != null)
+                {
+                    var proc = _activeStreamingProcessor;
+                    var rdr = _activeStreamingReader;
+                    var ct = _activeStreamingCancellationToken;
+                    // Clear the handles so the body dispatched per-match doesn't
+                    // re-enter this handoff (the for-each body runs against buffered
+                    // snapshots, not the live reader).
+                    _activeStreamingProcessor = null;
+                    _activeStreamingReader = null;
+                    try
+                    {
+                        await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _activeStreamingProcessor = proc;
+                        _activeStreamingReader = rdr;
+                    }
+                    return;
+                }
+            }
+        }
+
         // Streaming: when inside a streamable template with a consuming child-axis
         // select, drive the reader directly instead of pre-evaluating select.
         // Mirrors the apply-templates streaming intercept above. Sorts are not
@@ -15088,9 +15136,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // available when the content body evaluates variable select expressions
                     // (and so subscription for-each bodies execute per-match during the
                     // forward pass).
+                    // A wrapped (inline-driven) for-each must run inside LINEAR body
+                    // execution so its surrounding construction (the lexically-enclosing
+                    // LRE / xsl:element / xsl:copy) is emitted around its output. When
+                    // every subscription is inline-driven and there are no consuming
+                    // watchers, fall through to the linear-body branch below; the wrapped
+                    // for-each hands off to the live reader at its lexical position via
+                    // the ForEachAsync streaming intercept. The forward-pass dispatch is
+                    // used only for BARE top-of-body for-each (and watcher) bodies.
+                    bool allInlineDriven = subscriptions.Count > 0
+                        && watchers.Count == 0
+                        && subscriptions.All(s => s.InlineDriven);
+
                     bool processorRanForSubscriptions = false;
                     if ((watchers.Count > 0 || subscriptions.Count > 0) && instruction.Content != null
-                        && !ContentContainsApplyTemplates(instruction.Content))
+                        && !ContentContainsApplyTemplates(instruction.Content)
+                        && !allInlineDriven)
                     {
                         _activeStreamingProcessor = null;
                         _activeStreamingReader = null;

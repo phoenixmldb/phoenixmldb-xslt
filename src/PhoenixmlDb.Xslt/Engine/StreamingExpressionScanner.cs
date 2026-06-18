@@ -13,6 +13,15 @@ internal sealed class StreamingExpressionScanner
     private readonly List<StreamWatcher> _watchers = [];
     private readonly List<ForEachSubscription> _subscriptions = [];
 
+    // Lexical construction-nesting depth at the current scan position. Incremented
+    // while descending into output-constructing instructions (LRE, xsl:element,
+    // xsl:copy, xsl:if, xsl:choose). A for-each scanned at depth > 0 is lexically
+    // WRAPPED in construction — it must run inside linear body execution and hand off
+    // to the live reader at its lexical position so the surrounding construction is
+    // emitted around its output. A for-each at depth 0 is a BARE top-of-body for-each
+    // and keeps the forward-pass subscription-dispatch path unchanged.
+    private int _constructionDepth;
+
     /// <summary>
     /// Result of <see cref="ScanWithSubscriptions"/> — watchers for consuming
     /// aggregations plus per-item subscriptions for streamable xsl:for-each.
@@ -37,6 +46,7 @@ internal sealed class StreamingExpressionScanner
     {
         _watchers.Clear();
         _subscriptions.Clear();
+        _constructionDepth = 0;
         if (body != null)
         {
             ScanInstructions(body);
@@ -83,17 +93,27 @@ internal sealed class StreamingExpressionScanner
             case XsltIf ifInsn:
                 ScanExpression(ifInsn.Test);
                 if (ifInsn.Then != null)
+                {
+                    _constructionDepth++;
                     ScanInstructions(ifInsn.Then);
+                    _constructionDepth--;
+                }
                 break;
 
             case XsltChoose choose:
                 foreach (var branch in choose.When)
                 {
                     ScanExpression(branch.Test);
+                    _constructionDepth++;
                     ScanInstructions(branch.Body);
+                    _constructionDepth--;
                 }
                 if (choose.Otherwise != null)
+                {
+                    _constructionDepth++;
                     ScanInstructions(choose.Otherwise);
+                    _constructionDepth--;
+                }
                 break;
 
             case XsltSequenceConstructor ctor:
@@ -102,14 +122,21 @@ internal sealed class StreamingExpressionScanner
 
             // Literal result elements have Content that may contain consuming instructions
             case XsltLiteralResultElement lre:
+                _constructionDepth++;
                 ScanInstructions(lre.Content);
+                _constructionDepth--;
                 break;
 
             // xsl:copy in streaming mode keeps its open tag deferred; recurse into
             // its content so consuming aggregates nested inside surface to the watcher
             // registry (Martin's pattern: <xsl:copy><xsl:fork><count/></xsl:fork></xsl:copy>).
             case XsltCopy copy:
-                if (copy.Content != null) ScanInstructions(copy.Content);
+                if (copy.Content != null)
+                {
+                    _constructionDepth++;
+                    ScanInstructions(copy.Content);
+                    _constructionDepth--;
+                }
                 break;
 
             // xsl:fork: each prong (sequence body, for-each-group, result-document)
@@ -159,7 +186,9 @@ internal sealed class StreamingExpressionScanner
             case XsltElement elem:
                 ScanAvt(elem.Name);
                 if (elem.Namespace != null) ScanAvt(elem.Namespace);
+                _constructionDepth++;
                 ScanInstructions(elem.Content);
+                _constructionDepth--;
                 break;
 
             // xsl:try is transparent to streaming: its select expression (or body)
@@ -982,8 +1011,35 @@ internal sealed class StreamingExpressionScanner
     {
         if (forEach.Sorts.Count > 0) return;
 
-        if (!TryDecomposeForEachSelect(forEach.Select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates))
+        // Peel a leading subsequence(path, start [, length]) wrapper. The slice is a
+        // forward-countable positional window over the selected sequence — decidable
+        // from the running path-match count as the stream descends — so it is applied
+        // by the dispatcher rather than rejecting the whole for-each. The inner argument
+        // must itself decompose to a single streamable path (no mixed-sequence prefix/
+        // suffix, no separate predicate window).
+        var select = forEach.Select;
+        int subseqStart = 1;
+        int? subseqLength = null;
+        if (TryPeelSubsequence(select, out var inner, out var start, out var length))
+        {
+            // Reject a non-positive or non-integer start/length — out of scope; let the
+            // for-each fall back to buffered execution.
+            if (start < 1) return;
+            select = inner;
+            subseqStart = start;
+            subseqLength = length;
+        }
+
+        if (!TryDecomposeForEachSelect(select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates))
             return;
+
+        // A subsequence slice combined with a mixed-sequence prefix/suffix is out of
+        // scope (the slice index would span heterogeneous operands). Only register the
+        // slice when the select decomposed to a bare single path.
+        if (subseqStart != 1 || subseqLength != null)
+        {
+            if (prefix.Count > 0 || suffix.Count > 0) return;
+        }
 
         _subscriptions.Add(new ForEachSubscription
         {
@@ -995,7 +1051,57 @@ internal sealed class StreamingExpressionScanner
             TextNodeTail = textNodeTail,
             AttributeName = attributeName,
             Predicates = predicates,
+            SubsequenceStart = subseqStart,
+            SubsequenceLength = subseqLength,
+            InlineDriven = _constructionDepth > 0,
         });
+    }
+
+    /// <summary>
+    /// Recognizes <c>subsequence(arg, start)</c> or <c>subsequence(arg, start, length)</c>
+    /// where <c>start</c> and <c>length</c> are non-negative integer literals. Returns the
+    /// inner argument plus the (truncated-to-int) start and optional length. The streaming
+    /// dispatcher applies the slice as a forward positional window over the path matches.
+    /// </summary>
+    private static bool TryPeelSubsequence(
+        XQueryExpression expr, out XQueryExpression inner, out int start, out int? length)
+    {
+        inner = expr;
+        start = 1;
+        length = null;
+        if (expr is not FunctionCallExpression fc) return false;
+        if (fc.Name.LocalName != "subsequence") return false;
+        if (fc.Name.Namespace != NamespaceId.None
+            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            return false;
+        if (fc.Arguments.Count is not (2 or 3)) return false;
+        if (!TryConstantInt(fc.Arguments[1], out start)) return false;
+        if (fc.Arguments.Count == 3)
+        {
+            if (!TryConstantInt(fc.Arguments[2], out var len)) return false;
+            length = len;
+        }
+        inner = fc.Arguments[0];
+        return true;
+    }
+
+    private static bool TryConstantInt(XQueryExpression expr, out int value)
+    {
+        switch (expr)
+        {
+            case IntegerLiteral { LongValue: { } l }:
+                value = (int)l;
+                return true;
+            case DecimalLiteral dl when dl.Value == decimal.Truncate(dl.Value):
+                value = (int)dl.Value;
+                return true;
+            case DoubleLiteral dbl when dbl.Value == Math.Truncate(dbl.Value):
+                value = (int)dbl.Value;
+                return true;
+            default:
+                value = 0;
+                return false;
+        }
     }
 
     /// <summary>

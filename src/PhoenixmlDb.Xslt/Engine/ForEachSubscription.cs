@@ -57,4 +57,29 @@ internal sealed class ForEachSubscription
     /// </summary>
     public IReadOnlyList<XQueryExpression> Predicates { get; init; }
         = System.Array.Empty<XQueryExpression>();
+
+    /// <summary>
+    /// 1-based start index of a <c>subsequence(path, start [, length])</c> wrapper
+    /// around the streamable path (e.g. <c>subsequence(account/transaction, 1, 4)</c>).
+    /// 1 (the default) means "no leading skip". The dispatcher only iterates matched
+    /// items whose path-match position is in <c>[Start, Start + Length)</c>.
+    /// </summary>
+    public int SubsequenceStart { get; init; } = 1;
+
+    /// <summary>
+    /// Length of the <c>subsequence()</c> slice, or <c>null</c> for "to the end".
+    /// Paired with <see cref="SubsequenceStart"/>.
+    /// </summary>
+    public int? SubsequenceLength { get; init; }
+
+    /// <summary>
+    /// True when the for-each is lexically nested inside output construction
+    /// (an LRE, xsl:element, xsl:copy, xsl:if, xsl:choose) rather than being a
+    /// bare top-of-body instruction. An inline-driven for-each must run inside
+    /// linear body execution and hand off to the live reader at its lexical
+    /// position so the surrounding construction is emitted around its output
+    /// (otherwise the wrapper is dropped). A bare for-each (this flag false)
+    /// uses the forward-pass subscription-dispatch path unchanged.
+    /// </summary>
+    public bool InlineDriven { get; init; }
 }

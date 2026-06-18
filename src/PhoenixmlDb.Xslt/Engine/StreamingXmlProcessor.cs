@@ -65,6 +65,21 @@ internal sealed class StreamingXmlProcessor
     // (avoids allocating a removal list per EndElement). Reused across EndElement events.
     private readonly List<(int Depth, string Name)> _nameCountResetScratch = [];
 
+    // Running 1-based dispatch counter per for-each subscription. xsl:for-each
+    // numbers position() over the items it actually iterates (the matched
+    // elements/attributes/text-nodes that pass the subscription's predicates),
+    // NOT over all stream events. Incremented once per dispatched body execution
+    // so position()/last()-free positional logic inside the body is correct.
+    private Dictionary<ForEachSubscription, int>? _subscriptionDispatchCount;
+
+    // Running 1-based path-match counter per for-each subscription, incremented
+    // every time the subscription's path matches an element — BEFORE its filter
+    // predicate is evaluated. This is the context position() seen by a positional
+    // predicate on the for-each select (e.g. transaction[position() lt 5]),
+    // which counts position within the selected node sequence, distinct from the
+    // body's position() (which counts only items that passed the predicate).
+    private Dictionary<ForEachSubscription, int>? _subscriptionMatchCount;
+
     public StreamingXmlProcessor(
         XsltStylesheet stylesheet,
         TemplateIndex templateIndex,
@@ -86,6 +101,9 @@ internal sealed class StreamingXmlProcessor
         _subscriptions = subscriptions;
         _subscriptionDispatchOnly = subscriptionDispatchOnly;
     }
+
+    /// <summary>The for-each subscriptions this processor dispatches, if any.</summary>
+    public IReadOnlyList<ForEachSubscription>? Subscriptions => _subscriptions;
 
     /// <summary>
     /// Processes the XML document from the reader in a single streaming pass.
@@ -338,6 +356,15 @@ internal sealed class StreamingXmlProcessor
                                 var snapshot = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore, new DocumentId(0));
                                 if (snapshot != null)
                                 {
+                                    // Synthesize an ancestor chain on the snapshot root so the
+                                    // for-each body's upward navigation (parent axis `..`,
+                                    // ancestor::*) resolves against the elements open on the
+                                    // stream when this leaf matched. Without it name(..) is
+                                    // empty (si-for-each-008/009). Ancestors carry their names +
+                                    // attributes (known at their start-tags) but no children
+                                    // (motionless — descendants are not yet streamed).
+                                    LinkSnapshotAncestors(snapshot);
+
                                     // Body executes against a buffered snapshot, not the live
                                     // reader — temporarily clear the streaming flag so descendant
                                     // navigation uses the normal in-memory path.
@@ -347,12 +374,31 @@ internal sealed class StreamingXmlProcessor
                                     {
                                         foreach (var sub in matched)
                                         {
+                                            // Path-level match position (counts every element the
+                                            // subscription path matches, before predicate filtering)
+                                            // — the context position() for a positional filter
+                                            // predicate on the for-each select, and the index used
+                                            // to apply a subsequence() slice window.
+                                            int matchPosition = NextSubscriptionMatchPosition(sub);
+
+                                            // Apply a subsequence(path, start [, length]) slice: skip
+                                            // matches outside [start, start+length). Below the start
+                                            // index and past the end are both skipped (motionless —
+                                            // the body never sees them, so position() inside the body
+                                            // numbers only the windowed items).
+                                            if (sub.SubsequenceStart > 1 || sub.SubsequenceLength != null)
+                                            {
+                                                if (matchPosition < sub.SubsequenceStart) continue;
+                                                if (sub.SubsequenceLength is { } len
+                                                    && matchPosition >= sub.SubsequenceStart + len) continue;
+                                            }
+
                                             // Evaluate predicates (if any) against the snapshot.
                                             // Skip dispatch if any predicate is false.
                                             if (sub.Predicates.Count > 0)
                                             {
                                                 bool allPass = true;
-                                                _context.PushContextItem(snapshot, 1, 1);
+                                                _context.PushContextItem(snapshot, matchPosition, 1);
                                                 _context.PushCurrentItem(snapshot);
                                                 try
                                                 {
@@ -387,7 +433,7 @@ internal sealed class StreamingXmlProcessor
                                                     }
                                                 }
                                                 if (matchedAttr == null) continue;
-                                                _context.PushContextItem(matchedAttr, 1, 1);
+                                                _context.PushContextItem(matchedAttr, NextSubscriptionPosition(sub), 1);
                                                 _context.PushCurrentItem(matchedAttr);
                                                 try
                                                 {
@@ -411,7 +457,7 @@ internal sealed class StreamingXmlProcessor
                                                 // materialization).
                                                 foreach (var textChild in EnumerateTextChildren(snapshot))
                                                 {
-                                                    _context.PushContextItem(textChild, 1, 1);
+                                                    _context.PushContextItem(textChild, NextSubscriptionPosition(sub), 1);
                                                     _context.PushCurrentItem(textChild);
                                                     try
                                                     {
@@ -426,7 +472,7 @@ internal sealed class StreamingXmlProcessor
                                             }
                                             else
                                             {
-                                                _context.PushContextItem(snapshot, 1, 1);
+                                                _context.PushContextItem(snapshot, NextSubscriptionPosition(sub), 1);
                                                 _context.PushCurrentItem(snapshot);
                                                 try
                                                 {
@@ -932,6 +978,94 @@ internal sealed class StreamingXmlProcessor
     /// attributes (callers treat null as empty). Keys use ordinal comparison to
     /// mirror the watcher-matching attribute dictionaries.
     /// </summary>
+    /// <summary>
+    /// Returns the next 1-based position for <paramref name="sub"/>'s dispatch
+    /// sequence, incrementing the running counter. xsl:for-each position() must
+    /// count the items the for-each actually iterates, not all stream events.
+    /// </summary>
+    private int NextSubscriptionPosition(ForEachSubscription sub)
+    {
+        _subscriptionDispatchCount ??= new Dictionary<ForEachSubscription, int>(ReferenceEqualityComparer.Instance);
+        _subscriptionDispatchCount.TryGetValue(sub, out var n);
+        n++;
+        _subscriptionDispatchCount[sub] = n;
+        return n;
+    }
+
+    /// <summary>
+    /// Returns the next 1-based path-match position for <paramref name="sub"/>
+    /// (incremented every time its path matches, before predicate filtering).
+    /// Used as the context position() when evaluating a positional filter
+    /// predicate on the for-each select.
+    /// </summary>
+    private int NextSubscriptionMatchPosition(ForEachSubscription sub)
+    {
+        _subscriptionMatchCount ??= new Dictionary<ForEachSubscription, int>(ReferenceEqualityComparer.Instance);
+        _subscriptionMatchCount.TryGetValue(sub, out var n);
+        n++;
+        _subscriptionMatchCount[sub] = n;
+        return n;
+    }
+
+    /// <summary>
+    /// Sets <paramref name="snapshot"/>'s Parent to a synthesized ancestor chain
+    /// reconstructed from the currently-open stream elements (<see cref="_ancestorNames"/>
+    /// and <see cref="_ancestorAttributes"/>, outermost first). Each synthesized
+    /// ancestor carries its name and start-tag attributes but no children — upward
+    /// navigation (parent axis, ancestor::*) in the for-each body is motionless, so
+    /// it never needs the ancestors' not-yet-streamed descendant content. No-op when
+    /// there are no open ancestors. Ancestors are created with no-namespace names
+    /// (the streaming processor tracks local names only); this is sufficient for the
+    /// no-namespace upward-navigation cases in scope.
+    /// </summary>
+    private void LinkSnapshotAncestors(XdmElement snapshot)
+    {
+        if (_ancestorNames.Count == 0) return;
+
+        var documentId = new DocumentId(0);
+        NodeId? parentId = null;
+        // Build outermost → innermost so each ancestor's Parent points at the one above.
+        for (int i = 0; i < _ancestorNames.Count; i++)
+        {
+            var ancestorId = _nodeStore.NextId();
+            var attrs = _ancestorAttributes[i];
+            var attrIds = new List<NodeId>();
+            if (attrs is { Count: > 0 })
+            {
+                foreach (var (k, v) in attrs)
+                {
+                    var attrId = _nodeStore.NextId();
+                    _nodeStore.Register(new XdmAttribute
+                    {
+                        Id = attrId,
+                        Document = documentId,
+                        Namespace = _nodeStore.InternNamespace(string.Empty),
+                        LocalName = k,
+                        Prefix = null,
+                        Value = v,
+                        Parent = ancestorId
+                    });
+                    attrIds.Add(attrId);
+                }
+            }
+            var ancestor = new XdmElement
+            {
+                Id = ancestorId,
+                Document = documentId,
+                Namespace = _nodeStore.InternNamespace(string.Empty),
+                LocalName = _ancestorNames[i],
+                Prefix = null,
+                Attributes = attrIds.Count == 0 ? XdmElement.EmptyAttributes : attrIds,
+                Children = XdmElement.EmptyChildren,
+                NamespaceDeclarations = XdmElement.EmptyNamespaceDeclarations,
+                Parent = parentId
+            };
+            _nodeStore.Register(ancestor);
+            parentId = ancestorId;
+        }
+        snapshot.Parent = parentId;
+    }
+
     private static Dictionary<string, string>? BuildAttrDict(List<StreamingNodeContext>? attrs)
     {
         if (attrs is not { Count: > 0 }) return null;
