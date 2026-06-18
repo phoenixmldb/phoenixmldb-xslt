@@ -168,8 +168,24 @@ internal static class StreamingSubtreeBufferDetector
     {
         switch (insn)
         {
+            // A top-level xsl:for-each-group appearing directly in a streamable
+            // source-document body (or a match="/" document-node template) has no
+            // document-level streaming dispatch: ForEachGroupStreamingAsync only runs
+            // when _isStreamingExecution is already set (i.e. inside a template the
+            // streaming processor dispatched). At the document level the body executes
+            // against the synthetic empty document node, so the for-each-group's select
+            // (account/transaction, chapter/*, //Item/copy-of(), …) evaluates to the
+            // empty sequence and the group body never runs — only an empty wrapper is
+            // emitted. group-by is always absorbing (it must see the whole population);
+            // group-adjacent / group-starting-with / group-ending-with at the document
+            // level likewise need the real input. Materialize the whole input and run
+            // the buffered xsl:for-each-group, which evaluates the population against the
+            // real document root and groups correctly. Only a grounded select
+            // (literal / range / variable, no input navigation) can stay on the
+            // streaming path — buffering a grounded population would be wasteful and a
+            // large input could time out.
             case XsltForEachGroup feg:
-                return feg.GroupBy != null;
+                return feg.GroupBy != null || NavigatesInput(feg.Select);
 
             // A top-level xsl:iterate appearing directly in a streamable
             // source-document body (or a match="/" document-node template) has no
@@ -203,8 +219,11 @@ internal static class StreamingSubtreeBufferDetector
                 return sq.Select != null && SelectAbsorbsInput(sq.Select);
 
             case XsltFork fk:
+                // A for-each-group prong is itself absorbing at the document level
+                // (see the standalone XsltForEachGroup case): group-by always, and the
+                // other grouping modes when the population navigates the input.
                 foreach (var feg in fk.ForEachGroups)
-                    if (feg.GroupBy != null) return true;
+                    if (feg.GroupBy != null || NavigatesInput(feg.Select)) return true;
                 foreach (var seq in fk.Sequences)
                     if (RequiresWholeInputBuffer(seq)) return true;
                 foreach (var rd in fk.ResultDocuments)
