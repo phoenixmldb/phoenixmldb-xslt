@@ -2804,9 +2804,16 @@ public sealed class XsltTransformEngine
         if (xmlSource.Length > 0 && xmlSource[0] == '\uFEFF')
             xmlSource = xmlSource[1..];
 
-        // Check if initial mode is streamable — if so, use streaming execution
+        // Check if initial mode is streamable — if so, use streaming execution.
+        // Exception: when the document-node template (match="/") that would drive the
+        // streaming pass contains content we cannot drive off the live reader at the
+        // document level (xsl:fork / xsl:for-each-group with group-by — no streaming
+        // dispatch), the forward pass would evaluate group-by against an empty synthetic
+        // document and emit nothing. Materialize the whole input and run the in-memory
+        // engine instead, which evaluates group-by correctly.
         var initialModeKey = options?.InitialMode ?? new QName(NamespaceId.None, "");
-        if (_stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable)
+        if (_stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable
+            && !DocNodeTemplateRequiresWholeInputBuffer(options))
         {
             return await TransformStreamingAsync(xmlSource, options).ConfigureAwait(false);
         }
@@ -3230,12 +3237,67 @@ public sealed class XsltTransformEngine
     /// mode. Mirrors the local <c>ContentContainsApplyTemplates</c> helper used by the
     /// xsl:source-document streamable path.
     /// </summary>
-    private static bool ContentContainsApplyTemplatesStreaming(Ast.XsltSequenceConstructor body)
+    /// <summary>
+    /// Returns true when a streamable transform would dispatch through a document-node
+    /// template (<c>match="/"</c>) whose body cannot be driven off the live reader at the
+    /// document level (see <see cref="StreamingSubtreeBufferDetector.RequiresWholeInputBuffer"/>).
+    /// Such a body must run against a fully materialized input, so the caller routes to the
+    /// in-memory engine instead of the streaming pass.
+    /// </summary>
+    private bool DocNodeTemplateRequiresWholeInputBuffer(XsltTransformOptions? options)
     {
+        // Named-initial-template invocations don't dispatch through match="/".
+        if (options?.InitialTemplate != null) return false;
+
+        var probeStore = new XdmInMemoryStore();
+        var probeDoc = new XdmDocument
+        {
+            Id = probeStore.NextId(),
+            Document = new DocumentId(0),
+            Children = []
+        };
+        probeStore.Register(probeDoc);
+
+        XsltTemplate? docNodeTemplate;
+        var ctx = new DefaultXsltExecutionContext(
+            _stylesheet, _templateIndex, probeDoc, new StringBuilder(),
+            options ?? new XsltTransformOptions(), probeStore);
+        ctx.Owner = this;
+        using (var mc = ctx.AcquireMatchContext())
+            docNodeTemplate = _templateIndex.FindMatchingTemplate(probeDoc, options?.InitialMode, mc.Value);
+
+        return docNodeTemplate != null
+            && StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(docNodeTemplate.Body);
+    }
+
+    private static bool ContentContainsApplyTemplatesStreaming(Ast.XsltSequenceConstructor? body)
+    {
+        if (body == null) return false;
         foreach (var insn in body.Instructions)
         {
-            if (insn is Ast.XsltApplyTemplates) return true;
-            if (insn is Ast.XsltSequenceConstructor nested && ContentContainsApplyTemplatesStreaming(nested)) return true;
+            switch (insn)
+            {
+                case Ast.XsltApplyTemplates:
+                    return true;
+                // apply-templates is commonly wrapped in literal result elements
+                // (e.g. <html>…<section><xsl:apply-templates/></section></html>) —
+                // descend into every container so the doc-node dispatch correctly
+                // recognizes the body as driving the stream via apply-templates
+                // (and does NOT run in subscription-dispatch-only mode, which would
+                // leave child elements unmatched).
+                case Ast.XsltLiteralResultElement lre when ContentContainsApplyTemplatesStreaming(lre.Content):
+                case Ast.XsltCopy cp when ContentContainsApplyTemplatesStreaming(cp.Content):
+                case Ast.XsltForEach fe when ContentContainsApplyTemplatesStreaming(fe.Body):
+                case Ast.XsltSequenceConstructor nested when ContentContainsApplyTemplatesStreaming(nested):
+                    return true;
+                case Ast.XsltIf i when ContentContainsApplyTemplatesStreaming(i.Then):
+                    return true;
+                case Ast.XsltChoose c:
+                    foreach (var w in c.When)
+                        if (ContentContainsApplyTemplatesStreaming(w.Body)) return true;
+                    if (ContentContainsApplyTemplatesStreaming(c.Otherwise)) return true;
+                    break;
+            }
         }
         return false;
     }
@@ -7480,7 +7542,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // bookkeeping (ReadSubtree already advanced the parent reader past it).
                 if (_activeStreamingReader != null
                     && node is Xdm.Nodes.XdmElement bufElem
-                    && StreamingSubtreeBufferDetector.RequiresSubtreeBuffer(template.Body))
+                    && (StreamingSubtreeBufferDetector.RequiresSubtreeBuffer(template.Body)
+                        || StreamingSubtreeBufferDetector.RequiresSubtreeBufferForAbsorbingFunctions(
+                            template.Body, _stylesheet.Functions)))
                 {
                     await ExecuteWithBufferedSubtreeAsync(template, bufElem, mode, position).ConfigureAwait(false);
                     PopScope(); pushedScope = false;
@@ -7670,12 +7734,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (template.Version != null) _effectiveVersionStack.Push(template.Version);
         if (template.DefaultCollation != null) _defaultCollationStack.Push(template.DefaultCollation);
         if (template.BaseUri != null) _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
+
+        // The subtree is now fully buffered in memory. Clear the streaming flag and
+        // the active reader so the body's downward navigation (xsl:apply-templates,
+        // xsl:for-each, xsl:iterate — including those inside xsl:fork prongs) runs
+        // against the buffered tree instead of trying to drive the already-consumed
+        // live reader. Mirrors the subscription-dispatch path in StreamingXmlProcessor.
+        var prevStreamingExec = _isStreamingExecution;
+        var prevStreamingReader = _activeStreamingReader;
+        _isStreamingExecution = false;
+        _activeStreamingReader = null;
         try
         {
             await template.Body.ExecuteAsync(this).ConfigureAwait(false);
         }
         finally
         {
+            _isStreamingExecution = prevStreamingExec;
+            _activeStreamingReader = prevStreamingReader;
             if (template.BaseUri != null) _staticBaseUriStack.Pop();
             if (template.DefaultCollation != null) _defaultCollationStack.Pop();
             if (template.Version != null) _effectiveVersionStack.Pop();
@@ -14927,8 +15003,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             throw Error($"FODC0005: Invalid URI '{href}': {ex.Message}");
         }
 
-        // If streamable="yes", use XmlReader-based streaming instead of full tree loading
-        if (instruction.Streamable && resolvedUri.IsFile && string.IsNullOrEmpty(fragment))
+        // If streamable="yes", use XmlReader-based streaming instead of full tree loading.
+        // Exception: content that cannot be driven off the live reader at the document
+        // level (notably xsl:fork / xsl:for-each-group with group-by, which has no
+        // streaming dispatch) must materialize the whole input first — fall through to
+        // the full-tree load path below, which evaluates group-by correctly.
+        if (instruction.Streamable && resolvedUri.IsFile && string.IsNullOrEmpty(fragment)
+            && !StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(instruction.Content))
         {
             try
             {
