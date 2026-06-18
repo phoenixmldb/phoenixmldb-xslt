@@ -156,6 +156,17 @@ internal sealed class StreamWatcher
     public IReadOnlyList<XQueryExpression> Predicates { get; init; }
         = Array.Empty<XQueryExpression>();
 
+    /// <summary>
+    /// Motionless predicates carried by ancestor (intermediate) element steps of the
+    /// matched path — e.g. the <c>[@CAT='P']</c> on <c>ITEM</c> in
+    /// <c>BOOKLIST/BOOKS/ITEM[@CAT='P']/PRICE</c>. Each entry records how many element
+    /// levels above the matched leaf the predicated ancestor sits and the predicate(s)
+    /// to evaluate against that ancestor (name + attributes only). A matched leaf is
+    /// dropped from the aggregation unless every ancestor predicate passes.
+    /// </summary>
+    public IReadOnlyList<StreamingExpressionScanner.IntermediatePredicate> IntermediatePredicates { get; init; }
+        = Array.Empty<StreamingExpressionScanner.IntermediatePredicate>();
+
     // Accumulation state
     private long _count;
     private double _sum;

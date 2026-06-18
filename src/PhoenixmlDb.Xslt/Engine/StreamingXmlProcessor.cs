@@ -44,6 +44,13 @@ internal sealed class StreamingXmlProcessor
     // Ancestor element names for watcher path matching (outermost first)
     private readonly List<string> _ancestorNames = [];
 
+    // Ancestor element attributes, parallel to _ancestorNames (outermost first).
+    // Maintained at the same push/pop sites so a matched leaf can evaluate a
+    // motionless intermediate predicate (e.g. ITEM[@CAT='P']) against the
+    // attributes of the predicated ancestor, which are fully known at its
+    // start-tag. Each entry may be null when the ancestor has no attributes.
+    private readonly List<IReadOnlyDictionary<string, string>?> _ancestorAttributes = [];
+
     public StreamingXmlProcessor(
         XsltStylesheet stylesheet,
         TemplateIndex templateIndex,
@@ -190,6 +197,7 @@ internal sealed class StreamingXmlProcessor
                             {
                                 ancestorStack.Push(skipCtx);
                                 _ancestorNames.Add(skipCtx.LocalName);
+                                _ancestorAttributes.Add(BuildAttrDict(skipCtx.Attributes));
                             }
                             else
                             {
@@ -459,6 +467,7 @@ internal sealed class StreamingXmlProcessor
                         {
                             ancestorStack.Push(current);
                             _ancestorNames.Add(current.LocalName);
+                            _ancestorAttributes.Add(BuildAttrDict(current.Attributes));
 
                             // If the template had an empty body (suppression), skip all children
                             if (wasSuppressed && suppressionDepth < 0)
@@ -497,6 +506,8 @@ internal sealed class StreamingXmlProcessor
                             // Pop ancestor name for watcher path matching
                             if (_ancestorNames.Count > 0)
                                 _ancestorNames.RemoveAt(_ancestorNames.Count - 1);
+                            if (_ancestorAttributes.Count > 0)
+                                _ancestorAttributes.RemoveAt(_ancestorAttributes.Count - 1);
 
                             // Deferred-template execution: if a template firing for this
                             // element was deferred (consuming aggregates accumulated via
@@ -816,6 +827,25 @@ internal sealed class StreamingXmlProcessor
         // tree so copy-of(descendant::x) yields actual nested nodes rather
         // than collapsing to a leaf with concatenated descendant text.
         public Stack<SubtreeBuilderFrame>? SubtreeStack;
+
+        // Snapshotted ancestor elements (name + attributes) for motionless
+        // intermediate-step predicates (e.g. ITEM[@CAT='P'] above a matched PRICE).
+        // Captured at StartElement when the ancestors' attributes are fully known;
+        // each predicate group is evaluated against its ancestor at EndElement, and
+        // the matched leaf is dropped from the aggregation if any group fails.
+        public List<IntermediateAncestorSnapshot>? IntermediateAncestors;
+    }
+
+    /// <summary>
+    /// A captured ancestor element (name + attributes) paired with the motionless
+    /// predicate(s) that must hold against it for a matched leaf to contribute to
+    /// a streaming aggregation. See <see cref="PendingTextWatcherMatch.IntermediateAncestors"/>.
+    /// </summary>
+    private sealed class IntermediateAncestorSnapshot
+    {
+        public required string ElementName;
+        public required IReadOnlyDictionary<string, string>? Attributes;
+        public required IReadOnlyList<XQueryExpression> Predicates;
     }
 
     private sealed class SubtreeBuilderFrame
@@ -834,6 +864,21 @@ internal sealed class StreamingXmlProcessor
     }
 
     private readonly List<PendingTextWatcherMatch> _pendingTextWatcherMatches = [];
+
+    /// <summary>
+    /// Snapshots an element's attribute contexts into a plain local-name → value
+    /// dictionary for ancestor-attribute tracking. Returns null when there are no
+    /// attributes (callers treat null as empty). Keys use ordinal comparison to
+    /// mirror the watcher-matching attribute dictionaries.
+    /// </summary>
+    private static Dictionary<string, string>? BuildAttrDict(List<StreamingNodeContext>? attrs)
+    {
+        if (attrs is not { Count: > 0 }) return null;
+        var dict = new Dictionary<string, string>(attrs.Count, StringComparer.Ordinal);
+        foreach (var attr in attrs)
+            dict[attr.LocalName] = attr.StringValue ?? "";
+        return dict;
+    }
 
     private void FireWatchers(string elementName, IReadOnlyDictionary<string, string>? attributes, string? textContent)
     {
@@ -892,8 +937,32 @@ internal sealed class StreamingXmlProcessor
                 // matched element can be materialized for predicate evaluation
                 // — otherwise Count/Sum/etc. would commit before we know whether
                 // the predicate accepts the item.
+                // Snapshot ancestor elements named by motionless intermediate-step
+                // predicates (e.g. ITEM[@CAT='P'] above PRICE). The ancestors'
+                // attributes are fully known now (StartElement); evaluation is
+                // deferred to EndElement alongside the final-step predicates.
+                // At this point the current (matched) element has NOT yet been
+                // pushed onto _ancestorNames, so those lists hold exactly the
+                // matched element's ancestors; offset 1 == immediate parent.
+                List<IntermediateAncestorSnapshot>? intermediateAncestors = null;
+                if (watcher.IntermediatePredicates.Count > 0)
+                {
+                    foreach (var ip in watcher.IntermediatePredicates)
+                    {
+                        int idx = _ancestorNames.Count - ip.AncestorOffset;
+                        if (idx < 0 || idx >= _ancestorNames.Count) continue;
+                        (intermediateAncestors ??= []).Add(new IntermediateAncestorSnapshot
+                        {
+                            ElementName = _ancestorNames[idx],
+                            Attributes = idx < _ancestorAttributes.Count ? _ancestorAttributes[idx] : null,
+                            Predicates = ip.Predicates
+                        });
+                    }
+                }
+
                 bool defer = watcher.ValueAttribute == null
-                    && (WatcherNeedsTextContent(watcher) || watcher.Predicates.Count > 0);
+                    && (WatcherNeedsTextContent(watcher) || watcher.Predicates.Count > 0
+                        || watcher.IntermediatePredicates.Count > 0);
                 if (defer)
                 {
                     // Defer the OnElementMatch until EndElement so accumulated text
@@ -934,7 +1003,8 @@ internal sealed class StreamingXmlProcessor
                         ElementName = elementName,
                         Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null,
                         ReservedSlot = reservedSlot,
-                        SubtreeStack = subtreeStack
+                        SubtreeStack = subtreeStack,
+                        IntermediateAncestors = intermediateAncestors
                     });
                 }
                 else
@@ -943,14 +1013,23 @@ internal sealed class StreamingXmlProcessor
                 }
             }
 
-            // Check attribute match — attribute values are known at StartElement
-            var attrName = watcher.PathMatcher.MatchesAttribute(_ancestorNames, elementName);
-            if (attrName != null && attributes != null)
+            // Check attribute match — attribute values are known at StartElement.
+            // Intermediate-step predicates on the attribute path (e.g.
+            // transaction[@x]/@value) are not supported here: this immediate
+            // accumulation has no async predicate-evaluation hook, so rather than
+            // accumulate unfiltered values we skip the match and let the case fall
+            // back to its baseline. No current conformance case exercises this shape;
+            // the scanner only emits IntermediatePredicates for paths it captured.
+            if (watcher.IntermediatePredicates.Count == 0)
             {
-                var attrValue = attributes.GetValueOrDefault(attrName);
-                if (attrValue != null)
+                var attrName = watcher.PathMatcher.MatchesAttribute(_ancestorNames, elementName);
+                if (attrName != null && attributes != null)
                 {
-                    watcher.OnElementMatch(elementName, attributes, attrValue);
+                    var attrValue = attributes.GetValueOrDefault(attrName);
+                    if (attrValue != null)
+                    {
+                        watcher.OnElementMatch(elementName, attributes, attrValue);
+                    }
                 }
             }
         }
@@ -1057,6 +1136,42 @@ internal sealed class StreamingXmlProcessor
                     _context.PopCurrentItem();
                     _context.PopContextItem();
                     _context._isStreamingExecution = prevStreaming;
+                }
+            }
+
+            // Evaluate motionless intermediate (ancestor) predicates against the
+            // snapshotted ancestor element (name + attributes only). e.g. the
+            // [@CAT='P'] on ITEM above a matched PRICE. Each ancestor was captured
+            // at StartElement when its attributes were fully known; we materialize a
+            // lightweight leaf element (no children) for it here purely so the
+            // existing predicate-evaluation machinery can run against a real XdmNode.
+            if (predicatesPass && entry.IntermediateAncestors is { Count: > 0 } ancestors)
+            {
+                foreach (var anc in ancestors)
+                {
+                    var ancElem = MaterializeLeafElement(anc.ElementName, anc.Attributes, string.Empty);
+                    var prevStreaming = _context._isStreamingExecution;
+                    _context._isStreamingExecution = false;
+                    _context.PushContextItem(ancElem, 1, 1);
+                    _context.PushCurrentItem(ancElem);
+                    try
+                    {
+                        foreach (var pred in anc.Predicates)
+                        {
+                            if (!await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false))
+                            {
+                                predicatesPass = false;
+                                break;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        _context.PopCurrentItem();
+                        _context.PopContextItem();
+                        _context._isStreamingExecution = prevStreaming;
+                    }
+                    if (!predicatesPass) break;
                 }
             }
 

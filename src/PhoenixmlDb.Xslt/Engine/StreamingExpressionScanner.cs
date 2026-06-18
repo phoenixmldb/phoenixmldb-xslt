@@ -210,6 +210,7 @@ internal sealed class StreamingExpressionScanner
                         Aggregation = aggType,
                         ValueAttribute = pathInfo.Value.Attribute,
                         Predicates = pathInfo.Value.Predicates,
+                        IntermediatePredicates = pathInfo.Value.IntermediatePredicates,
                         Separator = aggType == WatcherAggregation.StringJoin && fc.Arguments.Count > 1
                             ? ExtractStringLiteral(fc.Arguments[1])
                             : null
@@ -231,7 +232,8 @@ internal sealed class StreamingExpressionScanner
                         PathMatcher = new StreamPathMatcher(headPathInfo.Value.Path),
                         Aggregation = WatcherAggregation.Head,
                         ValueAttribute = headPathInfo.Value.Attribute,
-                        Predicates = headPathInfo.Value.Predicates
+                        Predicates = headPathInfo.Value.Predicates,
+                        IntermediatePredicates = headPathInfo.Value.IntermediatePredicates
                     });
                     return;
                 }
@@ -248,7 +250,8 @@ internal sealed class StreamingExpressionScanner
                         PathMatcher = new StreamPathMatcher(seqPath.Value.Path),
                         Aggregation = WatcherAggregation.Sequence,
                         ValueAttribute = seqPath.Value.Attribute,
-                        Predicates = seqPath.Value.Predicates
+                        Predicates = seqPath.Value.Predicates,
+                        IntermediatePredicates = seqPath.Value.IntermediatePredicates
                     });
                     return;
                 }
@@ -265,7 +268,8 @@ internal sealed class StreamingExpressionScanner
                         PathMatcher = new StreamPathMatcher(snapPath.Value.Path),
                         Aggregation = WatcherAggregation.Snapshot,
                         ValueAttribute = snapPath.Value.Attribute,
-                        Predicates = snapPath.Value.Predicates
+                        Predicates = snapPath.Value.Predicates,
+                        IntermediatePredicates = snapPath.Value.IntermediatePredicates
                     });
                     return;
                 }
@@ -301,7 +305,8 @@ internal sealed class StreamingExpressionScanner
                             PathMatcher = new StreamPathMatcher(filterPath.Value.Path),
                             Aggregation = WatcherAggregation.Snapshot,
                             ValueAttribute = filterPath.Value.Attribute,
-                            Predicates = filterPath.Value.Predicates
+                            Predicates = filterPath.Value.Predicates,
+                            IntermediatePredicates = filterPath.Value.IntermediatePredicates
                         });
                         return;
                     }
@@ -339,7 +344,8 @@ internal sealed class StreamingExpressionScanner
                     PathMatcher = new StreamPathMatcher(shape.Path),
                     Aggregation = WatcherAggregation.Sequence,
                     ValueAttribute = shape.Attribute,
-                    Predicates = shape.Predicates
+                    Predicates = shape.Predicates,
+                    IntermediatePredicates = shape.IntermediatePredicates
                 });
                 return;
         }
@@ -570,6 +576,20 @@ internal sealed class StreamingExpressionScanner
     internal readonly record struct ExtractedPath(
         string Path,
         string? Attribute,
+        IReadOnlyList<XQueryExpression> Predicates,
+        IReadOnlyList<IntermediatePredicate> IntermediatePredicates);
+
+    /// <summary>
+    /// A motionless predicate carried by an ancestor (intermediate) element step of
+    /// a streaming aggregation path, e.g. the <c>[@CAT='P']</c> on <c>ITEM</c> in
+    /// <c>BOOKLIST/BOOKS/ITEM[@CAT='P']/PRICE</c>. <see cref="AncestorOffset"/> is the
+    /// number of element-step levels the predicated ancestor sits above the matched
+    /// leaf element (1 = immediate parent). The predicate is evaluated against the
+    /// ancestor element (name + attributes) when the leaf matches; only ancestors
+    /// whose predicate passes contribute their descendant leaves to the aggregation.
+    /// </summary>
+    internal readonly record struct IntermediatePredicate(
+        int AncestorOffset,
         IReadOnlyList<XQueryExpression> Predicates);
 
     private static ExtractedPath? ExtractPathFromArgument(XQueryExpression expr)
@@ -585,6 +605,7 @@ internal sealed class StreamingExpressionScanner
         var parts = new List<string>();
         string? attribute = null;
         IReadOnlyList<XQueryExpression> predicates = Array.Empty<XQueryExpression>();
+        List<IntermediatePredicate>? intermediatePredicates = null;
 
         var current = expr;
         while (current != null)
@@ -592,12 +613,17 @@ internal sealed class StreamingExpressionScanner
             switch (current)
             {
                 case PathExpression pathExpr:
-                    // PathExpression has steps — iterate. Predicates are only
-                    // permitted on the LAST element step (or the element step
-                    // immediately before an attribute tail). Any earlier step
-                    // carrying predicates is rejected — the streaming matcher
-                    // would otherwise silently ignore them and accumulate
-                    // unfiltered items (sf-zero-or-one-005/006 failure mode).
+                    // PathExpression has steps — iterate. Predicates on the LAST
+                    // element step (or the element step immediately before an
+                    // attribute tail) are captured for final-step runtime filtering.
+                    // Predicates on EARLIER (intermediate/ancestor) element steps are
+                    // captured separately when they are MOTIONLESS — decidable from
+                    // the ancestor element's own attributes/name at its start-tag
+                    // (e.g. [@CAT='P']). Non-motionless intermediate predicates
+                    // (positional, last(), or child navigation) cause the whole path
+                    // to be rejected (return null → no watcher registered, the case
+                    // falls back to its prior failing baseline) rather than silently
+                    // accumulating unfiltered items.
                     bool pendingDescendant = false;
                     int lastElementStepIdx = -1;
                     for (int si = pathExpr.Steps.Count - 1; si >= 0; si--)
@@ -608,14 +634,24 @@ internal sealed class StreamingExpressionScanner
                             break;
                         }
                     }
+                    // Count element-axis steps so an intermediate predicate's ancestor
+                    // offset (levels above the matched leaf) can be derived. Also detect
+                    // any descendant-axis marker, which makes the ancestor offset
+                    // ambiguous — intermediate predicates are then disallowed.
+                    int totalElementSteps = 0;
+                    bool pathHasDescendantAxis = false;
+                    for (int si = 0; si < pathExpr.Steps.Count; si++)
+                    {
+                        var s = pathExpr.Steps[si];
+                        if (s.Axis is Axis.Child or Axis.Descendant)
+                            totalElementSteps++;
+                        if (s.Axis is Axis.Descendant or Axis.DescendantOrSelf)
+                            pathHasDescendantAxis = true;
+                    }
+                    int elementStepSeen = 0;
                     for (int si = 0; si < pathExpr.Steps.Count; si++)
                     {
                         var step = pathExpr.Steps[si];
-                        // Predicates on non-terminal element steps were silently
-                        // dropped by the previous implementation; preserving that
-                        // shape here avoids unintended scanner rejections. Only
-                        // the last-element-step predicate is captured below for
-                        // runtime filtering.
                         if (step.Axis == Axis.Attribute)
                         {
                             if (step.NodeTest is NameTest attrNameTest)
@@ -632,9 +668,32 @@ internal sealed class StreamingExpressionScanner
                                 }
                                 parts.Add(nameTest.LocalName);
                             }
+                            elementStepSeen++;
                             if (si == lastElementStepIdx && step.Predicates.Count > 0)
                             {
                                 predicates = step.Predicates;
+                            }
+                            else if (si != lastElementStepIdx && step.Predicates.Count > 0)
+                            {
+                                // Intermediate (ancestor) element step predicate.
+                                // Capture it for runtime ancestor-filtering ONLY when it
+                                // is motionless against the ancestor (attributes/name) and
+                                // the path has no descendant axis (so the ancestor offset
+                                // is unambiguous). Otherwise fall back to the historical
+                                // behavior: silently drop the predicate and register a
+                                // watcher over the unfiltered path. Positional / last() /
+                                // child-navigating intermediate predicates are DEFERRED
+                                // this way (they remain in the streaming baseline) rather
+                                // than rejecting the whole path — which would otherwise
+                                // suppress the watcher and regress cases that previously
+                                // passed via the unfiltered aggregation.
+                                if (!pathHasDescendantAxis
+                                    && ArePredicatesMotionlessAgainstAncestor(step.Predicates))
+                                {
+                                    int ancestorOffset = totalElementSteps - elementStepSeen;
+                                    (intermediatePredicates ??= []).Add(
+                                        new IntermediatePredicate(ancestorOffset, step.Predicates));
+                                }
                             }
                         }
                         else if (step.Axis == Axis.DescendantOrSelf)
@@ -660,10 +719,14 @@ internal sealed class StreamingExpressionScanner
                             {
                                 return null;
                             }
+                            elementStepSeen++;
                             if (si == lastElementStepIdx && step.Predicates.Count > 0)
                             {
                                 predicates = step.Predicates;
                             }
+                            // Predicate on an intermediate descendant-axis step: the
+                            // ancestor offset is ambiguous under //, so it is not
+                            // captured (historical silent-drop behavior preserved).
                         }
                         else
                         {
@@ -683,7 +746,103 @@ internal sealed class StreamingExpressionScanner
         }
 
         if (parts.Count == 0) return null;
-        return new ExtractedPath(string.Join("/", parts), attribute, predicates);
+        return new ExtractedPath(
+            string.Join("/", parts),
+            attribute,
+            predicates,
+            (IReadOnlyList<IntermediatePredicate>?)intermediatePredicates ?? Array.Empty<IntermediatePredicate>());
+    }
+
+    /// <summary>
+    /// True when every predicate in <paramref name="preds"/> is decidable from an
+    /// ancestor element's own name and attributes at its start-tag — i.e. motionless
+    /// against the ancestor. Permits attribute-axis navigation (<c>@x</c>), <c>self::</c>,
+    /// comparisons, boolean connectives, literals and a small set of value functions.
+    /// Rejects positional predicates, <c>last()</c>/<c>position()</c>, and any child or
+    /// descendant navigation (which would require the ancestor's not-yet-streamed
+    /// content). Conservative: anything unrecognized is rejected.
+    /// </summary>
+    private static bool ArePredicatesMotionlessAgainstAncestor(IReadOnlyList<XQueryExpression> preds)
+    {
+        foreach (var pred in preds)
+        {
+            // Bare positional literal [1], [2.0] — positional, not motionless.
+            if (pred is IntegerLiteral or DecimalLiteral or DoubleLiteral) return false;
+            if (!IsMotionlessAncestorExpression(pred)) return false;
+        }
+        return true;
+    }
+
+    private static bool IsMotionlessAncestorExpression(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case IntegerLiteral or DecimalLiteral or DoubleLiteral
+                or StringLiteral or BooleanLiteral:
+                return true;
+
+            // The ancestor element itself (the predicate's context item). Reading
+            // its string value would require its child content — not motionless —
+            // so a bare '.' is rejected; only attribute/self navigation is allowed.
+            case ContextItemExpression:
+                return false;
+
+            case BinaryExpression bin:
+                return IsMotionlessAncestorExpression(bin.Left)
+                    && IsMotionlessAncestorExpression(bin.Right);
+
+            case UnaryExpression unary:
+                return IsMotionlessAncestorExpression(unary.Operand);
+
+            // Parenthesized expressions parse as a SequenceExpression (the empty
+            // sequence () has zero items, which is trivially motionless).
+            case SequenceExpression seq:
+                foreach (var item in seq.Items)
+                    if (!IsMotionlessAncestorExpression(item)) return false;
+                return true;
+
+            case CastExpression cast:
+                return IsMotionlessAncestorExpression(cast.Expression);
+            case CastableExpression castable:
+                return IsMotionlessAncestorExpression(castable.Expression);
+            case TreatExpression treat:
+                return IsMotionlessAncestorExpression(treat.Expression);
+            case InstanceOfExpression inst:
+                return IsMotionlessAncestorExpression(inst.Expression);
+
+            // A path is motionless against the ancestor only when it consists of a
+            // single attribute-axis step (e.g. @CAT) or self::name with no further
+            // navigation into children. Anything else (child/descendant) needs the
+            // not-yet-streamed subtree.
+            case PathExpression path:
+                if (path.InitialExpression != null && path.InitialExpression is not ContextItemExpression)
+                    return false;
+                if (path.Steps.Count == 0) return false;
+                foreach (var step in path.Steps)
+                {
+                    if (step.Predicates.Count > 0) return false;
+                    if (step.Axis == Axis.Attribute) continue;
+                    if (step.Axis == Axis.Self) continue;
+                    return false; // child/descendant/etc. — not motionless
+                }
+                return true;
+
+            // Only fn:/xs: functions whose arguments are themselves motionless.
+            // Reject positional/context-dependent functions explicitly.
+            case FunctionCallExpression fc:
+                if (fc.Name.LocalName is "position" or "last") return false;
+                var ns = fc.Name.Namespace;
+                if (ns != NamespaceId.None
+                    && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
+                    && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+                    return false;
+                foreach (var arg in fc.Arguments)
+                    if (!IsMotionlessAncestorExpression(arg)) return false;
+                return true;
+
+            default:
+                return false;
+        }
     }
 
     private static string? ExtractStringLiteral(XQueryExpression expr)
