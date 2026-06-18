@@ -189,24 +189,18 @@ internal static class StreamingSubtreeBufferDetector
                 return IterateConsumesInput(it.Select);
 
             // A top-level xsl:value-of / xsl:copy-of / xsl:sequence whose select calls an
-            // absorbing higher-order function (fold-left, fold-right) over a sequence that
-            // navigates the input has no document-level streaming dispatch: the streaming
-            // pass evaluates the select against the synthetic empty document node, so the
-            // folded sequence is empty and only the $zero seed survives (sf-fold-left-011/013),
-            // the computed-value forms collapse to nothing (sf-fold-left-015), or the eager
-            // fold over an unread streaming context produces wrong/typed-error results
-            // (sf-fold-left-012/018/019/022/023) or loops on large input (sf-fold-left-016/020/021).
-            // Materialize the whole input and run the buffered evaluation, which atomizes and
-            // folds the real node sequence correctly. A grounded fold argument (literal /
-            // variable, no input navigation) stays on the streaming path.
+            // absorbing aggregation/reduction over a sequence that navigates the input has
+            // no usable document-level streaming dispatch and would otherwise evaluate the
+            // select against the synthetic empty document node. See SelectAbsorbsInput for
+            // the full set of matched functions and the watcher-coexistence guard.
             case XsltValueOf vo:
-                return vo.Select != null && SelectFoldsOverInput(vo.Select);
+                return vo.Select != null && SelectAbsorbsInput(vo.Select);
 
             case XsltCopyOf cof:
-                return SelectFoldsOverInput(cof.Select);
+                return SelectAbsorbsInput(cof.Select);
 
             case XsltSequence sq:
-                return sq.Select != null && SelectFoldsOverInput(sq.Select);
+                return sq.Select != null && SelectAbsorbsInput(sq.Select);
 
             case XsltFork fk:
                 foreach (var feg in fk.ForEachGroups)
@@ -294,6 +288,16 @@ internal static class StreamingSubtreeBufferDetector
             case SimpleMapExpression sm:
                 return NavigatesInput(sm.Left) || NavigatesInput(sm.Right);
 
+            // A filtered primary (e.g. (1 to 5)[. gt year-from-date(current-date())])
+            // navigates the input only when its base sequence does. The predicate's
+            // context item is the primary's items, NOT the streamed input root — so a
+            // bare `.` or relative step inside the predicate filters the grounded base,
+            // it does not read the document. A grounded base (range, literal, variable)
+            // therefore stays on the streaming path — the critical grounded-argument
+            // guard: sum((1 to 5)[…], sum(//PRICE)) must NOT buffer on its first operand.
+            case FilterExpression filt:
+                return NavigatesInput(filt.Primary);
+
             // Conservative default: an expression shape we don't model might navigate
             // the input, so buffer rather than risk an empty-context evaluation.
             default:
@@ -302,57 +306,139 @@ internal static class StreamingSubtreeBufferDetector
     }
 
     /// <summary>
-    /// True when <paramref name="expr"/> contains a call to an absorbing higher-order
-    /// function (<c>fold-left</c> / <c>fold-right</c>) anywhere in its tree whose folded
-    /// sequence (the first argument) navigates the input. Such a call cannot be satisfied
-    /// by the document-level streaming pass — it has no streaming dispatch and would fold
-    /// over the empty synthetic document node — so it forces whole-input buffering. The
-    /// fold may be nested inside wrapping functions (<c>round(fold-left(…))</c>,
-    /// <c>format-number(fold-left(…), …)</c>, <c>xs:integer(round(fold-left(…)))</c>), so
-    /// the whole select tree is walked. A fold over a grounded sequence (literals,
-    /// variables, ranges) stays on the streaming path.
+    /// True when <paramref name="expr"/> contains a call to an absorbing aggregation /
+    /// reduction function anywhere in its tree whose operand navigates the input, where
+    /// that call has no usable document-level streaming dispatch and would otherwise fold
+    /// the empty synthetic document node. Such a call forces whole-input buffering. The
+    /// call may be nested inside wrapping functions (<c>round(sum(…))</c>,
+    /// <c>format-number(avg(…), …)</c>, <c>xs:integer(round(sum(…)))</c>) or boolean
+    /// connectives, so the whole select tree is walked. An aggregation over a grounded
+    /// sequence (literals, variables, ranges) stays on the streaming path.
     /// </summary>
-    private static bool SelectFoldsOverInput(XQueryExpression expr)
+    /// <remarks>
+    /// Two function families are matched, distinguished by their streaming support:
+    /// <list type="bullet">
+    /// <item><b>No watcher at all</b> — <c>fold-left</c>/<c>fold-right</c> (higher-order),
+    /// and the absorbing predicates <c>boolean</c>/<c>not</c>/<c>exists</c>/<c>empty</c>
+    /// plus the cardinality functions <c>one-or-more</c>/<c>exactly-one</c>/<c>zero-or-one</c>.
+    /// These are never registered by <see cref="StreamingExpressionScanner"/>, so ANY
+    /// input-navigating operand falls to the empty-doc path. We buffer whenever the operand
+    /// navigates the input.</item>
+    /// <item><b>Watcher-backed aggregations</b> — <c>sum</c>/<c>count</c>/<c>avg</c>/
+    /// <c>max</c>/<c>min</c>/<c>string-join</c>. The streaming pass handles these whenever the
+    /// operand is a single <see cref="PathExpression"/> — either via a StreamWatcher
+    /// (<c>sum(//PRICE)</c>) or via direct document-level path streaming, INCLUDING paths
+    /// whose final step is a computed value or function call (<c>sum(account/transaction/(@value*2))</c>,
+    /// <c>sum(account/transaction/abs(@value))</c>, <c>max(.../PUB-DATE/xs:date(.))</c>). We must
+    /// NOT steal any of those — buffering a large input there would time out. So we buffer ONLY
+    /// when the operand navigates the input AND is a COMPOSITE (non-path) shape the streaming
+    /// pass cannot drive: a parenthesised sequence mixing paths and literals
+    /// (<c>sum((path, 31, 32))</c>), a simple-map cast chain (<c>sum(path!xs:decimal(.))</c>),
+    /// a FLWOR (<c>sum(for $d in … return …)</c>), a union (<c>count(a | b)</c>), or a
+    /// function-wrapped operand (<c>count(remove(path, 3))</c>). See <see cref="IsBarePathOperand"/>.</item>
+    /// </list>
+    /// </remarks>
+    private static bool SelectAbsorbsInput(XQueryExpression expr)
     {
         switch (expr)
         {
             case FunctionCallExpression fc:
-                if (IsAbsorbingFold(fc) && fc.Arguments.Count > 0 && NavigatesInput(fc.Arguments[0]))
-                    return true;
+                switch (ClassifyAbsorbing(fc))
+                {
+                    case AbsorbingKind.NoWatcher:
+                        if (fc.Arguments.Count > 0 && NavigatesInput(fc.Arguments[0]))
+                            return true;
+                        break;
+                    case AbsorbingKind.WatcherBacked:
+                        if (fc.Arguments.Count > 0
+                            && NavigatesInput(fc.Arguments[0])
+                            && !IsBarePathOperand(fc.Arguments[0]))
+                            return true;
+                        break;
+                }
                 foreach (var arg in fc.Arguments)
-                    if (SelectFoldsOverInput(arg)) return true;
+                    if (SelectAbsorbsInput(arg)) return true;
                 return false;
 
             case BinaryExpression bin:
-                return SelectFoldsOverInput(bin.Left) || SelectFoldsOverInput(bin.Right);
+                return SelectAbsorbsInput(bin.Left) || SelectAbsorbsInput(bin.Right);
 
             case UnaryExpression un:
-                return SelectFoldsOverInput(un.Operand);
+                return SelectAbsorbsInput(un.Operand);
 
             case SequenceExpression seq:
                 foreach (var item in seq.Items)
-                    if (SelectFoldsOverInput(item)) return true;
+                    if (SelectAbsorbsInput(item)) return true;
                 return false;
 
             case SimpleMapExpression sm:
-                return SelectFoldsOverInput(sm.Left) || SelectFoldsOverInput(sm.Right);
+                return SelectAbsorbsInput(sm.Left) || SelectAbsorbsInput(sm.Right);
+
+            // A filtered absorbing call — one-or-more(path)[position() mod 2 = 0],
+            // one-or-more(path//text())[position() lt 4]. The absorbing call is the
+            // filter's primary; descend into it (predicates only re-filter the buffered
+            // result and don't add a separate document-level dispatch).
+            case FilterExpression filt:
+                return SelectAbsorbsInput(filt.Primary);
 
             default:
                 return false;
         }
     }
 
+    private enum AbsorbingKind { None, NoWatcher, WatcherBacked }
+
     /// <summary>
-    /// True when <paramref name="fc"/> is the <c>fn:fold-left</c> or <c>fn:fold-right</c>
-    /// higher-order function. These have streamability <c>absorbing</c> on their sequence
-    /// argument: they consume the whole sequence and cannot be driven off the live reader
-    /// at the document level.
+    /// Classifies an fn:-namespace function call by its absorbing-aggregation family.
+    /// See <see cref="SelectAbsorbsInput"/> for why the two families are gated differently.
     /// </summary>
-    private static bool IsAbsorbingFold(FunctionCallExpression fc)
+    private static AbsorbingKind ClassifyAbsorbing(FunctionCallExpression fc)
     {
-        return fc.Name.LocalName is "fold-left" or "fold-right"
-            && (fc.Name.Namespace == NamespaceId.None
-                || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
+        if (fc.Name.Namespace != NamespaceId.None
+            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            return AbsorbingKind.None;
+
+        return fc.Name.LocalName switch
+        {
+            // Higher-order absorbing reducers and absorbing predicates / cardinality
+            // checks: no StreamWatcher exists for any of these, so any input-navigating
+            // operand falls to the empty-doc path.
+            "fold-left" or "fold-right"
+                or "boolean" or "not" or "exists" or "empty"
+                or "one-or-more" or "exactly-one" or "zero-or-one"
+                => AbsorbingKind.NoWatcher,
+
+            // Aggregations the scanner streams via a watcher when the operand is a bare
+            // downward path; buffer only the operand shapes the watcher rejects.
+            "sum" or "count" or "avg" or "max" or "min" or "string-join"
+                => AbsorbingKind.WatcherBacked,
+
+            _ => AbsorbingKind.None,
+        };
+    }
+
+    /// <summary>
+    /// True when <paramref name="arg"/> is a single <see cref="PathExpression"/> — the shape
+    /// the streaming pass already drives directly off the live reader for a watcher-backed
+    /// aggregation, whether or not the scanner registers a watcher for it. This deliberately
+    /// accepts paths with computed or function-call final steps (<c>account/transaction/(@value*2)</c>,
+    /// <c>account/transaction/abs(@value)</c>, <c>.../PUB-DATE/xs:date(.)</c>): those stream
+    /// correctly today and must NOT be diverted to whole-input buffering (which on a large
+    /// input would time out). A bare context-item reference is likewise left on the streaming
+    /// path. Everything else — parenthesised sequences, simple-maps, FLWORs, unions,
+    /// function-wrapped operands — is a composite the streaming pass can't satisfy at the
+    /// document level, so it must be buffered.
+    /// </summary>
+    private static bool IsBarePathOperand(XQueryExpression arg)
+    {
+        return arg switch
+        {
+            PathExpression => true,
+            ContextItemExpression => true,
+            // (path) — a parenthesised single path round-trips through a one-item sequence.
+            SequenceExpression seq when seq.Items.Count == 1 => IsBarePathOperand(seq.Items[0]),
+            _ => false,
+        };
     }
 
     /// <summary>
