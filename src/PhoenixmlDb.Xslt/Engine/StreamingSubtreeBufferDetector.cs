@@ -209,14 +209,29 @@ internal static class StreamingSubtreeBufferDetector
             // no usable document-level streaming dispatch and would otherwise evaluate the
             // select against the synthetic empty document node. See SelectAbsorbsInput for
             // the full set of matched functions and the watcher-coexistence guard.
+            //
+            // The same empty-doc trap also strikes a select whose input-navigating operand
+            // is wrapped in an EXPRESSION OPERATOR that the streaming pass cannot drive at
+            // the document level — `treat as` / `instance of` / `castable as`, a
+            // union/except/intersect, a square-array constructor, or a mixed comma sequence
+            // (e.g. `(copy-of(//ITEM/PRICE), $insertion)`, `(.//node()) instance of
+            // element()*`, `(account/transaction/@value) treat as attribute()+`). The
+            // watcher-based dispatch only fires for a BARE path / simple-map; once the path
+            // is an operand of one of these operators the select evaluates against the
+            // empty synthetic node, dropping the navigating operand (or returning the wrong
+            // instance-of/treat-cardinality result). Route those to the whole-input buffer.
+            // See SelectNavigatesViaUnstreamableOperator. A bare path operand stays on the
+            // streaming path (the operator helper returns false for it).
             case XsltValueOf vo:
-                return vo.Select != null && SelectAbsorbsInput(vo.Select);
+                return vo.Select != null
+                    && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select));
 
             case XsltCopyOf cof:
-                return SelectAbsorbsInput(cof.Select);
+                return SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select);
 
             case XsltSequence sq:
-                return sq.Select != null && SelectAbsorbsInput(sq.Select);
+                return sq.Select != null
+                    && (SelectAbsorbsInput(sq.Select) || SelectNavigatesViaUnstreamableOperator(sq.Select));
 
             case XsltFork fk:
                 // A for-each-group prong is itself absorbing at the document level
@@ -458,6 +473,92 @@ internal static class StreamingSubtreeBufferDetector
             SequenceExpression seq when seq.Items.Count == 1 => IsBarePathOperand(seq.Items[0]),
             _ => false,
         };
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> is (or, after peeling a wrapping simple-map /
+    /// filter, resolves to) an EXPRESSION OPERATOR node whose operand navigates the streamed
+    /// input but which the document-level streaming pass cannot drive — so evaluating the
+    /// select against the synthetic empty document node would drop the navigating operand or
+    /// compute the wrong result. Such a shape forces whole-input buffering. The matched
+    /// operators:
+    /// <list type="bullet">
+    /// <item><c>treat as</c> / <c>instance of</c> / <c>castable as</c>
+    /// (<see cref="TreatExpression"/> / <see cref="InstanceOfExpression"/> /
+    /// <see cref="CastableExpression"/>): the path operand evaluates to empty against the
+    /// synthetic node, so <c>(.//node()) instance of element()*</c> returns the wrong boolean
+    /// and <c>(EXPR treat as T+)</c> raises a spurious empty-cardinality error.</item>
+    /// <item><c>union</c> / <c>except</c> / <c>intersect</c> (<see cref="BinaryExpression"/>):
+    /// a navigating operand on either side is dropped.</item>
+    /// <item>a square-array constructor <c>[ … ]</c> (<see cref="ArrayConstructor"/>) over a
+    /// navigating member.</item>
+    /// <item>a comma sequence <c>(A, B)</c> (<see cref="SequenceExpression"/>, two or more
+    /// items) mixing a navigating operand with grounded operands — the navigating side is
+    /// dropped, leaving only the grounded items (<c>(copy-of(//ITEM/PRICE), $insertion)</c>
+    /// emits just <c>$insertion</c>).</item>
+    /// </list>
+    /// A BARE path / context-item operand (the shape the watcher dispatch already streams,
+    /// e.g. <c>copy-of(//ITEM)</c>, <c>//x ! string(.)</c>) is NOT matched — the helper only
+    /// fires for the operator wrappers above, leaving plain streaming selects untouched.
+    /// </summary>
+    private static bool SelectNavigatesViaUnstreamableOperator(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            // treat as / instance of / castable as — the operand is the navigating part.
+            case TreatExpression t:
+                return NavigatesInput(t.Expression);
+            case InstanceOfExpression io:
+                return NavigatesInput(io.Expression);
+            case CastableExpression ca:
+                return NavigatesInput(ca.Expression);
+
+            // A | B / A except B / A intersect B — a navigating operand on either side
+            // has no document-level dispatch once it is a union/except/intersect operand.
+            case BinaryExpression bin
+                when bin.Operator is BinaryOperator.Union
+                    or BinaryOperator.Except
+                    or BinaryOperator.Intersect:
+                return NavigatesInput(bin.Left) || NavigatesInput(bin.Right);
+
+            // [ a, b, c ] — a square-array constructor over a navigating member.
+            case ArrayConstructor arr when arr.Kind == ArrayConstructorKind.Square:
+                foreach (var member in arr.Members)
+                    if (NavigatesInput(member)) return true;
+                return false;
+
+            // (A, B, …) — a comma sequence of two or more items where at least one item
+            // navigates the input. A single-item parenthesised expression is not a real
+            // sequence operator: peel it and re-test the inner expression (so a lone
+            // `(EXPR treat as T)` or `(A union B)` is still recognised).
+            case SequenceExpression seq when seq.Items.Count == 1:
+                return SelectNavigatesViaUnstreamableOperator(seq.Items[0]);
+            case SequenceExpression seq when seq.Items.Count >= 2:
+                foreach (var item in seq.Items)
+                    if (NavigatesInput(item)) return true;
+                return false;
+
+            // `OPERATOR ! name(.)` / `OPERATOR ! local-name()` — the streaming context flows
+            // through the simple-map Left, so peel to the operator on the left. (A bare-path
+            // Left returns false, so a plain `//x ! string(.)` stays streaming.)
+            case SimpleMapExpression sm:
+                return SelectNavigatesViaUnstreamableOperator(sm.Left);
+
+            // `OPERATOR[predicate]` — the operator is the filter's primary.
+            case FilterExpression filt:
+                return SelectNavigatesViaUnstreamableOperator(filt.Primary);
+
+            // `[ … ]?*` / `[ … ]?n` — an array/map lookup whose base is a square-array
+            // constructor over a navigating member. The members flatten out of the lookup,
+            // so a navigating member is dropped just as in the bare constructor case
+            // (`[$insertion, //PRICE/number()]?* ! (.+1)` emits only $insertion). Peel to
+            // the lookup base. A bare-path base returns false (left on the streaming path).
+            case LookupExpression lk:
+                return SelectNavigatesViaUnstreamableOperator(lk.Base);
+
+            default:
+                return false;
+        }
     }
 
     /// <summary>
