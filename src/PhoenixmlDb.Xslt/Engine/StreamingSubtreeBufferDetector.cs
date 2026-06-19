@@ -287,7 +287,7 @@ internal static class StreamingSubtreeBufferDetector
     /// <c>/*/transaction</c>, <c>outermost(.//gml:posList)</c>, <c>descendant::x</c>) cannot
     /// be satisfied at the document level and forces whole-input buffering.
     /// </summary>
-    private static bool NavigatesInput(XQueryExpression expr)
+    internal static bool NavigatesInput(XQueryExpression expr)
     {
         switch (expr)
         {

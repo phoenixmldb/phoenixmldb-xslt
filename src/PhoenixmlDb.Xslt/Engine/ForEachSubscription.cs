@@ -13,14 +13,35 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </remarks>
 internal sealed class ForEachSubscription
 {
-    /// <summary>The original <c>xsl:for-each</c> AST node this subscription was derived from.</summary>
-    public required Ast.XsltForEach SourceInstruction { get; init; }
+    /// <summary>
+    /// The original <c>xsl:for-each</c> AST node this subscription was derived from,
+    /// or <c>null</c> for an SM-ctx subscription (a consuming simple-map
+    /// <c>LEFT ! RIGHT</c> in an <c>xsl:value-of</c>/<c>xsl:sequence</c> select, which
+    /// has no for-each instruction — see <see cref="PerItemSelect"/>).
+    /// </summary>
+    public Ast.XsltForEach? SourceInstruction { get; init; }
 
     /// <summary>Path matcher fired against the input stream to identify match events.</summary>
     public required StreamPathMatcher PathMatcher { get; init; }
 
-    /// <summary>Sequence constructor body executed once per match.</summary>
-    public required Ast.XsltSequenceConstructor Body { get; init; }
+    /// <summary>
+    /// Sequence constructor body executed once per match. Always set for a
+    /// for-each-derived subscription; <c>null</c> for an SM-ctx subscription, which
+    /// evaluates <see cref="PerItemSelect"/> instead. A subscription has exactly one
+    /// of <see cref="Body"/> or <see cref="PerItemSelect"/> populated.
+    /// </summary>
+    public Ast.XsltSequenceConstructor? Body { get; init; }
+
+    /// <summary>
+    /// The simple-map RIGHT expression to evaluate per matched item (SM-ctx, OP-bucket
+    /// phase 1). When set, the per-match dispatch materializes the matched item, binds
+    /// it as the context item with <c>_isStreamingExecution=false</c>, evaluates this
+    /// expression in-memory against that one item (mirroring
+    /// <c>ApplySimpleMapTailAsync</c>), and emits the result via the
+    /// <c>xsl:sequence</c> emission path — instead of executing <see cref="Body"/>.
+    /// A subscription has exactly one of <see cref="Body"/> or this populated.
+    /// </summary>
+    public XQueryExpression? PerItemSelect { get; init; }
 
     /// <summary>
     /// Grounded operands appearing BEFORE the streamable path in the for-each select.

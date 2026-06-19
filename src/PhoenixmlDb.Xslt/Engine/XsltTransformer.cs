@@ -8681,6 +8681,59 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// SM-ctx (OP-bucket phase 1) streaming handoff for a consuming simple-map
+    /// <c>LEFT ! RIGHT</c> in an <c>xsl:value-of</c>/<c>xsl:sequence</c> select. When the
+    /// select is the SimpleMap whose RIGHT was registered as an inline-driven
+    /// <see cref="ForEachSubscription.PerItemSelect"/> on the active streaming processor
+    /// (and the live reader has not yet been consumed), hand off to the processor's
+    /// forward pass: it drives the reader, matches the subscription's LEFT path, and for
+    /// each matched item materializes it and evaluates RIGHT in place into the
+    /// currently-open output. Mirrors the wrapped-for-each handoff in
+    /// <see cref="ForEachAsync"/>. Returns true when the handoff fired (caller returns).
+    /// </summary>
+    private async ValueTask<bool> TryHandoffSimpleMapContextStreamingAsync(XQueryExpression? select)
+    {
+        if (_activeStreamingProcessor == null || _activeStreamingReader == null)
+            return false;
+        if (select is not SimpleMapExpression sm)
+            return false;
+        var subs = _activeStreamingProcessor.Subscriptions;
+        if (subs == null)
+            return false;
+
+        ForEachSubscription? matchSub = null;
+        foreach (var s in subs)
+        {
+            if (s.InlineDriven && s.PerItemSelect != null
+                && ReferenceEquals(s.PerItemSelect, sm.Right))
+            {
+                matchSub = s;
+                break;
+            }
+        }
+        if (matchSub == null)
+            return false;
+
+        var proc = _activeStreamingProcessor;
+        var rdr = _activeStreamingReader;
+        var ct = _activeStreamingCancellationToken;
+        // Clear the handles so the per-match RIGHT evaluation (which runs against the
+        // buffered materialized snapshot, not the live reader) doesn't re-enter here.
+        _activeStreamingProcessor = null;
+        _activeStreamingReader = null;
+        try
+        {
+            await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _activeStreamingProcessor = proc;
+            _activeStreamingReader = rdr;
+        }
+        return true;
+    }
+
     public override async ValueTask ForEachAsync(
         XQueryExpression select,
         List<XsltSort> sorts,
@@ -8704,7 +8757,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 ForEachSubscription? matchSub = null;
                 foreach (var s in subs)
                 {
-                    if (s.InlineDriven && ReferenceEquals(s.SourceInstruction.Body, body))
+                    if (s.InlineDriven && s.SourceInstruction != null
+                        && ReferenceEquals(s.SourceInstruction.Body, body))
                     {
                         matchSub = s;
                         break;
@@ -11392,6 +11446,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask ValueOfAsync(XsltValueOf instruction)
     {
+        // SM-ctx streaming handoff: a consuming simple-map LEFT ! RIGHT select whose
+        // RIGHT was registered as an inline-driven subscription streams in place.
+        if (await TryHandoffSimpleMapContextStreamingAsync(instruction.Select).ConfigureAwait(false))
+            return;
+
         // Evaluate separator AVT once (it may contain dynamic expressions)
         string? resolvedSeparator = instruction.Separator != null
             ? await EvaluateAvtAsync(instruction.Separator).ConfigureAwait(false)
@@ -12942,6 +13001,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask SequenceAsync(XsltSequence instruction)
     {
+        // SM-ctx streaming handoff: a consuming simple-map LEFT ! RIGHT select whose
+        // RIGHT was registered as an inline-driven subscription streams in place.
+        if (await TryHandoffSimpleMapContextStreamingAsync(instruction.Select).ConfigureAwait(false))
+            return;
+
         if (instruction.Select != null)
         {
             var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
@@ -13004,6 +13068,44 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         else if (instruction.Content != null)
         {
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// SM-ctx (OP-bucket phase 1): evaluates a consuming simple-map RIGHT expression
+    /// against the currently-bound (materialized) context item and emits its result to
+    /// the active output exactly as <c>xsl:value-of</c>/<c>xsl:sequence</c> would — atomic
+    /// results space-separated per XPath atomization (with cross-call continuity via
+    /// <see cref="_lastResultWasAtomic"/> so successive matched items separate correctly),
+    /// node results serialized. Called once per matched item by the streaming dispatch.
+    /// </summary>
+    internal async ValueTask EmitSimpleMapContextResultAsync(XQueryExpression perItemSelect)
+    {
+        var result = await EvaluateAsync(perItemSelect).ConfigureAwait(false);
+        if (result == null)
+            return;
+
+        // Mirror SequenceAsync's atomic-string handling: a top-level string from an
+        // XPath expression is an xs:string atomic value that takes a space separator
+        // from a preceding atomic item (XSLT 3.0 §5.7.2). SerializeResult handles
+        // sequences/arrays/nodes (and their internal atomic spacing) directly.
+        if (result is string str)
+        {
+            if (str.Length == 0 && _wherePopulatedDepth > 0)
+                return;
+            if (_lastResultWasAtomic && _attributeContentDepth == 0)
+            {
+                var sep = _itemSeparatorOverride ?? " ";
+                WriteText(sep, false);
+                if (_contentTrackingStack.Count > 0)
+                    _separatorCharsWritten += sep.Length;
+            }
+            WriteText(str, false);
+            _lastResultWasAtomic = true;
+        }
+        else
+        {
+            SerializeResult(result);
         }
     }
 
@@ -15040,7 +15142,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _currentTemplate = null;
                 try
                 {
-                    await sub.Body.ExecuteAsync(this).ConfigureAwait(false);
+                    // PrefixItems/SuffixItems drain only ever applies to a for-each
+                    // subscription (Body always set); an SM-ctx subscription carries
+                    // no prefix/suffix operands, so Body is non-null here.
+                    await sub.Body!.ExecuteAsync(this).ConfigureAwait(false);
                 }
                 finally
                 {

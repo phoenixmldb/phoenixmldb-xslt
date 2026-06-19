@@ -392,6 +392,18 @@ internal sealed class StreamingExpressionScanner
                     IntermediatePredicates = shape.IntermediatePredicates
                 });
                 return;
+
+            // SM-ctx (OP-bucket phase 1): a consuming simple-map LEFT ! RIGHT whose
+            // LEFT is a plain striding/downward path and whose RIGHT consumes the
+            // streamed context node per item (navigates `..`, reads attributes,
+            // uses position(), wraps the item in a conditional, …) — shapes the
+            // atomic-tail watcher branch above rejects. Register a for-each-style
+            // subscription off LEFT carrying RIGHT as PerItemSelect; the per-match
+            // dispatch materializes each item, binds it as context, and evaluates
+            // RIGHT in-memory. Falls through to ScanChildExpressions (Left-only
+            // Sequence watcher) when LEFT is a bounded-window function (deferred).
+            case SimpleMapExpression smCtx when TryRegisterSimpleMapContextSubscription(smCtx):
+                return;
         }
 
         // Recurse into child expressions for unrecognized patterns
@@ -1055,6 +1067,55 @@ internal sealed class StreamingExpressionScanner
             SubsequenceLength = subseqLength,
             InlineDriven = _constructionDepth > 0,
         });
+    }
+
+    /// <summary>
+    /// SM-ctx (OP-bucket phase 1): registers a for-each-style subscription for a
+    /// consuming simple-map <c>LEFT ! RIGHT</c> whose LEFT is a plain striding
+    /// child-axis path (the shape <see cref="TryBuildPathMatcher"/> accepts) and
+    /// whose RIGHT consumes the streamed context node per item. The subscription
+    /// carries RIGHT as <see cref="ForEachSubscription.PerItemSelect"/> and has no
+    /// Body; the per-match dispatch materializes each matched item, binds it as the
+    /// context item, and evaluates RIGHT in-memory.
+    /// <para>
+    /// Does NOT register (returns false, so the caller falls through to the Left-only
+    /// Sequence watcher) when: RIGHT is a trailing snapshot step (the for-each /
+    /// trailing-snapshot peel already handles it); LEFT is a bounded-window/absorbing
+    /// function (<c>head</c>/<c>subsequence</c>/<c>outermost</c>/<c>tail</c> — deferred
+    /// to phase 3); or LEFT is grounded (does not navigate the input). The
+    /// <c>NavigatesInput</c> guard keeps a grounded LEFT on its current path.
+    /// </para>
+    /// </summary>
+    private bool TryRegisterSimpleMapContextSubscription(SimpleMapExpression sm)
+    {
+        // A trailing snapshot RIGHT (records/record/copy-of()) is handled by the
+        // for-each / trailing-snapshot peel — not an SM-ctx per-item consuming shape.
+        if (IsTrailingSnapshotStep(sm.Right)) return false;
+
+        // LEFT must genuinely navigate the input. A grounded LEFT stays on its
+        // current path (the grounded-operand guard).
+        if (!StreamingSubtreeBufferDetector.NavigatesInput(sm.Left)) return false;
+
+        // LEFT must decompose to a plain striding child-axis path the subscription
+        // dispatcher can match (child-axis steps, last-step positional/attribute
+        // predicate, attribute tail). A bounded-window/absorbing function LEFT
+        // (head/subsequence/outermost/tail) is NOT a PathExpression, so
+        // TryBuildPathMatcher returns null and we leave it unregistered (phase 3).
+        var matcher = TryBuildPathMatcher(sm.Left, out var textNodeTail, out var attributeName, out var predicates);
+        if (matcher == null) return false;
+
+        _subscriptions.Add(new ForEachSubscription
+        {
+            SourceInstruction = null,
+            PathMatcher = matcher,
+            Body = null,
+            PerItemSelect = sm.Right,
+            TextNodeTail = textNodeTail,
+            AttributeName = attributeName,
+            Predicates = predicates,
+            InlineDriven = _constructionDepth > 0,
+        });
+        return true;
     }
 
     /// <summary>

@@ -452,7 +452,10 @@ internal sealed class StreamingXmlProcessor
                                                 _context.PushCurrentItem(matchedAttr);
                                                 try
                                                 {
-                                                    await sub.Body.ExecuteAsync(_context).ConfigureAwait(false);
+                                                    if (sub.PerItemSelect != null)
+                                                        await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
+                                                    else
+                                                        await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
                                                 }
                                                 finally
                                                 {
@@ -476,7 +479,10 @@ internal sealed class StreamingXmlProcessor
                                                     _context.PushCurrentItem(textChild);
                                                     try
                                                     {
-                                                        await sub.Body.ExecuteAsync(_context).ConfigureAwait(false);
+                                                        if (sub.PerItemSelect != null)
+                                                            await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
+                                                        else
+                                                            await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
                                                     }
                                                     finally
                                                     {
@@ -491,7 +497,10 @@ internal sealed class StreamingXmlProcessor
                                                 _context.PushCurrentItem(snapshot);
                                                 try
                                                 {
-                                                    await sub.Body.ExecuteAsync(_context).ConfigureAwait(false);
+                                                    if (sub.PerItemSelect != null)
+                                                        await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
+                                                    else
+                                                        await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
                                                 }
                                                 finally
                                                 {
