@@ -1244,6 +1244,14 @@ internal sealed class StreamingExpressionScanner
                 break;
             }
 
+            // Only fixed-depth child-axis element steps are streamable through the
+            // for-each SUBSCRIPTION path, which materializes-and-skips the matched
+            // element's whole subtree from the live reader. A descendant-axis (`//`)
+            // wildcard would be UNSOUND here: an ancestor element can also satisfy the
+            // any-depth pattern, and matching it consumes its descendants before they
+            // are seen (e.g. `//node()[name()=$g]` matches the root, swallowing the
+            // very nodes the predicate would select). Descendant for-each remains
+            // DEFERRED — it needs the non-consuming watcher mechanism, not this one.
             if (step.Axis != Axis.Child) return null;
 
             // Predicates: only allowed on the step that supplies the matched element
@@ -1268,9 +1276,17 @@ internal sealed class StreamingExpressionScanner
                 break;
             }
 
+            // Determine the element-name pattern for this CHILD-axis step:
+            //   - NameTest with a concrete local name → that name
+            //   - NameTest local-name wildcard (`*`)  → "*" (any element child)
+            // The StreamPathMatcher already honors "*" as a per-step element wildcard
+            // and still enforces the overall step count / ancestor alignment, so
+            // `/*/*` matches grandchildren-of-root only (never the root, never
+            // great-grandchildren). Namespace-qualified wildcards (`*:name`, `ns:*`)
+            // carry namespace semantics the flat string matcher can't honor — deferred.
             if (step.NodeTest is not NameTest nameTest) return null;
-            if (nameTest.IsLocalNameWildcard || nameTest.IsNamespaceWildcard) return null;
-            parts.Add(nameTest.LocalName);
+            if (nameTest.IsNamespaceWildcard) return null;
+            parts.Add(nameTest.IsLocalNameWildcard ? "*" : nameTest.LocalName);
         }
 
         if (parts.Count == 0) return null;
