@@ -419,7 +419,18 @@ internal sealed class StreamingXmlProcessor
                                                 {
                                                     foreach (var pred in sub.Predicates)
                                                     {
-                                                        if (!await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false))
+                                                        // A bare numeric predicate [N] is positional shorthand for
+                                                        // position() = N. EvaluateBooleanAsync would return the
+                                                        // literal's effective boolean (always true for non-zero),
+                                                        // so compare the match position directly. Mirrors the
+                                                        // motionless-ancestor positional handling below. No IsPositional
+                                                        // guard is needed (the motionless path has one): ForEachSubscription
+                                                        // carries no such flag, and per XPath a bare numeric literal in a
+                                                        // step predicate is always positional, so the literal-type test suffices.
+                                                        bool ok = pred is IntegerLiteral or DecimalLiteral or DoubleLiteral
+                                                            ? NumericLiteralEqualsPosition(pred, matchPosition)
+                                                            : await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false);
+                                                        if (!ok)
                                                         {
                                                             allPass = false;
                                                             break;

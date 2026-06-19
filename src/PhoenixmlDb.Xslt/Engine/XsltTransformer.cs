@@ -12092,6 +12092,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private async ValueTask CopyOfCoreAsync(XsltCopyOf instruction)
     {
         _currentInstructionLocation = instruction.Location ?? _currentInstructionLocation;
+
+        // SM-ctx streaming handoff (OP phase 2): a consuming simple-map LEFT ! RIGHT
+        // select whose RIGHT (a set/sequence operator combining the per-item streamed
+        // nodes with grounded nodes) was registered as an inline-driven subscription
+        // streams in place. Each matched item is materialized and RIGHT evaluated
+        // in-memory; node results are emitted with copy-of semantics (deep XML
+        // serialization) by EmitSimpleMapContextResultAsync. Mirrors ValueOfAsync /
+        // SequenceAsync.
+        if (await TryHandoffSimpleMapContextStreamingAsync(instruction.Select).ConfigureAwait(false))
+            return;
+
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
         var copyNs = instruction.CopyNamespaces ?? true;
 
