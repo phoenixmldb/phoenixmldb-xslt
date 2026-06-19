@@ -1,5 +1,24 @@
 # Release History
 
+## 1.4.12 (2026-06-19)
+
+Grouping fix + streaming correctness. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. No API changes.
+
+### Fix: `xsl:for-each-group group-by` with an empty grouping key (Martin Honnen)
+
+When an item's `group-by` expression atomizes to the empty sequence, that item contributes no grouping key and is assigned to no group (XSLT 3.0 §19.2). The engine previously formed a single group with an empty (`""`) grouping key, so the body ran once over all items. It now forms no group for such items (matching Saxon). Non-empty-key grouping — distinct keys, document order, multi-value sequence keys, `current-grouping-key()` — is unchanged. Applies to both streaming and non-streaming `for-each-group`.
+
+### Streaming: consuming expressions inside surrounding construction now stream in place
+
+A consuming expression that sits inside surrounding constructed output — rather than as the bare top-level content of a streamable body — previously dropped its wrapper or iterated empty, because streaming was two special-cased mechanisms that didn't compose with construction. These now execute in place within linear body execution, driving the input at the expression's lexical position:
+
+- A consuming `xsl:for-each` or `xsl:apply-templates` wrapped in literal result elements, `xsl:element`/`xsl:copy`, or `xsl:if`/`xsl:choose`.
+- Per-item consuming operators in an XPath simple-map — `path ! local-name(.)`, `path ! name(..)`, `path ! (* union/except/intersect $grounded)`, `path ! (*, $grounded)`, `path ! [*, $grounded]`, and conditional/atomizing right-hand sides.
+- Bounded-window functions over a streamed path used as the source of a streamable `xsl:for-each`/simple-map — `head(path)`, `tail(path)`, `remove(path, n)`, `subsequence(path, s, l)`.
+- Fixed-depth wildcard steps in a streamable `xsl:for-each` select (e.g. `/*/*`).
+
+(Continues the streaming work begun in 1.4.11. Some advanced shapes — descendant-axis windows, `outermost()`, secondary `xsl:result-document`, and a few grouping/snapshot cases — remain follow-ups.)
+
 ## 1.4.11 (2026-06-18)
 
 Streaming correctness. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. No API changes.
