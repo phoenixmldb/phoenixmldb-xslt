@@ -9006,11 +9006,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         var key = await EvaluateAsync(instruction.GroupBy).ConfigureAwait(false);
 
-                        // Convert key to list for composite comparison
+                        // Convert key to list for composite comparison. An empty
+                        // sequence yields an empty composite key (the item still
+                        // joins a group keyed by the empty tuple — composite="yes"
+                        // permits empty/multi-value keys, XSLT 3.0 §19.2).
                         var keyList = key switch
                         {
-                            null => new List<object?> { null },
+                            null => new List<object?>(),
                             object?[] arr => arr.ToList(),
+                            string s => new List<object?> { s },
                             IEnumerable<object?> seq => seq.ToList(),
                             _ => new List<object?> { key }
                         };
@@ -9063,10 +9067,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         var key = await EvaluateAsync(instruction.GroupBy).ConfigureAwait(false);
 
                         // Non-composite: if the key expression returns a sequence,
-                        // the item is added to a group for EACH value (XSLT 3.0 §15.3)
-                        IEnumerable<object?> keyValues = key is object?[] keyArr
-                            ? keyArr
-                            : [key]; // scalar or null — single group key
+                        // the item is added to a group for EACH value (XSLT 3.0 §19.2).
+                        // If it atomizes to the EMPTY SEQUENCE, the item contributes
+                        // ZERO grouping keys and joins NO group — it is skipped.
+                        IEnumerable<object?> keyValues = key switch
+                        {
+                            null => [],                              // empty sequence → no group
+                            object?[] keyArr => keyArr,              // sequence → one group per value
+                            string => [key],                         // strings are atomic, not sequences
+                            IEnumerable<object?> keySeq => keySeq,
+                            _ => [key]                               // single atomic value
+                        };
 
                         foreach (var singleKey in keyValues)
                         {
