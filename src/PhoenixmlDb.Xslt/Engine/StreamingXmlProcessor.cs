@@ -21,7 +21,22 @@ internal sealed class StreamingXmlProcessor
     private readonly TemplateIndex _templateIndex;
     private readonly DefaultXsltExecutionContext _context;
     private readonly XdmInMemoryStore _nodeStore;
-    private readonly QName? _mode;
+    private QName? _mode;
+
+    /// <summary>
+    /// Overrides the streaming dispatch mode for the duration of a single
+    /// <see cref="ProcessAsync"/> pass. Set by the wrapped/consuming
+    /// <c>xsl:apply-templates</c> handoff (Phase 2a of #143) so that an
+    /// apply-templates carrying an explicit <c>mode</c> attribute (e.g.
+    /// <c>mode="t"</c> with <c>on-no-match="deep-copy"</c>) drives the live reader
+    /// with THAT mode's template-matching and built-in rule behaviour — rather than
+    /// the processor's construction-time mode (the enclosing template's mode).
+    /// </summary>
+    internal QName? DispatchMode
+    {
+        get => _mode;
+        set => _mode = value;
+    }
     private ulong _nextNodeId = 1_000_000; // High start to avoid collision with tree nodes
 
     // Accumulator state for streaming computation

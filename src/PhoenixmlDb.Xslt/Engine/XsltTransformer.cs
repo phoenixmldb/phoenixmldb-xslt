@@ -6653,7 +6653,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // which may invoke templates that call apply-templates again).
                 _activeStreamingProcessor = null;
                 _activeStreamingReader = null;
-                await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
+                // Phase 2a (#143): propagate THIS apply-templates' explicit mode into the
+                // processor's forward pass so a wrapped/conditional apply-templates carrying
+                // mode="t" (deep-copy) etc. dispatches under that mode's template-matching and
+                // built-in on-no-match rules — not the processor's construction-time mode
+                // (the enclosing template's mode). Restored after the pass.
+                var savedDispatchMode = proc.DispatchMode;
+                if (mode != null)
+                    proc.DispatchMode = mode;
+                try
+                {
+                    await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    proc.DispatchMode = savedDispatchMode;
+                }
                 return;
             }
         }
@@ -7630,6 +7645,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else
             {
+                // Phase 2a (#143): streaming built-in DEEP-COPY of an unmatched element.
+                // The streamed element is shallow (its children have not yet been read),
+                // so serializing it directly would emit just an empty tag while the loop
+                // reads the descendants as flat siblings. Instead buffer the whole subtree
+                // from the live reader (same materialize + deferred-EndElement contract the
+                // snapshot()/copy-of() path uses) and serialize the buffered tree. Setting
+                // _streamingSubtreeBufferConsumed tells the processor's loop that the
+                // matching EndElement was already consumed, so it skips the ancestor push.
+                if (_activeStreamingReader != null
+                    && node is Xdm.Nodes.XdmElement deepCopyElem
+                    && GetOnNoMatchBehavior(mode) == OnNoMatchBehavior.DeepCopy)
+                {
+                    var bufferedRoot = StreamingSubtreeMaterializer.Materialize(
+                        _activeStreamingReader, _nodeStore!, new DocumentId(0)) ?? deepCopyElem;
+                    SerializeElement(bufferedRoot);
+                    _streamingSubtreeBufferConsumed = true;
+                    return false;
+                }
                 // Apply built-in template rules
                 await ApplyBuiltInTemplateAsync(node, mode, []).ConfigureAwait(false);
             }
@@ -7961,6 +7994,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Attributes and then child nodes
         if (_nodeStore != null)
         {
+            // Element attributes live in elem.Attributes, NOT in GetChildren(elem)
+            // (which yields only element/text/comment/PI children). Emit them here so a
+            // deep-copied element retains its attributes (e.g. <record id="a">). The
+            // legacy "child is XdmAttribute" guard below is kept defensively for any
+            // store shape that threads attributes through the child list.
+            foreach (var attr in _nodeStore.GetAttributes(elem))
+            {
+                var attrPrefix0 = attr.Prefix ?? "";
+                var attrName0 = !string.IsNullOrEmpty(attrPrefix0)
+                    ? $"{attrPrefix0}:{attr.LocalName}"
+                    : attr.LocalName;
+                _output.Append(' ');
+                _output.Append(attrName0);
+                _output.Append("=\"");
+                _output.Append(EscapeAttributeValue(attr.Value));
+                _output.Append('"');
+            }
             var childElements = new List<XdmNode>();
             foreach (var child in _nodeStore.GetChildren(elem))
             {
