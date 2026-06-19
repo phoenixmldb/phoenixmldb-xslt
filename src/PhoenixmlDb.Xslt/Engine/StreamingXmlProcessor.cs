@@ -408,6 +408,11 @@ internal sealed class StreamingXmlProcessor
                                                     && matchPosition >= sub.SubsequenceStart + len) continue;
                                             }
 
+                                            // Apply remove(path, n): skip the single match whose
+                                            // 1-based path-match position equals the remove index.
+                                            // Composes with the subsequence window above.
+                                            if (sub.RemoveIndex is { } ri && matchPosition == ri) continue;
+
                                             // Evaluate predicates (if any) against the snapshot.
                                             // Skip dispatch if any predicate is false.
                                             if (sub.Predicates.Count > 0)

@@ -94,6 +94,13 @@ internal sealed class ForEachSubscription
     public int? SubsequenceLength { get; init; }
 
     /// <summary>
+    /// When set, the dispatcher skips the single matched item whose 1-based
+    /// path-match position equals <c>RemoveIndex</c> (from <c>remove(path, N)</c>).
+    /// Composes with the subsequence window.
+    /// </summary>
+    public int? RemoveIndex { get; init; }
+
+    /// <summary>
     /// True when the for-each is lexically nested inside output construction
     /// (an LRE, xsl:element, xsl:copy, xsl:if, xsl:choose) rather than being a
     /// bare top-of-body instruction. An inline-driven for-each must run inside

@@ -1023,32 +1023,34 @@ internal sealed class StreamingExpressionScanner
     {
         if (forEach.Sorts.Count > 0) return;
 
-        // Peel a leading subsequence(path, start [, length]) wrapper. The slice is a
-        // forward-countable positional window over the selected sequence — decidable
-        // from the running path-match count as the stream descends — so it is applied
-        // by the dispatcher rather than rejecting the whole for-each. The inner argument
-        // must itself decompose to a single streamable path (no mixed-sequence prefix/
-        // suffix, no separate predicate window).
+        // Peel a leading forward-window function (subsequence/head/tail/remove). The
+        // window is forward-countable over the selected sequence — decidable from the
+        // running path-match count as the stream descends — so it is applied by the
+        // dispatcher rather than rejecting the whole for-each. The inner argument must
+        // itself decompose to a single streamable path (no mixed-sequence prefix/suffix,
+        // no separate predicate window).
         var select = forEach.Select;
         int subseqStart = 1;
         int? subseqLength = null;
-        if (TryPeelSubsequence(select, out var inner, out var start, out var length))
+        int? removeIndex = null;
+        if (TryPeelWindowFunction(select, out var inner, out var start, out var length, out var remIdx))
         {
-            // Reject a non-positive or non-integer start/length — out of scope; let the
+            // Reject a non-positive or non-integer start — out of scope; let the
             // for-each fall back to buffered execution.
             if (start < 1) return;
             select = inner;
             subseqStart = start;
             subseqLength = length;
+            removeIndex = remIdx;
         }
 
         if (!TryDecomposeForEachSelect(select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates))
             return;
 
-        // A subsequence slice combined with a mixed-sequence prefix/suffix is out of
-        // scope (the slice index would span heterogeneous operands). Only register the
-        // slice when the select decomposed to a bare single path.
-        if (subseqStart != 1 || subseqLength != null)
+        // A window slice combined with a mixed-sequence prefix/suffix is out of scope
+        // (the window index would span heterogeneous operands). Only register the
+        // window when the select decomposed to a bare single path.
+        if (subseqStart != 1 || subseqLength != null || removeIndex != null)
         {
             if (prefix.Count > 0 || suffix.Count > 0) return;
         }
@@ -1065,6 +1067,7 @@ internal sealed class StreamingExpressionScanner
             Predicates = predicates,
             SubsequenceStart = subseqStart,
             SubsequenceLength = subseqLength,
+            RemoveIndex = removeIndex,
             InlineDriven = _constructionDepth > 0,
         });
     }
@@ -1080,10 +1083,17 @@ internal sealed class StreamingExpressionScanner
     /// <para>
     /// Does NOT register (returns false, so the caller falls through to the Left-only
     /// Sequence watcher) when: RIGHT is a trailing snapshot step (the for-each /
-    /// trailing-snapshot peel already handles it); LEFT is a bounded-window/absorbing
-    /// function (<c>head</c>/<c>subsequence</c>/<c>outermost</c>/<c>tail</c> — deferred
-    /// to phase 3); or LEFT is grounded (does not navigate the input). The
-    /// <c>NavigatesInput</c> guard keeps a grounded LEFT on its current path.
+    /// trailing-snapshot peel already handles it); LEFT is <c>outermost</c> or another
+    /// absorbing/descendant-axis shape <see cref="TryBuildPathMatcher"/> rejects; or
+    /// LEFT is grounded (does not navigate the input). The <c>NavigatesInput</c> guard
+    /// keeps a grounded LEFT on its current path.
+    /// </para>
+    /// <para>
+    /// A forward-window function LEFT (<c>head</c>/<c>tail</c>/<c>subsequence</c>/
+    /// <c>remove</c>) over a plain striding path peels to its inner path plus a forward
+    /// window (phase 3): the window fields ride along on the registered subscription so
+    /// <c>head(p)!RIGHT</c> / <c>subsequence(p,s,l)!RIGHT</c> stream with the RIGHT
+    /// applied per windowed item.
     /// </para>
     /// </summary>
     private bool TryRegisterSimpleMapContextSubscription(SimpleMapExpression sm)
@@ -1092,17 +1102,55 @@ internal sealed class StreamingExpressionScanner
         // for-each / trailing-snapshot peel — not an SM-ctx per-item consuming shape.
         if (IsTrailingSnapshotStep(sm.Right)) return false;
 
+        // Peel a forward-window function (subsequence/head/tail/remove) wrapping the
+        // LEFT. The inner path must still decompose to a plain striding path; the
+        // window rides along as dispatcher fields. outermost()/descendant-axis stay
+        // unpeeled and are rejected below by TryBuildPathMatcher (deferred).
+        var left = sm.Left;
+        int subseqStart = 1;
+        int? subseqLength = null;
+        int? removeIndex = null;
+        bool windowPeeled = false;
+        if (TryPeelWindowFunction(left, out var inner, out var start, out var length, out var remIdx))
+        {
+            if (start < 1) return false;
+            left = inner;
+            subseqStart = start;
+            subseqLength = length;
+            removeIndex = remIdx;
+            windowPeeled = true;
+
+            // A peeled window over an ATOMIZED inner — fn:data(path) or a path whose
+            // last step is an attribute — is NOT a plain striding ELEMENT path. The
+            // per-item materialize-then-evaluate dispatch binds each windowed item as a
+            // node context item; an atomized-attribute window mis-emits through that
+            // path (it would regress the already-passing Sequence-watcher handling, e.g.
+            // subsequence(data(.../@value), 5, 3) ! (position(), .)). Leave such shapes
+            // unpeeled here so they stay on their working Sequence-watcher path.
+            if (left is FunctionCallExpression dataWrap
+                && dataWrap.Name.LocalName == "data"
+                && dataWrap.Arguments.Count == 1
+                && (dataWrap.Name.Namespace == NamespaceId.None
+                    || dataWrap.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+                return false;
+        }
+
         // LEFT must genuinely navigate the input. A grounded LEFT stays on its
         // current path (the grounded-operand guard).
-        if (!StreamingSubtreeBufferDetector.NavigatesInput(sm.Left)) return false;
+        if (!StreamingSubtreeBufferDetector.NavigatesInput(left)) return false;
 
         // LEFT must decompose to a plain striding child-axis path the subscription
         // dispatcher can match (child-axis steps, last-step positional/attribute
-        // predicate, attribute tail). A bounded-window/absorbing function LEFT
-        // (head/subsequence/outermost/tail) is NOT a PathExpression, so
-        // TryBuildPathMatcher returns null and we leave it unregistered (phase 3).
-        var matcher = TryBuildPathMatcher(sm.Left, out var textNodeTail, out var attributeName, out var predicates);
+        // predicate, attribute tail). outermost() / descendant-axis (//) LEFT is NOT a
+        // matchable PathExpression, so TryBuildPathMatcher returns null and we leave it
+        // unregistered (separate watcher effort).
+        var matcher = TryBuildPathMatcher(left, out var textNodeTail, out var attributeName, out var predicates);
         if (matcher == null) return false;
+
+        // A peeled window over an attribute-tailed path atomizes per item; the per-item
+        // node-context dispatch mis-emits it (see the data() guard above). Leave it on
+        // the Sequence-watcher path.
+        if (windowPeeled && attributeName != null) return false;
 
         _subscriptions.Add(new ForEachSubscription
         {
@@ -1113,37 +1161,78 @@ internal sealed class StreamingExpressionScanner
             TextNodeTail = textNodeTail,
             AttributeName = attributeName,
             Predicates = predicates,
+            SubsequenceStart = subseqStart,
+            SubsequenceLength = subseqLength,
+            RemoveIndex = removeIndex,
             InlineDriven = _constructionDepth > 0,
         });
         return true;
     }
 
     /// <summary>
-    /// Recognizes <c>subsequence(arg, start)</c> or <c>subsequence(arg, start, length)</c>
-    /// where <c>start</c> and <c>length</c> are non-negative integer literals. Returns the
-    /// inner argument plus the (truncated-to-int) start and optional length. The streaming
-    /// dispatcher applies the slice as a forward positional window over the path matches.
+    /// Recognizes the forward-decidable window functions over a streamed sequence and
+    /// reduces each to a positional window the dispatcher applies during the forward
+    /// pass (matched on the function's single sequence argument):
+    /// <list type="bullet">
+    ///   <item><c>subsequence(p, s)</c> / <c>subsequence(p, s, l)</c> → <c>(p, s, l, null)</c></item>
+    ///   <item><c>head(p)</c> → <c>(p, 1, 1, null)</c></item>
+    ///   <item><c>tail(p)</c> → <c>(p, 2, null, null)</c></item>
+    ///   <item><c>remove(p, n)</c> → <c>(p, 1, null, n)</c> (skip the n-th match)</item>
+    /// </list>
+    /// Functions are recognized in the fn namespace or with no namespace prefix; the
+    /// positional arguments must be constant integers (<see cref="TryConstantInt"/>).
+    /// Returns false (caller falls back to buffered execution) for any other shape.
     /// </summary>
-    private static bool TryPeelSubsequence(
-        XQueryExpression expr, out XQueryExpression inner, out int start, out int? length)
+    private static bool TryPeelWindowFunction(
+        XQueryExpression expr, out XQueryExpression inner, out int start, out int? length, out int? removeIndex)
     {
         inner = expr;
         start = 1;
         length = null;
+        removeIndex = null;
         if (expr is not FunctionCallExpression fc) return false;
-        if (fc.Name.LocalName != "subsequence") return false;
         if (fc.Name.Namespace != NamespaceId.None
             && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
             return false;
-        if (fc.Arguments.Count is not (2 or 3)) return false;
-        if (!TryConstantInt(fc.Arguments[1], out start)) return false;
-        if (fc.Arguments.Count == 3)
+
+        switch (fc.Name.LocalName)
         {
-            if (!TryConstantInt(fc.Arguments[2], out var len)) return false;
-            length = len;
+            case "subsequence":
+                if (fc.Arguments.Count is not (2 or 3)) return false;
+                if (!TryConstantInt(fc.Arguments[1], out start)) return false;
+                if (fc.Arguments.Count == 3)
+                {
+                    if (!TryConstantInt(fc.Arguments[2], out var len)) return false;
+                    length = len;
+                }
+                inner = fc.Arguments[0];
+                return true;
+
+            case "head":
+                if (fc.Arguments.Count != 1) return false;
+                start = 1;
+                length = 1;
+                inner = fc.Arguments[0];
+                return true;
+
+            case "tail":
+                if (fc.Arguments.Count != 1) return false;
+                start = 2;
+                inner = fc.Arguments[0];
+                return true;
+
+            case "remove":
+                if (fc.Arguments.Count != 2) return false;
+                if (!TryConstantInt(fc.Arguments[1], out var n)) return false;
+                if (n < 1) return false;
+                start = 1;
+                removeIndex = n;
+                inner = fc.Arguments[0];
+                return true;
+
+            default:
+                return false;
         }
-        inner = fc.Arguments[0];
-        return true;
     }
 
     private static bool TryConstantInt(XQueryExpression expr, out int value)
