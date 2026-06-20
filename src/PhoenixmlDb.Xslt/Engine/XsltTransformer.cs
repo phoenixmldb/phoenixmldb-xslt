@@ -2811,8 +2811,22 @@ public sealed class XsltTransformEngine
         // dispatch), the forward pass would evaluate group-by against an empty synthetic
         // document and emit nothing. Materialize the whole input and run the in-memory
         // engine instead, which evaluates group-by correctly.
+        //
+        // Exception 2: when the invocation entry point is an initial template (or an
+        // auto-detected xsl:initial-template invoked with no source document), the streamed
+        // input does NOT belong to the document-node dispatch at all — it belongs to an
+        // xsl:source-document instruction INSIDE the called template, which SourceDocumentAsync
+        // streams (and where a deferred XTSE3430 streamability error is surfaced). Taking the
+        // document-level streaming fast path here would silently skip the initial template,
+        // shallow-copy the synthetic empty document, and drop any deferred streamability error.
+        // Fall through to the XdmNode dispatch so the initial template runs.
+        bool entryIsInitialTemplate = options?.InitialTemplate != null
+            || options?.InitialFunction != null
+            || (options?.HasSourceDocument == false
+                && _stylesheet.NamedTemplates.Keys.Any(k => k.LocalName == "initial-template"));
         var initialModeKey = options?.InitialMode ?? new QName(NamespaceId.None, "");
         if (_stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable
+            && !entryIsInitialTemplate
             && !DocNodeTemplateRequiresWholeInputBuffer(options))
         {
             return await TransformStreamingAsync(xmlSource, options).ConfigureAwait(false);

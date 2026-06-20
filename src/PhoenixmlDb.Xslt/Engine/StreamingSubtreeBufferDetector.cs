@@ -390,6 +390,16 @@ internal static class StreamingSubtreeBufferDetector
                             return true;
                         break;
                 }
+                // A collation argument that navigates the input: distinct-values(seq, COLL),
+                // index-of(seq, search, COLL), max(seq, COLL), min(seq, COLL) etc. carry the
+                // collation URI in a NON-first argument. When that argument is an input-
+                // navigating path (e.g. /special/unknownCollation), the document-level
+                // streaming pass evaluates it against the synthetic empty node — the collation
+                // resolves to empty and the default collation is silently used, so an unknown
+                // collation never raises FOCH0002. Route to the whole-input buffer so the
+                // collation argument resolves against the real (bounded) input.
+                if (CollationArgNavigatesInput(fc))
+                    return true;
                 foreach (var arg in fc.Arguments)
                     if (SelectAbsorbsInput(arg)) return true;
                 return false;
@@ -418,6 +428,38 @@ internal static class StreamingSubtreeBufferDetector
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="fc"/> is an fn:-namespace function that takes a collation
+    /// URI as a trailing argument AND that collation argument navigates the streamed input.
+    /// The recognised functions and their collation-argument position (0-based):
+    /// <list type="bullet">
+    /// <item><c>distinct-values(seq, collation)</c> — arg 1</item>
+    /// <item><c>index-of(seq, search, collation)</c> — arg 2</item>
+    /// <item><c>max(seq, collation)</c> / <c>min(seq, collation)</c> — arg 1</item>
+    /// <item><c>compare(a, b, collation)</c> — arg 2; <c>deep-equal(a, b, collation)</c> — arg 2</item>
+    /// </list>
+    /// Only the collation argument is inspected here (the data arguments are handled by the
+    /// absorbing-classification above). A collation argument that does not navigate the input
+    /// (a literal URI, a variable, or absent) is left on the streaming path.
+    /// </summary>
+    private static bool CollationArgNavigatesInput(FunctionCallExpression fc)
+    {
+        if (fc.Name.Namespace != NamespaceId.None
+            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            return false;
+
+        int collationArgIndex = fc.Name.LocalName switch
+        {
+            "distinct-values" or "max" or "min" => 1,
+            "index-of" or "compare" or "deep-equal" => 2,
+            _ => -1,
+        };
+
+        return collationArgIndex >= 0
+            && fc.Arguments.Count > collationArgIndex
+            && NavigatesInput(fc.Arguments[collationArgIndex]);
     }
 
     private enum AbsorbingKind { None, NoWatcher, WatcherBacked }
