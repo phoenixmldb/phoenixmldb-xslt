@@ -405,6 +405,25 @@ internal sealed class StreamingXmlProcessor
                                     {
                                         foreach (var sub in matched)
                                         {
+                                            // Intermediate (non-leaf) child-axis predicate filter —
+                                            // forward-countable-positional (employee[1]) or motionless
+                                            // (department[@name='sales']) — evaluated against the matched
+                                            // leaf's ancestor (the leaf itself is NOT yet on
+                                            // _ancestorNames, so offset 1 == immediate parent, matching
+                                            // the watcher convention). A leaf whose ancestor fails the
+                                            // predicate is NOT part of the selected sequence, so this runs
+                                            // BEFORE NextSubscriptionMatchPosition — rejected leaves must
+                                            // not consume a position()/subsequence window index.
+                                            if (sub.IntermediatePredicates.Count > 0)
+                                            {
+                                                var ancSnaps = BuildSubscriptionIntermediateAncestors(sub.IntermediatePredicates);
+                                                if (ancSnaps is { Count: > 0 }
+                                                    && !await EvaluateIntermediateAncestorPredicatesAsync(ancSnaps).ConfigureAwait(false))
+                                                {
+                                                    continue;
+                                                }
+                                            }
+
                                             // Path-level match position (counts every element the
                                             // subscription path matches, before predicate filtering)
                                             // — the context position() for a positional filter
@@ -1440,6 +1459,97 @@ internal sealed class StreamingXmlProcessor
     };
 
     /// <summary>
+    /// Evaluates a set of intermediate (ancestor) element-step predicate snapshots —
+    /// forward-countable-positional (against the captured forward sibling position) or
+    /// motionless (against the ancestor's name + attributes) — and returns true only when
+    /// EVERY snapshot's predicates pass. Each ancestor is materialized as a lightweight
+    /// leaf element (no children) purely so the in-memory predicate-evaluation machinery
+    /// can run against a real XdmNode. Shared by the aggregation-watcher EndElement path
+    /// (<see cref="FireWatchersEndElement"/>) and the for-each subscription dispatch.
+    /// </summary>
+    private async ValueTask<bool> EvaluateIntermediateAncestorPredicatesAsync(
+        IReadOnlyList<IntermediateAncestorSnapshot> ancestors)
+    {
+        foreach (var anc in ancestors)
+        {
+            var ancElem = MaterializeLeafElement(anc.ElementName, anc.Attributes, string.Empty);
+            var prevStreaming = _context._isStreamingExecution;
+            _context._isStreamingExecution = false;
+            // For a forward-countable positional predicate, supply the ancestor's captured
+            // forward sibling position as the XPath context position so position()-based
+            // comparisons (e.g. position() lt 4) decide correctly. Motionless (non-positional)
+            // predicates keep the 1/1 context.
+            int ctxPos = anc.IsPositional ? anc.ContextPosition : 1;
+            _context.PushContextItem(ancElem, ctxPos, ctxPos);
+            _context.PushCurrentItem(ancElem);
+            bool pass = true;
+            try
+            {
+                foreach (var pred in anc.Predicates)
+                {
+                    bool ok;
+                    if (anc.IsPositional && pred is IntegerLiteral or DecimalLiteral or DoubleLiteral)
+                    {
+                        // A bare numeric predicate [N] is a positional shorthand for
+                        // position() = N. EvaluateBooleanAsync would instead return the
+                        // literal's effective boolean value (always true for non-zero),
+                        // so compare the position directly here.
+                        ok = NumericLiteralEqualsPosition(pred, anc.ContextPosition);
+                    }
+                    else
+                    {
+                        ok = await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false);
+                    }
+                    if (!ok) { pass = false; break; }
+                }
+            }
+            finally
+            {
+                _context.PopCurrentItem();
+                _context.PopContextItem();
+                _context._isStreamingExecution = prevStreaming;
+            }
+            if (!pass) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Builds <see cref="IntermediateAncestorSnapshot"/> records for a for-each
+    /// subscription's intermediate predicates from the CURRENT ancestor state
+    /// (<see cref="_ancestorNames"/>/<see cref="_ancestorAttributes"/>/<see cref="_ancestorPositions"/>),
+    /// captured at the matched leaf's StartElement — exactly the convention the watcher
+    /// path uses (offset 1 == immediate parent; the matched leaf has NOT yet been pushed).
+    /// Returns null when there is nothing to evaluate.
+    /// </summary>
+    private List<IntermediateAncestorSnapshot>? BuildSubscriptionIntermediateAncestors(
+        IReadOnlyList<StreamingExpressionScanner.IntermediatePredicate> intermediatePredicates)
+    {
+        if (intermediatePredicates.Count == 0) return null;
+        List<IntermediateAncestorSnapshot>? snapshots = null;
+        foreach (var ip in intermediatePredicates)
+        {
+            int idx = _ancestorNames.Count - ip.AncestorOffset;
+            if (idx < 0 || idx >= _ancestorNames.Count) continue;
+            int contextPos = 0;
+            if (ip.IsPositional && idx < _ancestorPositions.Count)
+            {
+                var pos = _ancestorPositions[idx];
+                contextPos = ip.IsWildcardStep ? pos.ElementPos : pos.NamePos;
+            }
+            (snapshots ??= []).Add(new IntermediateAncestorSnapshot
+            {
+                ElementName = _ancestorNames[idx],
+                Attributes = idx < _ancestorAttributes.Count ? _ancestorAttributes[idx] : null,
+                Predicates = ip.Predicates,
+                IsPositional = ip.IsPositional,
+                ContextPosition = contextPos
+            });
+        }
+        return snapshots;
+    }
+
+    /// <summary>
     /// Fires watchers for end element events (subtree tracking).
     /// </summary>
     private async ValueTask FireWatchersEndElement(string localName)
@@ -1537,50 +1647,8 @@ internal sealed class StreamingXmlProcessor
             // existing predicate-evaluation machinery can run against a real XdmNode.
             if (predicatesPass && entry.IntermediateAncestors is { Count: > 0 } ancestors)
             {
-                foreach (var anc in ancestors)
-                {
-                    var ancElem = MaterializeLeafElement(anc.ElementName, anc.Attributes, string.Empty);
-                    var prevStreaming = _context._isStreamingExecution;
-                    _context._isStreamingExecution = false;
-                    // For a forward-countable positional predicate, supply the ancestor's
-                    // captured forward sibling position as the XPath context position so
-                    // position()-based comparisons (e.g. position() lt 4) decide correctly.
-                    // Motionless (non-positional) predicates keep the 1/1 context.
-                    int ctxPos = anc.IsPositional ? anc.ContextPosition : 1;
-                    _context.PushContextItem(ancElem, ctxPos, ctxPos);
-                    _context.PushCurrentItem(ancElem);
-                    try
-                    {
-                        foreach (var pred in anc.Predicates)
-                        {
-                            bool ok;
-                            if (anc.IsPositional && pred is IntegerLiteral or DecimalLiteral or DoubleLiteral)
-                            {
-                                // A bare numeric predicate [N] is a positional shorthand
-                                // for position() = N. EvaluateBooleanAsync would instead
-                                // return the literal's effective boolean value (always true
-                                // for non-zero), so compare the position directly here.
-                                ok = NumericLiteralEqualsPosition(pred, anc.ContextPosition);
-                            }
-                            else
-                            {
-                                ok = await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false);
-                            }
-                            if (!ok)
-                            {
-                                predicatesPass = false;
-                                break;
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        _context.PopCurrentItem();
-                        _context.PopContextItem();
-                        _context._isStreamingExecution = prevStreaming;
-                    }
-                    if (!predicatesPass) break;
-                }
+                predicatesPass = await EvaluateIntermediateAncestorPredicatesAsync(ancestors)
+                    .ConfigureAwait(false);
             }
 
             if (!predicatesPass)

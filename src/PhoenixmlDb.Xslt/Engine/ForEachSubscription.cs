@@ -80,6 +80,19 @@ internal sealed class ForEachSubscription
         = System.Array.Empty<XQueryExpression>();
 
     /// <summary>
+    /// Forward-countable-positional (<c>employee[1]</c>) / motionless
+    /// (<c>department[@name='sales']</c>) predicates on intermediate (non-leaf)
+    /// child-axis element steps of the streamable path; evaluated against the matched
+    /// node's ancestor (located by <see cref="StreamingExpressionScanner.IntermediatePredicate.AncestorOffset"/>)
+    /// before the body is dispatched. The body only dispatches if EVERY intermediate
+    /// predicate passes. Mirrors <see cref="StreamWatcher.IntermediatePredicates"/>;
+    /// the scanner only emits forward-countable-positional or motionless predicates
+    /// (anything else rejects the whole path → buffered fallback, never silently dropped).
+    /// </summary>
+    public IReadOnlyList<StreamingExpressionScanner.IntermediatePredicate> IntermediatePredicates { get; init; }
+        = System.Array.Empty<StreamingExpressionScanner.IntermediatePredicate>();
+
+    /// <summary>
     /// 1-based start index of a <c>subsequence(path, start [, length])</c> wrapper
     /// around the streamable path (e.g. <c>subsequence(account/transaction, 1, 4)</c>).
     /// 1 (the default) means "no leading skip". The dispatcher only iterates matched

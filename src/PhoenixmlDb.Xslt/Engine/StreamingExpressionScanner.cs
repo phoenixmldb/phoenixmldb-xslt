@@ -1205,7 +1205,7 @@ internal sealed class StreamingExpressionScanner
             break;
         }
 
-        if (!TryDecomposeForEachSelect(select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates))
+        if (!TryDecomposeForEachSelect(select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates, out var intermediatePredicates))
             return;
 
         // A window slice combined with a mixed-sequence prefix/suffix is out of scope
@@ -1226,6 +1226,7 @@ internal sealed class StreamingExpressionScanner
             TextNodeTail = textNodeTail,
             AttributeName = attributeName,
             Predicates = predicates,
+            IntermediatePredicates = intermediatePredicates,
             SubsequenceStart = subseqStart,
             SubsequenceLength = subseqLength,
             RemoveIndex = removeIndex,
@@ -1374,7 +1375,7 @@ internal sealed class StreamingExpressionScanner
         // predicate, attribute tail). outermost() / descendant-axis (//) LEFT is NOT a
         // matchable PathExpression, so TryBuildPathMatcher returns null and we leave it
         // unregistered (separate watcher effort).
-        var matcher = TryBuildPathMatcher(left, out var textNodeTail, out var attributeName, out var predicates);
+        var matcher = TryBuildPathMatcher(left, out var textNodeTail, out var attributeName, out var predicates, out var intermediatePredicates);
         if (matcher == null) return false;
 
         // A peeled window over an attribute-tailed path atomizes per item; the per-item
@@ -1391,6 +1392,7 @@ internal sealed class StreamingExpressionScanner
             TextNodeTail = textNodeTail,
             AttributeName = attributeName,
             Predicates = predicates,
+            IntermediatePredicates = intermediatePredicates,
             SubsequenceStart = subseqStart,
             SubsequenceLength = subseqLength,
             RemoveIndex = removeIndex,
@@ -1497,7 +1499,8 @@ internal sealed class StreamingExpressionScanner
         out bool textNodeTail,
         out IReadOnlyList<XQueryExpression> suffix,
         out string? attributeName,
-        out IReadOnlyList<XQueryExpression> predicates)
+        out IReadOnlyList<XQueryExpression> predicates,
+        out IReadOnlyList<IntermediatePredicate> intermediatePredicates)
     {
         prefix = Array.Empty<XQueryExpression>();
         suffix = Array.Empty<XQueryExpression>();
@@ -1505,8 +1508,9 @@ internal sealed class StreamingExpressionScanner
         textNodeTail = false;
         attributeName = null;
         predicates = Array.Empty<XQueryExpression>();
+        intermediatePredicates = Array.Empty<IntermediatePredicate>();
 
-        var singleMatcher = TryBuildPathMatcher(select, out textNodeTail, out attributeName, out predicates);
+        var singleMatcher = TryBuildPathMatcher(select, out textNodeTail, out attributeName, out predicates, out intermediatePredicates);
         if (singleMatcher != null)
         {
             path = singleMatcher;
@@ -1515,6 +1519,7 @@ internal sealed class StreamingExpressionScanner
         textNodeTail = false;
         attributeName = null;
         predicates = Array.Empty<XQueryExpression>();
+        intermediatePredicates = Array.Empty<IntermediatePredicate>();
 
         // AST uses SequenceExpression with Items property for comma sequences.
         if (select is not SequenceExpression seq) return false;
@@ -1524,7 +1529,7 @@ internal sealed class StreamingExpressionScanner
         int streamableIndex = -1;
         for (int i = 0; i < operands.Count; i++)
         {
-            var inner = TryBuildPathMatcher(operands[i], out var innerTail, out var innerAttr, out var innerPreds);
+            var inner = TryBuildPathMatcher(operands[i], out var innerTail, out var innerAttr, out var innerPreds, out var innerInterPreds);
             if (inner == null) continue;
             if (streamableIndex >= 0) return false; // more than one streamable operand
             streamableIndex = i;
@@ -1532,6 +1537,7 @@ internal sealed class StreamingExpressionScanner
             textNodeTail = innerTail;
             attributeName = innerAttr;
             predicates = innerPreds;
+            intermediatePredicates = innerInterPreds;
         }
         if (streamableIndex < 0) return false;
 
@@ -1573,11 +1579,22 @@ internal sealed class StreamingExpressionScanner
     /// (signaled via <paramref name="textNodeTail"/>). Returns null for any
     /// other shape so the buffered execution path can handle it.
     /// </summary>
-    private static StreamPathMatcher? TryBuildPathMatcher(XQueryExpression select, out bool textNodeTail, out string? attributeName, out IReadOnlyList<XQueryExpression> predicates)
+    private static StreamPathMatcher? TryBuildPathMatcher(
+        XQueryExpression select,
+        out bool textNodeTail,
+        out string? attributeName,
+        out IReadOnlyList<XQueryExpression> predicates,
+        out IReadOnlyList<IntermediatePredicate> intermediatePredicates)
     {
         textNodeTail = false;
         attributeName = null;
         predicates = Array.Empty<XQueryExpression>();
+        intermediatePredicates = Array.Empty<IntermediatePredicate>();
+        // Captured (forward-countable-positional / motionless) predicates on intermediate
+        // (non-leaf) child-axis element steps, paired with the part index they occupy in
+        // `parts` so the ancestor offset (levels above the matched leaf) can be derived
+        // once the full element-step count is known.
+        List<(int PartIndex, IReadOnlyList<XQueryExpression> Predicates, bool IsPositional, bool IsWildcard)>? capturedIntermediate = null;
         // Peek through fn:data(path) — for untyped nodes, data() returns the string value
         // which equals what value-of/sequence emits for the node directly, so unwrapping
         // is semantically safe when the body just reads the context item.
@@ -1634,15 +1651,41 @@ internal sealed class StreamingExpressionScanner
             // DEFERRED — it needs the non-consuming watcher mechanism, not this one.
             if (step.Axis != Axis.Child) return null;
 
-            // Predicates: only allowed on the step that supplies the matched element
-            // context — i.e., the last step OR the step immediately before an
-            // attribute-tail step. Reject predicates on any earlier step.
+            // Predicates: the step that supplies the matched element context — i.e., the
+            // last element step OR the step immediately before an attribute-tail step —
+            // carries the final-step Predicates (last-step path, unchanged). A predicate
+            // on an EARLIER (intermediate, non-leaf) child-axis element step is captured
+            // as an IntermediatePredicate ONLY when it is forward-countable-positional
+            // (employee[1]) or motionless against the ancestor (department[@name='sales']);
+            // it is evaluated in the subscription dispatch against the matched node's
+            // ancestor before the body fires. A predicate that is NEITHER stays REJECTED
+            // (return null → buffered fallback) — never silently dropped.
             if (step.Predicates.Count > 0)
             {
                 bool isLastElementStep = isLastStep
                     || (i == path.Steps.Count - 2 && path.Steps[i + 1].Axis == Axis.Attribute);
-                if (!isLastElementStep) return null;
-                predicates = step.Predicates;
+                if (isLastElementStep)
+                {
+                    predicates = step.Predicates;
+                }
+                else
+                {
+                    // Intermediate (non-leaf) child-axis element-step predicate. `parts.Count`
+                    // is the index this step will occupy once added below.
+                    bool wildcardStep = step.NodeTest is NameTest ntw && ntw.IsLocalNameWildcard;
+                    if (ArePredicatesMotionlessAgainstAncestor(step.Predicates))
+                    {
+                        (capturedIntermediate ??= []).Add((parts.Count, step.Predicates, false, wildcardStep));
+                    }
+                    else if (ArePredicatesForwardCountablePositional(step.Predicates))
+                    {
+                        (capturedIntermediate ??= []).Add((parts.Count, step.Predicates, true, wildcardStep));
+                    }
+                    else
+                    {
+                        return null; // neither forward-countable-positional nor motionless
+                    }
+                }
             }
 
             // text() KindTest is acceptable only as the LAST step.
@@ -1670,6 +1713,24 @@ internal sealed class StreamingExpressionScanner
         }
 
         if (parts.Count == 0) return null;
+
+        // The matched leaf element is the LAST element-name part. An intermediate
+        // predicate captured at part index `p` sits (parts.Count-1 - p) element levels
+        // above the leaf — the IntermediatePredicate.AncestorOffset convention (1 ==
+        // immediate parent), matching how the subscription dispatch indexes _ancestorNames
+        // (idx = _ancestorNames.Count - AncestorOffset) at the matched leaf's StartElement.
+        if (capturedIntermediate is { Count: > 0 })
+        {
+            int leafIndex = parts.Count - 1;
+            var ips = new List<IntermediatePredicate>(capturedIntermediate.Count);
+            foreach (var (partIndex, preds, isPositional, isWildcard) in capturedIntermediate)
+            {
+                int ancestorOffset = leafIndex - partIndex;
+                ips.Add(new IntermediatePredicate(ancestorOffset, preds, isPositional, isWildcard));
+            }
+            intermediatePredicates = ips;
+        }
+
         return new StreamPathMatcher(string.Join("/", parts));
     }
 }
