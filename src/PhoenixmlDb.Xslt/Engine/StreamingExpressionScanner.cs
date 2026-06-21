@@ -357,6 +357,32 @@ internal sealed class StreamingExpressionScanner
                 }
                 break;
 
+            // Group A — wrapped head/outermost/remove aggregation. A top-level
+            // FilterExpression whose Primary is head/outermost/remove over a
+            // streamable downward/descendant path, with outer positional
+            // predicates. Register ONE watcher keyed to the WHOLE FilterExpression
+            // (so TryResolveFromWatchers' reference match succeeds), accumulating
+            // the inner function's result on the forward pass; the outer predicates
+            // are applied to the grounded sequence at resolve. innermost is
+            // recognized only to NOT register (it needs descendant lookahead).
+            case FilterExpression filt
+                when filt.Predicates.Count > 0
+                    && TryExtractWrappedAggregation(filt.Primary) is { } wrapped:
+                _watchers.Add(new StreamWatcher
+                {
+                    SourceExpression = expr,
+                    PathMatcher = new StreamPathMatcher(wrapped.Path.Path),
+                    Aggregation = wrapped.Aggregation,
+                    ValueAttribute = wrapped.Path.Attribute,
+                    Predicates = wrapped.Path.Predicates,
+                    IntermediatePredicates = wrapped.Path.IntermediatePredicates,
+                    OuterPredicates = filt.Predicates,
+                    RemoveSkipIndex = wrapped.RemoveSkipIndex,
+                    Outermost = wrapped.Outermost,
+                    TextNodeTail = wrapped.Path.TextNodeTail
+                });
+                return;
+
             // Map constructor — scan each entry value
             case MapConstructor map:
                 foreach (var entry in map.Entries)
@@ -531,6 +557,58 @@ internal sealed class StreamingExpressionScanner
     }
 
     /// <summary>
+    /// Group A: the inner consuming function of a wrapped aggregation, decomposed.
+    /// </summary>
+    internal readonly record struct WrappedAggregation(
+        ExtractedPath Path,
+        WatcherAggregation Aggregation,
+        bool Outermost,
+        int? RemoveSkipIndex);
+
+    /// <summary>
+    /// Group A: recognizes <c>head(path)</c> / <c>outermost(path)</c> /
+    /// <c>remove(path, n)</c> over a streamable downward/descendant path as the inner
+    /// of a wrapped aggregation. Returns the extracted path plus the watcher
+    /// aggregation (Head for head; Snapshot for outermost/remove), the outermost
+    /// flag, and the remove skip-index. <c>innermost</c> is rejected (it needs
+    /// descendant lookahead) by returning null — so the wrapper falls through and
+    /// stays in the streaming baseline.
+    /// </summary>
+    private static WrappedAggregation? TryExtractWrappedAggregation(XQueryExpression inner)
+    {
+        if (inner is not FunctionCallExpression fc) return null;
+        if (fc.Name.Namespace != NamespaceId.None
+            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            return null;
+
+        switch (fc.Name.LocalName)
+        {
+            case "head" when fc.Arguments.Count == 1:
+            {
+                var p = ExtractPathFromArgument(fc.Arguments[0]);
+                if (p == null) return null;
+                return new WrappedAggregation(p.Value, WatcherAggregation.Head, Outermost: false, RemoveSkipIndex: null);
+            }
+            case "outermost" when fc.Arguments.Count == 1:
+            {
+                var p = ExtractPathFromArgument(fc.Arguments[0]);
+                if (p == null) return null;
+                return new WrappedAggregation(p.Value, WatcherAggregation.Snapshot, Outermost: true, RemoveSkipIndex: null);
+            }
+            case "remove" when fc.Arguments.Count == 2:
+            {
+                if (!TryConstantInt(fc.Arguments[1], out var n) || n < 1) return null;
+                var p = ExtractPathFromArgument(fc.Arguments[0]);
+                if (p == null) return null;
+                return new WrappedAggregation(p.Value, WatcherAggregation.Snapshot, Outermost: false, RemoveSkipIndex: n);
+            }
+            // innermost — recognized only to NOT register (returns null).
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
     /// Recognizes a SimpleMap whose deep-left source is a downward PathExpression
     /// and whose every subsequent step is a per-item atomic operation on the
     /// context item. Handles chains like <c>path!xs:NMTOKENS(.)!xs:decimal(.)</c>
@@ -633,7 +711,8 @@ internal sealed class StreamingExpressionScanner
         string Path,
         string? Attribute,
         IReadOnlyList<XQueryExpression> Predicates,
-        IReadOnlyList<IntermediatePredicate> IntermediatePredicates);
+        IReadOnlyList<IntermediatePredicate> IntermediatePredicates,
+        bool TextNodeTail = false);
 
     /// <summary>
     /// A motionless predicate carried by an ancestor (intermediate) element step of
@@ -673,6 +752,7 @@ internal sealed class StreamingExpressionScanner
         // Complex expressions (predicates, descendant-or-self) fall through to null.
         var parts = new List<string>();
         string? attribute = null;
+        bool textNodeTail = false;
         IReadOnlyList<XQueryExpression> predicates = Array.Empty<XQueryExpression>();
         List<IntermediatePredicate>? intermediatePredicates = null;
 
@@ -697,11 +777,15 @@ internal sealed class StreamingExpressionScanner
                     int lastElementStepIdx = -1;
                     for (int si = pathExpr.Steps.Count - 1; si >= 0; si--)
                     {
-                        if (pathExpr.Steps[si].Axis != Axis.Attribute)
-                        {
-                            lastElementStepIdx = si;
-                            break;
-                        }
+                        var endStep = pathExpr.Steps[si];
+                        // Skip a trailing attribute step or a trailing text() KindTest
+                        // (//PRICE/text()): the matched-element step is the one above.
+                        if (endStep.Axis == Axis.Attribute) continue;
+                        if (endStep.NodeTest is KindTest tk
+                            && tk.Kind == XdmNodeKind.Text && tk.Name == null && tk.TypeName == null)
+                            continue;
+                        lastElementStepIdx = si;
+                        break;
                     }
                     // Count element-axis steps so an intermediate predicate's ancestor
                     // offset (levels above the matched leaf) can be derived. Also detect
@@ -728,6 +812,35 @@ internal sealed class StreamingExpressionScanner
                         }
                         else if (step.Axis == Axis.Child)
                         {
+                            // text() KindTest tail (e.g. //PRICE/text()): the leaf
+                            // match is still the parent element step; record the
+                            // text-node tail so the watcher consumer atomizes text
+                            // content. Don't add a path part (the matcher keys on
+                            // elements). Only valid as the last step.
+                            if (step.NodeTest is KindTest ktTail
+                                && ktTail.Kind == XdmNodeKind.Text
+                                && ktTail.Name == null
+                                && ktTail.TypeName == null)
+                            {
+                                if (si == pathExpr.Steps.Count - 1)
+                                {
+                                    textNodeTail = true;
+                                    // Predicates on the text() tail (e.g.
+                                    // PAGES/text()[. < 1000][. > 0]) filter the
+                                    // leaf's text value — the leaf's string value
+                                    // equals the text node's value, so capture them
+                                    // as the final-step predicates (preserving the
+                                    // historical aggregation-filter behavior). Only do
+                                    // so when the matched element step (e.g.
+                                    // b[@type='X']/text()[…]) hasn't already supplied a
+                                    // final-step predicate, so the element predicate is
+                                    // not silently overwritten by the text-tail one.
+                                    if (step.Predicates.Count > 0 && predicates.Count == 0)
+                                        predicates = step.Predicates;
+                                    continue;
+                                }
+                                return null; // text() not at tail — unsupported
+                            }
                             if (step.NodeTest is NameTest nameTest)
                             {
                                 if (pendingDescendant)
@@ -838,7 +951,8 @@ internal sealed class StreamingExpressionScanner
             string.Join("/", parts),
             attribute,
             predicates,
-            (IReadOnlyList<IntermediatePredicate>?)intermediatePredicates ?? Array.Empty<IntermediatePredicate>());
+            (IReadOnlyList<IntermediatePredicate>?)intermediatePredicates ?? Array.Empty<IntermediatePredicate>(),
+            textNodeTail);
     }
 
     /// <summary>

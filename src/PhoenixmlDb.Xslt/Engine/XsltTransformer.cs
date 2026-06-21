@@ -4590,6 +4590,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Try to resolve an expression (or its sub-expressions) from watcher results.
     /// Handles direct matches and map constructors with watcher entry values.
     /// </summary>
+    /// <summary>
+    /// Group A: returns the watcher whose <c>SourceExpression</c> is exactly
+    /// <paramref name="expr"/> (reference identity), or null. Used by the resolve
+    /// path to surface a wrapped-aggregation watcher carrying an outer op
+    /// (predicates / SimpleMap RIGHT) to apply to the grounded accumulated sequence.
+    /// </summary>
+    private static StreamWatcher? FindDirectWatcher(
+        PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
+        IReadOnlyList<StreamWatcher> watchers)
+    {
+        foreach (var watcher in watchers)
+            if (ReferenceEquals(expr, watcher.SourceExpression))
+                return watcher;
+        return null;
+    }
+
     private static (bool Resolved, object? Value) TryResolveFromWatchers(
         PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
         IReadOnlyList<StreamWatcher> watchers)
@@ -4977,6 +4993,75 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         return working;
     }
+
+    /// <summary>
+    /// Group A: applies a wrapped-aggregation watcher's stored outer op to its
+    /// grounded accumulated sequence. The sequence is fully materialized in memory
+    /// (inner head/outermost/remove result + outermost-dedup + remove-skip), so the
+    /// outer SimpleMap RIGHT or positional predicates run via the existing per-item
+    /// evaluator with correct <c>position()</c>/<c>last()</c>. Returns an
+    /// <c>object[]</c> (the grounded result) for <c>value-of</c>/<c>copy-of</c> to emit.
+    /// </summary>
+    private async ValueTask<object?> ApplyWrappedOuterOpAsync(StreamWatcher watcher)
+    {
+        var working = new List<object?>();
+        foreach (var it in watcher.ProduceAccumulated())
+            working.Add(it);
+
+        // SimpleMap RIGHT: apply per item, flattening (mirrors ApplySimpleMapTailAsync).
+        if (watcher.OuterSimpleMapRight is { } right)
+        {
+            var next = new List<object?>();
+            for (var i = 0; i < working.Count; i++)
+            {
+                PushContextItem(working[i], i + 1, working.Count);
+                try
+                {
+                    var stepResult = await EvaluateAsync(right).ConfigureAwait(false);
+                    AppendFlattened(next, stepResult);
+                }
+                finally { PopContextItem(); }
+            }
+            return next.ToArray();
+        }
+
+        // Positional predicates: apply each left-to-right against the grounded
+        // sequence, re-counting between predicates so position()/last() are correct.
+        foreach (var pred in watcher.OuterPredicates)
+        {
+            var kept = new List<object?>();
+            var count = working.Count;
+            for (var i = 0; i < working.Count; i++)
+            {
+                PushContextItem(working[i], i + 1, count);
+                try
+                {
+                    // A bare numeric literal [N] means position() = N; the generic
+                    // EvaluateBooleanAsync would return the literal's effective boolean
+                    // (always true for non-zero), so handle it positionally here.
+                    bool ok = IsNumericLiteral(pred)
+                        ? NumericLiteralEqualsPosition(pred, i + 1)
+                        : await EvaluateBooleanAsync(pred).ConfigureAwait(false);
+                    if (ok) kept.Add(working[i]);
+                }
+                finally { PopContextItem(); }
+            }
+            working = kept;
+        }
+
+        return working.ToArray();
+    }
+
+    private static bool IsNumericLiteral(XQueryExpression e) =>
+        e is IntegerLiteral or DecimalLiteral or DoubleLiteral;
+
+    private static bool NumericLiteralEqualsPosition(XQueryExpression lit, int position) => lit switch
+    {
+        IntegerLiteral i => i.LongValue is { } l && l == position,
+        DecimalLiteral d => d.Value == position,
+        DoubleLiteral db => db.Value == position,
+        _ => false
+    };
 
     private async ValueTask<List<object?>> EvaluateToListAsync(XQueryExpression expr)
     {
@@ -10486,6 +10571,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // nested matches (expr contains watcher sub-expressions, e.g., map entries).
         if (_activeStreamWatchers != null)
         {
+            // Group A — wrapped head/outermost/remove aggregation. When the whole
+            // select is a watched wrapper carrying an outer op (positional
+            // predicates / SimpleMap RIGHT), apply that op to the grounded
+            // accumulated sequence (inner result + outermost-dedup + remove-skip)
+            // via the existing per-item evaluator, and return the post-processed
+            // grounded sequence for emission.
+            var directWatcher = FindDirectWatcher(expr, _activeStreamWatchers);
+            if (directWatcher != null
+                && (directWatcher.OuterPredicates.Count > 0 || directWatcher.OuterSimpleMapRight != null))
+            {
+                return await ApplyWrappedOuterOpAsync(directWatcher).ConfigureAwait(false);
+            }
+
             var watcherResult = TryResolveFromWatchers(expr, _activeStreamWatchers);
             if (watcherResult.Resolved)
                 return watcherResult.Value;

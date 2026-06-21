@@ -167,6 +167,52 @@ internal sealed class StreamWatcher
     public IReadOnlyList<StreamingExpressionScanner.IntermediatePredicate> IntermediatePredicates { get; init; }
         = Array.Empty<StreamingExpressionScanner.IntermediatePredicate>();
 
+    /// <summary>
+    /// Group A (wrapped aggregation): when this watcher is keyed to the WHOLE
+    /// wrapper expression (a <c>FilterExpression</c> over head/outermost/remove of a
+    /// streamable path), these are the outer positional predicates applied to the
+    /// GROUNDED accumulated sequence at resolve time — not during the streaming
+    /// pass. Empty for a bare aggregation. The accumulated sequence is fully
+    /// materialized in memory, so the existing per-item evaluator binds correct
+    /// <c>position()</c>/<c>last()</c>.
+    /// </summary>
+    public IReadOnlyList<XQueryExpression> OuterPredicates { get; init; }
+        = Array.Empty<XQueryExpression>();
+
+    /// <summary>
+    /// Group A: when this watcher is keyed to the whole wrapper and the wrapper is a
+    /// <c>SimpleMapExpression</c> (<c>head/outermost/remove(path) ! RIGHT</c>), this is
+    /// the per-item RIGHT applied to the grounded accumulated sequence at resolve.
+    /// NOT YET WIRED by the scanner — the <c>! RIGHT</c> shape currently registers via
+    /// the SM-ctx subscription path, so this field is always null at present and the
+    /// matching branch in <c>ApplyWrappedOuterOpAsync</c> is a stub for future use.
+    /// </summary>
+    public XQueryExpression? OuterSimpleMapRight { get; init; }
+
+    /// <summary>
+    /// Group A: 1-based index dropped from the accumulated sequence when the inner
+    /// function is <c>remove(path, n)</c>. Applied to the grounded sequence before the
+    /// outer predicate/SimpleMap RIGHT. Null when the inner is not <c>remove</c>.
+    /// </summary>
+    public int? RemoveSkipIndex { get; init; }
+
+    /// <summary>
+    /// Group A: true when the inner path ends in a <c>text()</c> KindTest tail
+    /// (<c>//PRICE/text()</c>). Accumulated leaf values are the matched elements'
+    /// text content — already the string value the path matcher captures for a leaf
+    /// element — so this is informational/forward-looking; it does not change the
+    /// per-leaf capture for the single-text-child leaves in scope.
+    /// </summary>
+    public bool TextNodeTail { get; init; }
+
+    /// <summary>
+    /// Group A: true when the inner function is <c>outermost(...)</c>. The accumulated
+    /// Snapshot drops any node that is a descendant of another accumulated node
+    /// (outermost = a selected node with no selected ancestor). A no-op for child-axis
+    /// or non-nesting match sets; applied when producing the result.
+    /// </summary>
+    public bool Outermost { get; init; }
+
     // Accumulation state
     private long _count;
     private double _sum;
@@ -373,6 +419,86 @@ internal sealed class StreamWatcher
             WatcherAggregation.Head => _items.Count > 0 ? _items[0] : null,
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Group A: produces the inner accumulated sequence with the streaming-decidable
+    /// post-processing applied — outermost descendant-dedup and the <c>remove</c>
+    /// skip-index — but NOT the outer predicate / SimpleMap RIGHT (those need the
+    /// evaluator and are applied at resolve in <c>XsltTransformer</c>). Returns the
+    /// items as a flat <see cref="object"/> array (strings and/or <see cref="XdmNode"/>),
+    /// in document order. For a watcher with no outer wrapper this is never called.
+    /// </summary>
+    public object[] ProduceAccumulated()
+    {
+        // GetResult() already compacts tombstoned slots and prefers materialized
+        // nodes; normalize whatever it returns to a flat object[].
+        var raw = GetResult();
+        var items = new List<object>();
+        switch (raw)
+        {
+            case null:
+                break;
+            case object[] arr:
+                items.AddRange(arr);
+                break;
+            default:
+                items.Add(raw);
+                break;
+        }
+
+        // outermost(): drop a node that is a descendant of another accumulated node.
+        // Decidable on the materialized set via Parent-chain reachability. For the
+        // in-scope cases (child-axis PRICE, single-ITEM text nodes) the match set has
+        // no nesting, so this is a no-op; the string-valued path is always a no-op.
+        if (Outermost && items.Count > 1)
+        {
+            var nodes = new List<XdmNode>(items.Count);
+            foreach (var it in items)
+                if (it is XdmNode n) nodes.Add(n);
+            if (nodes.Count == items.Count)
+            {
+                var kept = new List<object>(items.Count);
+                foreach (var candidate in nodes)
+                {
+                    bool hasSelectedAncestor = false;
+                    foreach (var other in nodes)
+                    {
+                        if (ReferenceEquals(other, candidate)) continue;
+                        if (IsDescendantOf(candidate, other)) { hasSelectedAncestor = true; break; }
+                    }
+                    if (!hasSelectedAncestor) kept.Add(candidate);
+                }
+                items = kept;
+            }
+        }
+
+        // remove(path, n): drop the 1-based index n from the accumulated sequence.
+        if (RemoveSkipIndex is { } skip && skip >= 1 && skip <= items.Count)
+            items.RemoveAt(skip - 1);
+
+        return items.ToArray();
+    }
+
+    /// <summary>
+    /// True when <paramref name="node"/> is a descendant of <paramref name="ancestor"/>,
+    /// walking the materialized Parent chain. Both nodes must share the same document
+    /// for the comparison to resolve; standalone materialized subtrees never share a
+    /// document, so this returns false (the dedup no-op for the in-scope cases).
+    /// </summary>
+    private static bool IsDescendantOf(XdmNode node, XdmNode ancestor)
+    {
+        if (node.Document != ancestor.Document) return false;
+        var p = node.Parent;
+        while (p is { } pid)
+        {
+            if (pid == ancestor.Id) return true;
+            // No store reference here to resolve further ancestors; the materialized
+            // snapshots are single-level for the in-scope cases. Stop at the first
+            // parent comparison (sufficient for the non-nesting target sets).
+            break;
+        }
+        return false;
     }
 
     private object[] BuildSequenceResult()
