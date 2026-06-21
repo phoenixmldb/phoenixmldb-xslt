@@ -1,5 +1,17 @@
 # Release History
 
+## 1.4.13 (2026-06-21)
+
+Streaming error reporting. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. No API changes.
+
+### Fix: XTSE3430 surfaces for a striding-union-then-step select under streaming
+
+A streamable select that unions two striding paths and then takes a step — `(/BOOKLIST/ITEM | /BOOKLIST/MAGAZINE)/PRICE` — is not guaranteed streamable (the union of two striding expressions is crawling). The engine already classified this as XTSE3430 at compile time, but when the stylesheet was invoked through a named initial template the streamable-mode fast path skipped the template and never reached the point where the deferred error is raised, so the transform silently produced no output. The error now surfaces. Stylesheets whose streamed input belongs to an inner `xsl:source-document` continue to stream normally.
+
+### Fix: unknown collation raises FOCH0002 under streaming
+
+`fn:distinct-values`, `fn:max`, `fn:min`, and `fn:index-of` raise `FOCH0002` for an unknown collation URI. When the collation argument was an expression navigating the streamed input (e.g. `distinct-values($seq, /special/unknownCollation)`), under streaming that argument evaluated to nothing and the call silently fell back to codepoint collation instead of erroring. Such a call now resolves its collation argument against the input and raises `FOCH0002`, matching non-streaming behaviour. Calls with a grounded or absent collation argument are unaffected.
+
 ## 1.4.12 (2026-06-19)
 
 Grouping fix + streaming correctness. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. No API changes.

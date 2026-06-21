@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.12</Version>
+    <Version>1.4.13</Version>
     <PackageReleaseNotes>
-      Fix (Martin Honnen): xsl:for-each-group with group-by — an item whose group-by expression atomizes to the empty sequence now contributes no grouping key and joins no group (previously the engine formed a single group with an empty grouping key). Streaming: a consuming expression placed inside surrounding constructed output now streams in place rather than dropping the wrapper or iterating empty — covers a consuming xsl:for-each / xsl:apply-templates wrapped in literal result elements or xsl:if/xsl:choose, and per-item consuming operators and functions in a simple-map (treat/instance-of, union/except/intersect, sequence, square-array, head/tail/remove/subsequence over a streamed path). Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. See RELEASES.md for full notes.
+      Streaming error reporting: a streamable select that unions two striding paths and then takes a step (e.g. (/A | /B)/PRICE) now reports the XTSE3430 streamability error instead of silently producing no output, and an unknown collation supplied to fn:distinct-values/max/min/index-of via an input-navigating argument now raises FOCH0002 under streaming as it does without streaming. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
