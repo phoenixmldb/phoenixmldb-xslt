@@ -347,6 +347,21 @@ internal sealed class StreamingXmlProcessor
                             FireWatchers(current.LocalName, attrDict, null);
                         }
 
+                        // Group B — non-consuming inspection subscriptions. An
+                        // inspection for-each over outermost(//X) / //X with an
+                        // inspection-only body dispatches the body per match against an
+                        // ancestor-synthesized snapshot WITHOUT materializing/skipping
+                        // the subtree (mirrors FireWatchers' observe-at-StartElement
+                        // model), so the forward pass continues into descendants where
+                        // deeper //X matches still fire. Runs BEFORE the consuming
+                        // materialize-and-skip block (which would otherwise swallow the
+                        // subtree) and never breaks.
+                        if (_subscriptions != null && _subscriptions.Count > 0)
+                        {
+                            await DispatchInspectionSubscriptionsAsync(current.LocalName, attrs)
+                                .ConfigureAwait(false);
+                        }
+
                         // Dispatch for-each subscriptions whose path matches this element.
                         // Multiple subscriptions may match the same element; materialize the
                         // subtree once and execute each matching body against the snapshot.
@@ -358,6 +373,7 @@ internal sealed class StreamingXmlProcessor
                             List<ForEachSubscription>? matched = null;
                             foreach (var sub in _subscriptions)
                             {
+                                if (sub.IsInspectionOnly) continue; // handled non-consuming above
                                 if (sub.PathMatcher.Matches(_ancestorNames, current.LocalName))
                                 {
                                     (matched ??= new List<ForEachSubscription>()).Add(sub);
@@ -1048,6 +1064,105 @@ internal sealed class StreamingXmlProcessor
     }
 
     /// <summary>
+    /// Group B non-consuming dispatch. For each inspection subscription whose path
+    /// matches the element just opened (<paramref name="localName"/> with the live
+    /// ancestor stack), dispatch the inspection-only body against a lightweight
+    /// ancestor-synthesized snapshot WITHOUT materializing or skipping the subtree —
+    /// so the forward pass continues into descendants where deeper <c>//X</c> matches
+    /// still fire. <c>outermost(...)</c> dedup is decided immediately from the live
+    /// ancestor stack: a match is skipped when any ancestor also matches the pattern.
+    /// <para>
+    /// Called at StartElement BEFORE the current element is pushed onto
+    /// <see cref="_ancestorNames"/>, so the snapshot's synthesized ancestors are
+    /// exactly this element's ancestors and the outermost check inspects only
+    /// strictly-containing elements.
+    /// </para>
+    /// </summary>
+    private async ValueTask DispatchInspectionSubscriptionsAsync(
+        string localName, List<StreamingNodeContext>? attrs)
+    {
+        if (_subscriptions == null) return;
+
+        List<ForEachSubscription>? matched = null;
+        foreach (var sub in _subscriptions)
+        {
+            if (!sub.IsInspectionOnly) continue;
+            if (!sub.PathMatcher.Matches(_ancestorNames, localName)) continue;
+
+            // Outermost dedup: skip if a strictly-containing ancestor also matches
+            // the pattern (decided from the live ancestor stack — no buffering).
+            if (sub.Outermost && AncestorMatchesPattern(sub.PathMatcher))
+                continue;
+
+            (matched ??= new List<ForEachSubscription>()).Add(sub);
+        }
+        if (matched == null) return;
+
+        // Build the matched element's inspection snapshot once: local-name +
+        // attributes, empty children (descendants are NOT consumed), with its
+        // ancestor chain synthesized from the live stack so upward navigation
+        // (parent axis, ancestor::, ancestor-or-self::) resolves.
+        //
+        // Synthesize the ancestor chain FIRST so its nodes (and their attributes)
+        // receive LOWER NodeIds than the matched element and its attributes — the
+        // engine sorts union (`|`) results by ascending NodeId to realize document
+        // order, so an ancestor's @OWNER/@CAT must precede the self element's @UNIT
+        // (sx-union-137). LinkSnapshotAncestors alone (called after the leaf) would
+        // invert that ordering.
+        var attrDict = BuildAttrDict(attrs);
+        var parentId = SynthesizeAncestorChain();
+        var snapshot = MaterializeLeafElement(localName, attrDict, string.Empty);
+        snapshot.Parent = parentId;
+
+        // The body executes against a buffered snapshot, not the live reader —
+        // clear the streaming flag so any in-memory navigation uses the normal path.
+        var prevStreaming = _context._isStreamingExecution;
+        _context._isStreamingExecution = false;
+        try
+        {
+            foreach (var sub in matched)
+            {
+                _context.PushContextItem(snapshot, NextSubscriptionPosition(sub), 1);
+                _context.PushCurrentItem(snapshot);
+                try
+                {
+                    if (sub.PerItemSelect != null)
+                        await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
+                    else
+                        await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _context.PopCurrentItem();
+                    _context.PopContextItem();
+                }
+            }
+        }
+        finally
+        {
+            _context._isStreamingExecution = prevStreaming;
+        }
+    }
+
+    /// <summary>
+    /// True when some element currently on <see cref="_ancestorNames"/> (a strict
+    /// ancestor of the element just opened) satisfies <paramref name="matcher"/>.
+    /// Used for <c>outermost(...)</c> dedup: a match nested inside another match is
+    /// not outermost and is skipped. Each ancestor depth <c>i</c> is tested with the
+    /// names above it as its own ancestor stack and its own name as the current name.
+    /// </summary>
+    private bool AncestorMatchesPattern(StreamPathMatcher matcher)
+    {
+        for (int i = 0; i < _ancestorNames.Count; i++)
+        {
+            var prefix = _ancestorNames.GetRange(0, i);
+            if (matcher.Matches(prefix, _ancestorNames[i]))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Sets <paramref name="snapshot"/>'s Parent to a synthesized ancestor chain
     /// reconstructed from the currently-open stream elements (<see cref="_ancestorNames"/>
     /// and <see cref="_ancestorAttributes"/>, outermost first). Each synthesized
@@ -1060,7 +1175,21 @@ internal sealed class StreamingXmlProcessor
     /// </summary>
     private void LinkSnapshotAncestors(XdmElement snapshot)
     {
-        if (_ancestorNames.Count == 0) return;
+        snapshot.Parent = SynthesizeAncestorChain();
+    }
+
+    /// <summary>
+    /// Synthesizes the ancestor chain from the currently-open stream elements
+    /// (<see cref="_ancestorNames"/>/<see cref="_ancestorAttributes"/>, outermost
+    /// first) and returns the innermost ancestor's <see cref="NodeId"/> (the Parent
+    /// to assign to a matched-element snapshot), or <c>null</c> when there are no
+    /// open ancestors. Outermost ancestors are registered first so they receive the
+    /// lowest NodeIds — which the engine uses as the document-order key for union
+    /// (<c>|</c>) and other set operations.
+    /// </summary>
+    private NodeId? SynthesizeAncestorChain()
+    {
+        if (_ancestorNames.Count == 0) return null;
 
         var documentId = new DocumentId(0);
         NodeId? parentId = null;
@@ -1103,7 +1232,7 @@ internal sealed class StreamingXmlProcessor
             _nodeStore.Register(ancestor);
             parentId = ancestorId;
         }
-        snapshot.Parent = parentId;
+        return parentId;
     }
 
     private static Dictionary<string, string>? BuildAttrDict(List<StreamingNodeContext>? attrs)

@@ -110,4 +110,24 @@ internal sealed class ForEachSubscription
     /// uses the forward-pass subscription-dispatch path unchanged.
     /// </summary>
     public bool InlineDriven { get; init; }
+
+    /// <summary>
+    /// Non-consuming dispatch (Group B): the matched node's body inspects
+    /// ancestors/ancestor-or-self/parent/self/attributes only (plus atomize and
+    /// set-ops over those) — it never descends into the matched node's subtree.
+    /// The processor dispatches the body per match against an ancestor-synthesized
+    /// snapshot WITHOUT materializing/skipping the subtree, so the forward pass
+    /// continues into descendants where deeper <c>//X</c> matches still fire.
+    /// Registered ONLY when the body is provably inspection-only
+    /// (<c>BodyConsumptionDetector.Consumes == false</c>) — the soundness guard.
+    /// </summary>
+    public bool IsInspectionOnly { get; init; }
+
+    /// <summary>
+    /// From <c>outermost(...)</c>: a match is skipped when an ancestor on the live
+    /// stack also matches the subscription's pattern (decided immediately from the
+    /// ancestor stack — no buffering). For a bare descendant path (<c>//X</c>) this
+    /// is false and every match dispatches.
+    /// </summary>
+    public bool Outermost { get; init; }
 }

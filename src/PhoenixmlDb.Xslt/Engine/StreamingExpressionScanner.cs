@@ -1023,6 +1023,16 @@ internal sealed class StreamingExpressionScanner
     {
         if (forEach.Sorts.Count > 0) return;
 
+        // Group B — non-consuming inspection subscription. A streamable for-each over
+        // outermost(//X) / innermost(//X) / a bare descendant path //X whose per-match
+        // body is INSPECTION-ONLY (ancestor/parent/self/attribute + atomize + set-ops,
+        // no descent) streams by dispatching the body per match against an
+        // ancestor-synthesized snapshot WITHOUT materialize-and-skip, so the forward
+        // pass continues into descendants. This is SEPARATE from the consuming
+        // child-axis subscription below (TryBuildPathMatcher's child-axis-only gate
+        // deliberately rejects descendant axis as unsound for materialize-and-skip).
+        if (TryRegisterInspectionForEach(forEach)) return;
+
         // Peel a leading forward-window function (subsequence/head/tail/remove). The
         // window is forward-countable over the selected sequence — decidable from the
         // running path-match count as the stream descends — so it is applied by the
@@ -1070,6 +1080,75 @@ internal sealed class StreamingExpressionScanner
             RemoveIndex = removeIndex,
             InlineDriven = _constructionDepth > 0,
         });
+    }
+
+    /// <summary>
+    /// Group B: registers a non-consuming inspection <see cref="ForEachSubscription"/>
+    /// for a streamable <c>xsl:for-each</c> whose select is <c>outermost(//X)</c> /
+    /// <c>innermost(//X)</c> / a bare descendant path <c>//X</c> AND whose body is
+    /// provably inspection-only (ancestor/parent/self/attribute + atomize, no descent).
+    /// Returns true (registered) only for <c>outermost</c> or a bare descendant path;
+    /// <c>innermost</c> is recognized solely to REJECT it (it needs descendant
+    /// lookahead — never registered, never dispatched unsoundly). Returns false for any
+    /// other shape so the caller proceeds to the consuming child-axis path.
+    /// </summary>
+    private bool TryRegisterInspectionForEach(XsltForEach forEach)
+    {
+        var select = forEach.Select;
+
+        bool outermost = false;
+        XQueryExpression innerPath;
+        switch (select)
+        {
+            case FunctionCallExpression fc when IsFilterFunction(fc):
+                // outermost(<path>) / innermost(<path>). innermost is never registered.
+                if (fc.Name.LocalName == "innermost") return false;
+                outermost = true;
+                innerPath = fc.Arguments[0];
+                break;
+            case PathExpression:
+                innerPath = select;
+                break;
+            default:
+                return false;
+        }
+
+        // The inner argument must be a downward path containing a descendant-axis
+        // hop (// or descendant::). A purely child-axis path is handled by the
+        // existing consuming subscription path — do not capture it here.
+        if (innerPath is not PathExpression path || !IsDownwardPath(path))
+            return false;
+        if (!PathHasDescendantAxis(path)) return false;
+
+        // The body must be provably inspection-only — the soundness gate.
+        if (!StreamabilityChecker.IsInspectionOnlyBody(forEach.Body)) return false;
+
+        // Encode the descendant path (// → ** marker) into a StreamPathMatcher.
+        var extracted = ExtractPathFromExpression(path);
+        if (extracted == null) return false;
+        // An attribute tail or final-step predicates are out of scope for the
+        // inspection dispatch (the matched item is the element snapshot itself).
+        if (extracted.Value.Attribute != null) return false;
+        if (extracted.Value.Predicates.Count > 0) return false;
+
+        _subscriptions.Add(new ForEachSubscription
+        {
+            SourceInstruction = forEach,
+            PathMatcher = new StreamPathMatcher(extracted.Value.Path),
+            Body = forEach.Body,
+            IsInspectionOnly = true,
+            Outermost = outermost,
+            InlineDriven = _constructionDepth > 0,
+        });
+        return true;
+    }
+
+    private static bool PathHasDescendantAxis(PathExpression path)
+    {
+        foreach (var step in path.Steps)
+            if (step.Axis is Axis.Descendant or Axis.DescendantOrSelf)
+                return true;
+        return false;
     }
 
     /// <summary>

@@ -2785,6 +2785,47 @@ internal static class StreamabilityChecker
     }
 
     /// <summary>
+    /// True when <paramref name="body"/> is INSPECTION-ONLY: it never consumes the
+    /// matched context node's descendant content — i.e. it does not read the bare
+    /// context item's string value and does not navigate child/descendant/
+    /// descendant-or-self axis from it. Ancestor/ancestor-or-self/parent/self/
+    /// attribute navigation, atomization, and set-ops over those are all allowed.
+    /// <para>
+    /// This is the soundness gate for Group B non-consuming inspection
+    /// subscriptions (<c>outermost(//X)</c> / <c>//X</c> for-each): a body that
+    /// passes may be dispatched per match WITHOUT materializing/skipping the
+    /// subtree, so the forward pass continues into descendants. Reuses the existing
+    /// <see cref="BodyConsumptionDetector"/> (which combines
+    /// <see cref="ContextItemDetector"/> + <see cref="DownwardAxisDetector"/>).
+    /// </para>
+    /// </summary>
+    internal static bool IsInspectionOnlyBody(XsltSequenceConstructor? body)
+    {
+        if (body == null) return false;
+        var detector = new BodyConsumptionDetector();
+        detector.Walk(body);
+        return !detector.Consumes;
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> is INSPECTION-ONLY as a per-item simple-map
+    /// RIGHT expression evaluated against a matched node: no bare-context-item
+    /// string-value read and no child/descendant-axis navigation from it. Mirrors
+    /// <see cref="IsInspectionOnlyBody"/> for the simple-map (sx-bang) shape, reusing
+    /// the same two detectors directly on the expression.
+    /// </summary>
+    internal static bool IsInspectionOnlyExpression(XQueryExpression? expr)
+    {
+        if (expr == null) return false;
+        var ctxDetector = new ContextItemDetector();
+        ctxDetector.Walk(expr);
+        if (ctxDetector.Found) return false;
+        var downward = new DownwardAxisDetector();
+        downward.Walk(expr);
+        return !downward.Found;
+    }
+
+    /// <summary>
     /// Walks a for-each body (XSLT instructions) and checks if any expression
     /// consumes the context item — i.e., accesses its string value (bare ".")
     /// or navigates child/descendant axis from it.
@@ -2843,6 +2884,95 @@ internal static class StreamabilityChecker
         {
             CheckExpr(insn.Select);
             return null;
+        }
+
+        // HOLE 1: xsl:choose / xsl:when test predicates. The base VisitChoose walks
+        // only the when bodies + otherwise, never when.Test — so <xsl:when test="."/>
+        // or test="child::*" would be missed and the body misclassified inspection-only.
+        public override object? VisitChoose(XsltChoose insn)
+        {
+            foreach (var when in insn.When)
+            {
+                if (Consumes) return null;
+                CheckExpr(when.Test);
+                Walk(when.Body);
+            }
+            if (insn.Otherwise != null) Walk(insn.Otherwise);
+            return null;
+        }
+
+        // HOLE 2: literal-result-element AVT attributes (and the element name AVT).
+        // The base VisitLiteralResultElement walks only .Content, never the {…}
+        // attribute value templates — so <v count="{count(child::*)}"/> would be missed.
+        public override object? VisitLiteralResultElement(XsltLiteralResultElement insn)
+        {
+            // insn.Name is a static QName (LRE names are not AVTs); only the attribute
+            // value templates carry embedded {…} expressions that can consume.
+            foreach (var attr in insn.Attributes)
+            {
+                if (Consumes) return null;
+                CheckAvt(attr.Value);
+            }
+            Walk(insn.Content);
+            return null;
+        }
+
+        // HOLE 3a: xsl:variable select. The base VisitVariableInstruction walks only
+        // .Content, never .Select — so <xsl:variable select="*"/> would be missed.
+        public override object? VisitVariableInstruction(XsltVariableInstruction insn)
+        {
+            CheckExpr(insn.Select);
+            if (insn.Content != null) Walk(insn.Content);
+            return null;
+        }
+
+        // HOLE 3b: xsl:attribute select (and its name AVT). The base VisitAttribute
+        // walks only .Content, never .Select — so <xsl:attribute select="child::x"/>
+        // would be missed. xsl:attribute can compute a value from the matched subtree.
+        public override object? VisitAttribute(XsltAttribute insn)
+        {
+            CheckAvt(insn.Name);
+            CheckExpr(insn.Select);
+            if (insn.Content != null) Walk(insn.Content);
+            return null;
+        }
+
+        // xsl:element computes its name via an AVT and may carry consuming content via
+        // an AVT name. The base VisitElement walks only .Content; check the name AVT too.
+        public override object? VisitElement(XsltElement insn)
+        {
+            CheckAvt(insn.Name);
+            Walk(insn.Content);
+            return null;
+        }
+
+        // xsl:copy can carry a select (XSLT 4.0 select on copy) and content. The base
+        // walks only .Content; a select reading the matched subtree must be checked.
+        public override object? VisitCopy(XsltCopy insn)
+        {
+            CheckExpr(insn.Select);
+            if (insn.Content != null) Walk(insn.Content);
+            return null;
+        }
+
+        // A nested xsl:for-each whose select navigates child/descendant from the
+        // matched node consumes the subtree. The base walks only .Body, not .Select.
+        public override object? VisitForEach(XsltForEach insn)
+        {
+            CheckExpr(insn.Select);
+            Walk(insn.Body);
+            return null;
+        }
+
+        // Checks every embedded {…} expression of an attribute value template.
+        private void CheckAvt(XsltAttributeValueTemplate? avt)
+        {
+            if (avt == null || Consumes) return;
+            foreach (var part in avt.Parts)
+            {
+                if (Consumes) return;
+                if (part is AvtExpression avtExpr) CheckExpr(avtExpr.Expression);
+            }
         }
 
         public override object? VisitSequenceConstructor(XsltSequenceConstructor insn)
