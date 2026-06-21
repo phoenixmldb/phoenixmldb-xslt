@@ -1147,25 +1147,62 @@ internal sealed class StreamingExpressionScanner
         // deliberately rejects descendant axis as unsound for materialize-and-skip).
         if (TryRegisterInspectionForEach(forEach)) return;
 
-        // Peel a leading forward-window function (subsequence/head/tail/remove). The
-        // window is forward-countable over the selected sequence — decidable from the
-        // running path-match count as the stream descends — so it is applied by the
-        // dispatcher rather than rejecting the whole for-each. The inner argument must
-        // itself decompose to a single streamable path (no mixed-sequence prefix/suffix,
-        // no separate predicate window).
+        // Peel any leading snapshot()/copy-of() wrapper(s) and a forward-window
+        // function (subsequence/head/tail/remove), in either nesting order, until the
+        // core is a plain streamable path. A snapshot(<path>)/copy-of(<path>) wrapper is
+        // a grounded deep copy with navigable ancestors/attributes — exactly the
+        // materialized element + synthesized ancestor chain the subscription dispatch
+        // produces — so peeling it routes the for-each to the existing subscription
+        // machinery (which binds the @attr/text() context item and climbs ancestors),
+        // instead of falling through to the string-capturing Snapshot WATCHER (no node
+        // identity, no ancestor chain). The window is forward-countable over the selected
+        // sequence — decidable from the running path-match count as the stream descends —
+        // so it is applied by the dispatcher. Both `subsequence(snapshot(p),s,l)` (window
+        // outside) and `snapshot(remove(p,n))` (window inside) reduce to `p + window`.
+        // NOTE: confined to the for-each decomposition; the snapshot WATCHER path
+        // (ScanExpression, used by value-of/copy-of/aggregation over snapshot) is a
+        // separate scanner entry point and is untouched.
         var select = forEach.Select;
         int subseqStart = 1;
         int? subseqLength = null;
         int? removeIndex = null;
-        if (TryPeelWindowFunction(select, out var inner, out var start, out var length, out var remIdx))
+        bool windowPeeled = false;
+        while (true)
         {
-            // Reject a non-positive or non-integer start — out of scope; let the
-            // for-each fall back to buffered execution.
-            if (start < 1) return;
-            select = inner;
-            subseqStart = start;
-            subseqLength = length;
-            removeIndex = remIdx;
+            // Leading snapshot(<arg>) wrapper → peel to <arg>. Only the 1-arg wrapping
+            // form; a zero-arg trailing snapshot step is handled inside TryBuildPathMatcher
+            // and is not a select wrapper. NOTE: snapshot ONLY, not copy-of — fn:snapshot
+            // copies the node *and its ancestors* (so a climbing body sees them), which the
+            // subscription dispatch reproduces via SynthesizeAncestorChain; fn:copy-of is a
+            // parentless deep copy, so routing it through the ancestor-synthesizing path
+            // would make a `..`/`ancestor::` body see ancestors it must not (spec-wrong).
+            if (select is FunctionCallExpression snapFc
+                && snapFc.Name.LocalName == "snapshot"
+                && snapFc.Arguments.Count == 1
+                && (snapFc.Name.Namespace == NamespaceId.None
+                    || snapFc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+            {
+                select = snapFc.Arguments[0];
+                continue;
+            }
+
+            // A single forward-window wrapper. A second window is out of scope (the
+            // accumulated index would span heterogeneous slices) — fall back.
+            if (TryPeelWindowFunction(select, out var inner, out var start, out var length, out var remIdx))
+            {
+                if (windowPeeled) return;
+                // Reject a non-positive or non-integer start — out of scope; let the
+                // for-each fall back to buffered execution.
+                if (start < 1) return;
+                select = inner;
+                subseqStart = start;
+                subseqLength = length;
+                removeIndex = remIdx;
+                windowPeeled = true;
+                continue;
+            }
+
+            break;
         }
 
         if (!TryDecomposeForEachSelect(select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates))
