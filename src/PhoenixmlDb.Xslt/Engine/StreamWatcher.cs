@@ -279,12 +279,21 @@ internal sealed class StreamWatcher
     public void FillSequenceSlot(int index, IReadOnlyDictionary<string, string>? attributes, string? textContent)
     {
         if (index < 0 || index >= _items.Count) return;
-        string? value;
         if (ValueAttribute != null && attributes != null)
-            value = attributes.GetValueOrDefault(ValueAttribute);
+        {
+            // Attribute capture stays a raw string (see OnElementMatch).
+            _items[index] = attributes.GetValueOrDefault(ValueAttribute) ?? string.Empty;
+        }
         else
-            value = textContent;
-        _items[index] = value ?? string.Empty;
+        {
+            // Mirror OnElementMatch: a matched text node's value is xs:untypedAtomic
+            // (matching a non-streamed XdmText.TypedValue), so the predicate-deferred
+            // path produces the same typed item as the non-deferred path — keeping
+            // _items uniformly typed so e.g. text() ! (.+1) promotes for arithmetic.
+            _items[index] = textContent != null
+                ? new Xdm.XsUntypedAtomic(textContent)
+                : (object)string.Empty;
+        }
     }
 
     /// <summary>
@@ -331,7 +340,12 @@ internal sealed class StreamWatcher
                 }
                 else if (textContent != null)
                 {
-                    _items.Add(textContent);
+                    // Capture a streamed text node's value as xs:untypedAtomic, matching the
+                    // non-streaming text atomization (XdmText.TypedValue; the engine's own
+                    // text-capture path uses Xdm.XsUntypedAtomic). This lets arithmetic over the
+                    // captured value promote (head(//X/text())!(.+1)) while value-of/copy-of/
+                    // string-join still serialize its lexical string value.
+                    _items.Add(new Xdm.XsUntypedAtomic(textContent));
                 }
                 // The streaming processor calls OnLeafElementMatch separately for
                 // Snapshot/Sequence watchers when a full XdmElement is needed
@@ -344,9 +358,11 @@ internal sealed class StreamWatcher
                 // Only capture the first match; subsequent matches are ignored.
                 if (_items.Count == 0)
                 {
-                    var headVal = ValueAttribute != null
+                    object? headVal = ValueAttribute != null
                         ? attributes?.GetValueOrDefault(ValueAttribute)
-                        : textContent;
+                        // Streamed text node value as xs:untypedAtomic (see Sequence/Snapshot
+                        // branch): arithmetic over head(//X/text()) promotes; value-of serializes.
+                        : textContent != null ? new Xdm.XsUntypedAtomic(textContent) : null;
                     if (headVal != null) _items.Add(headVal);
                 }
                 break;
