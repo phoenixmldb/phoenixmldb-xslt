@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.13</Version>
+    <Version>1.4.14</Version>
     <PackageReleaseNotes>
-      Streaming error reporting: a streamable select that unions two striding paths and then takes a step (e.g. (/A | /B)/PRICE) now reports the XTSE3430 streamability error instead of silently producing no output, and an unknown collation supplied to fn:distinct-values/max/min/index-of via an input-navigating argument now raises FOCH0002 under streaming as it does without streaming. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. See RELEASES.md for full notes.
+      More streaming correctness for consuming expressions over a streamed source: outermost(//X) with an inspection-only body, a per-item simple-map over outermost/remove with an outer predicate, a for-each over snapshot(path), a for-each whose path carries an intermediate positional predicate (e.g. employee[1]/empnum/text()), and arithmetic over a streamed text node (head(//PRICE/text()) + 1) all now produce correct results under xsl:mode streamable="yes". Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>

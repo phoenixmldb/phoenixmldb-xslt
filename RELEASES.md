@@ -1,5 +1,15 @@
 # Release History
 
+## 1.4.14 (2026-06-22)
+
+Streaming correctness for consuming expressions over a streamed source. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. No API changes.
+
+- **`outermost(//X)` with an inspection-only body** streams. A streamable `xsl:for-each` / chained simple-map whose source is `outermost(//X)` and whose body only inspects each matched node (ancestor/parent/self/attribute navigation, atomization) now dispatches per match without buffering — outermost deduplication is decided on the live ancestor stack.
+- **Per-item set/sequence operators over a wrapped aggregation** stream — e.g. `path ! (* union $grounded)` and the `outermost`/`remove`-wrapped value-of/copy-of cases with an outer positional predicate.
+- **`xsl:for-each select="snapshot(path)"`** streams: the `snapshot()`/`copy-of()` wrapper is recognized so the iteration runs over the snapshotted nodes (with attribute/text leaf kinds and multi-level ancestor navigation).
+- **Intermediate positional predicate in a streamable for-each path** — e.g. `works/department/employee[1]/empnum/text()` — is now honored (a forward-countable-positional or motionless predicate on a non-leaf step), instead of being dropped.
+- **Arithmetic over a streamed text node** — `head(//PRICE/text()) + 1` — works: a streamed text node's value is typed `xs:untypedAtomic` (matching a non-streamed text node), so it promotes to numeric instead of raising a type error.
+
 ## 1.4.13 (2026-06-21)
 
 Streaming error reporting. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. No API changes.
