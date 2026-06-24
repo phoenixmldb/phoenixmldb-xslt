@@ -249,10 +249,40 @@ internal static class StreamingSubtreeBufferDetector
                 return rd2.Content != null && RequiresWholeInputBuffer(rd2.Content);
 
             case XsltLiteralResultElement lre:
-                return RequiresWholeInputBuffer(lre.Content);
+                // Also inspect attribute value templates: an AVT expression on a CONSTRUCTED
+                // element (e.g. <banana x="{count(//*)}"/>) gets no watcher/document-level
+                // streaming dispatch — it evaluates against the synthetic empty node and folds
+                // to "" / 0. Any input-navigating AVT therefore needs the whole-input buffer. (#143)
+                return AttributesNavigateInput(lre.Attributes) || RequiresWholeInputBuffer(lre.Content);
 
             case XsltCopy cp:
                 return cp.Content != null && RequiresWholeInputBuffer(cp.Content);
+
+            // xsl:if / xsl:choose run their chosen branch linearly within the constructed body,
+            // so a branch is treated exactly like the body it sits in — recurse with the same
+            // narrow rules (the branch's own LRE-AVT / absorbing-select checks fire). This reaches
+            // <banana x="{count(//*)}"/> nested in xsl:if (si-on-empty-033). (#143)
+            case XsltIf iff:
+                return RequiresWholeInputBuffer(iff.Then);
+
+            case XsltChoose ch:
+                foreach (var w in ch.When)
+                    if (RequiresWholeInputBuffer(w.Body)) return true;
+                return ch.Otherwise != null && RequiresWholeInputBuffer(ch.Otherwise);
+
+            // xsl:on-empty / xsl:on-non-empty have NO document-level streaming dispatch for their
+            // content in a source-document body: the streaming pass emits the surrounding
+            // construction but never drives the reader for a consuming child, so a navigating
+            // copy-of / for-each / value-of inside them silently yields empty (si-on-empty-002 drops
+            // copy-of(BOOKLIST/CATEGORIES/*); si-on-empty-039 drops a consuming for-each). Unlike the
+            // top-level path, even a BARE downward path here cannot stream, so use the broad
+            // input-navigation test rather than the narrow absorbing one. Materialize the whole input
+            // and run the body buffered; a grounded on-empty body stays on the streaming path. (#143)
+            case XsltOnEmpty oe:
+                return (oe.Select != null && NavigatesInput(oe.Select)) || BodyNavigatesInput(oe.Content);
+
+            case XsltOnNonEmpty one:
+                return (one.Select != null && NavigatesInput(one.Select)) || BodyNavigatesInput(one.Content);
 
             case XsltSequenceConstructor ctor:
                 return RequiresWholeInputBuffer(ctor);
@@ -275,6 +305,74 @@ internal static class StreamingSubtreeBufferDetector
     {
         if (select == null) return true; // default = children of context (the input root)
         return NavigatesInput(select);
+    }
+
+    /// <summary>
+    /// True when any attribute value template in <paramref name="attrs"/> contains an
+    /// input-navigating expression. AVTs on constructed elements get no streaming dispatch, so
+    /// a navigating <c>{…}</c> would fold the empty synthetic node. (#143)
+    /// </summary>
+    private static bool AttributesNavigateInput(IReadOnlyDictionary<QName, XsltAttributeValueTemplate> attrs)
+    {
+        foreach (var avt in attrs.Values)
+            foreach (var part in avt.Parts)
+                if (part is AvtExpression ae && NavigatesInput(ae.Expression))
+                    return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Broad test: does any instruction in <paramref name="body"/> read the input document? Used
+    /// for xsl:on-empty / xsl:on-non-empty content, whose position has no document-level streaming
+    /// dispatch — so even a bare downward path there cannot stream and must run buffered. A grounded
+    /// body (literals / variables / ranges, no input navigation) stays on the streaming path. (#143)
+    /// </summary>
+    private static bool BodyNavigatesInput(XsltSequenceConstructor? body)
+    {
+        if (body == null) return false;
+        foreach (var insn in body.Instructions)
+            if (InstructionNavigatesInput(insn)) return true;
+        return false;
+    }
+
+    private static bool InstructionNavigatesInput(XsltInstruction insn)
+    {
+        switch (insn)
+        {
+            case XsltValueOf vo:
+                return (vo.Select != null && NavigatesInput(vo.Select)) || BodyNavigatesInput(vo.Content);
+            case XsltCopyOf cof:
+                return NavigatesInput(cof.Select);
+            case XsltSequence sq:
+                return (sq.Select != null && NavigatesInput(sq.Select)) || BodyNavigatesInput(sq.Content);
+            case XsltForEach fe:
+                return NavigatesInput(fe.Select) || BodyNavigatesInput(fe.Body);
+            case XsltApplyTemplates at:
+                // A null select means "children of the context node" — that reads the input.
+                return at.Select == null || NavigatesInput(at.Select);
+            case XsltIf iff:
+                return NavigatesInput(iff.Test) || BodyNavigatesInput(iff.Then);
+            case XsltChoose ch:
+                foreach (var w in ch.When)
+                    if (NavigatesInput(w.Test) || BodyNavigatesInput(w.Body)) return true;
+                return BodyNavigatesInput(ch.Otherwise);
+            case XsltOnEmpty oe:
+                return (oe.Select != null && NavigatesInput(oe.Select)) || BodyNavigatesInput(oe.Content);
+            case XsltOnNonEmpty one:
+                return (one.Select != null && NavigatesInput(one.Select)) || BodyNavigatesInput(one.Content);
+            case XsltLiteralResultElement lre:
+                return AttributesNavigateInput(lre.Attributes) || BodyNavigatesInput(lre.Content);
+            case XsltElement el:
+                return BodyNavigatesInput(el.Content);
+            case XsltCopy cp:
+                return BodyNavigatesInput(cp.Content);
+            case XsltSequenceConstructor ctor:
+                return BodyNavigatesInput(ctor);
+            // Conservative toward NOT over-buffering: an instruction we don't model here is
+            // assumed grounded so we don't needlessly steal a streamable on-empty body.
+            default:
+                return false;
+        }
     }
 
     /// <summary>
