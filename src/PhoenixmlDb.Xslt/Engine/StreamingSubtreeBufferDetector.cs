@@ -653,6 +653,14 @@ internal static class StreamingSubtreeBufferDetector
             case CastableExpression ca:
                 return NavigatesInput(ca.Expression);
 
+            // if (C) then A else B — a conditional has no document-level streaming dispatch
+            // (the watcher fires only for a bare path / simple-map), so a branch that navigates
+            // the input folds against the synthetic empty node: `if($c) then () else
+            // copy-of(/BOOKLIST/BOOKS/ITEM/PRICE)` silently drops the copy. Buffer when either
+            // branch navigates the input; a fully grounded conditional stays streaming. (#143 sx-IfExpr)
+            case IfExpression iff:
+                return NavigatesInput(iff.Then) || (iff.Else != null && NavigatesInput(iff.Else));
+
             // A | B / A except B / A intersect B — a navigating operand on either side
             // has no document-level dispatch once it is a union/except/intersect operand.
             case BinaryExpression bin
