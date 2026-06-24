@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Xml;
 using System.Xml.Linq;
@@ -25,8 +26,15 @@ public sealed class StylesheetParser
     /// for XTSE3085 validation when declared-modes="yes".
     /// </summary>
     private List<(QName Mode, SourceLocation? Location)>? _usedModeReferences;
-    private static readonly Dictionary<string, NamespaceId> _dynamicNamespaces = new();
-    private static uint _nextNamespaceId = NamespaceId.FirstUserNamespaceId;
+    // Process-wide dynamic namespace intern table. ConcurrentDictionary + an Interlocked-managed
+    // counter make ResolveNamespaceUri safe under concurrent transforms/parses (#116) — a plain
+    // Dictionary with a check-then-act and a non-atomic `_nextNamespaceId++` could corrupt the
+    // table (throw / loop), hand the same id to two URIs, or throw "collection modified" when
+    // DynamicNamespaces is enumerated during a concurrent write.
+    private static readonly ConcurrentDictionary<string, NamespaceId> _dynamicNamespaces = new();
+    // Holds the LAST-allocated dynamic id; Interlocked.Increment hands out the next. Starts one
+    // below FirstUserNamespaceId so the first allocation is exactly FirstUserNamespaceId.
+    private static uint _nextNamespaceId = NamespaceId.FirstUserNamespaceId - 1;
 
     /// <summary>
     /// Current XElement context for namespace resolution (set during instruction parsing).
@@ -153,11 +161,12 @@ public sealed class StylesheetParser
             return NamespaceId.None;
         if (_wellKnownNamespaces.TryGetValue(namespaceUri, out var nsId))
             return nsId;
-        if (_dynamicNamespaces.TryGetValue(namespaceUri, out nsId))
-            return nsId;
-        nsId = new NamespaceId(_nextNamespaceId++);
-        _dynamicNamespaces[namespaceUri] = nsId;
-        return nsId;
+        // Thread-safe intern: GetOrAdd guarantees a single stored id per URI even when the
+        // factory runs concurrently for the same key, and Interlocked.Increment makes id
+        // allocation atomic. Under contention the factory may run more than once and skip a
+        // few ids — harmless, since ids only need to be unique. (#116)
+        return _dynamicNamespaces.GetOrAdd(namespaceUri,
+            _ => new NamespaceId(Interlocked.Increment(ref _nextNamespaceId)));
     }
 
     /// <summary>
