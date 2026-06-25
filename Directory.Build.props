@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.14</Version>
+    <Version>1.4.15</Version>
     <PackageReleaseNotes>
-      More streaming correctness for consuming expressions over a streamed source: outermost(//X) with an inspection-only body, a per-item simple-map over outermost/remove with an outer predicate, a for-each over snapshot(path), a for-each whose path carries an intermediate positional predicate (e.g. employee[1]/empnum/text()), and arithmetic over a streamed text node (head(//PRICE/text()) + 1) all now produce correct results under xsl:mode streamable="yes". Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. See RELEASES.md for full notes.
+      Thread-safe namespace interning (concurrent transforms no longer corrupt the shared namespace table) plus more streaming correctness for consuming expressions over a streamed source: a consuming copy-of/for-each inside xsl:on-empty/xsl:on-non-empty/xsl:where-populated, a copy-of/value-of whose select is a conditional (if-then-else) with a consuming branch, a copy-of/value-of/variable selecting a climbing (attribute/ancestor) axis, a for-each over a generic node() kind test (//node()[name()=$p]), and apply-templates over a function-wrapped select (copy-of(outermost(//p))) now produce correct results under xsl:mode streamable="yes". Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.7. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>

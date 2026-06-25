@@ -1,5 +1,24 @@
 # Release History
 
+## 1.4.15 (2026-06-25)
+
+Thread-safety fix and more streaming correctness for consuming expressions over a streamed source. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.7. No API changes.
+
+### Fix: thread-safe namespace interning
+
+`StylesheetParser.ResolveNamespaceUri` interned namespace URIs into a process-wide plain dictionary with a non-atomic id counter, so concurrent transforms/parses could corrupt the table, hand the same id to two URIs, or throw while another thread enumerated it. It now uses a concurrent dictionary with an interlocked counter — lock-free and safe under concurrent use.
+
+### Streaming: consuming expressions over a streamed source
+
+Each of these now produces correct results under `xsl:mode streamable="yes"` (the engine materializes the input where it cannot drive the consuming expression off the forward reader, rather than silently yielding empty):
+
+- A consuming `copy-of` / `for-each` inside **`xsl:on-empty` / `xsl:on-non-empty` / `xsl:where-populated`** (including an `xsl:fork` or a consuming `xsl:comment` / `xsl:processing-instruction` in the populated content).
+- A `copy-of` / `value-of` whose select is a **conditional** (`if (…) then … else …`) with a consuming branch.
+- A `copy-of` / `value-of` / `xsl:variable` selecting a **climbing axis** — an attribute or ancestor path (e.g. `…/@value`).
+- A consuming function call in an **attribute value template** on a constructed element (e.g. `{count(//*)}`).
+- A `for-each` over a **generic `node()` kind test** (e.g. `//node()[name() = $param]`).
+- An `apply-templates` over a **function-wrapped select** (e.g. `copy-of(outermost(//p))[…]`).
+
 ## 1.4.14 (2026-06-22)
 
 Streaming correctness for consuming expressions over a streamed source. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.6. No API changes.
