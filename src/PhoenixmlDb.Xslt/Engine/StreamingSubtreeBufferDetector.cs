@@ -215,6 +215,16 @@ internal static class StreamingSubtreeBufferDetector
             case XsltForEach fe:
                 return SelectUsesGenericNodeTest(fe.Select);
 
+            // A streamable xsl:apply-templates streams only when its select is a bare downward
+            // path it can match per node off the live reader. A select that navigates the input
+            // through a FUNCTION call or other composite — copy-of(outermost(//p))[pred],
+            // snapshot(…) — has no per-node dispatch: it evaluates against the synthetic empty
+            // node and applies templates to nothing (si-copy-of-801 -> empty output). Materialise
+            // the whole input and run apply-templates buffered. A bare path / context item stays
+            // streaming. (#143)
+            case XsltApplyTemplates at:
+                return at.Select != null && SelectNavigatesViaFunctionOrComposite(at.Select);
+
             // A top-level xsl:value-of / xsl:copy-of / xsl:sequence whose select calls an
             // absorbing aggregation/reduction over a sequence that navigates the input has
             // no usable document-level streaming dispatch and would otherwise evaluate the
@@ -702,6 +712,32 @@ internal static class StreamingSubtreeBufferDetector
                 return SelectUsesGenericNodeTest(seq.Items[0]);
             default:
                 return false;
+        }
+    }
+
+    /// <summary>
+    /// True when an xsl:apply-templates select navigates the input through a FUNCTION call or
+    /// other composite rather than a bare downward path — e.g. <c>copy-of(outermost(//p))[pred]</c>
+    /// or <c>snapshot(…)</c>. apply-templates dispatch streams only off a path it can match per
+    /// node; a function-wrapped select evaluates against the synthetic empty node and applies
+    /// templates to nothing, so it must run buffered. A bare path / context item (peeling a
+    /// wrapping filter / single-item sequence) stays streaming. (#143)
+    /// </summary>
+    private static bool SelectNavigatesViaFunctionOrComposite(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case PathExpression:
+            case StepExpression:
+            case ContextItemExpression:
+                return false;
+            case FilterExpression filt:
+                return SelectNavigatesViaFunctionOrComposite(filt.Primary);
+            case SequenceExpression seq when seq.Items.Count == 1:
+                return SelectNavigatesViaFunctionOrComposite(seq.Items[0]);
+            default:
+                // Function call / union / other composite — buffer only if it reads the input.
+                return NavigatesInput(expr);
         }
     }
 
