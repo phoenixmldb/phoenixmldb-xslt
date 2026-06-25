@@ -298,6 +298,15 @@ internal static class StreamingSubtreeBufferDetector
             case XsltOnNonEmpty one:
                 return (one.Select != null && NavigatesInput(one.Select)) || BodyNavigatesInput(one.Content);
 
+            // xsl:where-populated decides emptiness of its constructed content, then emits it
+            // only when populated. Like on-empty, its content has no document-level streaming
+            // dispatch for a consuming child, so a navigating comment/PI/fork/copy-of inside it
+            // folds the synthetic empty node — the populated-probe then sees nothing and drops
+            // the whole block (si-coco-010 fork → <out/>; si-coco-019/020 consuming comment/PI →
+            // empty). Buffer when the content navigates the input. (#143)
+            case XsltWherePopulated wp:
+                return BodyNavigatesInput(wp.Content);
+
             case XsltSequenceConstructor ctor:
                 return RequiresWholeInputBuffer(ctor);
 
@@ -374,6 +383,20 @@ internal static class StreamingSubtreeBufferDetector
                 return (oe.Select != null && NavigatesInput(oe.Select)) || BodyNavigatesInput(oe.Content);
             case XsltOnNonEmpty one:
                 return (one.Select != null && NavigatesInput(one.Select)) || BodyNavigatesInput(one.Content);
+            case XsltWherePopulated wp:
+                return BodyNavigatesInput(wp.Content);
+            case XsltComment c:
+                return (c.Select != null && NavigatesInput(c.Select)) || BodyNavigatesInput(c.Content);
+            case XsltProcessingInstruction pi:
+                return (pi.Select != null && NavigatesInput(pi.Select)) || BodyNavigatesInput(pi.Content);
+            case XsltFork fk:
+                foreach (var seq in fk.Sequences)
+                    if (BodyNavigatesInput(seq)) return true;
+                foreach (var feg in fk.ForEachGroups)
+                    if (NavigatesInput(feg.Select) || BodyNavigatesInput(feg.Body)) return true;
+                foreach (var rd in fk.ResultDocuments)
+                    if (BodyNavigatesInput(rd.Content)) return true;
+                return false;
             case XsltLiteralResultElement lre:
                 return AttributesNavigateInput(lre.Attributes) || BodyNavigatesInput(lre.Content);
             case XsltElement el:
