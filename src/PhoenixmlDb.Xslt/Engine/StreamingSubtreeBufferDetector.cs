@@ -204,6 +204,17 @@ internal static class StreamingSubtreeBufferDetector
             case XsltIterate it:
                 return IterateConsumesInput(it.Select);
 
+            // A streamable xsl:for-each whose select navigates the input via a generic
+            // node() kind test (e.g. //node()[name() = $param]) has no usable forward-pass
+            // subscription: the for-each dispatch matches element name/kind patterns, not the
+            // any-node-kind test, so the select folds to empty and the body never runs
+            // (si-for-each-801/802: //node()[name()=$node-name] -> <root/>). Materialise the
+            // whole input and run the for-each buffered. A name/element test stays streaming —
+            // only the generic node() test (and the global-var predicate that rides with it)
+            // forces the buffer. (#143)
+            case XsltForEach fe:
+                return SelectUsesGenericNodeTest(fe.Select);
+
             // A top-level xsl:value-of / xsl:copy-of / xsl:sequence whose select calls an
             // absorbing aggregation/reduction over a sequence that navigates the input has
             // no usable document-level streaming dispatch and would otherwise evaluate the
@@ -665,6 +676,34 @@ internal static class StreamingSubtreeBufferDetector
             or Axis.Preceding or Axis.PrecedingSibling => true,
         _ => false,
     };
+
+    /// <summary>
+    /// True when <paramref name="expr"/> is a path with any step using the generic <c>node()</c>
+    /// kind test (a <see cref="KindTest"/> whose <c>Kind</c> is <see cref="XdmNodeKind.None"/>),
+    /// e.g. <c>//node()[name() = $param]</c>. The streaming for-each subscription matches element
+    /// name / kind patterns, not the any-node-kind test, so such a select has no forward-pass
+    /// dispatch and folds to empty. A name test (<c>//*</c>, <c>//record</c>) or a typed kind test
+    /// (<c>element()</c>, <c>text()</c>) stays streaming. Wrapping filter / single-item sequence is
+    /// peeled to the path. (#143)
+    /// </summary>
+    private static bool SelectUsesGenericNodeTest(XQueryExpression? expr)
+    {
+        switch (expr)
+        {
+            case PathExpression p:
+                foreach (var step in p.Steps)
+                    if (step.NodeTest is KindTest { Kind: XdmNodeKind.None }) return true;
+                return false;
+            case StepExpression st:
+                return st.NodeTest is KindTest { Kind: XdmNodeKind.None };
+            case FilterExpression filt:
+                return SelectUsesGenericNodeTest(filt.Primary);
+            case SequenceExpression seq when seq.Items.Count == 1:
+                return SelectUsesGenericNodeTest(seq.Items[0]);
+            default:
+                return false;
+        }
+    }
 
     /// <summary>
     /// True when <paramref name="arg"/> is a single <see cref="PathExpression"/> — the shape
