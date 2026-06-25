@@ -224,14 +224,28 @@ internal static class StreamingSubtreeBufferDetector
             // streaming path (the operator helper returns false for it).
             case XsltValueOf vo:
                 return vo.Select != null
-                    && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select));
+                    && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select)
+                        || SelectNavigatesViaClimbingAxis(vo.Select));
 
             case XsltCopyOf cof:
-                return SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select);
+                return SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select)
+                    || SelectNavigatesViaClimbingAxis(cof.Select);
 
             case XsltSequence sq:
                 return sq.Select != null
-                    && (SelectAbsorbsInput(sq.Select) || SelectNavigatesViaUnstreamableOperator(sq.Select));
+                    && (SelectAbsorbsInput(sq.Select) || SelectNavigatesViaUnstreamableOperator(sq.Select)
+                        || SelectNavigatesViaClimbingAxis(sq.Select));
+
+            // xsl:variable binds a sequence captured from the stream. Its select / content is
+            // analysed exactly like the body it sits in: an absorbing, unstreamable-operator, or
+            // climbing-axis select (or a navigating content) has no document-level dispatch and
+            // would bind the wrong value (si-copy-of-003: copy-of of an @value attribute path into
+            // an attribute(*)* variable raised XTTE0570). (#143)
+            case XsltVariableInstruction var:
+                return (var.Select != null
+                        && (SelectAbsorbsInput(var.Select) || SelectNavigatesViaUnstreamableOperator(var.Select)
+                            || SelectNavigatesViaClimbingAxis(var.Select)))
+                    || RequiresWholeInputBuffer(var.Content);
 
             case XsltFork fk:
                 // A for-each-group prong is itself absorbing at the document level
@@ -590,6 +604,44 @@ internal static class StreamingSubtreeBufferDetector
             _ => AbsorbingKind.None,
         };
     }
+
+    /// <summary>
+    /// True when the selected nodes are reached by a NON-downward final step — an attribute or
+    /// namespace node, or a climbing axis (parent / ancestor[-or-self] / preceding[-sibling]).
+    /// Forward streaming only descends, so once the reader has passed a node it cannot go back to
+    /// copy its attributes or ancestors; a copy-of / value-of / sequence selecting such nodes
+    /// streams to the wrong value (si-copy-of-003: copy-of of <c>account/transaction[@value lt 0]/@value</c>
+    /// into an <c>attribute(*)*</c> variable raised XTTE0570). Route to the whole-input buffer.
+    /// A downward path (child / descendant[-or-self] / self) stays streaming. Wrapping
+    /// simple-map / filter / single-item-sequence is peeled to the node-producing step. (#143)
+    /// </summary>
+    private static bool SelectNavigatesViaClimbingAxis(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case StepExpression st:
+                return IsClimbingAxis(st.Axis);
+            case PathExpression p when p.Steps.Count > 0:
+                return IsClimbingAxis(p.Steps[^1].Axis);
+            case FilterExpression filt:
+                return SelectNavigatesViaClimbingAxis(filt.Primary);
+            case SequenceExpression seq when seq.Items.Count == 1:
+                return SelectNavigatesViaClimbingAxis(seq.Items[0]);
+            // `path ! STEP` — the result nodes come from the right operand.
+            case SimpleMapExpression sm:
+                return SelectNavigatesViaClimbingAxis(sm.Right);
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsClimbingAxis(Axis axis) => axis switch
+    {
+        Axis.Attribute or Axis.Namespace
+            or Axis.Parent or Axis.Ancestor or Axis.AncestorOrSelf
+            or Axis.Preceding or Axis.PrecedingSibling => true,
+        _ => false,
+    };
 
     /// <summary>
     /// True when <paramref name="arg"/> is a single <see cref="PathExpression"/> — the shape
