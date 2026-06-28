@@ -15,12 +15,25 @@ public class BaseUriOnCopyTests
     private const string SourceUri = "file:///tmp/baseuri-test/in.xml";
     private const string Input = """<doc><child fileref="../media/x.mp3"/></doc>""";
 
+    private const string StylesheetUri = "file:///tmp/baseuri-test/sheet.xsl";
+
     private static async System.Threading.Tasks.Task<string> RunAsync(
         string stylesheet, string input, string sourceUri = SourceUri)
     {
         var transformer = new XsltTransformer();
         transformer.SetSourceDocumentUri(new System.Uri(sourceUri));
         await transformer.LoadStylesheetAsync(stylesheet);
+        return (await transformer.TransformAsync(input)).Trim();
+    }
+
+    // Loads the stylesheet WITH a known base URI so constructed (non-source) temp trees,
+    // whose base URI is the static base of the variable declaration, are assertable.
+    private static async System.Threading.Tasks.Task<string> RunWithStylesheetBaseAsync(
+        string stylesheet, string input)
+    {
+        var transformer = new XsltTransformer();
+        transformer.SetSourceDocumentUri(new System.Uri(SourceUri));
+        await transformer.LoadStylesheetAsync(stylesheet, new System.Uri(StylesheetUri));
         return (await transformer.TransformAsync(input)).Trim();
     }
 
@@ -132,6 +145,45 @@ public class BaseUriOnCopyTests
             """;
         var result = await RunAsync(ss, Input);
         result.Should().Be("file:///tmp/baseuri-test/in.xml");
+    }
+
+    [Fact]
+    public async Task Constructed_document_node_typed_variable_carries_static_base_uri()
+    {
+        // as="document-node()" with CONSTRUCTED (not source-copied) content. The temp-tree
+        // document node's base URI is the static base of the variable declaration = the
+        // stylesheet URI. Previously the document-node temp tree was created with a null
+        // base URI (the as="item()*" sibling stamped it; this path did not).
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:variable name="v" as="document-node()"><data/></xsl:variable>
+              <xsl:template match="/">
+                <xsl:value-of select="base-uri($v)"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await RunWithStylesheetBaseAsync(ss, Input);
+        result.Should().Be(StylesheetUri);
+    }
+
+    [Fact]
+    public async Task Constructed_xsl_document_node_carries_static_base_uri()
+    {
+        // xsl:document building a document node from CONSTRUCTED content. Its base URI is the
+        // in-scope construction base (the stylesheet static base here). Previously seqBaseUri
+        // was computed but never stamped onto the document node.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:template match="/">
+                <xsl:variable name="v" as="document-node()"><xsl:document><data/></xsl:document></xsl:variable>
+                <xsl:value-of select="base-uri($v)"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await RunWithStylesheetBaseAsync(ss, Input);
+        result.Should().Be(StylesheetUri);
     }
 
     [Fact]

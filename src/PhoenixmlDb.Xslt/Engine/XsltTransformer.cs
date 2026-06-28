@@ -2401,6 +2401,10 @@ public sealed class XsltTransformEngine
                             DocumentElementLocalName = docElemLocalName,
                             _stringValue = sb.ToString(),
                         };
+                        // Carry the variable's base URI so base-uri()/document()/relative-URI
+                        // resolution inside the temp tree works (mirrors the as="item()*" sibling
+                        // above). Without it the document-node temp tree had a null base URI.
+                        docNode.BaseUri = globalBaseUri;
                         context._nodeStore.Register(docNode);
                         context.GlobalVariables[global.Name] = docNode;
                     }
@@ -13816,6 +13820,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         DocumentElementLocalName = docElemLocalName,
                         _stringValue = stringValueBuilder.ToString(),
                     };
+                    docNode.BaseUri = seqBaseUri;
                     _nodeStore.Register(docNode);
                     AppendToSeqAccumulator(docNode);
                 }
@@ -13835,7 +13840,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     Document = new DocumentId(1),
                     Parent = NodeId.None,
                     DocumentElement = NodeId.None,
-                    Children = new List<NodeId>()
+                    Children = new List<NodeId>(),
+                    BaseUri = EffectiveBaseUri,
                 };
                 _nodeStore.Register(docNode);
                 AppendToSeqAccumulator(docNode);
