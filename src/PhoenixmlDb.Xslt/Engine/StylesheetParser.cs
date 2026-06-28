@@ -3830,18 +3830,7 @@ public sealed class StylesheetParser
             var localName = nameValue[(closeBrace + 1)..];
             if (string.IsNullOrEmpty(localName))
                 throw new XsltException($"XTSE0020: Invalid EQName '{nameValue}': missing local name", location);
-            var nsId = NamespaceId.None;
-            if (!string.IsNullOrEmpty(nsUri))
-            {
-                if (!_wellKnownNamespaces.TryGetValue(nsUri, out nsId))
-                {
-                    if (!_dynamicNamespaces.TryGetValue(nsUri, out nsId))
-                    {
-                        nsId = new NamespaceId(_nextNamespaceId++);
-                        _dynamicNamespaces[nsUri] = nsId;
-                    }
-                }
-            }
+            var nsId = ResolveNamespaceUri(nsUri);
             name = new QName(nsId, localName);
         }
         else
@@ -7182,20 +7171,9 @@ public sealed class StylesheetParser
             }
             else
             {
-                var attrNsId = NamespaceId.None;
+                // Resolve the attribute's namespace URI to a NamespaceId (thread-safe intern)
                 var attrNsName = attr.Name.NamespaceName;
-                if (!string.IsNullOrEmpty(attrNsName))
-                {
-                    // Resolve the attribute's namespace URI to a NamespaceId
-                    if (!_wellKnownNamespaces.TryGetValue(attrNsName, out attrNsId))
-                    {
-                        if (!_dynamicNamespaces.TryGetValue(attrNsName, out attrNsId))
-                        {
-                            attrNsId = new NamespaceId(_nextNamespaceId++);
-                            _dynamicNamespaces[attrNsName] = attrNsId;
-                        }
-                    }
-                }
+                var attrNsId = ResolveNamespaceUri(attrNsName);
                 // Use prefix map from XmlReader when available (preserves original prefix
                 // even when multiple prefixes share the same namespace URI)
                 string? attrPrefix = null;
@@ -9262,18 +9240,7 @@ public sealed class StylesheetParser
             {
                 var nsUri = name[2..closeBrace];
                 var localName = name[(closeBrace + 1)..];
-                var nsId = NamespaceId.None;
-                if (!string.IsNullOrEmpty(nsUri))
-                {
-                    if (!_wellKnownNamespaces.TryGetValue(nsUri, out nsId))
-                    {
-                        if (!_dynamicNamespaces.TryGetValue(nsUri, out nsId))
-                        {
-                            nsId = new NamespaceId(_nextNamespaceId++);
-                            _dynamicNamespaces[nsUri] = nsId;
-                        }
-                    }
-                }
+                var nsId = ResolveNamespaceUri(nsUri);
                 return new QName(nsId, localName) { ExpandedNamespace = nsUri };
             }
         }
@@ -9286,16 +9253,8 @@ public sealed class StylesheetParser
             if (ns == null)
                 throw new XsltException($"XTSE0280: Namespace prefix '{parts[0]}' in QName '{name}' is not declared",
                     GetSourceLocation(context));
-            var nsId = NamespaceId.None;
-            if (!_wellKnownNamespaces.TryGetValue(ns, out nsId))
-            {
-                // Assign a dynamic namespace ID for unknown namespaces
-                if (!_dynamicNamespaces.TryGetValue(ns, out nsId))
-                {
-                    nsId = new NamespaceId(_nextNamespaceId++);
-                    _dynamicNamespaces[ns] = nsId;
-                }
-            }
+            // Assign/resolve the namespace ID (thread-safe intern)
+            var nsId = ResolveNamespaceUri(ns);
             return new QName(nsId, parts[1], parts[0]);
         }
 
