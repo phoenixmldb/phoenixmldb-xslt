@@ -1170,12 +1170,12 @@ internal sealed class StreamingXmlProcessor
     /// not outermost and is skipped. Each ancestor depth <c>i</c> is tested with the
     /// names above it as its own ancestor stack and its own name as the current name.
     /// </summary>
-    private bool AncestorMatchesPattern(StreamPathMatcher matcher)
+    private bool AncestorMatchesPattern(StreamPathMatcher matcher, int contextRootDepth = -1)
     {
         for (int i = 0; i < _ancestorNames.Count; i++)
         {
             var prefix = _ancestorNames.GetRange(0, i);
-            if (matcher.Matches(prefix, _ancestorNames[i]))
+            if (matcher.Matches(prefix, _ancestorNames[i], contextRootDepth))
                 return true;
         }
         return false;
@@ -1313,8 +1313,8 @@ internal sealed class StreamingXmlProcessor
                 continue;
             }
 
-            // Check element path match
-            if (watcher.PathMatcher.Matches(_ancestorNames, elementName))
+            // Check element path match (anchored to the watcher's context-root depth)
+            if (watcher.PathMatcher.Matches(_ancestorNames, elementName, watcher.ContextRootDepth))
             {
                 // When predicates are present we MUST defer to EndElement so the
                 // matched element can be materialized for predicate evaluation
@@ -1418,7 +1418,7 @@ internal sealed class StreamingXmlProcessor
             // the scanner only emits IntermediatePredicates for paths it captured.
             if (watcher.IntermediatePredicates.Count == 0)
             {
-                var attrName = watcher.PathMatcher.MatchesAttribute(_ancestorNames, elementName);
+                var attrName = watcher.PathMatcher.MatchesAttribute(_ancestorNames, elementName, watcher.ContextRootDepth);
                 if (attrName != null && attributes != null)
                 {
                     var attrValue = attributes.GetValueOrDefault(attrName);

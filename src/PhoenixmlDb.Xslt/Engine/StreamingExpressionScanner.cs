@@ -22,8 +22,13 @@ internal sealed class StreamingExpressionScanner
     // and keeps the forward-pass subscription-dispatch path unchanged.
     private int _constructionDepth;
 
+    // Absolute depth of the context root that emitted watchers anchor against.
+    // 0 for xsl:source-document (whole document); the active reader depth for a
+    // deferred matched-template. Stamped onto every StreamWatcher this scan emits.
+    private int _contextRootDepth;
+
     /// <summary>
-    /// Result of <see cref="ScanWithSubscriptions"/> — watchers for consuming
+    /// Result of <see cref="ScanWithSubscriptions(XsltSequenceConstructor?)"/> — watchers for consuming
     /// aggregations plus per-item subscriptions for streamable xsl:for-each.
     /// </summary>
     public readonly record struct ScanResult(
@@ -38,15 +43,34 @@ internal sealed class StreamingExpressionScanner
         => ScanWithSubscriptions(body).Watchers;
 
     /// <summary>
+    /// Scans the content body of a streaming instruction, anchoring every emitted
+    /// watcher's path against <paramref name="contextRootDepth"/> (the absolute
+    /// depth of the watcher's context root in the streaming ancestor stack). The
+    /// parameterless overload defaults to 0 (xsl:source-document); a deferred
+    /// matched-template passes the active reader depth.
+    /// </summary>
+    public IReadOnlyList<StreamWatcher> Scan(XsltSequenceConstructor? body, int contextRootDepth)
+        => ScanWithSubscriptions(body, contextRootDepth).Watchers;
+
+    /// <summary>
     /// Scans the content body of an xsl:source-document instruction.
     /// Returns both the watchers for consuming aggregates and the
     /// subscriptions for streamable xsl:for-each instructions.
     /// </summary>
     public ScanResult ScanWithSubscriptions(XsltSequenceConstructor? body)
+        => ScanWithSubscriptions(body, contextRootDepth: 0);
+
+    /// <summary>
+    /// As <see cref="ScanWithSubscriptions(XsltSequenceConstructor?)"/> but stamps
+    /// every emitted watcher with <paramref name="contextRootDepth"/> so its path
+    /// anchors to the runtime context root rather than floating to any depth.
+    /// </summary>
+    public ScanResult ScanWithSubscriptions(XsltSequenceConstructor? body, int contextRootDepth)
     {
         _watchers.Clear();
         _subscriptions.Clear();
         _constructionDepth = 0;
+        _contextRootDepth = contextRootDepth;
         if (body != null)
         {
             ScanInstructions(body);
@@ -250,6 +274,7 @@ internal sealed class StreamingExpressionScanner
                     _watchers.Add(new StreamWatcher
                     {
                         SourceExpression = expr,
+                        ContextRootDepth = _contextRootDepth,
                         PathMatcher = new StreamPathMatcher(pathInfo.Value.Path),
                         Aggregation = aggType,
                         ValueAttribute = pathInfo.Value.Attribute,
@@ -273,6 +298,7 @@ internal sealed class StreamingExpressionScanner
                     _watchers.Add(new StreamWatcher
                     {
                         SourceExpression = expr,
+                        ContextRootDepth = _contextRootDepth,
                         PathMatcher = new StreamPathMatcher(headPathInfo.Value.Path),
                         Aggregation = WatcherAggregation.Head,
                         ValueAttribute = headPathInfo.Value.Attribute,
@@ -291,6 +317,7 @@ internal sealed class StreamingExpressionScanner
                     _watchers.Add(new StreamWatcher
                     {
                         SourceExpression = expr,
+                        ContextRootDepth = _contextRootDepth,
                         PathMatcher = new StreamPathMatcher(seqPath.Value.Path),
                         Aggregation = WatcherAggregation.Sequence,
                         ValueAttribute = seqPath.Value.Attribute,
@@ -309,6 +336,7 @@ internal sealed class StreamingExpressionScanner
                     _watchers.Add(new StreamWatcher
                     {
                         SourceExpression = expr,
+                        ContextRootDepth = _contextRootDepth,
                         PathMatcher = new StreamPathMatcher(snapPath.Value.Path),
                         Aggregation = WatcherAggregation.Snapshot,
                         ValueAttribute = snapPath.Value.Attribute,
@@ -346,6 +374,7 @@ internal sealed class StreamingExpressionScanner
                         _watchers.Add(new StreamWatcher
                         {
                             SourceExpression = expr,
+                            ContextRootDepth = _contextRootDepth,
                             PathMatcher = new StreamPathMatcher(filterPath.Value.Path),
                             Aggregation = WatcherAggregation.Snapshot,
                             ValueAttribute = filterPath.Value.Attribute,
@@ -371,6 +400,7 @@ internal sealed class StreamingExpressionScanner
                 _watchers.Add(new StreamWatcher
                 {
                     SourceExpression = expr,
+                    ContextRootDepth = _contextRootDepth,
                     PathMatcher = new StreamPathMatcher(wrapped.Path.Path),
                     Aggregation = wrapped.Aggregation,
                     ValueAttribute = wrapped.Path.Attribute,
@@ -411,6 +441,7 @@ internal sealed class StreamingExpressionScanner
                 _watchers.Add(new StreamWatcher
                 {
                     SourceExpression = expr,
+                    ContextRootDepth = _contextRootDepth,
                     PathMatcher = new StreamPathMatcher(shape.Path),
                     Aggregation = WatcherAggregation.Sequence,
                     ValueAttribute = shape.Attribute,

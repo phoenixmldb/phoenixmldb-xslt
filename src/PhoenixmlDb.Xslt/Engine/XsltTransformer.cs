@@ -7799,7 +7799,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         if (_activeStreamingReader == null) return null;
         var scanner = new StreamingExpressionScanner();
-        var watchers = scanner.Scan(template.Body);
+        // Anchor the deferred watchers to the matched element's depth: their paths
+        // are relative to the matched template's context node, not the document root.
+        var watchers = scanner.Scan(template.Body, _activeStreamingReader.Depth);
         if (watchers.Count == 0) return null;
         if (BodyContainsApplyTemplates(template.Body)) return null;
         return new DeferredStreamingExecution

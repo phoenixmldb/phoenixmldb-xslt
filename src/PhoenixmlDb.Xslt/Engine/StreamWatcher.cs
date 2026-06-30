@@ -43,7 +43,15 @@ internal sealed class StreamPathMatcher
     /// </summary>
     /// <param name="ancestorStack">Current element name stack (outermost first).</param>
     /// <param name="currentName">The current element's local name.</param>
-    public bool Matches(IReadOnlyList<string> ancestorStack, string currentName)
+    /// <param name="contextRootDepth">
+    /// Absolute depth (in <paramref name="ancestorStack"/> terms) of the watcher's
+    /// context root: the leftmost concrete step is anchored as a child of that root.
+    /// A value of <c>-1</c> (the default) preserves the legacy floating behavior —
+    /// a relative path matches at any depth. 0 anchors to the document root
+    /// (xsl:source-document); a deferred matched-template passes the active reader
+    /// depth (its <c>ParentDepth</c>).
+    /// </param>
+    public bool Matches(IReadOnlyList<string> ancestorStack, string currentName, int contextRootDepth = -1)
     {
         // Build full path: ancestors + current
         // Match against steps from the end
@@ -56,9 +64,9 @@ internal sealed class StreamPathMatcher
 
         if (lastStep != currentName && lastStep != "*") return false;
 
-        if (_steps.Length == 1) return true;
+        if (_steps.Length == 1) return contextRootDepth < 0 || ancestorStack.Count == contextRootDepth + 1;
 
-        return MatchAncestors(_steps, _steps.Length - 2, ancestorStack, ancestorStack.Count - 1);
+        return MatchAncestors(_steps, _steps.Length - 2, ancestorStack, ancestorStack.Count - 1, contextRootDepth);
     }
 
     /// <summary>
@@ -67,7 +75,7 @@ internal sealed class StreamPathMatcher
     /// match becomes nondeterministic at that position — we try the shortest
     /// alignment first and fall back to deeper skips.
     /// </summary>
-    private static bool MatchAncestors(string[] steps, int stepIdx, IReadOnlyList<string> ancestorStack, int stackIdx)
+    private static bool MatchAncestors(string[] steps, int stepIdx, IReadOnlyList<string> ancestorStack, int stackIdx, int contextRootDepth)
     {
         while (stepIdx >= 0)
         {
@@ -76,13 +84,13 @@ internal sealed class StreamPathMatcher
             {
                 // Descendant marker: match zero or more ancestor names. Recurse
                 // for each possible alignment of the next concrete step.
-                if (stepIdx == 0) return true; // unbounded left edge — anything above is fine
+                if (stepIdx == 0) return true; // unbounded left edge — anything above is fine (stays floating)
                 var nextStep = steps[stepIdx - 1];
                 for (var i = stackIdx; i >= 0; i--)
                 {
                     if (nextStep == "**" || nextStep == ancestorStack[i] || nextStep == "*")
                     {
-                        if (MatchAncestors(steps, stepIdx - 2, ancestorStack, i - 1)) return true;
+                        if (MatchAncestors(steps, stepIdx - 2, ancestorStack, i - 1, contextRootDepth)) return true;
                     }
                 }
                 return false;
@@ -92,14 +100,17 @@ internal sealed class StreamPathMatcher
             stepIdx--;
             stackIdx--;
         }
-        return true;
+        // Reached the leftmost concrete step. With a sentinel of -1 the relative path
+        // floats (matches at any depth); otherwise anchor that step as a child of the
+        // context root, i.e. the next ancestor consumed must sit at contextRootDepth.
+        return contextRootDepth < 0 || stackIdx == contextRootDepth - 1;
     }
 
     /// <summary>
     /// Checks if the pattern ends with an attribute step and the element path matches.
     /// Returns the attribute local name if matched, null otherwise.
     /// </summary>
-    public string? MatchesAttribute(IReadOnlyList<string> ancestorStack, string currentElementName)
+    public string? MatchesAttribute(IReadOnlyList<string> ancestorStack, string currentElementName, int contextRootDepth = -1)
     {
         if (_steps.Length < 2) return null;
         var lastStep = _steps[^1];
@@ -109,7 +120,7 @@ internal sealed class StreamPathMatcher
         var elementSteps = _steps[..^1];
         if (elementSteps[^1] != currentElementName && elementSteps[^1] != "*") return null;
 
-        if (!MatchAncestors(elementSteps, elementSteps.Length - 2, ancestorStack, ancestorStack.Count - 1))
+        if (!MatchAncestors(elementSteps, elementSteps.Length - 2, ancestorStack, ancestorStack.Count - 1, contextRootDepth))
             return null;
 
         return lastStep[1..]; // Strip the @ prefix
@@ -135,6 +146,16 @@ internal sealed class StreamWatcher
     /// How to accumulate matched values.
     /// </summary>
     public required WatcherAggregation Aggregation { get; init; }
+
+    /// <summary>
+    /// Absolute depth (in the streaming ancestor-name stack) of this watcher's
+    /// context root. The leftmost concrete step of <see cref="PathMatcher"/> is
+    /// anchored as a child of that root. 0 for source-document activation (the
+    /// default); for a deferred matched-template the active reader depth
+    /// (<c>ParentDepth</c>) so the watcher path is interpreted relative to the
+    /// matched element, not floated to any depth.
+    /// </summary>
+    public int ContextRootDepth { get; init; }
 
     /// <summary>
     /// Optional: attribute name to extract from matched elements (e.g., "value" for @value).
