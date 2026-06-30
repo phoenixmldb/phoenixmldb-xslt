@@ -1170,7 +1170,7 @@ internal sealed class StreamingXmlProcessor
     /// not outermost and is skipped. Each ancestor depth <c>i</c> is tested with the
     /// names above it as its own ancestor stack and its own name as the current name.
     /// </summary>
-    private bool AncestorMatchesPattern(StreamPathMatcher matcher, int contextRootDepth = -1)
+    private bool AncestorMatchesPattern(StreamPathMatcher matcher, int? contextRootDepth = null)
     {
         for (int i = 0; i < _ancestorNames.Count; i++)
         {

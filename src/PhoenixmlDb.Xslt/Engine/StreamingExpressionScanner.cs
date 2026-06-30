@@ -22,10 +22,11 @@ internal sealed class StreamingExpressionScanner
     // and keeps the forward-pass subscription-dispatch path unchanged.
     private int _constructionDepth;
 
-    // Absolute depth of the context root that emitted watchers anchor against.
-    // 0 for xsl:source-document (whole document); the active reader depth for a
-    // deferred matched-template. Stamped onto every StreamWatcher this scan emits.
-    private int _contextRootDepth;
+    // Stack index of the context-root element that emitted watchers anchor against.
+    // -1 for xsl:source-document (the document NODE, above element index 0); the
+    // active reader depth for a deferred matched-template. Stamped onto every
+    // StreamWatcher this scan emits.
+    private int _contextRootDepth = -1;
 
     /// <summary>
     /// Result of <see cref="ScanWithSubscriptions(XsltSequenceConstructor?)"/> — watchers for consuming
@@ -45,9 +46,9 @@ internal sealed class StreamingExpressionScanner
     /// <summary>
     /// Scans the content body of a streaming instruction, anchoring every emitted
     /// watcher's path against <paramref name="contextRootDepth"/> (the absolute
-    /// depth of the watcher's context root in the streaming ancestor stack). The
-    /// parameterless overload defaults to 0 (xsl:source-document); a deferred
-    /// matched-template passes the active reader depth.
+    /// stack index of the watcher's context-root element in the streaming ancestor
+    /// stack). The parameterless overload defaults to -1 (xsl:source-document, the
+    /// document node); a deferred matched-template passes the active reader depth.
     /// </summary>
     public IReadOnlyList<StreamWatcher> Scan(XsltSequenceConstructor? body, int contextRootDepth)
         => ScanWithSubscriptions(body, contextRootDepth).Watchers;
@@ -58,7 +59,7 @@ internal sealed class StreamingExpressionScanner
     /// subscriptions for streamable xsl:for-each instructions.
     /// </summary>
     public ScanResult ScanWithSubscriptions(XsltSequenceConstructor? body)
-        => ScanWithSubscriptions(body, contextRootDepth: 0);
+        => ScanWithSubscriptions(body, contextRootDepth: -1);
 
     /// <summary>
     /// As <see cref="ScanWithSubscriptions(XsltSequenceConstructor?)"/> but stamps
