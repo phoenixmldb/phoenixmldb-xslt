@@ -1356,9 +1356,22 @@ internal sealed class StreamingXmlProcessor
                     }
                 }
 
+                // An attribute-axis aggregate (e.g. sum(a/b/@v)) matches HERE via the
+                // element-step Matches() with ValueAttribute set; it normally
+                // accumulates immediately because the attribute value is known at the
+                // matched element's start-tag. But a motionless predicate on the
+                // attribute leaf step — sum(a/b/@v[xs:decimal(.) gt 0]) — must be
+                // evaluated before the value is committed, and this synchronous path
+                // has no async predicate hook. Defer those (and intermediate-predicate
+                // attribute paths) to EndElement, where the host element is
+                // materialized, the matched attribute node is pushed as the predicate
+                // context item (. = attribute value), and only passing values are
+                // accumulated. sf-sum-019 / sf-avg-019 / sf-min-019. The unpredicated
+                // attribute case keeps the cheap immediate accumulation below.
                 bool defer = watcher.ValueAttribute == null
-                    && (WatcherNeedsTextContent(watcher) || watcher.Predicates.Count > 0
-                        || watcher.IntermediatePredicates.Count > 0);
+                    ? (WatcherNeedsTextContent(watcher) || watcher.Predicates.Count > 0
+                        || watcher.IntermediatePredicates.Count > 0)
+                    : (watcher.Predicates.Count > 0 || watcher.IntermediatePredicates.Count > 0);
                 if (defer)
                 {
                     // Defer the OnElementMatch until EndElement so accumulated text
@@ -1616,10 +1629,34 @@ internal sealed class StreamingXmlProcessor
             bool predicatesPass = true;
             if (entry.Watcher.Predicates.Count > 0 && materialized != null)
             {
+                // For an attribute-axis watcher (@value[...]) the predicate's context
+                // item `.` is the ATTRIBUTE node — its typed/string value is the
+                // attribute value (e.g. xs:decimal(.) gt 0). Push the matched
+                // attribute, not the host element. For element/text watchers `.` is
+                // the materialized element as before.
+                XdmNode predicateContext = materialized;
+                // materialized is statically XdmElement here (MaterializeLeafElement /
+                // MaterializeSubtreeFrame both return XdmElement), so the analyzer
+                // proves the cast always succeeds — keep the pattern for clarity but
+                // silence the always-true diagnostic.
+#pragma warning disable CA1508
+                if (entry.Watcher.ValueAttribute != null && materialized is XdmElement hostElem)
+#pragma warning restore CA1508
+                {
+                    foreach (var attrId in hostElem.Attributes)
+                    {
+                        if (_nodeStore.GetNode(attrId) is PhoenixmlDb.Xdm.Nodes.XdmAttribute xa
+                            && xa.LocalName == entry.Watcher.ValueAttribute)
+                        {
+                            predicateContext = xa;
+                            break;
+                        }
+                    }
+                }
                 var prevStreaming = _context._isStreamingExecution;
                 _context._isStreamingExecution = false;
-                _context.PushContextItem(materialized, 1, 1);
-                _context.PushCurrentItem(materialized);
+                _context.PushContextItem(predicateContext, 1, 1);
+                _context.PushCurrentItem(predicateContext);
                 try
                 {
                     foreach (var pred in entry.Watcher.Predicates)

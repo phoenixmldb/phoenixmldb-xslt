@@ -841,6 +841,17 @@ internal sealed class StreamingExpressionScanner
                         {
                             if (step.NodeTest is NameTest attrNameTest)
                                 attribute = attrNameTest.LocalName;
+                            // A predicate on the attribute leaf step itself
+                            // (e.g. @value[xs:decimal(.) gt 0]) is motionless —
+                            // its only context is the attribute's own string value
+                            // (the context item `.`). Capture it as the final-step
+                            // filter so the watcher drops attribute values that fail
+                            // it; without this the predicate was silently dropped and
+                            // the aggregate ran over ALL attribute values
+                            // (sf-sum-019 / sf-avg-019 / sf-min-019). Only when an
+                            // element step hasn't already supplied a final predicate.
+                            if (step.Predicates.Count > 0 && predicates.Count == 0)
+                                predicates = step.Predicates;
                         }
                         else if (step.Axis == Axis.Child)
                         {
