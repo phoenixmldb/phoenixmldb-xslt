@@ -3302,10 +3302,15 @@ public sealed class XsltTransformEngine
                 // descend into every container so the doc-node dispatch correctly
                 // recognizes the body as driving the stream via apply-templates
                 // (and does NOT run in subscription-dispatch-only mode, which would
-                // leave child elements unmatched).
+                // leave child elements unmatched). xsl:result-document is one such
+                // container: a match="/" body of <xsl:result-document><xsl:apply-templates/>
+                // </xsl:result-document> must keep the active streaming processor live
+                // so the inner apply-templates streams into the redirected secondary
+                // output rather than running against the empty synthetic document.
                 case Ast.XsltLiteralResultElement lre when ContentContainsApplyTemplatesStreaming(lre.Content):
                 case Ast.XsltCopy cp when ContentContainsApplyTemplatesStreaming(cp.Content):
                 case Ast.XsltForEach fe when ContentContainsApplyTemplatesStreaming(fe.Body):
+                case Ast.XsltResultDocument rd when ContentContainsApplyTemplatesStreaming(rd.Content):
                 case Ast.XsltSequenceConstructor nested when ContentContainsApplyTemplatesStreaming(nested):
                     return true;
                 case Ast.XsltIf i when ContentContainsApplyTemplatesStreaming(i.Then):
