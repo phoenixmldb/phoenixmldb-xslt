@@ -1,5 +1,25 @@
 # Release History
 
+## 1.4.16 (2026-06-30)
+
+Thread-safety completion, base-URI correctness, and streaming path-matching fixes. Requires PhoenixmlDb.Core 1.2.0 and PhoenixmlDb.XQuery 1.5.1. No API changes.
+
+### Fix: thread-safe namespace interning (completed)
+
+1.4.15 made `StylesheetParser.ResolveNamespaceUri` concurrent. The remaining QName-parsing intern sites in the parser now route through that same thread-safe path, so no namespace interning remains on the old non-atomic dictionary/counter.
+
+### Fix: base URI on constructed temporary trees
+
+A constructed document-node temporary tree now carries the stylesheet base URI, so `base-uri()` and relative-URI resolution against such a node behave correctly (previously the constructed node had no base URI).
+
+### Streaming: path anchoring
+
+A relative match/select pattern in streaming mode is anchored to its runtime context-root depth rather than matching at any descendant depth. A downward step such as `ITEM/PAGES` evaluated from the document node no longer spuriously matches deeper elements — which had skewed streaming aggregates such as `sum`/`avg`/`min`/`max`.
+
+### Streaming: result-document capture
+
+`xsl:result-document` with motionless content, driven from a streamed `apply-templates`, now captures its secondary output instead of producing nothing.
+
 ## 1.4.15 (2026-06-25)
 
 Thread-safety fix and more streaming correctness for consuming expressions over a streamed source. Requires PhoenixmlDb.Core 1.1.9 and PhoenixmlDb.XQuery 1.4.7. No API changes.
