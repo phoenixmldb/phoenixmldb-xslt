@@ -271,6 +271,15 @@ public static class StreamabilityClassifier
 
     private static PostureSweep ClassifyFunctionCall(FunctionCallExpression fc, StreamingContext ctx)
     {
+        // §19.8: a constructor-function call in the XSD namespace (xs:decimal(…), xs:integer(…),
+        // xs:date(…), xs:NMTOKENS(…), …) atomizes its single operand and yields a grounded
+        // atomic/list result — identical streamability to a CastExpression. Route it through the
+        // SAME logic so it is not left Unknown → NotStreamable. (Most xs:* casts parse to a
+        // CastExpression already handled in Classify; the residual constructor-CALL form — e.g.
+        // list types, or an explicit function call — lands here.)
+        if (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Xsd && fc.Arguments.Count == 1)
+            return Grounded(AtomizeSweep(fc.Arguments[0], ctx));
+
         var role = FunctionRole(fc.Name.LocalName, fc.Arguments.Count);
 
         switch (role)
@@ -287,6 +296,21 @@ public static class StreamabilityClassifier
                 if (!AllOperandsStreamable(fc.Arguments, ctx))
                     return NotStreamable();
                 return Grounded(CombineSweep(Sweep.Consuming, WorstSweep(fc.Arguments, ctx)));
+
+            case FnRole.Atomizing:
+                // §19.8 / fn spec: numeric (number/abs/round/floor/…), string-manipulation
+                // (contains/substring/matches/translate/…), and boolean/comparison predicate
+                // (starts-with/ends-with/has-children/deep-equal/…) functions ATOMIZE their
+                // node operands and yield a grounded atomic/boolean result. The sweep is the
+                // WORST ATOMIZE-sweep across the operands — posture-aware, unlike StringValue's
+                // forced Consuming: atomizing a striding/crawling ELEMENT operand is consuming
+                // (its subtree string-value is walked), but atomizing a climbing ATTRIBUTE
+                // operand is motionless (an attribute has no subtree). This is what makes
+                // number(@v) motionless-streamable but number(child::PRICE) consuming. A
+                // non-streamable operand (roaming filter, reverse(), …) propagates.
+                if (!AllOperandsStreamable(fc.Arguments, ctx))
+                    return NotStreamable();
+                return Grounded(WorstAtomizeSweep(fc.Arguments, ctx));
 
             case FnRole.Aggregate:
                 // count()/sum()/avg()/... absorb the operand sequence to an atomic — grounded,
@@ -665,6 +689,7 @@ public static class StreamabilityClassifier
         Unknown,
         NodeProperty,  // reads node identity/name only — Inspection, motionless, grounded result
         StringValue,   // atomizes subtree string-value — Absorption, consuming, grounded result
+        Atomizing,     // atomizes operand(s) → grounded atomic/boolean; posture-aware sweep
         Aggregate,     // absorbs a sequence to an atomic — Absorption, consuming, grounded result
         Transmission,  // passes a subset of the operand through — posture-preserving
         Boolean,       // reduces to an atomic boolean — grounded
@@ -688,11 +713,34 @@ public static class StreamabilityClassifier
             // NOT these functions, and stays motionless).
             "position" or "last" => FnRole.Positional,
 
-            "string" or "data" or "normalize-space" or "string-length"
-                or "upper-case" or "lower-case" => FnRole.StringValue,
+            "string" or "data" or "normalize-space" => FnRole.StringValue,
+
+            // §19.8 / fn spec: numeric, string-manipulation and boolean/comparison functions
+            // that ATOMIZE their node operand(s) and return a grounded atomic/boolean. Routed
+            // through the posture-aware Atomizing role so number(@v) is motionless-streamable
+            // while number(child::PRICE) is consuming (element subtree walked). Sweep is the
+            // worst ATOMIZE-sweep of the operands.
+            //
+            // Numeric.
+            "number" or "abs" or "round" or "round-half-to-even" or "floor" or "ceiling"
+            // String length / manipulation / predicates.
+                or "string-length" or "upper-case" or "lower-case" or "translate"
+                or "normalize-unicode" or "substring" or "substring-before" or "substring-after"
+                or "contains" or "starts-with" or "ends-with" or "matches" or "replace"
+            // URI escaping (operate on the atomized string value).
+                or "encode-for-uri" or "escape-html-uri" or "iri-to-uri"
+            // Sequence-inspecting boolean/comparison predicates that atomize/deep-walk operands.
+                or "has-children" or "deep-equal" or "compare" or "index-of" or "codepoint-equal"
+                => FnRole.Atomizing,
 
             "count" or "sum" or "avg" or "max" or "min"
-                or "string-join" or "concat" => FnRole.Aggregate,
+                or "string-join" or "concat"
+            // §19.8 / fn spec: tokenize/distinct-values/string-to-codepoints absorb their
+            // (atomized) operand and produce a grounded atomic sequence — consuming. Grouped
+            // with the absorbing aggregates (forced-consuming) per the fn streamability
+            // categories; a non-streamable operand still propagates.
+                or "tokenize" or "distinct-values" or "string-to-codepoints"
+                => FnRole.Aggregate,
 
             // §19.8.8: fn:reverse must buffer its whole operand sequence to emit it in
             // reverse order — it is NOT a posture-preserving transmission like head/tail/
@@ -700,8 +748,25 @@ public static class StreamabilityClassifier
             // free-ranging.
             "reverse" => FnRole.FreeRanging,
 
+            // §19.8: POSTURE-PRESERVING transmissions — the result is (a subset / reordering-
+            // free view of) the SAME nodes as the argument, so result posture = arg posture and
+            // result sweep = combine(arg sweep, secondary-arg sweeps). CRITICAL: one-or-more/…
+            // must NOT ground or motionless-collapse their argument — one-or-more(child::A)
+            // stays (Striding, Consuming); a roaming arg propagates.
+            //
+            // NOTE (Phase 1.5 Task A): fn:outermost / fn:innermost are DELIBERATELY NOT modelled
+            // as transmissions and left conservative (Unknown → NotStreamable). Although each
+            // returns a subset of its argument's nodes, the W3C streaming corpus REQUIRES
+            // XTSE3430 for innermost()/outermost() over a NON-GROUNDED (streamed) operand
+            // (sf-innermost-901: innermost(/chapter//section)/@id) — determining the innermost /
+            // outermost members of a streamed node-set needs the whole set buffered. Modelling
+            // them as posture-preserving over a striding/crawling operand OVER-ACCEPTS those
+            // (the shadow over-accept pin caught it), so they stay rejecting until a grounded-
+            // operand-only refinement is added in a later phase.
             "head" or "tail" or "subsequence" or "remove" or "insert-before"
-                or "subsequence-before" or "subsequence-after" => FnRole.Transmission,
+                or "subsequence-before" or "subsequence-after"
+                or "one-or-more" or "zero-or-one" or "exactly-one"
+                or "unordered" or "trace" => FnRole.Transmission,
 
             "boolean" or "not" or "exists" or "empty" or "true" or "false" => FnRole.Boolean,
 

@@ -247,11 +247,12 @@ public class StreamingPlanTests
     [Fact]
     public void WholeInputCase_ApplyTemplatesCompositeSelect_PlansBufferWholeInput()
     {
-        // <xsl:apply-templates select="copy-of(outermost(//p))"/> — the select navigates via a
-        // function composite; copy-of grounds it (streamable) but apply-templates over a grounded
-        // copied sequence is not the streaming per-node dispatch → not guaranteed streamable here
-        // (apply-templates transmits the select; a grounded copy-of select is grounded, but the
-        // instruction still navigates the input) ⇒ whole-input buffer.
+        // <xsl:apply-templates select="copy-of(outermost(//p))"/> — outermost() over a
+        // non-grounded (streamed) operand is DELIBERATELY left conservative (the W3C corpus
+        // requires XTSE3430 for streamed innermost/outermost — see the Phase 1.5 Task A note in
+        // the classifier's function-role table). So outermost(//p) → NotStreamable, copy-of of a
+        // non-streamable select → NotStreamable, and apply-templates over it still navigates the
+        // input ⇒ whole-input buffer.
         var ap = new XsltApplyTemplates
         {
             Select = Fn("copy-of", Fn("outermost", AbsPath(Step(Axis.DescendantOrSelf, "p")))),

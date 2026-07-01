@@ -878,4 +878,198 @@ public class PostureCompositionTests
         };
         StreamabilityClassifier.Classify(forEach, Streamed).IsGuaranteedStreamable.Should().BeTrue();
     }
+
+    // =======================================================================
+    // Phase 1.5 Task A: function-role table completion (§19.8 / fn spec
+    // streamability categories). These pin the roles added so the classifier
+    // stops CONSERVATIVELY over-rejecting streamable bodies whose only "sin"
+    // was containing an unroled standard function. Same streamed entry context.
+    // =======================================================================
+
+    private static FunctionCallExpression XsFn(string local, params XQueryExpression[] args) => new()
+    {
+        Name = new QName(NamespaceId.Xsd, local, "xs"),
+        Arguments = args,
+    };
+
+    // ---- A1: tokenize is grounded-atomic-sequence producing (consuming) -----
+
+    [Fact]
+    public void A01_TokenizeOfStringChild_IsGroundedConsuming()
+    {
+        // tokenize(string(child::A), ' ')
+        var call = Fn("tokenize", Fn("string", RelPath(Step(Axis.Child, "A"))),
+            new StringLiteral { Value = " " });
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Fact]
+    public void A01_TokenizeInSimpleMap_IsGroundedConsuming_TheSiIterate037Core()
+    {
+        // //text() ! tokenize(., '\s+') — the si-iterate-037 core.
+        var sm = new SimpleMapExpression
+        {
+            Left = AbsPath(Step(Axis.DescendantOrSelf, "text()")),
+            Right = Fn("tokenize", Dot, new StringLiteral { Value = "\\s+" }),
+        };
+        StreamabilityClassifier.Classify(sm, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    // ---- A2: outermost / innermost stay CONSERVATIVE over a streamed operand -
+    // The §19.8 anti-goal (posture preservation) is DEFERRED: the W3C streaming corpus
+    // requires XTSE3430 for innermost()/outermost() over a non-grounded operand
+    // (sf-innermost-901), so modelling them as posture-preserving transmissions OVER-ACCEPTS
+    // (the shadow over-accept pin caught it). They remain rejecting (Roaming, FreeRanging)
+    // until a grounded-operand-only refinement lands in a later phase.
+
+    [Fact]
+    public void A02_OutermostOfCrawling_StaysConservative_NotStreamable()
+    {
+        var call = Fn("outermost", AbsPath(Step(Axis.DescendantOrSelf, "PRICE")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Roaming, Sweep.FreeRanging));
+    }
+
+    [Fact]
+    public void A02_InnermostOfStriding_StaysConservative_NotStreamable()
+    {
+        var call = Fn("innermost", RelPath(Step(Axis.Child, "PRICE")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Roaming, Sweep.FreeRanging));
+    }
+
+    // ---- A3: cardinality / identity transmissions preserve posture ----------
+
+    [Fact]
+    public void A03_OneOrMoreChild_PreservesStridingConsuming()
+    {
+        var call = Fn("one-or-more", RelPath(Step(Axis.Child, "A")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Striding, Sweep.Consuming));
+    }
+
+    [Theory]
+    [InlineData("zero-or-one")]
+    [InlineData("exactly-one")]
+    [InlineData("unordered")]
+    [InlineData("trace")]
+    public void A03_TransmissionPreservesStridingConsuming(string fn)
+    {
+        var call = Fn(fn, RelPath(Step(Axis.Child, "A")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Striding, Sweep.Consuming));
+    }
+
+    // ---- A4: atomizing / numeric / string functions → grounded --------------
+
+    [Fact]
+    public void A04_NumberOfChild_IsGroundedConsuming()
+    {
+        // number(child::PRICE) — atomizes a striding element operand ⇒ consuming.
+        var call = Fn("number", RelPath(Step(Axis.Child, "PRICE")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Theory]
+    [InlineData("abs")]
+    [InlineData("round")]
+    [InlineData("floor")]
+    [InlineData("ceiling")]
+    [InlineData("string-length")]
+    [InlineData("normalize-unicode")]
+    [InlineData("translate")]
+    [InlineData("encode-for-uri")]
+    public void A04_AtomizingUnaryFunctionOfChild_IsGroundedConsuming(string fn)
+    {
+        var call = Fn(fn, RelPath(Step(Axis.Child, "PRICE")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Fact]
+    public void A04_NumberOfAttribute_IsGroundedMotionless()
+    {
+        // number(@v) — atomizing a climbing attribute of the context node is motionless (an
+        // attribute has no subtree to walk, and reaching it advanced nothing). Contrast
+        // number(child::A/@v), which is consuming because the child::A step itself consumes.
+        var call = Fn("number", RelPath(Step(Axis.Attribute, "v")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    // ---- A5: boolean / aggregate predicate functions → grounded -------------
+
+    [Fact]
+    public void A05_ContainsOfString_IsGroundedConsuming()
+    {
+        // contains(string(.), 'x') — string(.) atomizes striding . ⇒ consuming.
+        var call = Fn("contains", Fn("string", Dot), new StringLiteral { Value = "x" });
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Theory]
+    [InlineData("starts-with")]
+    [InlineData("ends-with")]
+    [InlineData("matches")]
+    [InlineData("substring-before")]
+    [InlineData("substring-after")]
+    public void A05_StringPredicateOfChild_IsGroundedConsuming(string fn)
+    {
+        var call = Fn(fn, RelPath(Step(Axis.Child, "A")), new StringLiteral { Value = "x" });
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Fact]
+    public void A05_HasChildrenOfChild_IsGroundedConsuming()
+    {
+        var call = Fn("has-children", RelPath(Step(Axis.Child, "A")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    // ---- A6: xs:* type-constructor calls route through cast logic ------------
+
+    [Fact]
+    public void A06_XsDecimalOfAttribute_IsGroundedMotionless()
+    {
+        // xs:decimal(@v) — climbing attribute operand atomizes motionless (routes through the
+        // same cast logic as a CastExpression).
+        var call = XsFn("decimal", RelPath(Step(Axis.Attribute, "v")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Fact]
+    public void A06_XsIntegerOfChild_IsGroundedConsuming()
+    {
+        // xs:integer(child::PRICE) — element operand atomizes consuming.
+        var call = XsFn("integer", RelPath(Step(Axis.Child, "PRICE")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Fact]
+    public void A06_XsNmtokensOfChild_IsGroundedConsuming()
+    {
+        // xs:NMTOKENS (a list type that parses to a constructor call, not a CastExpression) —
+        // still routes through cast logic.
+        var call = XsFn("NMTOKENS", RelPath(Step(Axis.Child, "PRICE")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    // ---- A7: distinct-values remains grounded-consuming ---------------------
+
+    [Fact]
+    public void A07_DistinctValuesOfChild_IsGroundedConsuming()
+    {
+        var call = Fn("distinct-values", RelPath(Step(Axis.Child, "A")));
+        StreamabilityClassifier.Classify(call, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
 }
