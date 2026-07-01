@@ -9744,6 +9744,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
             }
 
+            // xsl:break stops iteration early with the reader parked at the broken
+            // child's EndElement. Following siblings up to the parent's EndElement
+            // were NOT consumed by this iterate and would otherwise leak out through
+            // the processor's built-in template rule (si-iterate-013: trailing
+            // <item>/<c>/<d> text after the break, and the parent's own </root> close).
+            // Skip forward to the parent's EndElement and hand it to the processor via
+            // deferred-read so it closes any enclosing construction (e.g. the wrapping
+            // xsl:copy's <root> tag) — exactly as the natural end-of-children path does.
+            if (brokeOut)
+            {
+                while (await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (reader.NodeType == System.Xml.XmlNodeType.EndElement
+                        && reader.Depth == parentDepth)
+                        break;
+                }
+                _streamingDeferReadOnNextIteration = true;
+            }
+
             // xsl:on-completion fires after the loop unless an outer xsl:break
             // explicitly suppressed it (BreakException reaches the outer loop).
             // Streaming mirrors the non-streaming policy: on-completion fires when

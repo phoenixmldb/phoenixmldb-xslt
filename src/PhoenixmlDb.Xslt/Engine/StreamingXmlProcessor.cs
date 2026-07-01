@@ -59,6 +59,15 @@ internal sealed class StreamingXmlProcessor
     // Ancestor element names for watcher path matching (outermost first)
     private readonly List<string> _ancestorNames = [];
 
+    // Synthetic document-node parent for the streamed root element. In an XDM tree
+    // every element is rooted at a document node; the streaming materializer builds
+    // shallow elements with no parent, so a root-anchored pattern (match="/*",
+    // match="/", //X evaluated from the root) cannot see the document ancestor and
+    // fails to match — the built-in text-only rule runs instead (#143 si-iterate-013).
+    // Registered lazily the first time a depth-0 element is materialized, so the
+    // NodeResolver walk from the root reaches an XdmDocument. NodeId.None until then.
+    private NodeId _streamingRootDocId = NodeId.None;
+
     // Ancestor element attributes, parallel to _ancestorNames (outermost first).
     // Maintained at the same push/pop sites so a matched leaf can evaluate a
     // motionless intermediate predicate (e.g. ITEM[@CAT='P']) against the
@@ -329,6 +338,17 @@ internal sealed class StreamingXmlProcessor
 
                         // Match and execute template
                         var xdmElem = MaterializeElement(current);
+
+                        // Root element (no ancestor on the stack): anchor it under a
+                        // synthetic document node so root-anchored patterns (match="/*",
+                        // match="/", //X from the root) can walk to a document ancestor
+                        // and match. Every node in an XDM tree is rooted at a document
+                        // node; without this the shallow streamed root is parentless and
+                        // /* silently fails, falling back to the built-in text-only rule
+                        // (#143 si-iterate-013). Only the root is affected; deeper
+                        // elements keep their real element parent from ancestorStack.
+                        if (ancestorStack.Count == 0)
+                            xdmElem.Parent = EnsureStreamingRootDocId();
 
                         // Fire start-phase accumulator rules before template execution
                         await FireAccumulatorRulesAsync(xdmElem, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
@@ -2293,6 +2313,28 @@ internal sealed class StreamingXmlProcessor
         if (_nodeCtxListPool.Count >= MaxPooledLists) return;
         list.Clear();
         _nodeCtxListPool.Push(list);
+    }
+
+    /// <summary>
+    /// Lazily registers a single synthetic document node to serve as the parent of the
+    /// streamed root element, and returns its id. Idempotent: a second call returns the
+    /// same id. See <see cref="_streamingRootDocId"/> for why the root needs a document
+    /// ancestor (root-anchored pattern matching — #143 si-iterate-013).
+    /// </summary>
+    private NodeId EnsureStreamingRootDocId()
+    {
+        if (_streamingRootDocId != NodeId.None)
+            return _streamingRootDocId;
+        var docId = _nodeStore.NextId();
+        _nodeStore.Register(new XdmDocument
+        {
+            Id = docId,
+            Document = StreamingDocumentId,
+            Children = XdmDocument.EmptyChildren,
+            Parent = null,
+        });
+        _streamingRootDocId = docId;
+        return docId;
     }
 
     /// <summary>
