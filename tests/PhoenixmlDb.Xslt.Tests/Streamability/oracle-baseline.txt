@@ -1,0 +1,39 @@
+# Full-pass streaming oracle — refactor invariant for the #143 posture/sweep rebuild.
+# Captured 2026-07-01 at engine tip d8d5eff (phoenixmldb-xslt main) via:
+#   dotnet test PhoenixmlDb.Conformance.Tests --filter "Group=strm" --logger "console;verbosity=detailed"
+#   | grep FAILED | ... | sort -u
+# INVARIANT: after every rebuild task, the current per-case FAILED set must be a
+# SUBSET of this list — i.e. `comm -23 <current-failed> oracle-baseline.txt` is EMPTY.
+# A rebuild task MAY shrink this set (closing latent bugs); it must NEVER grow it.
+# The 9 si-fork-00X cases are BY-DESIGN (xsl:import-schema XQST0059, engine not schema-aware).
+sf-head-003
+sf-insert-before-022
+sf-insert-before-122
+sf-one-or-more-015
+sf-outermost-022
+sf-remove-003
+sf-remove-022
+sf-snapshot-0201
+sf-sum-011
+sf-sum-055
+sf-tail-012
+sf-trace-012
+si-for-each-807
+si-fork-001
+si-fork-002
+si-fork-003
+si-fork-004
+si-fork-005
+si-fork-006
+si-fork-007
+si-fork-008
+si-fork-009
+si-group-032
+si-group-033
+si-result-document-008
+st-string-join-002
+su-absorbing-301
+su-shallow-descent-001
+sx-bang-012
+sx-for-005
+sx-path-001
