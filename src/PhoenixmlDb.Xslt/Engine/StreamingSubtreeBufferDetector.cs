@@ -129,6 +129,24 @@ internal static class StreamingSubtreeBufferDetector
                 if (me.Select != null && ExpressionUsesSnapshot(me.Select)) return true;
                 return me.Content != null && RequiresSubtreeBuffer(me.Content);
 
+            // xsl:result-document dispatched as a matched-template body (streaming
+            // apply-templates, si-result-document-303): its Content is motionless but an
+            // AVT on href/method/etc. may CONSUME the matched subtree — e.g.
+            // href="{count(*)}.xml", which counts the matched element's children. That
+            // count is only knowable once the subtree has been read, so materialize the
+            // matched element and run the body against it. Motionless AVTs (href="{@nr}",
+            // si-result-document-301) navigate only the start-tag's attributes and do NOT
+            // touch the subtree, so they stay on the striding-snapshot path.
+            case XsltResultDocument rd:
+                if (AvtTouchesMatchedSubtree(rd.Href)
+                    || AvtTouchesMatchedSubtree(rd.Method)
+                    || AvtTouchesMatchedSubtree(rd.Format)
+                    || AvtTouchesMatchedSubtree(rd.Indent)
+                    || AvtTouchesMatchedSubtree(rd.OmitXmlDeclaration)
+                    || AvtTouchesMatchedSubtree(rd.Encoding))
+                    return true;
+                return RequiresSubtreeBuffer(rd.Content);
+
             case XsltWherePopulated wp:
                 return RequiresSubtreeBuffer(wp.Content);
             case XsltOnEmpty oe:
@@ -1098,5 +1116,72 @@ internal static class StreamingSubtreeBufferDetector
         return fc.Name.LocalName is "snapshot" or "copy-of"
             && (fc.Name.Namespace == NamespaceId.None
                 || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
+    }
+
+    /// <summary>
+    /// True when an AVT on an <c>xsl:result-document</c> attribute contains an expression
+    /// that CONSUMES the matched subtree — i.e. navigates into the matched element's
+    /// children/descendants (directly or inside a function-call argument such as
+    /// <c>count(*)</c>). Pure attribute-axis or start-tag-only access (<c>@nr</c>) is NOT
+    /// subtree-consuming — those values are available from the start tag without reading
+    /// the subtree, so they stay on the cheaper striding-snapshot dispatch. A null AVT or
+    /// one with only literal parts returns false.
+    /// </summary>
+    private static bool AvtTouchesMatchedSubtree(XsltAttributeValueTemplate? avt)
+    {
+        if (avt == null) return false;
+        foreach (var part in avt.Parts)
+            if (part is AvtExpression ae && ExpressionNavigatesChildOrDescendant(ae.Expression))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> reads the matched element's children or
+    /// descendants — a relative path whose first step is a child/descendant axis (or a
+    /// bare context item, which atomizes to descendant text), including inside
+    /// function-call arguments, binary operands, and simple-map / sequence subexpressions.
+    /// Attribute-axis and self-axis navigation are excluded (available at the start tag).
+    /// </summary>
+    private static bool ExpressionNavigatesChildOrDescendant(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case ContextItemExpression:
+                // `.` atomizes to the concatenation of descendant text — subtree-consuming.
+                return true;
+
+            case PathExpression path:
+                if (path.IsAbsolute) return false;
+                if (path.InitialExpression != null
+                    && path.InitialExpression is not ContextItemExpression)
+                    return ExpressionNavigatesChildOrDescendant(path.InitialExpression);
+                if (path.Steps.Count == 0) return false;
+                return path.Steps[0].Axis is Axis.Child or Axis.Descendant or Axis.DescendantOrSelf;
+
+            case FunctionCallExpression fc:
+                foreach (var arg in fc.Arguments)
+                    if (ExpressionNavigatesChildOrDescendant(arg)) return true;
+                return false;
+
+            case BinaryExpression bin:
+                return ExpressionNavigatesChildOrDescendant(bin.Left)
+                    || ExpressionNavigatesChildOrDescendant(bin.Right);
+
+            case UnaryExpression un:
+                return ExpressionNavigatesChildOrDescendant(un.Operand);
+
+            case SimpleMapExpression sm:
+                return ExpressionNavigatesChildOrDescendant(sm.Left)
+                    || ExpressionNavigatesChildOrDescendant(sm.Right);
+
+            case SequenceExpression seq:
+                foreach (var item in seq.Items)
+                    if (ExpressionNavigatesChildOrDescendant(item)) return true;
+                return false;
+
+            default:
+                return false;
+        }
     }
 }

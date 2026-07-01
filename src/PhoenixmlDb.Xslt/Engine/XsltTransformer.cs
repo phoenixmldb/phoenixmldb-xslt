@@ -6760,9 +6760,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         List<XsltWithParam> withParams)
     {
         // Streaming interception: when a streaming processor is active and
-        // apply-templates is called on children (select is null, context is the
-        // synthetic streaming document), delegate to the streaming processor.
-        if (_activeStreamingProcessor != null && select == null && _activeStreamingReader != null)
+        // apply-templates is called on the document's children (select is null, or a
+        // striding child-axis select like ./account naming top-level elements), delegate
+        // to the streaming processor. The processor's forward pass offers each top-level
+        // element to template matching, so a striding select restricting to a named child
+        // dispatches exactly the templates that match that name (si-result-document-301/
+        // 303/304, where the matched account template body writes an xsl:result-document).
+        if (_activeStreamingProcessor != null && _activeStreamingReader != null
+            && (select == null || IsDocumentLevelStridingSelect(select)))
         {
             var ci = ContextItem;
             if (ci is XdmDocument)
@@ -9449,6 +9454,38 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             && s2.Predicates.Count == 0)
             return true;
         return false;
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="select"/> is a document-level "striding" select
+    /// — a child-axis name-test path evaluated from the document node that selects one or
+    /// more top-level elements (e.g. <c>account</c>, <c>./account</c>, <c>/account</c>).
+    /// Such a select on a streamable <c>xsl:apply-templates</c> whose context is the
+    /// document node is driven through the streaming processor: its forward pass offers
+    /// each top-level element to template matching, and only templates whose pattern
+    /// matches the selected element name fire — reproducing the striding select without
+    /// materializing the document. Conservative: rejects predicates, non-child axes,
+    /// descendant hops, attribute tails, and multi-step descent so nothing but a
+    /// top-level element striding select routes here.
+    /// </summary>
+    private static bool IsDocumentLevelStridingSelect(XQueryExpression? select)
+    {
+        if (select is not PhoenixmlDb.XQuery.Ast.PathExpression path)
+            return false;
+        // A leading '.' parses as ContextItemExpression InitialExpression; a leading '/'
+        // sets IsAbsolute. Both anchor at the document node when the context IS the
+        // document node. Any other initial expression means the path is not rooted at
+        // the streamed document root.
+        if (path.InitialExpression != null
+            && path.InitialExpression is not PhoenixmlDb.XQuery.Ast.ContextItemExpression)
+            return false;
+        if (path.Steps.Count != 1) return false;
+        var step = path.Steps[0];
+        if (step.Axis != PhoenixmlDb.XQuery.Ast.Axis.Child) return false;
+        if (step.Predicates.Count > 0) return false;
+        // Require a name test (or *) — a kind test / text() tail is not a striding
+        // element select.
+        return step.NodeTest is PhoenixmlDb.XQuery.Ast.NameTest;
     }
 
     /// <summary>

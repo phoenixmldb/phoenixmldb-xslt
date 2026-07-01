@@ -152,6 +152,20 @@ internal sealed class StreamingExpressionScanner
                 _constructionDepth--;
                 break;
 
+            // xsl:result-document redirects its body to a secondary output but is
+            // otherwise a construction wrapper: a streamable xsl:for-each lexically
+            // inside it (e.g. <xsl:result-document><out><xsl:for-each select="//X"/>
+            // </out></xsl:result-document>, si-result-document-005) must be scanned so
+            // its subscription registers. Descend at construction depth > 0 so the
+            // for-each is treated as WRAPPED (InlineDriven) — it runs inside linear
+            // body execution and hands off to the live reader at its lexical position,
+            // with the surrounding <out> and the result-document redirect preserved.
+            case XsltResultDocument resultDoc:
+                _constructionDepth++;
+                ScanInstructions(resultDoc.Content);
+                _constructionDepth--;
+                break;
+
             // xsl:copy in streaming mode keeps its open tag deferred; recurse into
             // its content so consuming aggregates nested inside surface to the watcher
             // registry (Martin's pattern: <xsl:copy><xsl:fork><count/></xsl:fork></xsl:copy>).
