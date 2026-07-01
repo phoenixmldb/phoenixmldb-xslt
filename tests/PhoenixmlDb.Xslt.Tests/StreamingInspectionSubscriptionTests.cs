@@ -98,23 +98,16 @@ public class StreamingInspectionSubscriptionTests
         result.Trim().Should().Be("<out><v>out</v></out>");
     }
 
-    // SOUNDNESS NEGATIVE: a descendant-consuming body (string(.) reads the matched
-    // node's subtree text) must NOT be dispatched via the non-consuming inspection
-    // path. The inspection-only guard (BodyConsumptionDetector.Consumes == true for
-    // string(.)) keeps it UNREGISTERED, so it stays on its failing baseline (empty
-    // <out/>) rather than producing the silently-WRONG output that unsound
-    // non-consuming dispatch would.
-    //
-    // Why empty <out/> is the safe (not merely tolerated) outcome: the inspection
-    // snapshot carries the matched element with EMPTY children (descendants are not
-    // consumed). If string(.) were dispatched non-consuming against it, it would
-    // atomize to "" per match and silently emit <out><v/><v/></out> — a
-    // plausible-looking but WRONG result (the real values are 8 and 2). The guard
-    // refuses to register it, so that wrong output is never produced. The construct
-    // remains in the streaming baseline (a descendant-consuming // for-each is a
-    // separate, out-of-scope effort), surfacing as the empty <out/>.
+    // CONSUMING OUTERMOST: a for-each over outermost(//WEIGHT) whose body descends into
+    // (or atomizes) the matched node's subtree (string(.) reads its full text) is NOT
+    // inspection-only, so the empty-children inspection snapshot cannot serve it. But
+    // because outermost matches never nest, materialize-and-skip is SOUND: the consuming
+    // dispatch buffers each matched WEIGHT subtree (capturing its text/children) and
+    // evaluates the body against it, yielding the correct atomized value. (Formerly this
+    // punted to an empty <out/> — a conservative non-answer; the consuming-outermost path
+    // now produces the genuinely correct result.)
     [Fact]
-    public async Task DescendantConsumingBody_NotStreamedUnsound()
+    public async Task DescendantConsumingBody_OutermostStreamsCorrectly()
     {
         var sheet = """
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
@@ -127,21 +120,14 @@ public class StreamingInspectionSubscriptionTests
             </xsl:stylesheet>
             """;
         var result = await Transform(sheet, FlatXml, "b.xml");
-        // It must NOT have been dispatched non-consuming: the unsound output would be
-        // two empty <v/> elements. Assert that wrong shape is absent (the guard held).
-        result.Should().NotContain("<v/>").And.NotContain("<v></v>");
-        // It stays on its failing baseline — the unregistered // for-each emits the
-        // empty wrapper, not the (impossible-here) correct 8/2 values.
-        result.Trim().Should().Be("<out/>");
+        // string(.) is the matched WEIGHT's text value: 8 and 2.
+        result.Trim().Should().Be("<out><v>8</v><v>2</v></out>");
     }
 
-    // Input where each matched WEIGHT HAS children. If a consuming body is
-    // misclassified inspection-only and dispatched against the EMPTY-CHILDREN
-    // snapshot, the child-reading position yields a wrong-but-plausible answer
-    // ("none" / "0"). The hardened guard refuses to register such a body, so the
-    // wrong value is never produced — the construct stays on its // for-each
-    // baseline (empty <out/>). Each test below pins one previously-uninspected
-    // visitor position.
+    // Input where each matched WEIGHT HAS element children. The consuming-outermost
+    // materialize-and-skip gives the body full subtree access, so child-axis reads
+    // resolve to their true values. Each test below pins one body position (choose/when
+    // test, LRE AVT, xsl:variable select) that navigates the matched subtree.
     private const string ChildrenXml = """
         <BOOKLIST>
           <ITEM CAT="P"><WEIGHT UNIT="oz"><G>8</G></WEIGHT></ITEM>
@@ -149,10 +135,10 @@ public class StreamingInspectionSubscriptionTests
         </BOOKLIST>
         """;
 
-    // HOLE 1: xsl:choose / xsl:when test predicate reads child axis.
-    // Real answer: "has" (every WEIGHT has a <G> child). Empty snapshot → "none".
+    // xsl:choose / xsl:when test predicate reads child axis. Every WEIGHT has a <G>
+    // child, so the consuming-outermost dispatch yields "has" per match.
     [Fact]
-    public async Task ChooseWhenTest_ChildAxis_NotStreamedUnsound()
+    public async Task ChooseWhenTest_ChildAxis_OutermostStreamsCorrectly()
     {
         var sheet = """
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
@@ -165,16 +151,12 @@ public class StreamingInspectionSubscriptionTests
             </xsl:stylesheet>
             """;
         var result = await Transform(sheet, ChildrenXml, "b.xml");
-        // The wrong-but-plausible empty-snapshot output is <v>none</v> per match.
-        // The guard must keep that from being produced.
-        result.Should().NotContain("none");
-        result.Trim().Should().Be("<out/>");
+        result.Trim().Should().Be("<out><v>has</v><v>has</v></out>");
     }
 
-    // HOLE 2: literal-result-element AVT attribute reads child axis.
-    // Real answer: count = 1. Empty snapshot → count = 0.
+    // literal-result-element AVT attribute reads child axis; count(child::*) is 1.
     [Fact]
-    public async Task LreAvtAttribute_ChildAxis_NotStreamedUnsound()
+    public async Task LreAvtAttribute_ChildAxis_OutermostStreamsCorrectly()
     {
         var sheet = """
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
@@ -187,15 +169,12 @@ public class StreamingInspectionSubscriptionTests
             </xsl:stylesheet>
             """;
         var result = await Transform(sheet, ChildrenXml, "b.xml");
-        // The wrong-but-plausible empty-snapshot output is count="0" per match.
-        result.Should().NotContain("count=\"0\"");
-        result.Trim().Should().Be("<out/>");
+        result.Trim().Should().Be("<out><v count=\"1\"/><v count=\"1\"/></out>");
     }
 
-    // HOLE 3: xsl:variable select reads child axis; the body atomizes count($k).
-    // Real answer: 1. Empty snapshot → 0.
+    // xsl:variable select reads child axis; the body atomizes count($k) == 1.
     [Fact]
-    public async Task VariableSelect_ChildAxis_NotStreamedUnsound()
+    public async Task VariableSelect_ChildAxis_OutermostStreamsCorrectly()
     {
         var sheet = """
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
@@ -208,8 +187,87 @@ public class StreamingInspectionSubscriptionTests
             </xsl:stylesheet>
             """;
         var result = await Transform(sheet, ChildrenXml, "b.xml");
-        // The wrong-but-plausible empty-snapshot output is <v>0</v> per match.
-        result.Should().NotContain("<v>0</v>");
-        result.Trim().Should().Be("<out/>");
+        result.Trim().Should().Be("<out><v>1</v><v>1</v></out>");
+    }
+
+    // ---- Consuming outermost: self-atomizing body (sx-arithmetic-006/007/008) ----
+    //
+    // A for-each over outermost(//PRICE) whose body atomizes the bare context item
+    // `.` (the streamed leaf's own text value) combined with an upward climb
+    // (../@CAT) is NOT inspection-only — the empty-children inspection snapshot would
+    // atomize `.` to "". But because outermost matches never nest, materialize-and-skip
+    // is sound: the consuming dispatch buffers the matched leaf (capturing its text),
+    // synthesizes the ancestor chain (so ../@CAT resolves), and evaluates the arithmetic
+    // per match. Regression pin for sx-ArithmeticExpr-006 (. + string-length(../@CAT)).
+
+    private const string PricesXml = """
+        <BOOKLIST>
+          <BOOKS OWNER="MHK">
+            <ITEM CAT="MMP"><PRICE>4.95</PRICE></ITEM>
+            <ITEM CAT="P"><PRICE>6.58</PRICE></ITEM>
+            <ITEM CAT="H"><PRICE>16.47</PRICE></ITEM>
+          </BOOKS>
+        </BOOKLIST>
+        """;
+
+    [Fact]
+    public async Task OutermostForEach_SelfAtomizePlusAncestorAttr_Streams()
+    {
+        var sheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:mode streamable="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="b.xml">
+                  <out><xsl:for-each select="outermost(//PRICE)"><a><xsl:value-of select="format-number(. + string-length(../@CAT), '0.00')"/></a></xsl:for-each></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(sheet, PricesXml, "b.xml");
+        // 4.95+3=7.95 (MMP), 6.58+1=7.58 (P), 16.47+1=17.47 (H).
+        result.Trim().Should().Be("<out><a>7.95</a><a>7.58</a><a>17.47</a></out>");
+    }
+
+    // sx-arithmetic-008 shape: a let-bound self-atomization + a global variable.
+    [Fact]
+    public async Task OutermostForEach_SelfAtomizeLetPlusGlobal_Streams()
+    {
+        var sheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="xs">
+              <xsl:param name="two" as="xs:integer" select="2"/>
+              <xsl:mode streamable="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="b.xml">
+                  <out><xsl:for-each select="outermost(//PRICE)"><a><xsl:value-of select="(let $p := round(number(.)) return max(($p, $p - 1))) + $two"/></a></xsl:for-each></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(sheet, PricesXml, "b.xml");
+        // round(4.95)=5,max(5,4)+2=7; round(6.58)=7,max(7,6)+2=9; round(16.47)=16,max(16,15)+2=18.
+        result.Trim().Should().Be("<out><a>7</a><a>9</a><a>18</a></out>");
+    }
+
+    // SOUNDNESS: a self-atomizing body under outermost must still honor the outermost
+    // dedup — a PRICE nested inside another PRICE is NOT outermost and must be skipped
+    // (its subtree is swallowed by the outer match's materialize). Only the OUTER
+    // PRICE's atomized value (which, per XDM, is the concatenation of all descendant
+    // text: "9" + "5" = "95") is emitted.
+    [Fact]
+    public async Task OutermostForEach_SelfAtomize_NestedMatch_ExcludesInner()
+    {
+        var nested = "<BOOKLIST><PRICE>9<PRICE>5</PRICE></PRICE></BOOKLIST>";
+        var sheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:mode streamable="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="b.xml">
+                  <out><xsl:for-each select="outermost(//PRICE)"><a><xsl:value-of select="."/></a></xsl:for-each></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(sheet, nested, "b.xml");
+        result.Trim().Should().Be("<out><a>95</a></out>");
     }
 }

@@ -165,4 +165,25 @@ internal sealed class ForEachSubscription
     /// is false and every match dispatches.
     /// </summary>
     public bool Outermost { get; init; }
+
+    /// <summary>
+    /// Consuming <c>outermost(//X)</c> dispatch: the for-each select is
+    /// <c>outermost(//X)</c> over a descendant-axis path but the body is NOT
+    /// inspection-only — it atomizes the bare context item <c>.</c> (needs the
+    /// matched leaf's own text value), so the empty-children inspection snapshot
+    /// would be wrong. Because <c>outermost</c> matches never nest, materialize-and-skip
+    /// is sound: the consuming dispatch materializes the matched subtree (capturing its
+    /// text), synthesizes the ancestor chain (so <c>../@CAT</c> / <c>ancestor::</c>
+    /// resolve), and executes the body against that snapshot. Registered by
+    /// <c>TryRegisterInspectionForEach</c> when the inspection-only gate fails but the
+    /// select is <c>outermost</c>; the consuming dispatch block honors the
+    /// <see cref="Outermost"/> ancestor-dedup for these (unlike plain child-axis
+    /// consuming subscriptions, which never nest by construction).
+    /// <para>
+    /// This carries a descendant-axis <see cref="StreamPathMatcher"/> (<c>**</c>),
+    /// which the child-axis-only <c>TryBuildPathMatcher</c> gate rejects — hence it is
+    /// registered directly rather than via the ordinary consuming path.
+    /// </para>
+    /// </summary>
+    public bool ConsumingOutermost { get; init; }
 }

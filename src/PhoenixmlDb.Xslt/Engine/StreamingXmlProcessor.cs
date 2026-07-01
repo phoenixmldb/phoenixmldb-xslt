@@ -374,10 +374,15 @@ internal sealed class StreamingXmlProcessor
                             foreach (var sub in _subscriptions)
                             {
                                 if (sub.IsInspectionOnly) continue; // handled non-consuming above
-                                if (sub.PathMatcher.Matches(_ancestorNames, current.LocalName))
-                                {
-                                    (matched ??= new List<ForEachSubscription>()).Add(sub);
-                                }
+                                if (!sub.PathMatcher.Matches(_ancestorNames, current.LocalName))
+                                    continue;
+                                // ConsumingOutermost: outermost(//X) with a self-atomizing
+                                // body. Materialize-and-skip is sound here (outermost never
+                                // nests), but the outermost dedup must still hold — skip a
+                                // match nested inside another match of the same pattern.
+                                if (sub.ConsumingOutermost && AncestorMatchesPattern(sub.PathMatcher))
+                                    continue;
+                                (matched ??= new List<ForEachSubscription>()).Add(sub);
                             }
                             if (matched != null)
                             {

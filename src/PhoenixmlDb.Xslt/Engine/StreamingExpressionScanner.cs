@@ -1322,8 +1322,19 @@ internal sealed class StreamingExpressionScanner
             return false;
         if (!PathHasDescendantAxis(path)) return false;
 
-        // The body must be provably inspection-only — the soundness gate.
-        if (!StreamabilityChecker.IsInspectionOnlyBody(forEach.Body)) return false;
+        // The body's soundness class decides the dispatch mode:
+        //   inspection-only  → non-consuming empty-snapshot dispatch (Group B), valid
+        //                      for outermost AND bare //X (matches may nest).
+        //   self-atomizing   → the body reads the bare context item `.` (needs the
+        //                      matched leaf's text value), so the empty-children
+        //                      snapshot would atomize to "". Only sound under
+        //                      `outermost` (matches never nest), where materialize-and-skip
+        //                      captures the leaf's text and cannot swallow a deeper match.
+        // A body that is neither (bare //X with a `.`-atomizing body, or any downward
+        // navigation we can't materialize soundly non-outermost) is left to buffered
+        // execution.
+        bool inspectionOnly = StreamabilityChecker.IsInspectionOnlyBody(forEach.Body);
+        if (!inspectionOnly && !outermost) return false;
 
         // Encode the descendant path (// → ** marker) into a StreamPathMatcher.
         var extracted = ExtractPathFromExpression(path);
@@ -1338,7 +1349,11 @@ internal sealed class StreamingExpressionScanner
             SourceInstruction = forEach,
             PathMatcher = new StreamPathMatcher(extracted.Value.Path),
             Body = forEach.Body,
-            IsInspectionOnly = true,
+            // Inspection-only bodies ride the non-consuming empty-snapshot path;
+            // a not-inspection-only body under outermost rides the consuming
+            // materialize-and-skip path (sound because outermost never nests).
+            IsInspectionOnly = inspectionOnly,
+            ConsumingOutermost = !inspectionOnly,
             Outermost = outermost,
             InlineDriven = _constructionDepth > 0,
         });
