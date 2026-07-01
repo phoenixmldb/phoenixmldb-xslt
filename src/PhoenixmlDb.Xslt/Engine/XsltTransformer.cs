@@ -9849,107 +9849,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var currentGroup = new List<object>();
         object? currentKey = null;
         var firstItem = true;
+        // 1-based position of the current item within the whole SELECTED sequence
+        // (not within its group) — the context position() for the grouping-key
+        // expression, e.g. 032's group-adjacent="(position()-1) idiv $block-size".
+        var selectedPosition = 0;
+
+        // The select expression names which child elements are grouped. For a
+        // striding leaf like select="transaction" (or "record/copy-of()", whose
+        // striding step is `record`), only elements with that local name are
+        // members — a mixed-content parent (007's <account-number> sibling of the
+        // <transaction>s) would otherwise pollute the first group and evaluate the
+        // grouping key against the wrong element. select="*" (or any wildcard leaf)
+        // yields null → every child element is a member.
+        var selectLeafName = StreamingForEachGroupSelectLeafName(instruction.Select);
 
         // Helper: build a full XdmElement subtree starting from the current
-        // StartElement event. Consumes events through the matching EndElement.
-        async ValueTask<Xdm.Nodes.XdmElement> ReadElementSubtreeAsync()
+        // StartElement event, delegating to the shared streaming materializer so
+        // the accumulated group members are REAL nodes: text descendants captured
+        // and _stringValue precomputed (so value-of/aggregate/copy-of/snapshot over
+        // current-group() all resolve). The materializer leaves the reader ON the
+        // matching EndElement (or on the empty element) — the outer child loop's
+        // next ReadAsync advances past it to the next sibling.
+        Xdm.Nodes.XdmElement ReadElementSubtree()
         {
-            // Use the streaming node store and the same minimal-builder approach
-            // as StreamingNodeContext, but with full child content materialised.
-            var startDepth = reader.Depth;
-            var startName = reader.LocalName;
-            var startNs = reader.NamespaceURI;
-            var startPrefix = reader.Prefix;
-            var startId = new NodeId(_nextStreamGroupNodeId++);
-            var attrIds = new List<NodeId>();
-
-            // Intern the namespace
-            var nsId = !string.IsNullOrEmpty(startNs)
-                ? _nodeStore!.InternNamespace(startNs)
-                : NamespaceId.None;
-
-            // Collect attributes
-            if (reader.HasAttributes)
-            {
-                for (int i = 0; i < reader.AttributeCount; i++)
-                {
-                    reader.MoveToAttribute(i);
-                    if (reader.Prefix == "xmlns" || (reader.Prefix.Length == 0 && reader.LocalName == "xmlns"))
-                        continue; // namespace decl, skip
-                    var attrNsId = !string.IsNullOrEmpty(reader.NamespaceURI)
-                        ? _nodeStore!.InternNamespace(reader.NamespaceURI)
-                        : NamespaceId.None;
-                    var attrId = new NodeId(_nextStreamGroupNodeId++);
-                    var attrNode = new Xdm.Nodes.XdmAttribute
-                    {
-                        Id = attrId,
-                        Document = DocumentId.None,
-                        Parent = startId,
-                        LocalName = reader.LocalName,
-                        Namespace = attrNsId,
-                        Prefix = string.IsNullOrEmpty(reader.Prefix) ? null : reader.Prefix,
-                        Value = reader.Value
-                    };
-                    _nodeStore!.Register(attrNode);
-                    attrIds.Add(attrId);
-                }
-                reader.MoveToElement();
-            }
-
-            var children = new List<NodeId>();
-
-            // Read events until matching EndElement (or empty self-close)
-            if (!reader.IsEmptyElement)
-            {
-                while (await reader.ReadAsync().ConfigureAwait(false))
-                {
-                    ct.ThrowIfCancellationRequested();
-                    if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == startDepth)
-                        break;
-                    switch (reader.NodeType)
-                    {
-                        case System.Xml.XmlNodeType.Element:
-                        {
-                            var child = await ReadElementSubtreeAsync().ConfigureAwait(false);
-                            child.Parent = startId;
-                            children.Add(child.Id);
-                            break;
-                        }
-                        case System.Xml.XmlNodeType.Text:
-                        case System.Xml.XmlNodeType.CDATA:
-                        case System.Xml.XmlNodeType.SignificantWhitespace:
-                        case System.Xml.XmlNodeType.Whitespace:
-                        {
-                            var textId = new NodeId(_nextStreamGroupNodeId++);
-                            var textNode = new Xdm.Nodes.XdmText
-                            {
-                                Id = textId,
-                                Document = DocumentId.None,
-                                Parent = startId,
-                                Value = reader.Value
-                            };
-                            _nodeStore!.Register(textNode);
-                            children.Add(textId);
-                            break;
-                        }
-                        // Comments and PIs in streamed content: ignored for grouping purposes.
-                    }
-                }
-            }
-
-            var elem = new Xdm.Nodes.XdmElement
-            {
-                Id = startId,
-                Document = DocumentId.None,
-                Parent = NodeId.None,
-                LocalName = startName,
-                Namespace = nsId,
-                Prefix = string.IsNullOrEmpty(startPrefix) ? null : startPrefix,
-                Children = children,
-                Attributes = attrIds,
-                NamespaceDeclarations = Array.Empty<NamespaceBinding>()
-            };
-            _nodeStore!.Register(elem);
+            ct.ThrowIfCancellationRequested();
+            var elem = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore!, DocumentId.None)!;
+            // Detach the materialized root: as a selected group member it stands on
+            // its own, and later snapshot(current-group())/.. synthesizes the parent.
+            elem.Parent = NodeId.None;
             return elem;
         }
 
@@ -9998,8 +9925,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (reader.NodeType != System.Xml.XmlNodeType.Element)
                 continue; // text/whitespace/comment between children are not selected by *
 
+            // Non-selected sibling element (wrong local name): consume its subtree so
+            // the reader advances, but do NOT treat it as a group member. Its presence
+            // does not break an adjacent run (the spec's selected sequence simply omits
+            // it), matching the buffered path where select filters before grouping.
+            if (selectLeafName != null && reader.LocalName != selectLeafName)
+            {
+                ReadElementSubtree();
+                continue;
+            }
+
             // Build full subtree for this child element
-            var child = await ReadElementSubtreeAsync().ConfigureAwait(false);
+            var child = ReadElementSubtree();
 
             // Apply grouping decision
             if (instruction.GroupStartingWith != null)
@@ -10025,8 +9962,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else // GroupAdjacent
             {
-                // Evaluate the key expression with the child as context item
-                PushContextItem(child, currentGroup.Count + 1, 0);
+                // Evaluate the key expression with the child as context item, using
+                // its position in the whole selected sequence (position() support).
+                selectedPosition++;
+                PushContextItem(child, selectedPosition, 0);
                 object? key;
                 try
                 {
@@ -10064,12 +10003,72 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     private ulong _nextStreamGroupNodeId = 5_000_000;
 
-    /// <summary>Equality on group-adjacent keys: simple string-coerced comparison.</summary>
+    /// <summary>
+    /// Equality on group-adjacent keys. A composite key (composite="yes") is a
+    /// SEQUENCE of atomic values (e.g. 007's <c>(year, week)</c>) surfaced as an
+    /// <see cref="object"/> array; equality is member-wise so two distinct tuples
+    /// that happen to string-concatenate alike are still separated. Single atomic
+    /// keys fall back to value-then-string comparison.
+    /// </summary>
     private static bool GroupAdjacentKeysEqual(object? a, object? b)
     {
         if (a == null && b == null) return true;
         if (a == null || b == null) return false;
+
+        var aSeq = a as object?[];
+        var bSeq = b as object?[];
+        if (aSeq != null || bSeq != null)
+        {
+            aSeq ??= new[] { a };
+            bSeq ??= new[] { b };
+            if (aSeq.Length != bSeq.Length) return false;
+            for (int i = 0; i < aSeq.Length; i++)
+                if (!GroupAdjacentKeysEqual(aSeq[i], bSeq[i])) return false;
+            return true;
+        }
+
         return Equals(a, b) || string.Equals(StringValueOf(a), StringValueOf(b), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Extracts the child-element local name a streaming for-each-group <c>select</c>
+    /// picks, so the reader-driven accumulator can skip non-selected siblings. Returns
+    /// <c>null</c> ("match every child element") for a wildcard leaf (<c>*</c>) or any
+    /// shape this simple extractor doesn't recognise (the caller then admits all child
+    /// elements — the pre-existing behaviour, sound for <c>select="*"</c>).
+    /// <para>
+    /// Handles the streamable striding shapes in the si-for-each-group cluster:
+    /// <c>transaction</c> (single child step), <c>product</c>, and
+    /// <c>record/copy-of()</c> (whose striding step is <c>record</c>; the trailing
+    /// grounding <c>copy-of()</c> function step is ignored). A leaf whose last
+    /// element step is <c>text()</c> or an attribute is treated as "no element-name
+    /// filter" (null) — those forms are handled elsewhere or fall through unchanged.
+    /// </para>
+    /// </summary>
+    private static string? StreamingForEachGroupSelectLeafName(XQueryExpression select)
+    {
+        if (select is not PhoenixmlDb.XQuery.Ast.PathExpression path || path.Steps.Count == 0)
+            return null;
+
+        // Walk from the end to the last child-axis element name step, skipping a
+        // trailing grounding function step (copy-of()/snapshot()) which parses as a
+        // separate step with a non-NameTest node test.
+        for (int i = path.Steps.Count - 1; i >= 0; i--)
+        {
+            var step = path.Steps[i];
+            if (step.Axis != PhoenixmlDb.XQuery.Ast.Axis.Child)
+            {
+                // The striding leaf must be a child-axis element step; anything else
+                // (attribute/text tail, a leading grounding step) → no name filter.
+                if (step.NodeTest is PhoenixmlDb.XQuery.Ast.NameTest) return null;
+                continue;
+            }
+            if (step.NodeTest is PhoenixmlDb.XQuery.Ast.NameTest nt)
+                return nt.IsLocalNameWildcard ? null : nt.LocalName;
+            // A kind test (text()/node()/element()) leaf → no simple element-name filter.
+            return null;
+        }
+        return null;
     }
 
     private bool MatchesPattern(object item, XsltPattern pattern)
