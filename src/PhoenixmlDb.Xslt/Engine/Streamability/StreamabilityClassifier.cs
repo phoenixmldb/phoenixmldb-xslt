@@ -1,4 +1,5 @@
 using PhoenixmlDb.XQuery.Ast;
+using PhoenixmlDb.Xslt.Ast;
 
 namespace PhoenixmlDb.Xslt.Engine.Streamability;
 
@@ -275,6 +276,12 @@ public static class StreamabilityClassifier
                 // sweep is the worst of the arguments' sweeps.
                 return Grounded(WorstSweep(fc.Arguments, ctx));
 
+            case FnRole.CurrentGroup:
+                // §18.5.4: current-group() yields the buffered group items. Within a streamed
+                // group-adjacent/starting/ending burst these behave like a striding sequence the
+                // processor already holds — motionless (no additional forward stream advance).
+                return new PostureSweep(Posture.Striding, Sweep.Motionless);
+
             default:
                 // TODO(Task 0.4+): most functions are unmodelled. Absorbing functions that
                 // take node sequences and return atomics would be grounded+consuming, but we
@@ -494,6 +501,7 @@ public static class StreamabilityClassifier
         Aggregate,     // absorbs a sequence to an atomic — Absorption, consuming, grounded result
         Transmission,  // passes a subset of the operand through — posture-preserving
         Boolean,       // reduces to an atomic boolean — grounded
+        CurrentGroup,  // current-group() — striding over the buffered group, motionless
     }
 
     private static FnRole FunctionRole(string localName, int arity)
@@ -515,7 +523,396 @@ public static class StreamabilityClassifier
 
             "boolean" or "not" or "exists" or "empty" or "true" or "false" => FnRole.Boolean,
 
+            // §19.8: fn:snapshot / fn:copy-of make a GROUNDED deep copy of their operand,
+            // consuming the operand's subtree in the process (Absorption → grounded result,
+            // consuming sweep). This is exactly the streamable "copy the current node away"
+            // idiom used inside streamed for-each/iterate bodies.
+            "snapshot" or "copy-of" => FnRole.Aggregate,
+
+            // §18.5.4 current-group() / current-grouping-key(): inside a streamable
+            // group-adjacent / group-starting-with / group-ending-with, the current group is
+            // the buffered burst the processor is holding — a striding sequence over the
+            // grouped items, motionless (already in hand, no further stream advance to read it).
+            "current-group" => FnRole.CurrentGroup,
+            "current-grouping-key" => FnRole.NodeProperty,
+
             _ => FnRole.Unknown,
         };
+    }
+
+    // =======================================================================
+    // Task 0.4: XSLT INSTRUCTION classification (§19.8).
+    //
+    // Shadow-only, like the expression classifier above: wired into nothing.
+    // Composes an instruction's (posture, sweep) over its select / content / body
+    // by delegating navigation to the EXPRESSION Classify overload.
+    //
+    // Key §19.8 divergence from the expression classifier: XSLT *construction*
+    // instructions (xsl:copy, xsl:element, LRE, xsl:document, xsl:attribute,
+    // xsl:comment, xsl:processing-instruction, xsl:text, xsl:map, xsl:array, …)
+    // build BRAND-NEW nodes in a result tree, so their result posture is GROUNDED
+    // (§19.8.2 — constructed nodes are grounded), even though their content may
+    // freely consume the streamed input. That is the opposite of how the XQuery
+    // direct-constructor grammar is treated (left unsupported / roaming above).
+    // =======================================================================
+
+    /// <summary>
+    /// Computes the composed <see cref="PostureSweep"/> of an XSLT <paramref name="insn"/>
+    /// in the streaming environment <paramref name="ctx"/>, per XSLT 3.0 §19.8.
+    /// </summary>
+    /// <param name="insn">The XSLT instruction to classify.</param>
+    /// <param name="ctx">The streaming context (context-item posture and streamed-scope flag).</param>
+    /// <returns>The composed posture and sweep of the instruction's contribution to the result.</returns>
+    public static PostureSweep Classify(XsltInstruction insn, StreamingContext ctx)
+    {
+        ArgumentNullException.ThrowIfNull(insn);
+
+        return insn switch
+        {
+            // ---- Sequence constructor (a body) --------------------------------
+            XsltSequenceConstructor sc => Classify(sc, ctx),
+
+            // ---- Construction instructions → GROUNDED result (§19.8.2) --------
+            // Result posture is Grounded (new nodes); sweep is the combined sweep of
+            // whatever they read to build that content (select / content / AVTs).
+            XsltLiteralResultElement lre => Grounded(LreSweep(lre, ctx)),
+            XsltElement el => Grounded(CombineSweep(AvtSweep(el.Name, ctx),
+                CombineSweep(AvtSweep(el.Namespace, ctx), BodySweep(el.Content, ctx)))),
+            XsltCopy cp => Grounded(cp.Select is not null
+                // xsl:copy with select copies the selected node's shallow shell; the select
+                // is navigated (its sweep flows through) but the constructed copy is grounded.
+                ? CombineSweep(SweepOf(cp.Select, ctx), BodySweep(cp.Content, ctx))
+                : BodySweep(cp.Content, ctx)),
+            XsltDocument doc => Grounded(BodySweep(doc.Content, ctx)),
+            XsltResultDocument rd => Grounded(BodySweep(rd.Content, ctx)),
+            XsltComment cm => Grounded(SelectOrContentSweep(cm.Select, cm.Content, ctx)),
+            XsltProcessingInstruction pi => Grounded(CombineSweep(AvtSweep(pi.Name, ctx),
+                SelectOrContentSweep(pi.Select, pi.Content, ctx))),
+            XsltNamespace ns => Grounded(CombineSweep(AvtSweep(ns.Name, ctx),
+                SelectOrContentSweep(ns.Select, ns.Content, ctx))),
+            XsltText => Grounded(Sweep.Motionless),
+            XsltLiteralText => Grounded(Sweep.Motionless),
+            XsltTextValueTemplate tvt => Grounded(AvtSweep(tvt.Template, ctx)),
+            XsltAttribute at => Grounded(CombineSweep(AvtSweep(at.Name, ctx),
+                CombineSweep(AvtSweep(at.Namespace, ctx),
+                    SelectOrContentSweep(at.Select, at.Content, ctx)))),
+            XsltMap m => Grounded(BodySweep(m.Content, ctx)),
+            XsltMapEntry me => Grounded(CombineSweep(SweepOf(me.Key, ctx),
+                SelectOrContentSweep(me.Select, me.Content, ctx))),
+            XsltArray ar => Grounded(BodySweep(ar.Content, ctx)),
+            XsltArrayMember am => Grounded(SelectOrContentSweep(am.Select, am.Content, ctx)),
+
+            // ---- Transmitting instructions → carry the operand's posture ------
+            // §19.8: xsl:copy-of / xsl:sequence transmit the selected sequence unchanged,
+            // so they preserve the SELECT's posture AND sweep. xsl:value-of / xsl:variable
+            // atomize (or bind) and yield a grounded result but keep the select's sweep.
+            XsltCopyOf co => ClassifySelectTransmit(co.Select, ctx),
+            XsltSequence sq => sq.Select is not null
+                ? ClassifySelectTransmit(sq.Select, ctx)
+                : Grounded(BodySweep(sq.Content, ctx)),
+            XsltValueOf vo => vo.Select is not null
+                // xsl:value-of result is an atomic string ⇒ Grounded posture, select's sweep.
+                ? Grounded(SweepOf(vo.Select, ctx))
+                : Grounded(BodySweep(vo.Content, ctx)),
+            XsltVariableInstruction vi => vi.Select is not null
+                ? ClassifySelectTransmit(vi.Select, ctx)
+                : Grounded(BodySweep(vi.Content, ctx)),
+
+            // ---- Iteration ----------------------------------------------------
+            XsltForEach fe => ClassifyForEach(fe, ctx),
+            XsltIterate it => ClassifyIterate(it, ctx),
+            XsltForEachGroup feg => ClassifyForEachGroup(feg, ctx),
+            XsltApplyTemplates ap => ClassifyApplyTemplates(ap, ctx),
+
+            // ---- Conditionals -------------------------------------------------
+            XsltIf iff => ClassifyIf(iff, ctx),
+            XsltChoose ch => ClassifyChoose(ch, ctx),
+            XsltWherePopulated wp => Classify(wp.Content, ctx),
+            XsltOnEmpty oe => ClassifyBranchWithOptionalSelect(oe.Select, oe.Content, ctx),
+            XsltOnNonEmpty one => ClassifyBranchWithOptionalSelect(one.Select, one.Content, ctx),
+            XsltTry tr => ClassifyTry(tr, ctx),
+
+            // ---- Iteration control (grounded, motionless) ---------------------
+            // §19.8: xsl:break / xsl:next-iteration are control transfers; they emit no
+            // streamed nodes of their own and (bar their optional select) advance nothing.
+            XsltBreak br => Grounded(br.Select is not null ? SweepOf(br.Select, ctx) : Sweep.Motionless),
+            XsltNextIteration => Grounded(Sweep.Motionless),
+
+            // TODO(§19.8, later phase): xsl:merge, xsl:fork, xsl:analyze-string,
+            // xsl:evaluate, xsl:switch, xsl:for-each-member, xsl:number, xsl:perform-sort,
+            // xsl:call-template, xsl:next-match, xsl:apply-imports, xsl:message, xsl:assert.
+            // Conservatively NOT streamable so nothing is silently accepted.
+            _ => NotStreamable(),
+        };
+    }
+
+    /// <summary>
+    /// Computes the composed <see cref="PostureSweep"/> of a sequence-constructor body per
+    /// §19.8: fold over its child instructions — posture widens over the children, sweep is
+    /// the worst of the children's sweeps. An empty (or grounded-only) body is
+    /// <c>(Grounded, Motionless)</c>.
+    /// </summary>
+    /// <param name="body">The sequence constructor whose child instructions are combined.</param>
+    /// <param name="ctx">The streaming context in which the body is evaluated.</param>
+    /// <returns>The composed posture and sweep of the body.</returns>
+    public static PostureSweep Classify(XsltSequenceConstructor body, StreamingContext ctx)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        Posture posture = Posture.Grounded;
+        var sweep = Sweep.Motionless;
+        var first = true;
+        foreach (var child in body.Instructions)
+        {
+            var ps = Classify(child, ctx);
+            if (ps.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ps.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, ps.Sweep);
+            // §19.8: a sequence of constructed + streamed items takes the widened streamed
+            // posture (Grounded is absorbed by any streamed posture — see WidenNodePosture).
+            posture = first ? ps.Posture : WidenNodePosture(posture, ps.Posture);
+            first = false;
+        }
+        return new PostureSweep(posture, sweep);
+    }
+
+    // -----------------------------------------------------------------------
+    // Instruction helpers
+    // -----------------------------------------------------------------------
+
+    /// <summary>xsl:copy-of / xsl:sequence transmit the select's posture AND sweep unchanged.</summary>
+    private static PostureSweep ClassifySelectTransmit(XQueryExpression select, StreamingContext ctx)
+    {
+        var s = Classify(select, ctx);
+        if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
+            return NotStreamable();
+        return s;
+    }
+
+    private static PostureSweep ClassifyForEach(XsltForEach fe, StreamingContext ctx)
+    {
+        // §19.8: the select is the "population expression"; the body is classified with the
+        // context item = the per-item posture of the select's result. Result sweep combines
+        // the select's sweep with the body's; result posture is the body's posture.
+        var s = Classify(fe.Select, ctx);
+        if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
+            return NotStreamable();
+
+        var body = Classify(fe.Body, ctx with { ContextPosture = s.Posture });
+        if (body.Sweep == Sweep.FreeRanging || !IsStreamablePosture(body.Posture))
+            return NotStreamable();
+
+        return new PostureSweep(body.Posture, CombineSweep(s.Sweep, body.Sweep));
+    }
+
+    private static PostureSweep ClassifyIterate(XsltIterate it, StreamingContext ctx)
+    {
+        // §19.8: xsl:iterate is like xsl:for-each over the select, but its xsl:param values
+        // are grounded accumulators carried across iterations and xsl:on-completion emits
+        // grounded state. Streamable iff the select is striding/crawling/grounded and the
+        // body (which may contain xsl:break/xsl:next-iteration) does not free-range.
+        var s = Classify(it.Select, ctx);
+        if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
+            return NotStreamable();
+
+        var body = Classify(it.Body, ctx with { ContextPosture = s.Posture });
+        if (body.Sweep == Sweep.FreeRanging || !IsStreamablePosture(body.Posture))
+            return NotStreamable();
+
+        var sweep = CombineSweep(s.Sweep, body.Sweep);
+
+        // on-completion runs after the stream is exhausted, over grounded accumulator state —
+        // it must not itself free-range on the (now consumed) input.
+        if (it.OnCompletion is not null)
+        {
+            var oc = Classify(it.OnCompletion, ctx with { ContextPosture = Posture.Grounded });
+            if (oc.Sweep == Sweep.FreeRanging || !IsStreamablePosture(oc.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, oc.Sweep);
+        }
+
+        // xsl:iterate emits the body's result per item plus grounded on-completion state.
+        return new PostureSweep(body.Posture, sweep);
+    }
+
+    private static PostureSweep ClassifyForEachGroup(XsltForEachGroup feg, StreamingContext ctx)
+    {
+        // §19.8 / §18.5: group-by requires holding all groups simultaneously — NOT streamable.
+        if (feg.GroupBy is not null)
+            return NotStreamable(); // (Roaming, FreeRanging)
+
+        // group-adjacent / group-starting-with / group-ending-with are the streamable grouping
+        // forms: the processor buffers only the current group. The grouping key must itself be
+        // motionless (a simple key over the current item), else grouping is not streamable.
+        var s = Classify(feg.Select, ctx);
+        if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
+            return NotStreamable();
+
+        Sweep keySweep = Sweep.Motionless;
+        if (feg.GroupAdjacent is not null)
+        {
+            var k = Classify(feg.GroupAdjacent, ctx with { ContextPosture = s.Posture });
+            // A consuming (let alone free-ranging) adjacency key breaks streamable grouping.
+            if (k.Sweep != Sweep.Motionless)
+                return NotStreamable();
+            keySweep = k.Sweep;
+        }
+        // group-starting-with / group-ending-with use patterns (not expressions); a pattern
+        // match against the current item is motionless — nothing extra to fold here.
+
+        // Inside the body the current group is a striding burst the processor holds.
+        var body = Classify(feg.Body, ctx with { ContextPosture = Posture.Striding });
+        if (body.Sweep == Sweep.FreeRanging || !IsStreamablePosture(body.Posture))
+            return NotStreamable();
+
+        // The grouping itself advances the stream (Consuming), so combine at least Consuming.
+        var sweep = CombineSweep(CombineSweep(s.Sweep, Sweep.Consuming),
+            CombineSweep(keySweep, body.Sweep));
+        return new PostureSweep(body.Posture, sweep);
+    }
+
+    private static PostureSweep ClassifyApplyTemplates(XsltApplyTemplates ap, StreamingContext ctx)
+    {
+        // §19.8: apply-templates streams over the selected nodes; a null select means the
+        // context node's children (striding). The instruction's own posture/sweep is that of
+        // its select — the invoked templates are classified independently at their own sites.
+        if (ap.Select is null)
+        {
+            // No select ⇒ child::node() of the context. Striding + consuming when streamed.
+            return ctx.InStreamedScope
+                ? new PostureSweep(Posture.Striding, Sweep.Consuming)
+                : Grounded(Sweep.Motionless);
+        }
+        return ClassifySelectTransmit(ap.Select, ctx);
+    }
+
+    private static PostureSweep ClassifyIf(XsltIf iff, StreamingContext ctx)
+    {
+        // §19.8: combine the test's sweep with the branch's posture/sweep. A single-branch
+        // xsl:if has an implicit empty else ⇒ posture widens branch with grounded-empty.
+        var test = Classify(iff.Test, ctx);
+        if (test.Sweep == Sweep.FreeRanging)
+            return NotStreamable();
+        var then = Classify(iff.Then, ctx);
+        if (then.Sweep == Sweep.FreeRanging || !IsStreamablePosture(then.Posture))
+            return NotStreamable();
+        return new PostureSweep(then.Posture, CombineSweep(test.Sweep, then.Sweep));
+    }
+
+    private static PostureSweep ClassifyChoose(XsltChoose ch, StreamingContext ctx)
+    {
+        // §19.8: posture = widen over all branch postures; sweep = combine over every test
+        // sweep and every branch sweep (each branch and test is evaluated in the worst case).
+        Posture posture = Posture.Grounded;
+        var sweep = Sweep.Motionless;
+        var first = true;
+        foreach (var when in ch.When)
+        {
+            var test = Classify(when.Test, ctx);
+            if (test.Sweep == Sweep.FreeRanging)
+                return NotStreamable();
+            var body = Classify(when.Body, ctx);
+            if (body.Sweep == Sweep.FreeRanging || !IsStreamablePosture(body.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, CombineSweep(test.Sweep, body.Sweep));
+            posture = first ? body.Posture : WidenNodePosture(posture, body.Posture);
+            first = false;
+        }
+        if (ch.Otherwise is not null)
+        {
+            var ob = Classify(ch.Otherwise, ctx);
+            if (ob.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ob.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, ob.Sweep);
+            posture = first ? ob.Posture : WidenNodePosture(posture, ob.Posture);
+            first = false;
+        }
+        return new PostureSweep(posture, sweep);
+    }
+
+    private static PostureSweep ClassifyTry(XsltTry tr, StreamingContext ctx)
+    {
+        // §19.8: xsl:try combines its body (or select) with every catch branch — posture
+        // widens over body + catches, sweep combines over all of them.
+        var bodyPs = tr.SelectExpression is not null
+            ? ClassifySelectTransmit(tr.SelectExpression, ctx)
+            : tr.Body is not null ? Classify(tr.Body, ctx) : Grounded(Sweep.Motionless);
+        if (bodyPs.Sweep == Sweep.FreeRanging || !IsStreamablePosture(bodyPs.Posture))
+            return NotStreamable();
+
+        Posture posture = bodyPs.Posture;
+        var sweep = bodyPs.Sweep;
+        foreach (var c in tr.Catches)
+        {
+            var cPs = c.SelectExpression is not null
+                ? ClassifySelectTransmit(c.SelectExpression, ctx)
+                : c.Body is not null ? Classify(c.Body, ctx) : Grounded(Sweep.Motionless);
+            if (cPs.Sweep == Sweep.FreeRanging || !IsStreamablePosture(cPs.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, cPs.Sweep);
+            posture = WidenNodePosture(posture, cPs.Posture);
+        }
+        return new PostureSweep(posture, sweep);
+    }
+
+    private static PostureSweep ClassifyBranchWithOptionalSelect(
+        XQueryExpression? select, XsltSequenceConstructor? content, StreamingContext ctx)
+    {
+        if (select is not null)
+            return ClassifySelectTransmit(select, ctx);
+        if (content is not null)
+            return Classify(content, ctx);
+        return Grounded(Sweep.Motionless);
+    }
+
+    /// <summary>
+    /// Combined sweep of an instruction that offers a <c>select</c> XOR a <c>content</c> body.
+    /// </summary>
+    private static Sweep SelectOrContentSweep(
+        XQueryExpression? select, XsltSequenceConstructor? content, StreamingContext ctx)
+    {
+        if (select is not null)
+            return SweepOf(select, ctx);
+        return BodySweep(content, ctx);
+    }
+
+    /// <summary>Combined sweep of a (possibly null) sequence-constructor body.</summary>
+    private static Sweep BodySweep(XsltSequenceConstructor? body, StreamingContext ctx)
+    {
+        if (body is null)
+            return Sweep.Motionless;
+        var ps = Classify(body, ctx);
+        // A free-ranging body poisons the enclosing construction's sweep to free-ranging.
+        return ps.Sweep;
+    }
+
+    /// <summary>
+    /// The combined sweep contributed by a literal-result-element: its content plus every
+    /// attribute AVT. §19.8: an AVT like <c>{count(//*)}</c> makes the LRE consuming (though
+    /// the LRE is still grounded because it constructs a new element).
+    /// </summary>
+    private static Sweep LreSweep(XsltLiteralResultElement lre, StreamingContext ctx)
+    {
+        var sweep = BodySweep(lre.Content, ctx);
+        foreach (var avt in lre.Attributes.Values)
+            sweep = CombineSweep(sweep, AvtSweep(avt, ctx));
+        return sweep;
+    }
+
+    /// <summary>
+    /// The combined sweep of an attribute-value template: the worst sweep across its
+    /// embedded <c>{expr}</c> parts (literal parts are motionless).
+    /// </summary>
+    private static Sweep AvtSweep(XsltAttributeValueTemplate? avt, StreamingContext ctx)
+    {
+        if (avt is null)
+            return Sweep.Motionless;
+        var sweep = Sweep.Motionless;
+        foreach (var part in avt.Parts)
+        {
+            if (part is AvtExpression ae)
+                sweep = CombineSweep(sweep, SweepOf(ae.Expression, ctx));
+        }
+        return sweep;
     }
 }

@@ -1,6 +1,7 @@
 using FluentAssertions;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.XQuery.Ast;
+using PhoenixmlDb.Xslt.Ast;
 using PhoenixmlDb.Xslt.Engine.Streamability;
 using Xunit;
 
@@ -395,5 +396,250 @@ public class PostureCompositionTests
     {
         StreamabilityClassifier.Classify(Dot, GroundedCtx)
             .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    // =======================================================================
+    // Task 0.4: XSLT INSTRUCTION truth-table (§19.8).
+    // Same streamed entry context (Striding, InStreamedScope=true) unless noted.
+    // Instruction ASTs are built directly (no parser dependency).
+    // =======================================================================
+
+    // ---- Instruction AST factory helpers -----------------------------------
+
+    private static XsltSequenceConstructor Body(params XsltInstruction[] instructions) => new()
+    {
+        Instructions = instructions,
+    };
+
+    private static XsltAttributeValueTemplate Avt(params AvtPart[] parts) => new() { Parts = parts };
+
+    private static AvtExpression AvtExpr(XQueryExpression e) => new() { Expression = e };
+
+    private static readonly QName OutName = new(NamespaceId.None, "out");
+
+    // ---- Ins 1: THE 013 SHAPE (headline) -----------------------------------
+    // xsl:copy › xsl:iterate select=child::* › xsl:copy-of select=.
+    //   iterate select child::* → (Striding, Consuming)
+    //   body copy-of select=. → transmits per-item Striding, Motionless
+    //   iterate → (Striding, Consuming)
+    //   xsl:copy construction with consuming content → (Grounded, Consuming), streamable.
+
+    [Fact]
+    public void Ins01_The013Shape_CopyIterateCopyOf_IsGroundedConsuming_AndStreamable()
+    {
+        var copyOfDot = new XsltCopyOf { Select = Dot };
+        var iterate = new XsltIterate
+        {
+            Select = RelPath(Step(Axis.Child, "*")),
+            Body = Body(copyOfDot),
+        };
+        var copy = new XsltCopy { Content = Body(iterate) };
+
+        var ps = StreamabilityClassifier.Classify(copy, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- Ins 2: LRE with a consuming attribute AVT -------------------------
+
+    [Fact]
+    public void Ins02_LreWithConsumingAvt_IsGroundedConsuming_AndStreamable()
+    {
+        // <out code="{count(//*)}"/> — count(//*) is grounded+consuming; the LRE stays grounded.
+        var countAll = Fn("count", RelPath(Step(Axis.DescendantOrSelf, "*")));
+        var lre = new XsltLiteralResultElement
+        {
+            Name = OutName,
+            Attributes = new Dictionary<QName, XsltAttributeValueTemplate>
+            {
+                [new QName(NamespaceId.None, "code")] = Avt(AvtExpr(countAll)),
+            },
+            Content = Body(),
+        };
+
+        var ps = StreamabilityClassifier.Classify(lre, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- Ins 3: xsl:value-of select=sum(child::PRICE) ----------------------
+
+    [Fact]
+    public void Ins03_ValueOfSum_IsGroundedConsuming_AndStreamable()
+    {
+        var vo = new XsltValueOf { Select = Fn("sum", RelPath(Step(Axis.Child, "PRICE"))) };
+
+        var ps = StreamabilityClassifier.Classify(vo, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- Ins 4: xsl:for-each select=child::ITEM body=[value-of child::PRICE] -
+
+    [Fact]
+    public void Ins04_ForEachWithValueOfBody_IsStreamable_Consuming()
+    {
+        var forEach = new XsltForEach
+        {
+            Select = RelPath(Step(Axis.Child, "ITEM")),
+            Body = Body(new XsltValueOf { Select = RelPath(Step(Axis.Child, "PRICE")) }),
+        };
+
+        var ps = StreamabilityClassifier.Classify(forEach, Streamed);
+
+        // body is value-of ⇒ grounded; posture grounded, sweep consuming.
+        ps.Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- Ins 5: xsl:for-each-group group-by → NOT streamable ---------------
+
+    [Fact]
+    public void Ins05_ForEachGroup_GroupBy_IsRoamingFreeRanging_NotStreamable()
+    {
+        var feg = new XsltForEachGroup
+        {
+            Select = RelPath(Step(Axis.Child, "X")),
+            GroupBy = RelPath(Step(Axis.Attribute, "k")),
+            Body = Body(),
+        };
+
+        var ps = StreamabilityClassifier.Classify(feg, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Roaming, Sweep.FreeRanging));
+        ps.IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    // ---- Ins 6: group-adjacent + copy-of(current-group()) → streamable -----
+
+    [Fact]
+    public void Ins06_ForEachGroup_GroupAdjacent_CurrentGroupCopy_IsStreamable_Consuming()
+    {
+        var feg = new XsltForEachGroup
+        {
+            Select = RelPath(Step(Axis.Child, "X")),
+            GroupAdjacent = RelPath(Step(Axis.Attribute, "k")),
+            Body = Body(new XsltCopyOf { Select = Fn("current-group") }),
+        };
+
+        var ps = StreamabilityClassifier.Classify(feg, Streamed);
+
+        ps.Sweep.Should().Be(Sweep.Consuming);
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- Ins 7: xsl:apply-templates select=child::account ------------------
+
+    [Fact]
+    public void Ins07_ApplyTemplatesChildSelect_IsStridingConsuming_AndStreamable()
+    {
+        var ap = new XsltApplyTemplates { Select = RelPath(Step(Axis.Child, "account")) };
+
+        var ps = StreamabilityClassifier.Classify(ap, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Striding, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- Ins 8: xsl:iterate with grounded param + on-completion ------------
+
+    [Fact]
+    public void Ins08_IterateWithGroundedParamAndOnCompletion_IsStreamable()
+    {
+        // <xsl:iterate select="child::*">
+        //   <xsl:param name="m" select="map{}"/>   (grounded accumulator)
+        //   <xsl:value-of select="."/>              (grounded body)
+        //   <xsl:on-completion><xsl:sequence select="$m"/></xsl:on-completion>
+        // </xsl:iterate>
+        var iterate = new XsltIterate
+        {
+            Select = RelPath(Step(Axis.Child, "*")),
+            Params = new List<XsltParam>(),
+            Body = Body(new XsltValueOf { Select = Dot }),
+            OnCompletion = Body(new XsltSequence
+            {
+                Select = new VariableReference { Name = new QName(NamespaceId.None, "m") },
+            }),
+        };
+
+        var ps = StreamabilityClassifier.Classify(iterate, Streamed);
+
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+        ps.Sweep.Should().Be(Sweep.Consuming);
+    }
+
+    // ---- Ins 9: xsl:copy-of select=snapshot(child::A) ----------------------
+
+    [Fact]
+    public void Ins09_CopyOfSnapshot_IsGroundedConsuming_AndStreamable()
+    {
+        var co = new XsltCopyOf { Select = Fn("snapshot", RelPath(Step(Axis.Child, "A"))) };
+
+        var ps = StreamabilityClassifier.Classify(co, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- Ins 10: xsl:if test=exists(child::A) then=[<x/>] ------------------
+
+    [Fact]
+    public void Ins10_IfExistsThenConstruct_IsStreamable()
+    {
+        var iff = new XsltIf
+        {
+            Test = Fn("exists", RelPath(Step(Axis.Child, "A"))),
+            Then = Body(new XsltLiteralResultElement
+            {
+                Name = new QName(NamespaceId.None, "x"),
+                Content = Body(),
+            }),
+        };
+
+        var ps = StreamabilityClassifier.Classify(iff, Streamed);
+
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+        ps.Posture.Should().Be(Posture.Grounded);
+        ps.Sweep.Should().Be(Sweep.Consuming);
+    }
+
+    // ---- Ins 11: mixed body [<hdr/>, for-each(child::A){...}] --------------
+
+    [Fact]
+    public void Ins11_MixedGroundedAndStreamedBody_IsStreamable_Consuming()
+    {
+        var hdr = new XsltLiteralResultElement
+        {
+            Name = new QName(NamespaceId.None, "hdr"),
+            Content = Body(),
+        };
+        var loop = new XsltForEach
+        {
+            Select = RelPath(Step(Axis.Child, "A")),
+            Body = Body(new XsltValueOf { Select = Dot }),
+        };
+        var body = Body(hdr, loop);
+
+        var ps = StreamabilityClassifier.Classify(body, Streamed);
+
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+        ps.Sweep.Should().Be(Sweep.Consuming);
+    }
+
+    // ---- Ins 12: unknown instruction → (Roaming, FreeRanging) --------------
+
+    [Fact]
+    public void Ins12_UnknownInstruction_IsRoamingFreeRanging_NotStreamable()
+    {
+        // xsl:merge is not modelled by the instruction classifier yet → conservative.
+        var merge = new XsltMerge { Action = Body() };
+
+        var ps = StreamabilityClassifier.Classify(merge, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Roaming, Sweep.FreeRanging));
+        ps.IsGuaranteedStreamable.Should().BeFalse();
     }
 }
