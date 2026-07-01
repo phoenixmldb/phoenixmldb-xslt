@@ -1,3 +1,4 @@
+using PhoenixmlDb.Core;
 using PhoenixmlDb.XQuery.Ast;
 
 namespace PhoenixmlDb.Xslt.Engine;
@@ -42,6 +43,27 @@ internal sealed class ForEachSubscription
     /// A subscription has exactly one of <see cref="Body"/> or this populated.
     /// </summary>
     public XQueryExpression? PerItemSelect { get; init; }
+
+    /// <summary>
+    /// XPath <c>for</c> expression streaming (sx-ForExpr): when set, this subscription
+    /// derives from <c>for $x in CONSUMING-PATH return EXPR</c> in an
+    /// <c>xsl:value-of</c>/<c>xsl:sequence</c> select. The range variable bound per
+    /// matched item; <see cref="PerItemSelect"/> carries the <c>return</c> expression.
+    /// The matched striding path (the <c>in</c> operand minus its trailing grounding
+    /// step) selects items; for each, the materialized snapshot is pushed as the context
+    /// item, <see cref="RangeBindExpression"/> is evaluated against it to produce the
+    /// range variable's value, the variable is bound, and the <c>return</c> expression is
+    /// evaluated and emitted. <c>null</c> for a for-each / SM-ctx subscription.
+    /// </summary>
+    public QName? RangeVariable { get; init; }
+
+    /// <summary>
+    /// The trailing grounding step of a ForExpr <c>in</c> operand
+    /// (<c>string()</c>/<c>data()</c>/<c>copy-of()</c>/<c>snapshot()</c>), evaluated
+    /// against the matched element snapshot to produce the value bound to
+    /// <see cref="RangeVariable"/>. Set iff <see cref="RangeVariable"/> is set.
+    /// </summary>
+    public XQueryExpression? RangeBindExpression { get; init; }
 
     /// <summary>
     /// Grounded operands appearing BEFORE the streamable path in the for-each select.

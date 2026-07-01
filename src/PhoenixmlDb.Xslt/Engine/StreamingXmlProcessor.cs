@@ -548,7 +548,9 @@ internal sealed class StreamingXmlProcessor
                                                 _context.PushCurrentItem(snapshot);
                                                 try
                                                 {
-                                                    if (sub.PerItemSelect != null)
+                                                    if (sub.RangeVariable != null)
+                                                        await _context.EmitForExpressionResultAsync(sub).ConfigureAwait(false);
+                                                    else if (sub.PerItemSelect != null)
                                                         await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
                                                     else
                                                         await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
@@ -1211,7 +1213,21 @@ internal sealed class StreamingXmlProcessor
         if (_ancestorNames.Count == 0) return null;
 
         var documentId = new DocumentId(0);
-        NodeId? parentId = null;
+        // Synthesize a document node at the top of the chain so the snapshot's
+        // ancestor axis is complete (every node in an XDM tree is rooted at a
+        // document node). Without it `ancestor::node()` under-counts by one
+        // (sx-for-004: count($x/ancestor::node()) must include the document node).
+        // Registered first so it receives the lowest NodeId — preserving the
+        // outermost-first document-order keying the set-ops rely on.
+        var docNodeId = _nodeStore.NextId();
+        _nodeStore.Register(new XdmDocument
+        {
+            Id = docNodeId,
+            Document = documentId,
+            Children = XdmDocument.EmptyChildren,
+            Parent = null,
+        });
+        NodeId? parentId = docNodeId;
         // Build outermost → innermost so each ancestor's Parent points at the one above.
         for (int i = 0; i < _ancestorNames.Count; i++)
         {

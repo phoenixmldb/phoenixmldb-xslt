@@ -8844,6 +8844,55 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return true;
     }
 
+    /// <summary>
+    /// ForExpr streaming handoff (sx-ForExpr): when <paramref name="select"/> is a
+    /// <c>for $x in CONSUMING-PATH return EXPR</c> registered as an inline-driven
+    /// subscription on the active streaming processor, drive the forward pass in place so
+    /// the surrounding LRE is emitted around the concatenated per-item results. Mirrors
+    /// <see cref="TryHandoffSimpleMapContextStreamingAsync"/>. Returns true when fired.
+    /// </summary>
+    private async ValueTask<bool> TryHandoffForExpressionStreamingAsync(XQueryExpression? select)
+    {
+        if (_activeStreamingProcessor == null || _activeStreamingReader == null)
+            return false;
+        if (select is not PhoenixmlDb.XQuery.Ast.FlworExpression flwor)
+            return false;
+        var subs = _activeStreamingProcessor.Subscriptions;
+        if (subs == null)
+            return false;
+
+        ForEachSubscription? matchSub = null;
+        foreach (var s in subs)
+        {
+            if (s.InlineDriven && s.RangeVariable != null
+                && ReferenceEquals(s.PerItemSelect, flwor.ReturnExpression))
+            {
+                matchSub = s;
+                break;
+            }
+        }
+        if (matchSub == null)
+            return false;
+
+        var proc = _activeStreamingProcessor;
+        var rdr = _activeStreamingReader;
+        var ct = _activeStreamingCancellationToken;
+        // Clear the handles so the per-match return evaluation (against the buffered
+        // snapshot, not the live reader) doesn't re-enter here.
+        _activeStreamingProcessor = null;
+        _activeStreamingReader = null;
+        try
+        {
+            await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _activeStreamingProcessor = proc;
+            _activeStreamingReader = rdr;
+        }
+        return true;
+    }
+
     public override async ValueTask ForEachAsync(
         XQueryExpression select,
         List<XsltSort> sorts,
@@ -11585,6 +11634,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (await TryHandoffSimpleMapContextStreamingAsync(instruction.Select).ConfigureAwait(false))
             return;
 
+        // ForExpr streaming handoff: `for $x in CONSUMING-PATH return EXPR` registered as
+        // an inline-driven subscription streams in place (mirrors the SM-ctx handoff).
+        if (await TryHandoffForExpressionStreamingAsync(instruction.Select).ConfigureAwait(false))
+            return;
+
         // Evaluate separator AVT once (it may contain dynamic expressions)
         string? resolvedSeparator = instruction.Separator != null
             ? await EvaluateAvtAsync(instruction.Separator).ConfigureAwait(false)
@@ -13224,6 +13278,90 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <see cref="_lastResultWasAtomic"/> so successive matched items separate correctly),
     /// node results serialized. Called once per matched item by the streaming dispatch.
     /// </summary>
+    /// <summary>
+    /// ForExpr streaming (sx-ForExpr): emits one matched item of a streamable
+    /// <c>for $x in CONSUMING-PATH return EXPR</c>. The matched element snapshot is the
+    /// current context item; this evaluates the trailing grounding step
+    /// (<see cref="ForEachSubscription.RangeBindExpression"/>) against it to produce the
+    /// range variable's value, binds <see cref="ForEachSubscription.RangeVariable"/> in a
+    /// fresh scope (iterating if the grounded value is a sequence, per XPath <c>for</c>
+    /// semantics), evaluates the <c>return</c> expression
+    /// (<see cref="ForEachSubscription.PerItemSelect"/>), and emits each result through the
+    /// same atomic-spacing/serialization path as <see cref="EmitSimpleMapContextResultAsync"/>.
+    /// </summary>
+    internal async ValueTask EmitForExpressionResultAsync(ForEachSubscription sub)
+    {
+        var bindValue = await EvaluateAsync(sub.RangeBindExpression!).ConfigureAwait(false);
+
+        // Normalize the grounded bind value to the sequence of items the range variable
+        // iterates. A single atomic/node binds once; a sequence binds once per member.
+        PushScope();
+        try
+        {
+            if (bindValue is object?[] arr)
+            {
+                foreach (var member in arr)
+                {
+                    SetVariable(sub.RangeVariable!.Value, member);
+                    await EmitForExpressionReturnAsync(sub.PerItemSelect!).ConfigureAwait(false);
+                }
+            }
+            else if (bindValue is System.Collections.IEnumerable en && bindValue is not string
+                && bindValue is not XdmNode && bindValue is not ResultTreeFragment)
+            {
+                foreach (var member in en)
+                {
+                    SetVariable(sub.RangeVariable!.Value, member);
+                    await EmitForExpressionReturnAsync(sub.PerItemSelect!).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                // Empty sequence (null) still iterates zero times under for semantics.
+                if (bindValue != null)
+                {
+                    SetVariable(sub.RangeVariable!.Value, bindValue);
+                    await EmitForExpressionReturnAsync(sub.PerItemSelect!).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            PopScope();
+        }
+    }
+
+    /// <summary>
+    /// Evaluates and emits a single <c>return</c> result of a streamable ForExpr, with the
+    /// range variable already bound. Mirrors <see cref="EmitSimpleMapContextResultAsync"/>'s
+    /// atomic-string spacing and node serialization.
+    /// </summary>
+    private async ValueTask EmitForExpressionReturnAsync(XQueryExpression returnExpr)
+    {
+        var result = await EvaluateAsync(returnExpr).ConfigureAwait(false);
+        if (result == null)
+            return;
+
+        if (result is string str)
+        {
+            if (str.Length == 0 && _wherePopulatedDepth > 0)
+                return;
+            if (_lastResultWasAtomic && _attributeContentDepth == 0)
+            {
+                var sep = _itemSeparatorOverride ?? " ";
+                WriteText(sep, false);
+                if (_contentTrackingStack.Count > 0)
+                    _separatorCharsWritten += sep.Length;
+            }
+            WriteText(str, false);
+            _lastResultWasAtomic = true;
+        }
+        else
+        {
+            SerializeResult(result);
+        }
+    }
+
     internal async ValueTask EmitSimpleMapContextResultAsync(XQueryExpression perItemSelect)
     {
         var result = await EvaluateAsync(perItemSelect).ConfigureAwait(false);
@@ -13346,6 +13484,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 WriteText(FormatFloat(f), false);
             else if (result is double d)
                 WriteText(FormatDouble(d), false);
+            else if (result is decimal m)
+                // Canonical xs:decimal lexical form (e.g. 25.0m → "25"); CLR
+                // decimal.ToString() retains the source scale ("25.0").
+                WriteText(FormatDecimal(m), false);
             else
                 WriteText(result.ToString() ?? "", false);
             _lastResultWasAtomic = true;

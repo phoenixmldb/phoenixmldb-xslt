@@ -462,6 +462,13 @@ internal sealed class StreamingExpressionScanner
             // Sequence watcher) when LEFT is a bounded-window function (deferred).
             case SimpleMapExpression smCtx when TryRegisterSimpleMapContextSubscription(smCtx):
                 return;
+
+            // ForExpr streaming (sx-ForExpr): `for $x in CONSUMING-PATH return EXPR`
+            // whose `in` operand is a striding child-axis path ending in a grounding
+            // step (string()/data()/copy-of()/snapshot()). Register a subscription that
+            // binds $x to the grounded value per matched item and evaluates EXPR.
+            case FlworExpression flworFor when TryRegisterForExpressionSubscription(flworFor):
+                return;
         }
 
         // Recurse into child expressions for unrecognized patterns
@@ -1442,6 +1449,83 @@ internal sealed class StreamingExpressionScanner
             InlineDriven = _constructionDepth > 0,
         });
         return true;
+    }
+
+    /// <summary>
+    /// ForExpr streaming (sx-ForExpr): registers a subscription for an XPath
+    /// <c>for $x in CONSUMING-PATH return EXPR</c> whose <c>in</c> operand is a striding
+    /// child-axis path ending in a per-item grounding step
+    /// (<c>string()</c>/<c>data()</c>/<c>copy-of()</c>/<c>snapshot()</c>). The path minus
+    /// its grounding step is matched against the stream; per matched element snapshot the
+    /// grounding step is evaluated to produce the value bound to <c>$x</c>, then
+    /// <c>EXPR</c> is evaluated and emitted.
+    /// <para>
+    /// Only the single-for-clause, single-binding shape (no positional/type/allowing-empty,
+    /// no let/where/order-by/group-by) is accepted; anything else falls through to
+    /// <see cref="ScanChildExpressions"/> (which scans the for-clause source) so it
+    /// stays on the existing buffered path.
+    /// </para>
+    /// </summary>
+    private bool TryRegisterForExpressionSubscription(FlworExpression flwor)
+    {
+        // Single `for $x in P` clause, single binding, no decorations; no other clauses.
+        if (flwor.Clauses.Count != 1) return false;
+        if (flwor.Clauses[0] is not ForClause forClause) return false;
+        if (forClause.IsMember) return false;
+        if (forClause.Bindings.Count != 1) return false;
+        var binding = forClause.Bindings[0];
+        if (binding.PositionalVariable != null) return false;
+        if (binding.TypeDeclaration != null) return false;
+        if (binding.AllowingEmpty) return false;
+
+        // The `in` operand must be a striding path ending in a per-item grounding step
+        // (string()/data()/copy-of()/snapshot()), built by the parser as a SimpleMap
+        // whose Left is the path and whose Right is the zero-arg grounding function.
+        if (binding.Expression is not SimpleMapExpression sm) return false;
+        if (!IsForExprGroundingStep(sm.Right)) return false;
+
+        // The Left path must decompose to a plain striding child-axis matcher.
+        // Attribute-tail / text() tail paths are not part of the target ForExpr shape;
+        // reject them (intermediate predicates ride along, mirroring SM-ctx).
+        // A climbing `in` operand (DIMENSIONS/ancestor-or-self::*/@* — sx-for-005) is NOT
+        // handled here: its streaming-snapshot identity semantics (a shared ancestor
+        // attribute surfacing once across all matched items, not once per item) need a
+        // larger mechanism than per-match snapshot evaluation, so it stays on the buffered
+        // path. TryBuildPathMatcher returns null for it (non-child axis) → return false.
+        var matcher = TryBuildPathMatcher(sm.Left, out var textNodeTail, out var attributeName, out var predicates, out var intermediatePredicates);
+        if (matcher == null) return false;
+        if (textNodeTail || attributeName != null) return false;
+
+        // LEFT must genuinely navigate the input (grounded LEFT stays on its own path).
+        if (!StreamingSubtreeBufferDetector.NavigatesInput(sm.Left)) return false;
+
+        _subscriptions.Add(new ForEachSubscription
+        {
+            SourceInstruction = null,
+            PathMatcher = matcher,
+            Body = null,
+            PerItemSelect = flwor.ReturnExpression,
+            RangeVariable = binding.Variable,
+            RangeBindExpression = sm.Right,
+            Predicates = predicates,
+            IntermediatePredicates = intermediatePredicates,
+            InlineDriven = _constructionDepth > 0,
+        });
+        return true;
+    }
+
+    /// <summary>
+    /// True for a zero-argument per-item grounding step usable as the trailing step of a
+    /// ForExpr <c>in</c> operand: <c>string()</c>, <c>data()</c>, <c>copy-of()</c>, or
+    /// <c>snapshot()</c> in the fn namespace (or unprefixed). The function grounds the
+    /// matched node into the value bound to the range variable.
+    /// </summary>
+    private static bool IsForExprGroundingStep(XQueryExpression expr)
+    {
+        return expr is FunctionCallExpression fc
+            && fc.Arguments.Count == 0
+            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            && fc.Name.LocalName is "string" or "data" or "copy-of" or "snapshot";
     }
 
     /// <summary>
