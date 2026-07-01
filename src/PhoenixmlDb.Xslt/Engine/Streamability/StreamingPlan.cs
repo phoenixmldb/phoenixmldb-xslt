@@ -82,6 +82,21 @@ public static class StreamingPlanner
             // body that re-traverses the matched subtree). A grounded+motionless construct that
             // reads no input trivially streams inline; this is subsumed by the same test (it
             // touches no subtree).
+            //
+            // NOTE (#143 Task 1.2): "guaranteed-streamable per §19.8" is a SUPERSET of "the
+            // streaming executor can actually drive this shape off the live reader today". The
+            // classifier accepts count(($grounded, path)), (path instance of element()*),
+            // copy-of(a|b), a top-level consuming xsl:iterate, a navigating on-empty body, etc. as
+            // streamable, but the executor has no dispatch for several of those and would evaluate
+            // them against the synthetic empty node → wrong/empty output. Because that residual
+            // executor-capability gap DIFFERS by call site (a nested xsl:iterate streams
+            // in-template — the 013 win — but a TOP-LEVEL xsl:iterate has no document-level
+            // dispatch), the StreamInline→buffer downgrade for those shapes is applied at the CALL
+            // SITE via the proven StreamingSubtreeBufferDetector gates, NOT here. Plan therefore
+            // reports the §19.8-ideal plan; the wiring in XsltTransformer keeps the oracle clean by
+            // backstopping StreamInline with the site-appropriate executor-capability detector.
+            // TODO(#143 later phase): teach the executor those shapes and drop the call-site
+            // backstops so Plan alone governs.
             return NeedsMatchedSubtree(insn)
                 ? StreamingPlan.BufferMatchedSubtree
                 : StreamingPlan.StreamInline;

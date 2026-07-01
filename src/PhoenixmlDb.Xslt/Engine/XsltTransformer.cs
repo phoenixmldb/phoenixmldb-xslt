@@ -8,6 +8,7 @@ using PhoenixmlDb.Xdm.Nodes;
 using PhoenixmlDb.Xdm.Serialization;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.Xslt.Ast;
+using PhoenixmlDb.Xslt.Engine.Streamability;
 // XPath 4.0 ordered map: insertion-order iteration as a structural guarantee.
 // xslt keeps its existing default key-equality (pass EqualityComparer<object>.Default
 // at each construction site) — this change is about iteration order only.
@@ -3284,8 +3285,18 @@ public sealed class XsltTransformEngine
         using (var mc = ctx.AcquireMatchContext())
             docNodeTemplate = _templateIndex.FindMatchingTemplate(probeDoc, options?.InitialMode, mc.Value);
 
-        return docNodeTemplate != null
-            && StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(docNodeTemplate.Body);
+        if (docNodeTemplate?.Body == null) return false;
+        // #143 Task 1.2 — the document-level whole-input decision stays governed by the PROVEN
+        // executor-capability detector RequiresWholeInputBuffer, which encodes exactly which shapes
+        // the document-level streaming pass cannot drive off the live reader. The posture-derived
+        // StreamingPlan drives the unification at the IN-TEMPLATE site (MatchAndExecuteStreamingNodeAsync,
+        // where it closes the 013-sibling family); it is NOT authoritative here because the classifier
+        // conservatively over-rejects some bodies the document-level executor streams correctly
+        // (si-iterate-037: a match="/" body binding //text()!tokenize(...) then iterating tail($words)
+        // streams today — honouring Plan's BufferWholeInput there would over-buffer and change the
+        // result). TODO(#143 later phase): bring the executor and classifier to document-level parity,
+        // then route this through StreamingPlanner.Plan == BufferWholeInput like the in-template site.
+        return StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(docNodeTemplate.Body);
     }
 
     private static bool ContentContainsApplyTemplatesStreaming(Ast.XsltSequenceConstructor? body)
@@ -7727,16 +7738,38 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 template = _templateIndex.FindMatchingTemplate(node, mode, mc.Value);
             if (template != null)
             {
-                // Pre-scan template body for snapshot()/copy-of() of the matched subtree.
-                // If found, the body needs an in-memory XdmElement (XPath cannot deliver
-                // a buffered subtree from the streaming reader). Consume the subtree via
-                // XmlReader.ReadSubtree(), parse it into an XdmDocument fragment, and
-                // run the body against the parsed root. The processor sees
-                // _streamingSubtreeBufferConsumed and skips the now-impossible EndElement
-                // bookkeeping (ReadSubtree already advanced the parent reader past it).
+                // Route the buffering decision through the single posture-derived
+                // StreamingPlanner.Plan (#143 Task 1.2). A matched streaming template runs with
+                // the matched element as a live-streamed striding context node, so classify the
+                // body in that context. A Buffer plan (BufferMatchedSubtree — snapshot/copy-of of
+                // the matched subtree or a re-traversing body; OR BufferWholeInput — a body that
+                // navigates the matched subtree but is not guaranteed-streamable, e.g. the
+                // 013-sibling shapes: nested apply-templates composite select, LRE navigating AVT,
+                // on-empty/on-non-empty/where-populated navigating content, group-by for-each-group)
+                // means the body cannot be driven off the live reader and must run against the
+                // materialised matched subtree. Both plans map to the same in-template remedy —
+                // materialise the matched element's subtree and run the body in memory — because
+                // for a matched template the matched subtree IS the whole streamed scope. This is
+                // the unification: the SAME plan the document level uses, applied in-template, so a
+                // navigating body BUFFERS (correct output) instead of falling through to the
+                // text-only sink and silently losing structure. StreamInline / NotStreaming stay on
+                // the live streaming path below.
+                //
+                // EXECUTOR BACKSTOP: §19.8-guaranteed-streamable is a superset of what the
+                // in-template executor can actually drive off the live reader. Where Plan reports
+                // StreamInline for a shape the matched-template pass cannot yet stream, the proven
+                // legacy RequiresSubtreeBuffer detector still forces the subtree buffer — keeping
+                // the full-pass oracle clean. (TODO(#143 later phase): teach the executor those
+                // shapes and drop this backstop.) The absorbing-stylesheet-function check is an
+                // orthogonal signal Plan does not model (it needs the function table).
+                var streamingBodyCtx = new Streamability.StreamingContext(
+                    Streamability.Posture.Striding, InStreamedScope: true);
+                var streamingBodyPlan = StreamingPlanner.Plan(template.Body, streamingBodyCtx);
                 if (_activeStreamingReader != null
                     && node is Xdm.Nodes.XdmElement bufElem
-                    && (StreamingSubtreeBufferDetector.RequiresSubtreeBuffer(template.Body)
+                    && (streamingBodyPlan is StreamingPlan.BufferMatchedSubtree
+                            or StreamingPlan.BufferWholeInput
+                        || StreamingSubtreeBufferDetector.RequiresSubtreeBuffer(template.Body)
                         || StreamingSubtreeBufferDetector.RequiresSubtreeBufferForAbsorbingFunctions(
                             template.Body, _stylesheet.Functions)))
                 {
@@ -15632,8 +15665,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // level (notably xsl:fork / xsl:for-each-group with group-by, which has no
         // streaming dispatch) must materialize the whole input first — fall through to
         // the full-tree load path below, which evaluates group-by correctly.
+        // #143 Task 1.2 — like DocNodeTemplateRequiresWholeInputBuffer, the document-level
+        // source-document whole-input decision stays governed by the PROVEN executor-capability
+        // detector RequiresWholeInputBuffer. The posture-derived StreamingPlan drives the
+        // unification at the in-template site; it is not authoritative here (the classifier
+        // conservatively over-rejects some bodies the document-level pass streams correctly, e.g.
+        // si-iterate-037). TODO(#143 later phase): bring executor/classifier to document-level
+        // parity, then gate this on StreamingPlanner.Plan == BufferWholeInput.
+        var sourceDocNeedsWholeInput =
+            StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(instruction.Content);
         if (instruction.Streamable && resolvedUri.IsFile && string.IsNullOrEmpty(fragment)
-            && !StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(instruction.Content))
+            && !sourceDocNeedsWholeInput)
         {
             try
             {
