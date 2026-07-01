@@ -1214,4 +1214,136 @@ public class PostureCompositionTests
         StreamabilityClassifier.Classify(Map(), Streamed)
             .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
     }
+
+    // =======================================================================
+    // Phase 1.5 Task C: for-each / iterate over a CLIMBING (attribute /
+    // namespace) population (§19.8). An attribute sequence like
+    // account/transaction[@value lt 0]/@value is reachable motionlessly off the
+    // streamed element; iterating it with a GROUNDED body is streamable
+    // (si-lre-A cy-001). Widens the ACCEPTED population-posture set to include
+    // Climbing, in addition to Striding/Grounded. CRAWLING / ROAMING populations
+    // STAY rejected (the negative guard — only Climbing is added, not Crawling).
+    // Same streamed entry context (Striding, InStreamedScope).
+    // =======================================================================
+
+    // ---- C1: for-each over a climbing attribute population, grounded body ----
+
+    [Fact]
+    public void C01_ForEachClimbingAttributePopulation_GroundedBody_IsStreamable()
+    {
+        // <xsl:for-each select="account/transaction[@value lt 0]/@value">
+        //   <xsl:value-of select="."/>
+        // </xsl:for-each>
+        // population ends in @value (Climbing); the predicate [@value lt 0] is on an
+        // attribute (motionless), and the value-of body atomizes the climbing per-item
+        // context (.) motionlessly ⇒ streamable.
+        var pred = new BinaryExpression
+        {
+            Left = RelPath(Step(Axis.Attribute, "value")),
+            Operator = BinaryOperator.LessThan,
+            Right = new IntegerLiteral { Value = 0L },
+        };
+        var population = RelPath(
+            Step(Axis.Child, "account"),
+            Step(Axis.Child, "transaction", pred),
+            Step(Axis.Attribute, "value"));
+        var forEach = new XsltForEach
+        {
+            Select = population,
+            Body = Body(new XsltValueOf { Select = Dot }),
+        };
+
+        var ps = StreamabilityClassifier.Classify(forEach, Streamed);
+
+        ps.Posture.Should().Be(Posture.Grounded);
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void C01_ForEachClimbingAttributePopulation_ChildIdSelect_IsStreamable()
+    {
+        // <xsl:for-each select="child::A/@id"><xsl:value-of select="."/></xsl:for-each>
+        var population = RelPath(Step(Axis.Child, "A"), Step(Axis.Attribute, "id"));
+        var forEach = new XsltForEach
+        {
+            Select = population,
+            Body = Body(new XsltValueOf { Select = Dot }),
+        };
+
+        StreamabilityClassifier.Classify(forEach, Streamed)
+            .IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- C2: the negative guard — CRAWLING population stays rejected --------
+
+    [Fact]
+    public void C02_ForEachCrawlingPopulation_StaysNotStreamable()
+    {
+        // <xsl:for-each select="descendant::ITEM/TITLE"> — descendant axis ⇒ crawling
+        // population; NOT in the allowed set (only Climbing was added, not Crawling).
+        var population = RelPath(Step(Axis.Descendant, "ITEM"), Step(Axis.Child, "TITLE"));
+        var forEach = new XsltForEach
+        {
+            Select = population,
+            Body = Body(new XsltValueOf { Select = Dot }),
+        };
+
+        StreamabilityClassifier.Classify(forEach, Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void C02_ForEachRoamingPopulation_StaysNotStreamable()
+    {
+        // <xsl:for-each select="following-sibling::X"> — roaming population, rejected.
+        var forEach = new XsltForEach
+        {
+            Select = RelPath(Step(Axis.FollowingSibling, "X")),
+            Body = Body(new XsltValueOf { Select = Dot }),
+        };
+
+        StreamabilityClassifier.Classify(forEach, Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    // ---- C3: iterate over a climbing attribute population --------------------
+
+    [Fact]
+    public void C03_IterateClimbingAttributePopulation_GroundedParamAndOnCompletion_IsStreamable()
+    {
+        // <xsl:iterate select="child::A/@n">
+        //   <xsl:param name="m" select="..."/>   (grounded accumulator)
+        //   <xsl:value-of select="."/>            (grounded body over climbing @n)
+        //   <xsl:on-completion><xsl:sequence select="$m"/></xsl:on-completion>
+        // </xsl:iterate>
+        var population = RelPath(Step(Axis.Child, "A"), Step(Axis.Attribute, "n"));
+        var iterate = new XsltIterate
+        {
+            Select = population,
+            Params = new List<XsltParam>(),
+            Body = Body(new XsltValueOf { Select = Dot }),
+            OnCompletion = Body(new XsltSequence
+            {
+                Select = new VariableReference { Name = new QName(NamespaceId.None, "m") },
+            }),
+        };
+
+        StreamabilityClassifier.Classify(iterate, Streamed)
+            .IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void C03_IterateCrawlingPopulation_StaysNotStreamable()
+    {
+        // GUARD: iterate over a crawling population stays rejected (only Climbing added).
+        var iterate = new XsltIterate
+        {
+            Select = RelPath(Step(Axis.Descendant, "ITEM"), Step(Axis.Child, "TITLE")),
+            Params = new List<XsltParam>(),
+            Body = Body(new XsltValueOf { Select = Dot }),
+        };
+
+        StreamabilityClassifier.Classify(iterate, Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
 }

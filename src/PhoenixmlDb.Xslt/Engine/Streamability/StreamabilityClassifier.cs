@@ -735,13 +735,18 @@ public static class StreamabilityClassifier
 
     /// <summary>
     /// The postures a <c>for-each</c> / <c>iterate</c> population (select) expression may have
-    /// and still stream: STRIDING (a flat set of siblings, the classic streamable loop) or
+    /// and still stream: STRIDING (a flat set of siblings, the classic streamable loop),
     /// GROUNDED (a materialised sequence — e.g. <c>.//*/name()</c> mapped to strings, or a
-    /// grounded map's keys). A CRAWLING select (nested descendants, <c>//ITEM/TITLE</c>) is
-    /// NOT streamable in a loop (si-for-each-806); climbing/roaming likewise.
+    /// grounded map's keys), or CLIMBING (an attribute / namespace population reachable
+    /// motionlessly off the streamed element, e.g. <c>account/transaction[@value lt 0]/@value</c>
+    /// or <c>child::A/@id</c>; each per-item context is an attribute/namespace whose grounded body
+    /// consumes nothing forward — si-lre-A cy-001). A CRAWLING select (nested descendants,
+    /// <c>//ITEM/TITLE</c>) is NOT streamable in a loop (si-for-each-806); roaming likewise.
+    /// The body-must-be-grounded requirement (enforced by the callers) keeps a climbing per-item
+    /// context from being returned as a live streamed node.
     /// </summary>
     private static bool IsForEachPopulationPosture(Posture p)
-        => p is Posture.Striding or Posture.Grounded;
+        => p is Posture.Striding or Posture.Grounded or Posture.Climbing;
 
     private static bool IsStreamablePosture(Posture p)
         => p is Posture.Grounded or Posture.Striding or Posture.Crawling or Posture.Climbing;
