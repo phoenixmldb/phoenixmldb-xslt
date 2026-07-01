@@ -3020,6 +3020,21 @@ public sealed class XsltTransformEngine
         };
         nodeStore.Register(syntheticDoc);
 
+        // TODO(#143 Task 1.3 — synthetic-empty sink guard, deferred): this synthetic empty
+        // document node is the LEGITIMATE striding context for the streaming pass; the document
+        // node template body drives the stream via subscriptions/watchers/apply-templates rather
+        // than by evaluating a select against this node, so an empty evaluation result here is
+        // normally CORRECT, not a collapse. The 013-sibling "silent empty" bug is a
+        // guaranteed-streamable docNodeTemplate body that is NOT dispatched and instead evaluates
+        // its select against this empty node. Distinguishing that regression from the many
+        // correct empty-evaluations requires threading the docNodeTemplate's StreamingPlanner.Plan
+        // classification into every EvaluateAsync-against-syntheticDoc call site (a broad change).
+        // The document-level whole-input-buffer dispatch (DocNodeTemplateRequiresWholeInputBuffer,
+        // gated below) already routes such bodies away from this node. The invariant is enforced
+        // at the in-template text-only-copy sink (OwningConstructIsGuaranteedStreamable guard); the
+        // document-level synthetic-empty guard is deferred to the executor-parity phase where Plan
+        // becomes authoritative at the document level and the empty-eval sites collapse to one.
+
         var context = new DefaultXsltExecutionContext(
             _stylesheet,
             _templateIndex,
@@ -7323,12 +7338,116 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// #143 Task 1.3 — the guaranteed-streamable invariant guard. Returns true when the
+    /// construct that OWNS the current streaming execution (the matched streaming template
+    /// whose body is being run against the live reader) is classified guaranteed-streamable
+    /// per §19.8.6. Such a construct must be STREAMED or BUFFERED by StreamingPlanner.Plan —
+    /// it must NEVER silently collapse to the built-in text-only copy (element structure lost)
+    /// or be evaluated against the synthetic empty document node (empty output). The two sinks
+    /// consult this to assert-loudly (Debug) / route-to-buffering (Release) instead of emitting
+    /// the collapse.
+    ///
+    /// Conservatism: the guard is armed ONLY under an active streaming execution with a matched
+    /// current template whose body is available to classify. A node that legitimately reaches the
+    /// built-in text-only copy with NO guaranteed-streamable owning construct (a genuinely
+    /// unmatched node in a non-streaming pass, or an owning body that is itself not
+    /// guaranteed-streamable) returns false and takes the normal path. This never fires on the
+    /// text/attribute/atomic copy of leaf content inside a legitimately-streamed body — the
+    /// owning-construct classification is the same guaranteed-streamable body in both the correct
+    /// (streamed/buffered, never reaching here) and regressed (reaching here) cases, so the guard
+    /// is triggered strictly by REACHING a sink that a guaranteed-streamable construct must not.
+    /// </summary>
+    private bool OwningConstructIsGuaranteedStreamable()
+    {
+        if (!_isStreamingExecution)
+            return false;
+        var body = _currentTemplate?.Body;
+        if (body is null)
+            return false;
+        // Classify the owning body in the matched-template streaming environment: the matched
+        // element is a live-streamed striding context node (identical to the Task 1.2 dispatch
+        // site in MatchAndExecuteStreamingNodeAsync).
+        var ctx = new Streamability.StreamingContext(
+            Streamability.Posture.Striding, InStreamedScope: true);
+        return Streamability.StreamabilityClassifier.Classify(body, ctx).IsGuaranteedStreamable;
+    }
+
+    /// <summary>
+    /// #143 Task 1.3 — names the owning construct for the invariant diagnostic. Best-effort:
+    /// the current template's match pattern text plus the first structural instruction of its
+    /// body, so a tripped assert points at the exact stylesheet shape (e.g. the 013 family).
+    /// </summary>
+    private string DescribeOwningConstruct()
+    {
+        var t = _currentTemplate;
+        if (t is null)
+            return "<unknown construct>";
+        var match = t.Match is not null ? $"match=\"{t.Match}\"" : "(named template)";
+        var first = t.Body?.Instructions.Count > 0
+            ? t.Body.Instructions[0].GetType().Name
+            : "(empty body)";
+        return $"template {match}, body starts with {first}";
+    }
+
+    /// <summary>
+    /// #143 Task 1.3 — Release safety net for a guaranteed-streamable construct that reached a
+    /// silent sink. Rather than the structure-losing text-only copy (or an empty emission), this
+    /// preserves the node's full structure by deep-copying its buffered subtree — the correct,
+    /// never-collapsed output. Under an active streaming reader the subtree is materialised from
+    /// the live reader (identical contract to the snapshot()/copy-of()/deep-copy streaming paths);
+    /// otherwise the node is already a fully-populated tree and is serialized directly. This is a
+    /// backstop only: Task 1.2's StreamingPlanner.Plan dispatch routes such constructs before they
+    /// ever reach here, so in a non-regressed engine this method is unreachable.
+    /// </summary>
+    private ValueTask ApplyGuaranteedStreamableBufferFallbackAsync(
+        object node, QName? mode, List<XsltWithParam> withParams)
+    {
+        if (_activeStreamingReader != null && node is XdmElement streamedElem)
+        {
+            var bufferedRoot = StreamingSubtreeMaterializer.Materialize(
+                _activeStreamingReader, _nodeStore!, new DocumentId(0)) ?? streamedElem;
+            SerializeElement(bufferedRoot);
+            _streamingSubtreeBufferConsumed = true;
+            return ValueTask.CompletedTask;
+        }
+        if (node is XdmElement fullElem)
+        {
+            SerializeElement(fullElem);
+            return ValueTask.CompletedTask;
+        }
+        // Document node with no live reader: recurse into children non-streaming, preserving
+        // structure (the built-in document rule's structure-preserving behaviour, not text-only).
+        return ApplyTemplatesAsync(null, mode, [], withParams);
+    }
+
     private async ValueTask ApplyBuiltInTextOnlyCopyAsync(object node, QName? mode, List<XsltWithParam> withParams)
     {
         switch (node)
         {
             case XdmDocument:
             case XdmElement:
+                // #143 Task 1.3 GUARD: a structure-bearing node (element/document) must never be
+                // collapsed to the built-in text-only copy when the owning construct is
+                // guaranteed-streamable — that is the si-iterate-013 regression (xsl:copy >
+                // xsl:iterate > copy-of falling through here, its element structure lost to
+                // concatenated descendant text). The correct route is StreamingPlanner.Plan's
+                // stream/buffer dispatch (wired in Task 1.2). This arm being reached for such a
+                // construct means the dispatch was bypassed.
+                if (OwningConstructIsGuaranteedStreamable())
+                {
+                    System.Diagnostics.Debug.Assert(false,
+                        "#143 Task 1.3 invariant: a guaranteed-streamable construct (" +
+                        DescribeOwningConstruct() + ") reached the built-in text-only-copy sink " +
+                        "for a " + (node is XdmDocument ? "document" : "element") + " node. It must " +
+                        "stream or buffer via StreamingPlanner.Plan, never collapse structure to text.");
+                    // Release safety net: materialise the matched subtree and run the owning body
+                    // non-streaming (correct output — never the text-only collapse). This mirrors
+                    // BufferMatchedSubtree, the plan a guaranteed-streamable construct maps to.
+                    await ApplyGuaranteedStreamableBufferFallbackAsync(node, mode, withParams)
+                        .ConfigureAwait(false);
+                    break;
+                }
                 // In streaming mode, child recursion is handled by the streaming loop —
                 // the built-in template only needs to handle the current node.
                 if (!_isStreamingExecution)
