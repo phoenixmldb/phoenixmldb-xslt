@@ -4807,12 +4807,40 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Direct match: replace the whole node with $__streaming_watcher_N.
         for (var wi = 0; wi < watchers.Count; wi++)
         {
-            if (ReferenceEquals(expr, watchers[wi].SourceExpression))
+            var w = watchers[wi];
+            if (ReferenceEquals(expr, w.SourceExpression))
             {
-                return new PhoenixmlDb.XQuery.Ast.VariableReference
+                var varRef = new PhoenixmlDb.XQuery.Ast.VariableReference
                 {
                     Name = new QName(NamespaceId.None, $"__streaming_watcher_{wi}")
                 };
+
+                // Group A wrapped-aggregation watcher (outermost/head/remove(path)
+                // carrying OUTER positional predicates). The watcher's SourceExpression
+                // is the WHOLE FilterExpression `wrapped(path)[pred…]`, but the bound
+                // $__streaming_watcher_N variable holds only the GROUNDED BASE sequence
+                // (inner result + outermost-dedup + remove-skip) — the outer predicates
+                // are NOT baked into the variable value. When this watcher is used as an
+                // operand of a surrounding expression (e.g. `outermost(//PRICE)[1] + $two`),
+                // substituting the bare variable DROPS the outer `[1]`, yielding the whole
+                // unfiltered sequence and an "arithmetic operand is a sequence of more than
+                // one item" error (sx-arithmetic-002 regression). Preserve the outer
+                // predicates by re-wrapping the variable in a FilterExpression:
+                // `$__streaming_watcher_N[pred…]`. NB this branch only fires for wrappers
+                // with OuterPredicates; a filtered attribute-axis general-comparison watcher
+                // ((a/b/@v[pred]) = C) folds its predicate into the inner path (empty
+                // OuterPredicates), so the whole operand is substituted with no residual
+                // predicate — the two cases stay distinct.
+                if (w.OuterPredicates.Count > 0)
+                {
+                    return new PhoenixmlDb.XQuery.Ast.FilterExpression
+                    {
+                        Primary = varRef,
+                        Predicates = w.OuterPredicates,
+                    };
+                }
+
+                return varRef;
             }
         }
 
@@ -10835,7 +10863,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             for (var wi = 0; wi < _activeStreamWatchers.Count; wi++)
             {
                 var watcherVar = new QName(NamespaceId.None, $"__streaming_watcher_{wi}");
-                execContext.BindVariable(watcherVar, _activeStreamWatchers[wi].GetResult());
+                var w = _activeStreamWatchers[wi];
+                // Group A wrapped-aggregation watcher: bind the GROUNDED BASE sequence
+                // (inner result + outermost-dedup + remove-skip) so a re-wrapped outer
+                // predicate — `$__streaming_watcher_N[pred…]`, injected by
+                // RewriteWithWatcherVariables for operands like `outermost(//PRICE)[1] + $two`
+                // — filters over the correct base. Bare (non-wrapped) watchers keep the
+                // GetResult() contract used by map-entry / general-comparison consumers.
+                var bound = (w.OuterPredicates.Count > 0 || w.OuterSimpleMapRight != null)
+                    ? (object?)w.ProduceAccumulated()
+                    : w.GetResult();
+                execContext.BindVariable(watcherVar, bound);
             }
         }
 

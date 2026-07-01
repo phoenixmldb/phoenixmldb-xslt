@@ -66,4 +66,33 @@ public class StreamingWrappedAggregationTests
         // remove pos 2 → (4.95, 10.00); [position() lt 3] → both
         r.Trim().Should().Be("<out>4.95 10.00</out>");
     }
+
+    // Regression pin for sx-arithmetic-002 (broke at engine e4489d5). A Group A
+    // wrapped-aggregation FilterExpression `outermost(//PRICE)[1]` used as the LEFT
+    // operand of arithmetic: `outermost(//PRICE)[1] + $two`. The BinaryExpression
+    // watcher-rewrite must substitute ONLY the watcher's captured base and PRESERVE
+    // the outer positional predicate around the substituted variable — producing
+    // `$__streaming_watcher_N[1] + $two`, a single-item arithmetic (4.95 + 2 = 6.95),
+    // NOT the whole unfiltered PRICE sequence (which raised "An arithmetic operand
+    // is a sequence of more than one item").
+    [Fact]
+    public async Task Outermost_OuterPositionalPredicate_ArithmeticOperand()
+    {
+        const string sheet = """
+            <xsl:stylesheet version="3.0"
+                xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:mode streamable="yes"/>
+              <xsl:param name="two" select="2"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="b.xml">
+                  <out><xsl:copy-of select="outermost(//PRICE)[1] + $two"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var r = await Run(sheet, Books, "b.xml");
+        // first PRICE 4.95 + $two 2 = 6.95 (single item, not a >1-item sequence error)
+        r.Trim().Should().Be("<out>6.95</out>");
+    }
 }
