@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+### Streaming: xsl:iterate over a grounded atomic crawl
+
+An `xsl:iterate` whose `select` grounds each crawled node to an atomic value — for example `.//*/name()` — is now correctly accepted as streamable and streamed. The streamability classifier previously rejected it with a spurious `XTSE3430` ("crawling select expression has a consuming body") because it saw the descendant crawl together with a body that reads the context item (as a map-lookup key). When the per-item result is atomic (the select ends in a grounding step such as `name()`, `string()`, `data()`, `copy-of()`), the context item is a value, not a streaming node, so accumulating a grounded map parameter and emitting it from `xsl:on-completion` is streamable — the canonical streaming histogram. A genuinely consuming iterate body over a streaming-node crawl (navigating children/descendants of the per-item node) is still rejected.
+
 ## 1.4.16 (2026-06-30)
 
 Thread-safety completion, base-URI correctness, and streaming path-matching fixes. Requires PhoenixmlDb.Core 1.2.0 and PhoenixmlDb.XQuery 1.5.1. No API changes.

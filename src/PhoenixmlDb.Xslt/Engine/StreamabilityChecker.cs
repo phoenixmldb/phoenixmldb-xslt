@@ -962,9 +962,21 @@ internal static class StreamabilityChecker
             CheckExpression(insn.Select);
             if (NonStreamableReason != null) return null;
 
+            // When the select GROUNDS each item to an atomic value — e.g.
+            // .//*/name(), //x/string(), descendant::*/data() — the per-iteration
+            // context item is a string/atomic, NOT a streaming node. The crawl is
+            // consumed by the grounding step (each node atomized as it is seen,
+            // motionless per item), so a body that reads '.' (as a map-lookup key)
+            // or accumulates a grounded param is streamable. This is the canonical
+            // streaming histogram (si-iterate-134/135). Only genuinely consuming
+            // bodies over a STREAMING-NODE crawl (.//* with child/descendant
+            // navigation of the per-item node) are non-streamable — those retain a
+            // non-grounded '.' and are caught below.
+            bool selectGroundsItems = insn.Select != null && IterateSelectGroundsItems(insn.Select);
+
             // Same body checks as for-each: crawling select + consuming body,
             // and multi-consuming expressions in the body.
-            if (insn.Select != null && ContainsDescendantAxis(insn.Select))
+            if (!selectGroundsItems && insn.Select != null && ContainsDescendantAxis(insn.Select))
             {
                 if (BodyConsumesContext(insn.Body))
                 {
@@ -990,13 +1002,59 @@ internal static class StreamabilityChecker
 
             if (insn.OnCompletion != null) Walk(insn.OnCompletion);
 
-            // Track if this iterate processes streaming elements
+            // Track if this iterate processes streaming elements. A select that
+            // grounds each item (atomizing crawl like .//*/name()) yields atomic
+            // values, not streaming nodes — the body is not a streaming-element loop.
             var oldStreamingLoop = _insideStreamingElementLoop;
-            if (insn.Select != null && SelectNavigatesElements(insn.Select))
+            if (!selectGroundsItems && insn.Select != null && SelectNavigatesElements(insn.Select))
                 _insideStreamingElementLoop = true;
             Walk(insn.Body);
             _insideStreamingElementLoop = oldStreamingLoop;
             return null;
+        }
+
+        /// <summary>
+        /// Names of functions that, applied per-node, GROUND the node to an atomic
+        /// value (string/QName/number/boolean/id) — consuming the node in place and
+        /// producing a motionless grounded result. When an iterate/for-each select
+        /// ends in one of these applied per item (e.g. .//*/name()), the crawl is
+        /// consumed by the grounding step and the per-item context is atomic, not a
+        /// streaming node.
+        /// </summary>
+        private static readonly HashSet<string> PerItemGroundingFunctions = new()
+        {
+            "name", "local-name", "namespace-uri", "node-name",
+            "string", "data", "number", "boolean",
+            "generate-id", "string-length", "normalize-space",
+            "copy-of", "snapshot",
+        };
+
+        /// <summary>
+        /// True when an xsl:iterate/for-each select produces GROUNDED atomic items
+        /// per iteration — i.e. it ends in a per-item grounding step such as
+        /// name()/string()/data(). Recognised shapes:
+        ///   * SimpleMapExpression path-step whose Right is a grounding function
+        ///     (e.g. .//*/name(), descendant::*/string()), and
+        ///   * a bare grounding FunctionCallExpression (e.g. data(.//*)).
+        /// In these cases the per-item context item is an atomic value, not a
+        /// streaming node, so a body reading '.' does not consume the stream.
+        /// </summary>
+        private static bool IterateSelectGroundsItems(XQueryExpression? select)
+        {
+            if (select == null) return false;
+
+            // path/functioncall() step: .//*/name(), descendant::x/string()
+            if (select is SimpleMapExpression sme
+                && sme.Right is FunctionCallExpression rightFce
+                && PerItemGroundingFunctions.Contains(rightFce.Name.LocalName))
+                return true;
+
+            // Direct grounding call over a crawl: data(.//*), copy-of(.//*)
+            if (select is FunctionCallExpression fce
+                && PerItemGroundingFunctions.Contains(fce.Name.LocalName))
+                return true;
+
+            return false;
         }
 
         /// <summary>
