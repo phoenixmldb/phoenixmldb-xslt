@@ -328,6 +328,31 @@ internal static class StreamingSubtreeBufferDetector
             case XsltWherePopulated wp:
                 return BodyNavigatesInput(wp.Content);
 
+            // xsl:try with a select attribute evaluates that expression exactly as the
+            // equivalent xsl:value-of / xsl:sequence select would — its xsl:catch merely
+            // supplies a grounded fallback if a dynamic error is raised. The document-level
+            // streaming watcher dispatch only fires for a BARE aggregate over a bare path;
+            // once the operand is a mixed comma sequence, a simple-map cast chain, a
+            // for-expression, or a climbing/attribute axis (all wrapped inside the try's
+            // avg()/round()/format-number()), the select folds against the synthetic empty
+            // node and yields the wrong value (si-try-112/113/115/122). Apply the same
+            // absorbing / unstreamable-operator / climbing-axis checks the value-of case uses
+            // to route those to the whole-input buffer, where the aggregate evaluates against
+            // the real (bounded) document. A bare aggregate over a bare path (si-try-103..110)
+            // and an empty/attribute-avg select that already stream correctly return false
+            // here and stay on the streaming path. The try Body / catch bodies are analysed
+            // like any other constructed body.
+            case XsltTry tr:
+                if (tr.SelectExpression != null
+                    && (SelectAbsorbsInput(tr.SelectExpression)
+                        || SelectNavigatesViaUnstreamableOperator(tr.SelectExpression)
+                        || SelectNavigatesViaClimbingAxis(tr.SelectExpression)))
+                    return true;
+                if (tr.Body != null && RequiresWholeInputBuffer(tr.Body)) return true;
+                foreach (var c in tr.Catches)
+                    if (c.Body != null && RequiresWholeInputBuffer(c.Body)) return true;
+                return false;
+
             case XsltSequenceConstructor ctor:
                 return RequiresWholeInputBuffer(ctor);
 

@@ -3320,6 +3320,20 @@ public sealed class XsltTransformEngine
                         if (ContentContainsApplyTemplatesStreaming(w.Body)) return true;
                     if (ContentContainsApplyTemplatesStreaming(c.Otherwise)) return true;
                     break;
+                // xsl:try is transparent to the streaming crawl: a body-form
+                // <xsl:try><xsl:apply-templates/><xsl:catch/></xsl:try> at match="/"
+                // drives the stream through the wrapped apply-templates exactly as a
+                // bare apply-templates would (the catch only supplies a grounded fallback
+                // on error). Descend into the try body and each catch body so the
+                // doc-node dispatch keeps the active streaming processor live rather than
+                // running in subscription-dispatch-only mode — which would leave the
+                // wrapped apply-templates evaluating against the empty synthetic document
+                // and emit nothing (si-try-200).
+                case Ast.XsltTry tr:
+                    if (tr.Body != null && ContentContainsApplyTemplatesStreaming(tr.Body)) return true;
+                    foreach (var cat in tr.Catches)
+                        if (cat.Body != null && ContentContainsApplyTemplatesStreaming(cat.Body)) return true;
+                    break;
             }
         }
         return false;
