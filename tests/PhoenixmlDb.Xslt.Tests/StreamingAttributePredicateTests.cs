@@ -79,4 +79,104 @@ public class StreamingAttributePredicateTests
         var r = await Run(Sheet("min"), Transactions, "t.xml");
         r.Trim().Should().Be("<out>1</out>");
     }
+
+    // -----------------------------------------------------------------------
+    // Non-aggregate consumers of the SAME filtered attribute-axis sequence.
+    // The filtered attribute values must be delivered identically to
+    // value-of / general-comparison / xsl:attribute construction. These pin
+    // the regression 90cca99 introduced (sx-GeneralComp-*-019/119,
+    // si-attribute-019, si-element-219).
+    // -----------------------------------------------------------------------
+
+    private static string ValueOfSheet(string select) => $$"""
+        <xsl:stylesheet version="3.0"
+            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema"
+            exclude-result-prefixes="xs">
+          <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+          <xsl:mode streamable="yes"/>
+          <xsl:template name="xsl:initial-template">
+            <xsl:source-document streamable="yes" href="t.xml">
+              <out><xsl:value-of select="{{select}}"/></out>
+            </xsl:source-document>
+          </xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    [Fact]
+    public async Task ValueOf_FilteredAttributeSequence_DeliversFilteredValues()
+    {
+        // The filtered attribute values {1,2,4} rendered as a space-joined string.
+        var r = await Run(ValueOfSheet("account/transaction/@value[xs:decimal(.) gt 0]"),
+            Transactions, "t.xml");
+        r.Trim().Should().Be("<out>1 2 4</out>");
+    }
+
+    [Fact]
+    public async Task GeneralComparison_FilteredAttributeSequence_Matches()
+    {
+        // (filtered = 2.0) is true because 2 is among the positive-filtered {1,2,4}.
+        // Mirrors sx-GeneralComp-eq-019: (a/b/@v[xs:decimal(.) gt 0]) = 4.32.
+        // NB the RHS must be a decimal literal; a general comparison of the
+        // untyped/string attribute values against xs:integer would not promote.
+        var r = await Run(ValueOfSheet("(account/transaction/@value[xs:decimal(.) gt 0]) = 2.0"),
+            Transactions, "t.xml");
+        r.Trim().Should().Be("<out>true</out>");
+    }
+
+    [Fact]
+    public async Task GeneralComparison_FilteredEmptySequence_IsFalse()
+    {
+        // The predicate matches nothing (no value < -100), so the general
+        // comparison over the empty sequence is false. Mirrors the empty
+        // filtered-attribute shape of si-attribute-019.
+        var r = await Run(ValueOfSheet("(account/transaction/@value[xs:decimal(.) lt -100]) = 2.0"),
+            Transactions, "t.xml");
+        r.Trim().Should().Be("<out>false</out>");
+    }
+
+    [Fact]
+    public async Task Attribute_FilteredEmptySequence_IsEmpty()
+    {
+        // xsl:attribute over a filtered attribute sequence that matches nothing:
+        // the attribute value must be empty (si-attribute-019 -> /out/@a = '').
+        const string sheet = """
+            <xsl:stylesheet version="3.0"
+                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                exclude-result-prefixes="xs">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:mode streamable="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="t.xml">
+                  <out><xsl:attribute name="a" select="account/transaction/@value[xs:decimal(.) lt -100]"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var r = await Run(sheet, Transactions, "t.xml");
+        r.Trim().Should().Be("<out a=\"\"/>");
+    }
+
+    [Fact]
+    public async Task Attribute_FilteredNonEmptySequence_DeliversFilteredValues()
+    {
+        // xsl:attribute over the positive-filtered attribute sequence {1,2,4}.
+        const string sheet = """
+            <xsl:stylesheet version="3.0"
+                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                exclude-result-prefixes="xs">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+              <xsl:mode streamable="yes"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="t.xml">
+                  <out><xsl:attribute name="a" select="account/transaction/@value[xs:decimal(.) gt 0]"/></out>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var r = await Run(sheet, Transactions, "t.xml");
+        r.Trim().Should().Be("<out a=\"1 2 4\"/>");
+    }
 }

@@ -1415,8 +1415,20 @@ internal sealed class StreamingXmlProcessor
                     // descendants. Without this stack, Count/Sum/etc. with a
                     // predicate would see materialized == null at EndElement
                     // and silently fall through unfiltered.
-                    bool needSubtree = watcher.Aggregation is WatcherAggregation.Sequence or WatcherAggregation.Snapshot
-                        || watcher.Predicates.Count > 0;
+                    //
+                    // An attribute-axis watcher (ValueAttribute != null) is the
+                    // exception: its ONLY value is the matched attribute's own
+                    // string, known at the start-tag, and its motionless leaf
+                    // predicate (@v[xs:decimal(.) gt 0]) navigates nowhere — `.`
+                    // is the attribute value. Building (and, at EndElement,
+                    // materializing) the whole host element + all its sibling
+                    // attributes per match is pure waste that, on a 100k-row doc,
+                    // blows the streaming timeout. Skip the subtree entirely; the
+                    // EndElement path evaluates the predicate against a single
+                    // standalone attribute node instead.
+                    bool needSubtree = watcher.ValueAttribute == null
+                        && (watcher.Aggregation is WatcherAggregation.Sequence or WatcherAggregation.Snapshot
+                            || watcher.Predicates.Count > 0);
                     if (needSubtree)
                     {
                         subtreeStack = new Stack<SubtreeBuilderFrame>();
@@ -1626,20 +1638,39 @@ internal sealed class StreamingXmlProcessor
             // then reused both for predicate evaluation and (for
             // Sequence/Snapshot) slot population — we never materialize twice.
             XdmNode? materialized = null;
-            bool needMaterialize = entry.Watcher.Predicates.Count > 0
-                || (entry.Watcher.ValueAttribute == null
-                    && entry.Watcher.Aggregation is WatcherAggregation.Snapshot or WatcherAggregation.Sequence);
-            if (needMaterialize)
+            // Attribute-axis watcher: the only value is the matched attribute's
+            // string, and any motionless leaf predicate reads `.` = that value.
+            // Build a single standalone attribute node (no host element, no sibling
+            // attributes, no subtree) so predicate evaluation is O(1) per match
+            // rather than materializing the whole element. This keeps sf-sum-019
+            // fast and, crucially, keeps the predicated Sequence/value-of/xsl:attribute
+            // consumers (sx-GeneralComp-*-019/119, si-attribute-019, si-element-219)
+            // under the streaming timeout that 90cca99's element-materialization broke.
+            XdmNode? attrPredicateContext = null;
+            if (entry.Watcher.ValueAttribute != null)
             {
-                if (!entry.HasChildElement)
+                if (entry.Watcher.Predicates.Count > 0)
                 {
-                    materialized = MaterializeLeafElement(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
+                    var av = entry.Attributes?.GetValueOrDefault(entry.Watcher.ValueAttribute);
+                    attrPredicateContext = MaterializeStandaloneAttribute(entry.Watcher.ValueAttribute, av ?? string.Empty);
                 }
-                else if (entry.SubtreeStack is { Count: 1 } rootStack)
+            }
+            else
+            {
+                bool needMaterialize = entry.Watcher.Predicates.Count > 0
+                    || entry.Watcher.Aggregation is WatcherAggregation.Snapshot or WatcherAggregation.Sequence;
+                if (needMaterialize)
                 {
-                    var rootFrame = rootStack.Pop();
-                    rootFrame.FlushPendingText(MakeStreamingText);
-                    materialized = MaterializeSubtreeFrame(rootFrame);
+                    if (!entry.HasChildElement)
+                    {
+                        materialized = MaterializeLeafElement(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
+                    }
+                    else if (entry.SubtreeStack is { Count: 1 } rootStack)
+                    {
+                        var rootFrame = rootStack.Pop();
+                        rootFrame.FlushPendingText(MakeStreamingText);
+                        materialized = MaterializeSubtreeFrame(rootFrame);
+                    }
                 }
             }
 
@@ -1648,34 +1679,29 @@ internal sealed class StreamingXmlProcessor
             // dispatch path. If any predicate is false, the matched element is
             // dropped from the aggregation entirely.
             bool predicatesPass = true;
-            if (entry.Watcher.Predicates.Count > 0 && materialized != null)
+            // For an attribute-axis watcher the predicate context is the standalone
+            // attribute node (. = attribute value); for element/text watchers it is
+            // the materialized element.
+            XdmNode? predicateEvalContext = entry.Watcher.ValueAttribute != null ? attrPredicateContext : materialized;
+            if (entry.Watcher.Predicates.Count > 0 && predicateEvalContext != null)
             {
-                // For an attribute-axis watcher (@value[...]) the predicate's context
-                // item `.` is the ATTRIBUTE node — its typed/string value is the
-                // attribute value (e.g. xs:decimal(.) gt 0). Push the matched
-                // attribute, not the host element. For element/text watchers `.` is
-                // the materialized element as before.
-                XdmNode predicateContext = materialized;
-                // materialized is statically XdmElement here (MaterializeLeafElement /
-                // MaterializeSubtreeFrame both return XdmElement), so the analyzer
-                // proves the cast always succeeds — keep the pattern for clarity but
-                // silence the always-true diagnostic.
-#pragma warning disable CA1508
-                if (entry.Watcher.ValueAttribute != null && materialized is XdmElement hostElem)
-#pragma warning restore CA1508
-                {
-                    foreach (var attrId in hostElem.Attributes)
-                    {
-                        if (_nodeStore.GetNode(attrId) is PhoenixmlDb.Xdm.Nodes.XdmAttribute xa
-                            && xa.LocalName == entry.Watcher.ValueAttribute)
-                        {
-                            predicateContext = xa;
-                            break;
-                        }
-                    }
-                }
+                XdmNode predicateContext = predicateEvalContext;
                 var prevStreaming = _context._isStreamingExecution;
                 _context._isStreamingExecution = false;
+                // Suspend the active watcher list for the duration of predicate
+                // evaluation. A motionless leaf predicate (xs:decimal(.) gt 0) is
+                // self-contained — `.` is the pushed context item — and has NO watched
+                // sub-expression. With the watcher list still active, EvaluateAsync
+                // routes every sub-expression through the watcher-substitution path
+                // (TryResolveFromWatchers miss → RewriteWithWatcherVariables →
+                // full optimizer/executor replan), which fires once PER matched element.
+                // On a 100k-row doc that per-match replan is what blew the streaming
+                // timeout for the predicated Sequence/value-of/xsl:attribute consumers
+                // (sx-GeneralComp-*-019/119, si-attribute-019, si-element-219). Clearing
+                // it lets the predicate take the plain evaluation path. (Restored in
+                // finally so watcher accumulation for other consumers is unaffected.)
+                var prevWatchers = _context._activeStreamWatchers;
+                _context._activeStreamWatchers = null;
                 _context.PushContextItem(predicateContext, 1, 1);
                 _context.PushCurrentItem(predicateContext);
                 try
@@ -1693,6 +1719,7 @@ internal sealed class StreamingXmlProcessor
                 {
                     _context.PopCurrentItem();
                     _context.PopContextItem();
+                    _context._activeStreamWatchers = prevWatchers;
                     _context._isStreamingExecution = prevStreaming;
                 }
             }
@@ -1903,6 +1930,30 @@ internal sealed class StreamingXmlProcessor
         elem._stringValue = textContent ?? string.Empty;
         _nodeStore.Register(elem);
         return elem;
+    }
+
+    /// <summary>
+    /// Materializes a single parentless <see cref="XdmAttribute"/> holding the
+    /// matched attribute's value, registered in the node store so a motionless
+    /// leaf predicate (<c>@v[xs:decimal(.) gt 0]</c>) can evaluate with `.` bound
+    /// to the attribute (its typed value = the string value). Avoids building the
+    /// host element and all its sibling attributes per match — the O(N) cost that
+    /// made predicated attribute-axis paths blow the streaming timeout on large docs.
+    /// </summary>
+    private XdmAttribute MaterializeStandaloneAttribute(string localName, string value)
+    {
+        var attrId = _nodeStore.NextId();
+        var attr = new XdmAttribute
+        {
+            Id = attrId,
+            Document = new DocumentId(0),
+            Namespace = _nodeStore.InternNamespace(string.Empty),
+            LocalName = localName,
+            Prefix = null,
+            Value = value,
+        };
+        _nodeStore.Register(attr);
+        return attr;
     }
 
     private XdmText MakeStreamingText(string value)

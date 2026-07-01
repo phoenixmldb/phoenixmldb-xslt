@@ -4870,6 +4870,30 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 };
             }
 
+            // Binary operator (arithmetic / value / general comparison) whose
+            // operands may be watched sub-expressions — e.g. a lone
+            // (a/b/@v[pred]) = 4.32 where the LEFT is a streamed filtered
+            // attribute sequence. Substitute each watched operand with its
+            // $__streaming_watcher_N variable so the comparison runs against the
+            // accumulated sequence instead of re-evaluating the (now-closed)
+            // path against the synthetic empty document (which short-circuits
+            // to false). Without this the whole binary is returned unchanged and
+            // the watcher value is never seen — the regression behind
+            // sx-GeneralComp-*-019/119 over a predicated attribute axis.
+            case PhoenixmlDb.XQuery.Ast.BinaryExpression bin:
+            {
+                var newLeft = RewriteWithWatcherVariables(bin.Left, watchers);
+                var newRight = RewriteWithWatcherVariables(bin.Right, watchers);
+                if (ReferenceEquals(newLeft, bin.Left) && ReferenceEquals(newRight, bin.Right))
+                    return expr;
+                return new PhoenixmlDb.XQuery.Ast.BinaryExpression
+                {
+                    Left = newLeft,
+                    Operator = bin.Operator,
+                    Right = newRight,
+                };
+            }
+
             // SimpleMap: descend into Left so a watched LHS (e.g.
             // outermost(//PRICE) inside `outermost(//PRICE) ! string(.)`) gets
             // replaced with $__streaming_watcher_N. The Right is a per-item

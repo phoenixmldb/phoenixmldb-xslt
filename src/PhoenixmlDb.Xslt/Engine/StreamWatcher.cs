@@ -307,8 +307,16 @@ internal sealed class StreamWatcher
         if (index < 0 || index >= _items.Count) return;
         if (ValueAttribute != null && attributes != null)
         {
-            // Attribute capture stays a raw string (see OnElementMatch).
-            _items[index] = attributes.GetValueOrDefault(ValueAttribute) ?? string.Empty;
+            // A matched attribute's value is xs:untypedAtomic (its typed value when the
+            // attribute is not schema-validated), exactly like a matched text node's
+            // value below. Capturing it as XsUntypedAtomic — rather than a raw
+            // xs:string — lets a general comparison over the sequence promote to the
+            // other operand's type (e.g. (a/b/@v[pred]) = 4.32 -> numeric), while
+            // value-of / xsl:attribute / string-join still serialize its lexical string.
+            // A raw string would raise XPTY0004 ("cannot compare xs:string with numeric")
+            // in that comparison — the regression behind sx-GeneralComp-*-019/119.
+            var av = attributes.GetValueOrDefault(ValueAttribute);
+            _items[index] = av != null ? new Xdm.XsUntypedAtomic(av) : (object)string.Empty;
         }
         else
         {
@@ -361,8 +369,14 @@ internal sealed class StreamWatcher
                 // For simple leaf elements, capture value directly
                 if (ValueAttribute != null && attributes != null)
                 {
+                    // Capture the attribute's value as xs:untypedAtomic (its typed value
+                    // for a non-validated attribute), matching FillSequenceSlot and the
+                    // text-node branch below, so a general comparison over the sequence
+                    // promotes to the comparand's numeric type instead of raising
+                    // XPTY0004 for xs:string. value-of / string-join still serialize its
+                    // lexical string. (sx-GeneralComp-*-019/119.)
                     var attrVal = attributes.GetValueOrDefault(ValueAttribute);
-                    if (attrVal != null) _items.Add(attrVal);
+                    if (attrVal != null) _items.Add(new Xdm.XsUntypedAtomic(attrVal));
                 }
                 else if (textContent != null)
                 {
@@ -384,8 +398,11 @@ internal sealed class StreamWatcher
                 // Only capture the first match; subsequent matches are ignored.
                 if (_items.Count == 0)
                 {
+                    var headAttr = ValueAttribute != null ? attributes?.GetValueOrDefault(ValueAttribute) : null;
                     object? headVal = ValueAttribute != null
-                        ? attributes?.GetValueOrDefault(ValueAttribute)
+                        // Attribute value as xs:untypedAtomic (see Sequence/Snapshot branch)
+                        // so head(a/b/@v) promotes for arithmetic/comparison; value-of serializes.
+                        ? (headAttr != null ? new Xdm.XsUntypedAtomic(headAttr) : null)
                         // Streamed text node value as xs:untypedAtomic (see Sequence/Snapshot
                         // branch): arithmetic over head(//X/text()) promotes; value-of serializes.
                         : textContent != null ? new Xdm.XsUntypedAtomic(textContent) : null;
