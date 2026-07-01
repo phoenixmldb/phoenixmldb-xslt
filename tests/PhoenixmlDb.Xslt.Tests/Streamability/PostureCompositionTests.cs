@@ -387,9 +387,14 @@ public class PostureCompositionTests
     [Fact]
     public void Row18_UnsupportedNode_IsRoamingFreeRanging()
     {
-        // A map constructor is not modelled by the classifier yet → conservative.
-        var map = new MapConstructor { Entries = System.Array.Empty<MapEntry>() };
-        StreamabilityClassifier.Classify(map, Streamed)
+        // A dynamic map/array lookup (?key) is not modelled by the classifier yet → conservative.
+        // (MapConstructor / ArrayConstructor are now modelled — see Task B rows below.)
+        var lookup = new LookupExpression
+        {
+            Base = new VariableReference { Name = new QName(NamespaceId.None, "m") },
+            Key = new StringLiteral { Value = "k" },
+        };
+        StreamabilityClassifier.Classify(lookup, Streamed)
             .Should().Be(new PostureSweep(Posture.Roaming, Sweep.FreeRanging));
     }
 
@@ -1071,5 +1076,142 @@ public class PostureCompositionTests
         var call = Fn("distinct-values", RelPath(Step(Axis.Child, "A")));
         StreamabilityClassifier.Classify(call, Streamed)
             .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    // =======================================================================
+    // Phase 1.5 Task B: expression-level if / map-constructor / array-constructor
+    // classification (§19.8, §19.8.2). Mirrors the XsltIf/XsltChoose, XsltMap and
+    // XsltArray instruction arms so the expression side stops conservatively
+    // over-rejecting them. Same streamed entry context (Striding, InStreamedScope).
+    // =======================================================================
+
+    private static IfExpression If(XQueryExpression cond, XQueryExpression then, XQueryExpression? els) =>
+        new() { Condition = cond, Then = then, Else = els };
+
+    private static MapEntry Entry(XQueryExpression key, XQueryExpression value) =>
+        new() { Key = key, Value = value };
+
+    private static MapConstructor Map(params MapEntry[] entries) => new() { Entries = entries };
+
+    private static ArrayConstructor SquareArray(params XQueryExpression[] members) =>
+        new() { Kind = ArrayConstructorKind.Square, Members = members };
+
+    private static ArrayConstructor CurlyArray(params XQueryExpression[] members) =>
+        new() { Kind = ArrayConstructorKind.Curly, Members = members };
+
+    // ---- B1: if with two streamable node branches → widened & streamable ----
+
+    [Fact]
+    public void B01_IfExistsThenChildElseChild_IsStreamable()
+    {
+        // if (exists(child::A)) then child::A else child::B
+        // widen(Striding, Striding) = Crawling; sweep = Consuming ⇒ streamable.
+        var iff = If(
+            Fn("exists", RelPath(Step(Axis.Child, "A"))),
+            RelPath(Step(Axis.Child, "A")),
+            RelPath(Step(Axis.Child, "B")));
+
+        var ps = StreamabilityClassifier.Classify(iff, Streamed);
+
+        ps.Sweep.Should().Be(Sweep.Consuming);
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- B2: if then=child::A else=grounded → (Grounded, Consuming) ---------
+
+    [Fact]
+    public void B02_IfThenChildElseGrounded_IsGroundedConsuming()
+    {
+        // if (child::A) then string(.) else 0 — string(.) is grounded+consuming, 0 grounded;
+        // widen(Grounded, Grounded)=Grounded, sweep combines to Consuming.
+        var iff = If(
+            RelPath(Step(Axis.Child, "A")),
+            Fn("string", Dot),
+            new IntegerLiteral { Value = 0L });
+
+        StreamabilityClassifier.Classify(iff, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    // ---- B3: if with a roaming else → propagates (NOT streamable) ----------
+
+    [Fact]
+    public void B03_IfThenChildElseRoaming_IsNotStreamable()
+    {
+        // if (T) then child::A else following::X — the roaming else branch propagates.
+        var iff = If(
+            Fn("exists", RelPath(Step(Axis.Child, "A"))),
+            RelPath(Step(Axis.Child, "A")),
+            RelPath(Step(Axis.Following, "X")));
+
+        StreamabilityClassifier.Classify(iff, Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    // ---- B4: braced-if (null else) → then branch + implicit empty else ------
+
+    [Fact]
+    public void B04_BracedIfNoElse_IsStreamable()
+    {
+        // if (exists(child::A)) { child::A } — implicit empty-sequence else (grounded).
+        var iff = If(
+            Fn("exists", RelPath(Step(Axis.Child, "A"))),
+            RelPath(Step(Axis.Child, "A")),
+            null);
+
+        var ps = StreamabilityClassifier.Classify(iff, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Striding, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- B5: constructed map is grounded, sweep combines over key/value -----
+
+    [Fact]
+    public void B05_MapWithConsumingValue_IsGroundedConsuming()
+    {
+        // map { 'k': string(child::A) } — value consumes; the constructed map is grounded.
+        var map = Map(Entry(new StringLiteral { Value = "k" }, Fn("string", RelPath(Step(Axis.Child, "A")))));
+
+        var ps = StreamabilityClassifier.Classify(map, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- B6: constructed array is grounded, sweep combines over members -----
+
+    [Fact]
+    public void B06_SquareArrayWithConsumingMembers_IsGroundedConsuming()
+    {
+        // [ child::A/string(), child::B/string() ] — members consume; the array is grounded.
+        var arr = SquareArray(
+            new SimpleMapExpression { Left = RelPath(Step(Axis.Child, "A")), Right = Fn("string", Dot) },
+            new SimpleMapExpression { Left = RelPath(Step(Axis.Child, "B")), Right = Fn("string", Dot) });
+
+        var ps = StreamabilityClassifier.Classify(arr, Streamed);
+
+        ps.Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- B7: a free-ranging array member propagates via the sweep ----------
+
+    [Fact]
+    public void B07_CurlyArrayWithFreeRangingMember_IsNotStreamable()
+    {
+        // array { following::X } — the constructed array is grounded for POSTURE, but the
+        // free-ranging member sweep propagates ⇒ NOT guaranteed streamable.
+        var arr = CurlyArray(RelPath(Step(Axis.Following, "X")));
+
+        StreamabilityClassifier.Classify(arr, Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void B07_EmptyMap_IsGroundedMotionless()
+    {
+        StreamabilityClassifier.Classify(Map(), Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
     }
 }

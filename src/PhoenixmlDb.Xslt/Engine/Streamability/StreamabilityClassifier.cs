@@ -99,7 +99,15 @@ public static class StreamabilityClassifier
 
             StringConcatExpression sc => Grounded(WorstAtomizeSweep(sc.Operands, ctx)),
 
-            // TODO(Task 0.4+): model conditionals, quantifiers, constructors, maps/arrays,
+            // §19.8 (Phase 1.5 Task B): conditional / map-constructor / array-constructor.
+            // These mirror the XSLT-instruction arms (XsltIf/XsltChoose, XsltMap/XsltMapEntry,
+            // XsltArray/XsltArrayMember) so the expression side stops conservatively rejecting
+            // them. See ClassifyIfExpression / ClassifyMapConstructor / ClassifyArrayConstructor.
+            IfExpression iff => ClassifyIfExpression(iff, ctx),
+            MapConstructor mc => ClassifyMapConstructor(mc, ctx),
+            ArrayConstructor ac => ClassifyArrayConstructor(ac, ctx),
+
+            // TODO(Task 0.4+): model quantifiers, direct/computed node constructors,
             // arrow/dynamic calls, lookups, switch/typeswitch, try/catch. Until then, treat
             // every unmodelled node kind conservatively as NOT streamable so nothing is
             // silently accepted (§19.8.6: only grounded/striding/crawling/climbing +
@@ -543,6 +551,79 @@ public static class StreamabilityClassifier
             first = false;
         }
         return new PostureSweep(posture, sweep);
+    }
+
+    /// <summary>
+    /// §19.8: <c>if (T) then E1 else E2</c>. Result posture = WIDEN(posture(E1), posture(E2));
+    /// result sweep = COMBINE(sweep(T), sweep(E1), sweep(E2)). A free-ranging test, or a
+    /// branch that roams / free-ranges, propagates (mirrors the <c>XsltIf</c>/<c>XsltChoose</c>
+    /// instruction arm). The XQuery-4.0 braced-if (null else) has an implicit empty-sequence
+    /// else, which is grounded+motionless and absorbed by <see cref="WidenNodePosture"/>.
+    /// </summary>
+    private static PostureSweep ClassifyIfExpression(IfExpression iff, StreamingContext ctx)
+    {
+        var test = Classify(iff.Condition, ctx);
+        if (test.Sweep == Sweep.FreeRanging)
+            return NotStreamable();
+
+        var then = Classify(iff.Then, ctx);
+        if (then.Sweep == Sweep.FreeRanging || !IsStreamablePosture(then.Posture))
+            return NotStreamable();
+
+        Posture posture = then.Posture;
+        var sweep = CombineSweep(test.Sweep, then.Sweep);
+
+        if (iff.Else is not null)
+        {
+            var els = Classify(iff.Else, ctx);
+            if (els.Sweep == Sweep.FreeRanging || !IsStreamablePosture(els.Posture))
+                return NotStreamable();
+            posture = WidenNodePosture(posture, els.Posture);
+            sweep = CombineSweep(sweep, els.Sweep);
+        }
+
+        return new PostureSweep(posture, sweep);
+    }
+
+    /// <summary>
+    /// §19.8.2: a constructed <c>map { k: v, ... }</c> is GROUNDED (a brand-new function item,
+    /// detached from the stream), even though its key/value expressions may consume the streamed
+    /// input. Sweep = COMBINE over every key and value expression's sweep. A non-streamable key
+    /// or value propagates. Mirrors the <c>XsltMap</c>/<c>XsltMapEntry</c> instruction arm.
+    /// </summary>
+    private static PostureSweep ClassifyMapConstructor(MapConstructor mc, StreamingContext ctx)
+    {
+        var sweep = Sweep.Motionless;
+        foreach (var entry in mc.Entries)
+        {
+            var k = Classify(entry.Key, ctx);
+            if (k.Sweep == Sweep.FreeRanging || !IsStreamablePosture(k.Posture))
+                return NotStreamable();
+            var v = Classify(entry.Value, ctx);
+            if (v.Sweep == Sweep.FreeRanging || !IsStreamablePosture(v.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, CombineSweep(k.Sweep, v.Sweep));
+        }
+        return Grounded(sweep);
+    }
+
+    /// <summary>
+    /// §19.8.2: a constructed array — square <c>[ ... ]</c> or curly <c>array { ... }</c> — is
+    /// GROUNDED (a brand-new array item), even though its member expressions may consume the
+    /// streamed input. Sweep = COMBINE over every member expression's sweep. A non-streamable
+    /// member propagates. Mirrors the <c>XsltArray</c>/<c>XsltArrayMember</c> instruction arm.
+    /// </summary>
+    private static PostureSweep ClassifyArrayConstructor(ArrayConstructor ac, StreamingContext ctx)
+    {
+        var sweep = Sweep.Motionless;
+        foreach (var member in ac.Members)
+        {
+            var m = Classify(member, ctx);
+            if (m.Sweep == Sweep.FreeRanging || !IsStreamablePosture(m.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, m.Sweep);
+        }
+        return Grounded(sweep);
     }
 
     // -----------------------------------------------------------------------
