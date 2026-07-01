@@ -89,12 +89,15 @@ public static class StreamabilityClassifier
             // §19.8: cast/castable/treat/instance-of atomize-or-inspect their operand and yield
             // a grounded (atomic/boolean) result; posture collapses to grounded, sweep is the
             // operand's sweep (its subtree may be atomized).
-            CastExpression c => Grounded(SweepOf(c.Expression, ctx)),
-            CastableExpression c => Grounded(SweepOf(c.Expression, ctx)),
+            CastExpression c => Grounded(AtomizeSweep(c.Expression, ctx)),
+            CastableExpression c => Grounded(AtomizeSweep(c.Expression, ctx)),
             TreatExpression t => Classify(t.Expression, ctx), // treat is a no-op on posture/sweep.
-            InstanceOfExpression io => Grounded(SweepOf(io.Expression, ctx)),
+            // instance of does NOT atomize (it inspects node kinds) and yields a grounded
+            // boolean, but its operand's own posture/sweep still propagates: a non-streamable
+            // operand (e.g. a consuming-predicate filter that roams) poisons the whole test.
+            InstanceOfExpression io => GroundedFrom(io.Expression, ctx),
 
-            StringConcatExpression sc => Grounded(WorstSweep(sc.Operands, ctx)),
+            StringConcatExpression sc => Grounded(WorstAtomizeSweep(sc.Operands, ctx)),
 
             // TODO(Task 0.4+): model conditionals, quantifiers, constructors, maps/arrays,
             // arrow/dynamic calls, lookups, switch/typeswitch, try/catch. Until then, treat
@@ -126,6 +129,21 @@ public static class StreamabilityClassifier
         else if (path.InitialExpression is not null)
         {
             var init = Classify(path.InitialExpression, ctx);
+            // A non-streamable initial expression poisons the whole path — do NOT let a
+            // subsequent step (e.g. reverse(path)/@id) reset the posture back to a streamable
+            // axis posture.
+            if (init.Sweep == Sweep.FreeRanging || !IsStreamablePosture(init.Posture))
+                return new PostureSweep(Posture.Roaming, Sweep.FreeRanging);
+
+            // §19.8.8.3 (family 3): a UNION / COMMA of node sequences yields a crawling (or,
+            // when a grounded/free operand is mixed in, roaming) sequence whose members may
+            // overlap or nest. Applying a further downward STEP to such a combined operand
+            // requires re-reading the input for each member ⇒ not guaranteed streamable
+            // (($v | //ITEM)/PRICE ; (//A,//B)/C ; (/x/A | /x/B)/PRICE). A bare union with no
+            // trailing step stays classifiable by ClassifyBinary/ClassifySequence.
+            if (path.Steps.Count > 0 && IsNodeCombiningExpression(path.InitialExpression))
+                return new PostureSweep(Posture.Roaming, Sweep.FreeRanging);
+
             current = init.Posture;
             accumulatedSweep = init.Sweep;
         }
@@ -171,9 +189,12 @@ public static class StreamabilityClassifier
 
         switch (step.Axis)
         {
-            // Downward, non-overlapping, document order → striding; advances the stream.
+            // §19.8.8.2: child of a STRIDING operand is striding, but child of a CRAWLING
+            // operand stays CRAWLING (the crawling operand's items nest, so their children can
+            // nest too — e.g. //ITEM/TITLE, whose ITEMs sit at arbitrary depth, is crawling,
+            // NOT striding). Advances the stream either way.
             case Axis.Child:
-                axisPosture = Posture.Striding;
+                axisPosture = inPosture == Posture.Crawling ? Posture.Crawling : Posture.Striding;
                 axisSweep = Sweep.Consuming;
                 break;
 
@@ -215,17 +236,28 @@ public static class StreamabilityClassifier
                 return new PostureSweep(Posture.Roaming, Sweep.FreeRanging);
         }
 
-        // Fold predicate sweeps (predicates are evaluated with each candidate node as context).
+        // Fold predicates (each is evaluated with a candidate node produced by this axis as
+        // context). §19.8.8: on a STREAMED (non-grounded) sequence, a predicate is only
+        // streamable if it is MOTIONLESS — a predicate that CONSUMES the candidate node
+        // (navigates its children/descendants, or atomizes its element subtree, e.g.
+        // ITEM[AUTHOR='X'] or PAGES[. lt 1000]) forces the whole striding sequence to be
+        // buffered while each item is re-inspected ⇒ ROAMING. A predicate using position()/
+        // last() (free-ranging) is likewise not streamable. Motionless predicates
+        // ([@x='1'], [xs:decimal(@v) gt 0], constant [1]) preserve the posture.
         var predSweep = Sweep.Motionless;
         foreach (var pred in step.Predicates)
         {
-            // Predicate context item is a node produced by this axis, whose posture is
-            // axisPosture. A predicate never changes the step's result posture; it only
-            // contributes to the sweep.
             var p = Classify(pred, ctx with { ContextPosture = axisPosture });
+            if (!grounded && p.Sweep != Sweep.Motionless)
+            {
+                // Consuming/free-ranging predicate on a streamed axis → not guaranteed
+                // streamable (a free-ranging predicate is free-ranging; a merely consuming
+                // one still roams because the filtered sequence must be re-navigated).
+                return p.Sweep == Sweep.FreeRanging
+                    ? new PostureSweep(Posture.Roaming, Sweep.FreeRanging)
+                    : new PostureSweep(Posture.Roaming, Sweep.Consuming);
+            }
             predSweep = CombineSweep(predSweep, p.Sweep);
-            if (predSweep == Sweep.FreeRanging)
-                return new PostureSweep(Posture.Roaming, Sweep.FreeRanging);
         }
 
         var resultSweep = CombineSweep(axisSweep, predSweep);
@@ -250,12 +282,20 @@ public static class StreamabilityClassifier
 
             case FnRole.StringValue:
                 // string()/data()/normalize-space()/string-length() atomize the subtree string
-                // value — grounded (atomic) result, consuming the operand's subtree.
+                // value — grounded (atomic) result, consuming the operand's subtree. A
+                // non-streamable operand propagates.
+                if (!AllOperandsStreamable(fc.Arguments, ctx))
+                    return NotStreamable();
                 return Grounded(CombineSweep(Sweep.Consuming, WorstSweep(fc.Arguments, ctx)));
 
             case FnRole.Aggregate:
                 // count()/sum()/avg()/... absorb the operand sequence to an atomic — grounded,
-                // consuming (the operand is fully walked).
+                // consuming (the operand is fully walked). But a NON-streamable operand (e.g. a
+                // consuming-predicate filter ITEM[AUTHOR='X'] that roams, or reverse()) makes
+                // the aggregate non-streamable too — the operand's roaming/free-ranging must
+                // propagate, not be flattened to "consuming".
+                if (!AllOperandsStreamable(fc.Arguments, ctx))
+                    return NotStreamable();
                 return Grounded(CombineSweep(Sweep.Consuming, WorstSweep(fc.Arguments, ctx)));
 
             case FnRole.Transmission:
@@ -273,7 +313,11 @@ public static class StreamabilityClassifier
 
             case FnRole.Boolean:
                 // boolean()/exists()/empty()/not() reduce to an atomic boolean — grounded; the
-                // sweep is the worst of the arguments' sweeps.
+                // sweep is the worst of the arguments' sweeps. A non-streamable argument (a
+                // roaming consuming-predicate filter, reverse(), …) propagates: exists() of a
+                // roaming sequence is itself not streamable.
+                if (!AllOperandsStreamable(fc.Arguments, ctx))
+                    return NotStreamable();
                 return Grounded(WorstSweep(fc.Arguments, ctx));
 
             case FnRole.CurrentGroup:
@@ -281,6 +325,17 @@ public static class StreamabilityClassifier
                 // group-adjacent/starting/ending burst these behave like a striding sequence the
                 // processor already holds — motionless (no additional forward stream advance).
                 return new PostureSweep(Posture.Striding, Sweep.Motionless);
+
+            case FnRole.Positional:
+                // §19.8.8: position()/last() yield an atomic (grounded) integer but knowing
+                // last() (or comparing position() to it) requires look-ahead over the whole
+                // sequence being filtered — free-ranging.
+                return Grounded(Sweep.FreeRanging);
+
+            case FnRole.FreeRanging:
+                // §19.8.8: reverse() (and kin) must buffer the entire operand sequence, so the
+                // result roams and the sweep is free-ranging regardless of the operand posture.
+                return NotStreamable();
 
             default:
                 // TODO(Task 0.4+): most functions are unmodelled. Absorbing functions that
@@ -318,10 +373,25 @@ public static class StreamabilityClassifier
             }
 
             // Arithmetic, value/general comparisons, logical, is/precedes/follows, range,
-            // concat, otherwise: all yield atomic/boolean results — grounded. Sweep is the
-            // worst of the two operand sweeps (both must be evaluated).
+            // concat, otherwise: all yield atomic/boolean results — grounded. These ATOMIZE
+            // their node operands, so atomizing a striding/crawling element operand walks its
+            // subtree (Consuming) — see AtomizeSweep. (Node-identity ops is/<</>> compare
+            // identity not value, but treating them as atomizing is conservatively sound.)
+            //
+            // §19.8.5 multiple-consuming-operands rule: if BOTH operands independently consume
+            // the streamed context (e.g. count(*) + count(*/*)), the input would have to be
+            // read twice ⇒ free-ranging. This is the composition that makes the "multiple
+            // downward selections in a loop body" cases non-streamable (si-*-905).
             default:
-                return Grounded(WorstSweep([bin.Left, bin.Right], ctx));
+            {
+                var la = AtomizeSweep(bin.Left, ctx);
+                var ra = AtomizeSweep(bin.Right, ctx);
+                if (la == Sweep.FreeRanging || ra == Sweep.FreeRanging)
+                    return NotStreamable();
+                if (Consumes(bin.Left, ctx) && Consumes(bin.Right, ctx))
+                    return Grounded(Sweep.FreeRanging);
+                return Grounded(CombineSweep(la, ra));
+            }
         }
     }
 
@@ -337,13 +407,21 @@ public static class StreamabilityClassifier
         if (primary.Sweep == Sweep.FreeRanging || !IsStreamablePosture(primary.Posture))
             return NotStreamable();
 
+        // §19.8.8 (same rule as ClassifyStep): a consuming/free-ranging predicate on a
+        // STREAMED (non-grounded) primary forces the sequence to be buffered ⇒ roaming.
+        // Only motionless predicates preserve a streamed posture.
+        bool grounded = primary.Posture == Posture.Grounded;
         var sweep = primary.Sweep;
         foreach (var pred in filt.Predicates)
         {
             var p = Classify(pred, ctx with { ContextPosture = primary.Posture });
+            if (!grounded && p.Sweep != Sweep.Motionless)
+            {
+                return p.Sweep == Sweep.FreeRanging
+                    ? new PostureSweep(Posture.Roaming, Sweep.FreeRanging)
+                    : new PostureSweep(Posture.Roaming, Sweep.Consuming);
+            }
             sweep = CombineSweep(sweep, p.Sweep);
-            if (sweep == Sweep.FreeRanging)
-                return NotStreamable();
         }
         return new PostureSweep(primary.Posture, sweep);
     }
@@ -449,9 +527,59 @@ public static class StreamabilityClassifier
 
     private static PostureSweep Grounded(Sweep sweep) => new(Posture.Grounded, sweep);
 
+    /// <summary>
+    /// A grounded (atomic/boolean) result derived from inspecting <paramref name="e"/> WITHOUT
+    /// atomizing it, that nonetheless propagates non-streamability: if the operand roams or is
+    /// free-ranging, the whole expression is not guaranteed streamable.
+    /// </summary>
+    private static PostureSweep GroundedFrom(XQueryExpression e, StreamingContext ctx)
+    {
+        var ps = Classify(e, ctx);
+        if (ps.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ps.Posture))
+            return NotStreamable();
+        return Grounded(ps.Sweep);
+    }
+
     private static PostureSweep NotStreamable() => new(Posture.Roaming, Sweep.FreeRanging);
 
     private static Sweep SweepOf(XQueryExpression e, StreamingContext ctx) => Classify(e, ctx).Sweep;
+
+    /// <summary>
+    /// The sweep contributed by ATOMIZING an operand (as a comparison / cast / arithmetic /
+    /// string-value operand does). §19.8: atomizing a <b>striding or crawling</b> node walks
+    /// its element string-value (the whole subtree) ⇒ Consuming, even if navigating to the
+    /// node was itself motionless. Atomizing a <b>climbing</b> node (an attribute / namespace)
+    /// or a <b>grounded</b> value reads no streamed subtree ⇒ the operand's own sweep. A
+    /// free-ranging operand stays free-ranging. This is exactly what separates the streamable
+    /// attribute predicate <c>@v[xs:decimal(.) gt 0]</c> (climbing <c>.</c> → motionless) from
+    /// the non-streamable element predicate <c>PAGES[. lt 1000]</c> (striding <c>.</c> →
+    /// consuming ⇒ the filtered sequence roams).
+    /// </summary>
+    private static Sweep AtomizeSweep(XQueryExpression e, StreamingContext ctx)
+    {
+        var ps = Classify(e, ctx);
+        if (ps.Sweep == Sweep.FreeRanging)
+            return Sweep.FreeRanging;
+        return ps.Posture is Posture.Striding or Posture.Crawling
+            ? CombineSweep(ps.Sweep, Sweep.Consuming)
+            : ps.Sweep;
+    }
+
+    private static Sweep WorstAtomizeSweep(IReadOnlyList<XQueryExpression> exprs, StreamingContext ctx)
+    {
+        var sweep = Sweep.Motionless;
+        foreach (var e in exprs)
+            sweep = CombineSweep(sweep, AtomizeSweep(e, ctx));
+        return sweep;
+    }
+
+    /// <summary>
+    /// Whether evaluating <paramref name="e"/> (as an atomized operand) advances the streamed
+    /// input — i.e. its atomize-sweep is Consuming or worse. Only meaningful in streamed scope;
+    /// a grounded/motionless operand (a literal, a bare attribute read) does not consume.
+    /// </summary>
+    private static bool Consumes(XQueryExpression e, StreamingContext ctx)
+        => ctx.InStreamedScope && AtomizeSweep(e, ctx) != Sweep.Motionless;
 
     private static Sweep WorstSweep(IReadOnlyList<XQueryExpression> exprs, StreamingContext ctx)
     {
@@ -462,14 +590,53 @@ public static class StreamabilityClassifier
     }
 
     /// <summary>
+    /// True iff every operand is individually guaranteed-streamable (streamable posture AND
+    /// not free-ranging). Used by absorbing/boolean functions so a roaming operand (e.g. a
+    /// consuming-predicate filter) is not silently flattened to "consuming".
+    /// </summary>
+    private static bool AllOperandsStreamable(IReadOnlyList<XQueryExpression> exprs, StreamingContext ctx)
+    {
+        foreach (var e in exprs)
+        {
+            var ps = Classify(e, ctx);
+            if (ps.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ps.Posture))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Combines two sweeps taking the more-consuming of the two: Motionless &lt; Consuming &lt;
     /// FreeRanging. (§19.8: sequential composition of sweeps.)
     /// </summary>
     private static Sweep CombineSweep(Sweep a, Sweep b)
         => (Sweep)System.Math.Max((int)a, (int)b);
 
+    /// <summary>
+    /// True if <paramref name="e"/> COMBINES multiple node sequences into one (a union /
+    /// intersect / except, or a comma-sequence of ≥2 items). §19.8.8.3: navigating a further
+    /// step off such a combined operand is not guaranteed streamable.
+    /// </summary>
+    private static bool IsNodeCombiningExpression(XQueryExpression e) => e switch
+    {
+        BinaryExpression { Operator: BinaryOperator.Union or BinaryOperator.Intersect
+            or BinaryOperator.Except } => true,
+        SequenceExpression seq => seq.Items.Count > 1,
+        _ => false,
+    };
+
     private static bool IsNodePosture(Posture p)
         => p is Posture.Striding or Posture.Crawling or Posture.Climbing;
+
+    /// <summary>
+    /// The postures a <c>for-each</c> / <c>iterate</c> population (select) expression may have
+    /// and still stream: STRIDING (a flat set of siblings, the classic streamable loop) or
+    /// GROUNDED (a materialised sequence — e.g. <c>.//*/name()</c> mapped to strings, or a
+    /// grounded map's keys). A CRAWLING select (nested descendants, <c>//ITEM/TITLE</c>) is
+    /// NOT streamable in a loop (si-for-each-806); climbing/roaming likewise.
+    /// </summary>
+    private static bool IsForEachPopulationPosture(Posture p)
+        => p is Posture.Striding or Posture.Grounded;
 
     private static bool IsStreamablePosture(Posture p)
         => p is Posture.Grounded or Posture.Striding or Posture.Crawling or Posture.Climbing;
@@ -502,6 +669,8 @@ public static class StreamabilityClassifier
         Transmission,  // passes a subset of the operand through — posture-preserving
         Boolean,       // reduces to an atomic boolean — grounded
         CurrentGroup,  // current-group() — striding over the buffered group, motionless
+        Positional,    // position()/last() — need look-ahead over the sequence → free-ranging
+        FreeRanging,   // reverse() and other whole-sequence-buffering fns → free-ranging
     }
 
     private static FnRole FunctionRole(string localName, int arity)
@@ -510,7 +679,14 @@ public static class StreamabilityClassifier
         return localName switch
         {
             "name" or "local-name" or "node-name" or "namespace-uri"
-                or "generate-id" or "position" or "last" => FnRole.NodeProperty,
+                or "generate-id" => FnRole.NodeProperty,
+
+            // §19.8.8: position()/last() require the size/index of the sequence being
+            // filtered — knowing last() needs look-ahead to the end of a striding sequence,
+            // so a predicate using them cannot be evaluated in a single forward pass. They
+            // are free-ranging (a bare [1] constant-positional filter uses an IntegerLiteral,
+            // NOT these functions, and stays motionless).
+            "position" or "last" => FnRole.Positional,
 
             "string" or "data" or "normalize-space" or "string-length"
                 or "upper-case" or "lower-case" => FnRole.StringValue,
@@ -518,8 +694,14 @@ public static class StreamabilityClassifier
             "count" or "sum" or "avg" or "max" or "min"
                 or "string-join" or "concat" => FnRole.Aggregate,
 
+            // §19.8.8: fn:reverse must buffer its whole operand sequence to emit it in
+            // reverse order — it is NOT a posture-preserving transmission like head/tail/
+            // subsequence (which emit a forward-order subset). Reversing a streamed path is
+            // free-ranging.
+            "reverse" => FnRole.FreeRanging,
+
             "head" or "tail" or "subsequence" or "remove" or "insert-before"
-                or "reverse" or "subsequence-before" or "subsequence-after" => FnRole.Transmission,
+                or "subsequence-before" or "subsequence-after" => FnRole.Transmission,
 
             "boolean" or "not" or "exists" or "empty" or "true" or "false" => FnRole.Boolean,
 
@@ -575,6 +757,15 @@ public static class StreamabilityClassifier
             // ---- Construction instructions → GROUNDED result (§19.8.2) --------
             // Result posture is Grounded (new nodes); sweep is the combined sweep of
             // whatever they read to build that content (select / content / AVTs).
+            // §19.8 (family 4): a construction instruction carrying use-attribute-sets pulls
+            // in an attribute set whose own body may be non-streamable. The classifier does
+            // not yet model attribute-set streamability, so CONSERVATIVELY reject any
+            // construction that references one — this can only ever be a correct rejection
+            // (never an over-accept). Modelling attribute-set posture is a later phase.
+            XsltLiteralResultElement { UseAttributeSets.Count: > 0 } => NotStreamable(),
+            XsltElement { UseAttributeSets.Count: > 0 } => NotStreamable(),
+            XsltCopy { UseAttributeSets.Count: > 0 } => NotStreamable(),
+
             XsltLiteralResultElement lre => Grounded(LreSweep(lre, ctx)),
             XsltElement el => Grounded(CombineSweep(AvtSweep(el.Name, ctx),
                 CombineSweep(AvtSweep(el.Namespace, ctx), BodySweep(el.Content, ctx)))),
@@ -602,11 +793,16 @@ public static class StreamabilityClassifier
             XsltArray ar => Grounded(BodySweep(ar.Content, ctx)),
             XsltArrayMember am => Grounded(SelectOrContentSweep(am.Select, am.Content, ctx)),
 
-            // ---- Transmitting instructions → carry the operand's posture ------
-            // §19.8: xsl:copy-of / xsl:sequence transmit the selected sequence unchanged,
-            // so they preserve the SELECT's posture AND sweep. xsl:value-of / xsl:variable
-            // atomize (or bind) and yield a grounded result but keep the select's sweep.
-            XsltCopyOf co => ClassifySelectTransmit(co.Select, ctx),
+            // ---- Transmitting / copying instructions --------------------------
+            // §19.8: xsl:copy-of makes a GROUNDED deep copy of the selected sequence — its
+            // result is grounded (detached from the stream), even though reading the select
+            // consumes the input. This is exactly what makes the 013-shape (copy-of select=".")
+            // streamable inside a for-each/iterate body, while xsl:sequence select="." (which
+            // transmits the striding node reference, below) is NOT. The select must itself be
+            // streamable.
+            XsltCopyOf co => ClassifyCopyOf(co.Select, ctx),
+            // xsl:sequence transmits the selected sequence UNCHANGED — it preserves the
+            // select's posture AND sweep (a streamed node stays streamed).
             XsltSequence sq => sq.Select is not null
                 ? ClassifySelectTransmit(sq.Select, ctx)
                 : Grounded(BodySweep(sq.Content, ctx)),
@@ -680,7 +876,7 @@ public static class StreamabilityClassifier
     // Instruction helpers
     // -----------------------------------------------------------------------
 
-    /// <summary>xsl:copy-of / xsl:sequence transmit the select's posture AND sweep unchanged.</summary>
+    /// <summary>xsl:sequence transmits the select's posture AND sweep unchanged.</summary>
     private static PostureSweep ClassifySelectTransmit(XQueryExpression select, StreamingContext ctx)
     {
         var s = Classify(select, ctx);
@@ -689,34 +885,57 @@ public static class StreamabilityClassifier
         return s;
     }
 
+    /// <summary>
+    /// xsl:copy-of makes a GROUNDED deep copy of the selected sequence: the result posture is
+    /// Grounded (detached), the sweep is the select's sweep (reading it consumes the stream).
+    /// A non-streamable select propagates.
+    /// </summary>
+    private static PostureSweep ClassifyCopyOf(XQueryExpression select, StreamingContext ctx)
+    {
+        var s = Classify(select, ctx);
+        if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
+            return NotStreamable();
+        return Grounded(s.Sweep);
+    }
+
     private static PostureSweep ClassifyForEach(XsltForEach fe, StreamingContext ctx)
     {
-        // §19.8: the select is the "population expression"; the body is classified with the
-        // context item = the per-item posture of the select's result. Result sweep combines
-        // the select's sweep with the body's; result posture is the body's posture.
+        // §19.8: the select is the "population expression" (navigation role); the body is
+        // classified with the context item = the per-item posture of the select's result.
         var s = Classify(fe.Select, ctx);
-        if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
+        // Family 5a: the population select must be STRIDING or GROUNDED. A CRAWLING select
+        // (e.g. //ITEM/TITLE) yields overlapping/nested items whose independent processing
+        // in a loop is not guaranteed streamable (si-for-each-806). Climbing/roaming likewise.
+        if (!IsForEachPopulationPosture(s.Posture) || s.Sweep == Sweep.FreeRanging)
             return NotStreamable();
 
         var body = Classify(fe.Body, ctx with { ContextPosture = s.Posture });
-        if (body.Sweep == Sweep.FreeRanging || !IsStreamablePosture(body.Posture))
+        // Family 5b: the body must produce a GROUNDED result — it may consume the current
+        // item but must not RETURN a streamed node (xsl:sequence select="." is striding →
+        // not streamable, si-for-each-907), and multiple downward selections in the body
+        // (count(*)+count(*/*)) already surface as free-ranging (si-for-each-905).
+        if (body.Sweep == Sweep.FreeRanging || body.Posture != Posture.Grounded)
             return NotStreamable();
 
-        return new PostureSweep(body.Posture, CombineSweep(s.Sweep, body.Sweep));
+        return new PostureSweep(Posture.Grounded, CombineSweep(s.Sweep, body.Sweep));
     }
 
     private static PostureSweep ClassifyIterate(XsltIterate it, StreamingContext ctx)
     {
         // §19.8: xsl:iterate is like xsl:for-each over the select, but its xsl:param values
         // are grounded accumulators carried across iterations and xsl:on-completion emits
-        // grounded state. Streamable iff the select is striding/crawling/grounded and the
-        // body (which may contain xsl:break/xsl:next-iteration) does not free-range.
+        // grounded state. Streamable iff the population select is striding/grounded and the
+        // body (which may contain xsl:break/xsl:next-iteration) produces a grounded result.
         var s = Classify(it.Select, ctx);
-        if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
+        // Family 5a: population select must be striding or grounded (a crawling select is not
+        // streamable in an iterate loop, same as for-each).
+        if (!IsForEachPopulationPosture(s.Posture) || s.Sweep == Sweep.FreeRanging)
             return NotStreamable();
 
         var body = Classify(it.Body, ctx with { ContextPosture = s.Posture });
-        if (body.Sweep == Sweep.FreeRanging || !IsStreamablePosture(body.Posture))
+        // Family 5b: body must be grounded (xsl:sequence select="." → striding → rejected,
+        // si-iterate-907; count(*)+count(*/*) → free-ranging, si-iterate-905).
+        if (body.Sweep == Sweep.FreeRanging || body.Posture != Posture.Grounded)
             return NotStreamable();
 
         var sweep = CombineSweep(s.Sweep, body.Sweep);

@@ -105,6 +105,20 @@ public class PostureCompositionTests
         Steps = steps,
     };
 
+    private static PathExpression AbsPath(params StepExpression[] steps) => new()
+    {
+        IsAbsolute = true,
+        InitialExpression = null,
+        Steps = steps,
+    };
+
+    private static PathExpression PathFrom(XQueryExpression init, params StepExpression[] steps) => new()
+    {
+        IsAbsolute = false,
+        InitialExpression = init,
+        Steps = steps,
+    };
+
     private static FunctionCallExpression Fn(string local, params XQueryExpression[] args) => new()
     {
         Name = new QName(NamespaceId.None, local),
@@ -641,5 +655,227 @@ public class PostureCompositionTests
 
         ps.Should().Be(new PostureSweep(Posture.Roaming, Sweep.FreeRanging));
         ps.IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    // =======================================================================
+    // Task 0.6: NEGATIVE truth-table — the 5 over-accept defect families the
+    // §19.8 classifier must REJECT (the W3C oracle expects XTSE3430). Each is
+    // paired with an adjacent POSITIVE shape already pinned above that MUST
+    // stay streamable, so the fix is a genuine tightening, not a blanket reject.
+    // =======================================================================
+
+    // ---- Family 1: consuming / positional predicate on a striding sequence -
+
+    [Fact]
+    public void Neg1_AggregateOverConsumingPredicateFilter_IsNotStreamable()
+    {
+        // count(child::ITEM[child::AUTHOR = 'X']) — the predicate navigates the candidate's
+        // children (consuming) ⇒ the filtered striding sequence roams ⇒ count is not
+        // streamable (sf-count-901, sf-boolean-901, sx-treat-901, …).
+        var authorEq = new BinaryExpression
+        {
+            Left = RelPath(Step(Axis.Child, "AUTHOR")),
+            Operator = BinaryOperator.GeneralEqual,
+            Right = new StringLiteral { Value = "X" },
+        };
+        var filtered = RelPath(Step(Axis.Child, "ITEM", authorEq));
+
+        StreamabilityClassifier.Classify(Fn("count", filtered), Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg1_ElementValuePredicate_IsNotStreamable()
+    {
+        // child::PAGES[. lt 1000] — atomizing the striding element context (.) walks its
+        // subtree (consuming) ⇒ roaming (sx-gc-*-902).
+        var pred = new BinaryExpression
+        {
+            Left = Dot,
+            Operator = BinaryOperator.LessThan,
+            Right = new IntegerLiteral { Value = 1000L },
+        };
+        StreamabilityClassifier.Classify(RelPath(Step(Axis.Child, "PAGES", pred)), Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg1_LastInPredicate_IsNotStreamable()
+    {
+        // child::ITEM[position() ne last()] — last() needs look-ahead ⇒ free-ranging
+        // (sx-gc-eq-901).
+        var pred = new BinaryExpression
+        {
+            Left = Fn("position"),
+            Operator = BinaryOperator.NotEqual,
+            Right = Fn("last"),
+        };
+        StreamabilityClassifier.Classify(RelPath(Step(Axis.Child, "ITEM", pred)), Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg1_MotionlessAttributePredicate_StaysStreamable()
+    {
+        // GUARD: sum(child::b/@v[. gt 0]) — the predicate is on an ATTRIBUTE (@v), whose
+        // atomization (.) is motionless (an attribute has no subtree to walk), so this MUST
+        // stay streamable (sf-*-019 attribute-predicate shape).
+        var pred = new BinaryExpression
+        {
+            Left = Dot,
+            Operator = BinaryOperator.GreaterThan,
+            Right = new IntegerLiteral { Value = 0L },
+        };
+        var path = RelPath(Step(Axis.Child, "b"), Step(Axis.Attribute, "v", pred));
+        StreamabilityClassifier.Classify(Fn("sum", path), Streamed)
+            .IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    // ---- Family 2: reverse(path) → free-ranging (not transmission) ---------
+
+    [Fact]
+    public void Neg2_ReverseOfPath_IsNotStreamable()
+    {
+        // reverse(/chapter//section)/@id — reverse buffers the whole sequence ⇒ free-ranging
+        // (sf-reverse-901). Keep head()/subsequence() (Row12) as posture-preserving.
+        var reversed = Fn("reverse", AbsPath(Step(Axis.DescendantOrSelf, "section")));
+        StreamabilityClassifier.Classify(PathFrom(reversed, Step(Axis.Attribute, "id")), Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    // ---- Family 3: union/comma of node sequences, then navigated → roaming -
+
+    [Fact]
+    public void Neg3_UnionThenStep_IsNotStreamable()
+    {
+        // ($v | //ITEM)/PRICE — union then a child step ⇒ not guaranteed streamable
+        // (sx-union-201/202, sx-comma-201).
+        var union = new BinaryExpression
+        {
+            Left = new VariableReference { Name = new QName(NamespaceId.None, "v") },
+            Operator = BinaryOperator.Union,
+            Right = AbsPath(Step(Axis.DescendantOrSelf, "ITEM")),
+        };
+        StreamabilityClassifier.Classify(PathFrom(union, Step(Axis.Child, "PRICE")), Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg3_CommaThenStep_IsNotStreamable()
+    {
+        // (//A, //B)/C — comma-sequence of two node sets then a step ⇒ roaming (sx-comma-201).
+        var comma = new SequenceExpression
+        {
+            Items = new XQueryExpression[]
+            {
+                AbsPath(Step(Axis.DescendantOrSelf, "A")),
+                AbsPath(Step(Axis.DescendantOrSelf, "B")),
+            },
+        };
+        StreamabilityClassifier.Classify(PathFrom(comma, Step(Axis.Child, "C")), Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    // ---- Family 4: use-attribute-sets construction → conservative reject ---
+
+    [Fact]
+    public void Neg4_LreWithUseAttributeSets_IsNotStreamable()
+    {
+        // <e xsl:use-attribute-sets="as-2"/> — attribute-set streamability is unmodelled;
+        // conservative reject (si-lre-901/902, si-element-901/902, si-copy-901/902).
+        var lre = new XsltLiteralResultElement
+        {
+            Name = new QName(NamespaceId.None, "e"),
+            UseAttributeSets = { new QName(NamespaceId.None, "as-2") },
+            Content = Body(),
+        };
+        StreamabilityClassifier.Classify(lre, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg4_ElementWithUseAttributeSets_IsNotStreamable()
+    {
+        var el = new XsltElement
+        {
+            Name = Avt(new AvtLiteral { Value = "e" }),
+            UseAttributeSets = { new QName(NamespaceId.None, "as-2") },
+            Content = Body(),
+        };
+        StreamabilityClassifier.Classify(el, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg4_CopyWithUseAttributeSets_IsNotStreamable()
+    {
+        var cp = new XsltCopy
+        {
+            Select = RelPath(Step(Axis.Child, "*")),
+            UseAttributeSets = { new QName(NamespaceId.None, "as-2") },
+            Content = Body(),
+        };
+        StreamabilityClassifier.Classify(cp, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    // ---- Family 5: crawling for-each select / multi-downward / sequence-. --
+
+    [Fact]
+    public void Neg5_ForEachCrawlingSelect_IsNotStreamable()
+    {
+        // <xsl:for-each select="//ITEM/TITLE"> — the population select is crawling ⇒ not
+        // streamable in a loop (si-for-each-806).
+        var forEach = new XsltForEach
+        {
+            Select = AbsPath(Step(Axis.DescendantOrSelf, "ITEM"), Step(Axis.Child, "TITLE")),
+            Body = Body(new XsltValueOf { Select = Dot }),
+        };
+        StreamabilityClassifier.Classify(forEach, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg5_ForEachMultipleDownwardSelections_IsNotStreamable()
+    {
+        // body = <xsl:value-of select="count(*) + count(*/*)"/> — two independent downward
+        // selections of the same input ⇒ free-ranging (si-for-each-905, si-iterate-905).
+        var countStar = Fn("count", RelPath(Step(Axis.Child, "*")));
+        var countStarStar = Fn("count", RelPath(Step(Axis.Child, "*"), Step(Axis.Child, "*")));
+        var sum = new BinaryExpression
+        {
+            Left = countStar,
+            Operator = BinaryOperator.Add,
+            Right = countStarStar,
+        };
+        var forEach = new XsltForEach
+        {
+            Select = RelPath(Step(Axis.Child, "node")),
+            Body = Body(new XsltValueOf { Select = sum }),
+        };
+        StreamabilityClassifier.Classify(forEach, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg5_ForEachSequenceOfContextItem_IsNotStreamable()
+    {
+        // body = <xsl:sequence select="."/> RETURNS the striding streamed node (not grounded)
+        // ⇒ not streamable; contrast the 013-shape which uses xsl:copy-of (grounds the copy)
+        // (si-for-each-907, si-iterate-907).
+        var forEach = new XsltForEach
+        {
+            Select = RelPath(Step(Axis.Child, "transaction")),
+            Body = Body(new XsltSequence { Select = Dot }),
+        };
+        StreamabilityClassifier.Classify(forEach, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Neg5_ForEachSequenceOfContextItem_ContrastCopyOfStaysStreamable()
+    {
+        // GUARD: the same loop but with xsl:copy-of (grounds the copy) MUST stay streamable —
+        // the 013-shape discriminator.
+        var forEach = new XsltForEach
+        {
+            Select = RelPath(Step(Axis.Child, "transaction")),
+            Body = Body(new XsltCopyOf { Select = Dot }),
+        };
+        StreamabilityClassifier.Classify(forEach, Streamed).IsGuaranteedStreamable.Should().BeTrue();
     }
 }
