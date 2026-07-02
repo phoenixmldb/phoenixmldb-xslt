@@ -1192,9 +1192,26 @@ public static class StreamabilityClassifier
             XsltBreak br => Grounded(br.Select is not null ? SweepOf(br.Select, ctx) : Sweep.Motionless),
             XsltNextIteration => Grounded(Sweep.Motionless),
 
+            // ---- Grounding sinks: xsl:message / xsl:assert --------------------
+            // §19.8: xsl:message emits its content to a SEPARATE channel and xsl:assert only
+            // tests (and, on failure, reports) — NEITHER contributes a node to the constructed
+            // RESULT tree. So their result posture is GROUNDED even when their content transmits
+            // streamed nodes (a striding `xsl:sequence select="text()"` inside a message is
+            // consumed for the message text, not leaked into the result). This is the same SINK
+            // treatment as xsl:document / an LRE body — the streamed content is grounded away.
+            // The SWEEP still propagates through BodySweep/SweepOf: a free-ranging content or
+            // select (reverse(...)) makes the message/assert non-streamable. The whole
+            // si-message / si-assert corpus expects NO XTSE3430, so there is no paired
+            // non-streamable shape at this instruction — the only rejection is a genuinely
+            // free-ranging/roaming content, which BodySweep/SweepOf already carry.
+            XsltMessage msg => ClassifyGroundingSink(
+                msg.Select, msg.Content, extraTest: null, ctx),
+            XsltAssert asrt => ClassifyGroundingSink(
+                asrt.Select, asrt.Content, extraTest: asrt.Test, ctx),
+
             // TODO(§19.8, later phase): xsl:merge, xsl:fork, xsl:analyze-string,
             // xsl:evaluate, xsl:switch, xsl:for-each-member, xsl:number, xsl:perform-sort,
-            // xsl:call-template, xsl:next-match, xsl:apply-imports, xsl:message, xsl:assert.
+            // xsl:call-template, xsl:next-match, xsl:apply-imports.
             // Conservatively NOT streamable so nothing is silently accepted.
             _ => NotStreamable(),
         };
@@ -1461,6 +1478,53 @@ public static class StreamabilityClassifier
             posture = WidenNodePosture(posture, cPs.Posture);
         }
         return new PostureSweep(posture, sweep);
+    }
+
+    /// <summary>
+    /// §19.8: classify a GROUNDING SINK instruction — xsl:message / xsl:assert — whose content
+    /// (and optional select / test) is evaluated but contributes NO node to the constructed
+    /// result tree. Result posture is always GROUNDED; the sweep is the combined sweep of the
+    /// test, select, and content. A non-streamable (roaming / free-ranging) test, select, or
+    /// content STILL propagates (the sink grounds streamed NODES, but it cannot rescue an
+    /// expression that free-ranges or roams over the input — e.g. reverse(...), a consuming
+    /// predicate filter). This distinguishes a striding <c>xsl:sequence select="text()"</c>
+    /// inside a message (consumed for the message, grounded away) from the same instruction in a
+    /// for-each body (which leaks a striding node into the result and is not streamable).
+    /// </summary>
+    private static PostureSweep ClassifyGroundingSink(
+        XQueryExpression? select, XsltSequenceConstructor? content,
+        XQueryExpression? extraTest, StreamingContext ctx)
+    {
+        var sweep = Sweep.Motionless;
+
+        if (extraTest is not null)
+        {
+            var t = Classify(extraTest, ctx);
+            if (t.Sweep == Sweep.FreeRanging || !IsStreamablePosture(t.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, t.Sweep);
+        }
+
+        if (select is not null)
+        {
+            var s = Classify(select, ctx);
+            if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, s.Sweep);
+        }
+
+        if (content is not null)
+        {
+            var c = Classify(content, ctx);
+            // The content's POSTURE may be striding/crawling (streamed nodes copied into the
+            // message) — that is fine, the sink grounds them. Only a free-ranging / roaming
+            // content (which needs backward/arbitrary access to the input) is rejected.
+            if (c.Sweep == Sweep.FreeRanging || !IsStreamablePosture(c.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, c.Sweep);
+        }
+
+        return Grounded(sweep);
     }
 
     private static PostureSweep ClassifyBranchWithOptionalSelect(

@@ -1621,4 +1621,97 @@ public class PostureCompositionTests
         StreamabilityClassifier.Classify(Fn("filter", g, pred), Streamed)
             .IsGuaranteedStreamable.Should().BeFalse();
     }
+
+    // =======================================================================
+    // #143 bucket-closure: xsl:message / xsl:assert as GROUNDING SINKS (§19.8).
+    //
+    // xsl:message and xsl:assert emit NOTHING into the constructed result tree — a
+    // message goes to a separate channel; an assert only tests and (on failure) reports.
+    // So their RESULT posture is GROUNDED (no streamed result nodes leak), even when
+    // their content transmits streamed nodes (which are consumed for the message text,
+    // not returned). This is the SINK discriminator that makes
+    //   <xsl:message><xsl:sequence select="text()"/></xsl:message>
+    // streamable while a bare <xsl:sequence select="text()"/> in a for-each body (which
+    // leaks a striding node into the result) is NOT. Their SWEEP still propagates: a
+    // free-ranging content/select (reverse(...)) makes the message/assert non-streamable.
+    // The whole si-message / si-assert corpus (11 + N cases) expects NO XTSE3430.
+    // =======================================================================
+
+    [Fact]
+    public void Msg_CopyOfContextItem_IsGroundedStreamable()
+    {
+        // <xsl:message><xsl:copy-of select="."/></xsl:message> — copy grounds; message sinks.
+        // copy-of of the striding `.` is motionless (grounded deep copy, no atomize) ⇒ grounded,
+        // motionless.
+        var msg = new XsltMessage { Content = Body(new XsltCopyOf { Select = Dot }) };
+        StreamabilityClassifier.Classify(msg, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Fact]
+    public void Msg_SequenceOfStridingText_IsGroundedStreamable()
+    {
+        // <xsl:message><xsl:sequence select="text()"/></xsl:message> — the SAME xsl:sequence
+        // that leaks a striding node in a for-each body (Neg5) is streamable INSIDE a message:
+        // the message is a grounding sink, so the striding text does not reach the result tree.
+        var msg = new XsltMessage { Content = Body(new XsltSequence { Select = RelPath(Step(Axis.Child, "text")) }) };
+        StreamabilityClassifier.Classify(msg, Streamed).Posture.Should().Be(Posture.Grounded);
+        StreamabilityClassifier.Classify(msg, Streamed).IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Msg_SelectSumPrice_IsGroundedConsumingStreamable()
+    {
+        // <xsl:message select="sum(child::PRICE)"/> — absorbing select, grounded, consuming.
+        var msg = new XsltMessage { Select = Fn("sum", RelPath(Step(Axis.Child, "PRICE"))) };
+        StreamabilityClassifier.Classify(msg, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Fact]
+    public void Msg_FreeRangingSelect_IsNotStreamable()
+    {
+        // NEGATIVE: <xsl:message select="reverse(//section)"/> — the free-ranging select
+        // propagates; the grounding sink does NOT rescue a free-ranging sweep.
+        var msg = new XsltMessage { Select = Fn("reverse", AbsPath(Step(Axis.DescendantOrSelf, "section"))) };
+        StreamabilityClassifier.Classify(msg, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Msg_InForEachBody_IsStreamable()
+    {
+        // The real corpus shape (si-message-005): for-each over striding PRICE, body = message
+        // copying the current node. The message sinks the copy ⇒ grounded body ⇒ loop streams.
+        var forEach = new XsltForEach
+        {
+            Select = RelPath(Step(Axis.Child, "PRICE")),
+            Body = Body(new XsltMessage { Content = Body(new XsltCopyOf { Select = Dot }) }),
+        };
+        StreamabilityClassifier.Classify(forEach, Streamed).IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Assert_TestExistsPrice_GroundedContent_IsStreamable()
+    {
+        // <xsl:assert test="exists(child::PRICE)"><xsl:copy-of select="."/></xsl:assert> —
+        // grounded boolean test + grounding sink content ⇒ streamable.
+        var asrt = new XsltAssert
+        {
+            Test = Fn("exists", RelPath(Step(Axis.Child, "PRICE"))),
+            Content = Body(new XsltCopyOf { Select = Dot }),
+        };
+        StreamabilityClassifier.Classify(asrt, Streamed).Posture.Should().Be(Posture.Grounded);
+        StreamabilityClassifier.Classify(asrt, Streamed).IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Assert_FreeRangingTest_IsNotStreamable()
+    {
+        // NEGATIVE: a free-ranging test (reverse(...)) propagates ⇒ not streamable.
+        var asrt = new XsltAssert
+        {
+            Test = Fn("exists", Fn("reverse", AbsPath(Step(Axis.DescendantOrSelf, "section")))),
+        };
+        StreamabilityClassifier.Classify(asrt, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
 }
