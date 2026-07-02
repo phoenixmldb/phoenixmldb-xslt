@@ -1346,4 +1346,90 @@ public class PostureCompositionTests
         StreamabilityClassifier.Classify(iterate, Streamed)
             .IsGuaranteedStreamable.Should().BeFalse();
     }
+
+    // ---- V: xsl:variable-binding tracking (#143 si-iterate-037) -------------
+    // The classifier tracks in-body xsl:variable bindings so a later $X resolves to the
+    // binding's posture. This is what lets si-iterate-037's match="/" body classify
+    // guaranteed-streamable: $words := //text()!tokenize(.) is Grounded, so iterating
+    // tail($words) is a grounded (streamable) population, not a conservatively-striding one.
+
+    private static VariableReference Var(string name) =>
+        new() { Name = new QName(NamespaceId.None, name) };
+
+    [Fact]
+    public void V01_GroundedVariable_ThenIterateTailOfIt_IsGuaranteedStreamable()
+    {
+        // <xsl:variable name="words" select="//text()!tokenize(.,'\s+')"/>
+        // <xsl:variable name="histogram" as="map(*)">
+        //   <xsl:iterate select="tail($words)">
+        //     <xsl:param name="previous" select="head($words)"/>
+        //     <xsl:param name="histogram" select="map{}"/>
+        //     <xsl:value-of select="."/>          (grounded body)
+        //     <xsl:on-completion><xsl:sequence select="$histogram"/></xsl:on-completion>
+        //   </xsl:iterate>
+        // </xsl:variable>
+        var textStep = new StepExpression
+        {
+            Axis = Axis.DescendantOrSelf,
+            NodeTest = new KindTest { Kind = XdmNodeKind.Text },
+            Predicates = [],
+        };
+        var words = new SimpleMapExpression
+        {
+            Left = new PathExpression { IsAbsolute = false, InitialExpression = null, Steps = [textStep] },
+            Right = Fn("tokenize", Dot, new StringLiteral { Value = "\\s+" }),
+        };
+        var wordsVar = new XsltVariableInstruction
+        {
+            Name = new QName(NamespaceId.None, "words"),
+            Select = words,
+        };
+
+        var iterate = new XsltIterate
+        {
+            Select = Fn("tail", Var("words")),
+            Params = new List<XsltParam>(),
+            Body = Body(new XsltValueOf { Select = Dot }),
+            OnCompletion = Body(new XsltSequence { Select = Var("histogram") }),
+        };
+        var histogramVar = new XsltVariableInstruction
+        {
+            Name = new QName(NamespaceId.None, "histogram"),
+            Content = Body(iterate),
+        };
+
+        var body = Body(wordsVar, histogramVar);
+
+        var ps = StreamabilityClassifier.Classify(body, Streamed);
+
+        ps.IsGuaranteedStreamable.Should().BeTrue();
+        // And the document-level buffer decision must NOT force whole-input materialization.
+        StreamingPlanner.Plan(body, Streamed).Should().Be(StreamingPlan.StreamInline);
+    }
+
+    [Fact]
+    public void V02_UntrackedTailOfContextChildren_StaysStridingPopulation()
+    {
+        // GUARD (anti-over-accept): WITHOUT a grounding binding, tail(child::ITEM) is a striding
+        // population — still classifiable, but the point is variable tracking must not fabricate
+        // groundedness. Here $x := child::ITEM is STRIDING; iterating $x directly (a striding
+        // population with a grounded body) is streamable, but iterating it with a CONSUMING body
+        // that returns a streamed node must stay rejected.
+        var xVar = new XsltVariableInstruction
+        {
+            Name = new QName(NamespaceId.None, "x"),
+            Select = RelPath(Step(Axis.Child, "ITEM")),
+        };
+        // Body returns the streamed node (xsl:sequence select=".") → striding → NOT streamable.
+        var iterate = new XsltIterate
+        {
+            Select = Var("x"),
+            Params = new List<XsltParam>(),
+            Body = Body(new XsltSequence { Select = Dot }),
+        };
+        var body = Body(xVar, iterate);
+
+        StreamabilityClassifier.Classify(body, Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
 }

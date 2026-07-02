@@ -3301,18 +3301,85 @@ public sealed class XsltTransformEngine
             docNodeTemplate = _templateIndex.FindMatchingTemplate(probeDoc, options?.InitialMode, mc.Value);
 
         if (docNodeTemplate?.Body == null) return false;
-        // #143 Task 1.2 — the document-level whole-input decision stays governed by the PROVEN
-        // executor-capability detector RequiresWholeInputBuffer, which encodes exactly which shapes
-        // the document-level streaming pass cannot drive off the live reader. The posture-derived
-        // StreamingPlan drives the unification at the IN-TEMPLATE site (MatchAndExecuteStreamingNodeAsync,
-        // where it closes the 013-sibling family); it is NOT authoritative here because the classifier
-        // conservatively over-rejects some bodies the document-level executor streams correctly
-        // (si-iterate-037: a match="/" body binding //text()!tokenize(...) then iterating tail($words)
-        // streams today — honouring Plan's BufferWholeInput there would over-buffer and change the
-        // result). TODO(#143 later phase): bring the executor and classifier to document-level parity,
-        // then route this through StreamingPlanner.Plan == BufferWholeInput like the in-template site.
-        return StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(docNodeTemplate.Body);
+        return DocLevelWholeInputBuffer(docNodeTemplate.Body);
     }
+
+    /// <summary>
+    /// #143 Phase 1.5 — the document-level whole-input-buffer decision, unified across the two
+    /// document-level sites (<see cref="DocNodeTemplateRequiresWholeInputBuffer"/> and the
+    /// xsl:source-document streamable path). ADDITIVE: it buffers when EITHER the proven legacy
+    /// executor-capability detector <see cref="StreamingSubtreeBufferDetector.RequiresWholeInputBuffer"/>
+    /// demands it, OR the posture/sweep classifier's <see cref="StreamingPlanner.Plan"/> derives
+    /// <see cref="StreamingPlan.BufferWholeInput"/>. Because it only ever ORs in more buffering, a
+    /// body the classifier declares guaranteed-streamable (<see cref="StreamingPlan.StreamInline"/>)
+    /// never triggers it. This closes the ~13 doc-level cases the legacy detector alone misses.
+    /// <para>
+    /// CARVE-OUT (path b): a doc-level body whose TOP LEVEL contains an <c>xsl:iterate</c> is
+    /// governed by the legacy detector ALONE — the additive Plan trigger is suppressed for it. The
+    /// classifier still over-rejects such bodies when they mix a grounded accumulate-into-a-map
+    /// iterate with downstream instructions it cannot yet model (unmodelled functions like
+    /// <c>random-number-generator</c>/<c>map:*</c> poison the whole-body composition), yet the
+    /// executor streams them correctly today (si-iterate-037: <c>$words := //text()!tokenize(.)</c>
+    /// consumes the input once, then everything is grounded map/accumulator computation). Honouring
+    /// Plan's BufferWholeInput for those would force whole-input materialization of a 100K-item
+    /// streamable body and time out. All 13 doc-level wins are NON-iterate top-level bodies, so this
+    /// carve-out preserves every win while avoiding the hang.
+    /// TODO(#143): the classifier lacks full doc-level composition for iterate bodies that reference
+    /// unmodelled functions (map:*, random-number-generator, …) — si-iterate-037 is over-rejected
+    /// (its top-level iterate + downstream unmodelled fns → BufferWholeInput). xsl:variable-binding
+    /// tracking (added this phase) fixes the tail($words)/head($words) part but not the downstream
+    /// unmodelled-function poisoning. Model those roles, then drop this carve-out.
+    /// </para>
+    /// </summary>
+    internal static bool DocLevelWholeInputBuffer(Ast.XsltSequenceConstructor? body)
+    {
+        if (StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(body))
+            return true;
+        if (body is null || BodyContainsIterate(body))
+            return false;
+        return StreamingPlanner.Plan(body, new StreamingContext(Posture.Striding, InStreamedScope: true))
+            == StreamingPlan.BufferWholeInput;
+    }
+
+    /// <summary>
+    /// True when <paramref name="body"/> contains an <c>xsl:iterate</c> anywhere (directly or
+    /// nested inside a variable/element/choose/for-each/etc. content sequence constructor). The
+    /// carve-out on <see cref="DocLevelWholeInputBuffer"/> suppresses the additive Plan trigger
+    /// for such bodies. si-iterate-037's iterate is nested inside an <c>xsl:variable</c> content
+    /// and an LRE, so a top-level-only check would miss it — hence the recursive descent.
+    /// </summary>
+    private static bool BodyContainsIterate(Ast.XsltSequenceConstructor? body)
+    {
+        if (body is null) return false;
+        foreach (var insn in body.Instructions)
+            if (InstructionContainsIterate(insn))
+                return true;
+        return false;
+    }
+
+    private static bool InstructionContainsIterate(Ast.XsltInstruction insn) => insn switch
+    {
+        Ast.XsltIterate => true,
+        Ast.XsltForEach fe => BodyContainsIterate(fe.Body),
+        Ast.XsltForEachGroup feg => BodyContainsIterate(feg.Body),
+        Ast.XsltIf i => BodyContainsIterate(i.Then),
+        Ast.XsltChoose ch => ch.When.Any(w => BodyContainsIterate(w.Body))
+            || BodyContainsIterate(ch.Otherwise),
+        Ast.XsltVariableInstruction v => BodyContainsIterate(v.Content),
+        Ast.XsltParamInstruction p => BodyContainsIterate(p.Content),
+        Ast.XsltLiteralResultElement lre => BodyContainsIterate(lre.Content),
+        Ast.XsltElement el => BodyContainsIterate(el.Content),
+        Ast.XsltCopy cp => BodyContainsIterate(cp.Content),
+        Ast.XsltDocument d => BodyContainsIterate(d.Content),
+        Ast.XsltResultDocument rd => BodyContainsIterate(rd.Content),
+        Ast.XsltSequenceConstructor sc => BodyContainsIterate(sc),
+        Ast.XsltTry t => BodyContainsIterate(t.Body)
+            || t.Catches.Any(c => BodyContainsIterate(c.Body)),
+        Ast.XsltWherePopulated wp => BodyContainsIterate(wp.Content),
+        Ast.XsltOnEmpty oe => BodyContainsIterate(oe.Content),
+        Ast.XsltOnNonEmpty one => BodyContainsIterate(one.Content),
+        _ => false,
+    };
 
     private static bool ContentContainsApplyTemplatesStreaming(Ast.XsltSequenceConstructor? body)
     {
@@ -15784,15 +15851,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // level (notably xsl:fork / xsl:for-each-group with group-by, which has no
         // streaming dispatch) must materialize the whole input first — fall through to
         // the full-tree load path below, which evaluates group-by correctly.
-        // #143 Task 1.2 — like DocNodeTemplateRequiresWholeInputBuffer, the document-level
-        // source-document whole-input decision stays governed by the PROVEN executor-capability
-        // detector RequiresWholeInputBuffer. The posture-derived StreamingPlan drives the
-        // unification at the in-template site; it is not authoritative here (the classifier
-        // conservatively over-rejects some bodies the document-level pass streams correctly, e.g.
-        // si-iterate-037). TODO(#143 later phase): bring executor/classifier to document-level
-        // parity, then gate this on StreamingPlanner.Plan == BufferWholeInput.
+        // #143 Phase 1.5 — the source-document whole-input decision is unified with the
+        // document-node-template site through XsltTransformEngine.DocLevelWholeInputBuffer:
+        // buffer when EITHER the proven legacy detector demands it OR the posture/sweep
+        // classifier's StreamingPlan derives BufferWholeInput (additive — a guaranteed-streamable
+        // body never triggers it, so si-iterate-037 and kin still stream).
         var sourceDocNeedsWholeInput =
-            StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(instruction.Content);
+            XsltTransformEngine.DocLevelWholeInputBuffer(instruction.Content);
         if (instruction.Streamable && resolvedUri.IsFile && string.IsNullOrEmpty(fragment)
             && !sourceDocNeedsWholeInput)
         {

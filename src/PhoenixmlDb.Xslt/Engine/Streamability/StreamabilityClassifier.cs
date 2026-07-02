@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.Xslt.Ast;
 
@@ -17,7 +18,19 @@ namespace PhoenixmlDb.Xslt.Engine.Streamability;
 /// Whether the context item is a live-streamed node. When <c>false</c> the whole expression
 /// is grounded regardless of navigation (nothing streamed to consume).
 /// </param>
-public readonly record struct StreamingContext(Posture ContextPosture, bool InStreamedScope);
+/// <param name="Vars">
+/// In-scope variable bindings (name → the <see cref="PostureSweep"/> of the bound expression),
+/// accumulated as a sequence-constructor body or FLWOR clause list is walked. A
+/// <c>VariableReference</c> to a name present here resolves to that recorded posture instead of
+/// the conservative context-posture approximation. <c>null</c> means no bindings are in scope.
+/// Reading a bound value is always motionless (its consumption was accounted for at its binding
+/// site), so only the <em>posture</em> of the recorded entry is consulted — see the
+/// <c>VariableReference</c> arm of <see cref="StreamabilityClassifier.Classify(XQueryExpression, StreamingContext)"/>.
+/// </param>
+public readonly record struct StreamingContext(
+    Posture ContextPosture,
+    bool InStreamedScope,
+    ImmutableDictionary<string, Posture>? Vars = null);
 
 /// <summary>
 /// Compositional streamability classifier for the XPath/XQuery <b>expression</b> language,
@@ -65,10 +78,17 @@ public static class StreamabilityClassifier
             // does not advance the stream.
             ContextItemExpression => new PostureSweep(ctx.ContextPosture, Sweep.Motionless),
 
-            // §19.8: a variable reference has the posture of its binding. Without a resolved
-            // binding we take the context posture as an approximation for streamed scope, and
-            // grounded outside it. Reading a bound value is motionless (the value is already
-            // in hand — the binding's own consumption was accounted for at its binding site).
+            // §19.8: a variable reference has the posture of its binding. When the binding is
+            // in scope (tracked as the body / FLWOR clauses were walked) we resolve $X to that
+            // recorded posture — this is what lets `$words := //text()!tokenize(...)` (Grounded)
+            // make `tail($words)` / `head($words)` grounded instead of conservatively striding.
+            // Without a tracked binding we fall back to the context posture as an approximation
+            // for streamed scope, and grounded outside it. Reading a bound value is always
+            // motionless (the value is already in hand — the binding's own consumption was
+            // accounted for at its binding site).
+            VariableReference vr when ctx.Vars is not null
+                && ctx.Vars.TryGetValue(vr.Name.LocalName, out var boundPosture)
+                => new PostureSweep(boundPosture, Sweep.Motionless),
             VariableReference => new PostureSweep(
                 ctx.InStreamedScope ? ctx.ContextPosture : Posture.Grounded, Sweep.Motionless),
 
@@ -483,6 +503,9 @@ public static class StreamabilityClassifier
         // posture, and combine sweeps across all bindings + return.
         var sweep = Sweep.Motionless;
         Posture lastBindingPosture = ctx.ContextPosture;
+        // Track let/for bindings so a later clause or the return expression can resolve $X to
+        // its binding posture (same tracking as the xsl:variable body walk above).
+        var localCtx = ctx;
 
         foreach (var clause in flwor.Clauses)
         {
@@ -491,27 +514,31 @@ public static class StreamabilityClassifier
                 case ForClause fc:
                     foreach (var b in fc.Bindings)
                     {
-                        var bs = Classify(b.Expression, ctx);
+                        var bs = Classify(b.Expression, localCtx);
                         if (bs.Sweep == Sweep.FreeRanging || !IsStreamablePosture(bs.Posture))
                             return NotStreamable();
                         sweep = CombineSweep(sweep, bs.Sweep);
                         lastBindingPosture = bs.Posture;
+                        // A for range variable ranges over INDIVIDUAL items of its binding
+                        // sequence, so within scope $X has the item posture (== bs.Posture).
+                        localCtx = BindVar(localCtx, b.Variable.LocalName, bs.Posture);
                     }
                     break;
 
                 case LetClause lc:
                     foreach (var b in lc.Bindings)
                     {
-                        var bs = Classify(b.Expression, ctx);
+                        var bs = Classify(b.Expression, localCtx);
                         if (bs.Sweep == Sweep.FreeRanging || !IsStreamablePosture(bs.Posture))
                             return NotStreamable();
                         sweep = CombineSweep(sweep, bs.Sweep);
+                        localCtx = BindVar(localCtx, b.Variable.LocalName, bs.Posture);
                     }
                     break;
 
                 case WhereClause wc:
                 {
-                    var ws = Classify(wc.Condition, ctx with { ContextPosture = lastBindingPosture });
+                    var ws = Classify(wc.Condition, localCtx with { ContextPosture = lastBindingPosture });
                     if (ws.Sweep == Sweep.FreeRanging)
                         return NotStreamable();
                     sweep = CombineSweep(sweep, ws.Sweep);
@@ -526,7 +553,7 @@ public static class StreamabilityClassifier
 
         // The return expression's own `.` posture is the last for-binding's item posture
         // (a range variable ranges over individual items of its binding sequence).
-        var ret = Classify(flwor.ReturnExpression, ctx with { ContextPosture = lastBindingPosture });
+        var ret = Classify(flwor.ReturnExpression, localCtx with { ContextPosture = lastBindingPosture });
         if (ret.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ret.Posture))
             return NotStreamable();
 
@@ -631,6 +658,19 @@ public static class StreamabilityClassifier
     // -----------------------------------------------------------------------
 
     private static PostureSweep Grounded(Sweep sweep) => new(Posture.Grounded, sweep);
+
+    /// <summary>
+    /// Returns <paramref name="ctx"/> with variable <paramref name="name"/> bound to
+    /// <paramref name="posture"/> in scope (see <see cref="StreamingContext.Vars"/>). Used by the
+    /// xsl:variable body walk and the FLWOR let/for clause walk to make a later
+    /// <c>VariableReference</c> resolve to the binding's posture rather than the conservative
+    /// context-posture approximation.
+    /// </summary>
+    private static StreamingContext BindVar(StreamingContext ctx, string name, Posture posture)
+        => ctx with
+        {
+            Vars = (ctx.Vars ?? ImmutableDictionary<string, Posture>.Empty).SetItem(name, posture),
+        };
 
     /// <summary>
     /// A grounded (atomic/boolean) result derived from inspecting <paramref name="e"/> WITHOUT
@@ -1009,9 +1049,17 @@ public static class StreamabilityClassifier
         Posture posture = Posture.Grounded;
         var sweep = Sweep.Motionless;
         var first = true;
+        // §19.8: an in-body xsl:variable binding is in scope for the instructions that FOLLOW
+        // it. Track each binding's posture so a later VariableReference resolves to it (e.g.
+        // `<xsl:variable name="words" select="//text()!tokenize(.)"/>` is Grounded, so a later
+        // `tail($words)` classifies Grounded instead of conservatively striding). The recorded
+        // posture is the binding expression's own posture computed under the CURRENT scope; a
+        // non-streamable binding still poisons the body via the guard below (it returns
+        // NotStreamable before it can be recorded).
+        var localCtx = ctx;
         foreach (var child in body.Instructions)
         {
-            var ps = Classify(child, ctx);
+            var ps = Classify(child, localCtx);
             if (ps.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ps.Posture))
                 return NotStreamable();
             sweep = CombineSweep(sweep, ps.Sweep);
@@ -1019,6 +1067,15 @@ public static class StreamabilityClassifier
             // posture (Grounded is absorbed by any streamed posture — see WidenNodePosture).
             posture = first ? ps.Posture : WidenNodePosture(posture, ps.Posture);
             first = false;
+
+            if (child is XsltVariableInstruction { Name: var vname })
+            {
+                // ps is the xsl:variable instruction's posture: for select= it transmits the
+                // select's posture unchanged (ClassifySelectTransmit), for a content body it is
+                // the body's posture. Either way ps.Posture is exactly the binding's posture, so
+                // a later $vname resolves to it (e.g. select="//text()!tokenize(.)" → Grounded).
+                localCtx = BindVar(localCtx, vname.LocalName, ps.Posture);
+            }
         }
         return new PostureSweep(posture, sweep);
     }
