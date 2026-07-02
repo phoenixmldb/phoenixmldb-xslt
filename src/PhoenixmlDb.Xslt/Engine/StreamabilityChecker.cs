@@ -623,25 +623,15 @@ internal static class StreamabilityChecker
                 return;
             }
 
-            // Union of two striding expressions is crawling (XSLT 3.0 §19.8.8.3):
-            // e.g. /BOOKLIST/ITEM | /BOOKLIST/MAGAZINE — both navigate via child axis,
-            // and their union interleaves results in document order, requiring buffering.
-            if (ContainsStridingUnion(expr))
-            {
-                NonStreamableReason = $"{instruction} uses a union of striding expressions, which creates crawling — not streamable";
-            }
+            // #143 Phase 2: the "union of two striding expressions is crawling" check
+            // (XSLT 3.0 §19.8.8.3) is now a posture consequence of the classifier's union arm
+            // (ClassifyBinary, WidenNodePosture). Removing the legacy shape-check here is
+            // oracle-clean.
         }
 
         private static bool ContainsDescendantAxis(XQueryExpression expr)
         {
             var checker = new DescendantAxisDetector();
-            checker.Walk(expr);
-            return checker.Found;
-        }
-
-        private static bool ContainsStridingUnion(XQueryExpression expr)
-        {
-            var checker = new StridingUnionDetector();
             checker.Walk(expr);
             return checker.Found;
         }
@@ -2818,42 +2808,6 @@ internal static class StreamabilityChecker
     /// Detects union expressions where both operands navigate via child axis (striding).
     /// Per XSLT 3.0 §19.8.8.3, union of two striding expressions is crawling.
     /// </summary>
-    private sealed class StridingUnionDetector : XQueryExpressionWalker
-    {
-        public bool Found { get; private set; }
-
-        public override object? VisitBinaryExpression(BinaryExpression expr)
-        {
-            if (Found) return null;
-
-            if (expr.Operator == BinaryOperator.Union)
-            {
-                if (HasChildAxisNavigation(expr.Left) && HasChildAxisNavigation(expr.Right))
-                {
-                    Found = true;
-                    return null;
-                }
-            }
-
-            Walk(expr.Left);
-            Walk(expr.Right);
-            return null;
-        }
-
-        private static bool HasChildAxisNavigation(XQueryExpression expr)
-        {
-            if (expr is StepExpression se && se.Axis == Axis.Child)
-                return true;
-            if (expr is PathExpression pe)
-            {
-                foreach (var step in pe.Steps)
-                    if (step.Axis == Axis.Child)
-                        return true;
-            }
-            return false;
-        }
-    }
-
     /// <summary>
     /// True when <paramref name="body"/> is INSPECTION-ONLY: it never consumes the
     /// matched context node's descendant content — i.e. it does not read the bare
