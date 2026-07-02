@@ -14,6 +14,31 @@ namespace PhoenixmlDb.Xslt.Engine;
 internal static class StreamabilityChecker
 {
     /// <summary>
+    /// #143 Phase 2 — the single canonical set of "motionless node-inspection" function local
+    /// names: functions to which passing the streamed context item (<c>.</c>) or a streamed
+    /// parameter reads only node identity/name/count/existence WITHOUT consuming child content,
+    /// so the reference inside the argument is motionless (does not raise XTSE3430). This replaces
+    /// three previously-triplicated inline lists that had drifted apart (the widest of the three
+    /// is used as the reconciled canonical membership). Kept aligned with the classifier's
+    /// NodeProperty / Boolean / CurrentGroup roles; position()/last() are deliberately EXCLUDED
+    /// (they are positional/free-ranging and handled separately).
+    /// </summary>
+    private static readonly HashSet<string> MotionlessInspectionFunctions = new()
+    {
+        // Node identity / name / namespace properties.
+        "namespace-uri", "name", "local-name", "node-name", "generate-id", "nilled",
+        "has-children", "base-uri", "namespace-uri-for-prefix", "in-scope-prefixes",
+        "document-uri", "lang", "root", "path",
+        // Existence / cardinality / boolean reductions over the node reference.
+        "exists", "empty", "count", "boolean", "not",
+        "exactly-one", "zero-or-one", "one-or-more",
+        // Comparison / grouping / static-context inspection.
+        "deep-equal", "current", "current-group", "current-grouping-key",
+        "position", "type-available", "function-available",
+        "system-property", "element-available", "available-system-properties",
+    };
+
+    /// <summary>
     /// Checks the body of an xsl:source-document streamable="yes" instruction.
     /// Throws XsltException with XTSE3430 if the body contains non-streamable expressions.
     /// </summary>
@@ -345,9 +370,7 @@ internal static class StreamabilityChecker
         {
             if (Found) return null;
             var localName = expr.Name.LocalName;
-            if (localName is "name" or "local-name" or "namespace-uri" or "node-name"
-                or "generate-id" or "nilled" or "has-children" or "empty" or "exists"
-                or "count" or "boolean" or "not" or "exactly-one" or "zero-or-one" or "one-or-more")
+            if (MotionlessInspectionFunctions.Contains(localName))
             {
                 var old = _inMotionlessContext;
                 _inMotionlessContext = true;
@@ -1834,15 +1857,7 @@ internal static class StreamabilityChecker
 
             // Functions that access node properties without consuming child content.
             // Passing '.' to these functions is motionless even on element nodes.
-            if (localName is "namespace-uri" or "name" or "local-name" or "node-name"
-                or "generate-id" or "nilled" or "has-children" or "base-uri"
-                or "namespace-uri-for-prefix" or "in-scope-prefixes"
-                or "document-uri" or "lang" or "root" or "path"
-                or "exists" or "empty" or "count" or "boolean" or "not"
-                or "exactly-one" or "zero-or-one" or "one-or-more"
-                or "deep-equal" or "current" or "current-group" or "current-grouping-key"
-                or "position" or "type-available" or "function-available"
-                or "system-property" or "element-available" or "available-system-properties")
+            if (MotionlessInspectionFunctions.Contains(localName))
             {
                 var oldMotionless = _inMotionlessFunctionArg;
                 _inMotionlessFunctionArg = true;
@@ -2514,10 +2529,7 @@ internal static class StreamabilityChecker
 
             // Motionless functions: accessing node properties without consuming content.
             // References to the streamed parameter inside these are NOT consuming.
-            if (name is "namespace-uri" or "name" or "local-name" or "node-name"
-                or "generate-id" or "nilled" or "has-children" or "base-uri"
-                or "exists" or "empty" or "count" or "boolean" or "not"
-                or "exactly-one" or "zero-or-one" or "one-or-more")
+            if (MotionlessInspectionFunctions.Contains(name))
             {
                 var oldMotionless = _inMotionlessFunctionArg;
                 _inMotionlessFunctionArg = true;
