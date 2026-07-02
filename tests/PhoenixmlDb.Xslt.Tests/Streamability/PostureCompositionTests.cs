@@ -387,14 +387,16 @@ public class PostureCompositionTests
     [Fact]
     public void Row18_UnsupportedNode_IsRoamingFreeRanging()
     {
-        // A dynamic map/array lookup (?key) is not modelled by the classifier yet → conservative.
-        // (MapConstructor / ArrayConstructor are now modelled — see Task B rows below.)
-        var lookup = new LookupExpression
+        // A switch expression is not modelled by the classifier yet → conservative NotStreamable.
+        // (MapConstructor/ArrayConstructor and, in #143 Phase 1.5, map/array lookups + grounded-
+        // target dynamic calls are now modelled — see the Task B rows and the #143 rows below.)
+        var sw = new SwitchExpression
         {
-            Base = new VariableReference { Name = new QName(NamespaceId.None, "m") },
-            Key = new StringLiteral { Value = "k" },
+            Operand = Dot,
+            Cases = [new SwitchCase { Values = [new StringLiteral { Value = "a" }], Result = new IntegerLiteral { Value = 1L } }],
+            Default = new IntegerLiteral { Value = 0L },
         };
-        StreamabilityClassifier.Classify(lookup, Streamed)
+        StreamabilityClassifier.Classify(sw, Streamed)
             .Should().Be(new PostureSweep(Posture.Roaming, Sweep.FreeRanging));
     }
 
@@ -1430,6 +1432,193 @@ public class PostureCompositionTests
         var body = Body(xVar, iterate);
 
         StreamabilityClassifier.Classify(body, Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    // =======================================================================
+    // #143 Phase 1.5: NAMESPACE-AWARE map:/array:/math: grounding + random-number-generator +
+    // map/array lookup + grounded-target dynamic call. Retires the BodyContainsIterate carve-out.
+    // =======================================================================
+
+    // A namespace-qualified function call — the classifier keys on the RESOLVED NamespaceId, so
+    // map:get / array:size / math:sqrt must be distinguished from fn:get etc. by namespace, not
+    // by local name (map:contains vs fn:contains was a latent collision).
+    private static FunctionCallExpression FnNs(NamespaceId ns, string local, params XQueryExpression[] args) => new()
+    {
+        Name = new QName(ns, local, ns == NamespaceId.Map ? "map" : ns == NamespaceId.Array ? "array" : ns == NamespaceId.Math ? "math" : null),
+        Arguments = args,
+    };
+
+    [Theory]
+    [InlineData("get")]
+    [InlineData("size")]
+    [InlineData("contains")]
+    [InlineData("keys")]
+    [InlineData("put")]
+    [InlineData("remove")]
+    [InlineData("entry")]
+    [InlineData("merge")]
+    public void Map_NonHigherOrderFunction_OverGroundedArgs_IsGroundedMotionless(string local)
+    {
+        // map:*($g, 'k') over a grounded var/literal → grounded map/atomic, motionless.
+        var g = new VariableReference { Name = new QName(NamespaceId.None, "g") };
+        StreamabilityClassifier.Classify(FnNs(NamespaceId.Map, local, g, new StringLiteral { Value = "k" }), GroundedCtx)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Theory]
+    [InlineData("size")]
+    [InlineData("get")]
+    [InlineData("head")]
+    [InlineData("tail")]
+    [InlineData("reverse")]
+    [InlineData("append")]
+    [InlineData("flatten")]
+    public void Array_NonHigherOrderFunction_OverGroundedArgs_IsGroundedMotionless(string local)
+    {
+        var g = new VariableReference { Name = new QName(NamespaceId.None, "g") };
+        StreamabilityClassifier.Classify(FnNs(NamespaceId.Array, local, g, new IntegerLiteral { Value = 1L }), GroundedCtx)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Theory]
+    [InlineData("sqrt")]
+    [InlineData("pow")]
+    [InlineData("sin")]
+    [InlineData("log")]
+    public void Math_Function_IsGroundedMotionless(string local)
+    {
+        StreamabilityClassifier.Classify(FnNs(NamespaceId.Math, local, new IntegerLiteral { Value = 2L }), Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Fact]
+    public void MapPut_CarriesConsumingSweepOfValueArg_ButStaysGrounded()
+    {
+        // map:put(map{}, 'k', string(.)) — the value arg atomizes the streamed context (grounded,
+        // consuming), the map arg is a grounded empty map. RESULT is a grounded map; sweep carried
+        // through as consuming. (string(.) is Grounded/Consuming — a grounded atomized value, NOT a
+        // live streamed node, so it is storable; only Striding/Crawling node args are rejected.)
+        var emptyMap = new MapConstructor { Entries = [] };
+        var value = Fn("string", Dot); // grounded/consuming
+        StreamabilityClassifier.Classify(
+                FnNs(NamespaceId.Map, "put", emptyMap, new StringLiteral { Value = "k" }, value), Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Fact]
+    public void RandomNumberGenerator_NoSeed_IsGroundedMotionless()
+    {
+        StreamabilityClassifier.Classify(Fn("random-number-generator"), Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Fact]
+    public void RandomNumberGenerator_GroundedSeed_IsGroundedMotionless()
+    {
+        StreamabilityClassifier.Classify(Fn("random-number-generator", new IntegerLiteral { Value = 5L }), Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Fact]
+    public void Lookup_IntoGroundedMap_IsGrounded()
+    {
+        // $g?permute — lookup extracts a stored value from a grounded map → grounded.
+        var g = new VariableReference { Name = new QName(NamespaceId.None, "g") };
+        StreamabilityClassifier.Classify(
+                new LookupExpression { Base = g, Key = new StringLiteral { Value = "permute" } }, GroundedCtx)
+            .Posture.Should().Be(Posture.Grounded);
+    }
+
+    [Fact]
+    public void DynamicCall_OnGroundedFunctionItem_IsGrounded()
+    {
+        // (random-number-generator(.)?permute)($options) — grounded target, grounded args.
+        var rng = Fn("random-number-generator", Dot);
+        var permute = new LookupExpression { Base = rng, Key = new StringLiteral { Value = "permute" } };
+        var options = new VariableReference { Name = new QName(NamespaceId.None, "options") };
+        StreamabilityClassifier.Classify(
+                new DynamicFunctionCallExpression { FunctionExpression = permute, Arguments = [options] }, GroundedCtx)
+            .Posture.Should().Be(Posture.Grounded);
+    }
+
+    [Fact]
+    public void MapAccumulatingIterateBody_OverGroundedPopulation_IsGuaranteedStreamable()
+    {
+        // The si-iterate-037 SHAPE (map accumulator): iterate over a grounded population, body
+        // binds an xsl:variable that reads the streamed `.` and queries a grounded accumulator
+        // map (map:contains/map:get), and next-iteration carries map:put(...). The body EMITS
+        // nothing but grounded control transfers, so it must classify guaranteed-streamable.
+        var histParam = new QName(NamespaceId.None, "histogram");
+        var prevParam = new QName(NamespaceId.None, "previous");
+        var histRef = new VariableReference { Name = histParam };
+        var prevRef = new VariableReference { Name = prevParam };
+
+        // <xsl:variable name="new-entry" select="if (map:contains($h,$p)) then (map:get($h,$p), .) else (.)"/>
+        var newEntry = new XsltVariableInstruction
+        {
+            Name = new QName(NamespaceId.None, "new-entry"),
+            Select = new IfExpression
+            {
+                Condition = FnNs(NamespaceId.Map, "contains", histRef, prevRef),
+                Then = new SequenceExpression { Items = [FnNs(NamespaceId.Map, "get", histRef, prevRef), Dot] },
+                Else = Dot,
+            },
+        };
+        // <xsl:next-iteration> with-param histogram := map:put($h,$p,$new-entry)
+        var next = new XsltNextIteration
+        {
+            WithParams =
+            [
+                new XsltWithParam { Name = prevParam, Select = Dot },
+                new XsltWithParam
+                {
+                    Name = histParam,
+                    Select = FnNs(NamespaceId.Map, "put", histRef, prevRef,
+                        new VariableReference { Name = new QName(NamespaceId.None, "new-entry") }),
+                },
+            ],
+        };
+        var iterate = new XsltIterate
+        {
+            Select = new RangeExpression { Start = new IntegerLiteral { Value = 1L }, End = new IntegerLiteral { Value = 200L } },
+            Params = new List<XsltParam>(),
+            Body = Body(newEntry, next),
+            OnCompletion = Body(new XsltSequence { Select = histRef }),
+        };
+
+        StreamabilityClassifier.Classify(Body(iterate), Streamed)
+            .IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void MapForEach_WithConsumingCallbackOverStream_IsNotGuaranteedStreamable()
+    {
+        // NEGATIVE / anti-over-accept: map:for-each is a HIGHER-ORDER function — its callback can
+        // navigate/consume the streamed input. It is EXCLUDED from namespace grounding and stays
+        // conservative (NotStreamable), even though its arguments look grounded.
+        var g = new VariableReference { Name = new QName(NamespaceId.None, "g") };
+        var callback = new InlineFunctionExpression
+        {
+            Parameters = [],
+            Body = RelPath(Step(Axis.Descendant, "ITEM")), // consumes the stream
+        };
+        StreamabilityClassifier.Classify(FnNs(NamespaceId.Map, "for-each", g, callback), Streamed)
+            .IsGuaranteedStreamable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void FnFilter_WithConsumingPredicate_IsNotGuaranteedStreamable()
+    {
+        // NEGATIVE: fn:filter (higher-order, fn: namespace) is NOT modelled as grounded — it stays
+        // conservative. A consuming predicate over the stream must not be accepted.
+        var g = new VariableReference { Name = new QName(NamespaceId.None, "g") };
+        var pred = new InlineFunctionExpression
+        {
+            Parameters = [],
+            Body = RelPath(Step(Axis.Descendant, "ITEM")),
+        };
+        StreamabilityClassifier.Classify(Fn("filter", g, pred), Streamed)
             .IsGuaranteedStreamable.Should().BeFalse();
     }
 }

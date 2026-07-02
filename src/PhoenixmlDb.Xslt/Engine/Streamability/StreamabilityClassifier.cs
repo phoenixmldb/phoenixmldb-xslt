@@ -127,6 +127,25 @@ public static class StreamabilityClassifier
             MapConstructor mc => ClassifyMapConstructor(mc, ctx),
             ArrayConstructor ac => ClassifyArrayConstructor(ac, ctx),
 
+            // §19.8 (#143 Phase 1.5): map/array LOOKUP — `$m?key`, `$a?1`, `$m?*`, and the
+            // context-item form `?key`. A lookup EXTRACTS a stored value from a (grounded) map or
+            // array function item; the map/array itself is grounded (§19.8.2), so the extracted
+            // value is grounded, motionless (no stream advance of its own). Sweep = combine of the
+            // base's and key's sweeps; a non-streamable base or key still propagates. This is the
+            // idiom used to read from an accumulated map inside a streamed body
+            // (random-number-generator(.)?permute in si-iterate-037).
+            LookupExpression lu => ClassifyLookup(lu.Base, lu.Key, ctx),
+            UnaryLookupExpression ul => ClassifyLookup(ContextItemExpression.Instance, ul.Key, ctx),
+
+            // §19.8 (#143 Phase 1.5): DYNAMIC function call — `fnexpr(args)`. Modelled as grounded
+            // ONLY WHEN the function EXPRESSION is itself grounded (a grounded function item — e.g.
+            // a lookup into a grounded map, or a grounded partial application — does not navigate
+            // the OUTER streamed input) and every argument is streamable; result grounded, sweep =
+            // combine of the function-expr and argument sweeps. A non-grounded function expression
+            // (which could close over / navigate the stream) stays conservative (NotStreamable via
+            // the grounded guard). This is deliberately NARROWER than grounding fn:apply blanket.
+            DynamicFunctionCallExpression dfc => ClassifyDynamicCall(dfc, ctx),
+
             // TODO(Task 0.4+): model quantifiers, direct/computed node constructors,
             // arrow/dynamic calls, lookups, switch/typeswitch, try/catch. Until then, treat
             // every unmodelled node kind conservatively as NOT streamable so nothing is
@@ -307,6 +326,69 @@ public static class StreamabilityClassifier
         // list types, or an explicit function call — lands here.)
         if (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Xsd && fc.Arguments.Count == 1)
             return Grounded(AtomizeSweep(fc.Arguments[0], ctx));
+
+        // §19.8 (#143 Phase 1.5): NAMESPACE-AWARE grounding for the map:/array:/math: function
+        // libraries. These functions build or query a map/array/number — a brand-new function
+        // item or atomic, GROUNDED and detached from the stream (§19.8.2), exactly like the
+        // map{}/array{} constructors already handled in ClassifyMapConstructor/ArrayConstructor.
+        // Routing them by LocalName alone (the FunctionRole switch below) left map:get/map:size/
+        // map:put/… in the Unknown → NotStreamable default, poisoning any streamed body that
+        // accumulates into a map (si-iterate-037), and even collided map:contains with fn:contains'
+        // Atomizing role. Keying on the RESOLVED namespace fixes both.
+        //
+        // Sweep = COMBINE of the argument sweeps, so map:put($m,$k,consuming-expr) still carries
+        // the consuming sweep of its value argument; a non-streamable argument still propagates.
+        //
+        // CRITICAL (anti-over-accept): the HIGHER-ORDER members of these libraries — whose FUNCTION
+        // argument can navigate/consume the streamed input — are DELIBERATELY excluded and fall
+        // through to the conservative default. Grounding them blanket would over-accept (the shadow
+        // over-accept pin guards this). See IsHigherOrderMapArrayFunction.
+        if ((fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Map
+                || fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Array)
+            && !IsHigherOrderMapArrayFunction(fc.Name.LocalName))
+        {
+            // A map/array is a GROUNDED item — it CANNOT capture live streamed nodes. Any argument
+            // that is a downward/forward streamed NODE sequence (Striding / Crawling posture — e.g.
+            // //AUTHOR, child::PRICE) would have to be buffered to be stored/keyed, which §19.8
+            // forbids (si-map-901/902, sx-square-array-201: "attempt to save streamed nodes in a
+            // map/array value"). A GROUNDED value (an accumulated map, an atomized string, a copy)
+            // or a motionless CLIMBING value (an attribute/ancestor already in hand) is storable.
+            // NOTE: inside `xsl:iterate select="tail($words)"` where $words is a grounded string
+            // sequence, the context item `.` is GROUNDED, so map:put(...,.) there is storable —
+            // this is exactly what keeps si-iterate-037 streamable while si-map-901 is rejected.
+            foreach (var arg in fc.Arguments)
+            {
+                var a = Classify(arg, ctx);
+                if (a.Sweep == Sweep.FreeRanging || !IsStreamablePosture(a.Posture) || CapturesStreamedNodes(a.Posture))
+                    return NotStreamable();
+            }
+            return Grounded(WorstSweep(fc.Arguments, ctx));
+        }
+
+        // All math: functions are pure numeric computations over grounded atomics — grounded
+        // result, sweep = combine of the (atomizing) argument sweeps. math: has no higher-order
+        // members.
+        if (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Math)
+        {
+            if (!AllOperandsStreamable(fc.Arguments, ctx))
+                return NotStreamable();
+            return Grounded(WorstSweep(fc.Arguments, ctx));
+        }
+
+        // §19.8: fn:random-number-generator returns a (deterministic) random-number-generator MAP
+        // without navigating the streamed input — grounded, motionless. Its OPTIONAL seed argument
+        // is atomized, so its sweep combines (a non-streamable seed propagates). This is NOT a
+        // higher-order function: the returned map's ?permute/?next members are function items, but
+        // the call itself is motionless. (fn: is NamespaceId.Fn; a no-prefix call also resolves to
+        // Fn, and 'random-number-generator' is unambiguous.)
+        if (fc.Name.LocalName == "random-number-generator"
+            && (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Fn
+                || fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.None))
+        {
+            if (!AllOperandsStreamable(fc.Arguments, ctx))
+                return NotStreamable();
+            return Grounded(fc.Arguments.Count > 0 ? WorstSweep(fc.Arguments, ctx) : Sweep.Motionless);
+        }
 
         var role = FunctionRole(fc.Name.LocalName, fc.Arguments.Count);
 
@@ -624,10 +706,13 @@ public static class StreamabilityClassifier
         foreach (var entry in mc.Entries)
         {
             var k = Classify(entry.Key, ctx);
-            if (k.Sweep == Sweep.FreeRanging || !IsStreamablePosture(k.Posture))
+            if (k.Sweep == Sweep.FreeRanging || !IsStreamablePosture(k.Posture) || CapturesStreamedNodes(k.Posture))
                 return NotStreamable();
             var v = Classify(entry.Value, ctx);
-            if (v.Sweep == Sweep.FreeRanging || !IsStreamablePosture(v.Posture))
+            // A map value that is a live streamed NODE sequence (Striding/Crawling) cannot be
+            // stored without buffering — §19.8 rejects it (si-map-901/sx-MapExpr-901: map value
+            // = //AUTHOR). A grounded/atomized/climbing value is storable.
+            if (v.Sweep == Sweep.FreeRanging || !IsStreamablePosture(v.Posture) || CapturesStreamedNodes(v.Posture))
                 return NotStreamable();
             sweep = CombineSweep(sweep, CombineSweep(k.Sweep, v.Sweep));
         }
@@ -646,10 +731,57 @@ public static class StreamabilityClassifier
         foreach (var member in ac.Members)
         {
             var m = Classify(member, ctx);
-            if (m.Sweep == Sweep.FreeRanging || !IsStreamablePosture(m.Posture))
+            // An array member that is a live streamed NODE sequence (Striding/Crawling) cannot be
+            // stored without buffering — §19.8 rejects it (sx-square-array-201: [$g, //ITEM]).
+            if (m.Sweep == Sweep.FreeRanging || !IsStreamablePosture(m.Posture) || CapturesStreamedNodes(m.Posture))
                 return NotStreamable();
             sweep = CombineSweep(sweep, m.Sweep);
         }
+        return Grounded(sweep);
+    }
+
+    /// <summary>
+    /// §19.8.2: a map/array lookup <c>base?key</c> extracts a stored value from a GROUNDED map or
+    /// array function item. The extracted value is grounded, motionless of its own; the sweep is
+    /// the combine of the base's and (optional) key's sweeps. A non-streamable base or key
+    /// propagates. The base MUST be a streamable posture (a lookup on a streamed node-set is not
+    /// modelled here — it stays conservative because the base classify would not be a map/array).
+    /// </summary>
+    private static PostureSweep ClassifyLookup(XQueryExpression @base, XQueryExpression? key, StreamingContext ctx)
+    {
+        var b = Classify(@base, ctx);
+        if (b.Sweep == Sweep.FreeRanging || !IsStreamablePosture(b.Posture))
+            return NotStreamable();
+        var sweep = b.Sweep;
+        if (key is not null)
+        {
+            var k = Classify(key, ctx);
+            if (k.Sweep == Sweep.FreeRanging || !IsStreamablePosture(k.Posture))
+                return NotStreamable();
+            sweep = CombineSweep(sweep, k.Sweep);
+        }
+        return Grounded(sweep);
+    }
+
+    /// <summary>
+    /// §19.8: a dynamic function call <c>fnexpr(args)</c> is grounded ONLY when the function
+    /// EXPRESSION is itself grounded (a grounded function item cannot navigate the OUTER streamed
+    /// input) and every argument is streamable. Result grounded; sweep = combine of the
+    /// function-expression and argument sweeps. A non-grounded function expression stays
+    /// conservative (NotStreamable). This is intentionally narrower than blanket-grounding
+    /// higher-order calls: it only accepts a call whose target is a grounded function item (e.g.
+    /// a lookup into a grounded map: <c>random-number-generator(.)?permute($options)</c>).
+    /// </summary>
+    private static PostureSweep ClassifyDynamicCall(DynamicFunctionCallExpression dfc, StreamingContext ctx)
+    {
+        var f = Classify(dfc.FunctionExpression, ctx);
+        if (f.Posture != Posture.Grounded || f.Sweep == Sweep.FreeRanging)
+            return NotStreamable();
+        if (!AllOperandsStreamable(dfc.Arguments, ctx))
+            return NotStreamable();
+        var sweep = dfc.Arguments.Count > 0
+            ? CombineSweep(f.Sweep, WorstSweep(dfc.Arguments, ctx))
+            : f.Sweep;
         return Grounded(sweep);
     }
 
@@ -792,6 +924,20 @@ public static class StreamabilityClassifier
         => p is Posture.Grounded or Posture.Striding or Posture.Crawling or Posture.Climbing;
 
     /// <summary>
+    /// §19.8.2: true when <paramref name="p"/> is a DOWNWARD / FORWARD streamed NODE posture —
+    /// Striding (children of the streamed context) or Crawling (descendants). Such a sequence is a
+    /// LIVE view over the streamed input; capturing it into a grounded map/array value (or using it
+    /// as a key) would require buffering the whole sub-sequence, which §19.8 forbids. Grounded
+    /// (detached), Climbing (an attribute/ancestor already in hand, motionless), and atomic values
+    /// are storable and return false here. This is the rule that rejects si-map-901
+    /// (<c>map value = //AUTHOR</c>) / sx-square-array-201 (<c>[$g, //ITEM]</c>) while leaving
+    /// si-iterate-037's grounded-context accumulator (<c>map:put(...,.)</c> where <c>.</c> is a
+    /// grounded string) streamable.
+    /// </summary>
+    private static bool CapturesStreamedNodes(Posture p)
+        => p is Posture.Striding or Posture.Crawling;
+
+    /// <summary>
     /// Widens two node postures per §19.8.8.3: any pairing that involves descendant nesting is
     /// crawling; two striding operands compose to crawling (their node-sets may interleave).
     /// </summary>
@@ -823,6 +969,24 @@ public static class StreamabilityClassifier
         Positional,    // position()/last() — need look-ahead over the sequence → free-ranging
         FreeRanging,   // reverse() and other whole-sequence-buffering fns → free-ranging
     }
+
+    /// <summary>
+    /// The HIGHER-ORDER members of the <c>map:</c> / <c>array:</c> function libraries — those
+    /// taking a FUNCTION argument that the engine invokes per entry/member. Because that function
+    /// can navigate or consume the streamed input, they must NOT be blanket-grounded (that would
+    /// over-accept a body that consumes the stream through the callback). They fall through to the
+    /// conservative default (NotStreamable). Kept separate from the grounded map/array grounding
+    /// arm in <see cref="ClassifyFunctionCall"/>. (The <c>fn:</c> higher-order functions —
+    /// fold-left/right, filter, for-each, for-each-pair, sort, apply — are likewise left in the
+    /// Unknown default and are not listed here since they are keyed by namespace, not this set.)
+    /// </summary>
+    private static bool IsHigherOrderMapArrayFunction(string localName) => localName switch
+    {
+        "for-each" or "filter" or "sort"
+            or "fold-left" or "fold-right"
+            or "for-each-pair" => true,
+        _ => false,
+    };
 
     private static FnRole FunctionRole(string localName, int arity)
     {
@@ -979,10 +1143,13 @@ public static class StreamabilityClassifier
                 CombineSweep(AvtSweep(at.Namespace, ctx),
                     SelectOrContentSweep(at.Select, at.Content, ctx)))),
             XsltMap m => Grounded(BodySweep(m.Content, ctx)),
-            XsltMapEntry me => Grounded(CombineSweep(SweepOf(me.Key, ctx),
-                SelectOrContentSweep(me.Select, me.Content, ctx))),
+            // §19.8.2: an xsl:map-entry stores a KEY and a VALUE into a grounded map. A key or value
+            // that is a live streamed NODE sequence (Striding/Crawling — e.g. select="//AUTHOR")
+            // cannot be captured without buffering ⇒ NotStreamable (si-map-901/902). Mirrors the
+            // CapturesStreamedNodes guard in ClassifyMapConstructor.
+            XsltMapEntry me => ClassifyStoredEntry(SweepOf(me.Key, ctx), me.Key, me.Select, me.Content, ctx),
             XsltArray ar => Grounded(BodySweep(ar.Content, ctx)),
-            XsltArrayMember am => Grounded(SelectOrContentSweep(am.Select, am.Content, ctx)),
+            XsltArrayMember am => ClassifyStoredEntry(Sweep.Motionless, null, am.Select, am.Content, ctx),
 
             // ---- Transmitting / copying instructions --------------------------
             // §19.8: xsl:copy-of makes a GROUNDED deep copy of the selected sequence — its
@@ -1063,10 +1230,24 @@ public static class StreamabilityClassifier
             if (ps.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ps.Posture))
                 return NotStreamable();
             sweep = CombineSweep(sweep, ps.Sweep);
-            // §19.8: a sequence of constructed + streamed items takes the widened streamed
-            // posture (Grounded is absorbed by any streamed posture — see WidenNodePosture).
-            posture = first ? ps.Posture : WidenNodePosture(posture, ps.Posture);
-            first = false;
+
+            // §19.8: an in-body xsl:variable / xsl:param DECLARATION emits nothing into the
+            // constructed sequence — it only binds a value in scope. Its evaluation cost (sweep)
+            // and streamability (the guard above) still count, but its POSTURE must NOT widen the
+            // body's RESULT posture: `<xsl:variable name="e" select="(map:get($m,$k), .)"/>`
+            // reads the streamed `.` (striding) yet contributes no striding item to the emitted
+            // sequence, so a body that then only emits/returns GROUNDED accumulator state stays
+            // Grounded (si-iterate-037's map-accumulating iterate body). Treating the binding's
+            // posture as part of the sequence posture wrongly forced the body to Striding/Crawling
+            // and made the enclosing xsl:iterate reject (it requires a grounded body result).
+            bool isBinding = child is XsltVariableInstruction or XsltParamInstruction;
+            if (!isBinding)
+            {
+                // §19.8: a sequence of constructed + streamed items takes the widened streamed
+                // posture (Grounded is absorbed by any streamed posture — see WidenNodePosture).
+                posture = first ? ps.Posture : WidenNodePosture(posture, ps.Posture);
+                first = false;
+            }
 
             if (child is XsltVariableInstruction { Name: var vname })
             {
@@ -1301,6 +1482,29 @@ public static class StreamabilityClassifier
         if (select is not null)
             return SweepOf(select, ctx);
         return BodySweep(content, ctx);
+    }
+
+    /// <summary>
+    /// §19.8.2: classify an xsl:map-entry / xsl:array-member as a GROUNDED stored value, rejecting
+    /// when its key (<paramref name="key"/>) or value (<paramref name="select"/>/<paramref name="content"/>)
+    /// is a live streamed NODE sequence (Striding/Crawling) that cannot be captured without
+    /// buffering (si-map-901/902). Mirrors the CapturesStreamedNodes guard on the expression-form
+    /// map/array constructors. Grounded/atomized/climbing keys and values are storable.
+    /// </summary>
+    private static PostureSweep ClassifyStoredEntry(
+        Sweep keySweep, XQueryExpression? key, XQueryExpression? select,
+        XsltSequenceConstructor? content, StreamingContext ctx)
+    {
+        if (key is not null)
+        {
+            var k = Classify(key, ctx);
+            if (k.Sweep == Sweep.FreeRanging || !IsStreamablePosture(k.Posture) || CapturesStreamedNodes(k.Posture))
+                return NotStreamable();
+        }
+        var v = select is not null ? Classify(select, ctx) : (content is not null ? Classify(content, ctx) : Grounded(Sweep.Motionless));
+        if (v.Sweep == Sweep.FreeRanging || !IsStreamablePosture(v.Posture) || CapturesStreamedNodes(v.Posture))
+            return NotStreamable();
+        return Grounded(CombineSweep(keySweep, v.Sweep));
     }
 
     /// <summary>Combined sweep of a (possibly null) sequence-constructor body.</summary>

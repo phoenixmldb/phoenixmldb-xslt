@@ -3312,74 +3312,25 @@ public sealed class XsltTransformEngine
     /// demands it, OR the posture/sweep classifier's <see cref="StreamingPlanner.Plan"/> derives
     /// <see cref="StreamingPlan.BufferWholeInput"/>. Because it only ever ORs in more buffering, a
     /// body the classifier declares guaranteed-streamable (<see cref="StreamingPlan.StreamInline"/>)
-    /// never triggers it. This closes the ~13 doc-level cases the legacy detector alone misses.
+    /// never triggers it. This closes the doc-level cases the legacy detector alone misses.
     /// <para>
-    /// CARVE-OUT (path b): a doc-level body whose TOP LEVEL contains an <c>xsl:iterate</c> is
-    /// governed by the legacy detector ALONE — the additive Plan trigger is suppressed for it. The
-    /// classifier still over-rejects such bodies when they mix a grounded accumulate-into-a-map
-    /// iterate with downstream instructions it cannot yet model (unmodelled functions like
-    /// <c>random-number-generator</c>/<c>map:*</c> poison the whole-body composition), yet the
-    /// executor streams them correctly today (si-iterate-037: <c>$words := //text()!tokenize(.)</c>
-    /// consumes the input once, then everything is grounded map/accumulator computation). Honouring
-    /// Plan's BufferWholeInput for those would force whole-input materialization of a 100K-item
-    /// streamable body and time out. All 13 doc-level wins are NON-iterate top-level bodies, so this
-    /// carve-out preserves every win while avoiding the hang.
-    /// TODO(#143): the classifier lacks full doc-level composition for iterate bodies that reference
-    /// unmodelled functions (map:*, random-number-generator, …) — si-iterate-037 is over-rejected
-    /// (its top-level iterate + downstream unmodelled fns → BufferWholeInput). xsl:variable-binding
-    /// tracking (added this phase) fixes the tail($words)/head($words) part but not the downstream
-    /// unmodelled-function poisoning. Model those roles, then drop this carve-out.
+    /// (#143 Phase 1.5) The former <c>xsl:iterate</c> carve-out is RETIRED: the classifier now
+    /// models the map:/array:/math: function libraries and fn:random-number-generator as grounded
+    /// (namespace-aware), map/array lookups and grounded-target dynamic calls, and no longer lets an
+    /// in-body xsl:variable binding's posture widen the body result posture. si-iterate-037's
+    /// map-accumulating iterate body therefore classifies guaranteed-streamable
+    /// (<see cref="StreamingPlan.StreamInline"/>) — it is never buffered, so no 100K-iteration hang.
     /// </para>
     /// </summary>
     internal static bool DocLevelWholeInputBuffer(Ast.XsltSequenceConstructor? body)
     {
         if (StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(body))
             return true;
-        if (body is null || BodyContainsIterate(body))
+        if (body is null)
             return false;
         return StreamingPlanner.Plan(body, new StreamingContext(Posture.Striding, InStreamedScope: true))
             == StreamingPlan.BufferWholeInput;
     }
-
-    /// <summary>
-    /// True when <paramref name="body"/> contains an <c>xsl:iterate</c> anywhere (directly or
-    /// nested inside a variable/element/choose/for-each/etc. content sequence constructor). The
-    /// carve-out on <see cref="DocLevelWholeInputBuffer"/> suppresses the additive Plan trigger
-    /// for such bodies. si-iterate-037's iterate is nested inside an <c>xsl:variable</c> content
-    /// and an LRE, so a top-level-only check would miss it — hence the recursive descent.
-    /// </summary>
-    private static bool BodyContainsIterate(Ast.XsltSequenceConstructor? body)
-    {
-        if (body is null) return false;
-        foreach (var insn in body.Instructions)
-            if (InstructionContainsIterate(insn))
-                return true;
-        return false;
-    }
-
-    private static bool InstructionContainsIterate(Ast.XsltInstruction insn) => insn switch
-    {
-        Ast.XsltIterate => true,
-        Ast.XsltForEach fe => BodyContainsIterate(fe.Body),
-        Ast.XsltForEachGroup feg => BodyContainsIterate(feg.Body),
-        Ast.XsltIf i => BodyContainsIterate(i.Then),
-        Ast.XsltChoose ch => ch.When.Any(w => BodyContainsIterate(w.Body))
-            || BodyContainsIterate(ch.Otherwise),
-        Ast.XsltVariableInstruction v => BodyContainsIterate(v.Content),
-        Ast.XsltParamInstruction p => BodyContainsIterate(p.Content),
-        Ast.XsltLiteralResultElement lre => BodyContainsIterate(lre.Content),
-        Ast.XsltElement el => BodyContainsIterate(el.Content),
-        Ast.XsltCopy cp => BodyContainsIterate(cp.Content),
-        Ast.XsltDocument d => BodyContainsIterate(d.Content),
-        Ast.XsltResultDocument rd => BodyContainsIterate(rd.Content),
-        Ast.XsltSequenceConstructor sc => BodyContainsIterate(sc),
-        Ast.XsltTry t => BodyContainsIterate(t.Body)
-            || t.Catches.Any(c => BodyContainsIterate(c.Body)),
-        Ast.XsltWherePopulated wp => BodyContainsIterate(wp.Content),
-        Ast.XsltOnEmpty oe => BodyContainsIterate(oe.Content),
-        Ast.XsltOnNonEmpty one => BodyContainsIterate(one.Content),
-        _ => false,
-    };
 
     private static bool ContentContainsApplyTemplatesStreaming(Ast.XsltSequenceConstructor? body)
     {
