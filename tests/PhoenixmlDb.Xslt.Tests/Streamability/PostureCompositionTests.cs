@@ -1714,4 +1714,93 @@ public class PostureCompositionTests
         };
         StreamabilityClassifier.Classify(asrt, Streamed).IsGuaranteedStreamable.Should().BeFalse();
     }
+
+    // ---------------------------------------------------------------------------
+    // #143 expression-arm gap closure: the current-date/time accessor functions.
+    // §19.8 / fn spec: fn:current-date(), fn:current-time(), fn:current-dateTime()
+    // are NULLARY "current date and time" accessors — deterministic per-transform
+    // constants that navigate NO streamed input. They are grounded+motionless, exactly
+    // like a literal. Modelling them lets a streamed body's `<xsl:sequence
+    // select="current-date()"/>` (sf-sum/sx-GeneralComp -A/-B positive tests) stream,
+    // and unlocks their nested use inside comparisons/predicates
+    // (`current-date() lt xs:date('...')`). They can NEVER over-accept: being nullary
+    // and reading nothing, they only ever make a select streamable when the REST of the
+    // expression is already streamable — a consuming-predicate wrapper stays roaming.
+    // ---------------------------------------------------------------------------
+
+    [Fact]
+    public void CurrentDate_IsGroundedMotionless()
+    {
+        StreamabilityClassifier.Classify(Fn("current-date"), Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Fact]
+    public void CurrentTime_IsGroundedMotionless()
+    {
+        StreamabilityClassifier.Classify(Fn("current-time"), Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Fact]
+    public void CurrentDateTime_IsGroundedMotionless()
+    {
+        StreamabilityClassifier.Classify(Fn("current-dateTime"), Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Motionless));
+    }
+
+    [Fact]
+    public void CurrentDate_InSequenceSelect_IsStreamable()
+    {
+        // <xsl:sequence select="current-date()"/> in a streamed body — the corpus shape.
+        var seq = new XsltSequence { Select = Fn("current-date") };
+        StreamabilityClassifier.Classify(seq, Streamed).IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void CurrentDate_ComparedToLiteral_IsStreamable()
+    {
+        // current-date() lt xs:date('1999-11-16') — both operands motionless ⇒ streamable.
+        var cmp = new BinaryExpression
+        {
+            Operator = BinaryOperator.LessThan,
+            Left = Fn("current-date"),
+            Right = new StringLiteral { Value = "1999-11-16" },
+        };
+        StreamabilityClassifier.Classify(cmp, Streamed).IsGuaranteedStreamable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void CurrentDate_ComparedToConsumingElementPath_StaysStreamable_SingleConsumer()
+    {
+        // current-date() (motionless) vs child::PRICE (atomized striding = consuming). Only ONE
+        // operand consumes ⇒ (Grounded, Consuming), still streamable. Confirms current-date does
+        // not itself add a second consumer.
+        var cmp = new BinaryExpression
+        {
+            Operator = BinaryOperator.GreaterThan,
+            Left = Fn("current-date"),
+            Right = RelPath(Step(Axis.Child, "PRICE")),
+        };
+        StreamabilityClassifier.Classify(cmp, Streamed)
+            .Should().Be(new PostureSweep(Posture.Grounded, Sweep.Consuming));
+    }
+
+    [Fact]
+    public void CurrentDate_InConsumingPredicatePath_StaysNotStreamable()
+    {
+        // NEGATIVE sibling: current-date() modelled motionless must NOT rescue a genuinely
+        // non-streamable wrapper. child::ITEM[current-date() = child::DATE]/@id — the predicate
+        // atomizes a striding child (child::DATE) ⇒ consuming predicate on a streamed axis ⇒ the
+        // filtered sequence roams. Stays not streamable.
+        var path = RelPath(
+            Step(Axis.Child, "ITEM", new BinaryExpression
+            {
+                Operator = BinaryOperator.GeneralEqual,
+                Left = Fn("current-date"),
+                Right = RelPath(Step(Axis.Child, "DATE")),
+            }),
+            Step(Axis.Attribute, "id"));
+        StreamabilityClassifier.Classify(path, Streamed).IsGuaranteedStreamable.Should().BeFalse();
+    }
 }

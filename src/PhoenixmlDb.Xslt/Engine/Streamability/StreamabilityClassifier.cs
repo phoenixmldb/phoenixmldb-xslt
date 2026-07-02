@@ -399,6 +399,19 @@ public static class StreamabilityClassifier
                 // the node's own properties — grounded (atomic) result, motionless.
                 return Grounded(Sweep.Motionless);
 
+            case FnRole.MotionlessGrounded:
+                // §19.8 / fn spec: the "current date and time" accessors current-date()/
+                // current-time()/current-dateTime() are NULLARY deterministic per-transform
+                // constants — they navigate NO streamed input and read no operand. Grounded,
+                // motionless (identical streamability to a literal). Being nullary they can never
+                // over-accept: they only ever contribute a motionless operand, so a genuinely
+                // non-streamable enclosing shape (a consuming predicate, a second downward
+                // consumer) still poisons the whole expression. A defensive operand-streamable
+                // guard is kept in case a future 1-arg overload (e.g. an explicit timezone) lands.
+                if (!AllOperandsStreamable(fc.Arguments, ctx))
+                    return NotStreamable();
+                return Grounded(WorstSweep(fc.Arguments, ctx));
+
             case FnRole.StringValue:
                 // string()/data()/normalize-space()/string-length() atomize the subtree string
                 // value — grounded (atomic) result, consuming the operand's subtree. A
@@ -960,6 +973,7 @@ public static class StreamabilityClassifier
     {
         Unknown,
         NodeProperty,  // reads node identity/name only — Inspection, motionless, grounded result
+        MotionlessGrounded, // nullary deterministic constant (current-date/time/dateTime) — motionless, grounded
         StringValue,   // atomizes subtree string-value — Absorption, consuming, grounded result
         Atomizing,     // atomizes operand(s) → grounded atomic/boolean; posture-aware sweep
         Aggregate,     // absorbs a sequence to an atomic — Absorption, consuming, grounded result
@@ -995,6 +1009,13 @@ public static class StreamabilityClassifier
         {
             "name" or "local-name" or "node-name" or "namespace-uri"
                 or "generate-id" => FnRole.NodeProperty,
+
+            // §19.8 / fn spec: the "current date and time" accessor functions — nullary
+            // deterministic per-transform constants that navigate no streamed input. Motionless,
+            // grounded, exactly like a literal. Unlocks `<xsl:sequence select="current-date()"/>`
+            // and nested `current-date() lt xs:date('…')` in streamed bodies (sf-sum / sx-GeneralComp
+            // -A/-B positive tests) without any risk of over-accept (nullary ⇒ no operand to consume).
+            "current-date" or "current-time" or "current-dateTime" => FnRole.MotionlessGrounded,
 
             // §19.8.8: position()/last() require the size/index of the sequence being
             // filtered — knowing last() needs look-ahead to the end of a striding sequence,
