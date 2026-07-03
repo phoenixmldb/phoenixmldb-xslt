@@ -25,6 +25,21 @@ internal enum WatcherAggregation
 }
 
 /// <summary>
+/// Upward-navigation axis for a climbing (striding-then-climbing) watcher.
+/// <c>None</c> = a plain downward watcher (no climb). <c>Ancestor</c> /
+/// <c>AncestorOrSelf</c> = the watcher's leaf path is followed by an
+/// <c>ancestor::</c> / <c>ancestor-or-self::</c> step. The climb is resolved at the
+/// leaf's StartElement, where every ancestor is already open on the streaming
+/// element stack (Task 1.3).
+/// </summary>
+internal enum ClimbAxisKind
+{
+    None,
+    Ancestor,
+    AncestorOrSelf
+}
+
+/// <summary>
 /// Matches a path pattern against the streaming element stack.
 /// </summary>
 internal sealed class StreamPathMatcher
@@ -239,6 +254,37 @@ internal sealed class StreamWatcher
     /// </summary>
     public bool Outermost { get; init; }
 
+    /// <summary>
+    /// Task 1.3 (CLIMBING): when non-<c>None</c>, this watcher's leaf path is followed
+    /// by an <c>ancestor::</c> / <c>ancestor-or-self::</c> step. Instead of accumulating
+    /// the matched LEAF, the processor resolves the upward navigation against the leaf's
+    /// open-ancestor chain at StartElement (every ancestor is known there) via
+    /// <see cref="OnClimbMatch"/>. When <see cref="ValueAttribute"/> is also set, the
+    /// climb is followed by an attribute step (<c>ancestor::*/@a</c>), so the accumulated
+    /// items are the matched ancestors' attribute values; otherwise they are the ancestor
+    /// element nodes themselves (for <c>! name()</c> / union / windowing consumers).
+    /// </summary>
+    public ClimbAxisKind ClimbAxis { get; init; } = ClimbAxisKind.None;
+
+    /// <summary>
+    /// A single open ancestor supplied to <see cref="OnClimbMatch"/>: its stable
+    /// <see cref="OpenId"/> (a monotonic id assigned when the element was pushed onto the
+    /// streaming stack — shared ancestors of two leaves keep the same id, distinct
+    /// same-name elements get distinct ids, so document-order de-duplication is exact),
+    /// its <see cref="Name"/>, and its <see cref="Attributes"/> (may be null). A
+    /// materialized <see cref="XdmNode"/> may be attached (<see cref="Node"/>) so
+    /// <c>name()</c>/attribute consumers see a real node.
+    /// </summary>
+    public readonly record struct ClimbAncestor(
+        long OpenId,
+        string Name,
+        IReadOnlyDictionary<string, string>? Attributes,
+        XdmNode? Node = null);
+
+    // Open ids already contributed to the accumulation, so a shared ancestor climbed
+    // from multiple leaves is emitted once (in first-seen document order).
+    private readonly HashSet<long> _climbSeenOpenIds = [];
+
     // Accumulation state
     private long _count;
     private double _sum;
@@ -410,6 +456,69 @@ internal sealed class StreamWatcher
                 }
                 break;
         }
+    }
+
+    /// <summary>
+    /// Task 1.3 (CLIMBING): resolves the <c>ancestor::</c> / <c>ancestor-or-self::</c>
+    /// navigation for a matched leaf against its currently-open ancestor chain.
+    /// <paramref name="ancestors"/> are outermost-first (document order); for
+    /// <see cref="ClimbAxisKind.AncestorOrSelf"/> the leaf itself is the innermost
+    /// selected node and is appended last. Each selected node is contributed at most
+    /// once across all leaves (keyed on <see cref="ClimbAncestor.OpenId"/> / the leaf's
+    /// own <paramref name="leafOpenId"/>) so <c>ancestor::*</c> climbed from several
+    /// leaves de-duplicates by node identity in first-seen document order — matching the
+    /// XPath reverse-axis-then-document-order semantics for the in-scope corpus shapes.
+    ///
+    /// When <see cref="ValueAttribute"/> is set the selected item is the node's named
+    /// attribute value (dropped when absent, mirroring an empty attribute step); when a
+    /// materialized <see cref="XdmNode"/> is attached it is captured for node consumers
+    /// (<c>name()</c>, union) alongside the string form used by value-of/string-join.
+    /// </summary>
+    public void OnClimbMatch(
+        IReadOnlyList<ClimbAncestor> ancestors,
+        string leafName,
+        IReadOnlyDictionary<string, string>? leafAttributes,
+        long leafOpenId = -1,
+        XdmNode? leafNode = null)
+    {
+        if (Aggregation is not (WatcherAggregation.Sequence or WatcherAggregation.Snapshot))
+            return;
+
+        // ancestor::  -> the ancestors only (outermost first).
+        // ancestor-or-self:: -> ancestors then the leaf (document order: leaf is deepest).
+        for (int i = 0; i < ancestors.Count; i++)
+            ContributeClimbNode(ancestors[i].OpenId, ancestors[i].Name, ancestors[i].Attributes, ancestors[i].Node);
+
+        if (ClimbAxis == ClimbAxisKind.AncestorOrSelf)
+            ContributeClimbNode(leafOpenId, leafName, leafAttributes, leafNode);
+    }
+
+    private void ContributeClimbNode(
+        long openId,
+        string name,
+        IReadOnlyDictionary<string, string>? attributes,
+        XdmNode? node)
+    {
+        // De-duplicate by node identity. A synthetic (openId < 0) node is always kept
+        // (unit-test / no-identity path), but the real streaming path always supplies a
+        // stable open id so shared ancestors collapse to one occurrence.
+        if (openId >= 0 && !_climbSeenOpenIds.Add(openId)) return;
+
+        if (ValueAttribute != null)
+        {
+            // ancestor::*/@a — the selected item is the attribute value (untyped atomic),
+            // absent attributes contribute nothing (an empty attribute step).
+            var av = attributes?.GetValueOrDefault(ValueAttribute);
+            if (av != null)
+                _items.Add(new Xdm.XsUntypedAtomic(av));
+            return;
+        }
+
+        // Bare ancestor::* — the selected item is the element node. Capture its name as
+        // the string form (value-of/string-join) and the materialized node (name()/union).
+        _items.Add(name);
+        if (node != null)
+            _snapshots.Add(node);
     }
 
     /// <summary>
@@ -649,6 +758,7 @@ internal sealed class StreamWatcher
         _snapshots.Clear();
         _collectingSubtree = false;
         _subtreeEvents.Clear();
+        _climbSeenOpenIds.Clear();
     }
 }
 

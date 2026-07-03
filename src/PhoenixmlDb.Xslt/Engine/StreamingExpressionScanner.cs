@@ -343,6 +343,26 @@ internal sealed class StreamingExpressionScanner
                 }
                 break;
 
+            // Striding-then-climbing path — a downward striding prefix that locates a
+            // leaf, followed by ancestor::/ancestor-or-self:: (optionally then @attr).
+            // The climb is resolved at the leaf's StartElement (all ancestors open), so
+            // register a Sequence watcher keyed on the whole climbing PathExpression; the
+            // compositional rewriter (Task 1.1/1.2) substitutes $__streaming_watcher_N for
+            // it inside any enclosing head/tail/subsequence/if/name() wrapper. (Task 1.3)
+            case PathExpression climbPath when TryExtractClimbingPath(climbPath) is { } climb:
+                _watchers.Add(new StreamWatcher
+                {
+                    SourceExpression = expr,
+                    ContextRootDepth = _contextRootDepth,
+                    PathMatcher = new StreamPathMatcher(climb.LeafPath.Path),
+                    Aggregation = WatcherAggregation.Sequence,
+                    ValueAttribute = climb.ClimbAttribute,
+                    Predicates = climb.LeafPath.Predicates,
+                    IntermediatePredicates = climb.LeafPath.IntermediatePredicates,
+                    ClimbAxis = climb.ClimbAxis
+                });
+                return;
+
             // snapshot() / copy-of() wrapping a path
             case FunctionCallExpression fc2 when IsSnapshotFunction(fc2):
                 var snapPath = ExtractPathFromArgument(fc2.Arguments[0]);
@@ -848,6 +868,98 @@ internal sealed class StreamingExpressionScanner
     private static ExtractedPath? ExtractPathFromArgument(XQueryExpression expr)
     {
         return ExtractPathFromExpression(expr);
+    }
+
+    /// <summary>
+    /// Task 1.3 — the recognized shape of a striding-then-climbing path:
+    /// a downward striding <see cref="LeafPath"/> that locates a leaf, a single
+    /// <see cref="ClimbAxis"/> step (<c>ancestor::</c> / <c>ancestor-or-self::</c>),
+    /// and an optional trailing attribute (<see cref="ClimbAttribute"/>, the local
+    /// name of an <c>@a</c> selected from each climbed node).
+    /// </summary>
+    private readonly record struct ClimbingPath(
+        ExtractedPath LeafPath,
+        ClimbAxisKind ClimbAxis,
+        string? ClimbAttribute);
+
+    /// <summary>
+    /// Recognizes <c>downward-prefix / (ancestor|ancestor-or-self)::* [ / @attr ]</c>
+    /// and, where <c>data(@attr)</c> is used in the corpus, its function-wrapped
+    /// equivalent handled by the caller. Returns <c>null</c> for any other shape (a bare
+    /// climb with no downward anchor, a named-ancestor test, a reverse axis other than
+    /// ancestor(-or-self), or a non-attribute tail) so the case stays conservative.
+    /// The downward prefix must itself be a recognizable streaming leaf path.
+    /// </summary>
+    private static ClimbingPath? TryExtractClimbingPath(PathExpression path)
+    {
+        // A non-step initial expression means the steps don't navigate from the
+        // streamable document root — reject (mirrors IsDownwardPath).
+        if (path.InitialExpression != null && path.InitialExpression is not ContextItemExpression)
+            return null;
+
+        var steps = path.Steps;
+        if (steps.Count < 2) return null;
+
+        // Locate the (single) climbing step. It must be ancestor/ancestor-or-self with a
+        // wildcard name test; everything before it must be downward; after it at most one
+        // attribute step (the @attr tail).
+        int climbIdx = -1;
+        for (int i = 0; i < steps.Count; i++)
+        {
+            var ax = steps[i].Axis;
+            if (ax is Axis.Ancestor or Axis.AncestorOrSelf)
+            {
+                if (climbIdx >= 0) return null; // more than one climb — out of scope
+                climbIdx = i;
+            }
+        }
+        if (climbIdx <= 0) return null; // no climb, or climb with no downward prefix (bare)
+
+        var climbStep = steps[climbIdx];
+        if (climbStep.Predicates.Count > 0) return null; // predicate on the climb — out of scope
+        // Only the any-name wildcard climb (ancestor::*) appears in the target corpus.
+        if (climbStep.NodeTest is not NameTest { LocalName: "*" }) return null;
+
+        // Prefix: steps[0..climbIdx) must all be downward.
+        for (int i = 0; i < climbIdx; i++)
+        {
+            if (steps[i].Axis is not (Axis.Child or Axis.Descendant or Axis.DescendantOrSelf))
+                return null;
+        }
+
+        // Tail after the climb: nothing, or a single attribute step (@a / @*).
+        string? climbAttribute = null;
+        if (climbIdx + 1 < steps.Count)
+        {
+            if (climbIdx + 2 != steps.Count) return null; // more than one tail step
+            var tail = steps[climbIdx + 1];
+            if (tail.Axis != Axis.Attribute) return null;
+            if (tail.Predicates.Count > 0) return null;
+            climbAttribute = tail.NodeTest is NameTest { LocalName: var ln } && ln != "*" ? ln : null;
+            // @* (any attribute) is out of scope for this slice — a per-node attribute
+            // fan-out needs multi-value expansion the single-ValueAttribute watcher can't
+            // express. Reject so those cases stay conservative (deferred).
+            if (climbAttribute == null) return null;
+        }
+
+        // Build the leaf-only downward path and reuse the existing extractor.
+        var leafPath = new PathExpression
+        {
+            IsAbsolute = path.IsAbsolute,
+            InitialExpression = path.InitialExpression,
+            Steps = steps.Take(climbIdx).ToArray(),
+        };
+        var leaf = ExtractPathFromExpression(leafPath);
+        if (leaf == null) return null;
+        // The leaf extractor must not itself have produced an attribute tail (the prefix
+        // is pure element steps) — the climb's @attr is carried separately.
+        if (leaf.Value.Attribute != null) return null;
+
+        var climbAxis = climbStep.Axis == Axis.AncestorOrSelf
+            ? ClimbAxisKind.AncestorOrSelf
+            : ClimbAxisKind.Ancestor;
+
+        return new ClimbingPath(leaf.Value, climbAxis, climbAttribute);
     }
 
     private static ExtractedPath? ExtractPathFromExpression(XQueryExpression expr)

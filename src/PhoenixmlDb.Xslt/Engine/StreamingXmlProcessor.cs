@@ -85,6 +85,16 @@ internal sealed class StreamingXmlProcessor
     // context position. Maintained at the same push/pop sites as _ancestorNames.
     private readonly List<(int ElementPos, int NamePos)> _ancestorPositions = [];
 
+    // Stable open-element identity for CLIMBING watchers (Task 1.3), parallel to
+    // _ancestorNames (outermost first). Each pushed element receives a monotonically
+    // increasing id from _nextOpenId; the id stays fixed while the element is open, so
+    // two leaves that share an ancestor see the SAME id for it and distinct same-name
+    // elements see distinct ids. A climbing watcher de-duplicates its accumulated
+    // ancestor sequence on these ids (ancestor::* over multiple leaves = each ancestor
+    // once, in first-seen document order). Maintained at the _ancestorNames push/pop sites.
+    private readonly List<long> _ancestorOpenIds = [];
+    private long _nextOpenId;
+
     // Scratch buffer for clearing per-name child counters at a closing element's depth
     // (avoids allocating a removal list per EndElement). Reused across EndElement events.
     private readonly List<(int Depth, string Name)> _nameCountResetScratch = [];
@@ -266,6 +276,7 @@ internal sealed class StreamingXmlProcessor
                                 // the source-document aggregation path, not under a suppressed
                                 // template), so a 0/0 sentinel suffices here.
                                 _ancestorPositions.Add((0, 0));
+                                _ancestorOpenIds.Add(_nextOpenId++);
                             }
                             else
                             {
@@ -652,6 +663,7 @@ internal sealed class StreamingXmlProcessor
                             _ancestorNames.Add(current.LocalName);
                             _ancestorAttributes.Add(BuildAttrDict(current.Attributes));
                             _ancestorPositions.Add((siblingCount, currentNamePos));
+                            _ancestorOpenIds.Add(_nextOpenId++);
 
                             // If the template had an empty body (suppression), skip all children
                             if (wasSuppressed && suppressionDepth < 0)
@@ -694,6 +706,8 @@ internal sealed class StreamingXmlProcessor
                                 _ancestorAttributes.RemoveAt(_ancestorAttributes.Count - 1);
                             if (_ancestorPositions.Count > 0)
                                 _ancestorPositions.RemoveAt(_ancestorPositions.Count - 1);
+                            if (_ancestorOpenIds.Count > 0)
+                                _ancestorOpenIds.RemoveAt(_ancestorOpenIds.Count - 1);
 
                             // Deferred-template execution: if a template firing for this
                             // element was deferred (consuming aggregates accumulated via
@@ -1357,6 +1371,17 @@ internal sealed class StreamingXmlProcessor
             // Check element path match (anchored to the watcher's context-root depth)
             if (watcher.PathMatcher.Matches(_ancestorNames, elementName, watcher.ContextRootDepth))
             {
+                // CLIMBING (Task 1.3): the leaf matched — resolve its ancestor::/
+                // ancestor-or-self:: navigation NOW, while every ancestor is open on the
+                // streaming stack. This is sound without buffering: an ancestor is fully
+                // known at the child's StartElement. The climb accumulates the ancestor
+                // element nodes (or their @attr values); cross-leaf de-dup is by open id.
+                if (watcher.ClimbAxis != ClimbAxisKind.None)
+                {
+                    ResolveClimbMatch(watcher, elementName, attributes);
+                    continue;
+                }
+
                 // When predicates are present we MUST defer to EndElement so the
                 // matched element can be materialized for predicate evaluation
                 // — otherwise Count/Sum/etc. would commit before we know whether
@@ -1495,6 +1520,175 @@ internal sealed class StreamingXmlProcessor
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// CLIMBING dispatch (Task 1.3). The leaf located by the watcher's downward striding
+    /// path has just fired StartElement, so <see cref="_ancestorNames"/> /
+    /// <see cref="_ancestorAttributes"/> / <see cref="_ancestorOpenIds"/> hold exactly the
+    /// leaf's open ancestors (outermost first; the leaf is NOT yet pushed). Build the
+    /// selected-node set for <c>ancestor::*</c> (the ancestors) or <c>ancestor-or-self::*</c>
+    /// (ancestors + the leaf) and hand it to the watcher, which materializes a lightweight
+    /// element node per selected node (so <c>! name()</c> / union see a real node) and
+    /// de-duplicates across leaves by open id. When the climb is followed by <c>/@a</c>
+    /// (<see cref="StreamWatcher.ValueAttribute"/> set) the selected item is the node's
+    /// attribute value instead, so no element node is materialized.
+    /// </summary>
+    private void ResolveClimbMatch(
+        StreamWatcher watcher,
+        string leafName,
+        IReadOnlyDictionary<string, string>? leafAttributes)
+    {
+        // Intermediate (ancestor-step) predicates on the downward prefix — e.g. the
+        // [1] on ITEM in /BOOKLIST/BOOKS/ITEM[1]/PRICE/ancestor::* — must gate whether
+        // this leaf's climb fires. They are captured as forward-countable positional
+        // filters; evaluate them synchronously here (the climb dispatch is sync). A
+        // positional [N]/position()-comparison is decided from the ancestor's captured
+        // running position. Any predicate that is NOT synchronously decidable makes the
+        // leaf conservatively NON-matching (skip) rather than accumulate unfiltered.
+        if (watcher.IntermediatePredicates.Count > 0
+            && !ClimbIntermediatePredicatesPass(watcher))
+            return;
+
+        var ancestors = new List<StreamWatcher.ClimbAncestor>(_ancestorNames.Count);
+        bool needNodes = watcher.ValueAttribute == null; // bare climb yields element nodes
+        for (int i = 0; i < _ancestorNames.Count; i++)
+        {
+            var name = _ancestorNames[i];
+            var attrs = i < _ancestorAttributes.Count ? _ancestorAttributes[i] : null;
+            long openId = i < _ancestorOpenIds.Count ? _ancestorOpenIds[i] : -1;
+            XdmNode? node = needNodes ? MaterializeClimbNode(name, attrs) : null;
+            ancestors.Add(new StreamWatcher.ClimbAncestor(openId, name, attrs, node));
+        }
+
+        // For ancestor-or-self the leaf itself is a selected node; give it a fresh open
+        // id distinct from any ancestor (it is deeper than every ancestor in doc order).
+        long leafOpenId = _nextOpenId; // not yet consumed by a push
+        XdmNode? leafNode = (needNodes && watcher.ClimbAxis == ClimbAxisKind.AncestorOrSelf)
+            ? MaterializeClimbNode(leafName, leafAttributes)
+            : null;
+
+        watcher.OnClimbMatch(ancestors, leafName, leafAttributes, leafOpenId, leafNode);
+    }
+
+    /// <summary>
+    /// Synchronously evaluates a climbing watcher's intermediate (ancestor-step) predicates
+    /// against the currently-open ancestor chain. Returns true only when every predicate is
+    /// a forward-countable POSITIONAL filter that PASSES at the ancestor's captured running
+    /// position. Any non-positional (motionless) predicate — which would need to materialize
+    /// and evaluate against the ancestor element asynchronously — returns false so the leaf's
+    /// climb is conservatively skipped (empty), never accumulated unfiltered. No in-scope
+    /// climbing case carries a non-positional intermediate predicate.
+    /// </summary>
+    private bool ClimbIntermediatePredicatesPass(StreamWatcher watcher)
+    {
+        foreach (var ip in watcher.IntermediatePredicates)
+        {
+            int idx = _ancestorNames.Count - ip.AncestorOffset;
+            if (idx < 0 || idx >= _ancestorNames.Count) return false;
+            if (!ip.IsPositional) return false; // needs async ancestor eval — stay conservative
+            int contextPos = 0;
+            if (idx < _ancestorPositions.Count)
+            {
+                var pos = _ancestorPositions[idx];
+                contextPos = ip.IsWildcardStep ? pos.ElementPos : pos.NamePos;
+            }
+            foreach (var pred in ip.Predicates)
+                if (!PositionalPredicatePasses(pred, contextPos)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// True when a forward-countable positional predicate holds at <paramref name="position"/>:
+    /// a bare numeric literal <c>[N]</c> (position() = N) or a comparison with position() on
+    /// one side and a constant on the other. Mirrors the scanner's forward-countable acceptance
+    /// set (<c>ArePredicatesForwardCountablePositional</c>); conservative false otherwise.
+    /// </summary>
+    private static bool PositionalPredicatePasses(XQueryExpression pred, int position)
+    {
+        if (pred is IntegerLiteral or DecimalLiteral or DoubleLiteral)
+            return NumericLiteralEqualsPosition(pred, position);
+
+        if (pred is BinaryExpression bin)
+        {
+            bool leftPos = bin.Left is FunctionCallExpression { Name.LocalName: "position", Arguments.Count: 0 };
+            bool rightPos = bin.Right is FunctionCallExpression { Name.LocalName: "position", Arguments.Count: 0 };
+            if (leftPos == rightPos) return false;
+            var constant = leftPos ? bin.Right : bin.Left;
+            if (!TryConstInt(constant, out int c)) return false;
+            long l = leftPos ? position : c;
+            long r = leftPos ? c : position;
+            return bin.Operator switch
+            {
+                BinaryOperator.Equal or BinaryOperator.GeneralEqual => l == r,
+                BinaryOperator.NotEqual or BinaryOperator.GeneralNotEqual => l != r,
+                BinaryOperator.LessThan or BinaryOperator.GeneralLessThan => l < r,
+                BinaryOperator.LessOrEqual or BinaryOperator.GeneralLessOrEqual => l <= r,
+                BinaryOperator.GreaterThan or BinaryOperator.GeneralGreaterThan => l > r,
+                BinaryOperator.GreaterOrEqual or BinaryOperator.GeneralGreaterOrEqual => l >= r,
+                _ => false,
+            };
+        }
+        return false;
+    }
+
+    private static bool TryConstInt(XQueryExpression expr, out int value)
+    {
+        switch (expr)
+        {
+            case IntegerLiteral { LongValue: { } lv }: value = (int)lv; return true;
+            case DecimalLiteral dl when dl.Value == decimal.Truncate(dl.Value):
+                value = (int)dl.Value; return true;
+            case DoubleLiteral dbl when dbl.Value == Math.Truncate(dbl.Value):
+                value = (int)dbl.Value; return true;
+            default: value = 0; return false;
+        }
+    }
+
+    /// <summary>
+    /// Materializes a shallow, childless <see cref="XdmElement"/> (name + attributes) for
+    /// a climbed ancestor/self node. Sufficient for the in-scope consumers — <c>name()</c>,
+    /// <c>@attr</c>, and set-union ordering — which never descend into children. Registered
+    /// in the streaming node store so downstream evaluation can resolve it by id.
+    /// </summary>
+    private XdmElement MaterializeClimbNode(string name, IReadOnlyDictionary<string, string>? attrs)
+    {
+        var elemId = _nodeStore.NextId();
+        var documentId = new DocumentId(0);
+        var attrIds = new List<NodeId>();
+        if (attrs is { Count: > 0 })
+        {
+            foreach (var (k, v) in attrs)
+            {
+                var attrId = _nodeStore.NextId();
+                _nodeStore.Register(new XdmAttribute
+                {
+                    Id = attrId,
+                    Document = documentId,
+                    Namespace = _nodeStore.InternNamespace(string.Empty),
+                    LocalName = k,
+                    Prefix = null,
+                    Value = v,
+                    Parent = elemId
+                });
+                attrIds.Add(attrId);
+            }
+        }
+        var elem = new XdmElement
+        {
+            Id = elemId,
+            Document = documentId,
+            Namespace = _nodeStore.InternNamespace(string.Empty),
+            LocalName = name,
+            Prefix = null,
+            Attributes = attrIds.Count == 0 ? XdmElement.EmptyAttributes : attrIds,
+            Children = XdmElement.EmptyChildren,
+            NamespaceDeclarations = XdmElement.EmptyNamespaceDeclarations,
+            Parent = null
+        };
+        _nodeStore.Register(elem);
+        return elem;
     }
 
     /// <summary>
