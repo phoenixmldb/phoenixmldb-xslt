@@ -220,7 +220,6 @@ st-string-join-002
 su-absorbing-016
 su-absorbing-017
 su-absorbing-902
-sx-arithmetic-001
 sx-bang-006
 sx-comma-003
 sx-comma-018

@@ -5123,6 +5123,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     TargetType = castable.TargetType,
                 };
             }
+
+            // Task 1.2 — (Primary)[pred…] filter whose Primary is a watched striding
+            // base path (e.g. `(/BOOKLIST/BOOKS/ITEM/PRICE)[1]` in sx-arithmetic-001).
+            // Substitute the Primary with $__streaming_watcher_N and keep the outer
+            // predicates so `[1]` applies to the grounded materialized sequence in
+            // memory. NB the whole-FilterExpression-is-the-watched-source case (wrapped
+            // head/outermost/remove aggregation carrying OuterPredicates) is handled by
+            // the reference-equality direct-match block above and never reaches here.
+            case PhoenixmlDb.XQuery.Ast.FilterExpression filt:
+            {
+                var newPrimary = RewriteWithWatcherVariables(filt.Primary, watchers);
+                if (ReferenceEquals(newPrimary, filt.Primary)) return expr;
+                return new PhoenixmlDb.XQuery.Ast.FilterExpression
+                {
+                    Primary = newPrimary,
+                    Predicates = filt.Predicates,
+                };
+            }
         }
 
         return expr;

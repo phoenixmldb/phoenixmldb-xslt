@@ -212,6 +212,94 @@ public class StreamingOperatorRewriteTests
         seq.Items[2].Should().BeOfType<IntegerLiteral>();
     }
 
+    // =======================================================================
+    // Task 1.2 — a streamable striding base path reached through a
+    // FilterExpression composition point ((path)[pred]) is watched and
+    // substituted. This is the sx-arithmetic-001 shape: (path)[1] + 2.
+    // =======================================================================
+
+    [Fact]
+    public void Scanner_PathInsideFilterPrimary_RegistersSequenceWatcher()
+    {
+        // (/BOOKLIST/BOOKS/ITEM/PRICE)[1] + 2 — the striding base path is the
+        // Primary of a FilterExpression, itself the LHS of an arithmetic binary.
+        var path = StridingPath();
+        var filter = new FilterExpression
+        {
+            Primary = path,
+            Predicates = new XQueryExpression[] { new IntegerLiteral { Value = 1 } },
+        };
+        var expr = new BinaryExpression
+        {
+            Left = filter,
+            Operator = BinaryOperator.Add,
+            Right = new IntegerLiteral { Value = 2 },
+        };
+
+        var watchers = ScanSelect(expr);
+
+        watchers.Should().ContainSingle();
+        var w = watchers[0];
+        w.Aggregation.Should().Be(WatcherAggregation.Sequence);
+        // Keyed on the striding base path node so the rewriter's reference-equality
+        // substitution reaches it through the FilterExpression + BinaryExpression.
+        w.SourceExpression.Should().BeSameAs(path);
+    }
+
+    [Fact]
+    public void Rewriter_PathInsideFilterPrimary_SubstitutesWatcherVariable()
+    {
+        // (<striding-path>)[1] — after rewrite the Primary of the FilterExpression
+        // must be a $__streaming_watcher_N variable reference; the predicate stays.
+        var path = StridingPath();
+        var filter = new FilterExpression
+        {
+            Primary = path,
+            Predicates = new XQueryExpression[] { new IntegerLiteral { Value = 1 } },
+        };
+
+        var watcher = new StreamWatcher
+        {
+            SourceExpression = path,
+            ContextRootDepth = -1,
+            PathMatcher = new StreamPathMatcher("BOOKLIST/BOOKS/ITEM/PRICE"),
+            Aggregation = WatcherAggregation.Sequence,
+        };
+
+        var rewritten = DefaultXsltExecutionContext.RewriteWithWatcherVariables(
+            filter, new[] { watcher });
+
+        rewritten.Should().NotBeSameAs(filter);
+        var filt = rewritten.Should().BeOfType<FilterExpression>().Subject;
+        IsWatcherVar(filt.Primary).Should().BeTrue(
+            "the striding base path that is the Primary of a filter must be substituted");
+        filt.Predicates.Should().ContainSingle();
+        filt.Predicates[0].Should().BeOfType<IntegerLiteral>();
+    }
+
+    [Fact]
+    public void Scanner_RoamingPathInsideFilterPrimary_DoesNotRegisterWatcher()
+    {
+        // (ancestor::BOOKLIST)[1] — a reverse (climbing) axis inside a filter is not
+        // a striding downward path; IsDownwardPath rejects it, so no watcher registers
+        // (climbing streaming is Task 1.3, this stays conservative buffer-fallback).
+        var roaming = new PathExpression
+        {
+            IsAbsolute = false,
+            InitialExpression = null,
+            Steps = new[] { Step(Axis.Ancestor, "BOOKLIST") },
+        };
+        var filter = new FilterExpression
+        {
+            Primary = roaming,
+            Predicates = new XQueryExpression[] { new IntegerLiteral { Value = 1 } },
+        };
+
+        var watchers = ScanSelect(filter);
+
+        watchers.Should().BeEmpty();
+    }
+
     [Fact]
     public void Rewriter_NoWatchMatch_ReturnsSameReference()
     {

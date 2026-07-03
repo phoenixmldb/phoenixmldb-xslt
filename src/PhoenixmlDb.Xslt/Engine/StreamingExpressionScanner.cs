@@ -578,6 +578,23 @@ internal sealed class StreamingExpressionScanner
             case CastableExpression castable:
                 ScanExpression(castable.Expression);
                 break;
+
+            // Task 1.2 — FilterExpression composition point ((path)[pred]). A plain
+            // parenthesized striding base path with an outer predicate — e.g.
+            // `(/BOOKLIST/BOOKS/ITEM/PRICE)[1] + 2` (sx-arithmetic-001) — falls through
+            // the ScanExpression FilterExpression branch (which only fires for wrapped
+            // head/outermost/remove aggregations). Descend into the Primary so a
+            // streamable striding base path registers a Sequence watcher; the body
+            // rewriter (RewriteWithWatcherVariables) then substitutes the Primary with
+            // $__streaming_watcher_N and the outer predicate applies to the grounded
+            // materialized sequence in memory. The predicates are NOT scanned here —
+            // they filter the grounded per-item context after materialization, not the
+            // stream. Registration is still gated by IsDownwardPath/TryBuildPathMatcher
+            // in the ScanExpression path branch, so a climbing/consuming Primary falls
+            // through un-watched (Task 1.3 / buffer-fallback).
+            case FilterExpression filterExpr:
+                ScanExpression(filterExpr.Primary);
+                break;
         }
     }
 
