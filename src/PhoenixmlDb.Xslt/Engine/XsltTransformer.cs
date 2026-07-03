@@ -4844,7 +4844,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// other shapes are returned unchanged but their children are still walked
     /// when descending through the recognised shapes.
     /// </summary>
-    private static XQueryExpression RewriteWithWatcherVariables(
+    // internal (not private) so the streamability unit tests can assert on the
+    // rewritten AST directly (Task 1.1). Behaviour is unchanged for callers.
+    internal static XQueryExpression RewriteWithWatcherVariables(
         PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
         IReadOnlyList<StreamWatcher> watchers)
     {
@@ -4980,6 +4982,145 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     Left = newLeft,
                     Right = sme.Right,
                     IsPathStep = sme.IsPathStep,
+                };
+            }
+
+            // Task 1.1 — operator-node recursion (the `if`/`exists`/`=` false-branch
+            // cluster). A watched striding base path reached through one of these
+            // operators was previously left un-substituted, so at eval it ran against
+            // the closed synthetic document → empty sequence → `exists()`=false,
+            // `path = literal`=false, etc. Reconstruct each node with its rewritten
+            // children so the watched path becomes $__streaming_watcher_N.
+
+            // if (test) then A else B — recurse into all three branches. The test
+            // is the dominant case (e.g. `if (exists(<streamed-path>)) then 0 else 1`).
+            case PhoenixmlDb.XQuery.Ast.IfExpression iff:
+            {
+                var newCond = RewriteWithWatcherVariables(iff.Condition, watchers);
+                var newThen = RewriteWithWatcherVariables(iff.Then, watchers);
+                var newElse = iff.Else != null
+                    ? RewriteWithWatcherVariables(iff.Else, watchers)
+                    : null;
+                if (ReferenceEquals(newCond, iff.Condition)
+                    && ReferenceEquals(newThen, iff.Then)
+                    && ReferenceEquals(newElse, iff.Else))
+                    return expr;
+                return new PhoenixmlDb.XQuery.Ast.IfExpression
+                {
+                    Condition = newCond,
+                    Then = newThen,
+                    Else = newElse,
+                };
+            }
+
+            // (a, b, c) — a sequence/comma. A watched path may be one item of the
+            // sequence (e.g. `(<streamed-path>, 31, 32) = 346`). Rewrite each item.
+            case PhoenixmlDb.XQuery.Ast.SequenceExpression seq:
+            {
+                XQueryExpression[]? newItems = null;
+                for (var i = 0; i < seq.Items.Count; i++)
+                {
+                    var orig = seq.Items[i];
+                    var rw = RewriteWithWatcherVariables(orig, watchers);
+                    if (!ReferenceEquals(rw, orig))
+                    {
+                        if (newItems == null)
+                        {
+                            newItems = new XQueryExpression[seq.Items.Count];
+                            for (var j = 0; j < i; j++) newItems[j] = seq.Items[j];
+                        }
+                        newItems[i] = rw;
+                    }
+                    else if (newItems != null)
+                    {
+                        newItems[i] = orig;
+                    }
+                }
+                if (newItems == null) return expr;
+                return new PhoenixmlDb.XQuery.Ast.SequenceExpression { Items = newItems };
+            }
+
+            // some/every $x in <expr> satisfies <expr> — a watched path may be an
+            // in-clause source or appear in the satisfies body. Rewrite each binding
+            // source and the satisfies expression.
+            case PhoenixmlDb.XQuery.Ast.QuantifiedExpression quant:
+            {
+                PhoenixmlDb.XQuery.Ast.QuantifiedBinding[]? newBindings = null;
+                for (var i = 0; i < quant.Bindings.Count; i++)
+                {
+                    var b = quant.Bindings[i];
+                    var rw = RewriteWithWatcherVariables(b.Expression, watchers);
+                    if (!ReferenceEquals(rw, b.Expression))
+                    {
+                        if (newBindings == null)
+                        {
+                            newBindings = new PhoenixmlDb.XQuery.Ast.QuantifiedBinding[quant.Bindings.Count];
+                            for (var j = 0; j < quant.Bindings.Count; j++) newBindings[j] = quant.Bindings[j];
+                        }
+                        newBindings[i] = new PhoenixmlDb.XQuery.Ast.QuantifiedBinding
+                        {
+                            Variable = b.Variable,
+                            TypeDeclaration = b.TypeDeclaration,
+                            Expression = rw,
+                        };
+                    }
+                }
+                var newSatisfies = RewriteWithWatcherVariables(quant.Satisfies, watchers);
+                if (newBindings == null && ReferenceEquals(newSatisfies, quant.Satisfies))
+                    return expr;
+                return new PhoenixmlDb.XQuery.Ast.QuantifiedExpression
+                {
+                    Quantifier = quant.Quantifier,
+                    Bindings = newBindings ?? quant.Bindings,
+                    Satisfies = newSatisfies,
+                };
+            }
+
+            // <expr> instance of T — recurse into the operand.
+            case PhoenixmlDb.XQuery.Ast.InstanceOfExpression iof:
+            {
+                var newInner = RewriteWithWatcherVariables(iof.Expression, watchers);
+                if (ReferenceEquals(newInner, iof.Expression)) return expr;
+                return new PhoenixmlDb.XQuery.Ast.InstanceOfExpression
+                {
+                    Expression = newInner,
+                    TargetType = iof.TargetType,
+                };
+            }
+
+            // <expr> treat as T — recurse into the operand.
+            case PhoenixmlDb.XQuery.Ast.TreatExpression treat:
+            {
+                var newInner = RewriteWithWatcherVariables(treat.Expression, watchers);
+                if (ReferenceEquals(newInner, treat.Expression)) return expr;
+                return new PhoenixmlDb.XQuery.Ast.TreatExpression
+                {
+                    Expression = newInner,
+                    TargetType = treat.TargetType,
+                };
+            }
+
+            // <expr> cast as T — recurse into the operand.
+            case PhoenixmlDb.XQuery.Ast.CastExpression cast:
+            {
+                var newInner = RewriteWithWatcherVariables(cast.Expression, watchers);
+                if (ReferenceEquals(newInner, cast.Expression)) return expr;
+                return new PhoenixmlDb.XQuery.Ast.CastExpression
+                {
+                    Expression = newInner,
+                    TargetType = cast.TargetType,
+                };
+            }
+
+            // <expr> castable as T — recurse into the operand.
+            case PhoenixmlDb.XQuery.Ast.CastableExpression castable:
+            {
+                var newInner = RewriteWithWatcherVariables(castable.Expression, watchers);
+                if (ReferenceEquals(newInner, castable.Expression)) return expr;
+                return new PhoenixmlDb.XQuery.Ast.CastableExpression
+                {
+                    Expression = newInner,
+                    TargetType = castable.TargetType,
                 };
             }
         }

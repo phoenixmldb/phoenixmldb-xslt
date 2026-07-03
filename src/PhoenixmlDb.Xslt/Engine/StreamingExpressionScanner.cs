@@ -543,6 +543,41 @@ internal sealed class StreamingExpressionScanner
                 ScanExpression(bin.Left);
                 ScanExpression(bin.Right);
                 break;
+
+            // Task 1.1 — operator-node recursion. A streamable striding/child-axis
+            // base path reached through one of these operators (rather than at a
+            // recognized top-level shape) must still register a Sequence watcher so
+            // the body rewriter (RewriteWithWatcherVariables) has a node to substitute
+            // with $__streaming_watcher_N. Without descending here, a path inside
+            // `if (exists(<path>)) …`, `(<path>, 31, 32) = …`, `some $x in <path> …`,
+            // `<path> instance of …`, or a `cast`/`treat` was never watched and ran
+            // against the closed synthetic document → empty sequence → wrong result.
+            // Registration itself is gated by the existing PathExpression /
+            // IsDownwardPath branch in ScanExpression, so only paths TryBuildPathMatcher
+            // already supports register; unsupported shapes fall through unchanged
+            // (the oracle + shadow are the soundness guard).
+            case IfExpression iff:
+                ScanExpression(iff.Condition);
+                ScanExpression(iff.Then);
+                if (iff.Else != null) ScanExpression(iff.Else);
+                break;
+            case QuantifiedExpression quant:
+                foreach (var binding in quant.Bindings)
+                    ScanExpression(binding.Expression);
+                ScanExpression(quant.Satisfies);
+                break;
+            case InstanceOfExpression iof:
+                ScanExpression(iof.Expression);
+                break;
+            case TreatExpression treat:
+                ScanExpression(treat.Expression);
+                break;
+            case CastExpression cast:
+                ScanExpression(cast.Expression);
+                break;
+            case CastableExpression castable:
+                ScanExpression(castable.Expression);
+                break;
         }
     }
 
