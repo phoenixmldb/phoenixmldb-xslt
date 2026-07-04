@@ -17,7 +17,6 @@ sf-copy-of-011
 sf-copy-of-021
 sf-copy-of-025
 sf-deep-equal-012
-sf-head-003
 sf-head-032
 sf-head-035
 sf-index-of-002
@@ -28,7 +27,6 @@ sf-insert-before-103
 sf-insert-before-115
 sf-insert-before-118
 sf-one-or-more-015
-sf-remove-003
 sf-remove-032
 sf-remove-035
 sf-snapshot-0201
@@ -37,15 +35,9 @@ sf-snapshot-0304
 sf-snapshot-0311
 sf-snapshot-0321
 sf-snapshot-0325
-sf-subsequence-015
 sf-subsequence-035
-sf-subsequence-103
 sf-subsequence-135
-sf-sum-011
-sf-sum-041
-sf-sum-042
 sf-sum-055
-sf-tail-003
 sf-tail-032
 sf-tail-035
 sf-trace-015
@@ -119,7 +111,6 @@ si-element-025
 si-element-026
 si-element-049
 si-element-212
-si-element-250
 si-for-each-807
 si-fork-001
 si-fork-002
@@ -162,8 +153,6 @@ si-lre-025
 si-lre-026
 si-next-match-067
 si-on-empty-012
-si-on-empty-029
-si-on-non-empty-029
 si-perform-sort-002
 si-result-document-002
 si-result-document-004
