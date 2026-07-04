@@ -136,6 +136,27 @@ internal sealed class ForEachSubscription
     public int? RemoveIndex { get; init; }
 
     /// <summary>
+    /// B2 — a GROUNDED (non-streaming) start/length/remove-index expression for the
+    /// window, used when the positional argument is a variable or other non-literal
+    /// that is still forward-decidable because it does not navigate the input
+    /// (e.g. <c>subsequence(path, $three)</c>, <c>$three</c> a grounded param). The
+    /// processor evaluates these ONCE against the live XSLT scope when the subscription
+    /// is activated and folds the result into the effective
+    /// <see cref="SubsequenceStart"/> / <see cref="SubsequenceLength"/> /
+    /// <see cref="RemoveIndex"/>. Null when the corresponding argument was a compile-time
+    /// integer literal (already folded into the int fields) or absent. The scanner only
+    /// sets these for arguments that provably do NOT navigate the input; a stream-derived
+    /// window bound stays conservative (no subscription → buffer fallback).
+    /// </summary>
+    public XQueryExpression? SubsequenceStartExpression { get; init; }
+
+    /// <summary>Grounded length expression; see <see cref="SubsequenceStartExpression"/>.</summary>
+    public XQueryExpression? SubsequenceLengthExpression { get; init; }
+
+    /// <summary>Grounded remove-index expression; see <see cref="SubsequenceStartExpression"/>.</summary>
+    public XQueryExpression? RemoveIndexExpression { get; init; }
+
+    /// <summary>
     /// True when the for-each is lexically nested inside output construction
     /// (an LRE, xsl:element, xsl:copy, xsl:if, xsl:choose) rather than being a
     /// bare top-of-body instruction. An inline-driven for-each must run inside

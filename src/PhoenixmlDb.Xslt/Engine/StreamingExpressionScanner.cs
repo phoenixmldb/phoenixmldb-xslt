@@ -297,6 +297,15 @@ internal sealed class StreamingExpressionScanner
                         IntermediatePredicates = pathInfo.Value.IntermediatePredicates,
                         Separator = aggType == WatcherAggregation.StringJoin && fc.Arguments.Count > 1
                             ? ExtractStringLiteral(fc.Arguments[1])
+                            : null,
+                        // B2 — carry the fn:sum(seq, $zero) default so an empty stream
+                        // yields $zero (sf-sum-011/041/042) instead of an empty value-of.
+                        // The default rides along as an expression and is evaluated by the
+                        // transformer against the live scope only when nothing matched, so a
+                        // grounded literal (-1, 42) or a variable ($zero) both resolve. Only
+                        // the two-arg sum form carries it; count/max/min/avg ignore arg[1].
+                        SumDefaultExpression = aggType == WatcherAggregation.Sum && fc.Arguments.Count > 1
+                            ? fc.Arguments[1]
                             : null
                     });
                     return; // Don't recurse into recognized aggregation
@@ -1394,6 +1403,9 @@ internal sealed class StreamingExpressionScanner
         int subseqStart = 1;
         int? subseqLength = null;
         int? removeIndex = null;
+        XQueryExpression? startExpr = null;
+        XQueryExpression? lengthExpr = null;
+        XQueryExpression? removeIndexExpr = null;
         bool windowPeeled = false;
         while (true)
         {
@@ -1430,6 +1442,23 @@ internal sealed class StreamingExpressionScanner
                 continue;
             }
 
+            // B2 — a window whose positional bound is a GROUNDED non-literal (a variable
+            // like $three / $two that does not navigate the input) is still
+            // forward-decidable: the bound is a constant per run, evaluated once against
+            // the live scope by the processor. Carry the bound expressions so the
+            // dispatcher folds them into the effective window. A stream-navigating bound
+            // is rejected (returns false) → the for-each stays on the buffered path.
+            if (TryPeelWindowFunctionExpr(select, out var innerE, out var startE, out var lengthE, out var remIdxE))
+            {
+                if (windowPeeled) return;
+                select = innerE;
+                startExpr = startE;
+                lengthExpr = lengthE;
+                removeIndexExpr = remIdxE;
+                windowPeeled = true;
+                continue;
+            }
+
             break;
         }
 
@@ -1439,7 +1468,8 @@ internal sealed class StreamingExpressionScanner
         // A window slice combined with a mixed-sequence prefix/suffix is out of scope
         // (the window index would span heterogeneous operands). Only register the
         // window when the select decomposed to a bare single path.
-        if (subseqStart != 1 || subseqLength != null || removeIndex != null)
+        if (subseqStart != 1 || subseqLength != null || removeIndex != null
+            || startExpr != null || lengthExpr != null || removeIndexExpr != null)
         {
             if (prefix.Count > 0 || suffix.Count > 0) return;
         }
@@ -1458,6 +1488,9 @@ internal sealed class StreamingExpressionScanner
             SubsequenceStart = subseqStart,
             SubsequenceLength = subseqLength,
             RemoveIndex = removeIndex,
+            SubsequenceStartExpression = startExpr,
+            SubsequenceLengthExpression = lengthExpr,
+            RemoveIndexExpression = removeIndexExpr,
             InlineDriven = _constructionDepth > 0,
         });
     }
@@ -1779,6 +1812,71 @@ internal sealed class StreamingExpressionScanner
                 if (n < 1) return false;
                 start = 1;
                 removeIndex = n;
+                inner = fc.Arguments[0];
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// B2 — like <see cref="TryPeelWindowFunction"/> but for <c>subsequence</c>/<c>remove</c>
+    /// whose positional bound(s) are GROUNDED non-literal expressions (a variable such as
+    /// <c>$three</c>, or a grounded arithmetic on such) rather than compile-time integer
+    /// literals. Such a bound is a constant per run — it does not navigate the input — so it
+    /// is forward-decidable: the processor evaluates it ONCE against the live XSLT scope when
+    /// the subscription activates. Returns the inner sequence plus the bound EXPRESSIONS
+    /// (<paramref name="startExpr"/> etc.), leaving numeric folding to the dispatcher.
+    /// <para>
+    /// Rejects (returns false, → buffer fallback, never a silent drop) any bound that
+    /// navigates the input (<see cref="StreamingSubtreeBufferDetector.NavigatesInput"/>) —
+    /// a stream-derived window is not forward-decidable — and any shape
+    /// <see cref="TryPeelWindowFunction"/> already handles as a literal. <c>head</c>/<c>tail</c>
+    /// have no variable bound, so they are not handled here.
+    /// </para>
+    /// </summary>
+    private static bool TryPeelWindowFunctionExpr(
+        XQueryExpression expr,
+        out XQueryExpression inner,
+        out XQueryExpression? startExpr,
+        out XQueryExpression? lengthExpr,
+        out XQueryExpression? removeIndexExpr)
+    {
+        inner = expr;
+        startExpr = null;
+        lengthExpr = null;
+        removeIndexExpr = null;
+        if (expr is not FunctionCallExpression fc) return false;
+        if (fc.Name.Namespace != NamespaceId.None
+            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            return false;
+
+        static bool GroundedBound(XQueryExpression e)
+            => !TryConstantInt(e, out _)               // literal ints are handled elsewhere
+               && !StreamingSubtreeBufferDetector.NavigatesInput(e); // must not touch the stream
+
+        switch (fc.Name.LocalName)
+        {
+            case "subsequence":
+                if (fc.Arguments.Count is not (2 or 3)) return false;
+                // At least the start must be a grounded non-literal for this path to apply.
+                if (!GroundedBound(fc.Arguments[1])) return false;
+                startExpr = fc.Arguments[1];
+                if (fc.Arguments.Count == 3)
+                {
+                    // Length may be a literal int or a grounded expression; either way it
+                    // must not navigate the input.
+                    if (StreamingSubtreeBufferDetector.NavigatesInput(fc.Arguments[2])) return false;
+                    lengthExpr = fc.Arguments[2];
+                }
+                inner = fc.Arguments[0];
+                return true;
+
+            case "remove":
+                if (fc.Arguments.Count != 2) return false;
+                if (!GroundedBound(fc.Arguments[1])) return false;
+                removeIndexExpr = fc.Arguments[1];
                 inner = fc.Arguments[0];
                 return true;
 

@@ -238,6 +238,25 @@ internal sealed class StreamWatcher
     public int? RemoveSkipIndex { get; init; }
 
     /// <summary>
+    /// B2 (absorbing default): the <c>$zero</c> default expression of a two-argument
+    /// <c>sum(seq, $zero)</c> aggregation. When the streamed sequence is empty
+    /// (<c>_count == 0</c>) fn:sum returns this default instead of the numeric zero.
+    /// Carried by the scanner and evaluated by the transformer at resolve
+    /// (<c>SumEmpty</c> signals the empty case so a grounded/variable default is
+    /// evaluated against the live XSLT scope, not baked in). Null for the single-arg
+    /// form, whose empty result stays the numeric <c>0</c>.
+    /// </summary>
+    public XQueryExpression? SumDefaultExpression { get; init; }
+
+    /// <summary>
+    /// B2: true when this Sum watcher accumulated nothing (<c>_count == 0</c>) — the
+    /// transformer must emit <see cref="SumDefaultExpression"/> (two-arg form) or the
+    /// numeric <c>0</c> (single-arg form). Distinct from <see cref="GetResult"/>
+    /// returning <c>null</c>, which the value-of path would serialize as empty.
+    /// </summary>
+    public bool SumIsEmpty => Aggregation == WatcherAggregation.Sum && _count == 0;
+
+    /// <summary>
     /// Group A: true when the inner path ends in a <c>text()</c> KindTest tail
     /// (<c>//PRICE/text()</c>). Accumulated leaf values are the matched elements'
     /// text content — already the string value the path matcher captures for a leaf

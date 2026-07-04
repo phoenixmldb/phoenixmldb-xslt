@@ -114,6 +114,13 @@ internal sealed class StreamingXmlProcessor
     // body's position() (which counts only items that passed the predicate).
     private Dictionary<ForEachSubscription, int>? _subscriptionMatchCount;
 
+    // B2 — memoized resolved window bounds for subscriptions whose start/length/
+    // remove-index is a GROUNDED expression (e.g. subsequence(path, $three)). The
+    // bound is a constant per run and does not navigate the input, so it is evaluated
+    // ONCE against the live scope and cached here for every subsequent match of the
+    // same subscription. Subscriptions with pure literal-int bounds never enter here.
+    private Dictionary<ForEachSubscription, (int Start, int? Length, int? Remove)>? _subscriptionWindowCache;
+
     public StreamingXmlProcessor(
         XsltStylesheet stylesheet,
         TemplateIndex templateIndex,
@@ -467,22 +474,30 @@ internal sealed class StreamingXmlProcessor
                                             // to apply a subsequence() slice window.
                                             int matchPosition = NextSubscriptionMatchPosition(sub);
 
+                                            // B2 — resolve GROUNDED (variable/expression) window
+                                            // bounds against the live scope once per subscription
+                                            // (e.g. subsequence(path, $three)). Folds into the
+                                            // effective start/length/remove-index below. Literal-int
+                                            // bounds already live in the int fields.
+                                            var (effStart, effLength, effRemove) =
+                                                await ResolveSubscriptionWindowAsync(sub).ConfigureAwait(false);
+
                                             // Apply a subsequence(path, start [, length]) slice: skip
                                             // matches outside [start, start+length). Below the start
                                             // index and past the end are both skipped (motionless —
                                             // the body never sees them, so position() inside the body
                                             // numbers only the windowed items).
-                                            if (sub.SubsequenceStart > 1 || sub.SubsequenceLength != null)
+                                            if (effStart > 1 || effLength != null)
                                             {
-                                                if (matchPosition < sub.SubsequenceStart) continue;
-                                                if (sub.SubsequenceLength is { } len
-                                                    && matchPosition >= sub.SubsequenceStart + len) continue;
+                                                if (matchPosition < effStart) continue;
+                                                if (effLength is { } len
+                                                    && matchPosition >= effStart + len) continue;
                                             }
 
                                             // Apply remove(path, n): skip the single match whose
                                             // 1-based path-match position equals the remove index.
                                             // Composes with the subsequence window above.
-                                            if (sub.RemoveIndex is { } ri && matchPosition == ri) continue;
+                                            if (effRemove is { } ri && matchPosition == ri) continue;
 
                                             // Evaluate predicates (if any) against the snapshot.
                                             // Skip dispatch if any predicate is false.
@@ -1121,6 +1136,65 @@ internal sealed class StreamingXmlProcessor
         n++;
         _subscriptionMatchCount[sub] = n;
         return n;
+    }
+
+    /// <summary>
+    /// B2 — the effective window bounds for a subscription, folding any GROUNDED
+    /// (variable/expression) start/length/remove-index into the literal-int fields.
+    /// The grounded bounds are constants per run (they do not navigate the input), so
+    /// each is evaluated ONCE against the live scope and memoized. Subscriptions with
+    /// pure literal-int bounds return their int fields directly (no evaluation).
+    /// </summary>
+    private async ValueTask<(int Start, int? Length, int? Remove)> ResolveSubscriptionWindowAsync(ForEachSubscription sub)
+    {
+        if (sub.SubsequenceStartExpression == null
+            && sub.SubsequenceLengthExpression == null
+            && sub.RemoveIndexExpression == null)
+        {
+            return (sub.SubsequenceStart, sub.SubsequenceLength, sub.RemoveIndex);
+        }
+
+        _subscriptionWindowCache ??= new Dictionary<ForEachSubscription, (int, int?, int?)>(ReferenceEqualityComparer.Instance);
+        if (_subscriptionWindowCache.TryGetValue(sub, out var cached))
+            return cached;
+
+        int start = sub.SubsequenceStart;
+        int? length = sub.SubsequenceLength;
+        int? remove = sub.RemoveIndex;
+
+        if (sub.SubsequenceStartExpression is { } se)
+            start = await EvaluateBoundToIntAsync(se).ConfigureAwait(false);
+        if (sub.SubsequenceLengthExpression is { } le)
+            length = await EvaluateBoundToIntAsync(le).ConfigureAwait(false);
+        if (sub.RemoveIndexExpression is { } re)
+            remove = await EvaluateBoundToIntAsync(re).ConfigureAwait(false);
+
+        // fn:subsequence rounds its start toward the nearest integer and treats a
+        // start below 1 as 1 (items before position 1 do not exist); a non-positive
+        // start therefore imposes no leading skip. Clamp to keep the counter logic sound.
+        if (start < 1) start = 1;
+
+        var result = (start, length, remove);
+        _subscriptionWindowCache[sub] = result;
+        return result;
+    }
+
+    private async ValueTask<int> EvaluateBoundToIntAsync(XQueryExpression bound)
+    {
+        var value = await _context.EvaluateAsync(bound).ConfigureAwait(false);
+        // The bound is grounded (a variable/arithmetic), so the value is a single atomic.
+        if (value is System.Collections.IEnumerable en and not string)
+        {
+            foreach (var item in en) { value = item; break; }
+        }
+        return value switch
+        {
+            long l => (int)l,
+            int i => i,
+            double d => (int)System.Math.Round(d, System.MidpointRounding.ToEven),
+            decimal m => (int)System.Math.Round(m, System.MidpointRounding.ToEven),
+            _ => System.Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture),
+        };
     }
 
     /// <summary>

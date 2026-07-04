@@ -11095,6 +11095,37 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 return await ApplyWrappedOuterOpAsync(directWatcher).ConfigureAwait(false);
             }
 
+            // B2 — fn:sum(seq, $zero) over an EMPTY streamed sequence returns the $zero
+            // default, not an empty value-of. The default rides on the watcher as an
+            // expression and is evaluated here against the live scope only when nothing
+            // matched (sf-sum-011/041/042). Only the two-arg form is handled; a single-arg
+            // empty sum keeps its existing (null → empty) contract untouched. Non-empty
+            // sums fall through to the normal GetResult() path below unchanged.
+            if (directWatcher != null && directWatcher.SumIsEmpty
+                && directWatcher.SumDefaultExpression != null)
+            {
+                return await EvaluateAsync(directWatcher.SumDefaultExpression).ConfigureAwait(false);
+            }
+
+            // B2 (per-item window over a grounded atomic tail) — when the whole select is
+            // an atomic-tail SimpleMap watcher (`path ! RIGHT`, RIGHT a per-item atomic
+            // expression on the context item), re-apply RIGHT to each captured leaf value.
+            // The watcher only captured the raw path leaves; the RIGHT — e.g.
+            // `head(tokenize(., ' '))` / `subsequence(tokenize(.), $s)` /
+            // `insert-before(tokenize(.), 2, $ins)` — must run per item so its positional
+            // window is honored rather than dropped (sf-head/tail/remove/subsequence/
+            // insert-before -003/-103). This mirrors the binary-operand SimpleMap tail
+            // application already used for general comparisons; here it feeds value-of.
+            if (directWatcher != null
+                && directWatcher.SourceExpression is SimpleMapExpression directSm
+                && directWatcher.Aggregation == WatcherAggregation.Sequence
+                && directWatcher.OuterPredicates.Count == 0
+                && directWatcher.OuterSimpleMapRight == null)
+            {
+                var tailed = await ApplySimpleMapTailAsync(directSm, directWatcher.GetResult()).ConfigureAwait(false);
+                return tailed.ToArray();
+            }
+
             var watcherResult = TryResolveFromWatchers(expr, _activeStreamWatchers);
             if (watcherResult.Resolved)
                 return watcherResult.Value;
