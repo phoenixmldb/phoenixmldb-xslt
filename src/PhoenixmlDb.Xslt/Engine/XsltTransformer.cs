@@ -9202,7 +9202,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// currently-open output. Mirrors the wrapped-for-each handoff in
     /// <see cref="ForEachAsync"/>. Returns true when the handoff fired (caller returns).
     /// </summary>
-    private async ValueTask<bool> TryHandoffSimpleMapContextStreamingAsync(XQueryExpression? select)
+    /// <param name="select">The consuming instruction's select expression.</param>
+    /// <param name="atomizeText">
+    /// B3 (atomization/separator under streaming): when the consuming instruction is
+    /// <c>xsl:value-of</c>/<c>xsl:attribute</c>/<c>data()</c> (a text/simple-content
+    /// consumer), pass the resolved separator here (default <c>" "</c> for value-of,
+    /// <c>""</c> for attribute content without an explicit separator) so the per-match
+    /// RIGHT emission atomizes element items to their string value and joins them with
+    /// the separator, instead of serializing the raw element markup. Pass <c>null</c>
+    /// for node-preserving consumers (<c>xsl:copy-of</c>/<c>xsl:sequence</c>).
+    /// </param>
+    private async ValueTask<bool> TryHandoffSimpleMapContextStreamingAsync(
+        XQueryExpression? select, string? atomizeText = null)
     {
         if (_activeStreamingProcessor == null || _activeStreamingReader == null)
             return false;
@@ -9232,6 +9243,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // buffered materialized snapshot, not the live reader) doesn't re-enter here.
         _activeStreamingProcessor = null;
         _activeStreamingReader = null;
+        // B3: for a text/simple-content consumer, drive the forward pass in
+        // atomizing-text mode so element results emit their string value joined by
+        // the resolved separator (SerializeResult/SerializeSequenceItems honor
+        // _textContentDepth and _itemSeparatorOverride).
+        var savedTextDepth = _textContentDepth;
+        var savedSeparator = _itemSeparatorOverride;
+        if (atomizeText != null)
+        {
+            _textContentDepth++;
+            _itemSeparatorOverride = atomizeText;
+        }
         try
         {
             await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
@@ -9240,6 +9262,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             _activeStreamingProcessor = proc;
             _activeStreamingReader = rdr;
+            if (atomizeText != null)
+            {
+                _textContentDepth = savedTextDepth;
+                _itemSeparatorOverride = savedSeparator;
+            }
         }
         return true;
     }
@@ -9251,7 +9278,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// the surrounding LRE is emitted around the concatenated per-item results. Mirrors
     /// <see cref="TryHandoffSimpleMapContextStreamingAsync"/>. Returns true when fired.
     /// </summary>
-    private async ValueTask<bool> TryHandoffForExpressionStreamingAsync(XQueryExpression? select)
+    private async ValueTask<bool> TryHandoffForExpressionStreamingAsync(
+        XQueryExpression? select, string? atomizeText = null)
     {
         if (_activeStreamingProcessor == null || _activeStreamingReader == null)
             return false;
@@ -9281,6 +9309,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // snapshot, not the live reader) doesn't re-enter here.
         _activeStreamingProcessor = null;
         _activeStreamingReader = null;
+        // B3: atomizing-text mode for value-of/attribute/data() consumers (see
+        // TryHandoffSimpleMapContextStreamingAsync).
+        var savedTextDepth = _textContentDepth;
+        var savedSeparator = _itemSeparatorOverride;
+        if (atomizeText != null)
+        {
+            _textContentDepth++;
+            _itemSeparatorOverride = atomizeText;
+        }
         try
         {
             await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
@@ -9289,6 +9326,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             _activeStreamingProcessor = proc;
             _activeStreamingReader = rdr;
+            if (atomizeText != null)
+            {
+                _textContentDepth = savedTextDepth;
+                _itemSeparatorOverride = savedSeparator;
+            }
         }
         return true;
     }
@@ -11891,9 +11933,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
             var sep = resolvedSeparator ?? " ";
-            if (result is IEnumerable<object> seq && result is not string)
+            // §5.7.2 simple-content construction: merge ADJACENT text nodes with no
+            // separator (so a run of text() nodes concatenates: 352/430/480 → "352430480"),
+            // then join the remaining items (element/atomic string values) with the
+            // separator. Element items atomize to their string value. This mirrors
+            // xsl:value-of and is shared by the streaming and non-streaming paths.
+            if (result is object?[] arr)
             {
-                value = string.Join(sep, seq.Select(StringValueOf));
+                value = MergeSimpleContent(new List<object?>(arr), sep);
+            }
+            else if (result is System.Collections.IEnumerable seq && result is not string && result is not XdmNode)
+            {
+                var items = new List<object?>();
+                foreach (var item in seq)
+                    items.Add(item);
+                value = MergeSimpleContent(items, sep);
             }
             else
             {
@@ -12121,20 +12175,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask ValueOfAsync(XsltValueOf instruction)
     {
+        // Evaluate separator AVT once (it may contain dynamic expressions).
+        // Resolved before the streaming handoff so a watched sequence feeding
+        // value-of atomizes and joins with the correct separator (B3).
+        string? resolvedSeparator = instruction.Separator != null
+            ? await EvaluateAvtAsync(instruction.Separator).ConfigureAwait(false)
+            : null;
+
         // SM-ctx streaming handoff: a consuming simple-map LEFT ! RIGHT select whose
         // RIGHT was registered as an inline-driven subscription streams in place.
-        if (await TryHandoffSimpleMapContextStreamingAsync(instruction.Select).ConfigureAwait(false))
+        // value-of atomizes element results and joins with the value-of separator
+        // (default single space, or an explicit @separator).
+        if (await TryHandoffSimpleMapContextStreamingAsync(instruction.Select, resolvedSeparator ?? " ").ConfigureAwait(false))
             return;
 
         // ForExpr streaming handoff: `for $x in CONSUMING-PATH return EXPR` registered as
         // an inline-driven subscription streams in place (mirrors the SM-ctx handoff).
-        if (await TryHandoffForExpressionStreamingAsync(instruction.Select).ConfigureAwait(false))
+        if (await TryHandoffForExpressionStreamingAsync(instruction.Select, resolvedSeparator ?? " ").ConfigureAwait(false))
             return;
-
-        // Evaluate separator AVT once (it may contain dynamic expressions)
-        string? resolvedSeparator = instruction.Separator != null
-            ? await EvaluateAvtAsync(instruction.Separator).ConfigureAwait(false)
-            : null;
 
         string value;
 

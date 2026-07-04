@@ -20,10 +20,8 @@ sf-deep-equal-012
 sf-head-032
 sf-head-035
 sf-index-of-002
-sf-insert-before-003
 sf-insert-before-015
 sf-insert-before-018
-sf-insert-before-103
 sf-insert-before-115
 sf-insert-before-118
 sf-one-or-more-015
@@ -59,10 +57,8 @@ si-apply-templates-009
 si-apply-templates-010
 si-apply-templates-011
 si-apply-templates-013
-si-attribute-009
 si-attribute-010
 si-attribute-044
-si-attribute-073
 si-attribute-074
 si-attribute-075
 si-coco-003
@@ -170,9 +166,7 @@ su-absorbing-016
 su-absorbing-017
 su-absorbing-902
 sx-bang-006
-sx-comma-003
 sx-comma-018
-sx-comma-103
 sx-comma-118
 sx-except-118
 sx-gc-eq-016
