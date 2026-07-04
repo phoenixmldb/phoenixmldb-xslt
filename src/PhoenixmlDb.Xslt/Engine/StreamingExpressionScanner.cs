@@ -2123,11 +2123,30 @@ internal sealed class StreamingExpressionScanner
             // The StreamPathMatcher already honors "*" as a per-step element wildcard
             // and still enforces the overall step count / ancestor alignment, so
             // `/*/*` matches grandchildren-of-root only (never the root, never
-            // great-grandchildren). Namespace-qualified wildcards (`*:name`, `ns:*`)
-            // carry namespace semantics the flat string matcher can't honor — deferred.
+            // great-grandchildren).
+            //
+            // The flat matcher keys purely on LOCAL names — it never carried a
+            // namespace constraint, so a concrete prefix step (`gml:description`) has
+            // always matched by local name alone. That makes a NAMESPACE-wildcard
+            // step (`*:name`, "any namespace, this local name") exactly what the
+            // matcher already does: fold it to the local name. `*:*` (both wildcards)
+            // is any element, i.e. "*". A local-name wildcard bound to a SPECIFIC
+            // namespace (`ns:*`) would require a namespace constraint the flat matcher
+            // can't honor, so that case remains deferred.
             if (step.NodeTest is not NameTest nameTest) return null;
-            if (nameTest.IsNamespaceWildcard) return null;
-            parts.Add(nameTest.IsLocalNameWildcard ? "*" : nameTest.LocalName);
+            if (nameTest.IsLocalNameWildcard)
+            {
+                // `ns:*` (specific namespace + local wildcard) needs a namespace
+                // constraint the matcher can't apply; only fully-open `*` / `*:*`
+                // fold to the element wildcard.
+                if (nameTest.NamespaceUri is not null && !nameTest.IsNamespaceWildcard)
+                    return null;
+                parts.Add("*");
+            }
+            else
+            {
+                parts.Add(nameTest.LocalName);
+            }
         }
 
         if (parts.Count == 0) return null;
