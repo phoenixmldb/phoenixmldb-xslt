@@ -35,7 +35,6 @@ sf-snapshot-0321
 sf-snapshot-0325
 sf-subsequence-035
 sf-subsequence-135
-sf-sum-055
 sf-tail-032
 sf-tail-035
 sf-trace-015
