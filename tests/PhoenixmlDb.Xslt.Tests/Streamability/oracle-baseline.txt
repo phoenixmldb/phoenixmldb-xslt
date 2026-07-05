@@ -136,7 +136,6 @@ si-lre-026
 si-next-match-067
 si-on-empty-012
 si-perform-sort-002
-si-result-document-002
 si-result-document-004
 si-result-document-011
 si-value-of-044

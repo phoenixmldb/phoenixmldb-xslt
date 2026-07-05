@@ -9377,7 +9377,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _activeStreamingReader = null;
                     try
                     {
+                        // Mixed-sequence prefix/suffix: grounded operands appearing
+                        // before/after the streamable path in the for-each select
+                        // (e.g. `data(path), 101, 102` — si-result-document-002).
+                        // The bare top-of-body forward-pass path drains these in
+                        // SourceDocumentAsync; the WRAPPED (inline-driven) handoff must
+                        // do the same in place so the per-item body dispatch surrounds
+                        // the streaming pass in document order (and, when wrapped in an
+                        // xsl:result-document, lands in the redirected secondary buffer).
+                        if (matchSub.PrefixItems.Count > 0)
+                            await ExecuteForEachSubscriptionItemsAsync(matchSub, matchSub.PrefixItems).ConfigureAwait(false);
                         await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
+                        if (matchSub.SuffixItems.Count > 0)
+                            await ExecuteForEachSubscriptionItemsAsync(matchSub, matchSub.SuffixItems).ConfigureAwait(false);
                     }
                     finally
                     {

@@ -213,4 +213,35 @@ public class StreamingResultDocumentTests
         var sec = await Run(ss, [("txns.xml", Txns)], "main");
         StripDecl(Lookup(sec, "304.xml")!).Should().Be("<root>account</root>");
     }
+
+    /// <summary>
+    /// si-result-document-002: xsl:result-document WRAPPING a streamable xsl:for-each
+    /// whose select is a MIXED sequence — a consuming streamable path followed by
+    /// grounded atomic literals (<c>data(path), 101, 102</c>). The wrapped (inline-driven)
+    /// handoff must drain the grounded suffix operands AFTER the streaming pass so the
+    /// trailing atomics land in the redirected secondary output. Regression guard for the
+    /// dropped-suffix bug (secondary output emitted only the streamed prefix, or was empty).
+    /// </summary>
+    [Fact]
+    public async Task Rd002_ResultDocumentWrappingMixedSequenceForEach_DrainsSuffix()
+    {
+        var ss = """
+            <xsl:transform version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:strip-space elements="*"/>
+              <xsl:template name="xsl:initial-template">
+                <xsl:source-document streamable="yes" href="txns.xml">
+                  <xsl:result-document href="d-002.xml">
+                    <out>
+                      <xsl:for-each select="data(account/transaction[@value &gt; 17]/@value), 101, 102">
+                        <xsl:sequence select="data(.)"/>
+                      </xsl:for-each>
+                    </out>
+                  </xsl:result-document>
+                </xsl:source-document>
+              </xsl:template>
+            </xsl:transform>
+            """;
+        var sec = await Run(ss, [("txns.xml", Txns)], null);
+        StripDecl(Lookup(sec, "d-002.xml")!).Should().Be("<out>18 19 101 102</out>");
+    }
 }
