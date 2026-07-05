@@ -136,4 +136,58 @@ public class StreamingCoreOpsTests
         r.Should().Contain("<wrap>b</wrap>", $"actual={r}");
         r.Should().Contain("<wrap>c</wrap>", $"actual={r}");
     }
+
+    [Fact]
+    public async Task Streaming_apply_templates_with_param_binds_in_dispatched_rule()
+    {
+        // Mirrors si-apply-templates-008/009: apply-templates carrying a non-tunnel
+        // and a tunnel with-param dispatches (through built-in shallow-copy recursion)
+        // to a rule matching a text node. Both params must arrive: the built-in
+        // shallow-copy template forwards all params unchanged down the streamed pass.
+        var r = await Run("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema" version="3.0">
+                <xsl:mode on-no-match="shallow-copy" streamable="yes"/>
+                <xsl:template match="/">
+                    <xsl:apply-templates>
+                        <xsl:with-param name="prefix" tunnel="no" as="xs:string" select="'['"/>
+                        <xsl:with-param name="suffix" tunnel="yes" as="xs:string" select="']'"/>
+                    </xsl:apply-templates>
+                </xsl:template>
+                <xsl:template match="w/text()">
+                    <xsl:param name="prefix" tunnel="no"/>
+                    <xsl:param name="suffix" tunnel="yes"/>
+                    <xsl:value-of select="$prefix || . || $suffix"/>
+                </xsl:template>
+            </xsl:stylesheet>
+            """, "<ws><w>how</w><w>now</w></ws>");
+        r.Should().Contain("<w>[how]</w>", $"actual={r}");
+        r.Should().Contain("<w>[now]</w>", $"actual={r}");
+    }
+
+    [Fact]
+    public async Task Streaming_apply_templates_with_param_binds_with_attr_and_whitespace()
+    {
+        // Faithful si-apply-templates-009 shape: <w> carries an id attribute and the
+        // <w> elements are separated by indentation whitespace.
+        var r = await Run("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema" version="3.0">
+                <xsl:mode on-no-match="shallow-copy" streamable="yes"/>
+                <xsl:template match="/">
+                    <xsl:apply-templates>
+                        <xsl:with-param name="prefix" tunnel="no" as="xs:string" select="'['"/>
+                        <xsl:with-param name="suffix" tunnel="yes" as="xs:string" select="']'"/>
+                    </xsl:apply-templates>
+                </xsl:template>
+                <xsl:template match="w/text()">
+                    <xsl:param name="prefix" tunnel="no"/>
+                    <xsl:param name="suffix" tunnel="yes"/>
+                    <xsl:value-of select="$prefix || . || $suffix"/>
+                </xsl:template>
+            </xsl:stylesheet>
+            """, "<ws>\n    <w id=\"w_1\">how</w>\n    <w id=\"w_2\">now</w>\n</ws>");
+        r.Should().Contain("[how]", $"actual={r}");
+        r.Should().Contain("[now]", $"actual={r}");
+    }
 }

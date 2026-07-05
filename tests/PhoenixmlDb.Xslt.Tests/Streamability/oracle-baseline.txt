@@ -50,8 +50,6 @@ si-apply-templates-002
 si-apply-templates-004
 si-apply-templates-005
 si-apply-templates-006
-si-apply-templates-008
-si-apply-templates-009
 si-apply-templates-010
 si-apply-templates-011
 si-apply-templates-013

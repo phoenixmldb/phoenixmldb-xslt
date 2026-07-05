@@ -812,6 +812,15 @@ internal sealed class StreamingXmlProcessor
                         //     the node is unreferenced before we reach Remove.
                         var textNodeId = new NodeId(_nextNodeId++);
                         var textNode = AcquirePooledText(textNodeId, textValue);
+                        // Anchor the text node under its parent element so parent-relative
+                        // match patterns (e.g. w/text()) evaluate correctly. Without this the
+                        // pooled text node is parentless and such patterns over-match every
+                        // text node — including document- and ws-level whitespace — which the
+                        // si-apply-templates-008/009 param binding then brackets, corrupting
+                        // the output (text before the root element => non-well-formed).
+                        textNode.Parent = ancestorStack.Count > 0
+                            ? ancestorStack.Peek().NodeId
+                            : EnsureStreamingRootDocId();
                         _nodeStore.Register(textNode);
 
                         // Fire stream watchers for text content (constructor-time +

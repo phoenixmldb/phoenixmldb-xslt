@@ -4616,6 +4616,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     internal bool _streamingDeferReadOnNextIteration;
 
     /// <summary>
+    /// Parameters forwarded into the processor-driven streamed descent by an
+    /// <c>xsl:apply-templates</c> carrying <c>xsl:with-param</c> (si-apply-templates-008/009).
+    /// The whole-document forward pass is driven by <see cref="StreamingXmlProcessor"/>,
+    /// which dispatches every node through <see cref="MatchAndExecuteStreamingNodeAsync"/>
+    /// without a per-call param list. The built-in shallow-copy template rule forwards all
+    /// caller params (both tunnel and non-tunnel) UNCHANGED at every level of the streamed
+    /// descent, so a single ambient param set is correct for the whole pass. Set before
+    /// <c>proc.ProcessAsync</c> / the inline <see cref="ApplyTemplatesStreamingAsync"/> loop
+    /// and restored after; <see cref="MatchAndExecuteStreamingNodeAsync"/> binds it into the
+    /// matched rule's scope (mirrors the non-streaming apply-templates binding).
+    /// </summary>
+    internal List<XsltWithParam> _streamingForwardedParams = [];
+
+    /// <summary>
     /// Set by <see cref="MatchAndExecuteStreamingNodeAsync"/> when the matched
     /// template required snapshot()/copy-of() of the matched subtree, so the
     /// engine consumed events from <see cref="_activeStreamingReader"/> via
@@ -7043,12 +7057,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedDispatchMode = proc.DispatchMode;
                 if (mode != null)
                     proc.DispatchMode = mode;
+                // Forward this apply-templates' with-params into the processor-driven
+                // descent (si-apply-templates-008/009). The built-in shallow-copy rule
+                // forwards all params unchanged at every level, so a single ambient set
+                // covers the whole streamed pass.
+                var savedForwardedParams = _streamingForwardedParams;
+                _streamingForwardedParams = withParams;
                 try
                 {
                     await proc.ProcessAsync(rdr, ct).ConfigureAwait(false);
                 }
                 finally
                 {
+                    _streamingForwardedParams = savedForwardedParams;
                     proc.DispatchMode = savedDispatchMode;
                 }
                 return;
@@ -8109,16 +8130,65 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _currentTemplate = template;
                 _currentMode = mode;
 
-                // Bind template parameters with defaults
+                // Bind template parameters. Forwarded with-params (from the apply-templates
+                // that entered this streamed pass) take precedence over defaults; both tunnel
+                // and non-tunnel are honoured, mirroring the non-streaming apply-templates
+                // binding (si-apply-templates-008/009). The current scope was pushed above.
+                var forwardedParams = _streamingForwardedParams;
+
+                // Propagate tunnel parameters from parent scopes into this scope.
+                foreach (var scope in _scopes.Skip(1))
+                {
+                    if (scope.TunnelParametersOrNull is { } parentTunnels)
+                    {
+                        foreach (var (name, value) in parentTunnels)
+                        {
+                            if (!_scopes.Peek().TunnelParameters.ContainsKey(name))
+                                _scopes.Peek().TunnelParameters[name] = value;
+                        }
+                    }
+                    if (scope.IsTunnelBarrier)
+                        break;
+                }
+                // Register forwarded tunnel params in this scope's tunnel table.
+                foreach (var param in forwardedParams.Where(p => p.Tunnel))
+                {
+                    var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
+                    _scopes.Peek().TunnelParameters[param.Name] = value;
+                }
+                // Bind forwarded non-tunnel params to matching template params.
+                foreach (var param in forwardedParams.Where(p => !p.Tunnel))
+                {
+                    var templateParam = template.Parameters.FirstOrDefault(tp =>
+                        tp.Name.Equals(param.Name) && !tp.Tunnel);
+                    if (templateParam != null)
+                    {
+                        var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
+                        if (templateParam.As != null)
+                        {
+                            value = CoerceToType(value, templateParam.As);
+                            ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
+                                $"Parameter ${param.Name.LocalName}");
+                        }
+                        SetVariable(param.Name, value);
+                    }
+                }
+                // Bind any remaining template params: tunnel-supplied value, then default.
                 foreach (var param in template.Parameters)
                 {
-                    if (param.Select != null)
+                    if (_scopes.Peek().Variables.ContainsKey(param.Name))
+                        continue;
+                    if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
+                    {
+                        if (param.As != null)
+                            tunnelValue = CoerceToType(tunnelValue, param.As);
+                        SetVariable(param.Name, tunnelValue);
+                    }
+                    else if (param.Select != null)
                     {
                         var defaultVal = await EvaluateAsync(param.Select).ConfigureAwait(false);
                         if (param.As != null)
-                        {
                             defaultVal = CoerceToType(defaultVal, param.As);
-                        }
                         SetVariable(param.Name, defaultVal);
                     }
                     else
@@ -8171,8 +8241,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _streamingSubtreeBufferConsumed = true;
                     return false;
                 }
-                // Apply built-in template rules
-                await ApplyBuiltInTemplateAsync(node, mode, []).ConfigureAwait(false);
+                // Apply built-in template rules. Forward the ambient with-params so the
+                // built-in shallow-copy rule passes them to matched attribute/child templates
+                // (si-apply-templates-008: w/@id rule receives prefix/suffix). Per spec the
+                // built-in rules forward all caller params unchanged.
+                await ApplyBuiltInTemplateAsync(node, mode, _streamingForwardedParams).ConfigureAwait(false);
             }
         }
         finally
@@ -9938,6 +10011,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var parentDepth = reader.Depth;
         var position = 0;
 
+        // Forward these with-params into the streamed dispatch. Each node this loop
+        // dispatches (and any built-in shallow-copy recursion underneath it) binds
+        // this ambient set (si-apply-templates-008/009). Restored on exit.
+        var savedForwardedParams = _streamingForwardedParams;
+        _streamingForwardedParams = withParams;
+        try
+        {
         while (await reader.ReadAsync().ConfigureAwait(false))
         {
             ct.ThrowIfCancellationRequested();
@@ -9987,6 +10067,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // Comments and PIs skipped — they're not matched by the default rule
                 // for templating in this engine; out of scope for first cut.
             }
+        }
+        }
+        finally
+        {
+            _streamingForwardedParams = savedForwardedParams;
         }
     }
 
