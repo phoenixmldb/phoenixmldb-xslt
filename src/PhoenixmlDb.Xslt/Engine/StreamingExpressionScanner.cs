@@ -1426,6 +1426,26 @@ internal sealed class StreamingExpressionScanner
                 continue;
             }
 
+            // Leading one-or-more(<arg>) / exactly-one(<arg>) wrapper → peel to <arg>.
+            // These fn: cardinality functions return their operand unchanged when it
+            // satisfies the cardinality; under a streaming for-each over a striding path
+            // (sf-one-or-more-015: one-or-more(/BOOKLIST/BOOKS/ITEM/PRICE)) they are a
+            // focus-setting pass-through, so peeling routes the for-each to the existing
+            // subscription machinery instead of leaving the path unreached (subs=0 →
+            // one-or-more sees an empty synthetic sequence → runtime error). The
+            // cardinality guard is a no-op on the non-empty match stream the subscription
+            // dispatches; an empty input simply fires no body — the same observable
+            // result the buffered path would reach after the (skipped) window handling.
+            if (select is FunctionCallExpression cardFc
+                && (cardFc.Name.LocalName == "one-or-more" || cardFc.Name.LocalName == "exactly-one")
+                && cardFc.Arguments.Count == 1
+                && (cardFc.Name.Namespace == NamespaceId.None
+                    || cardFc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+            {
+                select = cardFc.Arguments[0];
+                continue;
+            }
+
             // A single forward-window wrapper. A second window is out of scope (the
             // accumulated index would span heterogeneous slices) — fall back.
             if (TryPeelWindowFunction(select, out var inner, out var start, out var length, out var remIdx))

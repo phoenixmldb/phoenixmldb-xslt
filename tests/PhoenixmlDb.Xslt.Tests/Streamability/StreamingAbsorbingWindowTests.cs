@@ -224,4 +224,45 @@ public class StreamingAbsorbingWindowTests
         subs.Where(s => s.SubsequenceStartExpression != null || s.SubsequenceStart != 1)
             .Should().BeEmpty("a stream-navigating start is not forward-decidable → no window subscription");
     }
+
+    // =======================================================================
+    // one-or-more(seq) / exactly-one(seq) — the fn: cardinality wrapper is a
+    // focus-setting pass-through over a striding path and must be peeled so the
+    // for-each registers its subscription (sf-one-or-more-015). Left unpeeled the
+    // path is unreached (subs=0) and one-or-more sees an empty synthetic sequence.
+    // =======================================================================
+
+    [Fact]
+    public void Scanner_ForEachOverOneOrMoreStridingPath_RegistersSubscription()
+    {
+        // <xsl:for-each select="one-or-more(/BOOKLIST/BOOKS/ITEM/PRICE)"> — the wrapper
+        // is peeled to the striding path, which registers a single subscription.
+        var subs = ScanForEachSubs(Fn("one-or-more", StridingPath()));
+
+        subs.Should().ContainSingle(
+            "the one-or-more cardinality wrapper is a pass-through and must be peeled so the striding for-each subscribes");
+    }
+
+    [Fact]
+    public void Scanner_ForEachOverExactlyOneStridingPath_RegistersSubscription()
+    {
+        // exactly-one(...) is the same cardinality-checking pass-through.
+        var subs = ScanForEachSubs(Fn("exactly-one", StridingPath()));
+
+        subs.Should().ContainSingle(
+            "the exactly-one cardinality wrapper is a pass-through and must be peeled so the striding for-each subscribes");
+    }
+
+    [Fact]
+    public void Scanner_ForEachOverOneOrMoreNonStridingArg_StaysConservative()
+    {
+        // one-or-more($grounded) where the argument is NOT a streamable striding path
+        // (here a bare grounded variable reference) must NOT register a subscription:
+        // peeling exposes a non-path core that TryDecomposeForEachSelect rejects.
+        var grounded = new VariableReference { Name = new QName(NamespaceId.None, "extra") };
+        var subs = ScanForEachSubs(Fn("one-or-more", grounded));
+
+        subs.Should().BeEmpty(
+            "peeling one-or-more must not force a subscription when the operand is not a streamable striding path");
+    }
 }
