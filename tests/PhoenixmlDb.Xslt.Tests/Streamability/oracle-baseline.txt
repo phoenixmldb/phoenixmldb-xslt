@@ -122,8 +122,6 @@ si-group-026
 si-group-033
 si-group-037
 si-group-065
-si-iterate-095
-si-iterate-096
 si-iterate-135
 si-lre-003
 si-lre-004
@@ -141,7 +139,6 @@ si-value-of-047
 si-value-of-076
 si-value-of-102
 st-string-join-002
-su-absorbing-016
 su-absorbing-017
 su-absorbing-902
 sx-bang-006

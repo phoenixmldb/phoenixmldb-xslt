@@ -7076,6 +7076,46 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
 
+        // Streaming interception: a striding DOWNWARD-path apply-templates whose context
+        // is the streamed document node (e.g. select="root/item"). The single-step case
+        // (select="item") is routed through the processor above; a multi-step descent
+        // cannot be, because the processor's forward pass only offers TOP-LEVEL elements to
+        // matching — it does not descend to a grandchild set. Drive the reader directly:
+        // navigate the intermediate steps (read start-tags, descend), and per element
+        // selected by the FINAL step, run the matched template body via
+        // MatchAndExecuteStreamingNodeAsync. This closes streamed apply-templates for the
+        // simple (non-recursive-body) striding-descent case and, transitively, the
+        // apply-imports/next-match cases whose bodies were never reached. Only reached when
+        // the body executes directly (document-level match="/"), where the processor is
+        // active but _isStreamingExecution is not yet set.
+        if (_activeStreamingProcessor != null && _activeStreamingReader != null
+            && ContextItem is XdmDocument
+            && TryGetStridingDescentSteps(select) is { } descentSteps)
+        {
+            var proc = _activeStreamingProcessor;
+            var rdr = _activeStreamingReader;
+            var ct = _activeStreamingCancellationToken;
+            // Clear the active processor for the duration of the descent so a nested
+            // apply-templates in a matched body doesn't re-trigger the doc-level pass.
+            _activeStreamingProcessor = null;
+            var savedStreamingExec = _isStreamingExecution;
+            _isStreamingExecution = true;
+            var savedForwardedParams = _streamingForwardedParams;
+            _streamingForwardedParams = withParams;
+            try
+            {
+                await DriveStridingDescentLevelAsync(
+                    rdr, descentSteps, 0, mode, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                _streamingForwardedParams = savedForwardedParams;
+                _isStreamingExecution = savedStreamingExec;
+                _activeStreamingProcessor = proc;
+            }
+            return;
+        }
+
         // Streaming interception inside a template body: when we're already inside
         // the streaming processor's pass and apply-templates is called on a
         // consuming select (children of the current node), drive the reader directly
@@ -9994,6 +10034,152 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Require a name test (or *) — a kind test / text() tail is not a striding
         // element select.
         return step.NodeTest is PhoenixmlDb.XQuery.Ast.NameTest;
+    }
+
+    /// <summary>
+    /// Recognizes a striding DOWNWARD-path select — a multi-step child-axis name-test
+    /// path rooted at the document node (e.g. <c>root/item</c>, <c>./a/b/c</c>) — and
+    /// returns its step name-tests in document order. Returns <c>null</c> for anything
+    /// else (predicates, non-child axes, kind tests, descendant hops, initial variable).
+    /// The single-step case is handled by <see cref="IsDocumentLevelStridingSelect"/> and
+    /// the processor forward pass; this drives the reader for the multi-step descent that
+    /// the forward pass cannot reach. Conservative by construction.
+    /// </summary>
+    private static List<PhoenixmlDb.XQuery.Ast.NameTest>? TryGetStridingDescentSteps(
+        XQueryExpression? select)
+    {
+        if (select is not PhoenixmlDb.XQuery.Ast.PathExpression path)
+            return null;
+        if (path.InitialExpression != null
+            && path.InitialExpression is not PhoenixmlDb.XQuery.Ast.ContextItemExpression)
+            return null;
+        // Require at least two steps — one-step striding selects route through the
+        // processor forward pass, not this reader-driven descent.
+        if (path.Steps.Count < 2) return null;
+        var names = new List<PhoenixmlDb.XQuery.Ast.NameTest>(path.Steps.Count);
+        foreach (var step in path.Steps)
+        {
+            if (step.Axis != PhoenixmlDb.XQuery.Ast.Axis.Child) return null;
+            if (step.Predicates.Count > 0) return null;
+            if (step.NodeTest is not PhoenixmlDb.XQuery.Ast.NameTest nt) return null;
+            names.Add(nt);
+        }
+        return names;
+    }
+
+    /// <summary>
+    /// Tests whether the element the <paramref name="reader"/> is currently positioned on
+    /// matches the striding-descent <paramref name="nameTest"/> (local name + namespace,
+    /// honoring <c>*</c> / <c>*:name</c> / bare-name wildcards). Used only for the
+    /// intermediate/final name matching of a reader-driven downward path.
+    /// </summary>
+    private static bool StridingNameTestMatchesReader(
+        PhoenixmlDb.XQuery.Ast.NameTest nameTest, System.Xml.XmlReader reader)
+    {
+        if (!nameTest.IsLocalNameWildcard && reader.LocalName != nameTest.LocalName)
+            return false;
+        if (nameTest.IsNamespaceWildcard)
+            return true; // *:name — any namespace
+        var readerNs = reader.NamespaceURI ?? "";
+        // Bare wildcard `*` (no explicit namespace) matches any namespace.
+        if (nameTest is { IsLocalNameWildcard: true, NamespaceUri: null })
+            return true;
+        var wantNs = nameTest.NamespaceUri ?? "";
+        return readerNs == wantNs;
+    }
+
+    /// <summary>
+    /// Drives the active streaming reader over one level of a striding DOWNWARD path,
+    /// selecting the child elements of the current parent that match the name-test at
+    /// <paramref name="stepIndex"/>. Non-final matches recurse into the child's children
+    /// for the next step; final matches are dispatched through
+    /// <see cref="MatchAndExecuteStreamingNodeAsync"/> (which materializes the matched
+    /// subtree and runs the matched template body per selected node). Non-matching or
+    /// deeper elements are skipped. On entry the reader is positioned just before the
+    /// children of the current parent (for step 0 that is the document node — the reader
+    /// sits before the root element). Handles only the SIMPLE non-recursive body case
+    /// (no re-emitting xsl:copy, no climbing) — the same scope as
+    /// <see cref="ApplyTemplatesStreamingAsync"/>.
+    /// </summary>
+    private async ValueTask DriveStridingDescentLevelAsync(
+        System.Xml.XmlReader reader,
+        List<PhoenixmlDb.XQuery.Ast.NameTest> steps,
+        int stepIndex,
+        QName? mode,
+        CancellationToken ct)
+    {
+        var nameTest = steps[stepIndex];
+        var isFinal = stepIndex == steps.Count - 1;
+        // Depth of the children we iterate: reader.Depth after reading a start-tag equals
+        // that element's depth; the parent's children live at parentDepth+1. For step 0
+        // the parent is the document node (depth -1 conceptually); the root element arrives
+        // at depth 0. Track the depth of the parent whose children we scan.
+        int parentDepth = reader.Depth; // element currently open (or -1/0 sentinel at doc start)
+        var position = 0;
+
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (reader.NodeType == System.Xml.XmlNodeType.EndElement
+                && reader.Depth == parentDepth)
+            {
+                // Exhausted this parent's children.
+                break;
+            }
+
+            if (reader.NodeType != System.Xml.XmlNodeType.Element)
+                continue; // text/comment/PI between children — not selected by a name test
+
+            var childDepth = reader.Depth;
+            var matches = StridingNameTestMatchesReader(nameTest, reader);
+
+            if (matches && isFinal)
+            {
+                var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                position++;
+                await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
+                // Mirror ApplyTemplatesStreamingAsync: if the matched body pushed a
+                // deferred open element (shallow-copy / xsl:copy), close it now — the
+                // element's full subtree was already consumed.
+                if (_streamingOpenElements.Count > 0)
+                {
+                    var qn = _streamingOpenElements.Pop();
+                    WriteStreamingEndTag(qn);
+                }
+            }
+            else if (matches && !reader.IsEmptyElement)
+            {
+                // Intermediate match — descend one level for the next step.
+                await DriveStridingDescentLevelAsync(
+                    reader, steps, stepIndex + 1, mode, ct).ConfigureAwait(false);
+                // DriveStridingDescentLevelAsync consumed through this element's
+                // EndElement; continue scanning the parent's remaining children.
+            }
+            else if (!reader.IsEmptyElement)
+            {
+                // Non-matching element (or intermediate with empty content) — skip its
+                // whole subtree so we stay at the current level.
+                await SkipStreamingSubtreeAsync(reader, childDepth, ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Advances the reader past the current element's subtree, stopping after its
+    /// matching EndElement (at <paramref name="startDepth"/>). The reader must be
+    /// positioned on the element's start-tag; on return it sits on that EndElement.
+    /// </summary>
+    private static async ValueTask SkipStreamingSubtreeAsync(
+        System.Xml.XmlReader reader, int startDepth, CancellationToken ct)
+    {
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (reader.NodeType == System.Xml.XmlNodeType.EndElement
+                && reader.Depth == startDepth)
+                return;
+        }
     }
 
     /// <summary>
