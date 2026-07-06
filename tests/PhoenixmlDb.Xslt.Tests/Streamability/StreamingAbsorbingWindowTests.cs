@@ -265,4 +265,45 @@ public class StreamingAbsorbingWindowTests
         subs.Should().BeEmpty(
             "peeling one-or-more must not force a subscription when the operand is not a streamable striding path");
     }
+
+    // unordered(seq) / trace(seq[, label]) — both are pure identity pass-throughs over
+    // their value operand and must be peeled so the striding for-each subscribes
+    // (sf-unordered-015, sf-trace-015). Left unpeeled the wrapped path ran against the
+    // closed synthetic document → empty output.
+    // =======================================================================
+
+    [Fact]
+    public void Scanner_ForEachOverUnorderedStridingPath_RegistersSubscription()
+    {
+        // <xsl:for-each select="unordered(/BOOKLIST/BOOKS/ITEM/PRICE)"> — the ordering
+        // wrapper is a pass-through; peeling exposes the striding path.
+        var subs = ScanForEachSubs(Fn("unordered", StridingPath()));
+
+        subs.Should().ContainSingle(
+            "the unordered() wrapper is an identity pass-through and must be peeled so the striding for-each subscribes");
+    }
+
+    [Fact]
+    public void Scanner_ForEachOverTraceStridingPath_RegistersSubscription()
+    {
+        // <xsl:for-each select="trace(/BOOKLIST/BOOKS/ITEM/PRICE, 'r-015')"> — trace
+        // returns its first argument unchanged; the label is diagnostic only.
+        var subs = ScanForEachSubs(Fn("trace", StridingPath(), new StringLiteral { Value = "r-015" }));
+
+        subs.Should().ContainSingle(
+            "the trace() wrapper returns its value operand unchanged and must be peeled so the striding for-each subscribes");
+    }
+
+    [Fact]
+    public void Scanner_ForEachOverUnorderedNonStridingArg_StaysConservative()
+    {
+        // unordered($grounded) where the argument is NOT a streamable striding path must
+        // NOT register a subscription: peeling exposes a non-path core that
+        // TryDecomposeForEachSelect rejects.
+        var grounded = new VariableReference { Name = new QName(NamespaceId.None, "extra") };
+        var subs = ScanForEachSubs(Fn("unordered", grounded));
+
+        subs.Should().BeEmpty(
+            "peeling unordered must not force a subscription when the operand is not a streamable striding path");
+    }
 }

@@ -36,10 +36,8 @@ sf-subsequence-035
 sf-subsequence-135
 sf-tail-032
 sf-tail-035
-sf-trace-015
 sf-trace-032
 sf-trace-035
-sf-unordered-015
 sf-unordered-032
 sf-unordered-035
 si-apply-imports-068

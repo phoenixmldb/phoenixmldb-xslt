@@ -1446,6 +1446,26 @@ internal sealed class StreamingExpressionScanner
                 continue;
             }
 
+            // Leading unordered(<arg>) / trace(<arg>[, label]) wrapper → peel to <arg>.
+            // Both are pure identity pass-throughs over their value operand:
+            // fn:unordered returns its input in an implementation-dependent order (leaving
+            // it in document order is conformant), and fn:trace returns its first argument
+            // unchanged (the optional label is a side-effecting diagnostic only). Under a
+            // streaming for-each over a striding path — sf-unordered-015
+            // (unordered(/BOOKLIST/BOOKS/ITEM/PRICE)), sf-trace-015
+            // (trace(/BOOKLIST/BOOKS/ITEM/PRICE,'r-015')) — peeling routes the for-each to
+            // the existing subscription machinery instead of leaving the wrapped path
+            // unreached (the wrapper ran against the closed synthetic document → empty).
+            if (select is FunctionCallExpression passFc
+                && ((passFc.Name.LocalName == "unordered" && passFc.Arguments.Count == 1)
+                    || (passFc.Name.LocalName == "trace" && passFc.Arguments.Count is 1 or 2))
+                && (passFc.Name.Namespace == NamespaceId.None
+                    || passFc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+            {
+                select = passFc.Arguments[0];
+                continue;
+            }
+
             // A single forward-window wrapper. A second window is out of scope (the
             // accumulated index would span heterogeneous slices) — fall back.
             if (TryPeelWindowFunction(select, out var inner, out var start, out var length, out var remIdx))
