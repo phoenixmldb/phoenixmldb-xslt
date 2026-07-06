@@ -494,6 +494,27 @@ internal sealed class StreamingExpressionScanner
                 });
                 return;
 
+            // Node-capturing SimpleMap (sx-GeneralComp-*-016/116/020/120): LEFT ! TAIL
+            // where TAIL navigates the matched node's attribute inside a compile-time
+            // numeric op (@value*2, abs(@value), -@value, …). The string/atomic capture
+            // of IsPerItemAtomicTail can't satisfy the @attr tail, so register a
+            // node-capturing Sequence watcher: the processor materializes a childless
+            // element carrying the matched element's attributes, and the general-comparison
+            // resolver reads @attr off it and applies the known numeric op cheaply per item
+            // (no full per-node plan eval — stays fast on 100k rows).
+            case SimpleMapExpression smAttr when TryExtractAttributeArithmeticTail(smAttr) is { } attrShape:
+                _watchers.Add(new StreamWatcher
+                {
+                    SourceExpression = expr,
+                    ContextRootDepth = _contextRootDepth,
+                    PathMatcher = new StreamPathMatcher(attrShape.Path.Path),
+                    Aggregation = WatcherAggregation.Sequence,
+                    CaptureMatchedNode = true,
+                    Predicates = attrShape.Path.Predicates,
+                    IntermediatePredicates = attrShape.Path.IntermediatePredicates
+                });
+                return;
+
             // SM-ctx (OP-bucket phase 1): a consuming simple-map LEFT ! RIGHT whose
             // LEFT is a plain striding/downward path and whose RIGHT consumes the
             // streamed context node per item (navigates `..`, reads attributes,
@@ -766,6 +787,104 @@ internal sealed class StreamingExpressionScanner
             return null;
 
         return ExtractPathFromExpression(path);
+    }
+
+    /// <summary>
+    /// Node-capturing SimpleMap recognizer (sx-GeneralComp-*-016/116/020/120): matches a
+    /// <c>path ! TAIL</c> whose deep-left is a plain downward striding path and whose TAIL
+    /// is a numeric expression over a SINGLE context-relative attribute step
+    /// (<c>@attr</c>) plus numeric literals — e.g. <c>@value*2</c>, <c>abs(@value)</c>,
+    /// <c>-@value</c>, <c>(@value+1) div 2</c>. Returns the extracted LEFT path (with the
+    /// attribute NOT folded into <see cref="ExtractedPath.Attribute"/> — the leaf element,
+    /// not the attribute, is what the watcher must match) plus the single attribute local
+    /// name the tail reads, so the cheap per-item evaluator can read it off the captured
+    /// childless element. Rejects any tail that navigates children/descendants/absolute
+    /// paths, references more than one attribute name, or contains non-numeric operations.
+    /// Distinct from <see cref="IsPerItemAtomicTail"/> (the context-item string path),
+    /// which stays untouched.
+    /// </summary>
+    private static (ExtractedPath Path, string Attribute)? TryExtractAttributeArithmeticTail(SimpleMapExpression sm)
+    {
+        // Only a single tail step: SimpleMap(path, TAIL). A chained SM (a!b!c) mixing an
+        // attribute-navigating tail with further steps is out of scope.
+        if (sm.Left is SimpleMapExpression) return null;
+
+        string? attr = null;
+        if (!IsNodeNavigatingAttributeTail(sm.Right, ref attr) || attr == null)
+            return null;
+
+        if (sm.Left is not PathExpression path || !IsDownwardPath(path))
+            return null;
+
+        // The LEFT path must itself be a plain element path (no attribute leaf); the
+        // attribute is read by the tail, not the striding matcher.
+        var extracted = ExtractPathFromExpression(path);
+        if (extracted is not { } ep || ep.Attribute != null) return null;
+
+        return (ep, attr);
+    }
+
+    /// <summary>
+    /// True when <paramref name="tail"/> is a numeric expression built only from numeric
+    /// literals and exactly one context-relative single-step attribute reference
+    /// (<c>@attr</c>), combined via arithmetic (<c>* + - div idiv mod</c>), unary
+    /// plus/minus, or a numeric built-in function call (<c>abs</c>, <c>ceiling</c>,
+    /// <c>floor</c>, <c>round</c>, <c>number</c>, <c>xs:decimal/xs:double/…</c>). The
+    /// single attribute name is captured in <paramref name="attr"/>; two DIFFERENT
+    /// attribute names, any child/descendant navigation, or any non-numeric operation
+    /// makes it false. This is the compile-time-known shape the cheap evaluator applies
+    /// per captured node.
+    /// </summary>
+    private static bool IsNodeNavigatingAttributeTail(XQueryExpression tail, ref string? attr)
+    {
+        switch (tail)
+        {
+            case IntegerLiteral:
+            case DoubleLiteral:
+            case DecimalLiteral:
+                return true;
+            case PathExpression pe:
+            {
+                // A single relative attribute step: @value. No initial expression, one
+                // attribute-axis step, a concrete local name, no predicates.
+                if (pe.IsAbsolute || pe.InitialExpression != null) return false;
+                if (pe.Steps.Count != 1) return false;
+                var step = pe.Steps[0];
+                if (step.Axis != Axis.Attribute || step.Predicates.Count > 0) return false;
+                if (step.NodeTest is not NameTest nt || nt.IsLocalNameWildcard) return false;
+                if (attr != null && attr != nt.LocalName) return false; // >1 distinct attr
+                attr = nt.LocalName;
+                return true;
+            }
+            case UnaryExpression ue when ue.Operator is UnaryOperator.Plus or UnaryOperator.Minus:
+                return IsNodeNavigatingAttributeTail(ue.Operand, ref attr);
+            case BinaryExpression be when IsNumericArithmetic(be.Operator):
+                return IsNodeNavigatingAttributeTail(be.Left, ref attr)
+                    && IsNodeNavigatingAttributeTail(be.Right, ref attr);
+            case FunctionCallExpression fc when IsNumericTailFunction(fc):
+            {
+                foreach (var a in fc.Arguments)
+                    if (!IsNodeNavigatingAttributeTail(a, ref attr)) return false;
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsNumericArithmetic(BinaryOperator op) => op is
+        BinaryOperator.Add or BinaryOperator.Subtract or BinaryOperator.Multiply
+        or BinaryOperator.Divide or BinaryOperator.IntegerDivide or BinaryOperator.Modulo;
+
+    private static bool IsNumericTailFunction(FunctionCallExpression fc)
+    {
+        var ns = fc.Name.Namespace;
+        if (ns != NamespaceId.None
+            && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
+            && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+            return false;
+        return fc.Name.LocalName is "abs" or "ceiling" or "floor" or "round" or "number"
+            or "decimal" or "double" or "integer" or "float";
     }
 
     /// <summary>

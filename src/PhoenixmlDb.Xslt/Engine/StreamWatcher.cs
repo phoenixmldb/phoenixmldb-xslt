@@ -286,6 +286,35 @@ internal sealed class StreamWatcher
     public ClimbAxisKind ClimbAxis { get; init; } = ClimbAxisKind.None;
 
     /// <summary>
+    /// Node-capturing SimpleMap watcher (sx-GeneralComp-*-016/116/020/120): the watched
+    /// SimpleMap's RIGHT tail NAVIGATES the matched context node (reads an attribute) —
+    /// e.g. <c>account/transaction/(@value*2)</c> or <c>.../abs(@value)</c>. The
+    /// string/untyped-atomic capture of <see cref="OnElementMatch"/> can't satisfy the
+    /// <c>@attr</c>-navigating tail, so when this is set the processor materializes a
+    /// childless element carrying the matched element's ATTRIBUTES (no subtree) and calls
+    /// <see cref="OnNodeCapturedMatch"/>. <see cref="BuildSequenceResult"/> then surfaces
+    /// those nodes (snapshots in lockstep with the placeholder items) so the tail can read
+    /// <c>@attr</c> off a real node. The tail is applied cheaply (a compile-time-known
+    /// numeric op over the attribute value) — never a full per-item plan eval — so 100k
+    /// rows stay fast. Set only for the narrow attribute-arithmetic shape the scanner
+    /// recognizes; the plain string/atomic path (value-of, string-join) is unaffected.
+    /// </summary>
+    public bool CaptureMatchedNode { get; init; }
+
+    /// <summary>
+    /// Appends a materialized childless element (name + attributes) for a
+    /// <see cref="CaptureMatchedNode"/> Sequence watcher, in lockstep with a placeholder
+    /// item, so <see cref="BuildSequenceResult"/> returns the node array. Only the
+    /// attributes are needed by the recognized tail shape; the node has no children.
+    /// </summary>
+    public void OnNodeCapturedMatch(XdmNode element)
+    {
+        if (Aggregation is not WatcherAggregation.Sequence) return;
+        _items.Add(string.Empty);
+        _snapshots.Add(element);
+    }
+
+    /// <summary>
     /// A single open ancestor supplied to <see cref="OnClimbMatch"/>: its stable
     /// <see cref="OpenId"/> (a monotonic id assigned when the element was pushed onto the
     /// streaming stack — shared ancestors of two leaves keep the same id, distinct

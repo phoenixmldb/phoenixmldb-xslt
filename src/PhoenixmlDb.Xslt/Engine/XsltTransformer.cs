@@ -5253,6 +5253,33 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     private async ValueTask<List<object?>> ApplySimpleMapTailAsync(SimpleMapExpression sm, object? sourceItems)
     {
+        // CHEAP node-capture path (sx-GeneralComp-*-016/116/020/120): when the source
+        // items are the watcher's captured childless elements and the single tail step is
+        // a compile-time numeric op over ONE context-relative attribute (@value*2,
+        // abs(@value), -@value, …), read the attribute value off each captured node and
+        // apply the op inline. No PushContextItem / full-plan EvaluateAsync per node — that
+        // is what timed out on 100k rows in the reverted prototype.
+        if (sm.Left is not SimpleMapExpression
+            && TryGetAttributeArithmeticTail(sm.Right, out var attrName))
+        {
+            var srcList = NormalizeToList(sourceItems);
+            if (srcList.Count > 0 && srcList.TrueForAll(static it => it is Xdm.Nodes.XdmElement))
+            {
+                var cheap = new List<object?>(srcList.Count);
+                foreach (var it in srcList)
+                {
+                    var el = (Xdm.Nodes.XdmElement)it!;
+                    var raw = GetElementAttributeValue(el, attrName!);
+                    if (raw == null) continue; // absent attribute contributes nothing
+                    if (!double.TryParse(raw, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var av))
+                        continue;
+                    cheap.Add(EvaluateAttributeArithmeticTail(sm.Right, av));
+                }
+                return cheap;
+            }
+        }
+
         // Walk down the Left chain to collect tail-step Rights in order.
         // SimpleMap(SimpleMap(path, R1), R2) ⇒ [R1, R2].
         var tailSteps = new List<XQueryExpression>();
@@ -5284,6 +5311,122 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             working = next;
         }
         return working;
+    }
+
+    /// <summary>
+    /// Node-capture cheap-eval recognizer (mirror of the scanner's
+    /// <c>IsNodeNavigatingAttributeTail</c>): true when <paramref name="tail"/> is a
+    /// compile-time numeric op over a SINGLE context-relative attribute step plus numeric
+    /// literals. Yields the attribute local name in <paramref name="attr"/>. Used to take
+    /// the cheap per-node path in <see cref="ApplySimpleMapTailAsync"/>.
+    /// </summary>
+    private static bool TryGetAttributeArithmeticTail(XQueryExpression tail, out string? attr)
+    {
+        attr = null;
+        return MatchAttrArith(tail, ref attr) && attr != null;
+    }
+
+    private static bool MatchAttrArith(XQueryExpression tail, ref string? attr)
+    {
+        switch (tail)
+        {
+            case IntegerLiteral:
+            case DoubleLiteral:
+            case DecimalLiteral:
+                return true;
+            case PathExpression pe:
+                if (pe.IsAbsolute || pe.InitialExpression != null || pe.Steps.Count != 1) return false;
+                var step = pe.Steps[0];
+                if (step.Axis != Axis.Attribute || step.Predicates.Count > 0) return false;
+                if (step.NodeTest is not NameTest nt || nt.IsLocalNameWildcard) return false;
+                if (attr != null && attr != nt.LocalName) return false;
+                attr = nt.LocalName;
+                return true;
+            case UnaryExpression ue when ue.Operator is UnaryOperator.Plus or UnaryOperator.Minus:
+                return MatchAttrArith(ue.Operand, ref attr);
+            case BinaryExpression be when IsCheapNumericArithmetic(be.Operator):
+                return MatchAttrArith(be.Left, ref attr) && MatchAttrArith(be.Right, ref attr);
+            case FunctionCallExpression fc when IsCheapNumericFunction(fc):
+                foreach (var a in fc.Arguments)
+                    if (!MatchAttrArith(a, ref attr)) return false;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsCheapNumericArithmetic(BinaryOperator op) => op is
+        BinaryOperator.Add or BinaryOperator.Subtract or BinaryOperator.Multiply
+        or BinaryOperator.Divide or BinaryOperator.IntegerDivide or BinaryOperator.Modulo;
+
+    private static bool IsCheapNumericFunction(FunctionCallExpression fc)
+    {
+        var ns = fc.Name.Namespace;
+        if (ns != NamespaceId.None
+            && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
+            && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+            return false;
+        return fc.Name.LocalName is "abs" or "ceiling" or "floor" or "round" or "number"
+            or "decimal" or "double" or "integer" or "float";
+    }
+
+    /// <summary>
+    /// Evaluates a recognized attribute-arithmetic tail against a single attribute value
+    /// (already parsed to <paramref name="attrValue"/>). The tree is numeric literals,
+    /// arithmetic, unary +/-, and numeric built-ins over one <c>@attr</c> — all evaluated
+    /// as <see cref="double"/>. This is the compile-time-known op the cheap path applies
+    /// per captured node.
+    /// </summary>
+    private static double EvaluateAttributeArithmeticTail(XQueryExpression tail, double attrValue) => tail switch
+    {
+        IntegerLiteral i => (double)(i.LongValue ?? 0),
+        DoubleLiteral d => d.Value,
+        DecimalLiteral dc => (double)dc.Value,
+        PathExpression => attrValue, // the single @attr step
+        UnaryExpression { Operator: UnaryOperator.Plus } up => EvaluateAttributeArithmeticTail(up.Operand, attrValue),
+        UnaryExpression { Operator: UnaryOperator.Minus } um => -EvaluateAttributeArithmeticTail(um.Operand, attrValue),
+        BinaryExpression be => ApplyCheapArith(be.Operator,
+            EvaluateAttributeArithmeticTail(be.Left, attrValue),
+            EvaluateAttributeArithmeticTail(be.Right, attrValue)),
+        FunctionCallExpression fc => ApplyCheapNumericFn(fc,
+            fc.Arguments.Count > 0 ? EvaluateAttributeArithmeticTail(fc.Arguments[0], attrValue) : attrValue),
+        _ => attrValue
+    };
+
+    private static double ApplyCheapArith(BinaryOperator op, double a, double b) => op switch
+    {
+        BinaryOperator.Add => a + b,
+        BinaryOperator.Subtract => a - b,
+        BinaryOperator.Multiply => a * b,
+        BinaryOperator.Divide => a / b,
+        BinaryOperator.IntegerDivide => Math.Truncate(a / b),
+        BinaryOperator.Modulo => a % b,
+        _ => a
+    };
+
+    private static double ApplyCheapNumericFn(FunctionCallExpression fc, double v) => fc.Name.LocalName switch
+    {
+        "abs" => Math.Abs(v),
+        "ceiling" => Math.Ceiling(v),
+        "floor" => Math.Floor(v),
+        "round" => Math.Round(v, MidpointRounding.AwayFromZero),
+        _ => v // number/decimal/double/integer/float — identity on the already-numeric value
+    };
+
+    /// <summary>
+    /// Reads the string value of a named no-namespace attribute off a materialized
+    /// <see cref="Xdm.Nodes.XdmElement"/> via the streaming node store; null when absent.
+    /// </summary>
+    private string? GetElementAttributeValue(Xdm.Nodes.XdmElement el, string localName)
+    {
+        if (_nodeStore == null) return null;
+        foreach (var attrId in el.Attributes)
+        {
+            if (_nodeStore.GetNode(attrId) is Xdm.Nodes.XdmAttribute attr
+                && attr.LocalName == localName)
+                return attr.Value;
+        }
+        return null;
     }
 
     /// <summary>

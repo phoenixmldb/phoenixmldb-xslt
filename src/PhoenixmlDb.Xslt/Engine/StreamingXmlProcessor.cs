@@ -1517,7 +1517,13 @@ internal sealed class StreamingXmlProcessor
                 // context item (. = attribute value), and only passing values are
                 // accumulated. sf-sum-019 / sf-avg-019 / sf-min-019. The unpredicated
                 // attribute case keeps the cheap immediate accumulation below.
-                bool defer = watcher.ValueAttribute == null
+                // A node-capturing SimpleMap watcher (sx-GeneralComp-*-016/116/020/120)
+                // needs only the matched element's ATTRIBUTES — fully known at StartElement
+                // — and no text content or subtree. Capture it immediately below; building a
+                // subtree per match on a 100k-row doc would blow the streaming timeout.
+                bool defer = watcher.CaptureMatchedNode
+                    ? (watcher.Predicates.Count > 0 || watcher.IntermediatePredicates.Count > 0)
+                    : watcher.ValueAttribute == null
                     ? (WatcherNeedsTextContent(watcher) || watcher.Predicates.Count > 0
                         || watcher.IntermediatePredicates.Count > 0)
                     : (watcher.Predicates.Count > 0 || watcher.IntermediatePredicates.Count > 0);
@@ -1576,6 +1582,14 @@ internal sealed class StreamingXmlProcessor
                         SubtreeStack = subtreeStack,
                         IntermediateAncestors = intermediateAncestors
                     });
+                }
+                else if (watcher.CaptureMatchedNode)
+                {
+                    // Materialize a childless element carrying the matched leaf's
+                    // attributes (no subtree). The @attr-navigating tail reads its
+                    // attribute value off this node in the cheap per-item evaluator.
+                    var captured = MaterializeClimbNode(elementName, attributes);
+                    watcher.OnNodeCapturedMatch(captured);
                 }
                 else
                 {
