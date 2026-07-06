@@ -1,6 +1,30 @@
 # Release History
 
-## Unreleased
+## 1.4.17 (2026-07-06)
+
+Streaming breadth and correctness. Requires PhoenixmlDb.Core 1.2.0 and PhoenixmlDb.XQuery 1.5.2. No API changes.
+
+The streamability analysis is now **compositional** — a posture/sweep classification computed over the expression tree — rather than a fixed catalogue of recognized shapes. A single streaming plan is derived from that classification and drives the buffer/stream decision at both the template and document level. The practical effect is that many more genuinely-streamable constructs are accepted and executed as true streaming, instead of falling back to whole-input buffering or (worse) producing empty output.
+
+### Streaming: apply-templates dispatch
+
+`xsl:apply-templates` with a downward `select` now dispatches the matched template's body per selected node during the forward pass, threading tunnel and non-tunnel `xsl:with-param` values into the matched rule. Multi-step striding-descent selects (e.g. `select="root/item"`) dispatch correctly.
+
+### Streaming: general comparisons over a per-item attribute tail
+
+A general comparison whose operand is a simple map ending in an attribute-arithmetic tail — e.g. `(account/transaction/(@value*2)) = 8.64`, or `abs(@value)` — now streams: each matched node is captured and its tail evaluated per item, cheaply, without buffering the input.
+
+### Streaming: absorbing and windowing functions
+
+`head`, `tail`, `subsequence`, `remove`, and `insert-before` over a streamed sequence now apply their positional/window arguments during the forward pass, and `sum(seq, $default)` emits the default when the sequence is empty. `fn:unordered`/`fn:trace`/`one-or-more`/`exactly-one` pass-throughs no longer hide the streamable path beneath them.
+
+### Streaming: atomization, separators, and sinks
+
+`value-of`, `xsl:attribute`, and `data()` over a streamed sequence atomize each item and join with the correct separator instead of emitting raw markup. `xsl:message` and `xsl:assert` are recognized as grounding sinks (they emit nothing into the result tree). Namespace-wildcard steps (`*:name`) register a streaming match instead of bailing to empty. `xsl:result-document` with motionless content driven from a streamed pass captures its secondary output.
+
+### Fix: `xsl:attribute` simple-content merging
+
+`xsl:attribute select="…"` over a run of adjacent text nodes now merges them without a separator (per §5.7.2) before applying the separator to remaining items — a correctness fix shared with the non-streaming path.
 
 ### Streaming: xsl:iterate over a grounded atomic crawl
 
