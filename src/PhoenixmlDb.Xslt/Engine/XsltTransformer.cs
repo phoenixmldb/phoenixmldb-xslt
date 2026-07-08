@@ -11184,10 +11184,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask TryAsync(XsltTry instruction)
     {
-        // Save the full output content, not just length, because exceptions propagating
-        // through nested element constructors (LRE, xsl:element) replace _output content
-        // with the inner element's partial content. The outer content would be lost.
-        var savedOutputContent = _output.ToString();
+        // Checkpoint the output by LENGTH, not by copying the whole buffer. Nested element
+        // constructors (LRE, xsl:element) always append their content PAST this point and
+        // truncate their own suffix on completion (see EvaluateBodyContentToValueAsync's
+        // `_output.Length = savedLen` pattern); an exception mid-assembly leaves partial
+        // content appended beyond savedOutputLen but never shrinks the buffer below it.
+        // So on the rollback path, truncating back to savedOutputLen discards exactly the
+        // try body's partial output while preserving the outer content — and is O(1)
+        // rather than O(current-output-length). The former `_output.ToString()` snapshot
+        // was O(N) per try; inside a streaming for-each that accumulates all matches into
+        // _output, that made an N-item pass O(N^2) (each try copied the whole running
+        // buffer). See sf-boolean-107 / sf-not-107.
+        var savedOutputLen = _output.Length;
         var savedAttrStackDepth = _collectedAttributesStack.Count;
         try
         {
@@ -11231,13 +11239,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // element constructors whose assembly code was skipped by the exception.
             if (instruction.Rollback)
             {
-                _output.Clear();
-                _output.Append(savedOutputContent);
+                // O(1) truncation: discard everything the (failed) try body appended,
+                // leaving the outer content intact.
+                if (_output.Length > savedOutputLen)
+                    _output.Length = savedOutputLen;
                 // Pop any _collectedAttributesStack entries pushed by interrupted element constructors
                 while (_collectedAttributesStack.Count > savedAttrStackDepth)
                     _collectedAttributesStack.Pop();
             }
-            else if (_output.Length > savedOutputContent.Length)
+            else if (_output.Length > savedOutputLen)
             {
                 // XTDE3530: When rollback-output="no" and output has been committed,
                 // recovery is not possible — the output state cannot be rolled back.
