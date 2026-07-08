@@ -8515,9 +8515,57 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         PushCurrentItem(bufferedRoot);
         PushScope();
 
+        // Bind template parameters, honouring the forwarded with-params (tunnel and
+        // non-tunnel) from the apply-templates that entered this streamed pass — mirrors
+        // the live-path binding in MatchAndExecuteStreamingNodeAsync. Without this, a
+        // matched template whose body needs the buffered subtree (e.g. copy-of(node()))
+        // silently lost its params (si-apply-templates-005 tunnel $a).
+        var forwardedParams = _streamingForwardedParams;
+        foreach (var scope in _scopes.Skip(1))
+        {
+            if (scope.TunnelParametersOrNull is { } parentTunnels)
+            {
+                foreach (var (name, value) in parentTunnels)
+                {
+                    if (!_scopes.Peek().TunnelParameters.ContainsKey(name))
+                        _scopes.Peek().TunnelParameters[name] = value;
+                }
+            }
+            if (scope.IsTunnelBarrier)
+                break;
+        }
+        foreach (var param in forwardedParams.Where(p => p.Tunnel))
+        {
+            var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
+            _scopes.Peek().TunnelParameters[param.Name] = value;
+        }
+        foreach (var param in forwardedParams.Where(p => !p.Tunnel))
+        {
+            var templateParam = template.Parameters.FirstOrDefault(tp =>
+                tp.Name.Equals(param.Name) && !tp.Tunnel);
+            if (templateParam != null)
+            {
+                var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
+                if (templateParam.As != null)
+                {
+                    value = CoerceToType(value, templateParam.As);
+                    ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
+                        $"Parameter ${param.Name.LocalName}");
+                }
+                SetVariable(param.Name, value);
+            }
+        }
         foreach (var param in template.Parameters)
         {
-            if (param.Select != null)
+            if (_scopes.Peek().Variables.ContainsKey(param.Name))
+                continue;
+            if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
+            {
+                if (param.As != null)
+                    tunnelValue = CoerceToType(tunnelValue, param.As);
+                SetVariable(param.Name, tunnelValue);
+            }
+            else if (param.Select != null)
             {
                 var defaultVal = await EvaluateAsync(param.Select).ConfigureAwait(false);
                 if (param.As != null)
