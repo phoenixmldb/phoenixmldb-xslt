@@ -13325,6 +13325,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (await TryHandoffSimpleMapContextStreamingAsync(instruction.Select).ConfigureAwait(false))
             return;
 
+        // Streaming whole-subtree copy (si-lre-011 / si-copy-011): inside a streamable
+        // xsl:source-document whose body has no apply-templates, the live reader is still
+        // positioned at the document start when a lexical xsl:copy-of runs. Its select
+        // (child::node() / child::*) evaluates against the CLOSED synthetic document node
+        // and yields empty. Instead, forward the live reader's subtree events straight into
+        // _output at this lexical position. Handles only the document-level fresh-reader
+        // case (context = streamed document node, reader unpositioned); every other shape
+        // falls through to the normal evaluate-and-serialize path below.
+        if (_activeStreamingReader != null && _nodeStore != null
+            && ContextItem is XdmDocument
+            && IsConsumingChildSelect(instruction.Select)
+            && await TryStreamingCopyOfDocumentChildrenAsync(instruction.CopyNamespaces ?? true).ConfigureAwait(false))
+            return;
+
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
         var copyNs = instruction.CopyNamespaces ?? true;
 
@@ -13469,6 +13483,61 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _lastResultWasAtomic = false;
             }
         }
+    }
+
+    /// <summary>
+    /// Streaming whole-subtree copy-of forward for the document-level fresh-reader case
+    /// (<c>xsl:copy-of select="child::node()"</c> inside a streamable
+    /// <c>xsl:source-document</c> body). The active streaming reader is still positioned
+    /// before the document element (<see cref="System.Xml.ReadState.Initial"/>); walk it
+    /// forward, materialize each top-level element subtree into the node store via
+    /// <see cref="StreamingSubtreeMaterializer"/> (which leaves the reader on the subtree's
+    /// EndElement), and serialize it into <c>_output</c> with copy-of semantics — reusing
+    /// the same <see cref="SerializeNode"/> path a materialized element result would take.
+    /// Top-level comments / processing-instructions are forwarded verbatim (child::node()
+    /// selects them too); whitespace-only text between top-level nodes is dropped, matching
+    /// the streamed-input strip-space default the subtree materializer applies.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> when the forward ran (the reader was fresh and this call consumed it);
+    /// <c>false</c> when the reader was already positioned, so the caller must fall through
+    /// to the normal evaluate-and-serialize path.
+    /// </returns>
+    private async ValueTask<bool> TryStreamingCopyOfDocumentChildrenAsync(bool copyNamespaces)
+    {
+        var reader = _activeStreamingReader!;
+        // Only the document-level, unpositioned-reader case is handled here. Once the
+        // reader has advanced (e.g. a striding for-each is mid-stream), the mapping from
+        // child::node() to reader events is no longer "the whole remaining input", so we
+        // decline and let the normal path run.
+        if (reader.ReadState != System.Xml.ReadState.Initial)
+            return false;
+
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            switch (reader.NodeType)
+            {
+                case XmlNodeType.Element:
+                {
+                    var elem = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore!, new DocumentId(0));
+                    if (elem != null)
+                        SerializeNode(elem, copyNamespaces, faithfulNamespaces: false);
+                    break;
+                }
+                case XmlNodeType.Comment:
+                    _output.Append("<!--").Append(reader.Value).Append("-->");
+                    break;
+                case XmlNodeType.ProcessingInstruction:
+                    _output.Append("<?").Append(reader.Name);
+                    if (!string.IsNullOrEmpty(reader.Value))
+                        _output.Append(' ').Append(reader.Value);
+                    _output.Append("?>");
+                    break;
+                // Document-level whitespace text is stripped (streamed-input strip-space
+                // default); other node kinds cannot appear as document children.
+            }
+        }
+        return true;
     }
 
     /// <summary>

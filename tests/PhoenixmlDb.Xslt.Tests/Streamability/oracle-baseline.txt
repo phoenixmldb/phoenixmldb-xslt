@@ -64,7 +64,6 @@ si-copy-003
 si-copy-004
 si-copy-007
 si-copy-010
-si-copy-011
 si-copy-021
 si-copy-025
 si-copy-026
@@ -82,10 +81,8 @@ si-document-002
 si-document-004
 si-document-007
 si-document-010
-si-document-011
 si-element-003
 si-element-004
-si-element-011
 si-element-025
 si-element-026
 si-element-049
@@ -122,14 +119,12 @@ si-group-065
 si-iterate-135
 si-lre-003
 si-lre-004
-si-lre-011
 si-lre-025
 si-lre-026
 si-next-match-067
 si-on-empty-012
 si-perform-sort-002
 si-result-document-004
-si-result-document-011
 si-value-of-044
 si-value-of-046
 si-value-of-047
