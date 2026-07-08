@@ -66,4 +66,35 @@ public class StreamingCopyOfSubtreeForwardTests
             "<out><head/><doc><BOOKLIST><BOOKS><ITEM><TITLE>Alpha</TITLE></ITEM></BOOKS>"
             + "<CATEGORIES><CATEGORY CODE=\"P\"/></CATEGORIES></BOOKLIST></doc><tail/></out>");
     }
+
+    // Sibling shape: xsl:copy-of select="." at document level. The context item IS the
+    // streamed document node, so copying the document node deep-serializes to its children
+    // — identical output to child::node(). Before the fix select="." parsed as a bare
+    // ContextItemExpression (not a child-axis step), so IsConsumingChildSelect rejected it
+    // and the streaming forward was skipped, dropping the copy. Covers si-copy-of-011.
+    private const string SheetSelf = """
+        <xsl:stylesheet version="3.0"
+            xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+          <xsl:output method="xml" indent="no" omit-xml-declaration="yes"/>
+          <xsl:strip-space elements="*"/>
+          <xsl:template name="main">
+            <out>
+              <xsl:source-document streamable="yes" href="d.xml">
+                <head/>
+                <xsl:copy-of select="."/>
+                <tail/>
+              </xsl:source-document>
+            </out>
+          </xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    [Fact]
+    public async Task CopyOfSelf_AtDocumentLevel_ForwardsWholeSubtree()
+    {
+        var r = await Run(SheetSelf, Doc, "d.xml");
+        r.Should().Be(
+            "<out><head/><BOOKLIST><BOOKS><ITEM><TITLE>Alpha</TITLE></ITEM></BOOKS>"
+            + "<CATEGORIES><CATEGORY CODE=\"P\"/></CATEGORIES></BOOKLIST><tail/></out>");
+    }
 }

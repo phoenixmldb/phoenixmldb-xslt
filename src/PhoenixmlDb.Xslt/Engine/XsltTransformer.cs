@@ -10196,6 +10196,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// Returns true when <paramref name="select"/> is a bare context-item select
+    /// (<c>select="."</c>) — either the singleton <see cref="ContextItemExpression"/> or a
+    /// <see cref="PhoenixmlDb.XQuery.Ast.PathExpression"/> with a context-item initial
+    /// expression and no trailing steps. At the document level (context = the streamed
+    /// document node) <c>copy-of select="."</c> deep-copies the document node, whose
+    /// serialization is exactly its children — identical to <c>select="child::node()"</c>.
+    /// Recognizing it lets the streaming whole-subtree forward run for the "whole document
+    /// unchanged" shape written with <c>.</c> instead of <c>child::node()</c>
+    /// (si-copy-of-011).
+    /// </summary>
+    private static bool IsSelfContextSelect(XQueryExpression? select)
+    {
+        if (select is PhoenixmlDb.XQuery.Ast.ContextItemExpression)
+            return true;
+        return select is PhoenixmlDb.XQuery.Ast.PathExpression path
+            && path.InitialExpression is PhoenixmlDb.XQuery.Ast.ContextItemExpression
+            && path.Steps.Count == 0;
+    }
+
+    /// <summary>
     /// Returns true when <paramref name="select"/> is a document-level "striding" select
     /// — a child-axis name-test path evaluated from the document node that selects one or
     /// more top-level elements (e.g. <c>account</c>, <c>./account</c>, <c>/account</c>).
@@ -13325,17 +13345,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (await TryHandoffSimpleMapContextStreamingAsync(instruction.Select).ConfigureAwait(false))
             return;
 
-        // Streaming whole-subtree copy (si-lre-011 / si-copy-011): inside a streamable
-        // xsl:source-document whose body has no apply-templates, the live reader is still
-        // positioned at the document start when a lexical xsl:copy-of runs. Its select
-        // (child::node() / child::*) evaluates against the CLOSED synthetic document node
-        // and yields empty. Instead, forward the live reader's subtree events straight into
-        // _output at this lexical position. Handles only the document-level fresh-reader
-        // case (context = streamed document node, reader unpositioned); every other shape
-        // falls through to the normal evaluate-and-serialize path below.
+        // Streaming whole-subtree copy (si-lre-011 / si-copy-011 / si-copy-of-011): inside
+        // a streamable xsl:source-document whose body has no apply-templates, the live
+        // reader is still positioned at the document start when a lexical xsl:copy-of runs.
+        // Its select (child::node() / child::* / "." ) evaluates against the CLOSED
+        // synthetic document node and yields empty. Instead, forward the live reader's
+        // subtree events straight into _output at this lexical position. select="." copies
+        // the document node, whose serialization is exactly its children — identical to
+        // child::node(). Handles only the document-level fresh-reader case (context =
+        // streamed document node, reader unpositioned); every other shape falls through to
+        // the normal evaluate-and-serialize path below.
         if (_activeStreamingReader != null && _nodeStore != null
             && ContextItem is XdmDocument
-            && IsConsumingChildSelect(instruction.Select)
+            && (IsConsumingChildSelect(instruction.Select) || IsSelfContextSelect(instruction.Select))
             && await TryStreamingCopyOfDocumentChildrenAsync(instruction.CopyNamespaces ?? true).ConfigureAwait(false))
             return;
 
