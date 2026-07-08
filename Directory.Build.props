@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.17</Version>
+    <Version>1.4.18</Version>
     <PackageReleaseNotes>
-      Streaming breadth and correctness. The streamability analysis is now compositional (posture/sweep over the expression tree) rather than a fixed set of recognized shapes, so many more streamable constructs are accepted and executed as true streaming instead of falling back to whole-input buffering or empty output. Newly streamed correctly: xsl:apply-templates over a downward select (dispatching the matched template body per node, with tunnel and non-tunnel parameters); general comparisons over a per-item attribute-arithmetic tail such as (path/(@value*2)) = n; the absorbing/windowing functions head, tail, subsequence, remove, insert-before and sum's empty default; xsl:message and xsl:assert as grounding sinks; namespace-wildcard (*:name) selects; value-of / xsl:attribute atomization and separators over a streamed sequence; ancestor/climbing populations; and xsl:iterate over a grounded atomic crawl. Also corrects xsl:attribute simple-content node merging on the non-streaming path. Requires PhoenixmlDb.Core 1.2.0 and PhoenixmlDb.XQuery 1.5.2. No API changes. See RELEASES.md for full notes.
+      Streaming robustness and performance. A streamed transform now observes the CancellationToken across its streaming and whole-input-buffer loops, so a long-running or unbounded transform cancels promptly instead of running to completion. xsl:try no longer snapshots the whole accumulated output buffer on every attempt — it checkpoints by length and truncates on rollback (O(1)), so error-catching inside a streamed loop over a large input is linear rather than quadratic (a per-item xsl:try over 100K items is dramatically faster). Picks up PhoenixmlDb.Core 1.2.1, whose XML parser computes a large element's string value in linear time. Requires PhoenixmlDb.Core 1.2.1 and PhoenixmlDb.XQuery 1.5.3. No API changes. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>

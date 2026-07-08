@@ -11,12 +11,6 @@
 # SUBSET of this list — i.e. `comm -23 <current-failed> oracle-baseline.txt` is EMPTY.
 # A rebuild task MAY shrink this set (closing latent bugs); it must NEVER grow it.
 # The 9 si-fork-00X cases are BY-DESIGN (xsl:import-schema XQST0059, engine not schema-aware).
-# sf-boolean-107 / sf-not-107 (#187): 100K-iteration boolean()/not() inside xsl:try over the
-# ~5MB big-transactions.xml. The engine now observes the CancellationToken (streaming and
-# whole-input-buffer loops both poll), and the harness bounds assertion verification by the
-# same deadline — so these cancel at the 180s budget instead of hanging the test process.
-# They are recorded as honest FAILURES (they cannot complete within budget), not hidden.
-sf-boolean-107
 sf-copy-of-003
 sf-copy-of-004
 sf-copy-of-011
@@ -30,7 +24,6 @@ sf-insert-before-015
 sf-insert-before-018
 sf-insert-before-115
 sf-insert-before-118
-sf-not-107
 sf-remove-032
 sf-remove-035
 sf-snapshot-0201

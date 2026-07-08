@@ -1,5 +1,21 @@
 # Release History
 
+## 1.4.18 (2026-07-07)
+
+Streaming robustness and performance. Requires PhoenixmlDb.Core 1.2.1 and PhoenixmlDb.XQuery 1.5.3. No API changes.
+
+### Streaming: observe cancellation
+
+A streamed transform now polls the `CancellationToken` across its streaming and whole-input-buffer loops, so a long-running or unbounded transform cancels promptly when the caller's token fires, instead of running to completion and holding the thread. A streamed transform given an already-cancelled token throws `OperationCanceledException` without doing the work.
+
+### Fix: `xsl:try` output checkpoint is O(1), not O(N)
+
+`xsl:try` previously snapshotted the entire accumulated output buffer (`ToString()`) on every attempt so it could roll back the try body on a caught error. Inside a streamed `xsl:for-each` that accumulates all matches into one buffer, the k-th item copied the ~k already-emitted items — O(N²) over the whole pass. It now checkpoints by buffer length and, on the rollback path, truncates back to that length (discarding exactly the failed try body's output). A per-item `xsl:try` over a large streamed input is now linear; a 100K-item catch-per-item transform drops from tens of seconds to a few.
+
+### Linear large-element string value (via Core 1.2.1)
+
+Picks up PhoenixmlDb.Core 1.2.1, whose XML parser resolves child nodes through an id→node index instead of a per-child linear scan, so computing (or atomizing) the string value of an element with many children is linear rather than quadratic.
+
 ## 1.4.17 (2026-07-06)
 
 Streaming breadth and correctness. Requires PhoenixmlDb.Core 1.2.0 and PhoenixmlDb.XQuery 1.5.2. No API changes.
