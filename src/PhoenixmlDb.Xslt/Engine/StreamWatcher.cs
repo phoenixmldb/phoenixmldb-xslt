@@ -184,6 +184,16 @@ internal sealed class StreamWatcher
     public string? ValueAttribute { get; init; }
 
     /// <summary>
+    /// Climbing <c>ancestor::*/@*</c> (wildcard attribute) EXISTENCE marker. When set,
+    /// <see cref="OnClimbMatch"/> contributes EVERY attribute value of each climbed node
+    /// (rather than a single <see cref="ValueAttribute"/>), so the accumulated sequence is
+    /// non-empty iff some climbed node carried an attribute. The only consumer is an
+    /// effective-boolean-value test — <c>if(&lt;climb&gt;/@*) then G1 else G2</c>
+    /// (sx-if-232/235) — which needs existence, not the attributes' identities.
+    /// </summary>
+    public bool ClimbAttributeWildcard { get; init; }
+
+    /// <summary>
     /// For StringJoin: the separator string.
     /// </summary>
     public string? Separator { get; init; }
@@ -551,6 +561,18 @@ internal sealed class StreamWatcher
         // (unit-test / no-identity path), but the real streaming path always supplies a
         // stable open id so shared ancestors collapse to one occurrence.
         if (openId >= 0 && !_climbSeenOpenIds.Add(openId)) return;
+
+        if (ClimbAttributeWildcard)
+        {
+            // ancestor::*/@* — every attribute of the climbed node is a selected item
+            // (untyped atomic). The sole consumer is an existence (EBV) test, so any
+            // non-empty contribution suffices; contributing all attribute values keeps the
+            // sequence faithful without needing attribute identity/order.
+            if (attributes != null)
+                foreach (var av in attributes.Values)
+                    _items.Add(new Xdm.XsUntypedAtomic(av));
+            return;
+        }
 
         if (ValueAttribute != null)
         {

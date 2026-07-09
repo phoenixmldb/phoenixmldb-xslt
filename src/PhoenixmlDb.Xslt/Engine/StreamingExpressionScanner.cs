@@ -368,7 +368,8 @@ internal sealed class StreamingExpressionScanner
                     ValueAttribute = climb.ClimbAttribute,
                     Predicates = climb.LeafPath.Predicates,
                     IntermediatePredicates = climb.LeafPath.IntermediatePredicates,
-                    ClimbAxis = climb.ClimbAxis
+                    ClimbAxis = climb.ClimbAxis,
+                    ClimbAttributeWildcard = climb.AttributeWildcard
                 });
                 return;
 
@@ -1022,7 +1023,8 @@ internal sealed class StreamingExpressionScanner
     private readonly record struct ClimbingPath(
         ExtractedPath LeafPath,
         ClimbAxisKind ClimbAxis,
-        string? ClimbAttribute);
+        string? ClimbAttribute,
+        bool AttributeWildcard = false);
 
     /// <summary>
     /// Recognizes <c>downward-prefix / (ancestor|ancestor-or-self)::* [ / @attr ]</c>
@@ -1071,6 +1073,7 @@ internal sealed class StreamingExpressionScanner
 
         // Tail after the climb: nothing, or a single attribute step (@a / @*).
         string? climbAttribute = null;
+        bool attributeWildcard = false;
         if (climbIdx + 1 < steps.Count)
         {
             if (climbIdx + 2 != steps.Count) return null; // more than one tail step
@@ -1078,10 +1081,16 @@ internal sealed class StreamingExpressionScanner
             if (tail.Axis != Axis.Attribute) return null;
             if (tail.Predicates.Count > 0) return null;
             climbAttribute = tail.NodeTest is NameTest { LocalName: var ln } && ln != "*" ? ln : null;
-            // @* (any attribute) is out of scope for this slice — a per-node attribute
-            // fan-out needs multi-value expansion the single-ValueAttribute watcher can't
-            // express. Reject so those cases stay conservative (deferred).
-            if (climbAttribute == null) return null;
+            // @* (any attribute): the per-node attribute fan-out cannot be expressed by the
+            // single-value ValueAttribute path, but the ONLY consumer in the corpus is an
+            // EXISTENCE test — `if(<climb>/@*) then G1 else G2` (sx-if-232/235), grounded
+            // branches — so we do not need each attribute's identity, only whether any
+            // climbed node carries any attribute. Mark the watcher AttributeWildcard so the
+            // climb resolver contributes every ancestor attribute value; the enclosing EBV
+            // is then true iff some ancestor had an attribute. A NON-existence use (reading
+            // @*'s values/name) is not in scope and does not occur.
+            if (climbAttribute == null)
+                attributeWildcard = true;
         }
 
         // Build the leaf-only downward path and reuse the existing extractor.
@@ -1101,7 +1110,7 @@ internal sealed class StreamingExpressionScanner
             ? ClimbAxisKind.AncestorOrSelf
             : ClimbAxisKind.Ancestor;
 
-        return new ClimbingPath(leaf.Value, climbAxis, climbAttribute);
+        return new ClimbingPath(leaf.Value, climbAxis, climbAttribute, attributeWildcard);
     }
 
     private static ExtractedPath? ExtractPathFromExpression(XQueryExpression expr)

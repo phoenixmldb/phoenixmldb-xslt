@@ -1741,7 +1741,8 @@ internal sealed class StreamingXmlProcessor
             return;
 
         var ancestors = new List<StreamWatcher.ClimbAncestor>(_ancestorNames.Count);
-        bool needNodes = watcher.ValueAttribute == null; // bare climb yields element nodes
+        // bare climb yields element nodes; @a / @* yield attribute values (no node needed)
+        bool needNodes = watcher.ValueAttribute == null && !watcher.ClimbAttributeWildcard;
         for (int i = 0; i < _ancestorNames.Count; i++)
         {
             var name = _ancestorNames[i];

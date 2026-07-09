@@ -109,6 +109,40 @@ public class StreamingClimbingTests
         w.ValueAttribute.Should().Be("CAT");
     }
 
+    // /BOOKLIST/BOOKS/ITEM/PRICE/ancestor::*/@*  — wildcard-attribute climb (existence).
+    private static PathExpression ClimbThenWildcardAttribute() => new()
+    {
+        IsAbsolute = true,
+        InitialExpression = null,
+        Steps = new[]
+        {
+            Step(Axis.Child, "BOOKLIST"),
+            Step(Axis.Child, "BOOKS"),
+            Step(Axis.Child, "ITEM"),
+            Step(Axis.Child, "PRICE"),
+            Step(Axis.Ancestor, AnyName()),
+            Step(Axis.Attribute, AnyName()),
+        },
+    };
+
+    [Fact]
+    public void Scanner_StridingThenClimbWildcardAttribute_RegistersWildcardExistenceWatcher()
+    {
+        // `ancestor::*/@*` is an existence shape (sx-if-232/235): it registers a climbing
+        // watcher flagged ClimbAttributeWildcard with NO single ValueAttribute, so the
+        // resolver contributes every ancestor attribute and the enclosing EBV is true iff
+        // some ancestor carried an attribute.
+        var path = ClimbThenWildcardAttribute();
+
+        var watchers = ScanSelect(path);
+
+        watchers.Should().ContainSingle();
+        var w = watchers[0];
+        w.ClimbAxis.Should().Be(ClimbAxisKind.Ancestor);
+        w.ClimbAttributeWildcard.Should().BeTrue();
+        w.ValueAttribute.Should().BeNull("@* has no single named attribute to extract");
+    }
+
     // =======================================================================
     // NEGATIVE: a bare climbing path (no striding anchor) stays conservative.
     // =======================================================================
