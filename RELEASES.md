@@ -1,5 +1,27 @@
 # Release History
 
+## 1.4.21 (2026-07-09)
+
+Serialization output-method conformance — the HTML/XHTML method and serialization-error validation. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes.
+
+### HTML / XHTML output method
+
+- **URI-attribute escaping.** A URI-valued attribute (`href`, `src`, and the rest) is now NFC-normalized before its non-ASCII octets are percent-encoded, so a decomposed character encodes as its composed UTF-8 octets (matching the XQuery serializer).
+- **XHTML empty elements.** The XHTML method emits well-formed empty elements (`<br />`) rather than the HTML minimized form.
+- **Content-Type meta.** An existing `http-equiv="Content-Type"` `<meta>` is replaced with the computed media-type and charset, rather than skipped, so the document carries a single correct declaration.
+
+### Character maps on attribute values
+
+A character map now rewrites attribute values as well as text content (per §20), excluding URI-valued attributes under the HTML/XHTML methods (where `escape-uri-attributes` governs instead).
+
+### Serialization-error validation
+
+Invalid serialization parameters now raise the correct W3C Serialization 4.0 errors instead of silently producing output: **SESU0007** (an `encoding` the runtime can't produce), **SESU0011** (an unsupported `normalization-form`), **SEPM0004** (`standalone`/`doctype-system` with a result that isn't a single well-formed document element), **SEPM0009** and **SEPM0010**. The `undeclare-prefixes` output attribute is now parsed and honored.
+
+### Control characters in attribute values
+
+Control characters (DEL, `U+0080`–`U+009F`, `U+2028`) appearing in an attribute value now serialize as numeric character references instead of being written literally (which silently lost them on re-parse).
+
 ## 1.4.20 (2026-07-09)
 
 Non-streaming type and serialization correctness, plus more streaming breadth. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes.
