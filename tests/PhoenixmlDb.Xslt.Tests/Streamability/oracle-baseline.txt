@@ -124,9 +124,7 @@ sx-bang-006
 sx-comma-018
 sx-comma-118
 sx-except-118
-sx-if-015
 sx-if-213
-sx-if-215
 sx-if-232
 sx-if-235
 sx-MapExpr-005

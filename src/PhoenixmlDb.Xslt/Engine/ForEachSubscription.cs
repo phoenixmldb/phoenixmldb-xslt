@@ -220,4 +220,27 @@ internal sealed class ForEachSubscription
     /// </para>
     /// </summary>
     public bool ConsumingOutermost { get; init; }
+
+    /// <summary>
+    /// Runtime branch-gate for a conditional for-each select
+    /// <c>for-each select="if(C) then T else E"</c> where the condition C is GROUNDED
+    /// (motionless — a variable / constant, evaluated once against the live scope) and
+    /// exactly ONE branch is a streamable path while the OTHER is the empty sequence
+    /// <c>()</c>. This subscription carries the streamable branch's path; it fires ONLY
+    /// when the gate is open. The gate is open when the effective boolean value of
+    /// <see cref="GateCondition"/> equals <see cref="GateFiresWhenConditionTrue"/> — i.e.
+    /// when the condition selects the streamable branch. If it selects the empty branch,
+    /// the subscription is skipped entirely (nothing is iterated), which is the exact and
+    /// sound behaviour because the other branch is <c>()</c>. <c>null</c> = no gate
+    /// (unconditional subscription). (sx-if-015.)
+    /// </summary>
+    public XQueryExpression? GateCondition { get; init; }
+
+    /// <summary>
+    /// True when the streamable branch is the <c>then</c> branch (so the gate is open
+    /// when the condition is true); false when it is the <c>else</c> branch (gate open
+    /// when the condition is false). Only meaningful when <see cref="GateCondition"/> is
+    /// set.
+    /// </summary>
+    public bool GateFiresWhenConditionTrue { get; init; }
 }

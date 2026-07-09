@@ -122,6 +122,12 @@ internal sealed class StreamingXmlProcessor
     // same subscription. Subscriptions with pure literal-int bounds never enter here.
     private Dictionary<ForEachSubscription, (int Start, int? Length, int? Remove)>? _subscriptionWindowCache;
 
+    // Runtime branch-gate — memoized open/closed decision for a subscription carrying a
+    // GROUNDED (motionless) gate condition (a for-each `if(C) then <path> else ()` shape).
+    // The condition is a constant per run, so its effective boolean value is evaluated ONCE
+    // against the live scope and cached; the subscription fires only when the gate is open.
+    private Dictionary<ForEachSubscription, bool>? _subscriptionGateCache;
+
     public StreamingXmlProcessor(
         XsltStylesheet stylesheet,
         TemplateIndex templateIndex,
@@ -455,6 +461,21 @@ internal sealed class StreamingXmlProcessor
                                     {
                                         foreach (var sub in matched)
                                         {
+                                            // Runtime branch-gate — a subscription derived from
+                                            // `if(C) then <path> else ()` (or the mirror) fires only when
+                                            // the grounded condition C selects the streamable branch. The
+                                            // condition is motionless (a variable/constant), so its boolean
+                                            // value is evaluated once against the live scope and cached; a
+                                            // closed gate skips the subscription entirely (nothing iterated),
+                                            // which is exact because the other branch is (). Runs BEFORE the
+                                            // match-position counter so a gated-off subscription consumes no
+                                            // position()/subsequence index. (sx-if-015.)
+                                            if (sub.GateCondition != null
+                                                && !await IsSubscriptionGateOpenAsync(sub).ConfigureAwait(false))
+                                            {
+                                                continue;
+                                            }
+
                                             // Intermediate (non-leaf) child-axis predicate filter —
                                             // forward-countable-positional (employee[1]) or motionless
                                             // (department[@name='sales']) — evaluated against the matched
@@ -1229,6 +1250,26 @@ internal sealed class StreamingXmlProcessor
         var result = (start, length, remove);
         _subscriptionWindowCache[sub] = result;
         return result;
+    }
+
+    /// <summary>
+    /// Evaluates the runtime branch-gate of <paramref name="sub"/> once and caches the
+    /// result. The gate condition is GROUNDED (motionless — a variable / constant), so its
+    /// effective boolean value is a constant per run. The gate is OPEN (the subscription
+    /// fires) when that value equals <see cref="ForEachSubscription.GateFiresWhenConditionTrue"/>
+    /// — i.e. when the condition selects the streamable branch. Callers must only invoke
+    /// this when <see cref="ForEachSubscription.GateCondition"/> is non-null.
+    /// </summary>
+    private async ValueTask<bool> IsSubscriptionGateOpenAsync(ForEachSubscription sub)
+    {
+        _subscriptionGateCache ??= new Dictionary<ForEachSubscription, bool>(ReferenceEqualityComparer.Instance);
+        if (_subscriptionGateCache.TryGetValue(sub, out var cached))
+            return cached;
+
+        var conditionTrue = await _context.EvaluateBooleanAsync(sub.GateCondition!).ConfigureAwait(false);
+        var open = conditionTrue == sub.GateFiresWhenConditionTrue;
+        _subscriptionGateCache[sub] = open;
+        return open;
     }
 
     private async ValueTask<int> EvaluateBoundToIntAsync(XQueryExpression bound)

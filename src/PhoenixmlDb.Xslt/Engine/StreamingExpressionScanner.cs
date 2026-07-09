@@ -1406,6 +1406,38 @@ internal sealed class StreamingExpressionScanner
         }
     }
 
+    /// <summary>
+    /// True when <paramref name="expr"/> is a GROUNDED result: a value that does not
+    /// navigate into the streamed input (no path, no bare context item, no consuming
+    /// function). Used to recognize the branches of a grounded-branch conditional
+    /// select <c>if(C) then G1 else G2</c>, where only the condition C consumes the
+    /// stream. Whitelist-only (conservative false for anything unrecognized).
+    /// </summary>
+    private static bool IsGroundedResultExpression(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case IntegerLiteral or DecimalLiteral or DoubleLiteral
+                or StringLiteral or BooleanLiteral or EmptySequence:
+                return true;
+            // A variable reference is a constant per run (evaluated once against the
+            // live scope), so it does not navigate the stream.
+            case VariableReference:
+                return true;
+            case UnaryExpression unary:
+                return IsGroundedResultExpression(unary.Operand);
+            case BinaryExpression bin:
+                return IsGroundedResultExpression(bin.Left)
+                    && IsGroundedResultExpression(bin.Right);
+            case SequenceExpression seq:
+                foreach (var item in seq.Items)
+                    if (!IsGroundedResultExpression(item)) return false;
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private static bool IsMotionlessAncestorExpression(XQueryExpression expr)
     {
         switch (expr)
@@ -1493,6 +1525,35 @@ internal sealed class StreamingExpressionScanner
     {
         if (forEach.Sorts.Count > 0) return;
 
+        // Grounded-branch conditional select — `xsl:for-each select="if(C) then G1
+        // else G2"` where BOTH branches are grounded (motionless: literals / constants
+        // / variable refs, no navigation into the streamed input). The whole select's
+        // only dependence on the stream is the effective boolean value of the consuming
+        // condition C. Rather than register a for-each SUBSCRIPTION (there is no per-match
+        // striding path to iterate — the iteration is over a grounded 0/1), scan C so its
+        // consuming path registers a WATCHER, then leave the for-each on the deferred body
+        // path. When the deferred body runs, EvaluateAsync(select) sees _activeStreamWatchers
+        // set, RewriteWithWatcherVariables substitutes the watched condition sub-expression,
+        // the grounded `if` collapses to the selected branch, and the for-each iterates it.
+        // (sx-if-215.) The condition scan must not leak a for-each subscription: a consuming
+        // SimpleMap/for-expr condition would register one keyed to no iterable body, so any
+        // subscription the scan adds is rolled back (those shapes stay deferred/buffered).
+        if (forEach.Select is IfExpression groundedIf
+            && groundedIf.Condition != null
+            && IsGroundedResultExpression(groundedIf.Then)
+            && (groundedIf.Else == null || IsGroundedResultExpression(groundedIf.Else)))
+        {
+            int watchersBefore = _watchers.Count;
+            int subsBefore = _subscriptions.Count;
+            ScanExpression(groundedIf.Condition);
+            while (_subscriptions.Count > subsBefore)
+                _subscriptions.RemoveAt(_subscriptions.Count - 1);
+            // Only claim the for-each when the condition actually registered a watcher;
+            // otherwise fall through so nothing changes for un-watchable conditions.
+            if (_watchers.Count > watchersBefore)
+                return;
+        }
+
         // Group B — non-consuming inspection subscription. A streamable for-each over
         // outermost(//X) / innermost(//X) / a bare descendant path //X whose per-match
         // body is INSPECTION-ONLY (ancestor/parent/self/attribute + atomize + set-ops,
@@ -1519,6 +1580,46 @@ internal sealed class StreamingExpressionScanner
         // (ScanExpression, used by value-of/copy-of/aggregation over snapshot) is a
         // separate scanner entry point and is untouched.
         var select = forEach.Select;
+
+        // Runtime branch-gate — `for-each select="if(C) then T else E"` where the
+        // condition C is GROUNDED (motionless — a variable / constant) and exactly ONE
+        // branch is a streamable path while the OTHER is the empty sequence (). The
+        // striding path lives in a BRANCH of the conditional, so the ordinary decomposition
+        // below cannot reach it; register the subscription for the streamable branch and
+        // carry the condition as a runtime GATE (evaluated once against the live scope by
+        // the processor). The gate is open — the subscription fires — only when C selects
+        // the streamable branch; when C selects the () branch the subscription is skipped
+        // entirely, which is exactly right (the other branch is empty). A static always-fire
+        // would be UNSOUND: with C true, `then ()` is empty and the else-path must NOT fire.
+        // (sx-if-015.) Both branches grounded is handled by the earlier grounded-branch
+        // block; both non-empty / neither empty is out of scope (not this shape).
+        XQueryExpression? gateCondition = null;
+        bool gateFiresWhenConditionTrue = false;
+        if (select is IfExpression branchIf
+            && branchIf.Condition != null
+            && IsGroundedResultExpression(branchIf.Condition)
+            && branchIf.Else != null)
+        {
+            bool thenEmpty = IsEmptySequenceExpression(branchIf.Then);
+            bool elseEmpty = IsEmptySequenceExpression(branchIf.Else);
+            if (thenEmpty ^ elseEmpty)
+            {
+                gateCondition = branchIf.Condition;
+                if (elseEmpty)
+                {
+                    // if(C) then <path> else () — fire when C is true.
+                    select = UnwrapSingletonSequence(branchIf.Then);
+                    gateFiresWhenConditionTrue = true;
+                }
+                else
+                {
+                    // if(C) then () else <path> — fire when C is false.
+                    select = UnwrapSingletonSequence(branchIf.Else);
+                    gateFiresWhenConditionTrue = false;
+                }
+            }
+        }
+
         int subseqStart = 1;
         int? subseqLength = null;
         int? removeIndex = null;
@@ -1652,8 +1753,28 @@ internal sealed class StreamingExpressionScanner
             SubsequenceLengthExpression = lengthExpr,
             RemoveIndexExpression = removeIndexExpr,
             InlineDriven = _constructionDepth > 0,
+            GateCondition = gateCondition,
+            GateFiresWhenConditionTrue = gateFiresWhenConditionTrue,
         });
     }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> is the empty sequence <c>()</c> — either the
+    /// dedicated <see cref="EmptySequence"/> node or a parenthesized sequence with zero
+    /// items. Used to recognize the empty branch of a runtime branch-gated conditional
+    /// for-each select.
+    /// </summary>
+    private static bool IsEmptySequenceExpression(XQueryExpression? expr)
+        => expr is EmptySequence
+            || (expr is SequenceExpression seq && seq.Items.Count == 0);
+
+    /// <summary>
+    /// Unwraps a parenthesized single-item sequence <c>(X)</c> to <c>X</c> so the
+    /// streamable branch of a conditional select decomposes as a bare path. A
+    /// multi-item sequence or non-sequence expression is returned unchanged.
+    /// </summary>
+    private static XQueryExpression UnwrapSingletonSequence(XQueryExpression expr)
+        => expr is SequenceExpression { Items: { Count: 1 } items } ? items[0] : expr;
 
     /// <summary>
     /// Group B: registers a non-consuming inspection <see cref="ForEachSubscription"/>

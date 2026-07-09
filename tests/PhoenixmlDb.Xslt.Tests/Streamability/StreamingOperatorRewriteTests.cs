@@ -144,6 +144,112 @@ public class StreamingOperatorRewriteTests
     }
 
     // =======================================================================
+    // Scanner: xsl:for-each over a grounded-branch conditional select.
+    // `for-each select="if(<striding-path>) then G1 else G2"` — both branches
+    // grounded (literals), so the only stream dependence is the condition's EBV.
+    // The scanner registers a WATCHER for the condition path (no for-each
+    // subscription: there is no striding path to iterate — the iteration is over
+    // a grounded 0/1). The deferred body then rewrites the select and iterates the
+    // selected branch. (sx-if-215.)
+    // =======================================================================
+
+    [Fact]
+    public void Scanner_ForEachGroundedBranchIf_RegistersConditionWatcherNoSubscription()
+    {
+        // <xsl:for-each select="if(/BOOKLIST/BOOKS/ITEM/PRICE) then 0 else 1">
+        var path = StridingPath();
+        var select = new IfExpression
+        {
+            Condition = path,
+            Then = new IntegerLiteral { Value = 0 },
+            Else = new IntegerLiteral { Value = 1 },
+        };
+        var forEach = new XsltForEach
+        {
+            Select = select,
+            Body = new XsltSequenceConstructor { Instructions = System.Array.Empty<XsltInstruction>() },
+            Sorts = new System.Collections.Generic.List<XsltSort>(),
+        };
+        var body = new XsltSequenceConstructor
+        {
+            Instructions = new XsltInstruction[] { forEach },
+        };
+
+        var result = new StreamingExpressionScanner().ScanWithSubscriptions(body);
+
+        result.Subscriptions.Should().BeEmpty(
+            "the iteration is over a grounded branch, not a striding path");
+        result.Watchers.Should().ContainSingle();
+        result.Watchers[0].SourceExpression.Should().BeSameAs(path);
+        result.Watchers[0].Aggregation.Should().Be(WatcherAggregation.Sequence);
+    }
+
+    [Fact]
+    public void Scanner_ForEachConsumingElseBranchIf_RegistersRuntimeBranchGatedSubscription()
+    {
+        // <xsl:for-each select="if($cond) then () else (/BOOKLIST/BOOKS/ITEM/PRICE)">
+        // The ELSE branch is a streamable path and the THEN branch is the empty sequence,
+        // with a GROUNDED condition ($cond). The scanner registers a subscription for the
+        // else-branch path carrying a runtime gate: it fires only when $cond is FALSE
+        // (the condition selects the streamable else branch). (sx-if-015.)
+        var path = StridingPath();
+        var select = new IfExpression
+        {
+            Condition = new VariableReference { Name = new QName(NamespaceId.None, "cond") },
+            Then = EmptySequence.Instance,
+            Else = path,
+        };
+        var forEach = new XsltForEach
+        {
+            Select = select,
+            Body = new XsltSequenceConstructor { Instructions = System.Array.Empty<XsltInstruction>() },
+            Sorts = new System.Collections.Generic.List<XsltSort>(),
+        };
+        var body = new XsltSequenceConstructor
+        {
+            Instructions = new XsltInstruction[] { forEach },
+        };
+
+        var result = new StreamingExpressionScanner().ScanWithSubscriptions(body);
+
+        result.Watchers.Should().BeEmpty();
+        result.Subscriptions.Should().ContainSingle();
+        var sub = result.Subscriptions[0];
+        sub.GateCondition.Should().BeSameAs(select.Condition);
+        sub.GateFiresWhenConditionTrue.Should().BeFalse("the streamable path is the ELSE branch");
+    }
+
+    [Fact]
+    public void Scanner_ForEachConsumingThenBranchIf_GateFiresWhenConditionTrue()
+    {
+        // <xsl:for-each select="if($cond) then (/BOOKLIST/BOOKS/ITEM/PRICE) else ()">
+        // The THEN branch is the streamable path, so the gate fires when $cond is TRUE.
+        var path = StridingPath();
+        var select = new IfExpression
+        {
+            Condition = new VariableReference { Name = new QName(NamespaceId.None, "cond") },
+            Then = path,
+            Else = EmptySequence.Instance,
+        };
+        var forEach = new XsltForEach
+        {
+            Select = select,
+            Body = new XsltSequenceConstructor { Instructions = System.Array.Empty<XsltInstruction>() },
+            Sorts = new System.Collections.Generic.List<XsltSort>(),
+        };
+        var body = new XsltSequenceConstructor
+        {
+            Instructions = new XsltInstruction[] { forEach },
+        };
+
+        var result = new StreamingExpressionScanner().ScanWithSubscriptions(body);
+
+        result.Subscriptions.Should().ContainSingle();
+        result.Subscriptions[0].GateCondition.Should().BeSameAs(select.Condition);
+        result.Subscriptions[0].GateFiresWhenConditionTrue.Should().BeTrue("the streamable path is the THEN branch");
+    }
+
+    // =======================================================================
     // Rewriter: the watched path inside the operator becomes $__streaming_watcher_N.
     // =======================================================================
 
