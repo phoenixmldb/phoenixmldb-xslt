@@ -639,7 +639,7 @@ public class XsltTransformEngineTests
         var charMap = new XsltCharacterMap
         {
             Name = charMapName,
-            Mappings = new Dictionary<char, string>
+            Mappings = new Dictionary<int, string>
             {
                 ['<'] = "[LT]",
                 ['>'] = "[GT]",
@@ -661,7 +661,7 @@ public class XsltTransformEngineTests
         {
             Name = new QName(NamespaceId.None, "extended-map"),
             UseCharacterMaps = [baseMapName],
-            Mappings = new Dictionary<char, string>
+            Mappings = new Dictionary<int, string>
             {
                 ['"'] = "[QUOT]"
             }

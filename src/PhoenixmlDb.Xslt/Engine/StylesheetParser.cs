@@ -4274,7 +4274,7 @@ public sealed class StylesheetParser
             }
         }
 
-        var mappings = new Dictionary<char, string>();
+        var mappings = new Dictionary<int, string>();
         foreach (var child in element.Elements(XsltNs + "output-character"))
         {
             var charAttr = child.Attribute("character")?.Value
@@ -4283,9 +4283,17 @@ public sealed class StylesheetParser
             var stringAttr = child.Attribute("string")?.Value
                 ?? throw new XsltException("XTSE0010: xsl:output-character requires a 'string' attribute",
                     GetSourceLocation(child));
+            // The 'character' attribute must be a single XML character (one Unicode code
+            // point). That is one UTF-16 code unit for BMP characters, or a surrogate pair
+            // for astral characters (> U+FFFF). Key the mapping on the code point so astral
+            // characters are not silently dropped (character-map-007/010).
             if (charAttr.Length == 1)
             {
                 mappings[charAttr[0]] = stringAttr;
+            }
+            else if (charAttr.Length == 2 && char.IsHighSurrogate(charAttr[0]) && char.IsLowSurrogate(charAttr[1]))
+            {
+                mappings[char.ConvertToUtf32(charAttr[0], charAttr[1])] = stringAttr;
             }
         }
 

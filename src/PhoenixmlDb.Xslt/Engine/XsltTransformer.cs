@@ -657,21 +657,40 @@ public sealed class XsltTransformEngine
                 var mergedMaps = new List<QName>();
                 if (outputMaps != null) mergedMaps.AddRange(outputMaps);
                 if (rdMaps != null) mergedMaps.AddRange(rdMaps);
-                output = ApplyCharacterMaps(output, mergedMaps, outputDecl?.EffectiveMethod ?? OutputMethod.Xml);
+                // When a normalization-form is in effect, bracket each replacement so the
+                // normalization pass below leaves character-map output alone (character-map-025/028).
+                output = ApplyCharacterMaps(output, mergedMaps, outputDecl?.EffectiveMethod ?? OutputMethod.Xml,
+                    protectMappedOutput: outputDecl?.NormalizationForm != null);
             }
         }
 
-        // Apply Unicode normalization if specified
+        // Apply Unicode normalization if specified. Character-map replacement regions are
+        // immune (they are bracketed by MapGuard sentinels, which NormalizeExceptMappedRegions
+        // skips and strips).
         if (outputDecl?.NormalizationForm != null)
         {
-            output = outputDecl.NormalizationForm.ToUpperInvariant() switch
+            System.Text.NormalizationForm? form = outputDecl.NormalizationForm.ToUpperInvariant() switch
             {
-                "NFC" => output.Normalize(System.Text.NormalizationForm.FormC),
-                "NFD" => output.Normalize(System.Text.NormalizationForm.FormD),
-                "NFKC" => output.Normalize(System.Text.NormalizationForm.FormKC),
-                "NFKD" => output.Normalize(System.Text.NormalizationForm.FormKD),
-                _ => output
+                "NFC" => System.Text.NormalizationForm.FormC,
+                "NFD" => System.Text.NormalizationForm.FormD,
+                "NFKC" => System.Text.NormalizationForm.FormKC,
+                "NFKD" => System.Text.NormalizationForm.FormKD,
+                _ => null
             };
+            if (form.HasValue)
+                output = NormalizeExceptMappedRegions(output, form.Value);
+        }
+
+        // Characters that cannot be represented in the target encoding are emitted as numeric
+        // character references (W3C Serialization 4.0 §7.2), matching PhoenixmlDb.XQuery's
+        // encoding-aware WriteTextEscaped/WriteCDataEncodingAware. This runs after character
+        // maps and normalization so replacement text is included, and before the XML/DOCTYPE
+        // prolog is prepended so the scan sees only the serialized element tree.
+        if (outputDecl != null &&
+            outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html &&
+            !string.IsNullOrEmpty(outputDecl.Encoding))
+        {
+            output = EscapeUnrepresentableCharacters(output, outputDecl.Encoding);
         }
 
         // Emit XML declaration if requested
@@ -2072,11 +2091,23 @@ public sealed class XsltTransformEngine
         return sb.ToString();
     }
 
-    private string ApplyCharacterMaps(string output, List<QName> useCharacterMaps, OutputMethod method = OutputMethod.Xml)
+    /// <summary>
+    /// Private-use sentinels bracketing a character-map replacement string so that a
+    /// later Unicode-normalization pass leaves the replacement untouched
+    /// (character-map-025/028: "characters produced by a character map are immune to
+    /// Unicode normalization"). Only emitted when <c>protectMappedOutput</c> is set,
+    /// i.e. when a normalization-form is in effect; stripped by
+    /// <see cref="NormalizeExceptMappedRegions"/>.
+    /// </summary>
+    private const char MapGuardStart = '\uE000';
+    private const char MapGuardEnd = '\uE001';
+
+    private string ApplyCharacterMaps(string output, List<QName> useCharacterMaps, OutputMethod method = OutputMethod.Xml, bool protectMappedOutput = false)
     {
         // Collect character mappings from referenced maps in declaration order.
-        // Later maps in the list override earlier ones (XSLT 3.0 §25.1).
-        var allMappings = new Dictionary<char, string>();
+        // Later maps in the list override earlier ones (XSLT 3.0 §25.1). Keyed by Unicode
+        // code point so astral characters participate (character-map-007/010).
+        var allMappings = new Dictionary<int, string>();
         var visited = new HashSet<QName>();
         foreach (var mapName in useCharacterMaps)
         {
@@ -2094,6 +2125,19 @@ public sealed class XsltTransformEngine
         var mapThisAttr = true;
         var isHtmlLike = method is OutputMethod.Html or OutputMethod.Xhtml;
         var attrNameToken = new StringBuilder();
+
+        void EmitReplacement(string replacement)
+        {
+            if (protectMappedOutput)
+            {
+                sb.Append(MapGuardStart).Append(replacement).Append(MapGuardEnd);
+            }
+            else
+            {
+                sb.Append(replacement);
+            }
+        }
+
         for (var i = 0; i < output.Length; i++)
         {
             var c = output[i];
@@ -2140,9 +2184,9 @@ public sealed class XsltTransformEngine
                         inAttrValue = false;
                         sb.Append(c);
                     }
-                    else if (mapThisAttr && allMappings.TryGetValue(c, out var attrRepl))
+                    else if (mapThisAttr && TryMapLogicalChar(output, ref i, allMappings, out var attrRepl))
                     {
-                        sb.Append(attrRepl);
+                        EmitReplacement(attrRepl);
                     }
                     else
                     {
@@ -2182,15 +2226,222 @@ public sealed class XsltTransformEngine
                 continue;
             }
             // Apply character map to text content
-            if (allMappings.TryGetValue(c, out var replacement))
-                sb.Append(replacement);
+            if (TryMapLogicalChar(output, ref i, allMappings, out var replacement))
+                EmitReplacement(replacement);
             else
                 sb.Append(c);
         }
         return sb.ToString();
     }
 
-    private void CollectCharacterMappings(XsltCharacterMap map, Dictionary<char, string> target, HashSet<QName> visited)
+    /// <summary>
+    /// At position <paramref name="i"/> in the already-escaped serialized string, determine
+    /// the <em>logical source character</em> (the character as it appeared in the result
+    /// tree, before XML escaping) and look it up in <paramref name="mappings"/>. This lets
+    /// character maps key on the original character even though the serializer has already
+    /// turned it into an entity reference — character maps are, per the serialization spec,
+    /// applied to the pre-escaped characters, and their replacement is emitted verbatim
+    /// (character-map-023/026). The logical character may be:
+    /// <list type="bullet">
+    /// <item>a predefined or numeric entity reference (<c>&amp;lt;</c>, <c>&amp;#100000;</c>, …)</item>
+    /// <item>an astral character encoded as a UTF-16 surrogate pair (character-map-007)</item>
+    /// <item>an ordinary BMP character</item>
+    /// </list>
+    /// On a hit, <paramref name="i"/> is advanced to the last consumed code unit (the caller's
+    /// loop increment steps past it) and the replacement is returned. On a miss, <paramref name="i"/>
+    /// is left unchanged so the caller emits the single code unit verbatim.
+    /// </summary>
+    private static bool TryMapLogicalChar(string s, ref int i, Dictionary<int, string> mappings, out string replacement)
+    {
+        var c = s[i];
+        // Entity reference: decode to its code point for the lookup, but only consume it
+        // (advance i to the ';') when a mapping actually fires. A miss leaves the '&' to be
+        // emitted verbatim and the remaining entity characters handled on later iterations.
+        if (c == '&')
+        {
+            var semi = s.IndexOf(';', i + 1);
+            if (semi > i && semi - i <= 10 && TryDecodeEntity(s, i, semi, out var entityCp)
+                && mappings.TryGetValue(entityCp, out var entityRep))
+            {
+                i = semi;
+                replacement = entityRep;
+                return true;
+            }
+        }
+        // Astral character as a surrogate pair.
+        else if (char.IsHighSurrogate(c) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1]))
+        {
+            var cp = char.ConvertToUtf32(c, s[i + 1]);
+            if (mappings.TryGetValue(cp, out var astralRep))
+            {
+                i++; // consume the low surrogate; caller's loop steps past it
+                replacement = astralRep;
+                return true;
+            }
+        }
+        // Ordinary BMP character.
+        else if (mappings.TryGetValue(c, out var bmpRep))
+        {
+            replacement = bmpRep;
+            return true;
+        }
+
+        replacement = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Decodes the entity reference occupying <c>s[start..end]</c> (where <c>s[start]=='&amp;'</c>
+    /// and <c>s[end]==';'</c>) to its Unicode code point. Handles the five predefined XML
+    /// entities and decimal / hexadecimal numeric character references. Returns false for
+    /// anything else.
+    /// </summary>
+    private static bool TryDecodeEntity(string s, int start, int end, out int codePoint)
+    {
+        codePoint = 0;
+        var inner = s.AsSpan(start + 1, end - start - 1);
+        if (inner.Length == 0)
+            return false;
+        if (inner[0] == '#')
+        {
+            if (inner.Length >= 2 && (inner[1] == 'x' || inner[1] == 'X'))
+                return int.TryParse(inner[2..], System.Globalization.NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture, out codePoint) && codePoint > 0;
+            return int.TryParse(inner, System.Globalization.NumberStyles.None,
+                CultureInfo.InvariantCulture, out codePoint) && codePoint > 0;
+        }
+        switch (inner)
+        {
+            case "amp": codePoint = '&'; return true;
+            case "lt": codePoint = '<'; return true;
+            case "gt": codePoint = '>'; return true;
+            case "quot": codePoint = '"'; return true;
+            case "apos": codePoint = '\''; return true;
+            default: return false;
+        }
+    }
+
+    /// <summary>
+    /// Applies Unicode normalization to <paramref name="output"/> while leaving character-map
+    /// replacement regions — bracketed by <see cref="MapGuardStart"/>/<see cref="MapGuardEnd"/> —
+    /// untouched, then strips the guards. Characters produced by a character map are immune to
+    /// normalization (character-map-025/028).
+    /// </summary>
+    private static string NormalizeExceptMappedRegions(string output, System.Text.NormalizationForm form)
+    {
+        if (output.IndexOf(MapGuardStart, StringComparison.Ordinal) < 0)
+            return output.Normalize(form);
+
+        var sb = new StringBuilder(output.Length);
+        var segStart = 0;
+        for (var i = 0; i < output.Length; i++)
+        {
+            if (output[i] == MapGuardStart)
+            {
+                if (i > segStart)
+                    sb.Append(output.Substring(segStart, i - segStart).Normalize(form));
+                var close = output.IndexOf(MapGuardEnd, i + 1);
+                if (close < 0)
+                {
+                    // Unbalanced guard (should not happen) — emit the remainder verbatim.
+                    sb.Append(output.AsSpan(i + 1));
+                    return sb.ToString();
+                }
+                sb.Append(output.AsSpan(i + 1, close - i - 1)); // mapped region: immune, guards dropped
+                i = close;
+                segStart = close + 1;
+            }
+        }
+        if (segStart < output.Length)
+            sb.Append(output.Substring(segStart).Normalize(form));
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Replaces characters that the declared output <paramref name="encodingName"/> cannot
+    /// represent with decimal numeric character references, in text and attribute-value content
+    /// only (never in element/attribute names or other markup). Handles astral characters
+    /// (surrogate pairs) as a single code point (character-map-010 att3). No-op when the encoding
+    /// can represent all of Unicode (UTF-8/16/32) or is unknown.
+    /// </summary>
+    private static string EscapeUnrepresentableCharacters(string output, string encodingName)
+    {
+        System.Text.Encoding enc;
+        try { enc = System.Text.Encoding.GetEncoding(encodingName); }
+        catch (ArgumentException) { return output; }
+        // UTF encodings represent all of Unicode — nothing to escape.
+        if (enc.CodePage is 65001 or 1200 or 1201 or 12000 or 12001)
+            return output;
+
+        var sb = new StringBuilder(output.Length);
+        var inTag = false;
+        var inAttrValue = false;
+        var attrQuote = '"';
+        var changed = false;
+        for (var i = 0; i < output.Length; i++)
+        {
+            var c = output[i];
+            if (inTag)
+            {
+                if (inAttrValue)
+                {
+                    if (c == attrQuote) { inAttrValue = false; sb.Append(c); continue; }
+                }
+                else
+                {
+                    if (c == '>') { inTag = false; sb.Append(c); continue; }
+                    if (c == '"' || c == '\'') { inAttrValue = true; attrQuote = c; sb.Append(c); continue; }
+                    // Element/attribute names and other in-tag markup: leave verbatim.
+                    sb.Append(c);
+                    continue;
+                }
+                // fall through: attribute-value content is escaped like text
+            }
+            else if (c == '<')
+            {
+                inTag = true;
+                sb.Append(c);
+                continue;
+            }
+
+            // Content region (text node or attribute value): NCR-escape unrepresentable chars.
+            int codePoint;
+            var consumedLow = false;
+            if (char.IsHighSurrogate(c) && i + 1 < output.Length && char.IsLowSurrogate(output[i + 1]))
+            {
+                codePoint = char.ConvertToUtf32(c, output[i + 1]);
+                consumedLow = true;
+            }
+            else
+            {
+                codePoint = c;
+            }
+
+            if (codePoint > 0x7F && !IsEncodable(codePoint, enc))
+            {
+                sb.Append("&#").Append(codePoint.ToString(CultureInfo.InvariantCulture)).Append(';');
+                if (consumedLow) i++;
+                changed = true;
+            }
+            else
+            {
+                sb.Append(c);
+                if (consumedLow) { sb.Append(output[i + 1]); i++; }
+            }
+        }
+        return changed ? sb.ToString() : output;
+    }
+
+    /// <summary>Returns true if <paramref name="codePoint"/> round-trips through
+    /// <paramref name="enc"/> without loss (mirrors PhoenixmlDb.XQuery's IsEncodable).</summary>
+    private static bool IsEncodable(int codePoint, System.Text.Encoding enc)
+    {
+        var s = char.ConvertFromUtf32(codePoint);
+        try { return enc.GetString(enc.GetBytes(s)) == s; }
+        catch (System.Text.EncoderFallbackException) { return false; }
+    }
+
+    private void CollectCharacterMappings(XsltCharacterMap map, Dictionary<int, string> target, HashSet<QName> visited)
     {
         if (!visited.Add(map.Name))
             return;
