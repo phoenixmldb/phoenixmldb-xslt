@@ -4109,6 +4109,33 @@ public sealed class StylesheetParser
             throw new XsltException($"XTSE0020: Invalid html-version value '{output.HtmlVersion}': must be a decimal number");
         }
 
+        // XTSE0020: reject invalid values for the yes-or-no serialization attributes.
+        // The serialization spec ties these to SEPM0016 at serialization time; XSLT
+        // catches them statically as XTSE0020. Only "yes"/"no"/"true"/"false"/"1"/"0"
+        // (case-sensitive, per xsl:yes-or-no) are permitted, so uppercase values such as
+        // "TRUE"/"YES" are errors rather than being silently ignored.
+        ValidateYesNoOutputAttribute(element, "omit-xml-declaration");
+        ValidateYesNoOutputAttribute(element, "indent");
+        ValidateYesNoOutputAttribute(element, "include-content-type");
+        ValidateYesNoOutputAttribute(element, "allow-duplicate-names");
+        ValidateYesNoOutputAttribute(element, "byte-order-mark");
+        ValidateYesNoOutputAttribute(element, "escape-uri-attributes");
+        ValidateYesNoOutputAttribute(element, "undeclare-prefixes");
+
+        // standalone additionally permits the value "omit".
+        var standaloneAttr = element.Attribute("standalone");
+        if (standaloneAttr != null)
+        {
+            var v = standaloneAttr.Value.Trim();
+            if (v is not ("yes" or "no" or "true" or "false" or "1" or "0" or "omit"))
+                throw new XsltException($"XTSE0020: Invalid standalone value '{standaloneAttr.Value}': must be yes, no, true, false, 1, 0, or omit");
+        }
+
+        // doctype-public must be a valid XML PubidLiteral (XTSE0020).
+        var doctypePublicAttr = element.Attribute("doctype-public");
+        if (doctypePublicAttr != null && !IsValidPublicId(doctypePublicAttr.Value))
+            throw new XsltException($"XTSE0020: Invalid doctype-public value '{doctypePublicAttr.Value}': not a valid public identifier");
+
         var cdataAttr = element.Attribute("cdata-section-elements");
         if (cdataAttr != null)
         {
@@ -4137,6 +4164,42 @@ public sealed class StylesheetParser
         }
 
         return output;
+    }
+
+    /// <summary>
+    /// XTSE0020: throw when a present xsl:output yes-or-no attribute carries a value outside
+    /// the permitted set ("yes"/"no"/"true"/"false"/"1"/"0"). Absent attributes are ignored.
+    /// </summary>
+    private static void ValidateYesNoOutputAttribute(XElement element, string attrName)
+    {
+        var attr = element.Attribute(attrName);
+        if (attr == null) return;
+        if (ParseYesNo(attr) == null)
+            throw new XsltException($"XTSE0020: Invalid value '{attr.Value}' for xsl:output {attrName} attribute (must be yes, no, true, false, 1, or 0)");
+    }
+
+    /// <summary>
+    /// XTSE0020: the disable-output-escaping attribute (on xsl:text / xsl:value-of) is a
+    /// yes-or-no; reject any present value outside the permitted set (e.g. "YES", " ").
+    /// </summary>
+    private static void ValidateDoeAttribute(XAttribute? attr, SourceLocation? location)
+    {
+        if (attr == null) return;
+        if (ParseYesNo(attr) == null)
+            throw new XsltException($"XTSE0020: Invalid disable-output-escaping value '{attr.Value}' (must be yes, no, true, false, 1, or 0)", location);
+    }
+
+    /// <summary>Validates an XML PubidLiteral (public identifier) character set.</summary>
+    private static bool IsValidPublicId(string value)
+    {
+        foreach (var c in value)
+        {
+            bool ok = c is ' ' or '\r' or '\n'
+                || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                || "-'()+,./:=?;!*#@$_%".Contains(c, StringComparison.Ordinal);
+            if (!ok) return false;
+        }
+        return true;
     }
 
     private XsltAttributeSet ParseAttributeSet(XElement element)
@@ -5854,7 +5917,9 @@ public sealed class StylesheetParser
         if (element.Elements().Any())
             throw new XsltException("XTSE0010: xsl:text must not contain child elements", location);
 
-        var doe = element.Attribute("disable-output-escaping")?.Value.Trim() is "yes" or "true" or "1";
+        var doeTextAttr = element.Attribute("disable-output-escaping");
+        ValidateDoeAttribute(doeTextAttr, location);
+        var doe = doeTextAttr?.Value.Trim() is "yes" or "true" or "1";
         var expandText = IsExpandTextActive(element);
         var value = element.Value;
 
@@ -5884,6 +5949,7 @@ public sealed class StylesheetParser
         var selectAttr = element.Attribute("select");
         var separatorAttr = element.Attribute("separator");
         var doeAttr = element.Attribute("disable-output-escaping");
+        ValidateDoeAttribute(doeAttr, location);
 
         // XTSE0870: select and non-empty content are mutually exclusive
         ValidateSelectContentExclusive(selectAttr, element, "XTSE0870", "xsl:value-of", location);
@@ -6144,6 +6210,29 @@ public sealed class StylesheetParser
                 System.Globalization.CultureInfo.InvariantCulture, out _))
                 throw new XsltException($"XTSE0020: Invalid html-version value '{htmlVersionAttr.Value}': must be a decimal number", location);
         }
+
+        // XTSE0020: reject invalid literal values for the yes-or-no serialization attributes.
+        // Values may be AVTs (e.g. standalone="{$x}"); those are validated at runtime, so
+        // skip any value containing a "{".
+        foreach (var yn in new[] { "omit-xml-declaration", "indent", "byte-order-mark",
+                                   "escape-uri-attributes", "include-content-type",
+                                   "undeclare-prefixes", "allow-duplicate-names" })
+        {
+            var a = element.Attribute(yn);
+            if (a != null && !a.Value.Contains('{', StringComparison.Ordinal) && ParseYesNo(a) == null)
+                throw new XsltException($"XTSE0020: Invalid value '{a.Value}' for xsl:result-document {yn} attribute (must be yes, no, true, false, 1, or 0)", location);
+        }
+        var rdStandalone = element.Attribute("standalone");
+        if (rdStandalone != null && !rdStandalone.Value.Contains('{', StringComparison.Ordinal))
+        {
+            var v = rdStandalone.Value.Trim();
+            if (v is not ("yes" or "no" or "true" or "false" or "1" or "0" or "omit"))
+                throw new XsltException($"XTSE0020: Invalid standalone value '{rdStandalone.Value}' on xsl:result-document: must be yes, no, true, false, 1, 0, or omit", location);
+        }
+        var rdDoctypePublic = element.Attribute("doctype-public");
+        if (rdDoctypePublic != null && !rdDoctypePublic.Value.Contains('{', StringComparison.Ordinal)
+            && !IsValidPublicId(rdDoctypePublic.Value))
+            throw new XsltException($"XTSE0020: Invalid doctype-public value '{rdDoctypePublic.Value}' on xsl:result-document: not a valid public identifier", location);
 
         // XTSE1660: Non-schema-aware processor must reject type attribute
         if (typeAttr != null && ShouldRejectSchemaAware)
