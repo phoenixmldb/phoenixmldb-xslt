@@ -2106,7 +2106,7 @@ public sealed class XsltTransformEngine
                 try
                 {
                     var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
-                    context.GlobalVariables[global.Name] = value;
+                    context.GlobalVariables[global.Name] = DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As);
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
             }
@@ -2418,10 +2418,17 @@ public sealed class XsltTransformEngine
                         // numeric type"). Found in Docbook xslTNG `vp:section-toc-depth`
                         // (as="xs:integer" with xsl:choose+xsl:sequence body) — minimal repro:
                         // `<xsl:variable as="xs:integer"><xsl:sequence select="2147483647"/></xsl:variable>`.
-                        if (DefaultXsltExecutionContext.IsStrictAtomicTypePublic(global.As.ItemType)
+                        if (DefaultXsltExecutionContext.IsCastableAtomicTypePublic(global.As.ItemType)
                             && !content.Contains('<', StringComparison.Ordinal))
                         {
-                            var coerced = DefaultXsltExecutionContext.TryCoerceStringToTypePublic(content, global.As.ItemType);
+                            // Cast the body's text value to the declared atomic type via the
+                            // canonical caster (covers untypedAtomic/anyURI/G*/date-time/duration
+                            // that the narrower TryCoerceStringToType/IsStrictAtomicType gate missed,
+                            // so `instance of xs:TYPE` now holds — attr/as-0105, as-0111).
+                            object? coerced;
+                            try { coerced = PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(content, global.As.ItemType); }
+                            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+                            { _ = ex; coerced = null; }
                             context.GlobalVariables[global.Name] = coerced ?? (object)content;
                         }
                         else
@@ -2518,7 +2525,7 @@ public sealed class XsltTransformEngine
                 try
                 {
                     var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
-                    context.GlobalVariables[global.Name] = value;
+                    context.GlobalVariables[global.Name] = DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As);
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
             }
@@ -22548,6 +22555,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
 
                 _sequenceAccumulator = savedAccumulator;
+                // Apply as="ATOMIC*" coercion per item (atomize + cast). The sequence branch
+                // previously returned the raw untypedAtomic/string items, so e.g.
+                // as="xs:anyURI+" / as="xs:float*" bodies failed `instance of xs:TYPE`
+                // (attr/as-1001, as-1101).
+                if (param.As != null && IsCastableAtomicType(param.As.ItemType))
+                {
+                    for (var i = 0; i < sequenceItems.Count; i++)
+                        if (sequenceItems[i] != null)
+                            sequenceItems[i] = CoerceToType(sequenceItems[i], param.As);
+                }
                 return sequenceItems.Count > 0 ? sequenceItems.ToArray() : Array.Empty<object?>();
             }
 
@@ -23145,13 +23162,41 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 coerced[i] = CoerceToType(arr[i], targetType);
             return coerced;
         }
-        return targetType.ItemType switch
+        var itemType = targetType.ItemType;
+
+        // Subtype substitution (XSLT 3.0 §9.3 / XPath sequence-type matching): when the value
+        // already matches the declared type — including as a MORE specific subtype, e.g. an
+        // xs:dayTimeDuration value satisfying as="xs:duration" — keep it as-is. Down-casting to
+        // the declared base type would strip the subtype and break `instance of xs:dayTimeDuration`
+        // (attr/as-0118). Only applies to atomic targets; node/item targets are handled below.
+        if (IsCastableAtomicType(itemType)
+            && XQuery.Execution.TypeCastHelper.MatchesItemType(value, itemType))
+        {
+            return value;
+        }
+
+        // Atomize a temporary tree (RTF) or node before atomic coercion. Per XSLT 3.0 §9.3,
+        // a sequence-constructor body (or a select= expression yielding nodes) bound to an
+        // atomic `as=` type is atomized to its string/typed value, not left as the tree.
+        // For the numeric/G*/untypedAtomic cases below this is a no-op (they already went
+        // through StringValueOf); it matters for the date/time/duration/anyURI/float/QName/
+        // binary types handled by the fall-through cast arm, which otherwise left the raw tree.
+        if (IsCastableAtomicType(itemType)
+            && value is ResultTreeFragment or Xdm.Nodes.XdmNode or Xdm.TextNodeItem)
+        {
+            value = StringValueOf(value);
+        }
+
+        return itemType switch
         {
             ItemType.String => StringValueOf(value),
             ItemType.Integer => value is long ? value : long.TryParse(StringValueOf(value), out var l) ? l : value,
             // xs:integer is a subtype of xs:decimal — accept int/long without conversion
             ItemType.Decimal => value is decimal or int or long ? value : decimal.TryParse(StringValueOf(value), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : value,
-            ItemType.Double => value is double ? value : double.TryParse(StringValueOf(value), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var dbl) ? dbl : value,
+            // Delegate double/float to the canonical caster so INF/-INF/NaN lexical forms and
+            // numeric promotion are handled (attr/as-0113 func3: xs:double('INF')).
+            ItemType.Double => value is double ? value : TryCastToAtomicLenient(value, ItemType.Double),
+            ItemType.Float => value is float ? value : TryCastToAtomicLenient(value, ItemType.Float),
             ItemType.Boolean => CoerceToBoolean(value),
             ItemType.GYear => value is Xdm.XsGYear ? value : new Xdm.XsGYear(StringValueOf(value)),
             ItemType.GYearMonth => value is Xdm.XsGYearMonth ? value : new Xdm.XsGYearMonth(StringValueOf(value)),
@@ -23159,8 +23204,64 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             ItemType.GDay => value is Xdm.XsGDay ? value : new Xdm.XsGDay(StringValueOf(value)),
             ItemType.GMonth => value is Xdm.XsGMonth ? value : new Xdm.XsGMonth(StringValueOf(value)),
             ItemType.UntypedAtomic => value is Xdm.XsUntypedAtomic ? value : new Xdm.XsUntypedAtomic(StringValueOf(value)),
+            // Remaining atomic types (date/time/dateTime/duration/dayTimeDuration/
+            // yearMonthDuration/anyURI/float/QName/hexBinary/base64Binary): delegate to the
+            // canonical XQuery caster so the value carries the proper typed representation that
+            // `instance of xs:TYPE` recognizes. Lenient on failure (return the value unchanged)
+            // to match the existing numeric arms; a genuine type mismatch is caught downstream
+            // by ValidateValueMatchesType.
+            _ when IsCastableAtomicType(itemType) => TryCastToAtomicLenient(value, itemType),
             _ => value
         };
+    }
+
+    /// <summary>
+    /// True for atomic item types that <see cref="CoerceToType"/> can atomize-and-cast toward.
+    /// Deliberately excludes node/item/map/array/function/record/union types (which must keep
+    /// their nodes) and the schema-only pseudo-types.
+    /// </summary>
+    private static bool IsCastableAtomicType(ItemType type) => type is
+        ItemType.String or ItemType.Boolean or ItemType.Integer or ItemType.Decimal
+        or ItemType.Double or ItemType.Float or ItemType.Date or ItemType.DateTime
+        or ItemType.Time or ItemType.Duration or ItemType.YearMonthDuration
+        or ItemType.DayTimeDuration or ItemType.QName or ItemType.AnyUri
+        or ItemType.UntypedAtomic or ItemType.GYearMonth or ItemType.GYear
+        or ItemType.GMonthDay or ItemType.GDay or ItemType.GMonth
+        or ItemType.HexBinary or ItemType.Base64Binary or ItemType.AnyAtomicType;
+
+    /// <summary>
+    /// Casts <paramref name="value"/> to an atomic type via the canonical XQuery caster,
+    /// returning the original value if the cast is not applicable (mirrors the lenient
+    /// numeric arms of <see cref="CoerceToType"/>).
+    /// </summary>
+    private static object? TryCastToAtomicLenient(object? value, ItemType itemType)
+    {
+        if (value == null)
+            return null;
+        try
+        {
+            return PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(value, itemType) ?? value;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+        {
+            _ = ex; // conversion failure — leave value for the downstream type validator
+            return value;
+        }
+    }
+
+    /// <summary>
+    /// Applies an <c>as=</c> atomic-type declaration to a <c>select=</c> (or otherwise computed)
+    /// value: atomizes nodes/RTFs and casts each item to the declared atomic type. Node/item/map/
+    /// array/function target types are returned unchanged so their nodes are preserved. Used by the
+    /// global-variable <c>select</c> path, which previously stored the raw node/typed value and so
+    /// failed <c>instance of xs:TYPE</c> for e.g. <c>select="/doc/item/@a" as="xs:untypedAtomic"</c>
+    /// or <c>select="/doc/item" as="xs:duration"</c>.
+    /// </summary>
+    internal static object? CoerceSelectValueToDeclaredType(object? value, XdmSequenceType? asType)
+    {
+        if (asType == null || value == null || !IsCastableAtomicType(asType.ItemType))
+            return value;
+        return CoerceToType(value, asType);
     }
 
     /// <summary>
@@ -23282,6 +23383,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     /// <summary>Public alias used by the engine's global-variable initialization path.</summary>
     internal static bool IsStrictAtomicTypePublic(ItemType type) => IsStrictAtomicType(type);
+
+    /// <summary>Public alias used by the engine's global-variable initialization path.</summary>
+    internal static bool IsCastableAtomicTypePublic(ItemType type) => IsCastableAtomicType(type);
 
     /// <summary>Public alias used by the engine's global-variable initialization path.</summary>
     internal static object? TryCoerceStringToTypePublic(string value, ItemType targetType) =>
@@ -24381,22 +24485,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // `<xsl:apply-templates select="$node" mode="mp:label-number"/>` and the
             // matching templates use `<xsl:number/>`) returns the formatted string and the
             // tightened validator now rejects it as XTTE0780.
-            if (funcResult is string fs && func.As != null && IsStrictAtomicType(func.As.ItemType))
+            if (func.As != null && IsCastableAtomicType(func.As.ItemType))
             {
-                var coerced = TryCoerceStringToType(fs, func.As.ItemType);
-                if (coerced != null)
-                    funcResult = coerced;
-            }
-            else if (funcResult is object?[] resultArr && func.As != null && IsStrictAtomicType(func.As.ItemType))
-            {
-                for (var i = 0; i < resultArr.Length; i++)
+                // Atomize + cast the return value to the declared atomic type. Covers a
+                // string body (xsl:number/xsl:value-of), a temporary tree / node produced by
+                // the sequence constructor (attr/as-0122: RTF → xs:dayTimeDuration, previously
+                // XTTE0780), and numeric promotion (attr/as-0152: xs:integer → xs:double).
+                if (funcResult is object?[] resultArr)
                 {
-                    if (resultArr[i] is string sStr)
-                    {
-                        var coerced = TryCoerceStringToType(sStr, func.As.ItemType);
-                        if (coerced != null)
-                            resultArr[i] = coerced;
-                    }
+                    for (var i = 0; i < resultArr.Length; i++)
+                        if (resultArr[i] != null)
+                            resultArr[i] = CoerceToType(resultArr[i], func.As);
+                }
+                else if (funcResult != null)
+                {
+                    funcResult = CoerceToType(funcResult, func.As);
                 }
             }
 

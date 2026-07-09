@@ -9984,6 +9984,24 @@ public sealed class StylesheetParser
                 type = "xs:" + type;
         }
 
+        // Normalize any namespace prefix bound to the XSD namespace to the canonical "xs:"
+        // so the type-name switch (keyed on "xs:") recognizes it. A stylesheet may bind e.g.
+        // xmlns:xsd="http://www.w3.org/2001/XMLSchema" and write as="xsd:string" (attr/as-0116);
+        // without this the type resolved to item() and `instance of` checks were wrong.
+        if (context != null && !type.Contains('(', StringComparison.Ordinal))
+        {
+            var colon = type.IndexOf(':', StringComparison.Ordinal);
+            if (colon > 0)
+            {
+                var prefix = type[..colon];
+                if (prefix != "xs"
+                    && context.GetNamespaceOfPrefix(prefix)?.NamespaceName == "http://www.w3.org/2001/XMLSchema")
+                {
+                    type = "xs:" + type[(colon + 1)..];
+                }
+            }
+        }
+
         // Handle parameterized map types: map(xs:string, xs:boolean)
         if (type.StartsWith("map(", StringComparison.Ordinal) && type.EndsWith(')') && type != "map(*)")
         {
