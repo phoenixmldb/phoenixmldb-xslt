@@ -496,7 +496,7 @@ public sealed class XsltTransformEngine
                 var mergedMaps = new List<QName>();
                 if (outputMaps != null) mergedMaps.AddRange(outputMaps);
                 if (rdMaps != null) mergedMaps.AddRange(rdMaps);
-                output = ApplyCharacterMaps(output, mergedMaps);
+                output = ApplyCharacterMaps(output, mergedMaps, outputDecl?.EffectiveMethod ?? OutputMethod.Xml);
             }
         }
 
@@ -1911,7 +1911,7 @@ public sealed class XsltTransformEngine
         return sb.ToString();
     }
 
-    private string ApplyCharacterMaps(string output, List<QName> useCharacterMaps)
+    private string ApplyCharacterMaps(string output, List<QName> useCharacterMaps, OutputMethod method = OutputMethod.Xml)
     {
         // Collect character mappings from referenced maps in declaration order.
         // Later maps in the list override earlier ones (XSLT 3.0 §25.1).
@@ -1928,6 +1928,11 @@ public sealed class XsltTransformEngine
         var sb = new StringBuilder(output.Length);
         var inTag = false;
         var inCdata = false;
+        var inAttrValue = false;
+        var attrQuote = '"';
+        var mapThisAttr = true;
+        var isHtmlLike = method is OutputMethod.Html or OutputMethod.Xhtml;
+        var attrNameToken = new StringBuilder();
         for (var i = 0; i < output.Length; i++)
         {
             var c = output[i];
@@ -1955,21 +1960,63 @@ public sealed class XsltTransformEngine
                 }
                 continue;
             }
-            // Track XML tags — character maps do not apply inside tags
-            if (c == '<' && !inCdata)
+            // Track XML tags. Character maps do not apply to markup delimiters, element
+            // names, or attribute names — but per XSLT 3.0 §20 they DO apply to attribute
+            // VALUES (as well as text content). Track attribute-value regions inside a tag.
+            if (c == '<' && !inTag)
             {
                 inTag = true;
-                sb.Append(c);
-                continue;
-            }
-            if (c == '>' && inTag)
-            {
-                inTag = false;
+                attrNameToken.Clear();
                 sb.Append(c);
                 continue;
             }
             if (inTag)
             {
+                if (inAttrValue)
+                {
+                    if (c == attrQuote)
+                    {
+                        inAttrValue = false;
+                        sb.Append(c);
+                    }
+                    else if (mapThisAttr && allMappings.TryGetValue(c, out var attrRepl))
+                    {
+                        sb.Append(attrRepl);
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                    continue;
+                }
+                if (c == '>')
+                {
+                    inTag = false;
+                    attrNameToken.Clear();
+                    sb.Append(c);
+                    continue;
+                }
+                if (c == '"' || c == '\'')
+                {
+                    inAttrValue = true;
+                    attrQuote = c;
+                    // Character maps apply to attribute VALUES, except URI-valued attributes
+                    // in HTML/XHTML output where escape-uri-attributes escaping applies instead
+                    // (character-map-009). Names are accumulated in attrNameToken up to '='.
+                    var attrName = attrNameToken.ToString();
+                    mapThisAttr = !(isHtmlLike && HtmlUriAttributes.Contains(attrName));
+                    attrNameToken.Clear();
+                    sb.Append(c);
+                    continue;
+                }
+                if (char.IsWhiteSpace(c))
+                {
+                    attrNameToken.Clear();
+                }
+                else if (c != '=' && c != '/')
+                {
+                    attrNameToken.Append(c);
+                }
                 sb.Append(c);
                 continue;
             }
