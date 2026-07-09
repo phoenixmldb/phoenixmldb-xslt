@@ -1621,7 +1621,7 @@ internal sealed class StreamingExpressionScanner
             break;
         }
 
-        if (!TryDecomposeForEachSelect(select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates, out var intermediatePredicates))
+        if (!TryDecomposeForEachSelect(select, out var prefix, out var path, out var textNodeTail, out var suffix, out var attributeName, out var predicates, out var intermediatePredicates, out var atomize))
             return;
 
         // A window slice combined with a mixed-sequence prefix/suffix is out of scope
@@ -1642,6 +1642,7 @@ internal sealed class StreamingExpressionScanner
             SuffixItems = suffix,
             TextNodeTail = textNodeTail,
             AttributeName = attributeName,
+            AtomizeContextItem = atomize,
             Predicates = predicates,
             IntermediatePredicates = intermediatePredicates,
             SubsequenceStart = subseqStart,
@@ -1810,7 +1811,7 @@ internal sealed class StreamingExpressionScanner
         // predicate, attribute tail). outermost() / descendant-axis (//) LEFT is NOT a
         // matchable PathExpression, so TryBuildPathMatcher returns null and we leave it
         // unregistered (separate watcher effort).
-        var matcher = TryBuildPathMatcher(left, out var textNodeTail, out var attributeName, out var predicates, out var intermediatePredicates);
+        var matcher = TryBuildPathMatcher(left, out var textNodeTail, out var attributeName, out var predicates, out var intermediatePredicates, out _);
         if (matcher == null) return false;
 
         // A peeled window over an attribute-tailed path atomizes per item; the per-item
@@ -1877,7 +1878,7 @@ internal sealed class StreamingExpressionScanner
         // attribute surfacing once across all matched items, not once per item) need a
         // larger mechanism than per-match snapshot evaluation, so it stays on the buffered
         // path. TryBuildPathMatcher returns null for it (non-child axis) → return false.
-        var matcher = TryBuildPathMatcher(sm.Left, out var textNodeTail, out var attributeName, out var predicates, out var intermediatePredicates);
+        var matcher = TryBuildPathMatcher(sm.Left, out var textNodeTail, out var attributeName, out var predicates, out var intermediatePredicates, out _);
         if (matcher == null) return false;
         if (textNodeTail || attributeName != null) return false;
 
@@ -2077,7 +2078,8 @@ internal sealed class StreamingExpressionScanner
         out IReadOnlyList<XQueryExpression> suffix,
         out string? attributeName,
         out IReadOnlyList<XQueryExpression> predicates,
-        out IReadOnlyList<IntermediatePredicate> intermediatePredicates)
+        out IReadOnlyList<IntermediatePredicate> intermediatePredicates,
+        out bool atomize)
     {
         prefix = Array.Empty<XQueryExpression>();
         suffix = Array.Empty<XQueryExpression>();
@@ -2086,8 +2088,9 @@ internal sealed class StreamingExpressionScanner
         attributeName = null;
         predicates = Array.Empty<XQueryExpression>();
         intermediatePredicates = Array.Empty<IntermediatePredicate>();
+        atomize = false;
 
-        var singleMatcher = TryBuildPathMatcher(select, out textNodeTail, out attributeName, out predicates, out intermediatePredicates);
+        var singleMatcher = TryBuildPathMatcher(select, out textNodeTail, out attributeName, out predicates, out intermediatePredicates, out atomize);
         if (singleMatcher != null)
         {
             path = singleMatcher;
@@ -2097,6 +2100,7 @@ internal sealed class StreamingExpressionScanner
         attributeName = null;
         predicates = Array.Empty<XQueryExpression>();
         intermediatePredicates = Array.Empty<IntermediatePredicate>();
+        atomize = false;
 
         // AST uses SequenceExpression with Items property for comma sequences.
         if (select is not SequenceExpression seq) return false;
@@ -2106,7 +2110,7 @@ internal sealed class StreamingExpressionScanner
         int streamableIndex = -1;
         for (int i = 0; i < operands.Count; i++)
         {
-            var inner = TryBuildPathMatcher(operands[i], out var innerTail, out var innerAttr, out var innerPreds, out var innerInterPreds);
+            var inner = TryBuildPathMatcher(operands[i], out var innerTail, out var innerAttr, out var innerPreds, out var innerInterPreds, out var innerAtomize);
             if (inner == null) continue;
             if (streamableIndex >= 0) return false; // more than one streamable operand
             streamableIndex = i;
@@ -2115,6 +2119,7 @@ internal sealed class StreamingExpressionScanner
             attributeName = innerAttr;
             predicates = innerPreds;
             intermediatePredicates = innerInterPreds;
+            atomize = innerAtomize;
         }
         if (streamableIndex < 0) return false;
 
@@ -2161,26 +2166,33 @@ internal sealed class StreamingExpressionScanner
         out bool textNodeTail,
         out string? attributeName,
         out IReadOnlyList<XQueryExpression> predicates,
-        out IReadOnlyList<IntermediatePredicate> intermediatePredicates)
+        out IReadOnlyList<IntermediatePredicate> intermediatePredicates,
+        out bool atomize)
     {
         textNodeTail = false;
         attributeName = null;
         predicates = Array.Empty<XQueryExpression>();
         intermediatePredicates = Array.Empty<IntermediatePredicate>();
+        atomize = false;
         // Captured (forward-countable-positional / motionless) predicates on intermediate
         // (non-leaf) child-axis element steps, paired with the part index they occupy in
         // `parts` so the ancestor offset (levels above the matched leaf) can be derived
         // once the full element-step count is known.
         List<(int PartIndex, IReadOnlyList<XQueryExpression> Predicates, bool IsPositional, bool IsWildcard)>? capturedIntermediate = null;
         // Peek through fn:data(path) — for untyped nodes, data() returns the string value
-        // which equals what value-of/sequence emits for the node directly, so unwrapping
-        // is semantically safe when the body just reads the context item.
+        // which equals what value-of/sequence emits for the node directly. When the body
+        // merely READS the context item (value-of/sequence) unwrapping is transparent; when
+        // the body COPIES it (<xsl:copy/>) the atomization is load-bearing (an attribute
+        // node would copy as an attribute, an atomic copies as text). Signal `atomize` so
+        // the subscription dispatch pushes the ATOMIZED value as the context item — see
+        // ForEachSubscription.AtomizeContextItem (si-copy-002).
         if (select is FunctionCallExpression dataCall
             && dataCall.Name.LocalName == "data"
             && dataCall.Arguments.Count == 1
             && (dataCall.Name.Namespace == NamespaceId.None || dataCall.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
         {
             select = dataCall.Arguments[0];
+            atomize = true;
         }
         // Peek through a trailing copy-of()/snapshot() step — e.g.
         // `records/record/copy-of()`. The parser builds this as a SimpleMap whose

@@ -557,8 +557,15 @@ internal sealed class StreamingXmlProcessor
                                                     }
                                                 }
                                                 if (matchedAttr == null) continue;
-                                                _context.PushContextItem(matchedAttr, NextSubscriptionPosition(sub), 1);
-                                                _context.PushCurrentItem(matchedAttr);
+                                                // fn:data(...) wrapper in the select: the body sees the
+                                                // ATOMIZED attribute value, so <xsl:copy/> copies an atomic
+                                                // (text) instead of re-emitting a leaked attribute node
+                                                // onto the constructed element (si-copy-002).
+                                                object attrCtxItem = sub.AtomizeContextItem
+                                                    ? new PhoenixmlDb.Xdm.XsUntypedAtomic(matchedAttr.Value)
+                                                    : matchedAttr;
+                                                _context.PushContextItem(attrCtxItem, NextSubscriptionPosition(sub), 1);
+                                                _context.PushCurrentItem(attrCtxItem);
                                                 try
                                                 {
                                                     if (sub.PerItemSelect != null)
@@ -584,8 +591,11 @@ internal sealed class StreamingXmlProcessor
                                                 // materialization).
                                                 foreach (var textChild in EnumerateTextChildren(snapshot))
                                                 {
-                                                    _context.PushContextItem(textChild, NextSubscriptionPosition(sub), 1);
-                                                    _context.PushCurrentItem(textChild);
+                                                    object textCtxItem = sub.AtomizeContextItem
+                                                        ? new PhoenixmlDb.Xdm.XsUntypedAtomic(textChild.Value)
+                                                        : textChild;
+                                                    _context.PushContextItem(textCtxItem, NextSubscriptionPosition(sub), 1);
+                                                    _context.PushCurrentItem(textCtxItem);
                                                     try
                                                     {
                                                         if (sub.PerItemSelect != null)
@@ -602,8 +612,11 @@ internal sealed class StreamingXmlProcessor
                                             }
                                             else
                                             {
-                                                _context.PushContextItem(snapshot, NextSubscriptionPosition(sub), 1);
-                                                _context.PushCurrentItem(snapshot);
+                                                object elemCtxItem = sub.AtomizeContextItem
+                                                    ? new PhoenixmlDb.Xdm.XsUntypedAtomic(snapshot.StringValue)
+                                                    : (object)snapshot;
+                                                _context.PushContextItem(elemCtxItem, NextSubscriptionPosition(sub), 1);
+                                                _context.PushCurrentItem(elemCtxItem);
                                                 try
                                                 {
                                                     if (sub.RangeVariable != null)

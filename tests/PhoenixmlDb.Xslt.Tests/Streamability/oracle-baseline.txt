@@ -54,7 +54,6 @@ si-coco-003
 si-coco-012
 si-coco-013
 si-coco-018
-si-copy-002
 si-copy-003
 si-copy-004
 si-copy-021
