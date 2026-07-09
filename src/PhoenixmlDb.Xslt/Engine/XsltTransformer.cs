@@ -26239,10 +26239,14 @@ internal sealed class XsltAvailableSystemPropertiesFunction : PhoenixmlDb.XQuery
 
         // Use hash-based NamespaceId consistent with the QName() constructor function
         var nsId = new NamespaceId((uint)Math.Abs(XsltNamespaceUri.GetHashCode(StringComparison.Ordinal)));
-        var props = new List<object>(localNames.Length);
-        foreach (var ln in localNames)
+        // Return an XDM SEQUENCE (object?[]) of xs:QName, not a List<object>. A List is
+        // treated by the type-checker as a single XDM array item (List<object?> matches the
+        // "don't enumerate" pattern), so binding to `as="xs:QName+"` saw one non-QName item
+        // and raised XTTE0570. An object?[] is enumerated as a sequence of QName items.
+        var props = new object?[localNames.Length];
+        for (int i = 0; i < localNames.Length; i++)
         {
-            props.Add(new QName(nsId, ln, "xsl") { RuntimeNamespace = XsltNamespaceUri });
+            props[i] = new QName(nsId, localNames[i], "xsl") { RuntimeNamespace = XsltNamespaceUri };
         }
         return ValueTask.FromResult<object?>(props);
     }
