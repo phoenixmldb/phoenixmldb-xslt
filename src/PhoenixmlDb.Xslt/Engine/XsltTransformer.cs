@@ -13248,6 +13248,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
             case XdmText text:
                 WriteText(text.Value, false);
+                // §5.7.2: a text node breaks any adjacent-atomic-value run, so a
+                // following atomic value must NOT be prefixed with a separator
+                // (text→atomic merges with no space: cy-007 "…16.47101 102").
+                _lastResultWasAtomic = false;
                 break;
 
             case XdmAttribute attr:
@@ -13319,9 +13323,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 break;
 
             default:
-                // Atomic values: output as text
+                // Atomic values: output as text. §5.7.2 sequence normalization
+                // inserts a single space between ADJACENT atomic values in the
+                // result sequence (e.g. a striding for-each of xsl:copy over atomic
+                // values: cy-001 "-15.00 -5.00 -2.33 -248.05"). Mirrors the copy-of
+                // atomic path; shared _lastResultWasAtomic state carries the run
+                // across for-each iterations. Suppressed in attribute content.
                 if (node != null)
+                {
+                    if (_lastResultWasAtomic && _attributeContentDepth == 0)
+                        WriteText(" ", false);
                     WriteText(StringValueOf(node), false);
+                    _lastResultWasAtomic = true;
+                }
                 break;
         }
     }
