@@ -925,6 +925,20 @@ internal sealed class StreamingExpressionScanner
                 return true;
             case SimpleMapExpression sm:
                 return IsPerItemAtomicTail(sm.Left) && IsPerItemAtomicTail(sm.Right);
+            // Per-item ARITHMETIC over the context item (e.g. `.+1`, `. * 2`): a numeric
+            // op whose operands are themselves per-item atomic. The tail is re-applied
+            // per captured leaf value by ApplySimpleMapTailAsync, so `(path)!(.+1)`
+            // registers a Sequence watcher (not a spurious for-each subscription) and an
+            // enclosing general comparison — `(path)!(.+1) = 5.95` — resolves against the
+            // grounded values. Only arithmetic operators qualify; comparison/logical/
+            // sequence operators change the tail's meaning and stay out of scope.
+            case BinaryExpression bin
+                when bin.Operator is BinaryOperator.Add or BinaryOperator.Subtract
+                    or BinaryOperator.Multiply or BinaryOperator.Divide
+                    or BinaryOperator.IntegerDivide or BinaryOperator.Modulo:
+                return IsPerItemAtomicTail(bin.Left) && IsPerItemAtomicTail(bin.Right);
+            case UnaryExpression u:
+                return IsPerItemAtomicTail(u.Operand);
             case StringLiteral:
             case IntegerLiteral:
             case DoubleLiteral:

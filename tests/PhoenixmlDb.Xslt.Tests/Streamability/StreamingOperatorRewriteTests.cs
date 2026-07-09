@@ -250,6 +250,82 @@ public class StreamingOperatorRewriteTests
     }
 
     // =======================================================================
+    // Scanner + rewriter: a per-item ARITHMETIC SimpleMap tail `(path) ! (.+1)`.
+    // The tail is atomic per item, so the whole SimpleMap registers a Sequence watcher
+    // (not a spurious for-each subscription); the rewriter must PRESERVE the tail when
+    // substituting the watcher variable so an enclosing comparison — `(path)!(.+1) = C`
+    // inside an `if(...)` — resolves against the grounded, tailed leaves. (sx-if-213.)
+    // =======================================================================
+
+    // (/BOOKLIST/BOOKS/ITEM/PRICE) ! (. + 1)
+    private static SimpleMapExpression PriceArithmeticMap() => new()
+    {
+        Left = StridingPath(),
+        Right = new BinaryExpression
+        {
+            Left = ContextItemExpression.Instance,
+            Operator = BinaryOperator.Add,
+            Right = new IntegerLiteral { Value = 1 },
+        },
+    };
+
+    [Fact]
+    public void Scanner_ArithmeticSimpleMapTail_RegistersSequenceWatcherNotSubscription()
+    {
+        var sm = PriceArithmeticMap();
+
+        var result = new StreamingExpressionScanner().ScanWithSubscriptions(
+            new XsltSequenceConstructor
+            {
+                Instructions = new XsltInstruction[] { new XsltValueOf { Select = sm } },
+            });
+
+        result.Subscriptions.Should().BeEmpty("a per-item atomic tail is a watcher shape, not a subscription");
+        result.Watchers.Should().ContainSingle();
+        result.Watchers[0].SourceExpression.Should().BeSameAs(sm);
+        result.Watchers[0].Aggregation.Should().Be(WatcherAggregation.Sequence);
+    }
+
+    [Fact]
+    public void Rewriter_ArithmeticSimpleMapWatcher_PreservesTail()
+    {
+        // if ((path)!(.+1) = 5.95) then 0 else 1 — the watcher keys on the whole SimpleMap;
+        // after rewrite the condition must be `($__streaming_watcher_N ! (.+1)) = 5.95`,
+        // i.e. the tail is re-attached to the variable rather than dropped.
+        var sm = PriceArithmeticMap();
+        var comparison = new BinaryExpression
+        {
+            Left = sm,
+            Operator = BinaryOperator.GeneralEqual,
+            Right = new DecimalLiteral { Value = 5.95m },
+        };
+        var expr = new IfExpression
+        {
+            Condition = comparison,
+            Then = new IntegerLiteral { Value = 0 },
+            Else = new IntegerLiteral { Value = 1 },
+        };
+
+        var watcher = new StreamWatcher
+        {
+            SourceExpression = sm,
+            ContextRootDepth = -1,
+            PathMatcher = new StreamPathMatcher("BOOKLIST/BOOKS/ITEM/PRICE"),
+            Aggregation = WatcherAggregation.Sequence,
+        };
+
+        var rewritten = DefaultXsltExecutionContext.RewriteWithWatcherVariables(expr, new[] { watcher });
+
+        var iff = rewritten.Should().BeOfType<IfExpression>().Subject;
+        var cmp = iff.Condition.Should().BeOfType<BinaryExpression>().Subject;
+        // LEFT must be a SimpleMap whose Left is now the watcher variable and whose Right
+        // (the `.+1` tail) is preserved.
+        var rewrittenMap = cmp.Left.Should().BeOfType<SimpleMapExpression>().Subject;
+        IsWatcherVar(rewrittenMap.Left).Should().BeTrue("the striding base path is replaced by the watcher variable");
+        rewrittenMap.Right.Should().BeSameAs(sm.Right, "the per-item arithmetic tail is preserved");
+    }
+
+    // =======================================================================
     // Rewriter: the watched path inside the operator becomes $__streaming_watcher_N.
     // =======================================================================
 

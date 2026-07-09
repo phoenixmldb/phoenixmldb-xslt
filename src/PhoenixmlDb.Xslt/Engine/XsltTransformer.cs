@@ -4847,6 +4847,27 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// Rebuilds a (possibly chained) SimpleMap <c>path ! R1 ! R2 …</c> with its deepest
+    /// LEFT operand (the striding base path) replaced by <paramref name="replacement"/>,
+    /// preserving every per-item tail step. Used to substitute a SimpleMap-source watcher
+    /// variable while keeping the tail (<c>$watcher ! R1 ! R2</c>).
+    /// </summary>
+    private static PhoenixmlDb.XQuery.Ast.SimpleMapExpression ReplaceSimpleMapLeftmost(
+        PhoenixmlDb.XQuery.Ast.SimpleMapExpression sm,
+        XQueryExpression replacement)
+    {
+        var newLeft = sm.Left is PhoenixmlDb.XQuery.Ast.SimpleMapExpression innerSm
+            ? ReplaceSimpleMapLeftmost(innerSm, replacement)
+            : replacement;
+        return new PhoenixmlDb.XQuery.Ast.SimpleMapExpression
+        {
+            Left = newLeft,
+            Right = sm.Right,
+            IsPathStep = sm.IsPathStep,
+        };
+    }
+
+    /// <summary>
     /// Walks an expression tree and substitutes any watched sub-expression
     /// (by reference identity against <paramref name="watchers"/>) with a
     /// <see cref="VariableReference"/> to the synthetic
@@ -4898,6 +4919,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         Primary = varRef,
                         Predicates = w.OuterPredicates,
                     };
+                }
+
+                // SimpleMap-source Sequence watcher (`path ! TAIL`): the bound variable
+                // holds only the RAW captured LEFT leaves — the per-item TAIL (`.+1`,
+                // `xs:decimal(.)`, …) is NOT baked in. Substituting the bare variable drops
+                // the tail, so a NESTED use — e.g. `(path)!(.+1) = 5.95` inside an
+                // `if(...)` condition — would compare the raw leaves and pick the wrong
+                // branch (sx-if-213). Preserve the tail by re-attaching it to the variable:
+                // rebuild the SimpleMap chain with the deep-left path replaced by
+                // $__streaming_watcher_N, so the tail re-applies per grounded leaf. (The
+                // top-level value-of / general-comparison paths re-apply the tail before
+                // reaching here and return early, so this only affects nested uses.)
+                if (w.SourceExpression is PhoenixmlDb.XQuery.Ast.SimpleMapExpression smSrc)
+                {
+                    return ReplaceSimpleMapLeftmost(smSrc, varRef);
                 }
 
                 return varRef;
