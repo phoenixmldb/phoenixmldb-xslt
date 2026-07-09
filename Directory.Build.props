@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.19</Version>
+    <Version>1.4.20</Version>
     <PackageReleaseNotes>
-      Streaming breadth: more constructs stream correctly instead of producing empty or unseparated output. A streamed template body that materializes its subtree now receives forwarded xsl:with-param values (tunnel and non-tunnel). xsl:copy-of that copies a streamed document's whole subtree (child::node() or the context item) now forwards the live reader's events at the lexical position instead of yielding empty, so copy-of wrapped in a literal result element, xsl:copy, xsl:element, xsl:document, or xsl:result-document works over streamed input. A shallow xsl:copy of adjacent atomic values on the streaming path now inserts the §5.7.2 single-space separator (matching non-streaming output). Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes. See RELEASES.md for full notes.
+      Conformance: non-streaming type/serialization correctness and more streaming breadth. fn:available-system-properties now returns a sequence of xs:QName (was a single non-QName item, failing binding to xs:QName*). A variable/parameter/function with as="ATOMIC-TYPE" and a temporary-tree or node-valued body now atomizes and casts to the declared atomic type (date/time/duration/anyURI/untypedAtomic/etc.) instead of leaving a raw result-tree-fragment — node-typed as= keeps its nodes. Invalid xsl:output / xsl:result-document / disable-output-escaping values now raise XTSE0020 instead of being silently ignored. Streaming: a streamed xsl:copy / copy-of preserves in-scope namespace declarations and prefixes; xsl:for-each whose select is a conditional (if(…) then … else …) streams the selected branch; a wildcard-attribute existence climb (ancestor::*/@*) streams; and a consuming attribute sequence (data(@x)) atomizes correctly in a streamed copy. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>

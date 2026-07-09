@@ -1,10 +1,28 @@
 # Release History
 
-## Unreleased
+## 1.4.20 (2026-07-09)
+
+Non-streaming type and serialization correctness, plus more streaming breadth. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes.
+
+### Fix: `fn:available-system-properties` returns a sequence of `xs:QName`
+
+The function returned a single non-QName item, so binding its result to `as="xs:QName*"`/`xs:QName+` raised `XTTE0570`. It now returns each system-property name as an `xs:QName`, matching the XSLT 4.0 signature.
+
+### Fix: atomic `as=` atomizes a temporary-tree or node body
+
+An `xsl:variable`/`xsl:param`/`xsl:with-param`/`xsl:function` declared with `as="ATOMIC-TYPE"` whose body is a sequence constructor (a temporary tree) or a `select` yielding nodes now atomizes that value and casts it to the declared atomic type — `xs:date`, `xs:time`, `xs:dayTimeDuration`, `xs:anyURI`, `xs:untypedAtomic`, and the rest — instead of leaving a raw result-tree-fragment (which raised `XTTE0780`, or made `instance of` return false). A subtype guard keeps `xs:dayTimeDuration` from being widened to `xs:duration`; a node/`item()`/map/array `as=` type keeps its nodes unchanged. All atomic coercion now routes through one shared caster.
+
+### Fix: invalid serialization-parameter values are rejected
+
+Invalid `yes`/`no`, enumerated, and pseudo-boolean values on `xsl:output`, `xsl:result-document`, and `disable-output-escaping` (e.g. `indent="TRUE"`, `standalone="1"`, `disable-output-escaping="YES"`) now raise `XTSE0020` at compile time instead of being silently ignored.
 
 ### Streaming: namespaces preserved when copying a streamed element
 
-A streamed `xsl:copy-of` / `fn:copy-of` / `fn:snapshot` that selects an element by a striding path — `copy-of(/*/*:description)` against a document whose namespaces are declared on ancestors — now preserves the copied element's prefix and its in-scope namespace declarations. The streamed event pipeline previously carried only local names, so such a copy lost the element prefix and every ancestor-declared namespace. `copy-namespaces="yes"` now emits the full in-scope set; `copy-namespaces="no"` emits just the namespaces the element and its attributes use.
+A streamed `xsl:copy-of` / `fn:copy-of` / `fn:snapshot` that selects an element by a striding path — `copy-of(/*/*:description)` against a document whose namespaces are declared on ancestors — now preserves the copied element's prefix and its in-scope namespace declarations (the streamed event pipeline previously carried only local names). `copy-namespaces="yes"` emits the full in-scope set; `copy-namespaces="no"` emits just what the element and its attributes use.
+
+### Streaming: conditional and absorbing `xsl:for-each` select, and more
+
+An `xsl:for-each` whose `select` is a conditional (`if(C) then … else …`) now streams the selected branch (the condition is evaluated once and the matching branch is driven). A wildcard-attribute existence climb (`ancestor::*/@*`) streams. A consuming attribute sequence such as `data(account/@value)` atomizes correctly inside a streamed `xsl:copy`.
 
 ## 1.4.19 (2026-07-08)
 
