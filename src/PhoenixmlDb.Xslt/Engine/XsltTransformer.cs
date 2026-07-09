@@ -447,10 +447,171 @@ public sealed class XsltTransformEngine
     /// content-type meta, indentation, character maps, Unicode normalization, XML declaration,
     /// doctype, BOM, escape-uri-attributes, sentinel restore) to <paramref name="output"/>.
     /// </summary>
+    /// <summary>
+    /// Validates the serialization parameters of an <see cref="XsltOutput"/> declaration
+    /// against the W3C XSLT/XQuery Serialization 4.0 constraints, raising the relevant
+    /// serialization error before any output is delivered. Mirrors the checks performed by
+    /// <c>PhoenixmlDb.XQuery.XQueryResultSerializer</c> so both engines behave identically.
+    /// </summary>
+    /// <param name="output">The serialized result tree (pre-declaration/doctype).</param>
+    /// <param name="outputDecl">The effective output declaration.</param>
+    private static void ValidateSerializationParameters(string output, XsltOutput outputDecl)
+    {
+        var method = outputDecl.EffectiveMethod;
+
+        // SESU0007: an output encoding is requested that the serializer cannot produce.
+        // UTF-8/UTF-16 are always supported; any other name is validated against the
+        // runtime's encoding registry. An unknown name (e.g. "XXX-xx") is a serialization
+        // error. (Serialization 4.0 §5.1.2.)
+        if (!string.IsNullOrEmpty(outputDecl.Encoding))
+        {
+            var enc = outputDecl.Encoding.Trim();
+            var isUtf = enc.Equals("UTF-8", StringComparison.OrdinalIgnoreCase)
+                || enc.Equals("UTF-16", StringComparison.OrdinalIgnoreCase);
+            if (!isUtf)
+            {
+                bool supported;
+                try { supported = System.Text.Encoding.GetEncoding(enc) != null; }
+                catch (ArgumentException) { supported = false; }
+                if (!supported)
+                    throw new XsltException(
+                        $"SESU0007: The requested output encoding '{enc}' is not supported by the serializer");
+            }
+        }
+
+        // SESU0011: an unsupported normalization-form is requested. NFC/NFD/NFKC/NFKD and
+        // "none" are supported; anything else (including "fully-normalized") is an error.
+        if (!string.IsNullOrEmpty(outputDecl.NormalizationForm))
+        {
+            var nf = outputDecl.NormalizationForm.Trim();
+            var supported = nf.Equals("NFC", StringComparison.OrdinalIgnoreCase)
+                || nf.Equals("NFD", StringComparison.OrdinalIgnoreCase)
+                || nf.Equals("NFKC", StringComparison.OrdinalIgnoreCase)
+                || nf.Equals("NFKD", StringComparison.OrdinalIgnoreCase)
+                || nf.Equals("none", StringComparison.OrdinalIgnoreCase);
+            if (!supported)
+                throw new XsltException(
+                    $"SESU0011: The requested normalization-form '{nf}' is not supported by the serializer");
+        }
+
+        // SEPM0009: omit-xml-declaration="yes" conflicts with a standalone value other than
+        // "omit", OR with (version != 1.0 AND doctype-system specified).
+        if (outputDecl.OmitXmlDeclaration == true)
+        {
+            if (outputDecl.Standalone.HasValue)
+                throw new XsltException(
+                    "SEPM0009: omit-xml-declaration=\"yes\" cannot be combined with a standalone value other than omit");
+            var version = outputDecl.Version ?? "1.0";
+            if (version != "1.0" && outputDecl.DoctypeSystem != null)
+                throw new XsltException(
+                    "SEPM0009: omit-xml-declaration=\"yes\" cannot be combined with version other than 1.0 when doctype-system is specified");
+        }
+
+        // SEPM0010: undeclare-prefixes="yes" requires XML output version 1.1; combining it
+        // with version 1.0 is a serialization error.
+        if (outputDecl.UndeclarePrefixes == true
+            && method is OutputMethod.Xml or OutputMethod.Xhtml
+            && (outputDecl.Version ?? "1.0") == "1.0")
+        {
+            throw new XsltException(
+                "SEPM0010: undeclare-prefixes=\"yes\" cannot be combined with output version 1.0");
+        }
+
+        // SEPM0004: standalone (yes/no) or doctype-system requires the result to be a single
+        // well-formed document element. A result with zero, or more than one, top-level
+        // element (or top-level non-whitespace text) cannot be serialized this way.
+        if (method is OutputMethod.Xml or OutputMethod.Xhtml
+            && (outputDecl.Standalone.HasValue || outputDecl.DoctypeSystem != null)
+            && !ResultIsSingleDocumentElement(output))
+        {
+            throw new XsltException(
+                "SEPM0004: standalone or doctype-system requires a result that is a single well-formed document element");
+        }
+    }
+
+    /// <summary>
+    /// Determines whether a serialized result-tree string consists of exactly one top-level
+    /// element (with only whitespace, comments or processing instructions around it), i.e. it
+    /// forms a well-formed XML document. Used to enforce SEPM0004.
+    /// </summary>
+    private static bool ResultIsSingleDocumentElement(string output)
+    {
+        int depth = 0;
+        int topElements = 0;
+        bool topLevelText = false;
+        int i = 0;
+        int n = output.Length;
+        while (i < n)
+        {
+            char c = output[i];
+            if (c == '<')
+            {
+                var rest = output.AsSpan(i);
+                if (rest.StartsWith("<!--".AsSpan(), StringComparison.Ordinal))
+                {
+                    int end = output.IndexOf("-->", i + 4, StringComparison.Ordinal);
+                    i = end < 0 ? n : end + 3;
+                    continue;
+                }
+                if (rest.StartsWith("<![CDATA[".AsSpan(), StringComparison.Ordinal))
+                {
+                    if (depth == 0) topLevelText = true;
+                    int end = output.IndexOf("]]>", i + 9, StringComparison.Ordinal);
+                    i = end < 0 ? n : end + 3;
+                    continue;
+                }
+                if (i + 1 < n && output[i + 1] == '!') // DOCTYPE or other declaration
+                {
+                    int endg = output.IndexOf('>', i);
+                    i = endg < 0 ? n : endg + 1;
+                    continue;
+                }
+                if (i + 1 < n && output[i + 1] == '?') // PI / xml declaration
+                {
+                    int end = output.IndexOf("?>", i + 2, StringComparison.Ordinal);
+                    i = end < 0 ? n : end + 2;
+                    continue;
+                }
+                if (i + 1 < n && output[i + 1] == '/') // end tag
+                {
+                    depth--;
+                    int endg = output.IndexOf('>', i);
+                    i = endg < 0 ? n : endg + 1;
+                    continue;
+                }
+                // start tag
+                if (depth == 0) topElements++;
+                int te = i + 1;
+                while (te < n && output[te] != '>')
+                {
+                    if (output[te] == '"' || output[te] == '\'')
+                    {
+                        char q = output[te];
+                        te++;
+                        while (te < n && output[te] != q) te++;
+                    }
+                    te++;
+                }
+                bool selfClose = te > 0 && te <= n && te - 1 >= 0 && te - 1 < n && output[te - 1] == '/';
+                if (!selfClose) depth++;
+                i = te < n ? te + 1 : n;
+                continue;
+            }
+            if (depth == 0 && !char.IsWhiteSpace(c)) topLevelText = true;
+            i++;
+        }
+        return topElements == 1 && !topLevelText;
+    }
+
     internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind)
     {
         if (outputDecl != null)
         {
+            // W3C Serialization 4.0 parameter validation. These serialization errors are
+            // raised before any output is produced, matching PhoenixmlDb.XQuery's serializer
+            // (SEPM0004 / SESU0007 / SESU0011 / SEPM0009 / SEPM0010).
+            ValidateSerializationParameters(output, outputDecl);
+
             if (outputDecl.EffectiveMethod == OutputMethod.Text)
             {
                 // Text output: strip all markup, return only text content.
