@@ -2852,12 +2852,17 @@ public sealed class StylesheetParser
         if (stylesheet.Outputs.Count <= 1)
             return;
 
-        // Group by name (null for unnamed). Use QName identity (namespace + local name)
-        // so that outputs with the same local name but different namespaces are separate.
+        // Group by name (null for unnamed). Key on the EXPANDED QName identity (namespace URI
+        // + local name), never the lexical prefix: two xsl:output declarations whose @name uses
+        // different prefixes bound to the same namespace URI denote the same output definition
+        // and must merge (output-0135). QName.ToString() emits the prefix when no expanded
+        // namespace is attached, so it cannot be the key.
+        static string OutputKey(QName name)
+            => "{" + (name.ResolvedNamespace ?? "#" + name.Namespace.Value.ToString(CultureInfo.InvariantCulture)) + "}" + name.LocalName;
         var groups = new Dictionary<string, List<XsltOutput>>();
         foreach (var output in stylesheet.Outputs)
         {
-            var key = output.Name != null ? output.Name.Value.ToString() : "";
+            var key = output.Name != null ? OutputKey(output.Name.Value) : "";
             if (!groups.TryGetValue(key, out var list))
             {
                 list = new List<XsltOutput>();
