@@ -1,5 +1,21 @@
 # Release History
 
+## 1.4.19 (2026-07-08)
+
+Streaming breadth. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes.
+
+### Streaming: forwarded parameters into a materializing template body
+
+A streamed template body that materializes its subtree (e.g. a rule whose body copies the matched node) now receives the caller's forwarded `xsl:with-param` values — both tunnel and non-tunnel — instead of seeing only parameter defaults. A tunnel parameter that gates an `xsl:copy-of` inside such a body now works.
+
+### Streaming: whole-subtree `xsl:copy-of` forward
+
+`xsl:copy-of` that copies a streamed document's whole subtree — `select="child::node()"`, or `select="."` on the document node — now forwards the live reader's events into the output at the lexical position, instead of evaluating against a closed synthetic document and yielding empty. This works with the copy-of wrapped in a literal result element, `xsl:copy`, `xsl:element`, `xsl:document`, or `xsl:result-document`.
+
+### Streaming: §5.7.2 atomic-value separator in shallow `xsl:copy`
+
+A shallow `xsl:copy` of adjacent atomic values on the streaming path now inserts the single-space separator that sequence normalization (§5.7.2) requires between adjacent atomic values, matching the non-streaming output (previously the values ran together). A text node correctly breaks the atomic run.
+
 ## 1.4.18 (2026-07-07)
 
 Streaming robustness and performance. Requires PhoenixmlDb.Core 1.2.1 and PhoenixmlDb.XQuery 1.5.3. No API changes.

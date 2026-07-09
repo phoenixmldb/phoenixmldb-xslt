@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>1.4.18</Version>
+    <Version>1.4.19</Version>
     <PackageReleaseNotes>
-      Streaming robustness and performance. A streamed transform now observes the CancellationToken across its streaming and whole-input-buffer loops, so a long-running or unbounded transform cancels promptly instead of running to completion. xsl:try no longer snapshots the whole accumulated output buffer on every attempt — it checkpoints by length and truncates on rollback (O(1)), so error-catching inside a streamed loop over a large input is linear rather than quadratic (a per-item xsl:try over 100K items is dramatically faster). Picks up PhoenixmlDb.Core 1.2.1, whose XML parser computes a large element's string value in linear time. Requires PhoenixmlDb.Core 1.2.1 and PhoenixmlDb.XQuery 1.5.3. No API changes. See RELEASES.md for full notes.
+      Streaming breadth: more constructs stream correctly instead of producing empty or unseparated output. A streamed template body that materializes its subtree now receives forwarded xsl:with-param values (tunnel and non-tunnel). xsl:copy-of that copies a streamed document's whole subtree (child::node() or the context item) now forwards the live reader's events at the lexical position instead of yielding empty, so copy-of wrapped in a literal result element, xsl:copy, xsl:element, xsl:document, or xsl:result-document works over streamed input. A shallow xsl:copy of adjacent atomic values on the streaming path now inserts the §5.7.2 single-space separator (matching non-streaming output). Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes. See RELEASES.md for full notes.
     </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
