@@ -464,7 +464,7 @@ public sealed class XsltTransformEngine
             }
             else if (outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml)
             {
-                output = DefaultXsltExecutionContext.PostProcessHtmlOutput(output);
+                output = DefaultXsltExecutionContext.PostProcessHtmlOutput(output, outputDecl.EffectiveMethod);
             }
 
             // Insert <meta http-equiv="Content-Type"> in <head> when include-content-type is yes (default)
@@ -1665,6 +1665,12 @@ public sealed class XsltTransformEngine
             if (c > 127) { hasNonAscii = true; break; }
         }
         if (!hasNonAscii) return value;
+
+        // Normalize to Unicode NFC before mapping to UTF-8 octets. Source documents may hold
+        // combining sequences (e.g. "a" + U+030A) that must be percent-encoded as the composed
+        // codepoint (U+00E5 → %C3%A5), matching the serialization spec's URI-escaping behavior
+        // and the XQuery serializer (output-0101/a/b).
+        value = value.Normalize(System.Text.NormalizationForm.FormC);
 
         var sb = new StringBuilder(value.Length * 2);
         foreach (char c in value)
@@ -23931,9 +23937,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Post-processes output for HTML/XHTML method.
     /// Converts self-closing void elements to HTML style and expands non-void self-closing elements.
     /// </summary>
-    internal static string PostProcessHtmlOutput(string output)
+    internal static string PostProcessHtmlOutput(string output, OutputMethod method = OutputMethod.Html)
     {
-        // Convert <br/> → <br> for void elements, <div/> → <div></div> for non-void
+        // Convert <br/> → <br> (HTML) or <br /> (XHTML) for void elements,
+        // <div/> → <div></div> for non-void.
+        var isXhtml = method == OutputMethod.Xhtml;
         var sb = new StringBuilder(output.Length);
         var i = 0;
         while (i < output.Length)
@@ -23957,9 +23965,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // Self-closing tag: <tag ... />
                     if (HtmlVoidElements.Contains(tagName))
                     {
-                        // Void element: output without /> → just >
-                        sb.Append(output.AsSpan(tagStart, i - 1 - tagStart)); // everything up to /
-                        sb.Append('>');
+                        // Void element. HTML: <br/> → <br>. XHTML: <br/> → <br /> (well-formed
+                        // empty element with a space before the self-closing slash).
+                        var upToSlash = output.AsSpan(tagStart, i - 1 - tagStart); // everything up to /
+                        if (isXhtml)
+                        {
+                            sb.Append(upToSlash.TrimEnd());
+                            sb.Append(" />");
+                        }
+                        else
+                        {
+                            sb.Append(upToSlash);
+                            sb.Append('>');
+                        }
                     }
                     else
                     {
@@ -24030,16 +24048,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // Locate the matching </head> and search the head's content for an
                     // existing Content-Type meta. If found, skip insertion for this head.
                     var endHead = result.IndexOf("</head", closeTag + 1, StringComparison.OrdinalIgnoreCase);
-                    var headContent = endHead > 0
-                        ? result.AsSpan(closeTag + 1, endHead - closeTag - 1)
-                        : result.AsSpan(closeTag + 1);
-                    if (!ContainsContentTypeMeta(headContent))
+                    var headEndAbs = endHead > 0 ? endHead : result.Length;
+                    var existing = FindContentTypeMetaSpan(result, closeTag + 1, headEndAbs);
+                    if (existing.Start < 0)
                     {
+                        // No Content-Type meta present: insert one as the first child of head.
                         result = result.Insert(closeTag + 1, metaElement);
                         searchFrom = closeTag + 1 + metaElement.Length;
                         continue;
                     }
-                    searchFrom = endHead > 0 ? endHead : result.Length;
+                    // Per the serialization spec (§HTML/XHTML output), an existing
+                    // http-equiv="Content-Type" meta is REPLACED by the serializer's computed
+                    // value (correct media type + charset) rather than left as-is or duplicated
+                    // (output-0143/0144/0157/0158; keeps DocBook TNG to a single correct meta).
+                    result = result.Remove(existing.Start, existing.Length).Insert(existing.Start, metaElement);
+                    searchFrom = existing.Start + metaElement.Length;
                     continue;
                 }
             }
@@ -24049,45 +24072,42 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
-    /// Scans a run of head content for an existing http-equiv="Content-Type" meta tag
-    /// (case-insensitive). Used to suppress duplicate insertion by InsertContentTypeMeta.
+    /// Locates an existing http-equiv="Content-Type" meta element within result[from..end)
+    /// and returns its absolute (start, length) span, or (-1, 0) if none is present.
+    /// Attribute names/values are matched case-insensitively per HTML rules.
     /// </summary>
-    private static bool ContainsContentTypeMeta(ReadOnlySpan<char> headContent)
+    private static (int Start, int Length) FindContentTypeMetaSpan(string s, int from, int end)
     {
-        var i = 0;
-        while (i < headContent.Length)
+        var i = from;
+        while (i < end)
         {
-            var lt = headContent.Slice(i).IndexOf('<');
-            if (lt < 0) break;
-            i += lt;
-            // Match <meta (case-insensitive) followed by whitespace or end
-            if (i + 5 <= headContent.Length
-                && (headContent[i + 1] == 'm' || headContent[i + 1] == 'M')
-                && (headContent[i + 2] == 'e' || headContent[i + 2] == 'E')
-                && (headContent[i + 3] == 't' || headContent[i + 3] == 'T')
-                && (headContent[i + 4] == 'a' || headContent[i + 4] == 'A')
-                && (i + 5 == headContent.Length || headContent[i + 5] == ' '
-                    || headContent[i + 5] == '\t' || headContent[i + 5] == '\n'
-                    || headContent[i + 5] == '\r' || headContent[i + 5] == '/'
-                    || headContent[i + 5] == '>'))
+            var lt = s.IndexOf('<', i);
+            if (lt < 0 || lt >= end) break;
+            i = lt;
+            if (i + 5 <= end
+                && (s[i + 1] == 'm' || s[i + 1] == 'M')
+                && (s[i + 2] == 'e' || s[i + 2] == 'E')
+                && (s[i + 3] == 't' || s[i + 3] == 'T')
+                && (s[i + 4] == 'a' || s[i + 4] == 'A')
+                && (i + 5 == end || s[i + 5] == ' ' || s[i + 5] == '\t' || s[i + 5] == '\n'
+                    || s[i + 5] == '\r' || s[i + 5] == '/' || s[i + 5] == '>'))
             {
-                var gt = headContent.Slice(i).IndexOf('>');
-                if (gt < 0) break;
-                var tag = headContent.Slice(i, gt + 1);
-                // Look for http-equiv="Content-Type" or http-equiv='Content-Type'
-                // (HTML attributes are case-insensitive; values per spec are too).
+                var gt = s.IndexOf('>', i);
+                if (gt < 0 || gt >= end) break;
+                var tag = s.AsSpan(i, gt + 1 - i);
                 if (tag.IndexOf("http-equiv", StringComparison.OrdinalIgnoreCase) >= 0
                     && tag.IndexOf("Content-Type", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    return true;
+                    return (i, gt + 1 - i);
                 }
-                i += gt + 1;
+                i = gt + 1;
                 continue;
             }
             i++;
         }
-        return false;
+        return (-1, 0);
     }
+
 
     /// <summary>
     /// Strips all XML markup from output, returning only text content.
