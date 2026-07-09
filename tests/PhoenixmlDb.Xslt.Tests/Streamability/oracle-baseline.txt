@@ -14,8 +14,6 @@
 sf-copy-of-003
 sf-copy-of-004
 sf-copy-of-011
-sf-copy-of-021
-sf-copy-of-025
 sf-deep-equal-012
 sf-head-032
 sf-head-035
@@ -30,8 +28,6 @@ sf-snapshot-0201
 sf-snapshot-0303
 sf-snapshot-0304
 sf-snapshot-0311
-sf-snapshot-0321
-sf-snapshot-0325
 sf-subsequence-035
 sf-subsequence-135
 sf-tail-032
@@ -68,10 +64,6 @@ si-copy-028
 si-copy-052
 si-copy-200
 si-copy-of-001
-si-copy-of-020
-si-copy-of-021
-si-copy-of-025
-si-copy-of-026
 si-document-001
 si-document-002
 si-document-004

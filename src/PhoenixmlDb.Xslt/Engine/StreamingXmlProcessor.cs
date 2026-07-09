@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Xml;
@@ -271,6 +272,9 @@ internal sealed class StreamingXmlProcessor
                                     foreach (var attr in skipAttrs)
                                         skipAttrDict[attr.LocalName] = attr.StringValue ?? "";
                                 }
+                                _matchPrefix = skipCtx.Prefix;
+                                _matchNamespaceUri = skipCtx.NamespaceUri;
+                                _matchInScopeNamespaces = CaptureInScopeNamespaces(reader);
                                 FireWatchers(skipCtx.LocalName, skipAttrDict, null);
                             }
                             if (!isEmptyElement)
@@ -382,6 +386,9 @@ internal sealed class StreamingXmlProcessor
                                 foreach (var attr in attrs)
                                     attrDict[attr.LocalName] = attr.StringValue ?? "";
                             }
+                            _matchPrefix = current.Prefix;
+                            _matchNamespaceUri = current.NamespaceUri;
+                            _matchInScopeNamespaces = CaptureInScopeNamespaces(reader);
                             FireWatchers(current.LocalName, attrDict, null);
                         }
 
@@ -1045,6 +1052,12 @@ internal sealed class StreamingXmlProcessor
         public required int Depth;
         public required string ElementName;
         public Dictionary<string, string>? Attributes;
+        // Namespace channel (#192): the matched element's prefix / namespace-URI and
+        // its in-scope namespace bindings, captured at StartElement so the materialized
+        // copy preserves element prefixes and copied namespace declarations.
+        public string? Prefix;
+        public string? NamespaceUri;
+        public IReadOnlyList<KeyValuePair<string, string>>? InScopeNamespaces;
         public StringBuilder TextBuffer = new();
         // Set when a child element StartElement appears inside the match window.
         // Materialization of a leaf XdmElement only fires when this stays false —
@@ -1099,6 +1112,12 @@ internal sealed class StreamingXmlProcessor
     {
         public required string LocalName;
         public Dictionary<string, string>? Attributes;
+        // Namespace channel (#192): prefix / namespace-URI and in-scope namespace
+        // bindings for this frame's element, so the materialized subtree copy keeps
+        // element prefixes and copied namespace declarations.
+        public string? Prefix;
+        public string? NamespaceUri;
+        public IReadOnlyList<KeyValuePair<string, string>>? InScopeNamespaces;
         public List<XdmNode> Children = [];
         public StringBuilder PendingText = new();
 
@@ -1111,6 +1130,17 @@ internal sealed class StreamingXmlProcessor
     }
 
     private readonly List<PendingTextWatcherMatch> _pendingTextWatcherMatches = [];
+
+    // Namespace channel (#192): the prefix / namespace-URI and in-scope namespace
+    // bindings of the element currently being fired through the watcher pipeline,
+    // captured from the live reader immediately before FireWatchers. The event model
+    // (FireWatchers/SubtreeBuilderFrame/PendingTextWatcherMatch) otherwise carries only
+    // local names, so a streamed copy would drop the element's prefix and its ancestors'
+    // namespace declarations. Consumed when a PendingTextWatcherMatch / SubtreeBuilderFrame
+    // is created so the materialized copy preserves them.
+    private string? _matchPrefix;
+    private string? _matchNamespaceUri;
+    private IReadOnlyList<KeyValuePair<string, string>>? _matchInScopeNamespaces;
 
     /// <summary>
     /// Snapshots an element's attribute contexts into a plain local-name → value
@@ -1435,7 +1465,10 @@ internal sealed class StreamingXmlProcessor
                     stack.Push(new SubtreeBuilderFrame
                     {
                         LocalName = elementName,
-                        Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null
+                        Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null,
+                        Prefix = _matchPrefix,
+                        NamespaceUri = _matchNamespaceUri,
+                        InScopeNamespaces = _matchInScopeNamespaces
                     });
                 }
             }
@@ -1569,7 +1602,10 @@ internal sealed class StreamingXmlProcessor
                         subtreeStack.Push(new SubtreeBuilderFrame
                         {
                             LocalName = elementName,
-                            Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null
+                            Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null,
+                            Prefix = _matchPrefix,
+                            NamespaceUri = _matchNamespaceUri,
+                            InScopeNamespaces = _matchInScopeNamespaces
                         });
                     }
                     _pendingTextWatcherMatches.Add(new PendingTextWatcherMatch
@@ -1578,6 +1614,9 @@ internal sealed class StreamingXmlProcessor
                         Depth = _ancestorNames.Count,
                         ElementName = elementName,
                         Attributes = attributes != null ? new Dictionary<string, string>((IDictionary<string, string>)attributes) : null,
+                        Prefix = _matchPrefix,
+                        NamespaceUri = _matchNamespaceUri,
+                        InScopeNamespaces = _matchInScopeNamespaces,
                         ReservedSlot = reservedSlot,
                         SubtreeStack = subtreeStack,
                         IntermediateAncestors = intermediateAncestors
@@ -1974,7 +2013,8 @@ internal sealed class StreamingXmlProcessor
                 {
                     if (!entry.HasChildElement)
                     {
-                        materialized = MaterializeLeafElement(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString());
+                        materialized = MaterializeLeafElement(entry.ElementName, entry.Attributes, entry.TextBuffer.ToString(),
+                            entry.Prefix, entry.NamespaceUri, entry.InScopeNamespaces);
                     }
                     else if (entry.SubtreeStack is { Count: 1 } rootStack)
                     {
@@ -2187,7 +2227,9 @@ internal sealed class StreamingXmlProcessor
     /// watchers that match leaf elements (e.g. <c>copy-of(/BOOKLIST/BOOKS/ITEM/PRICE)</c>)
     /// so downstream xsl:copy-of consumers receive a real element node.
     /// </summary>
-    private XdmElement MaterializeLeafElement(string localName, IReadOnlyDictionary<string, string>? attributes, string textContent)
+    private XdmElement MaterializeLeafElement(string localName, IReadOnlyDictionary<string, string>? attributes, string textContent,
+        string? prefix = null, string? namespaceUri = null,
+        IReadOnlyList<KeyValuePair<string, string>>? inScopeNamespaces = null)
     {
         var documentId = new DocumentId(0);
         var elemId = _nodeStore.NextId();
@@ -2231,16 +2273,63 @@ internal sealed class StreamingXmlProcessor
         {
             Id = elemId,
             Document = documentId,
-            Namespace = _nodeStore.InternNamespace(string.Empty),
+            Namespace = _nodeStore.InternNamespace(namespaceUri ?? string.Empty),
             LocalName = localName,
-            Prefix = null,
+            Prefix = string.IsNullOrEmpty(prefix) ? null : prefix,
             Attributes = attrIds.Count == 0 ? XdmElement.EmptyAttributes : attrIds,
             Children = childIds.Count == 0 ? XdmElement.EmptyChildren : childIds,
-            NamespaceDeclarations = XdmElement.EmptyNamespaceDeclarations
+            NamespaceDeclarations = BuildNamespaceDeclarations(inScopeNamespaces)
         };
         elem._stringValue = textContent ?? string.Empty;
         _nodeStore.Register(elem);
         return elem;
+    }
+
+    /// <summary>
+    /// Builds the <see cref="XdmElement.NamespaceDeclarations"/> for a streamed copy
+    /// from the in-scope namespace bindings captured at the source element (#192). The
+    /// streamed event pipeline carries only local names, so an element copied deep out
+    /// of the stream would otherwise lose the prefix→URI bindings its ancestors declared
+    /// (<c>copy-of(/*/*:description)</c> against a CityGML doc). Attaching every in-scope
+    /// binding lets the existing <c>SerializeNode</c> copy-namespaces filter emit the
+    /// full set for <c>copy-namespaces="yes"</c> and just the element/attribute-used ones
+    /// for <c>"no"</c>. The <c>xml</c> prefix is implicit and never materialized.
+    /// </summary>
+    private IReadOnlyList<NamespaceBinding> BuildNamespaceDeclarations(
+        IReadOnlyList<KeyValuePair<string, string>>? inScopeNamespaces)
+    {
+        if (inScopeNamespaces == null || inScopeNamespaces.Count == 0)
+            return XdmElement.EmptyNamespaceDeclarations;
+        var builder = ImmutableArray.CreateBuilder<NamespaceBinding>(inScopeNamespaces.Count);
+        foreach (var kv in inScopeNamespaces)
+        {
+            if (kv.Key == "xml" || kv.Key == "xmlns") continue;
+            builder.Add(new NamespaceBinding(kv.Key, _nodeStore.InternNamespace(kv.Value)));
+        }
+        return builder.Count == 0 ? XdmElement.EmptyNamespaceDeclarations : builder.ToImmutable();
+    }
+
+    /// <summary>
+    /// Captures the in-scope namespace bindings (all ancestor + local xmlns declarations)
+    /// visible at the reader's current element via <see cref="IXmlNamespaceResolver"/>.
+    /// Used to feed <see cref="BuildNamespaceDeclarations"/> for streamed copy materialization
+    /// (#192) so a copied subtree preserves the namespaces its source ancestors declared.
+    /// </summary>
+    private static List<KeyValuePair<string, string>>? CaptureInScopeNamespaces(XmlReader reader)
+    {
+        if (reader is not IXmlNamespaceResolver resolver)
+            return null;
+        var all = resolver.GetNamespacesInScope(XmlNamespaceScope.All);
+        if (all == null || all.Count == 0)
+            return null;
+        List<KeyValuePair<string, string>>? list = null;
+        foreach (var kv in all)
+        {
+            if (kv.Key == "xml" || kv.Key == "xmlns")
+                continue;
+            (list ??= new List<KeyValuePair<string, string>>(all.Count)).Add(kv);
+        }
+        return list;
     }
 
     /// <summary>
@@ -2336,12 +2425,12 @@ internal sealed class StreamingXmlProcessor
         {
             Id = elemId,
             Document = documentId,
-            Namespace = _nodeStore.InternNamespace(string.Empty),
+            Namespace = _nodeStore.InternNamespace(frame.NamespaceUri ?? string.Empty),
             LocalName = frame.LocalName,
-            Prefix = null,
+            Prefix = string.IsNullOrEmpty(frame.Prefix) ? null : frame.Prefix,
             Attributes = attrIds.Count == 0 ? XdmElement.EmptyAttributes : attrIds,
             Children = childIds.Count == 0 ? XdmElement.EmptyChildren : childIds,
-            NamespaceDeclarations = XdmElement.EmptyNamespaceDeclarations
+            NamespaceDeclarations = BuildNamespaceDeclarations(frame.InScopeNamespaces)
         };
         elem._stringValue = stringValue.ToString();
         _nodeStore.Register(elem);

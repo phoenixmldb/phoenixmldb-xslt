@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+### Streaming: namespaces preserved when copying a streamed element
+
+A streamed `xsl:copy-of` / `fn:copy-of` / `fn:snapshot` that selects an element by a striding path — `copy-of(/*/*:description)` against a document whose namespaces are declared on ancestors — now preserves the copied element's prefix and its in-scope namespace declarations. The streamed event pipeline previously carried only local names, so such a copy lost the element prefix and every ancestor-declared namespace. `copy-namespaces="yes"` now emits the full in-scope set; `copy-namespaces="no"` emits just the namespaces the element and its attributes use.
+
 ## 1.4.19 (2026-07-08)
 
 Streaming breadth. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes.
