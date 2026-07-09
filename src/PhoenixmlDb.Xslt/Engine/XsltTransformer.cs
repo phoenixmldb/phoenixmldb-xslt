@@ -527,6 +527,58 @@ public sealed class XsltTransformEngine
             throw new XsltException(
                 "SEPM0004: standalone or doctype-system requires a result that is a single well-formed document element");
         }
+
+        // SERE0015: the HTML output method terminates a processing instruction with a bare '>'
+        // (not '?>'), so a '>' inside PI content cannot be represented and is a serialization
+        // error (Serialization 4.0 §8.1 / output-0196). Checked here, before HTML post-processing
+        // rewrites PIs, while they are still in <?name content?> form.
+        if (method == OutputMethod.Html && ProcessingInstructionContentContainsGt(output))
+        {
+            throw new XsltException(
+                "SERE0015: a '>' character appears within a processing instruction serialized with the HTML output method");
+        }
+    }
+
+    /// <summary>
+    /// Scans a serialized result-tree string for a processing instruction whose content
+    /// (between the target name and the closing <c>?&gt;</c>) contains a <c>&gt;</c> character.
+    /// CDATA sections and comments are skipped so a <c>&gt;</c> in ordinary data is not mistaken
+    /// for PI content. Used to enforce SERE0015 for the HTML output method.
+    /// </summary>
+    private static bool ProcessingInstructionContentContainsGt(string output)
+    {
+        var i = 0;
+        var n = output.Length;
+        while (i < n)
+        {
+            var c = output[i];
+            if (c != '<') { i++; continue; }
+            var rest = output.AsSpan(i);
+            if (rest.StartsWith("<!--".AsSpan(), StringComparison.Ordinal))
+            {
+                var end = output.IndexOf("-->", i + 4, StringComparison.Ordinal);
+                i = end < 0 ? n : end + 3;
+                continue;
+            }
+            if (rest.StartsWith("<![CDATA[".AsSpan(), StringComparison.Ordinal))
+            {
+                var end = output.IndexOf("]]>", i + 9, StringComparison.Ordinal);
+                i = end < 0 ? n : end + 3;
+                continue;
+            }
+            if (i + 1 < n && output[i + 1] == '?')
+            {
+                var end = output.IndexOf("?>", i + 2, StringComparison.Ordinal);
+                if (end < 0) return false;
+                // Content spans [i+2, end); a '>' anywhere in it is illegal for HTML PIs.
+                if (output.AsSpan(i + 2, end - (i + 2)).IndexOf('>') >= 0)
+                    return true;
+                i = end + 2;
+                continue;
+            }
+            i++;
+        }
+        return false;
     }
 
     /// <summary>
