@@ -105,6 +105,27 @@ public class XsltParserTests
     }
 
     [Fact]
+    public void Parse_MatchPattern_WhitespaceBetweenNodeTestAndPredicate_ParsesStepWithPredicate()
+    {
+        // Whitespace is permitted between a NodeTest and a following predicate
+        // (as produced by XPath comment stripping in match-246a/b, e.g.
+        // "letters (:1:)[true()]" -> "letters [true()]").
+        var xslt = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="letters [true()]"/>
+            </xsl:stylesheet>
+            """;
+
+        var stylesheet = _parser.Parse(xslt);
+
+        var path = stylesheet.Templates.Single().Match.Should().BeOfType<PathPattern>().Subject;
+        var step = path.Steps.Single();
+        step.NodeTest.Should().BeOfType<NameTest>().Which.LocalName.Should().Be("letters");
+        step.Predicates.Should().HaveCount(1);
+    }
+
+    [Fact]
     public void Parse_StylesheetWithExcludeResultPrefixes_ParsesPrefixes()
     {
         // Arrange

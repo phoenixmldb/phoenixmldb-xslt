@@ -8327,7 +8327,9 @@ public sealed class StylesheetParser
             if (predStart >= 0)
             {
                 var predPart = name[predStart..];
-                name = name[..predStart];
+                // Whitespace is permitted between a NodeTest and its predicate
+                // (e.g. "letters [true()]"); trim it so the node test stays valid.
+                name = name[..predStart].Trim();
 
                 // Parse each predicate expression between matching brackets
                 var pPos = 0;
