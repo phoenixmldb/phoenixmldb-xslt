@@ -4428,14 +4428,30 @@ public sealed class XsltTransformEngine
         public readonly int SavedLength => _savedLength;
 
         /// <summary>The number of characters written to <c>_output</c> since this scope was opened.</summary>
-        public readonly int WrittenLength => _buffer.Length - _savedLength;
+        /// <remarks>
+        /// Clamped to be non-negative: the buffer can be shorter than <c>_savedLength</c> if it was
+        /// <c>Clear()</c>ed underneath an open scope (e.g. an xsl:result-document or a finalize/flush
+        /// path resets <c>_output</c>). In that case nothing this scope wrote survives, so the written
+        /// length is 0 — without the clamp <c>GetWritten</c> would pass a negative count to
+        /// <c>StringBuilder.ToString</c> and throw <c>ArgumentOutOfRangeException</c>.
+        /// </remarks>
+        public readonly int WrittenLength => System.Math.Max(0, _buffer.Length - _savedLength);
 
         /// <summary>Returns the slice of <c>_output</c> written since this scope was opened, as a new string.</summary>
         public readonly string GetWritten()
             => WrittenLength == 0 ? string.Empty : _buffer.ToString(_savedLength, WrittenLength);
 
         /// <summary>Truncates <c>_output</c> back to its saved length, discarding anything written in this scope.</summary>
-        public readonly void Dispose() => _buffer.Length = _savedLength;
+        /// <remarks>
+        /// Only shrinks — never grows. If the buffer was already cleared/truncated below
+        /// <c>_savedLength</c> (see <see cref="WrittenLength"/>), setting <c>Length = _savedLength</c>
+        /// would pad it back out with NUL characters; guarding avoids that corruption.
+        /// </remarks>
+        public readonly void Dispose()
+        {
+            if (_buffer.Length > _savedLength)
+                _buffer.Length = _savedLength;
+        }
     }
 
 }
