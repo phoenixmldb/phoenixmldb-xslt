@@ -4615,7 +4615,7 @@ public sealed class StylesheetParser
         };
     }
 
-    private static OnNoMatchBehavior ParseOnNoMatchBehavior(string value, XElement element) => value switch
+    private static OnNoMatchBehavior ParseOnNoMatchBehavior(string value, XElement element) => value.Trim() switch
     {
         "deep-copy" => OnNoMatchBehavior.DeepCopy,
         "shallow-copy" => OnNoMatchBehavior.ShallowCopy,
@@ -4644,7 +4644,7 @@ public sealed class StylesheetParser
         };
     }
 
-    private static OnMultipleMatchBehavior ParseOnMultipleMatchBehavior(string value, XElement element) => value switch
+    private static OnMultipleMatchBehavior ParseOnMultipleMatchBehavior(string value, XElement element) => value.Trim() switch
     {
         "use-last" => OnMultipleMatchBehavior.UseLast,
         "fail" => OnMultipleMatchBehavior.Fail,

@@ -86,6 +86,25 @@ public class XsltParserTests
     }
 
     [Fact]
+    public void Parse_XslMode_OnNoMatch_WhitespaceSurroundedValue_IsNormalized()
+    {
+        // XSLT enumeration-valued attributes are whitespace-normalized before
+        // being matched against the permitted token set (mode-1429/1441/1443).
+        var xslt = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:mode on-no-match=" text-only-copy " on-multiple-match=" use-last "/>
+            </xsl:stylesheet>
+            """;
+
+        var stylesheet = _parser.Parse(xslt);
+
+        var mode = stylesheet.Modes.Values.Single();
+        mode.OnNoMatch.Should().Be(OnNoMatchBehavior.TextOnlyCopy);
+        mode.OnMultipleMatch.Should().Be(OnMultipleMatchBehavior.UseLast);
+    }
+
+    [Fact]
     public void Parse_StylesheetWithExcludeResultPrefixes_ParsesPrefixes()
     {
         // Arrange
