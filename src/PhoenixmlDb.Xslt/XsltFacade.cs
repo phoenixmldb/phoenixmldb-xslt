@@ -989,7 +989,11 @@ public sealed class XsltTransformer
                 ? ResolveQName(_initialTemplate, _initialTemplateNamespace)
                 : null,
             InitialMode = _initialMode != null
-                ? ResolveQName(_initialMode, _initialModeNamespace)
+                ? (_initialMode is "#unnamed" or "#default"
+                    // "#unnamed"/"#default" as an initial mode select the unnamed mode
+                    // (stored under the empty QName), not a mode literally named "#unnamed".
+                    ? new QName(NamespaceId.None, "")
+                    : ResolveQName(_initialMode, _initialModeNamespace))
                 : null,
             InitialFunction = _initialFunction != null
                 ? ResolveQName(_initialFunction, _initialFunctionNamespace)

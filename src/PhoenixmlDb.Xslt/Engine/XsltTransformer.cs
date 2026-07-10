@@ -370,13 +370,20 @@ public sealed class XsltTransformEngine
                     throw new XsltException($"XTDE0045: The initial mode '{m.LocalName}' is not a mode used in the stylesheet");
 
                 // XTDE0045: A mode is eligible as initial mode only if it has public or
-                // final visibility, or it is the default mode. In packages, modes default
-                // to private; in stylesheets, only explicitly-declared private modes are affected.
+                // final visibility, or it is the default mode of the package. In a package,
+                // a top-level xsl:mode with no explicit visibility defaults to PRIVATE (the
+                // shared ParseVisibility default of public covers only non-package modules),
+                // so such modes are ineligible unless named in @default-mode. See W3C
+                // mode-1705b and mode-1714err.
                 if (!isDefaultMode
-                    && _stylesheet.Modes.TryGetValue(m, out var modeDecl)
-                    && (modeDecl.VisibilityAttr != null || _stylesheet.IsPackage)
-                    && modeDecl.Visibility is Ast.Visibility.Private)
-                    throw new XsltException($"XTDE0045: The initial mode '{m.LocalName}' is not eligible as an initial mode (it has private visibility)");
+                    && _stylesheet.Modes.TryGetValue(m, out var modeDecl))
+                {
+                    var effectiveVisibility = modeDecl.VisibilityAttr == null && _stylesheet.IsPackage
+                        ? Ast.Visibility.Private
+                        : modeDecl.Visibility;
+                    if (effectiveVisibility is Ast.Visibility.Private)
+                        throw new XsltException($"XTDE0045: The initial mode '{m.LocalName}' is not eligible as an initial mode (it has private visibility)");
+                }
             }
 
             // Build with-params from initial template/mode parameters
