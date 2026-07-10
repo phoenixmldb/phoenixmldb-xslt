@@ -387,6 +387,15 @@ public sealed class PathPattern : XsltPattern
     public required IReadOnlyList<PatternStep> Steps { get; init; }
 
     /// <summary>
+    /// When true, this path came from a parenthesized pattern such as <c>(*/a)</c>. A
+    /// parenthesized pattern is evaluated as an expression rooted in the tree, so the
+    /// "child-or-top" rule (XSLT 3.0 §5.5.3 — which lets a parentless node vacuously satisfy
+    /// leading ancestor steps of <c>A/B</c>) does NOT apply: every ancestor step must match a
+    /// real ancestor. See W3C match-215.
+    /// </summary>
+    public bool DisableChildOrTop { get; init; }
+
+    /// <summary>
     /// Default priority per XSLT 3.0 section 6.5:
     /// - Multi-step patterns (a/b, a//b): 0.5
     /// - Patterns starting with // (e.g., //*): 0.5
@@ -478,9 +487,29 @@ public sealed class PathPattern : XsltPattern
         // Single-step patterns (most common)
         var lastStep = Steps[^1];
 
+        // root() pattern step: matches any root node (a node with no parent — document
+        // nodes and free-standing parentless elements). See W3C match-233.
+        if (Steps.Count == 1 && lastStep.IsRootFunction)
+        {
+            bool isRoot = node switch
+            {
+                XdmDocument => true,
+                XdmNode xn => xn.Parent is not { } pid || pid == NodeId.None,
+                _ => false
+            };
+            if (!isRoot)
+                return false;
+            return lastStep.Predicates.Count == 0 || EvaluatePredicates(lastStep, node, context);
+        }
+
         // Match "/" (document root) — Steps contains a single step with axis self and KindTest for Document
         if (Steps.Count == 1 && lastStep.NodeTest is KindTest kt)
         {
+            // A document node is only ever matched on the self axis (patterns "/" or a
+            // lone "document-node()"). "child::document-node()" uses the child axis and
+            // must never match, since a document node is never anyone's child (match-048).
+            if (kt.Kind == XdmNodeKind.Document && lastStep.Axis == Axis.Child)
+                return false;
             if (kt.Kind == XdmNodeKind.Document && node is XdmDocument doc)
             {
                 if (kt.DocumentElementTest == null)
@@ -572,6 +601,11 @@ public sealed class PathPattern : XsltPattern
         var parentId = currentNode.Parent;
         if (parentId is null || parentId.Value == NodeId.None)
         {
+            // A parenthesized pattern is an expression rooted in the tree: it never gets
+            // the child-or-top escape, so a missing ancestor is a definite non-match (match-215).
+            if (DisableChildOrTop)
+                return false;
+
             // XSLT 3.0 §5.5.3: "child-or-top" matching — parentless nodes
             // match A/B if they match B, regardless of A ancestor steps.
             // BUT: absolute patterns (starting with /) require a document ancestor,
@@ -682,6 +716,13 @@ public sealed class PathPattern : XsltPattern
     /// </summary>
     internal static bool MatchesStepPublic(PatternStep step, object node) => MatchesStep(step, node);
 
+    /// <summary>
+    /// Public accessor for EvaluatePredicates, used by ExceptPattern/IntersectPattern so
+    /// context-scoped matching honours step predicates (e.g. <c>div[@id='a']</c>). See match-278.
+    /// </summary>
+    internal static bool EvaluatePredicatesPublic(PatternStep step, object node, XsltContext context)
+        => EvaluatePredicates(step, node, context);
+
     private static bool MatchesStep(PatternStep step, object node)
     {
         return (step.Axis, node) switch
@@ -790,6 +831,14 @@ public sealed class PatternStep
     /// meaning it can match any ancestor (not just the direct parent).
     /// </summary>
     public bool DescendantSeparator { get; init; }
+
+    /// <summary>
+    /// When true, this step is the <c>root()</c> function used as a pattern step.
+    /// It matches any node that is the root of its tree (a node with no parent):
+    /// document nodes and parentless (free-standing) elements/other nodes.
+    /// See W3C match-233.
+    /// </summary>
+    public bool IsRootFunction { get; init; }
 }
 
 /// <summary>
@@ -880,16 +929,21 @@ public sealed class ExceptPattern : XsltPattern
             if (path.Steps[0].Axis == Axis.Self && path.Steps[0].NodeTest is KindTest { Kind: XdmNodeKind.Document })
                 return path.Matches(node, context);
 
-            // If any step has predicates, the optimized context-scoped matching
-            // (which only checks node tests) would give incorrect results.
-            // Fall back to full pattern matching which evaluates predicates.
-            if (path.Steps.Any(s => s.Predicates.Count > 0))
+            // A pattern whose first step is introduced by '//' (e.g. "//div[@id='a']//*") is
+            // rooted at the document, so it selects the same nodes regardless of the ancestor
+            // context F. Use global matching — it must NOT be anchored to a specific F (match-279).
+            if (path.Steps[0].DescendantSeparator)
                 return path.Matches(node, context);
 
             var lastStep = path.Steps[^1];
 
-            // Check if node matches the final step's node test
+            // Check if node matches the final step's node test and its predicates.
+            // Predicates must be honoured here so anchored intersect/except patterns like
+            // "div[@id='a']//* intersect div[@id='b']//*" require both sides' constraints to
+            // hold relative to the SAME context node, not merely somewhere in the tree (match-278).
             if (!PathPattern.MatchesStepPublic(lastStep, node))
+                return false;
+            if (!PathPattern.EvaluatePredicatesPublic(lastStep, node, context))
                 return false;
 
             // For single-step patterns, check axis relationship between context and node
@@ -941,7 +995,8 @@ public sealed class ExceptPattern : XsltPattern
                     var parent = context.NodeResolver(pid);
                     if (parent == null) break;
 
-                    if (PathPattern.MatchesStepPublic(step, parent))
+                    if (PathPattern.MatchesStepPublic(step, parent)
+                        && PathPattern.EvaluatePredicatesPublic(step, parent, context))
                     {
                         if (i == 0)
                         {
@@ -966,6 +1021,7 @@ public sealed class ExceptPattern : XsltPattern
                 if (parent == null) return false;
 
                 if (!PathPattern.MatchesStepPublic(step, parent)) return false;
+                if (!PathPattern.EvaluatePredicatesPublic(step, parent, context)) return false;
 
                 if (i == 0 && parent != contextNode) return false;
 
@@ -1034,9 +1090,11 @@ public sealed class IntersectPattern : XsltPattern
 
     public override bool Matches(object node, XsltContext context)
     {
-        // Context-scoped matching: find a common ancestor context where
-        // the node matches both Left and Right
-        if (node is XdmNode xdmNode && context.NodeResolver != null)
+        // Context-scoped matching: find a common ancestor context F such that the node is
+        // selected by both F/Left and F/Right. Both sides must share the SAME anchor F — this
+        // is the whole point of an intersect pattern (match-278).
+        if (node is XdmNode xdmNode && context.NodeResolver != null
+            && xdmNode.Parent is { } startPid && startPid != NodeId.None)
         {
             var current = xdmNode;
             while (current.Parent is { } pid && pid != NodeId.None)
@@ -1050,9 +1108,14 @@ public sealed class IntersectPattern : XsltPattern
 
                 current = parent;
             }
+            // The node has ancestors, so the context-scoped search above is authoritative:
+            // no common anchor means no match. Do NOT fall through to unanchored matching,
+            // which would (incorrectly) accept a node satisfying each side from DIFFERENT
+            // anchors.
+            return false;
         }
 
-        // Fallback: simple matching
+        // Fallback for parentless nodes (no anchor to scope to): simple matching.
         return Left.Matches(node, context) && Right.Matches(node, context);
     }
 
@@ -1129,6 +1192,59 @@ public sealed class DotPattern : XsltPattern
     }
 
     public override bool MatchesNodeTest(object node) => true;
+}
+
+/// <summary>
+/// A parenthesized pattern with an outer positional/filter predicate, e.g.
+/// <c>(doc/descendant::foo)[2]</c>. Unlike <c>doc/descendant::foo[2]</c> (where the
+/// predicate binds to the last step per starting node), the outer predicate here filters
+/// the ENTIRE sequence of nodes matching the inner pattern, in document order across the
+/// whole tree. See W3C match-076.
+/// </summary>
+public sealed class ParenthesizedPositionalPattern : XsltPattern
+{
+    public required XsltPattern Inner { get; init; }
+    public required IReadOnlyList<XQueryExpression> Predicates { get; init; }
+
+    // A pattern with a predicate has default priority 0.5 (XSLT 3.0 §6.4).
+    public override double DefaultPriority => 0.5;
+
+    public override bool MatchesNodeTest(object node) => Inner.MatchesNodeTest(node);
+
+    public override bool Matches(object node, XsltContext context)
+    {
+        // The node must first match the inner pattern.
+        if (!Inner.Matches(node, context))
+            return false;
+        if (Predicates.Count == 0)
+            return true;
+        if (context.PredicateEvaluator == null || context.TreeNodesInDocumentOrder == null)
+            return true; // no way to build the sequence — accept the inner match
+
+        // Build the document-order sequence of all nodes in the tree that match the inner
+        // pattern, and locate the target within it.
+        int position = 0, size = 0;
+        foreach (var candidate in context.TreeNodesInDocumentOrder(node))
+        {
+            if (!Inner.Matches(candidate, context))
+                continue;
+            size++;
+            if (position == 0 && ReferenceEquals(candidate, node))
+                position = size;
+            else if (position == 0 && candidate is XdmNode cn && node is XdmNode tn && cn.Id == tn.Id && cn.Id != NodeId.None)
+                position = size;
+        }
+        if (position == 0)
+            return false;
+
+        context.MatchedNode = node;
+        foreach (var predicate in Predicates)
+        {
+            if (!context.PredicateEvaluator(node, predicate, position, size, node))
+                return false;
+        }
+        return true;
+    }
 }
 
 /// <summary>
@@ -1317,6 +1433,12 @@ public sealed class VariableReferencePattern : XsltPattern
     /// <summary>Whether the separator to the continuation is '//' (descendant) vs '/' (child).</summary>
     public bool DescendantSeparator { get; init; }
 
+    /// <summary>
+    /// Optional predicates applied directly to the variable reference, e.g. <c>$v[@att1='a']</c>
+    /// or <c>$v[2]</c>. Position/size are relative to the variable's value sequence. See W3C match-074.
+    /// </summary>
+    public List<XQueryExpression> Predicates { get; init; } = new();
+
     public override double DefaultPriority => 0.5;
 
     public override bool Matches(object node, XsltContext context)
@@ -1330,8 +1452,23 @@ public sealed class VariableReferencePattern : XsltPattern
 
         if (Continuation == null)
         {
-            // Simple variable pattern: node must be a member of the variable's value
-            return IsMemberOf(node, variableValue);
+            // Simple variable pattern: node must be a member of the variable's value.
+            if (!IsMemberOf(node, variableValue))
+                return false;
+            if (Predicates.Count == 0)
+                return true;
+            // Predicates are filtered against the variable's value sequence: position()/last()
+            // are relative to that sequence (in its stored order).
+            var (position, size) = MemberPositionOf(node, variableValue);
+            if (context.PredicateEvaluator == null)
+                return true;
+            context.MatchedNode = node;
+            foreach (var predicate in Predicates)
+            {
+                if (!context.PredicateEvaluator(node, predicate, position, size, node))
+                    return false;
+            }
+            return true;
         }
 
         // $var//child or $var/child pattern:
@@ -1417,6 +1554,34 @@ public sealed class VariableReferencePattern : XsltPattern
 
         // Single non-node item — direct equality
         return ReferenceEquals(node, variableValue);
+    }
+
+    /// <summary>
+    /// Returns the 1-based position of <paramref name="node"/> within the variable's value
+    /// sequence and the total size of that sequence. Used for predicate context on
+    /// <c>$v[predicate]</c> patterns.
+    /// </summary>
+    private static (int position, int size) MemberPositionOf(object node, object variableValue)
+    {
+        static bool Same(object node, object? item)
+            => item != null && (ReferenceEquals(node, item)
+                || (node is XdmNode n && item is XdmNode i && n.Id == i.Id && n.Id != NodeId.None));
+
+        var items = variableValue switch
+        {
+            object?[] arr => (System.Collections.IEnumerable)arr,
+            System.Collections.IList list => list,
+            _ => new[] { variableValue }
+        };
+
+        int size = 0, position = 0;
+        foreach (var item in items)
+        {
+            size++;
+            if (position == 0 && Same(node, item))
+                position = size;
+        }
+        return (position == 0 ? 1 : position, size == 0 ? 1 : size);
     }
 }
 
@@ -1896,6 +2061,13 @@ public class XsltContext
     /// Parameters: (uri) → document node at that URI, or null if not available.
     /// </summary>
     public Func<string, XdmNode?>? DocPatternEvaluator { get; set; }
+
+    /// <summary>
+    /// Returns all nodes (in document order) of the tree containing the given node, used to
+    /// evaluate outer positional predicates on parenthesized patterns like
+    /// <c>(doc/descendant::foo)[2]</c>. Null when no node store is available.
+    /// </summary>
+    public Func<object, IReadOnlyList<object>>? TreeNodesInDocumentOrder { get; set; }
 }
 
 /// <summary>

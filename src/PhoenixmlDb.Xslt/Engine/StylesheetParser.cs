@@ -2547,6 +2547,11 @@ public sealed class StylesheetParser
                 foreach (var pred in dp.Predicates)
                     ValidateFunctionCallsInExpression(pred, stylesheet, lib, wellKnownNamespaces);
                 break;
+            case ParenthesizedPositionalPattern ppp:
+                ValidatePatternFunctionsInPattern(ppp.Inner, stylesheet, lib, wellKnownNamespaces);
+                foreach (var pred in ppp.Predicates)
+                    ValidateFunctionCallsInExpression(pred, stylesheet, lib, wellKnownNamespaces);
+                break;
         }
     }
 
@@ -8191,6 +8196,15 @@ public sealed class StylesheetParser
             }
         }
 
+        // Parenthesized pattern with an OUTER predicate: "(P)[pred1][pred2]...".
+        // The predicate filters the whole sequence matching P (document order), which is
+        // different from folding it onto P's last step. See W3C match-076.
+        {
+            var parenPositional = TryParseParenthesizedPositionalPattern(pattern.Trim(), context);
+            if (parenPositional != null)
+                return parenPositional;
+        }
+
         // Expand parenthesized unions within path steps:
         // "x/(child::a|descendant::b)" → "x/child::a | x/descendant::b"
         {
@@ -8319,7 +8333,9 @@ public sealed class StylesheetParser
         foreach (var (part, descendantSep) in segments)
         {
             var axis = Axis.Child;
-            var name = part;
+            // Trim whitespace that can surround a step when comments/whitespace appear around
+            // the '/' separator, e.g. "*/(: c :) a" → "*/ a" → step " a". See W3C match-215.
+            var name = part.Trim();
 
             // Extract predicates (e.g., "item[@type='a']" -> name="item", predicates=["@type='a'"])
             var predicates = new List<XQueryExpression>();
@@ -8453,6 +8469,21 @@ public sealed class StylesheetParser
                 throw new XsltException($"XTSE0340: '{name}' is not allowed in a pattern", GetSourceLocation(context));
             }
 
+            // root() function used as a pattern step: matches any root node (a node with
+            // no parent — document nodes and parentless elements). See W3C match-233.
+            if (name == "root()")
+            {
+                steps.Add(new PatternStep
+                {
+                    Axis = Axis.Self,
+                    NodeTest = new KindTest { Kind = XdmNodeKind.None },
+                    DescendantSeparator = descendantSep,
+                    Predicates = predicates,
+                    IsRootFunction = true
+                });
+                continue;
+            }
+
             var nodeTest = ParseNodeTest(name, context, isAttribute: axis == Axis.Attribute);
 
             // KindTest patterns like attribute() and namespace-node() imply their axis
@@ -8464,6 +8495,12 @@ public sealed class StylesheetParser
                     axis = Axis.Attribute;
                 else if (nodeTest is KindTest { Kind: XdmNodeKind.Namespace })
                     axis = Axis.Namespace;
+                else if (nodeTest is KindTest { Kind: XdmNodeKind.Document })
+                    // A lone document-node() pattern matches the document node itself
+                    // (self axis), like "/". An explicit "child::document-node()" keeps
+                    // the child axis and therefore never matches (a document node is
+                    // never a child of anything) — see W3C match-048.
+                    axis = Axis.Self;
             }
 
             steps.Add(new PatternStep
@@ -8711,6 +8748,97 @@ public sealed class StylesheetParser
         return null;
     }
 
+    /// <summary>
+    /// Parses a pattern that is a single parenthesized group, optionally followed by outer
+    /// predicates. "(P)" unwraps to P; "(P)[pred]" becomes a
+    /// <see cref="ParenthesizedPositionalPattern"/> whose predicate filters the whole
+    /// sequence matching P (document order). See W3C match-076 and match-215.
+    /// Returns null when the pattern is not a single wrapped group (e.g. "(a)/b").
+    /// </summary>
+    private XsltPattern? TryParseParenthesizedPositionalPattern(string pattern, XElement context)
+    {
+        if (pattern.Length < 3 || pattern[0] != '(')
+            return null;
+
+        // Find the parenthesis that closes the leading '(' (respecting nesting and strings).
+        var depth = 0;
+        var closeIdx = -1;
+        for (var k = 0; k < pattern.Length; k++)
+        {
+            var c = pattern[k];
+            if (c == '\'' || c == '"')
+            {
+                var q = c;
+                k++;
+                while (k < pattern.Length && pattern[k] != q) k++;
+            }
+            else if (c == '(') depth++;
+            else if (c == ')')
+            {
+                depth--;
+                if (depth == 0) { closeIdx = k; break; }
+            }
+        }
+        if (closeIdx < 0)
+            return null;
+
+        var rest = pattern[(closeIdx + 1)..].TrimStart();
+
+        // Fully parenthesized "(P)" with nothing after — unwrap to P, but mark path patterns
+        // so the child-or-top rule is disabled (a parenthesized pattern is an expression).
+        if (rest.Length == 0)
+        {
+            var innerOnly = pattern[1..closeIdx].Trim();
+            return innerOnly.Length == 0 ? null : MarkParenthesized(ParsePattern(innerOnly, context));
+        }
+
+        if (!rest.StartsWith('['))
+            return null; // e.g. "(a)/b" — let other handlers deal with it
+
+        // Collect the outer predicate expressions.
+        var predicates = new List<XQueryExpression>();
+        var predPart = rest;
+        while (predPart.StartsWith('['))
+        {
+            var bracketDepth = 0;
+            var k = 0;
+            for (; k < predPart.Length; k++)
+            {
+                if (predPart[k] == '[') bracketDepth++;
+                else if (predPart[k] == ']') { bracketDepth--; if (bracketDepth == 0) break; }
+                else if (predPart[k] == '\'' || predPart[k] == '"')
+                {
+                    var q = predPart[k];
+                    k++;
+                    while (k < predPart.Length && predPart[k] != q) k++;
+                }
+            }
+            if (k >= predPart.Length) return null; // unbalanced
+            predicates.Add(ParseExpression(predPart[1..k], context));
+            predPart = predPart[(k + 1)..].TrimStart();
+        }
+        if (predPart.Length != 0)
+            return null; // trailing content after the predicates — not this shape
+
+        var innerText = pattern[1..closeIdx].Trim();
+        if (innerText.Length == 0)
+            return null;
+
+        var inner = MarkParenthesized(ParsePattern(innerText, context));
+        return new ParenthesizedPositionalPattern { Inner = inner, Predicates = predicates };
+    }
+
+    /// <summary>
+    /// Marks a parsed pattern as having come from a parenthesized group, so path patterns
+    /// disable the child-or-top rule. Recurses into union alternatives. See W3C match-215.
+    /// </summary>
+    private static XsltPattern MarkParenthesized(XsltPattern pattern) => pattern switch
+    {
+        PathPattern pp => new PathPattern { Steps = pp.Steps, DisableChildOrTop = true },
+        UnionPattern up => new UnionPattern { Patterns = up.Patterns.Select(MarkParenthesized).ToList() },
+        _ => pattern
+    };
+
     private VariableReferencePattern? TryParseVariableReferencePattern(string pattern, XElement context)
     {
         if (pattern.Length < 2 || pattern[0] != '$')
@@ -8742,11 +8870,39 @@ public sealed class StylesheetParser
         var varNameStr = pattern[nameStart..nameEnd];
         var varName = ParseQName(varNameStr, context);
 
-        // Check for continuation path: $var//path or $var/path
+        // Check for continuation path: $var//path or $var/path, or a predicate: $var[pred]
         var rest = pattern[nameEnd..].TrimStart();
         if (rest.Length == 0)
         {
             return new VariableReferencePattern { VariableName = varName };
+        }
+
+        // $var[pred1][pred2]... — trailing predicate(s) directly on the variable reference.
+        if (rest.StartsWith('['))
+        {
+            var predicates = new List<XQueryExpression>();
+            var predPart = rest;
+            while (predPart.StartsWith('['))
+            {
+                var bracketDepth = 0;
+                var k = 0;
+                for (; k < predPart.Length; k++)
+                {
+                    if (predPart[k] == '[') bracketDepth++;
+                    else if (predPart[k] == ']') { bracketDepth--; if (bracketDepth == 0) break; }
+                    else if (predPart[k] == '\'' || predPart[k] == '"')
+                    {
+                        var q = predPart[k];
+                        k++;
+                        while (k < predPart.Length && predPart[k] != q) k++;
+                    }
+                }
+                if (k >= predPart.Length) return null; // unbalanced — not a variable pattern
+                predicates.Add(ParseExpression(predPart[1..k], context));
+                predPart = predPart[(k + 1)..].TrimStart();
+            }
+            if (predPart.Length != 0) return null; // trailing junk — not a clean $var[pred]
+            return new VariableReferencePattern { VariableName = varName, Predicates = predicates };
         }
 
         if (rest.StartsWith("//", StringComparison.Ordinal))
@@ -8913,12 +9069,17 @@ public sealed class StylesheetParser
                         parts.Add(pattern[start..i]);
                         start = i + 1;
                         break;
-                    // XSLT 3.0: 'union' keyword as synonym for '|' in patterns
+                    // XSLT 3.0: 'union' keyword as synonym for '|' in patterns.
+                    // But per the leading-lone-slash rule, a '/' immediately preceding 'union'
+                    // makes it a name test ("/union" = child::union), not the union operator —
+                    // "union" can begin a RelativePathExpr. So don't split when the previous
+                    // non-whitespace character is '/'. See W3C match-038.
                     case 'u' when bracketDepth == 0
                         && i + 5 <= pattern.Length
                         && pattern.AsSpan(i, 5).SequenceEqual("union")
                         && (i == 0 || !char.IsLetterOrDigit(pattern[i - 1]) && pattern[i - 1] != '_' && pattern[i - 1] != '-')
-                        && (i + 5 >= pattern.Length || !char.IsLetterOrDigit(pattern[i + 5]) && pattern[i + 5] != '_' && pattern[i + 5] != '-'):
+                        && (i + 5 >= pattern.Length || !char.IsLetterOrDigit(pattern[i + 5]) && pattern[i + 5] != '_' && pattern[i + 5] != '-')
+                        && PrecedingNonWhitespaceChar(pattern, i) != '/':
                         parts.Add(pattern[start..i]);
                         start = i + 5;
                         i += 4; // loop will increment to i+5
@@ -8929,6 +9090,19 @@ public sealed class StylesheetParser
 
         parts.Add(pattern[start..]);
         return parts;
+    }
+
+    /// <summary>
+    /// Returns the nearest non-whitespace character before <paramref name="index"/>, or '\0' if none.
+    /// </summary>
+    private static char PrecedingNonWhitespaceChar(string s, int index)
+    {
+        for (var k = index - 1; k >= 0; k--)
+        {
+            if (!char.IsWhiteSpace(s[k]))
+                return s[k];
+        }
+        return '\0';
     }
 
     /// <summary>
@@ -9152,7 +9326,7 @@ public sealed class StylesheetParser
             }
             return new KindTest { Kind = XdmNodeKind.ProcessingInstruction, Name = piNameTest };
         }
-        if (name is "document-node()" or "root()")
+        if (name == "document-node()")
             return new KindTest { Kind = XdmNodeKind.Document };
         // document-node(element(E)) or document-node(element(E, type))
         if (name.StartsWith("document-node(element(", StringComparison.Ordinal) && name.EndsWith("))", StringComparison.Ordinal))

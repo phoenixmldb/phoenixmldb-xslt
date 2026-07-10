@@ -19030,6 +19030,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private Func<XQueryExpression, object, bool>? _matchCtxIdPatternEvaluator;
     private Func<QName, object?>? _matchCtxVariablePatternEvaluator;
     private Func<string, XdmNode?>? _matchCtxDocPatternEvaluator;
+    private Func<object, IReadOnlyList<object>>? _matchCtxTreeNodesInDocumentOrder;
 
     // Pool of XsltContext instances. Each call to AcquireMatchContext pops one
     // (or allocates if empty) and stamps the per-call fields; the returned lease
@@ -19067,7 +19068,46 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _matchCtxIdPatternEvaluator = EvaluateIdPattern;
             _matchCtxVariablePatternEvaluator = EvaluateVariablePattern;
             _matchCtxDocPatternEvaluator = EvaluateDocPattern;
+            _matchCtxTreeNodesInDocumentOrder = EnumerateTreeNodesInDocumentOrder;
         }
+    }
+
+    /// <summary>
+    /// Enumerates every node (in document order) of the tree that contains
+    /// <paramref name="node"/>, including attributes. Used to evaluate outer positional
+    /// predicates on parenthesized patterns such as <c>(doc/descendant::foo)[2]</c>.
+    /// </summary>
+    private List<object> EnumerateTreeNodesInDocumentOrder(object node)
+    {
+        var result = new List<object>();
+        if (node is not XdmNode start || _nodeStore == null)
+        {
+            if (node != null) result.Add(node);
+            return result;
+        }
+
+        // Walk up to the root of the tree.
+        XdmNode root = start;
+        while (root.Parent is { } pid && pid != NodeId.None)
+        {
+            var parent = _nodeStore.GetNode(pid);
+            if (parent == null) break;
+            root = parent;
+        }
+
+        void Walk(XdmNode n)
+        {
+            result.Add(n);
+            if (n is XdmElement elem)
+            {
+                foreach (var attr in _nodeStore.GetAttributes(elem))
+                    result.Add(attr);
+            }
+            foreach (var child in _nodeStore.GetChildren(n))
+                Walk(child);
+        }
+        Walk(root);
+        return result;
     }
 
     internal MatchContextLease AcquireMatchContext(int position = 0, int size = 0)
@@ -19087,6 +19127,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         ctx.IdPatternEvaluator = _matchCtxIdPatternEvaluator;
         ctx.VariablePatternEvaluator = _matchCtxVariablePatternEvaluator;
         ctx.DocPatternEvaluator = _matchCtxDocPatternEvaluator;
+        ctx.TreeNodesInDocumentOrder = _matchCtxTreeNodesInDocumentOrder;
         return new MatchContextLease(this, ctx);
     }
 
@@ -19121,6 +19162,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             IdPatternEvaluator = _matchCtxIdPatternEvaluator,
             VariablePatternEvaluator = _matchCtxVariablePatternEvaluator,
             DocPatternEvaluator = _matchCtxDocPatternEvaluator,
+            TreeNodesInDocumentOrder = _matchCtxTreeNodesInDocumentOrder,
         };
     }
 
