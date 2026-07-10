@@ -19024,6 +19024,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     // are stable for the lifetime of the transformer.
     private Func<NodeId, XdmNode?>? _matchCtxNodeResolver;
     private Func<object, XQueryExpression, int, int, object?, bool>? _matchCtxPredicateEvaluator;
+    private Func<object, IReadOnlyList<XQueryExpression>, NodeTest, object?, bool>? _matchCtxSequencePredicateEvaluator;
     private Func<object, NodeTest, object?, (int, int)>? _matchCtxPositionComputer;
     private Func<string, XQueryExpression, object, bool>? _matchCtxKeyPatternEvaluator;
     private Func<XQueryExpression, object, bool>? _matchCtxIdPatternEvaluator;
@@ -19060,6 +19061,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             _matchCtxNodeResolver = _nodeStore != null ? id => _nodeStore.GetNode(id) : null;
             _matchCtxPredicateEvaluator = EvaluatePatternPredicate;
+            _matchCtxSequencePredicateEvaluator = EvaluateSequencePredicates;
             _matchCtxPositionComputer = ComputeNodePosition;
             _matchCtxKeyPatternEvaluator = EvaluateKeyPattern;
             _matchCtxIdPatternEvaluator = EvaluateIdPattern;
@@ -19079,6 +19081,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         ctx.DescendantPositionAncestor = null;
         ctx.NodeResolver = _matchCtxNodeResolver;
         ctx.PredicateEvaluator = _matchCtxPredicateEvaluator;
+        ctx.SequencePredicateEvaluator = _matchCtxSequencePredicateEvaluator;
         ctx.PositionComputer = _matchCtxPositionComputer;
         ctx.KeyPatternEvaluator = _matchCtxKeyPatternEvaluator;
         ctx.IdPatternEvaluator = _matchCtxIdPatternEvaluator;
@@ -19112,6 +19115,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             Last = size,
             NodeResolver = _matchCtxNodeResolver,
             PredicateEvaluator = _matchCtxPredicateEvaluator,
+            SequencePredicateEvaluator = _matchCtxSequencePredicateEvaluator,
             PositionComputer = _matchCtxPositionComputer,
             KeyPatternEvaluator = _matchCtxKeyPatternEvaluator,
             IdPatternEvaluator = _matchCtxIdPatternEvaluator,
@@ -19221,6 +19225,111 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         WalkDescendants(ancestor);
         return position == 0 ? (1, 1) : (position, size);
+    }
+
+    /// <summary>
+    /// Evaluates a chain of two or more pattern predicates against <paramref name="node"/>
+    /// with true XPath filter semantics. Builds the candidate sequence the node belongs to
+    /// (siblings matching the node test, or all descendants of the descendant-axis ancestor,
+    /// in document order), then applies each predicate to the survivors of the previous
+    /// predicate so that <c>position()</c>/<c>last()</c> re-index against the surviving
+    /// sequence. Returns true iff <paramref name="node"/> is in the final filtered sequence.
+    /// Backs <see cref="XsltContext.SequencePredicateEvaluator"/>.
+    /// </summary>
+    internal bool EvaluateSequencePredicates(object node, IReadOnlyList<XQueryExpression> predicates, NodeTest nodeTest, object? descendantAncestor)
+    {
+        if (node is not XdmNode target || _nodeStore == null)
+        {
+            // No node store to build a sequence from: fall back to single-position AND
+            // semantics (each predicate evaluated against the node's own position).
+            var (pos, sz) = ComputeNodePosition(node, nodeTest, descendantAncestor);
+            foreach (var pred in predicates)
+            {
+                if (!EvaluatePatternPredicate(node, pred, pos, sz, node))
+                    return false;
+            }
+            return true;
+        }
+
+        var current = BuildCandidateSequence(target, nodeTest, descendantAncestor);
+
+        foreach (var predicate in predicates)
+        {
+            int size = current.Count;
+            var next = new List<XdmNode>(size);
+            for (int i = 0; i < size; i++)
+            {
+                // current() in a pattern predicate refers to the node being matched (the
+                // original target), not the candidate under test — mirror the single-predicate path.
+                if (EvaluatePatternPredicate(current[i], predicate, i + 1, size, target))
+                    next.Add(current[i]);
+            }
+            current = next;
+
+            // Once the target drops out of the survivors it can never return.
+            if (!ContainsNodeId(current, target.Id))
+                return false;
+        }
+
+        return ContainsNodeId(current, target.Id);
+    }
+
+    /// <summary>
+    /// Builds the candidate sequence (document order) that <paramref name="node"/> belongs to
+    /// for pattern predicate evaluation: all descendants of <paramref name="descendantAncestor"/>
+    /// matching the node test when set, otherwise the node's siblings matching the node test.
+    /// Mirrors the enumeration used by <see cref="ComputeNodePosition"/> /
+    /// <see cref="ComputeDescendantPosition"/> so positions agree with the single-predicate path.
+    /// </summary>
+    private List<XdmNode> BuildCandidateSequence(XdmNode node, NodeTest nodeTest, object? descendantAncestor)
+    {
+        var result = new List<XdmNode>();
+
+        if (descendantAncestor is XdmNode ancestor)
+        {
+            void WalkDescendants(XdmNode parent)
+            {
+                foreach (var child in _nodeStore!.GetChildren(parent))
+                {
+                    if (MatchesNodeTest(child, nodeTest))
+                        result.Add(child);
+                    WalkDescendants(child);
+                }
+            }
+            WalkDescendants(ancestor);
+            return result;
+        }
+
+        if (node.Parent is not { } parentId || parentId == NodeId.None)
+        {
+            // Parentless node — the candidate sequence is just the node itself.
+            result.Add(node);
+            return result;
+        }
+
+        var parent = _nodeStore!.GetNode(parentId);
+        if (parent == null)
+        {
+            result.Add(node);
+            return result;
+        }
+
+        foreach (var sibling in _nodeStore.GetChildren(parent))
+        {
+            if (MatchesNodeTest(sibling, nodeTest))
+                result.Add(sibling);
+        }
+        return result;
+    }
+
+    private static bool ContainsNodeId(List<XdmNode> nodes, NodeId id)
+    {
+        foreach (var n in nodes)
+        {
+            if (n.Id == id)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

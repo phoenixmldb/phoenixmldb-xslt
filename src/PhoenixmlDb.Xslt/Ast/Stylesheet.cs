@@ -635,6 +635,17 @@ public sealed class PathPattern : XsltPattern
         if (context.PredicateEvaluator == null)
             return true; // No evaluator available, skip predicate check
 
+        // Two or more predicates require true XPath filter semantics: each predicate is
+        // applied to the sequence that survived the earlier predicates, so position()/last()
+        // in a later predicate re-index against the survivors. Delegate to the sequence-aware
+        // evaluator when one is wired (non-streaming match context); otherwise fall through to
+        // the single-position AND behaviour below (streaming accumulator context, or no
+        // node store — chained positional predicates are out of scope there).
+        if (step.Predicates.Count >= 2 && context.SequencePredicateEvaluator != null)
+        {
+            return context.SequencePredicateEvaluator(node, step.Predicates, step.NodeTest, context.DescendantPositionAncestor);
+        }
+
         // Compute position and size for predicates like [2] or [position() mod 2 = 1]
         // If Position/Last are already set (e.g., from xsl:number counting), use those values.
         // Otherwise, use the PositionComputer callback to compute on-demand.
@@ -1829,6 +1840,21 @@ public class XsltContext
     /// Third parameter is optional descendant axis ancestor (for descendant axis patterns).
     /// </summary>
     public Func<object, NodeTest, object?, (int position, int size)>? PositionComputer { get; set; }
+
+    /// <summary>
+    /// Evaluates a chain of predicates against a node with true XPath filter semantics.
+    /// Given the node being tested, the step's predicate list, its node test, and the
+    /// optional descendant-axis ancestor, this builds the candidate sequence the node
+    /// belongs to (in document order) and applies each predicate to the sequence that
+    /// survived the earlier predicates — so <c>position()</c>/<c>last()</c> inside a later
+    /// predicate are relative to the re-indexed survivors. Returns true iff the node is in
+    /// the final filtered sequence. Used for patterns with two or more predicates such as
+    /// <c>x[(position() mod 2)=1][position() &gt; 3]</c>; single-predicate steps keep the
+    /// cheaper <see cref="PositionComputer"/> path. Null when no sequence-aware evaluator is
+    /// wired (e.g. the streaming accumulator match context), in which case the caller falls
+    /// back to per-node predicate evaluation.
+    /// </summary>
+    public Func<object, IReadOnlyList<XQueryExpression>, NodeTest, object?, bool>? SequencePredicateEvaluator { get; set; }
 
     /// <summary>
     /// When set, position computation should be relative to descendants of this ancestor
