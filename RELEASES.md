@@ -1,5 +1,27 @@
 # Release History
 
+## 1.4.22 (2026-07-09)
+
+Serialization character-maps, pattern/mode conformance, and a concurrency-robustness fix. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes.
+
+### Character maps
+
+The character-map serialization path was reworked: astral (beyond-BMP) `xsl:output-character/@character` values are kept and mapped (the map is keyed on code point, not `char`); maps are applied *before* XML-escaping, so a map for `<`, `>`, or `&` fires; a mapped character outside the declared output encoding emits a numeric character reference; and mapped output is protected from Unicode normalization of the surrounding text.
+
+### Serialization
+
+- `xsl:output` declarations with the same expanded-QName name but different prefixes now merge (previously keyed on the lexical prefix, so `one:temp` and `two:temp` in the same namespace didn't).
+- A `>` in a processing instruction serialized under the HTML method raises **SERE0015** (HTML terminates a PI with a bare `>`).
+
+### Patterns and modes
+
+- `xsl:mode` enumerated attribute values (`on-no-match`, `on-multiple-match`) are whitespace-normalized before validation, so surrounding whitespace no longer raises a spurious `XTSE0020`.
+- Whitespace between a pattern's node test and its predicate is permitted (e.g. `letters (:comment:)[true()]`, where comment-stripping leaves a space).
+
+### Robustness
+
+- `ScopedOutputBuffer` is now safe when `_output` is cleared underneath an open scope (an `xsl:result-document` or finalize/flush path). The written length clamps to zero and disposal only shrinks the buffer, so this no longer throws `ArgumentOutOfRangeException` (which surfaced intermittently under concurrent load) or pads the buffer with NUL characters.
+
 ## 1.4.21 (2026-07-09)
 
 Serialization output-method conformance — the HTML/XHTML method and serialization-error validation. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes.
