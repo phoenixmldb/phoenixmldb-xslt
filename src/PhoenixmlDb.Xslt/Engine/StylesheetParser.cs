@@ -637,6 +637,18 @@ public sealed class StylesheetParser
                 case "template":
                     var template = ParseTemplate(child, version);
                     stylesheet.Templates.Add(template);
+                    // XTSE3050: a top-level template rule (outside xsl:override) that targets a
+                    // mode declared in a used package adds a rule to a used component, which is
+                    // only allowed inside xsl:override (override-m-018). Record explicit modes.
+                    if (template.Match != null)
+                    {
+                        foreach (var m in template.Modes)
+                        {
+                            if (m.LocalName is "#all" or "#unnamed" or "#default" or "#current" or "")
+                                continue;
+                            stylesheet.LocalTemplateRuleModes.Add(m);
+                        }
+                    }
                     if (template.Name.HasValue)
                     {
                         if (stylesheet.NamedTemplates.TryGetValue(template.Name.Value, out var existingTmpl))
@@ -659,6 +671,7 @@ public sealed class StylesheetParser
                         throw new XsltException($"XTSE0630: Duplicate global variable '{variable.Name.LocalName}'",
                             GetSourceLocation(child));
                     stylesheet.Variables.Add(variable);
+                    stylesheet.LocalComponentSymbols.Add(("V", variable.Name, 0));
                     // Track static variables for use-when and shadow attribute resolution
                     if (variable.Static && variable.Select != null)
                     {
@@ -687,6 +700,7 @@ public sealed class StylesheetParser
                         throw new XsltException($"XTSE0630: Duplicate global parameter '{param.Name.LocalName}'",
                             GetSourceLocation(child));
                     stylesheet.Parameters.Add(param);
+                    stylesheet.LocalComponentSymbols.Add(("V", param.Name, 0));
                     // Track static params for use-when and shadow attribute resolution
                     if (param.Static && param.Select != null)
                     {
@@ -718,6 +732,7 @@ public sealed class StylesheetParser
                         throw new XsltException($"XTSE0770: Duplicate function declaration '{func.Name.LocalName}' with arity {func.Parameters.Count}",
                             GetSourceLocation(child));
                     stylesheet.Functions[funcKey] = func;
+                    stylesheet.LocalComponentSymbols.Add(("F", func.Name, func.Parameters.Count));
                     break;
 
                 case "key":
@@ -877,7 +892,10 @@ public sealed class StylesheetParser
                     var acc = ParseAccumulator(child);
                     // Track duplicates within the same module for XTSE3350 detection.
                     // Don't throw yet — import precedence may resolve the conflict.
-                    if (stylesheet.Accumulators.ContainsKey(acc.Name))
+                    // An accumulator merged in from a used package is package-local, so it
+                    // does not clash with a local accumulator of the same name (override-misc-005).
+                    if (stylesheet.Accumulators.ContainsKey(acc.Name)
+                        && !stylesheet.PackageMergedAccumulatorNames.Contains(acc.Name))
                         stylesheet.DuplicateAccumulatorNames.Add(acc.Name);
                     stylesheet.Accumulators[acc.Name] = acc;
                     break;
@@ -910,6 +928,8 @@ public sealed class StylesheetParser
                     }
                     _modeElements[modeKey] = child;
                     stylesheet.Modes[modeKey] = mode;
+                    if (mode.Name is { } namedMode)
+                        stylesheet.LocalComponentSymbols.Add(("M", namedMode, 0));
                     break;
 
                 // xsl:global-context-item declares constraints on the global context item.
@@ -1089,6 +1109,35 @@ public sealed class StylesheetParser
 
         _modeElements = prevModeElements;
 
+        // XTSE3050: A component declared in the using package (outside xsl:override) must not
+        // have the same symbolic name as a public/final component of a used package. The
+        // legal way to redefine such a component is within xsl:override.
+        if (stylesheet.UsedComponentSymbols.Count > 0)
+        {
+            foreach (var sym in stylesheet.LocalComponentSymbols)
+            {
+                if (stylesheet.UsedComponentSymbols.Contains(sym))
+                {
+                    var kindName = sym.Kind switch
+                    {
+                        "F" => "function",
+                        "M" => "mode",
+                        _ => "variable"
+                    };
+                    throw new XsltException(
+                        $"XTSE3050: The {kindName} '{sym.Name.LocalName}' has the same name as a public component of a used package and is declared outside xsl:override");
+                }
+            }
+            // Adding a template rule to a mode from a used package is only allowed within
+            // xsl:override (override-m-018).
+            foreach (var ruleMode in stylesheet.LocalTemplateRuleModes)
+            {
+                if (stylesheet.UsedComponentSymbols.Contains(("M", ruleMode, 0)))
+                    throw new XsltException(
+                        $"XTSE3050: A template rule for mode '{ruleMode.LocalName}' (declared in a used package) must appear within xsl:override");
+            }
+        }
+
         // XTSE3350: Duplicate accumulators in the top-level module are always an error
         // (no higher-precedence import can override them).
         // Only check at the top level — imported modules' duplicates may be resolved by
@@ -1196,6 +1245,31 @@ public sealed class StylesheetParser
         }
         if (acceptElements.Count > 0)
             ApplyAcceptVisibilities(acceptElements, packageStylesheet);
+
+        // Record the symbolic names of public/final components exposed by this used package.
+        // A component of the same symbolic kind+name declared in the using package outside
+        // xsl:override is a static error (XTSE3050): override-v-012 (variable), override-f-023
+        // (function), override-m-017 (mode). Overriding declarations live inside xsl:override
+        // and are therefore never added to LocalComponentSymbols, so they never collide here.
+        // Only components with an EXPLICIT visibility of public or final are exposed:
+        // package top-level components default to private (the parser's public default is a
+        // workaround for non-package modules, so it must not be treated as "exposed" here).
+        static bool ExplicitlyExposed(string? visAttr) => visAttr is "public" or "final";
+        foreach (var (fkey, func) in packageStylesheet.Functions)
+        {
+            if (ExplicitlyExposed(func.VisibilityAttr))
+                stylesheet.UsedComponentSymbols.Add(("F", fkey.Item1, fkey.Item2));
+        }
+        foreach (var variable in packageStylesheet.Variables)
+        {
+            if (ExplicitlyExposed(variable.VisibilityAttr))
+                stylesheet.UsedComponentSymbols.Add(("V", variable.Name, 0));
+        }
+        foreach (var (modeKey, mode) in packageStylesheet.Modes)
+        {
+            if (ExplicitlyExposed(mode.VisibilityAttr))
+                stylesheet.UsedComponentSymbols.Add(("M", modeKey, 0));
+        }
 
         // Merge visible (public/final) components into the consuming stylesheet at lower precedence
         var beforeMerge = new HashSet<QName>(stylesheet.NamedTemplates.Keys);
@@ -1390,9 +1464,25 @@ public sealed class StylesheetParser
             _nsContext = null;
         }
 
+        // XTSE0010: The only permitted children of xsl:override are the overridable
+        // component declarations xsl:template, xsl:function, xsl:variable, xsl:param and
+        // xsl:attribute-set. A non-whitespace text node child is not allowed (override-f-005).
+        foreach (var node in overrideElement.Nodes())
+        {
+            if (node is XText text && !string.IsNullOrWhiteSpace(text.Value))
+                throw new XsltException(
+                    "XTSE0010: A text node is not permitted as a child of xsl:override",
+                    GetSourceLocation(overrideElement));
+        }
+
         foreach (var child in overrideElement.Elements())
         {
-            if (child.Name.Namespace != XsltNs) continue;
+            // A literal result element (or any non-XSLT element) is not a permitted child
+            // of xsl:override (override-f-006).
+            if (child.Name.Namespace != XsltNs)
+                throw new XsltException(
+                    $"XTSE0010: Element '{child.Name.LocalName}' is not permitted as a child of xsl:override",
+                    GetSourceLocation(child));
             _nsContext = child;
 
             switch (child.Name.LocalName)
@@ -1407,6 +1497,7 @@ public sealed class StylesheetParser
                 case "key":
                 case "accumulator":
                 case "use-package":
+                case "override":
                 case "expose":
                     throw new XsltException(
                         $"XTSE0010: xsl:{child.Name.LocalName} is not permitted as a child of xsl:override",
@@ -1571,10 +1662,24 @@ public sealed class StylesheetParser
                     var overrideAttrSet = ParseAttributeSet(child);
                     // Capture the original for use-attribute-sets="xsl:original" resolution
                     if (packageStylesheet.AttributeSets.TryGetValue(overrideAttrSet.Name, out var origAttrSet))
+                    {
+                        // XTSE3060: Can only override public or abstract components — a private
+                        // or final attribute-set from the used package is not overridable
+                        // (override-as-004).
+                        if (origAttrSet.Visibility is Visibility.Private or Visibility.Final)
+                            throw new XsltException(
+                                $"XTSE3060: Cannot override attribute-set '{overrideAttrSet.Name.LocalName}' which has visibility '{origAttrSet.Visibility.ToString().ToUpperInvariant()}'",
+                                GetSourceLocation(child));
                         overrideAttrSet.OriginalAttributeSet = origAttrSet;
+                    }
                     packageStylesheet.AttributeSets[overrideAttrSet.Name] = overrideAttrSet;
                     break;
                 }
+                default:
+                    // XTSE0010: any other XSLT element is not a permitted child of xsl:override.
+                    throw new XsltException(
+                        $"XTSE0010: xsl:{child.Name.LocalName} is not permitted as a child of xsl:override",
+                        GetSourceLocation(child));
             }
             _nsContext = null;
         }
@@ -2247,9 +2352,14 @@ public sealed class StylesheetParser
         target.StripSpace.AddRange(package.StripSpace);
         target.PreserveSpace.AddRange(package.PreserveSpace);
 
-        // Accumulators: merge all
+        // Accumulators: merge all. Accumulators are package-local, so record which names
+        // came from the used package — a same-named accumulator declared in the using
+        // package is not a duplicate (XTSE3350) (override-misc-005).
         foreach (var (name, acc) in package.Accumulators)
+        {
             target.Accumulators.TryAdd(name, acc);
+            target.PackageMergedAccumulatorNames.Add(name);
+        }
 
         // Character maps, decimal formats, namespace aliases, and outputs are
         // package-local per XSLT 3.0 spec — they do NOT cross package boundaries.
@@ -3886,6 +3996,7 @@ public sealed class StylesheetParser
             Content = ParseContentBody(element, selectAttr),
             Static = isStatic,
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
+            VisibilityAttr = element.Attribute("visibility")?.Value,
             BaseUri = ResolveEffectiveBaseUri(element),
             Version = element.Attribute("version")?.Value
         };
@@ -4141,6 +4252,7 @@ public sealed class StylesheetParser
             Body = body,
             Override = ParseYesNo(overrideAttr) ?? true,
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
+            VisibilityAttr = element.Attribute("visibility")?.Value,
             Cache = ParseYesNo(cacheAttr) ?? false,
             NewEachTime = newEachTimeAttr?.Value?.Trim(),
             Streamability = streamabilityValue

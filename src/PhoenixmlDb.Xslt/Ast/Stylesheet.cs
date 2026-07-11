@@ -150,6 +150,35 @@ public sealed class XsltStylesheet
     public HashSet<QName> DuplicateAccumulatorNames { get; init; } = new();
 
     /// <summary>
+    /// Accumulator names that were merged in from a used package (xsl:use-package).
+    /// Accumulators are package-local, so an accumulator declared in the using package
+    /// with the same name as one from a used package is NOT a duplicate (XTSE3350).
+    /// </summary>
+    public HashSet<QName> PackageMergedAccumulatorNames { get; init; } = new();
+
+    /// <summary>
+    /// Symbolic names (kind, name, arity) of public/final components exposed by packages
+    /// referenced via xsl:use-package. A component declared in the using package (outside
+    /// xsl:override) whose symbolic name matches one of these is a static error (XTSE3050).
+    /// Kinds: "V" variable/param, "F" function, "M" mode.
+    /// </summary>
+    public HashSet<(string Kind, QName Name, int Arity)> UsedComponentSymbols { get; init; } = new();
+
+    /// <summary>
+    /// Symbolic names (kind, name, arity) of components declared locally in this package
+    /// at the top level (not inside xsl:override, not merged from a used package).
+    /// Checked against <see cref="UsedComponentSymbols"/> for XTSE3050.
+    /// </summary>
+    public HashSet<(string Kind, QName Name, int Arity)> LocalComponentSymbols { get; init; } = new();
+
+    /// <summary>
+    /// Modes referenced by local top-level template rules (outside xsl:override). Adding a
+    /// template rule to a mode declared in a used package is only permitted inside
+    /// xsl:override (XTSE3050).
+    /// </summary>
+    public HashSet<QName> LocalTemplateRuleModes { get; init; } = new();
+
+    /// <summary>
     /// Mode names with conflicting use-accumulators at same import precedence.
     /// Deferred until import merge can check if higher-precedence declaration resolves the conflict.
     /// </summary>
@@ -1676,6 +1705,10 @@ public sealed class XsltVariable
     public XsltSequenceConstructor? Content { get; init; }
     public bool Static { get; init; }
     public Visibility Visibility { get; init; } = Visibility.Private;
+    /// <summary>Raw visibility attribute value (null when absent). Distinguishes an
+    /// explicitly-declared public/final component from the parser's public default,
+    /// which matters for XTSE3050 (package top-level components default to private).</summary>
+    public string? VisibilityAttr { get; init; }
     public Uri? BaseUri { get; init; }
     public string? Version { get; init; }
 
@@ -1714,6 +1747,10 @@ public sealed class XsltFunction
     public required XsltSequenceConstructor Body { get; init; }
     public bool Override { get; init; } = true;
     public Visibility Visibility { get; init; } = Visibility.Private;
+    /// <summary>Raw visibility attribute value (null when absent). Distinguishes an
+    /// explicitly-declared public/final component from the parser's public default,
+    /// which matters for XTSE3050 (package top-level components default to private).</summary>
+    public string? VisibilityAttr { get; init; }
     public bool Cache { get; init; }
     /// <summary>
     /// new-each-time attribute: "yes" (default), "no", or "maybe".
