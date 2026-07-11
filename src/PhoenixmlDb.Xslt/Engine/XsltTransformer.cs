@@ -2538,6 +2538,15 @@ public sealed class XsltTransformEngine
         var dependencies = new Dictionary<QName, HashSet<QName>>();
         var functionDeps = BuildFunctionDependencies();
 
+        // Globals whose select/content references an abstract variable of a used package
+        // (a variable with no concrete definition). Such a global cannot be evaluated
+        // eagerly without error, and per XSLT lazy global evaluation it must not be
+        // evaluated at all unless actually referenced — at which point evaluating an
+        // abstract component is XTDE3052 (accept-042/043a: unreferenced proxy = no error;
+        // accept-043b: referenced proxy = XTDE3052).
+        var abstractVarNames = _stylesheet.AbstractVariableNames;
+        var deferredAbstractGlobals = new Dictionary<QName, QName>(); // global -> abstract var it depends on
+
         foreach (var global in globals)
         {
             var deps = new HashSet<QName>();
@@ -2553,6 +2562,8 @@ public sealed class XsltTransformEngine
                 {
                     if (globalNames.Contains(varRef))
                         deps.Add(varRef);
+                    else if (abstractVarNames.Contains(varRef) && !deferredAbstractGlobals.ContainsKey(global.Name))
+                        deferredAbstractGlobals[global.Name] = varRef;
                 }
 
                 // Add transitive dependencies through function calls
@@ -2573,6 +2584,8 @@ public sealed class XsltTransformEngine
                 {
                     if (globalNames.Contains(varRef))
                         deps.Add(varRef);
+                    else if (abstractVarNames.Contains(varRef) && !deferredAbstractGlobals.ContainsKey(global.Name))
+                        deferredAbstractGlobals[global.Name] = varRef;
                 }
 
                 // Add transitive dependencies through function calls
@@ -2598,9 +2611,25 @@ public sealed class XsltTransformEngine
         foreach (var global in sorted)
             context._pendingGlobals[global.Name] = global;
 
+        // Bind globals that reference an abstract variable to a deferred value that throws
+        // XTDE3052 only when actually accessed. Skipping their eager evaluation keeps an
+        // unreferenced public proxy over an abstract variable from failing at load time
+        // (accept-042/043a), while a genuine reference surfaces XTDE3052 (accept-043b).
+        foreach (var (globalName, abstractVar) in deferredAbstractGlobals)
+        {
+            var capturedAbstract = abstractVar;
+            context.GlobalVariables[globalName] = new LazyValue(() =>
+                throw new XsltException(
+                    $"XTDE3052: Cannot evaluate abstract variable ${capturedAbstract.LocalName} " +
+                    "(no concrete definition was supplied by the using package)"));
+            context._pendingGlobals.Remove(globalName);
+        }
+
         // Initialize in dependency order
         foreach (var global in sorted)
         {
+            if (deferredAbstractGlobals.ContainsKey(global.Name))
+                continue; // bound above as a deferred XTDE3052 value
             // Push per-element version for backwards-compatible mode propagation
             if (global.Version != null)
                 context.PushVersion(global.Version);
@@ -14541,7 +14570,25 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 else
                 {
-                    _stylesheet.AttributeSets.TryGetValue(attrSetName, out attrSet);
+                    // Package-local resolution first: when the attribute-set currently being
+                    // expanded belongs to a used package, its nested use-attribute-sets
+                    // references resolve within that package's own scope — including the
+                    // package's private/abstract sets — not the merged registry
+                    // (override-as-005: base's as-public must reach base's private as-private,
+                    // and the using package's own like-named set must stay separate).
+                    var ownerPkg = _currentAttributeSetStack.Count > 0
+                        ? _currentAttributeSetStack.Peek().PackageStylesheet
+                        : null;
+                    if (ownerPkg != null && ownerPkg.AttributeSets.TryGetValue(attrSetName, out var pkgSet))
+                    {
+                        if (pkgSet.Visibility == Ast.Visibility.Abstract || pkgSet.IsAbstract)
+                            throw Error($"XTDE3052: Abstract attribute-set '{attrSetName}' has no concrete implementation");
+                        attrSet = pkgSet;
+                    }
+                    else
+                    {
+                        _stylesheet.AttributeSets.TryGetValue(attrSetName, out attrSet);
+                    }
                     // An abstract attribute-set from a used package that was never overridden
                     // cannot be instantiated (XTDE3052).
                     if (attrSet == null && _stylesheet.AbstractAttributeSetNames.Contains(attrSetName))
@@ -16843,7 +16890,36 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Resolves an accumulator name string (possibly prefixed like "f:figNr" or EQName like "Q{uri}local")
     /// to a QName matching an accumulator in the stylesheet.
     /// </summary>
+    /// <summary>
+    /// The library package that declared the component currently executing (topmost
+    /// xsl:function or template on the call stack), or null when executing a component of
+    /// the principal package. Used for package-local resolution of accumulators.
+    /// </summary>
+    internal Ast.XsltStylesheet? CurrentComponentPackage()
+    {
+        if (_currentXsltFunctionStack.Count > 0)
+            return _currentXsltFunctionStack.Peek().PackageStylesheet;
+        if (_currentTemplateStack.Count > 0)
+            return _currentTemplateStack.Peek().PackageStylesheet;
+        return null;
+    }
+
     internal QName ResolveAccumulatorName(string name)
+    {
+        var resolved = ResolveAccumulatorNameCore(name);
+        // Package-local remap: a component of a used package resolves an accumulator name to
+        // its own package's accumulator when a like-named one exists in the using package
+        // (override-misc-005).
+        if (_stylesheet.PackageAccumulatorRemap.Count > 0)
+        {
+            var pkg = CurrentComponentPackage();
+            if (pkg != null && _stylesheet.PackageAccumulatorRemap.TryGetValue((pkg, resolved), out var remapped))
+                return remapped;
+        }
+        return resolved;
+    }
+
+    private QName ResolveAccumulatorNameCore(string name)
     {
         // Handle EQName (Q{uri}local) format
         if (name.StartsWith("Q{", StringComparison.Ordinal))

@@ -894,7 +894,34 @@ public sealed class StylesheetParser
                     // Don't throw yet — import precedence may resolve the conflict.
                     // An accumulator merged in from a used package is package-local, so it
                     // does not clash with a local accumulator of the same name (override-misc-005).
-                    if (stylesheet.Accumulators.ContainsKey(acc.Name)
+                    if (stylesheet.Accumulators.TryGetValue(acc.Name, out var priorAcc)
+                        && stylesheet.PackageMergedAccumulatorNames.Contains(acc.Name)
+                        && priorAcc.PackageStylesheet != null)
+                    {
+                        // A used package already contributed an accumulator with this name.
+                        // Both are package-local: relocate the used package's copy under a
+                        // synthetic internal key and record the remap so that package's own
+                        // components (e.g. its templates calling accumulator-after) resolve to
+                        // it, while the local declaration keeps the plain name (override-misc-005).
+                        var synthetic = new QName(priorAcc.Name.Namespace,
+                            priorAcc.Name.LocalName + "pkg" + stylesheet.PackageAccumulatorRemap.Count);
+                        // Clone under the synthetic name so pre-computation keys the values by
+                        // the synthetic key — PreComputeAccumulatorsAsync keys _accumulatorValues
+                        // by the accumulator's own Name, so reusing the same object would collide
+                        // under the plain 'ac' key and the used package's values would be lost.
+                        stylesheet.Accumulators[synthetic] = new XsltAccumulator
+                        {
+                            Name = synthetic,
+                            As = priorAcc.As,
+                            InitialValue = priorAcc.InitialValue,
+                            Rules = priorAcc.Rules,
+                            Streamable = priorAcc.Streamable,
+                            SourceName = priorAcc.SourceName,
+                            PackageStylesheet = priorAcc.PackageStylesheet
+                        };
+                        stylesheet.PackageAccumulatorRemap[(priorAcc.PackageStylesheet, priorAcc.Name)] = synthetic;
+                    }
+                    else if (stylesheet.Accumulators.ContainsKey(acc.Name)
                         && !stylesheet.PackageMergedAccumulatorNames.Contains(acc.Name))
                         stylesheet.DuplicateAccumulatorNames.Add(acc.Name);
                     stylesheet.Accumulators[acc.Name] = acc;
@@ -1234,6 +1261,15 @@ public sealed class StylesheetParser
         // then apply visibility changes with name-specificity resolution across ALL accepts:
         // an explicit QName is more specific than a partial wildcard (prefix:* / *:local /
         // Q{uri}*), which is more specific than "*"; ties are broken by document order.
+        // Capture which attribute-sets the used package PROVIDES at its boundary (exposed
+        // public/final, or abstract) before xsl:accept lowers their effective visibility.
+        // A set the using package accepts as "private" is still provided (usable), whereas a
+        // set declared private in the used package is not provided and must not leak
+        // (override-as-005 vs accept-002).
+        foreach (var (_, attrSet) in packageStylesheet.AttributeSets)
+            attrSet.ProvidedByPackage =
+                attrSet.Visibility is Visibility.Public or Visibility.Final or Visibility.Abstract;
+
         var acceptElements = new List<XElement>();
         foreach (var child in element.Elements())
         {
@@ -2255,6 +2291,7 @@ public sealed class StylesheetParser
     {
         Name = v.Name, As = v.As, Select = v.Select, Content = v.Content,
         Static = v.Static, Visibility = vis, BaseUri = v.BaseUri, Version = v.Version,
+        IsAbstract = v.IsAbstract || v.Visibility == Ast.Visibility.Abstract,
         OriginalVariable = v.OriginalVariable
     };
 
@@ -2262,7 +2299,9 @@ public sealed class StylesheetParser
     {
         Name = a.Name, UseAttributeSets = a.UseAttributeSets, Attributes = a.Attributes,
         Visibility = v, Streamable = a.Streamable, BaseUri = a.BaseUri, Parts = a.Parts,
-        OriginalAttributeSet = a.OriginalAttributeSet
+        OriginalAttributeSet = a.OriginalAttributeSet,
+        IsAbstract = a.IsAbstract || a.Visibility == Ast.Visibility.Abstract,
+        PackageStylesheet = a.PackageStylesheet, ProvidedByPackage = a.ProvidedByPackage
     };
 
     private static void MergePackageComponents(XsltStylesheet target, XsltStylesheet package)
@@ -2300,10 +2339,14 @@ public sealed class StylesheetParser
         }
 
         // Variables: merge all except abstract (private variables may be referenced
-        // by public functions from the same package)
+        // by public functions from the same package). An abstract variable that is not
+        // overridden has no evaluable value — record its name so a used-package global
+        // that references it is deferred rather than eagerly evaluated (accept-042/043).
         foreach (var variable in package.Variables)
         {
-            if (variable.Visibility is not (Visibility.Abstract or Visibility.Hidden)
+            if (variable.Visibility is Visibility.Abstract || variable.IsAbstract)
+                target.AbstractVariableNames.Add(variable.Name);
+            else if (variable.Visibility is not Visibility.Hidden
                 && !target.Variables.Any(v => v.Name.Equals(variable.Name)))
                 target.Variables.Add(variable);
         }
@@ -2315,15 +2358,24 @@ public sealed class StylesheetParser
                 target.Parameters.Add(param);
         }
 
-        // Attribute sets: merge all except abstract (private sets may be referenced
-        // by public sets via use-attribute-sets chains). An abstract attribute-set that is
-        // not overridden remains unusable — record its name so a reference to it at runtime
-        // raises XTDE3052 rather than silently applying nothing (accept-911).
+        // Attribute sets: stamp every set of the used package with its owning package so a
+        // nested use-attribute-sets reference resolves within THAT package's scope (which
+        // includes its private/abstract sets), not the merged registry (override-as-005).
+        // Only PUBLIC/FINAL sets are exposed into the merged registry — private and hidden
+        // sets stay package-local (resolvable only from within their own package). An abstract
+        // set that is not overridden remains unusable — record its name so a reference to it
+        // at runtime raises XTDE3052 rather than silently applying nothing (accept-911).
+        foreach (var (_, attrSet) in package.AttributeSets)
+            attrSet.PackageStylesheet ??= package;
         foreach (var (name, attrSet) in package.AttributeSets)
         {
-            if (attrSet.Visibility is Visibility.Abstract)
+            if (attrSet.Visibility is Visibility.Abstract || attrSet.IsAbstract)
                 target.AbstractAttributeSetNames.Add(name);
-            else if (attrSet.Visibility is not Visibility.Hidden)
+            // Provided by the package (exposed public/final/abstract at its boundary) and not
+            // hidden by the using package's xsl:accept — a set the using package accepts as
+            // "private" is still usable (accept-002); a set declared private in the USED
+            // package is not provided and stays package-local (override-as-005).
+            else if (attrSet.ProvidedByPackage && attrSet.Visibility is not Visibility.Hidden)
                 target.AttributeSets.TryAdd(name, attrSet);
         }
 
@@ -2357,6 +2409,7 @@ public sealed class StylesheetParser
         // package is not a duplicate (XTSE3350) (override-misc-005).
         foreach (var (name, acc) in package.Accumulators)
         {
+            acc.PackageStylesheet ??= package;
             target.Accumulators.TryAdd(name, acc);
             target.PackageMergedAccumulatorNames.Add(name);
         }
@@ -2611,8 +2664,17 @@ public sealed class StylesheetParser
                 // overriding attribute-set's overridden component; it is not a named set.
                 if (usedName.Namespace == NamespaceId.Xslt && usedName.LocalName == "original")
                     continue;
-                if (!stylesheet.AttributeSets.ContainsKey(usedName))
-                    throw new XsltException($"XTSE0710: Attribute set '{usedName}' referenced by '{name}' is not defined");
+                if (stylesheet.AttributeSets.ContainsKey(usedName))
+                    continue;
+                // Package-local resolution: a set merged from a used package resolves its
+                // own use-attribute-sets references within that package's scope, which
+                // includes the package's private and abstract sets (override-as-005,
+                // accept-046/047). Only fall through to XTSE0710 if unresolved there too.
+                if (attrSet.PackageStylesheet != null
+                    && (attrSet.PackageStylesheet.AttributeSets.ContainsKey(usedName)
+                        || attrSet.PackageStylesheet.AbstractAttributeSetNames.Contains(usedName)))
+                    continue;
+                throw new XsltException($"XTSE0710: Attribute set '{usedName}' referenced by '{name}' is not defined");
             }
         }
 
@@ -3997,6 +4059,7 @@ public sealed class StylesheetParser
             Static = isStatic,
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
             VisibilityAttr = element.Attribute("visibility")?.Value,
+            IsAbstract = element.Attribute("visibility")?.Value == "abstract",
             BaseUri = ResolveEffectiveBaseUri(element),
             Version = element.Attribute("version")?.Value
         };
@@ -4517,6 +4580,7 @@ public sealed class StylesheetParser
             UseAttributeSets = useAttributeSets,
             Attributes = attributes,
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
+            IsAbstract = element.Attribute("visibility")?.Value == "abstract",
             Streamable = streamable,
             BaseUri = ResolveEffectiveBaseUri(element)
         };

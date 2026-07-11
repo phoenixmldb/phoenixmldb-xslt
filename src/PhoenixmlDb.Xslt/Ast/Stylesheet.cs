@@ -86,6 +86,15 @@ public sealed class XsltStylesheet
     public HashSet<QName> AbstractAttributeSetNames { get; init; } = new();
 
     /// <summary>
+    /// Names of variables from used packages that remain abstract (not overridden with a
+    /// concrete definition). A global variable of the used package that references one of
+    /// these has no evaluable value, so it must be deferred (bound lazily) rather than
+    /// eagerly evaluated; evaluating it — i.e. actually referencing it — is XTDE3052.
+    /// (accept-042/043: an unreferenced public proxy over an abstract variable must not fail.)
+    /// </summary>
+    public HashSet<QName> AbstractVariableNames { get; init; } = new();
+
+    /// <summary>
     /// Functions (xsl:function).
     /// </summary>
     public Dictionary<(QName Name, int Arity), XsltFunction> Functions { get; init; } = new();
@@ -155,6 +164,15 @@ public sealed class XsltStylesheet
     /// with the same name as one from a used package is NOT a duplicate (XTSE3350).
     /// </summary>
     public HashSet<QName> PackageMergedAccumulatorNames { get; init; } = new();
+
+    /// <summary>
+    /// When a used package and the using package (or two used packages) declare accumulators
+    /// with the same name, the used package's copy is relocated in the merged registry under
+    /// a synthetic internal key. This maps (owning package, original accumulator name) to that
+    /// synthetic key so a component of the owning package resolves accumulator-before/after to
+    /// its own accumulator rather than the merged one (override-misc-005).
+    /// </summary>
+    public Dictionary<(XsltStylesheet Package, QName Name), QName> PackageAccumulatorRemap { get; init; } = new();
 
     /// <summary>
     /// Symbolic names (kind, name, arity) of public/final components exposed by packages
@@ -1709,6 +1727,13 @@ public sealed class XsltVariable
     /// explicitly-declared public/final component from the parser's public default,
     /// which matters for XTSE3050 (package top-level components default to private).</summary>
     public string? VisibilityAttr { get; init; }
+    /// <summary>
+    /// True when this variable was declared visibility="abstract" and never given a concrete
+    /// definition (no override). It has no evaluable value even after an xsl:accept changes
+    /// its effective visibility (e.g. to hidden), so a global that references it must be
+    /// deferred rather than eagerly evaluated (accept-042/043).
+    /// </summary>
+    public bool IsAbstract { get; init; }
     public Uri? BaseUri { get; init; }
     public string? Version { get; init; }
 
@@ -1891,6 +1916,12 @@ public sealed class XsltAttributeSet
     public required List<XsltAttribute> Attributes { get; init; }
     public Visibility Visibility { get; init; } = Visibility.Private;
     public bool Streamable { get; init; }
+    /// <summary>
+    /// True when declared visibility="abstract" and never overridden with a concrete
+    /// definition. It has no concrete implementation even after an xsl:accept changes its
+    /// effective visibility (e.g. to hidden), so applying it is XTDE3052 (accept-047b/c).
+    /// </summary>
+    public bool IsAbstract { get; init; }
     public Uri? BaseUri { get; init; }
 
     /// <summary>
@@ -1906,6 +1937,25 @@ public sealed class XsltAttributeSet
     /// declaration resolves to the overridden component.
     /// </summary>
     public XsltAttributeSet? OriginalAttributeSet { get; set; }
+
+    /// <summary>
+    /// The library package (used via xsl:use-package) that declared this attribute-set.
+    /// Set when the attribute-set is merged into a consuming stylesheet, so that a nested
+    /// <c>use-attribute-sets</c> reference resolves within this attribute-set's OWN package
+    /// scope (including that package's private/abstract attribute-sets) rather than against
+    /// the consuming package's merged registry. Null for components declared locally.
+    /// </summary>
+    public XsltStylesheet? PackageStylesheet { get; set; }
+
+    /// <summary>
+    /// True when the used package exposes this attribute-set at its package boundary
+    /// (declared/exposed public, final, or abstract) — i.e. it is "provided" to the using
+    /// package. Captured before the using package's xsl:accept lowers the effective
+    /// visibility, so a component the using package accepts as "private" is still usable
+    /// (accept-002), while a component declared private in the USED package is not provided
+    /// and must not leak into the using package (override-as-005).
+    /// </summary>
+    public bool ProvidedByPackage { get; set; }
 }
 
 public sealed class XsltAttributeSetPart
@@ -1973,6 +2023,15 @@ public sealed class XsltAccumulator
     public bool Streamable { get; init; }
     /// <summary>Original lexical name from the name attribute (for XTSE3350 duplicate detection).</summary>
     public string SourceName { get; init; } = "";
+
+    /// <summary>
+    /// The library package (via xsl:use-package) that declared this accumulator. Accumulators
+    /// are package-local, so when a used package and the using package both declare an
+    /// accumulator with the same name, a component of the used package must resolve
+    /// accumulator-before/after to ITS OWN package's accumulator, not the merged one
+    /// (override-misc-005). Null for locally-declared accumulators.
+    /// </summary>
+    public XsltStylesheet? PackageStylesheet { get; set; }
 }
 
 /// <summary>
