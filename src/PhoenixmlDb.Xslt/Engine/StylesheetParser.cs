@@ -2213,6 +2213,7 @@ public sealed class StylesheetParser
                             foreach (var (name, mode) in stylesheet.Modes)
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
+                                {
                                     stylesheet.Modes[name] = new Ast.XsltMode
                                     {
                                         Name = mode.Name,
@@ -2227,6 +2228,32 @@ public sealed class StylesheetParser
                                         Typed = mode.Typed,
                                         UseAccumulatorsAttr = mode.UseAccumulatorsAttr,
                                     };
+                                    if (visibility == Visibility.Private)
+                                        stylesheet.ExplicitlyExposedPrivateModes.Add(name);
+                                }
+                            }
+                            // Implicit modes (declared-modes="false") never appear in
+                            // stylesheet.Modes, but a wildcard/name expose still applies to
+                            // them. When such a mode is explicitly exposed as private, record
+                            // it so the initial-mode eligibility check (XTDE0045) can reject
+                            // it — an implicitly-private mode remains eligible, but an
+                            // explicitly-exposed-private one does not. Enumerate the modes
+                            // named on template rules (which cover implicit modes not present
+                            // in stylesheet.Modes). See W3C package-001j.
+                            if (visibility == Visibility.Private)
+                            {
+                                foreach (var rule in stylesheet.Templates)
+                                {
+                                    foreach (var modeRef in rule.Modes)
+                                    {
+                                        if (modeRef.Equals(TemplateIndex.DefaultModeSentinel)
+                                            || modeRef.Equals(TemplateIndex.AllModeSentinel))
+                                            continue;
+                                        if (!stylesheet.Modes.ContainsKey(modeRef)
+                                            && MatchesExposePattern(modeRef, token, isWildcard, expose.Element))
+                                            stylesheet.ExplicitlyExposedPrivateModes.Add(modeRef);
+                                    }
+                                }
                             }
                             break;
                     }
@@ -2274,6 +2301,7 @@ public sealed class StylesheetParser
     {
         Name = t.Name, Match = t.Match, Priority = t.Priority, Modes = t.Modes,
         As = t.As, Parameters = t.Parameters, Body = t.Body, Visibility = v,
+        VisibilityAttr = VisibilityToAttr(v),
         UnionGroupId = t.UnionGroupId, Version = t.Version, BaseUri = t.BaseUri,
         DefaultCollation = t.DefaultCollation, ContextItemUse = t.ContextItemUse,
         ContextItemAs = t.ContextItemAs, OriginalTemplate = t.OriginalTemplate
@@ -3470,6 +3498,16 @@ public sealed class StylesheetParser
             else
             {
                 stylesheetRoot = doc.Root!;
+                // XTSE0165: the target of xsl:import / xsl:include must be a stylesheet
+                // module (xsl:stylesheet / xsl:transform, or a simplified literal-result
+                // stylesheet). An xsl:package is NOT a stylesheet module and cannot be
+                // imported or included — it is consumed only via xsl:use-package. See
+                // W3C decl/package package-910.
+                if (stylesheetRoot.Name.Namespace == XsltNs
+                    && stylesheetRoot.Name.LocalName == "package")
+                    throw new XsltException(
+                        $"XTSE0165: The target of xsl:import/xsl:include '{href}' is an xsl:package, which is not a stylesheet module",
+                        GetSourceLocation(element));
             }
 
             // Handle xml:base on embedded stylesheet elements
@@ -3747,6 +3785,14 @@ public sealed class StylesheetParser
         if (matchAttr == null && nameAttr == null)
             throw new XsltException("XTSE0500: An xsl:template element must have either a match attribute or a name attribute, or both",
                 GetSourceLocation(element));
+        // XTSE0500: The visibility attribute is permitted only on a named template
+        // (a component). A template rule — one with a match pattern but no name — is
+        // not an independently-referenced component, so visibility is not allowed on it.
+        // See W3C decl/package package-001t.
+        if (nameAttr == null && element.Attribute("visibility") != null)
+            throw new XsltException("XTSE0500: The visibility attribute is not permitted on an xsl:template element that has no name attribute",
+                GetSourceLocation(element));
+
         // XTSE0500: Template without match must not have mode or priority
         if (matchAttr == null)
         {
@@ -3995,7 +4041,8 @@ public sealed class StylesheetParser
             DefaultCollation = ResolveDefaultCollation(element.Attribute("default-collation")?.Value),
             ContextItemUse = contextItemUse,
             ContextItemAs = contextItemAs,
-            Visibility = ParseVisibility(element.Attribute("visibility")?.Value)
+            Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
+            VisibilityAttr = element.Attribute("visibility")?.Value.Trim()
         };
     }
 
@@ -4863,6 +4910,12 @@ public sealed class StylesheetParser
                 GetSourceLocation(element));
 
         var nameAttr = element.Attribute("name");
+        // XTSE0020: xsl:mode/@name must be a valid EQName. The reserved tokens
+        // "#unnamed"/"#default" (and any other #-prefixed token) are not permitted —
+        // the unnamed mode is selected by omitting @name entirely. See W3C
+        // decl/package package-909.
+        if (nameAttr != null)
+            ValidateQNameValue(nameAttr.Value, "name", GetSourceLocation(element));
         var streamableAttr = element.Attribute("streamable");
         var onNoMatchAttr = element.Attribute("on-no-match");
         var onMultipleMatchAttr = element.Attribute("on-multiple-match");

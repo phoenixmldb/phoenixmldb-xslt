@@ -209,6 +209,17 @@ public sealed class XsltStylesheet
     public HashSet<QName> ConflictingModeVisibility { get; init; } = new();
 
     /// <summary>
+    /// Mode names that were EXPLICITLY given private visibility by an xsl:expose
+    /// declaration (as opposed to being implicitly private by the package default).
+    /// An implicitly-private mode is still eligible as an initial mode, but a mode
+    /// explicitly exposed as private is not — it raises XTDE0045 when requested as the
+    /// initial mode. This is tracked separately so implicit modes (declared-modes="false",
+    /// never appearing in <see cref="Modes"/>) can be recognised. See W3C decl/package
+    /// package-001j.
+    /// </summary>
+    public HashSet<QName> ExplicitlyExposedPrivateModes { get; init; } = new();
+
+    /// <summary>
     /// Use-package declarations (XSLT 3.0).
     /// </summary>
     public List<XsltUsePackage> UsePackages { get; init; } = new();
@@ -335,6 +346,12 @@ public sealed class XsltTemplate
     /// Visibility (XSLT 3.0 packages).
     /// </summary>
     public Visibility Visibility { get; init; } = Visibility.Private;
+
+    /// <summary>Raw visibility attribute value (null when absent). Distinguishes an
+    /// explicitly-declared public/final component from the parser's public default,
+    /// which matters for XTDE0040: a package top-level named template defaults to
+    /// private and is therefore ineligible as an initial (entry-point) template.</summary>
+    public string? VisibilityAttr { get; init; }
 
     /// <summary>
     /// Shared identity for templates expanded from the same union pattern.

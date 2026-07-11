@@ -307,11 +307,16 @@ public sealed class XsltTransformEngine
                 initialTemplate = _stylesheet.NamedTemplates.Keys.First(k => k.LocalName == "initial-template");
             }
 
-            // XTDE0040: Check that initial template is public (in packages)
-            // Now that xsl:expose is implemented, visibility is correctly set on all components.
+            // XTDE0040: Check that initial template is public (in packages).
+            // A package top-level named template defaults to PRIVATE visibility (the
+            // parser's effective-Visibility default of public is a non-package
+            // workaround), so only a template with an EXPLICIT visibility of public or
+            // final — whether declared inline or raised by xsl:expose — is eligible as
+            // an entry point. See W3C decl/package package-001a/001b, decl/accept
+            // accept-001a.
             if (_stylesheet.IsPackage
                 && _stylesheet.NamedTemplates.TryGetValue(initialTemplate.Value, out var tmpl)
-                && tmpl.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
+                && tmpl.VisibilityAttr is not ("public" or "final"))
                 throw new XsltException($"XTDE0040: Initial template '{initialTemplate.Value.LocalName}' is not public");
 
             // Convert initial template parameters to xsl:with-param entries.
@@ -345,6 +350,15 @@ public sealed class XsltTransformEngine
         }
         else
         {
+            // XTDE0040: with no source document, no initial template (or auto-detected
+            // xsl:initial-template), no initial function, and no initial mode / match
+            // selection, there is nothing to apply templates to — the invocation has no
+            // eligible entry point. An empty package invoked this way must be rejected
+            // rather than silently producing empty output. See W3C decl/package
+            // package-914a (any-of XTDE0040 / XTDE0044).
+            if (!options.HasSourceDocument && !options.InitialMode.HasValue && options.InitialModeSelect == null)
+                throw new XsltException("XTDE0040: The invocation supplies no source document, initial template, initial function, or initial mode");
+
             // XTDE0044: It is a dynamic error if the invocation of the stylesheet specifies
             // an initial mode and no initial match selection is supplied.
             if (options.InitialMode.HasValue && !options.HasSourceDocument && options.InitialModeSelect == null)
@@ -368,6 +382,14 @@ public sealed class XsltTransformEngine
                     && !_templateIndex.IsModeExplicitlyUsed(m)
                     && !_stylesheet.Modes.ContainsKey(m))
                     throw new XsltException($"XTDE0045: The initial mode '{m.LocalName}' is not a mode used in the stylesheet");
+
+                // XTDE0045: A mode explicitly exposed as private (via xsl:expose) is not
+                // eligible as an initial mode. This covers implicit modes (declared-modes=
+                // "false") that never appear in _stylesheet.Modes but were matched by a
+                // wildcard/name expose with visibility="private". An implicitly-private mode
+                // (never named by an expose) remains eligible. See W3C package-001j.
+                if (!isDefaultMode && _stylesheet.ExplicitlyExposedPrivateModes.Contains(m))
+                    throw new XsltException($"XTDE0045: The initial mode '{m.LocalName}' is not eligible as an initial mode (it is explicitly exposed as private)");
 
                 // XTDE0045: A mode is eligible as initial mode only if it has public or
                 // final visibility, or it is the default mode of the package. In a package,
@@ -877,7 +899,7 @@ public sealed class XsltTransformEngine
             // fn:transform targets specific packages — xsl:expose visibility is enforced.
             if (_stylesheet.IsPackage
                 && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
-                && rawTmpl.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
+                && rawTmpl.VisibilityAttr is not ("public" or "final"))
                 throw new XsltException($"XTDE0040: Initial template '{initialTemplate.LocalName}' is not public");
             if (!options.HasSourceDocument)
                 context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
@@ -1079,7 +1101,7 @@ public sealed class XsltTransformEngine
                     ?? _stylesheet.NamedTemplates.Keys.First(k => k.LocalName == "initial-template");
                 if (_stylesheet.IsPackage
                     && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
-                    && rawTmpl.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
+                    && rawTmpl.VisibilityAttr is not ("public" or "final"))
                     throw new XsltException($"XTDE0040: Initial template '{initialTemplate.LocalName}' is not public");
                 await context.CallTemplateAsync(initialTemplate, []).ConfigureAwait(false);
             }
