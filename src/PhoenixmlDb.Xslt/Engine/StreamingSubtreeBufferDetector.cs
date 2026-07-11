@@ -264,16 +264,19 @@ internal static class StreamingSubtreeBufferDetector
             case XsltValueOf vo:
                 return vo.Select != null
                     && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select)
-                        || SelectNavigatesViaClimbingAxis(vo.Select));
+                        || SelectNavigatesViaClimbingAxis(vo.Select)
+                        || SelectReferencesContextAccumulator(vo.Select));
 
             case XsltCopyOf cof:
                 return SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select)
-                    || SelectNavigatesViaClimbingAxis(cof.Select);
+                    || SelectNavigatesViaClimbingAxis(cof.Select)
+                    || SelectReferencesContextAccumulator(cof.Select);
 
             case XsltSequence sq:
                 return sq.Select != null
                     && (SelectAbsorbsInput(sq.Select) || SelectNavigatesViaUnstreamableOperator(sq.Select)
-                        || SelectNavigatesViaClimbingAxis(sq.Select));
+                        || SelectNavigatesViaClimbingAxis(sq.Select)
+                        || SelectReferencesContextAccumulator(sq.Select));
 
             // xsl:variable binds a sequence captured from the stream. Its select / content is
             // analysed exactly like the body it sits in: an absorbing, unstreamable-operator, or
@@ -283,7 +286,8 @@ internal static class StreamingSubtreeBufferDetector
             case XsltVariableInstruction var:
                 return (var.Select != null
                         && (SelectAbsorbsInput(var.Select) || SelectNavigatesViaUnstreamableOperator(var.Select)
-                            || SelectNavigatesViaClimbingAxis(var.Select)))
+                            || SelectNavigatesViaClimbingAxis(var.Select)
+                            || SelectReferencesContextAccumulator(var.Select)))
                     || RequiresWholeInputBuffer(var.Content);
 
             case XsltFork fk:
@@ -571,6 +575,52 @@ internal static class StreamingSubtreeBufferDetector
     /// function-wrapped operand (<c>count(remove(path, 3))</c>). See <see cref="IsBarePathOperand"/>.</item>
     /// </list>
     /// </remarks>
+    /// <summary>
+    /// True when <paramref name="expr"/> evaluates <c>accumulator-after()</c> /
+    /// <c>accumulator-before()</c> against the CONTEXT node — a bare call, or one wrapped
+    /// only in arithmetic / a comma sequence / a filter / another function's arguments
+    /// (i.e. NOT reached through a downward navigation step). At the document level (a
+    /// <c>match="/"</c> template body or an <c>xsl:source-document</c> body) the context node
+    /// is the principal source tree's root, so <c>accumulator-after('x')</c> there needs the
+    /// accumulator value AFTER the whole tree has been consumed — a value not yet known at
+    /// the document node's start event in a single forward pass (it folds to the initial
+    /// value, e.g. <c>&lt;out&gt;0&lt;/out&gt;</c> instead of 3). Route to the whole-input
+    /// buffer, where <c>PreComputeAccumulatorsAsync</c> walks the full tree and returns the
+    /// correct after-value. A call reached through a downward step
+    /// (<c>foo/accumulator-after('x')</c>) evaluates against a descendant while striding and
+    /// is left on the streaming path. (attr/mode mode-1107a/c)
+    /// </summary>
+    private static bool SelectReferencesContextAccumulator(XQueryExpression? expr)
+    {
+        switch (expr)
+        {
+            case null:
+                return false;
+            case FunctionCallExpression fc:
+                // Unprefixed system functions resolve to either the fn namespace or
+                // NamespaceId.None depending on the parse path (mirrors ClassifyAbsorbing).
+                if ((fc.Name.Namespace == NamespaceId.None
+                        || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+                    && fc.Name.LocalName is "accumulator-after" or "accumulator-before")
+                    return true;
+                foreach (var arg in fc.Arguments)
+                    if (SelectReferencesContextAccumulator(arg)) return true;
+                return false;
+            case BinaryExpression bin:
+                return SelectReferencesContextAccumulator(bin.Left) || SelectReferencesContextAccumulator(bin.Right);
+            case UnaryExpression un:
+                return SelectReferencesContextAccumulator(un.Operand);
+            case SequenceExpression seq:
+                foreach (var item in seq.Items)
+                    if (SelectReferencesContextAccumulator(item)) return true;
+                return false;
+            case FilterExpression filt:
+                return SelectReferencesContextAccumulator(filt.Primary);
+            default:
+                return false;
+        }
+    }
+
     private static bool SelectAbsorbsInput(XQueryExpression expr)
     {
         switch (expr)

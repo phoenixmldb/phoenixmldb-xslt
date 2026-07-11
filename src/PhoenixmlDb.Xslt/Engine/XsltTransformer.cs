@@ -16915,6 +16915,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// True when <paramref name="node"/> belongs to the principal source tree (the tree the
+    /// initial mode was applied to). Used to distinguish the two accumulator-access errors:
+    /// accessing an accumulator that the initial mode excluded, on the principal source
+    /// document, is XTDE3362 (§18.2 — the accumulator was never evaluated for that tree);
+    /// the same access on any OTHER tree is the general XTDE3340.
+    /// </summary>
+    internal bool IsPrincipalSourceNode(object? node)
+    {
+        if (!_principalSourceDocId.HasValue) return false;
+        var docId = FindDocumentIdForInput(node);
+        return docId.HasValue && docId.Value == _principalSourceDocId.Value;
+    }
+
+    /// <summary>
     /// Strict accumulator applicability check for copy-accumulators="yes" (XTDE3362).
     /// Per §18.2.2 #5: for the principal source document, accumulators are applicable only if
     /// the initial mode's xsl:mode includes them in use-accumulators.
@@ -27714,10 +27728,6 @@ internal sealed class XsltAccumulatorBeforeFunction : PhoenixmlDb.XQuery.Ast.XQu
         XsltFunctionValidation.ValidateQNameArgument(name, "XTDE3340", "accumulator-before");
         var accName = _context.ResolveAccumulatorName(name);
 
-        // XTDE3340: Check if the accumulator is applicable in the current mode
-        if (!_context.IsAccumulatorApplicable(accName))
-            throw new XsltException($"XTDE3340: Accumulator '{name}' is not applicable in the current mode (not listed in use-accumulators)");
-
         // Use XQuery context item (from path step) if available, fall back to XSLT context item.
         // The XQuery context is preferred because in path expressions like $v/w/accumulator-before('x'),
         // the XSLT context is the template match node, not the path step's current node.
@@ -27725,6 +27735,17 @@ internal sealed class XsltAccumulatorBeforeFunction : PhoenixmlDb.XQuery.Ast.XQu
         try { node = context.ContextItem; } catch (InvalidOperationException) { node = null; }
         node ??= _context.ContextItem
             ?? throw new XsltException("XTDE3340: accumulator-before() called with no context item");
+
+        // Check if the accumulator is applicable in the current mode. When it is not, the
+        // error code depends on the tree: for the principal source document, the initial
+        // mode governs which accumulators were evaluated, so an excluded accumulator is
+        // XTDE3362 (§18.2); on any other tree the general XTDE3340 applies.
+        if (!_context.IsAccumulatorApplicable(accName))
+        {
+            if (_context.IsPrincipalSourceNode(node))
+                throw new XsltException($"XTDE3362: Accumulator '{name}' is not applicable to the principal source tree (not listed in use-accumulators for the initial mode)");
+            throw new XsltException($"XTDE3340: Accumulator '{name}' is not applicable in the current mode (not listed in use-accumulators)");
+        }
 
         // Lazily compute accumulators for this document if not yet done
         await _context.EnsureAccumulatorsComputedAsync(accName, node).ConfigureAwait(false);
@@ -27757,10 +27778,6 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
         XsltFunctionValidation.ValidateQNameArgument(name, "XTDE3340", "accumulator-after");
         var accName = _context.ResolveAccumulatorName(name);
 
-        // XTDE3340: Check if the accumulator is applicable in the current mode
-        if (!_context.IsAccumulatorApplicable(accName))
-            throw new XsltException($"XTDE3340: Accumulator '{name}' is not applicable in the current mode (not listed in use-accumulators)");
-
         // Use XQuery context item (from path step) if available, fall back to XSLT context item.
         // The XQuery context is preferred because in path expressions like $v/w/accumulator-after('x'),
         // the XSLT context is the template match node, not the path step's current node.
@@ -27768,6 +27785,17 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
         try { node = context.ContextItem; } catch (InvalidOperationException) { node = null; }
         node ??= _context.ContextItem
             ?? throw new XsltException("XTDE3340: accumulator-after() called with no context item");
+
+        // Check if the accumulator is applicable in the current mode. When it is not, the
+        // error code depends on the tree: for the principal source document, the initial
+        // mode governs which accumulators were evaluated, so an excluded accumulator is
+        // XTDE3362 (§18.2); on any other tree the general XTDE3340 applies.
+        if (!_context.IsAccumulatorApplicable(accName))
+        {
+            if (_context.IsPrincipalSourceNode(node))
+                throw new XsltException($"XTDE3362: Accumulator '{name}' is not applicable to the principal source tree (not listed in use-accumulators for the initial mode)");
+            throw new XsltException($"XTDE3340: Accumulator '{name}' is not applicable in the current mode (not listed in use-accumulators)");
+        }
 
         // Lazily compute accumulators for this document if not yet done
         await _context.EnsureAccumulatorsComputedAsync(accName, node).ConfigureAwait(false);
