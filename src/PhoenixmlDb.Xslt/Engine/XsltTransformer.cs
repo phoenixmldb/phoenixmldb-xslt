@@ -2613,6 +2613,9 @@ public sealed class XsltTransformEngine
             var globalSbu = XsltTransformEngine.UriString(global.BaseUri);
             if (globalSbu != null)
                 context.PushStaticBaseUri(globalSbu);
+            // If this global is an overriding xsl:variable that references $xsl:original,
+            // evaluate the overridden variable and bind $xsl:original for its select/content.
+            var xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
             try
             {
             // If this is a param with an externally-supplied value, use that instead of the default
@@ -2999,6 +3002,8 @@ public sealed class XsltTransformEngine
             }
             finally
             {
+                if (xslOrigScopePushed)
+                    context.PopScope();
                 if (globalSbu != null)
                     context.PopStaticBaseUri();
                 if (global.Version != null)
@@ -3033,6 +3038,8 @@ public sealed class XsltTransformEngine
         var globalSbu = XsltTransformEngine.UriString(global.BaseUri);
         if (globalSbu != null)
             context.PushStaticBaseUri(globalSbu);
+        // Bind $xsl:original if this is an overriding xsl:variable referencing it.
+        var xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
         try
         {
             var externalParams = context._options.InitialParameters;
@@ -3080,6 +3087,8 @@ public sealed class XsltTransformEngine
         }
         finally
         {
+            if (xslOrigScopePushed)
+                context.PopScope();
             if (globalSbu != null)
                 context.PopStaticBaseUri();
             if (global.Version != null)
@@ -5135,6 +5144,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private int _templateDepth; // Nesting depth for trace output
     private Dictionary<string, string>? _evaluateNamespaceBindings; // Namespace bindings override during xsl:evaluate
     private readonly HashSet<QName> _activeAttributeSets = new(); // Detect circular attribute set references (XTDE0640)
+    // Tracks the attribute-set currently being expanded so that use-attribute-sets="xsl:original"
+    // within an overriding xsl:attribute-set can resolve to its overridden component.
+    private readonly Stack<XsltAttributeSet> _currentAttributeSetStack = new();
     internal readonly HashSet<QName> _globalsBeingEvaluated = new(); // Detect circular global variable/param references (XTDE0640)
 
     // Streaming execution state: when true, built-in template recursion into children is
@@ -6392,6 +6404,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// to resolve calls to xsl:original.
     /// </summary>
     internal readonly Stack<XsltFunction> _currentXsltFunctionStack = new();
+
+    /// <summary>QName of the xsl:original pseudo-function used for package function overrides.</summary>
+    private static readonly QName XslOriginalFunctionName = new(NamespaceId.Xslt, "original");
 
     /// <summary>
     /// Stack tracking the current named template being executed, for xsl:original resolution.
@@ -7672,6 +7687,45 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     public void SetVariable(QName name, object? value)
     {
         _scopes.Peek().Variables[name] = value;
+    }
+
+    /// <summary>The QName of the pseudo-variable <c>$xsl:original</c>.</summary>
+    private static readonly QName XslOriginalVariableName = new(NamespaceId.Xslt, "original");
+
+    /// <summary>
+    /// When <paramref name="global"/> is an overriding <c>xsl:variable</c> that carries an
+    /// <see cref="Ast.XsltVariable.OriginalVariable"/> (from an <c>xsl:override</c>), evaluates
+    /// the overridden variable's value and pushes a scope binding <c>$xsl:original</c> to it so
+    /// the overriding variable's <c>select</c>/content can reference it (XSLT 3.0 §3.5.6).
+    /// Returns true when a scope was pushed — the caller must <see cref="PopScope"/> afterwards.
+    /// </summary>
+    internal async ValueTask<bool> TryPushXslOriginalVariableBindingAsync(
+        GlobalDeclaration global, StringBuilder outputBuilder)
+    {
+        if (global.OriginalDeclaration is not Ast.XsltVariable ov || ov.OriginalVariable is not { } orig)
+            return false;
+
+        object? originalValue;
+        if (orig.Select != null)
+        {
+            var v = await EvaluateAsync(orig.Select).ConfigureAwait(false);
+            originalValue = CoerceSelectValueToDeclaredType(v, orig.As);
+        }
+        else if (orig.Content != null)
+        {
+            var savedLen = outputBuilder.Length;
+            await orig.Content.ExecuteAsync(this).ConfigureAwait(false);
+            originalValue = outputBuilder.ToString(savedLen, outputBuilder.Length - savedLen);
+            outputBuilder.Length = savedLen;
+        }
+        else
+        {
+            originalValue = "";
+        }
+
+        PushScope();
+        SetVariable(XslOriginalVariableName, originalValue);
+        return true;
     }
 
     /// <summary>
@@ -14469,10 +14523,35 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 throw Error($"XTDE0640: Circular reference in attribute set '{attrSetName}'");
             }
 
+            var pushedCurrentAttrSet = false;
             try
             {
-                if (_stylesheet.AttributeSets.TryGetValue(attrSetName, out var attrSet))
+                // use-attribute-sets="xsl:original" resolves to the overridden attribute-set
+                // of the overriding xsl:attribute-set currently being expanded (XSLT 3.0 §3.5.6).
+                XsltAttributeSet? attrSet;
+                var isXslOriginal = attrSetName.Namespace == NamespaceId.Xslt
+                    && attrSetName.LocalName == "original";
+                if (isXslOriginal)
                 {
+                    attrSet = _currentAttributeSetStack.Count > 0
+                        ? _currentAttributeSetStack.Peek().OriginalAttributeSet
+                        : null;
+                    if (attrSet == null)
+                        throw Error("XTSE0710: use-attribute-sets=\"xsl:original\" has no overridden attribute set");
+                }
+                else
+                {
+                    _stylesheet.AttributeSets.TryGetValue(attrSetName, out attrSet);
+                    // An abstract attribute-set from a used package that was never overridden
+                    // cannot be instantiated (XTDE3052).
+                    if (attrSet == null && _stylesheet.AbstractAttributeSetNames.Contains(attrSetName))
+                        throw Error($"XTDE3052: Abstract attribute-set '{attrSetName}' has no concrete implementation");
+                }
+
+                if (attrSet != null)
+                {
+                    _currentAttributeSetStack.Push(attrSet);
+                    pushedCurrentAttrSet = true;
                     // Temporarily disable attribute collection mode so that the xsl:attribute
                     // instructions write to _output (which we capture) instead of _collectedAttributes
                     // Save and clear the stack, then restore after
@@ -14555,6 +14634,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             finally
             {
+                if (pushedCurrentAttrSet)
+                    _currentAttributeSetStack.Pop();
                 _activeAttributeSets.Remove(attrSetName);
             }
         }
@@ -25003,6 +25084,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         CheckResourceLimits();
 
         _currentXsltFunctionStack.Push(func);
+        // When this function overrides a package component, bind xsl:original to the overridden
+        // function for the duration of the body. Registering a per-call adapter (rather than
+        // relying on the runtime function stack) means a function ITEM materialized from
+        // xsl:original#N or a partial application xsl:original(?, …) captures the correct
+        // original even when it is later invoked outside this frame (override-f-017/-018).
+        XQueryFunction? savedXslOriginalAdapter = null;
+        var swappedXslOriginalAdapter = false;
+        if (func.OriginalFunction is { } overriddenFunc)
+        {
+            savedXslOriginalAdapter = _functionLibrary.Resolve(XslOriginalFunctionName, 0);
+            _functionLibrary.Register(new XsltBoundOriginalFunctionAdapter(this, overriddenFunc));
+            swappedXslOriginalAdapter = true;
+        }
         PushScope();
         // Mark this scope as a tunnel barrier — per XSLT spec, tunnel parameters
         // are not propagated through stylesheet function calls
@@ -25270,6 +25364,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             PopCurrentItem();
             PopContextItem();
             PopScope();
+            if (swappedXslOriginalAdapter && savedXslOriginalAdapter != null)
+                _functionLibrary.Register(savedXslOriginalAdapter);
             _currentXsltFunctionStack.Pop();
             _recursionDepth--;
         }
@@ -25443,6 +25539,35 @@ internal sealed class XsltOriginalFunctionAdapter : PhoenixmlDb.XQuery.Ast.XQuer
 
         return await _context.CallXsltFunctionAsync(originalFunc, arguments).ConfigureAwait(false);
     }
+}
+
+/// <summary>
+/// Adapter for xsl:original bound to a specific overridden function. Registered per-call
+/// while an overriding xsl:function body executes, so a function ITEM materialized from
+/// xsl:original#N or a partial application captures the correct overridden function even
+/// when invoked outside the overriding function's execution frame (override-f-017/-018).
+/// </summary>
+internal sealed class XsltBoundOriginalFunctionAdapter : PhoenixmlDb.XQuery.Ast.XQueryFunction
+{
+    private readonly DefaultXsltExecutionContext _context;
+    private readonly XsltFunction _originalFunc;
+
+    public XsltBoundOriginalFunctionAdapter(DefaultXsltExecutionContext context, XsltFunction originalFunc)
+    {
+        _context = context;
+        _originalFunc = originalFunc;
+    }
+
+    public override QName Name => new(NamespaceId.Xslt, "original");
+    public override XdmSequenceType ReturnType => XdmSequenceType.ZeroOrMoreItems;
+    public override IReadOnlyList<FunctionParameterDef> Parameters => [];
+    public override bool IsVariadic => true;
+    public override int MaxArity => 20;
+
+    public override async ValueTask<object?> InvokeAsync(
+        IReadOnlyList<object?> arguments,
+        PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+        => await _context.CallXsltFunctionAsync(_originalFunc, arguments).ConfigureAwait(false);
 }
 
 /// <summary>

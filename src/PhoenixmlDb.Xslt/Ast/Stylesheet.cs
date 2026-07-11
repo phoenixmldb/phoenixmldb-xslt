@@ -80,6 +80,12 @@ public sealed class XsltStylesheet
     public Dictionary<QName, XsltAttributeSet> AttributeSets { get; init; } = new();
 
     /// <summary>
+    /// Names of attribute-sets from used packages that remain abstract (not overridden and
+    /// not accepted with a concrete implementation). Referencing one at runtime is XTDE3052.
+    /// </summary>
+    public HashSet<QName> AbstractAttributeSetNames { get; init; } = new();
+
+    /// <summary>
     /// Functions (xsl:function).
     /// </summary>
     public Dictionary<(QName Name, int Arity), XsltFunction> Functions { get; init; } = new();
@@ -1672,6 +1678,13 @@ public sealed class XsltVariable
     public Visibility Visibility { get; init; } = Visibility.Private;
     public Uri? BaseUri { get; init; }
     public string? Version { get; init; }
+
+    /// <summary>
+    /// When this variable overrides a package component, stores the original variable
+    /// so that a <c>$xsl:original</c> reference in the overriding variable's select/content
+    /// resolves to the overridden component's value at runtime.
+    /// </summary>
+    public XsltVariable? OriginalVariable { get; set; }
 }
 
 /// <summary>
@@ -1849,6 +1862,13 @@ public sealed class XsltAttributeSet
     /// interleave each part's use-attribute-sets with its local attributes in document order.
     /// </summary>
     public List<XsltAttributeSetPart>? Parts { get; internal set; }
+
+    /// <summary>
+    /// When this attribute-set overrides a package component, stores the original
+    /// attribute-set so that <c>use-attribute-sets="xsl:original"</c> in the overriding
+    /// declaration resolves to the overridden component.
+    /// </summary>
+    public XsltAttributeSet? OriginalAttributeSet { get; set; }
 }
 
 public sealed class XsltAttributeSetPart

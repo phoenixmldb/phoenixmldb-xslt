@@ -1181,14 +1181,21 @@ public sealed class StylesheetParser
             }
         }
 
-        // Second pass: apply accept declarations (after overrides, for XTSE3051 checking)
+        // Second pass: validate accept declarations (after overrides, for XTSE3051 checking),
+        // then apply visibility changes with name-specificity resolution across ALL accepts:
+        // an explicit QName is more specific than a partial wildcard (prefix:* / *:local /
+        // Q{uri}*), which is more specific than "*"; ties are broken by document order.
+        var acceptElements = new List<XElement>();
         foreach (var child in element.Elements())
         {
             if (child.Name == XsltNs + "accept")
             {
-                ApplyAccept(child, packageStylesheet, overriddenTemplateNames, overriddenFunctionKeys);
+                ValidateAccept(child, packageStylesheet, overriddenTemplateNames, overriddenFunctionKeys);
+                acceptElements.Add(child);
             }
         }
+        if (acceptElements.Count > 0)
+            ApplyAcceptVisibilities(acceptElements, packageStylesheet);
 
         // Merge visible (public/final) components into the consuming stylesheet at lower precedence
         var beforeMerge = new HashSet<QName>(stylesheet.NamedTemplates.Keys);
@@ -1533,11 +1540,12 @@ public sealed class StylesheetParser
                 case "variable":
                 {
                     var overrideVar = ParseVariable(child);
-                    // Replace matching variable
+                    // Replace matching variable, capturing the original for xsl:original resolution
                     for (var i = 0; i < packageStylesheet.Variables.Count; i++)
                     {
                         if (packageStylesheet.Variables[i].Name.Equals(overrideVar.Name))
                         {
+                            overrideVar.OriginalVariable = packageStylesheet.Variables[i];
                             packageStylesheet.Variables[i] = overrideVar;
                             break;
                         }
@@ -1561,6 +1569,9 @@ public sealed class StylesheetParser
                 case "attribute-set":
                 {
                     var overrideAttrSet = ParseAttributeSet(child);
+                    // Capture the original for use-attribute-sets="xsl:original" resolution
+                    if (packageStylesheet.AttributeSets.TryGetValue(overrideAttrSet.Name, out var origAttrSet))
+                        overrideAttrSet.OriginalAttributeSet = origAttrSet;
                     packageStylesheet.AttributeSets[overrideAttrSet.Name] = overrideAttrSet;
                     break;
                 }
@@ -1700,12 +1711,15 @@ public sealed class StylesheetParser
     }
 
     /// <summary>
-    /// Applies xsl:accept visibility changes to package components.
-    /// Validates that named components exist (XTSE3030) and visibility is compatible (XTSE3040).
+    /// Validates a single xsl:accept declaration: named components exist (XTSE3030), the
+    /// visibility change is compatible (XTSE3040), and no accepted name is also overridden
+    /// (XTSE3051). Visibility application is done separately, with cross-declaration
+    /// name-specificity resolution, in <see cref="ApplyAcceptVisibilities"/>.
     /// </summary>
-    private static void ApplyAccept(XElement acceptElement, XsltStylesheet packageStylesheet,
+    private static void ValidateAccept(XElement acceptElement, XsltStylesheet packageStylesheet,
         HashSet<QName>? overriddenTemplateNames = null, HashSet<(QName, int)>? overriddenFunctionKeys = null)
     {
+        _ = overriddenFunctionKeys;
         var component = acceptElement.Attribute("component")?.Value;
         var names = acceptElement.Attribute("names")?.Value;
         var visibilityStr = acceptElement.Attribute("visibility")?.Value;
@@ -1716,15 +1730,21 @@ public sealed class StylesheetParser
 
         foreach (var token in names.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
         {
-            // Wildcards always match — skip validation
-            if (token == "*" || token.EndsWith(":*", StringComparison.Ordinal)) continue;
+            // XTSE3032: xsl:accept component="*" may only be combined with a wildcard name.
+            if (component == "*" && !IsAcceptWildcard(token))
+                throw new XsltException(
+                    $"XTSE3032: xsl:accept with component=\"*\" must use a wildcard name, not '{token}'",
+                    location);
+
+            // Wildcards (in any of the *, prefix:*, *:local, Q{uri}* forms) always match — skip validation
+            if (IsAcceptWildcard(token)) continue;
 
             // XTSE3051: accept must not name a component also in xsl:override
             switch (component)
             {
                 case "template":
                 {
-                    var qname = new QName(NamespaceId.None, token);
+                    var qname = ResolveAcceptTokenQName(token, acceptElement);
                     if (overriddenTemplateNames != null && overriddenTemplateNames.Contains(qname))
                         throw new XsltException(
                             $"XTSE3051: Component '{token}' in xsl:accept is also declared in xsl:override",
@@ -1755,43 +1775,24 @@ public sealed class StylesheetParser
                         funcToken = token[..hashIdx];
                         _ = int.TryParse(token[(hashIdx + 1)..], out arity);
                     }
-                    // Try to resolve and check visibility using namespace from the element
-                    try
+                    var funcName = ResolveAcceptTokenQName(funcToken, acceptElement);
+                    foreach (var (fkey, func) in packageStylesheet.Functions)
                     {
-                        var colonIdx = funcToken.IndexOf(':', StringComparison.Ordinal);
-                        QName funcName;
-                        if (colonIdx > 0)
+                        if (fkey.Name.Equals(funcName) && (arity < 0 || fkey.Arity == arity))
                         {
-                            var prefix = funcToken[..colonIdx];
-                            var localName = funcToken[(colonIdx + 1)..];
-                            var nsUri = acceptElement.GetNamespaceOfPrefix(prefix)?.NamespaceName;
-                            var nsId = nsUri != null ? ResolveNamespaceUri(nsUri) : NamespaceId.None;
-                            funcName = new QName(nsId, localName, prefix);
-                        }
-                        else
-                        {
-                            funcName = new QName(NamespaceId.None, funcToken);
-                        }
-                        foreach (var (fkey, func) in packageStylesheet.Functions)
-                        {
-                            if (fkey.Name.Equals(funcName) && (arity < 0 || fkey.Arity == arity))
-                            {
-                                if ((func.Visibility == Visibility.Private && visibility is not (Visibility.Private or Visibility.Hidden))
-                                    || (func.Visibility == Visibility.Final && visibility == Visibility.Public))
-                                    throw new XsltException(
-                                        $"XTSE3040: Cannot change visibility of {func.Visibility.ToString().ToUpperInvariant()} function '{token}' to {visibility.ToString().ToUpperInvariant()}",
-                                        location);
-                            }
+                            if ((func.Visibility == Visibility.Private && visibility is not (Visibility.Private or Visibility.Hidden))
+                                || (func.Visibility == Visibility.Final && visibility == Visibility.Public))
+                                throw new XsltException(
+                                    $"XTSE3040: Cannot change visibility of {func.Visibility.ToString().ToUpperInvariant()} function '{token}' to {visibility.ToString().ToUpperInvariant()}",
+                                    location);
                         }
                     }
-                    catch (XsltException ex) when (ex.Message.Contains("XTSE3040", StringComparison.Ordinal))
-                    { throw; }
                     break;
                 }
                 case "variable":
                 {
-                    var qname = new QName(NamespaceId.None, token);
-                    if (!packageStylesheet.Variables.Any(v => v.Name.LocalName == token))
+                    var qname = ResolveAcceptTokenQName(token, acceptElement);
+                    if (!packageStylesheet.Variables.Any(v => v.Name.Equals(qname)))
                         throw new XsltException(
                             $"XTSE3030: xsl:accept names variable '{token}' which does not exist in the used package",
                             location);
@@ -1799,68 +1800,197 @@ public sealed class StylesheetParser
                 }
             }
         }
+    }
 
-        // Apply visibility changes for wildcard patterns
-        // (wildcards skip validation above but still need to change component visibility)
-        foreach (var token in names.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
+    private readonly record struct AcceptRule(
+        XElement Element, string Component, string Token, Visibility Visibility, int Order);
+
+    /// <summary>
+    /// Applies xsl:accept visibility changes across all xsl:accept declarations of a single
+    /// xsl:use-package, resolving conflicts by name specificity (XSLT 3.0 §3.5.2): an explicit
+    /// QName is more specific than a partial wildcard (prefix:* / *:local / Q{uri}*), which is
+    /// more specific than "*". Among equally-specific matches, the last in document order wins.
+    /// </summary>
+    private static void ApplyAcceptVisibilities(List<XElement> acceptElements, XsltStylesheet package)
+    {
+        var rules = new List<AcceptRule>();
+        var order = 0;
+        foreach (var elem in acceptElements)
         {
-            var isWildcard = token == "*" || token.EndsWith(":*", StringComparison.Ordinal);
-            var components = component == "*"
-                ? new[] { "template", "function", "variable", "attribute-set", "mode" }
-                : new[] { component };
-
-            foreach (var comp in components)
+            var component = elem.Attribute("component")?.Value;
+            var names = elem.Attribute("names")?.Value;
+            var visStr = elem.Attribute("visibility")?.Value;
+            if (component != null && names != null && visStr != null)
             {
-                switch (comp)
+                var vis = ParseVisibility(visStr);
+                foreach (var token in names.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
+                    rules.Add(new AcceptRule(elem, component, token, vis, order));
+            }
+            order++;
+        }
+
+        foreach (var name in package.NamedTemplates.Keys.ToList())
+            if (TryResolveAcceptVisibility(rules, "template", name, package.NamedTemplates[name].Visibility, out var vis))
+                package.NamedTemplates[name] = CloneTemplateWithVisibility(package.NamedTemplates[name], vis);
+
+        foreach (var key in package.Functions.Keys.ToList())
+            if (TryResolveAcceptVisibility(rules, "function", key.Name, package.Functions[key].Visibility, out var vis))
+                package.Functions[key] = CloneFunctionWithVisibility(package.Functions[key], vis);
+
+        for (var i = 0; i < package.Variables.Count; i++)
+            if (TryResolveAcceptVisibility(rules, "variable", package.Variables[i].Name, package.Variables[i].Visibility, out var vis))
+                package.Variables[i] = CloneVariableWithVisibility(package.Variables[i], vis);
+
+        foreach (var name in package.AttributeSets.Keys.ToList())
+            if (TryResolveAcceptVisibility(rules, "attribute-set", name, package.AttributeSets[name].Visibility, out var vis))
+                package.AttributeSets[name] = CloneAttributeSetWithVisibility(package.AttributeSets[name], vis);
+
+        foreach (var name in package.Modes.Keys.ToList())
+            if (TryResolveAcceptVisibility(rules, "mode", name, package.Modes[name].Visibility, out var vis))
+            {
+                var mode = package.Modes[name];
+                package.Modes[name] = new Ast.XsltMode
                 {
-                    case "template":
-                        foreach (var (name, tmpl) in packageStylesheet.NamedTemplates)
-                        {
-                            if (MatchesAcceptPattern(name, token, isWildcard, acceptElement))
-                                packageStylesheet.NamedTemplates[name] = CloneTemplateWithVisibility(tmpl, visibility);
-                        }
-                        break;
-                    case "function":
-                        foreach (var (key, func) in packageStylesheet.Functions)
-                        {
-                            if (MatchesAcceptPattern(key.Name, token, isWildcard, acceptElement))
-                                packageStylesheet.Functions[key] = CloneFunctionWithVisibility(func, visibility);
-                        }
-                        break;
-                    case "variable":
-                        for (var i = 0; i < packageStylesheet.Variables.Count; i++)
-                        {
-                            if (MatchesAcceptPattern(packageStylesheet.Variables[i].Name, token, isWildcard, acceptElement))
-                                packageStylesheet.Variables[i] = CloneVariableWithVisibility(packageStylesheet.Variables[i], visibility);
-                        }
-                        break;
-                    case "attribute-set":
-                        foreach (var (name, attrSet) in packageStylesheet.AttributeSets)
-                        {
-                            if (MatchesAcceptPattern(name, token, isWildcard, acceptElement))
-                                packageStylesheet.AttributeSets[name] = CloneAttributeSetWithVisibility(attrSet, visibility);
-                        }
-                        break;
-                    case "mode":
-                        foreach (var (name, mode) in packageStylesheet.Modes)
-                        {
-                            if (MatchesAcceptPattern(name, token, isWildcard, acceptElement))
-                                packageStylesheet.Modes[name] = new Ast.XsltMode
-                                {
-                                    Name = mode.Name, Streamable = mode.Streamable,
-                                    OnNoMatch = mode.OnNoMatch, OnMultipleMatch = mode.OnMultipleMatch,
-                                    UseAllAccumulators = mode.UseAllAccumulators,
-                                    UseAccumulatorNames = mode.UseAccumulatorNames,
-                                    Visibility = visibility,
-                                    VisibilityAttr = acceptElement.Attribute("visibility")?.Value,
-                                    TypedValueWarnings = mode.TypedValueWarnings, Typed = mode.Typed,
-                                    UseAccumulatorsAttr = mode.UseAccumulatorsAttr,
-                                };
-                        }
-                        break;
-                }
+                    Name = mode.Name, Streamable = mode.Streamable,
+                    OnNoMatch = mode.OnNoMatch, OnMultipleMatch = mode.OnMultipleMatch,
+                    UseAllAccumulators = mode.UseAllAccumulators,
+                    UseAccumulatorNames = mode.UseAccumulatorNames,
+                    Visibility = vis,
+                    VisibilityAttr = VisibilityToAttr(vis),
+                    TypedValueWarnings = mode.TypedValueWarnings, Typed = mode.Typed,
+                    UseAccumulatorsAttr = mode.UseAccumulatorsAttr,
+                };
+            }
+    }
+
+    /// <summary>
+    /// Finds the most-specific xsl:accept rule matching a component of the given kind and name.
+    /// </summary>
+    private static bool TryResolveAcceptVisibility(
+        List<AcceptRule> rules, string componentType, QName name, Visibility currentVisibility,
+        out Visibility visibility)
+    {
+        var bestSpecificity = -1;
+        var bestOrder = -1;
+        visibility = default;
+        var found = false;
+        foreach (var rule in rules)
+        {
+            if (rule.Component != "*" && rule.Component != componentType) continue;
+            if (!AcceptTokenMatches(name, rule.Token, rule.Element)) continue;
+            var spec = AcceptTokenSpecificity(rule.Token);
+            // A wildcard xsl:accept that would make an abstract component public or final
+            // cannot be satisfied and is treated as not matching that component (XSLT 3.0
+            // §3.5.2); the abstract component then keeps its default hidden visibility.
+            if (spec < 3 && currentVisibility == Visibility.Abstract
+                && rule.Visibility is Visibility.Public or Visibility.Final)
+                continue;
+            // Higher specificity wins; among equal specificity, later document order wins.
+            if (spec > bestSpecificity || (spec == bestSpecificity && rule.Order >= bestOrder))
+            {
+                bestSpecificity = spec;
+                bestOrder = rule.Order;
+                visibility = rule.Visibility;
+                found = true;
             }
         }
+        return found;
+    }
+
+    private static string VisibilityToAttr(Visibility vis) => vis switch
+    {
+        Visibility.Public => "public",
+        Visibility.Private => "private",
+        Visibility.Final => "final",
+        Visibility.Abstract => "abstract",
+        Visibility.Hidden => "hidden",
+        _ => "private",
+    };
+
+    private static bool IsAcceptWildcard(string token) => AcceptTokenSpecificity(token) < 3;
+
+    private static int AcceptTokenSpecificity(string token)
+    {
+        if (token == "*") return 1;
+        if (token.StartsWith("Q{", StringComparison.Ordinal) && token.EndsWith("}*", StringComparison.Ordinal)) return 2;
+        if (token.EndsWith(":*", StringComparison.Ordinal)) return 2;
+        if (token.StartsWith("*:", StringComparison.Ordinal)) return 2;
+        return 3;
+    }
+
+    /// <summary>
+    /// Resolves an explicit (non-wildcard) xsl:accept name token to a QName, honouring an
+    /// optional prefix or Q{uri}local EQName form against the accept element's namespaces.
+    /// </summary>
+    private static QName ResolveAcceptTokenQName(string token, XElement element)
+    {
+        if (token.StartsWith("Q{", StringComparison.Ordinal))
+        {
+            var close = token.IndexOf('}', StringComparison.Ordinal);
+            if (close > 0)
+            {
+                var uri = token[2..close];
+                var local = token[(close + 1)..];
+                var nsId = uri.Length == 0 ? NamespaceId.None : ResolveNamespaceUri(uri);
+                return new QName(nsId, local);
+            }
+        }
+        var colon = token.IndexOf(':', StringComparison.Ordinal);
+        if (colon > 0)
+        {
+            var prefix = token[..colon];
+            var local = token[(colon + 1)..];
+            var nsUri = element.GetNamespaceOfPrefix(prefix)?.NamespaceName;
+            var nsId = nsUri != null ? ResolveNamespaceUri(nsUri) : NamespaceId.None;
+            return new QName(nsId, local, prefix);
+        }
+        return new QName(NamespaceId.None, token);
+    }
+
+    /// <summary>
+    /// Tests whether a component QName matches an xsl:accept name token, supporting the
+    /// *, prefix:*, *:local, Q{uri}*, Q{uri}local, prefix:local and NCName forms.
+    /// </summary>
+    private static bool AcceptTokenMatches(QName name, string token, XElement element)
+    {
+        if (token == "*") return true;
+
+        if (token.StartsWith("Q{", StringComparison.Ordinal))
+        {
+            var close = token.IndexOf('}', StringComparison.Ordinal);
+            if (close < 0) return false;
+            var uri = token[2..close];
+            var local = token[(close + 1)..];
+            var nsMatch = uri.Length == 0
+                ? name.Namespace == NamespaceId.None
+                : name.Namespace == ResolveNamespaceUri(uri);
+            if (!nsMatch) return false;
+            return local == "*" || name.LocalName == local;
+        }
+
+        if (token.EndsWith(":*", StringComparison.Ordinal))
+        {
+            var prefix = token[..^2];
+            var nsUri = element.GetNamespaceOfPrefix(prefix)?.NamespaceName;
+            if (nsUri != null)
+                return name.Namespace == ResolveNamespaceUri(nsUri);
+            return name.Prefix == prefix;
+        }
+
+        if (token.StartsWith("*:", StringComparison.Ordinal))
+            return name.LocalName == token[2..];
+
+        var colon = token.IndexOf(':', StringComparison.Ordinal);
+        if (colon > 0)
+        {
+            var prefix = token[..colon];
+            var local = token[(colon + 1)..];
+            var nsUri = element.GetNamespaceOfPrefix(prefix)?.NamespaceName;
+            var nsId = nsUri != null ? ResolveNamespaceUri(nsUri) : NamespaceId.None;
+            return name.Namespace == nsId && name.LocalName == local;
+        }
+
+        return name.Namespace == NamespaceId.None && name.LocalName == token;
     }
 
     private static bool MatchesAcceptPattern(QName name, string pattern, bool isWildcard, XElement element)
@@ -2019,13 +2149,15 @@ public sealed class StylesheetParser
     private static Ast.XsltVariable CloneVariableWithVisibility(Ast.XsltVariable v, Ast.Visibility vis) => new()
     {
         Name = v.Name, As = v.As, Select = v.Select, Content = v.Content,
-        Static = v.Static, Visibility = vis, BaseUri = v.BaseUri, Version = v.Version
+        Static = v.Static, Visibility = vis, BaseUri = v.BaseUri, Version = v.Version,
+        OriginalVariable = v.OriginalVariable
     };
 
     private static Ast.XsltAttributeSet CloneAttributeSetWithVisibility(Ast.XsltAttributeSet a, Ast.Visibility v) => new()
     {
         Name = a.Name, UseAttributeSets = a.UseAttributeSets, Attributes = a.Attributes,
-        Visibility = v, Streamable = a.Streamable, BaseUri = a.BaseUri, Parts = a.Parts
+        Visibility = v, Streamable = a.Streamable, BaseUri = a.BaseUri, Parts = a.Parts,
+        OriginalAttributeSet = a.OriginalAttributeSet
     };
 
     private static void MergePackageComponents(XsltStylesheet target, XsltStylesheet package)
@@ -2079,10 +2211,14 @@ public sealed class StylesheetParser
         }
 
         // Attribute sets: merge all except abstract (private sets may be referenced
-        // by public sets via use-attribute-sets chains)
+        // by public sets via use-attribute-sets chains). An abstract attribute-set that is
+        // not overridden remains unusable — record its name so a reference to it at runtime
+        // raises XTDE3052 rather than silently applying nothing (accept-911).
         foreach (var (name, attrSet) in package.AttributeSets)
         {
-            if (attrSet.Visibility is not (Visibility.Abstract or Visibility.Hidden))
+            if (attrSet.Visibility is Visibility.Abstract)
+                target.AbstractAttributeSetNames.Add(name);
+            else if (attrSet.Visibility is not Visibility.Hidden)
                 target.AttributeSets.TryAdd(name, attrSet);
         }
 
@@ -2361,6 +2497,10 @@ public sealed class StylesheetParser
         {
             foreach (var usedName in attrSet.UseAttributeSets)
             {
+                // use-attribute-sets="xsl:original" is resolved dynamically against the
+                // overriding attribute-set's overridden component; it is not a named set.
+                if (usedName.Namespace == NamespaceId.Xslt && usedName.LocalName == "original")
+                    continue;
                 if (!stylesheet.AttributeSets.ContainsKey(usedName))
                     throw new XsltException($"XTSE0710: Attribute set '{usedName}' referenced by '{name}' is not defined");
             }
