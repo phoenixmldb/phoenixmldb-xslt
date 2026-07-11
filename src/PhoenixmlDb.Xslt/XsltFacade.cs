@@ -989,11 +989,18 @@ public sealed class XsltTransformer
                 ? ResolveQName(_initialTemplate, _initialTemplateNamespace)
                 : null,
             InitialMode = _initialMode != null
-                ? (_initialMode is "#unnamed" or "#default"
-                    // "#unnamed"/"#default" as an initial mode select the unnamed mode
-                    // (stored under the empty QName), not a mode literally named "#unnamed".
-                    ? new QName(NamespaceId.None, "")
-                    : ResolveQName(_initialMode, _initialModeNamespace))
+                ? (_initialMode is "#default"
+                    // "#default" selects the package/stylesheet default mode. When
+                    // @default-mode names a mode, THAT (possibly private) named mode is the
+                    // initial mode — and it is eligible precisely because it is the default
+                    // mode (XSLT 3.0 §5.7.1, W3C package-001p/q/r, package-012). Falls back to
+                    // the unnamed mode (empty QName) when no @default-mode is declared.
+                    ? (_stylesheet?.DefaultMode ?? new QName(NamespaceId.None, ""))
+                    : _initialMode is "#unnamed"
+                        // "#unnamed" always selects the unnamed mode (empty QName), never a
+                        // mode literally named "#unnamed" and never the named default mode.
+                        ? new QName(NamespaceId.None, "")
+                        : ResolveQName(_initialMode, _initialModeNamespace))
                 : null,
             InitialFunction = _initialFunction != null
                 ? ResolveQName(_initialFunction, _initialFunctionNamespace)
