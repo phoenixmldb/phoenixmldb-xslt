@@ -1,6 +1,18 @@
 # Release History
 
-## Unreleased
+## 1.4.23 (2026-07-12)
+
+A large conformance release across pattern matching, modes and accumulators, XSLT 3.0 packages, `xsl:copy` namespaces, and XPath string literals. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.5 (for the inherited-namespace `namespace::` axis and raw-`&` XPath string literals). No breaking API changes.
+
+### Patterns
+
+- **Chained predicates in a match pattern now use XPath filter semantics.** A pattern with two or more predicates — e.g. `match="x[(position() mod 2)=1][position() &gt; 3]"` — now applies each predicate to the sequence that survived the earlier predicates, so `position()`/`last()` in a later predicate re-index against the survivors. Previously every predicate was tested against a single position, so a chained positional pattern matched the wrong nodes (`match-021`…`match-028`). Single-predicate patterns are unchanged.
+- **More pattern forms now match.** `union`/`intersect` as pattern operators are disambiguated from a leading lone `/` (`/ union /*`); `child::document-node()`; a variable-reference pattern carrying a predicate (`$v[@att1='a']`); a parenthesized pattern with a positional predicate (`(doc/descendant::foo)[2]`); `root()` (matching any root — a document node or a parentless element) with a predicate (`root()[self::A]`); and XPath comments or whitespace inside a parenthesized pattern.
+
+### Modes
+
+- **`initial-mode="#default"` selects the declared default mode.** `#default` now resolves to the mode named by the package/stylesheet `default-mode` (rather than collapsing to the unnamed mode); `#unnamed` selects the unnamed mode. A package-level `xsl:mode` with no explicit visibility is private and is not an eligible initial mode unless the package's `@default-mode` names it (**XTDE0045**).
+- **Mode-scoped accumulators are evaluated on the streamed initial-mode path.** When a streamable initial mode's `match="/"` template reads `accumulator-after('…')` against the document node, the mode's applicable accumulators (`use-accumulators`) are now evaluated over the tree instead of returning their initial value. Reading an accumulator that is not applicable to the initial mode's source tree now raises **XTDE3362** (rather than the generic XTDE3340) (`mode-1107a`/`b`/`c`).
 
 ### Expressions
 
@@ -12,6 +24,12 @@
 
 ### Packages
 
+- **`xsl:original` is resolved for every overridden component kind.** An `xsl:override` of a function (including when taken as a function item or partially applied), a variable (`$xsl:original`), an attribute-set (`use-attribute-sets="xsl:original"`), or a template rule can now invoke/reference the component it overrides — previously only some kinds worked.
+- **Accepted components are visible and validated.** `xsl:accept` is applied with correct specificity (explicit name &gt; partial wildcard &gt; `*`), validates that an accepted name exists in the used package, and accepted variables, attribute-sets, and templates now resolve in the using package.
+- **`xsl:override` is statically validated.** A disallowed child of `xsl:override` (**XTSE0010**), an overriding component that does not correspond to an overridable component of the used package (**XTSE3050**), and an incompatible attribute-set override (**XTSE3060**) are now diagnosed instead of silently accepted.
+- **Component references resolve within their own package's scope.** A component's reference to a variable, attribute-set, or accumulator is resolved against its own package (including that package's private components) rather than a flattened global registry, so same-named components and diamonds across packages resolve correctly.
+- **More package/entry-point errors are detected.** An initial named template invoked as an entry point must be public (**XTDE0040**); `xsl:mode/@name` rejects reserved `#`-tokens (**XTSE0020**); `xsl:import`/`xsl:include` of an `xsl:package` is rejected (**XTSE0165**); a `visibility` attribute on a template *rule* is rejected (**XTSE0500**); and an implicit mode exposed as private is ineligible as an initial mode (**XTDE0045**).
+- **`xsl:use-package/@package-version` selects the correct version.** Version-range matching now picks the correct available package version by the spec's ordering — including pre-release ordering (`2.0.0-alpha` &lt; `2.0.0-beta` &lt; `2.0.0`) — rather than the first declared; the highest match is chosen (or the lowest, per a caller-supplied resolution policy).
 - `xsl:key` declarations are now local to the package that declares them (XSLT 3.0 §3.6.2). A key name declared in a used (library) package is no longer visible to the using package, and two packages that each declare a key of the same name now index independently instead of merging into one shared index. `key()` resolves definitions against the package owning the executing template or function.
 - Three more component kinds are now resolved package-locally, matching the same rule:
   - **Global variables.** When a diamond of packages contributes a same-named global with different values — an `xsl:override` on the same variable along two routes, or two used versions of the same package — each package's components now see their own package's value instead of one shared binding.
