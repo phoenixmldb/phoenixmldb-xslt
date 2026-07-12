@@ -222,6 +222,19 @@ public sealed class XsltStylesheet
     public HashSet<(string Kind, QName Name, int Arity)> LocalComponentSymbols { get; init; } = new();
 
     /// <summary>
+    /// Symbolic names (kind, name, arity) of components that have become visible (accepted,
+    /// not hidden) components of THIS package from an xsl:use-package. Each xsl:use-package is a
+    /// distinct package instance, so two such contributions of the same symbolic name — whether
+    /// from two different used packages (decl/accept-020) or the same package reached by two
+    /// routes in a diamond (decl/package-022err) — are two distinct components with the same
+    /// name and are a static error (XTSE3050), unless one is resolved by xsl:override. Populated
+    /// per use-package and propagated across xsl:include boundaries (MergeStylesheet) so a
+    /// conflict spanning two included modules is detected. Kinds: "T" template, "V" variable,
+    /// "F" function, "A" attribute-set, "M" mode.
+    /// </summary>
+    public HashSet<(string Kind, QName Name, int Arity)> AcceptedComponentSymbols { get; init; } = new();
+
+    /// <summary>
     /// Modes referenced by local top-level template rules (outside xsl:override). Adding a
     /// template rule to a mode declared in a used package is only permitted inside
     /// xsl:override (XTSE3050).

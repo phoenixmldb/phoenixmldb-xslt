@@ -1239,6 +1239,10 @@ public sealed class StylesheetParser
         // First pass: apply overrides and collect overridden component names
         var overriddenTemplateNames = new HashSet<QName>();
         var overriddenFunctionKeys = new HashSet<(QName, int)>();
+        // Symbolic names resolved by xsl:override in THIS use-package. A component whose symbol
+        // is overridden here is the XTSE3050 exception ("unless one overrides the other") and is
+        // excluded from cross-package conflict accounting below.
+        var overriddenSymbols = new HashSet<(string, QName, int)>();
         foreach (var child in element.Elements())
         {
             if (child.Name == XsltNs + "override")
@@ -1247,27 +1251,32 @@ public sealed class StylesheetParser
                 foreach (var overChild in child.Elements())
                 {
                     if (overChild.Name.Namespace != XsltNs) continue;
-                    if (overChild.Name.LocalName == "template")
+                    var overName = overChild.Attribute("name")?.Value;
+                    if (overName == null) continue;
+                    _nsContext = overChild;
+                    var overQName = ParseQName(overName, overChild);
+                    _nsContext = null;
+                    switch (overChild.Name.LocalName)
                     {
-                        var nameAttr = overChild.Attribute("name")?.Value;
-                        if (nameAttr != null)
-                        {
-                            _nsContext = overChild;
-                            overriddenTemplateNames.Add(ParseQName(nameAttr, overChild));
-                            _nsContext = null;
-                        }
-                    }
-                    else if (overChild.Name.LocalName == "function")
-                    {
-                        var nameAttr = overChild.Attribute("name")?.Value;
-                        if (nameAttr != null)
-                        {
-                            _nsContext = overChild;
-                            var funcName = ParseQName(nameAttr, overChild);
+                        case "template":
+                            overriddenTemplateNames.Add(overQName);
+                            overriddenSymbols.Add(("T", overQName, 0));
+                            break;
+                        case "function":
                             var arity = overChild.Elements(XsltNs + "param").Count();
-                            overriddenFunctionKeys.Add((funcName, arity));
-                            _nsContext = null;
-                        }
+                            overriddenFunctionKeys.Add((overQName, arity));
+                            overriddenSymbols.Add(("F", overQName, arity));
+                            break;
+                        case "variable":
+                        case "param":
+                            overriddenSymbols.Add(("V", overQName, 0));
+                            break;
+                        case "attribute-set":
+                            overriddenSymbols.Add(("A", overQName, 0));
+                            break;
+                        case "mode":
+                            overriddenSymbols.Add(("M", overQName, 0));
+                            break;
                     }
                 }
                 ApplyOverrides(child, packageStylesheet);
@@ -1298,6 +1307,49 @@ public sealed class StylesheetParser
         foreach (var variable in packageStylesheet.Variables)
             variable.ProvidedByPackage |= XsltStylesheet.VisibleAcrossPackageBoundary(variable.VisibilityAttr);
 
+        // Capture boundary exposure BEFORE xsl:accept runs — an accept clones the component and
+        // drops VisibilityAttr, so the used package's own public/final exposure must be
+        // snapshotted here. Used below (with the post-accept visibility) to decide which
+        // components this use-package contributes for XTSE3050. Only components the used package
+        // genuinely exposes as public/final become components of the using package; a private
+        // component (including a private xsl:override) stays internal to the used package and
+        // never conflicts (use-package-175/176 diamond). For templates/functions/modes an
+        // explicit or expose-set VisibilityAttr of public/final is the signal (the parser's
+        // public-by-default workaround leaves VisibilityAttr null, so it is correctly excluded).
+        // For variables/attribute-sets, whose exposure clones drop VisibilityAttr, the signal is
+        // ProvidedByPackage together with a pre-accept effective visibility of public/final —
+        // ProvidedByPackage alone is set even for a private override, so it is not sufficient.
+        // Only a component DECLARED (or overridden) in the immediately-used package itself is a
+        // component this use-package contributes. A component merged into it from a deeper
+        // use-package is stamped with that deeper package (PackageStylesheet) and only flows
+        // through transitively as an effectively-private inherited component — it must not be
+        // treated as re-exposed here, or two sibling packages that each inherit the same public
+        // global from a shared lower package would falsely conflict (use-package-176 different
+        // versions). A package's own declarations are unstamped (null) at this point; the merge
+        // that stamps them runs after this capture.
+        bool DeclaredHere(XsltStylesheet? owner) => owner == null || ReferenceEquals(owner, packageStylesheet);
+        var boundaryExposedTemplates = new HashSet<QName>();
+        foreach (var (tname, t) in packageStylesheet.NamedTemplates)
+            if (t.VisibilityAttr is "public" or "final" && DeclaredHere(t.PackageStylesheet))
+                boundaryExposedTemplates.Add(tname);
+        var boundaryExposedModes = new HashSet<QName>();
+        foreach (var (mname, m) in packageStylesheet.Modes)
+            if (m.VisibilityAttr is "public" or "final") boundaryExposedModes.Add(mname);
+        var boundaryExposedFunctions = new HashSet<(QName, int)>();
+        foreach (var (fkey2, f) in packageStylesheet.Functions)
+            if (f.VisibilityAttr is "public" or "final" && DeclaredHere(f.PackageStylesheet))
+                boundaryExposedFunctions.Add((fkey2.Name, fkey2.Arity));
+        var boundaryExposedVariables = new HashSet<QName>();
+        foreach (var variable in packageStylesheet.Variables)
+            if (variable.ProvidedByPackage && variable.Visibility is Visibility.Public or Visibility.Final
+                && DeclaredHere(variable.PackageStylesheet))
+                boundaryExposedVariables.Add(variable.Name);
+        var boundaryExposedAttrSets = new HashSet<QName>();
+        foreach (var (aname, a) in packageStylesheet.AttributeSets)
+            if (a.ProvidedByPackage && a.Visibility is Visibility.Public or Visibility.Final
+                && DeclaredHere(a.PackageStylesheet))
+                boundaryExposedAttrSets.Add(aname);
+
         var acceptElements = new List<XElement>();
         foreach (var child in element.Elements())
         {
@@ -1309,6 +1361,35 @@ public sealed class StylesheetParser
         }
         if (acceptElements.Count > 0)
             ApplyAcceptVisibilities(acceptElements, packageStylesheet);
+
+        // XTSE3050 (cross-package): each xsl:use-package is a distinct instance of the used
+        // package, so a component it contributes as a visible (accepted, not hidden) component
+        // of the using package clashes with a same-kind-same-name component contributed by any
+        // OTHER use-package on this package. This covers two independent used packages exposing
+        // the same unnamespaced symbol (accept-020) and the diamond where the same package is
+        // reached via xsl:include + another use-package (package-022err). A symbol resolved by
+        // xsl:override here is the spec exception and is excluded. "Contributed" means the
+        // component is exposed at the used package's boundary (public/final — or exposed as such
+        // via xsl:expose, captured for variables/attribute-sets by ProvidedByPackage) and was
+        // not lowered to hidden by an xsl:accept in this use-package.
+        RecordAcceptedComponent(stylesheet, overriddenSymbols, element,
+            "T", packageStylesheet.NamedTemplates.Select(t =>
+                (t.Key, IsBoundaryExposed: boundaryExposedTemplates.Contains(t.Key),
+                 t.Value.Visibility, 0)));
+        RecordAcceptedComponent(stylesheet, overriddenSymbols, element,
+            "V", packageStylesheet.Variables.Select(v =>
+                (v.Name, IsBoundaryExposed: boundaryExposedVariables.Contains(v.Name), v.Visibility, 0)));
+        RecordAcceptedComponent(stylesheet, overriddenSymbols, element,
+            "A", packageStylesheet.AttributeSets.Select(a =>
+                (a.Key, IsBoundaryExposed: boundaryExposedAttrSets.Contains(a.Key), a.Value.Visibility, 0)));
+        RecordAcceptedComponent(stylesheet, overriddenSymbols, element,
+            "M", packageStylesheet.Modes.Select(m =>
+                (m.Key, IsBoundaryExposed: boundaryExposedModes.Contains(m.Key),
+                 m.Value.Visibility, 0)));
+        RecordAcceptedComponent(stylesheet, overriddenSymbols, element,
+            "F", packageStylesheet.Functions.Select(f =>
+                (f.Key.Name, IsBoundaryExposed: boundaryExposedFunctions.Contains((f.Key.Name, f.Key.Arity)),
+                 f.Value.Visibility, f.Key.Arity)));
 
         // Record the symbolic names of public/final components exposed by this used package.
         // A component of the same symbolic kind+name declared in the using package outside
@@ -1345,6 +1426,48 @@ public sealed class StylesheetParser
                 _packageMergedTemplateNames.Add(name);
         }
     }
+
+    /// <summary>
+    /// Records the visible components a single xsl:use-package contributes to the using package
+    /// and raises XTSE3050 when a distinct earlier use-package already contributed the same
+    /// symbolic name. A component is contributed when it is exposed at the used package's
+    /// boundary and the using package's xsl:accept did not hide it (its effective visibility is
+    /// public, private, or final — abstract components are unusable and never counted, hidden
+    /// ones are not components). A symbol resolved by xsl:override in this use-package is the
+    /// spec exception and is skipped.
+    /// </summary>
+    private static void RecordAcceptedComponent(
+        XsltStylesheet stylesheet,
+        HashSet<(string, QName, int)> overriddenSymbols,
+        XElement element,
+        string kind,
+        IEnumerable<(QName Name, bool IsBoundaryExposed, Ast.Visibility Vis, int Arity)> components)
+    {
+        foreach (var (name, exposed, vis, arity) in components)
+        {
+            if (!exposed) continue;
+            if (vis is not (Ast.Visibility.Public or Ast.Visibility.Private or Ast.Visibility.Final))
+                continue;
+            var symbol = (kind, name, arity);
+            if (overriddenSymbols.Contains(symbol)) continue;
+            if (!stylesheet.AcceptedComponentSymbols.Add(symbol))
+                throw new XsltException(
+                    $"XTSE3050: The package contains two components of kind '{KindDisplayName(kind)}' " +
+                    $"with the same name '{name.LocalName}', each accepted from a used package, " +
+                    "and neither resolves the other via xsl:override",
+                    GetSourceLocation(element));
+        }
+    }
+
+    private static string KindDisplayName(string kind) => kind switch
+    {
+        "T" => "template",
+        "V" => "variable",
+        "F" => "function",
+        "A" => "attribute-set",
+        "M" => "mode",
+        _ => kind,
+    };
 
     /// <summary>
     /// Resolves a package file path from the catalog using version matching, selecting
@@ -2045,7 +2168,7 @@ public sealed class StylesheetParser
                 package.NamedTemplates[name] = CloneTemplateWithVisibility(package.NamedTemplates[name], vis);
 
         foreach (var key in package.Functions.Keys.ToList())
-            if (TryResolveAcceptVisibility(rules, "function", key.Name, package.Functions[key].Visibility, out var vis))
+            if (TryResolveAcceptVisibility(rules, "function", key.Name, package.Functions[key].Visibility, out var vis, key.Arity))
                 package.Functions[key] = CloneFunctionWithVisibility(package.Functions[key], vis);
 
         for (var i = 0; i < package.Variables.Count; i++)
@@ -2079,7 +2202,7 @@ public sealed class StylesheetParser
     /// </summary>
     private static bool TryResolveAcceptVisibility(
         List<AcceptRule> rules, string componentType, QName name, Visibility currentVisibility,
-        out Visibility visibility)
+        out Visibility visibility, int componentArity = -1)
     {
         var bestSpecificity = -1;
         var bestOrder = -1;
@@ -2088,8 +2211,22 @@ public sealed class StylesheetParser
         foreach (var rule in rules)
         {
             if (rule.Component != "*" && rule.Component != componentType) continue;
-            if (!AcceptTokenMatches(name, rule.Token, rule.Element)) continue;
-            var spec = AcceptTokenSpecificity(rule.Token);
+            // Erratum E36: a function accept token carries its arity ("p:f#0"). Match on the
+            // name part and require the arity to agree; strip the suffix before name-matching and
+            // specificity scoring (a suffixed token was previously never matched at all).
+            var token = rule.Token;
+            if (componentType == "function")
+            {
+                var hashIdx = token.IndexOf('#', StringComparison.Ordinal);
+                if (hashIdx >= 0)
+                {
+                    var ruleArity = int.TryParse(token[(hashIdx + 1)..], out var a) ? a : -1;
+                    if (ruleArity >= 0 && componentArity >= 0 && ruleArity != componentArity) continue;
+                    token = token[..hashIdx];
+                }
+            }
+            if (!AcceptTokenMatches(name, token, rule.Element)) continue;
+            var spec = AcceptTokenSpecificity(token);
             // A wildcard xsl:accept that would make an abstract component public or final
             // cannot be satisfied and is treated as not matching that component (XSLT 3.0
             // §3.5.2); the abstract component then keeps its default hidden visibility.
@@ -3855,6 +3992,21 @@ public sealed class StylesheetParser
 
         // Also merge any nested imports
         target.Imports.AddRange(source.Imports);
+
+        // Propagate the components each module accepted from used packages, detecting a
+        // cross-include XTSE3050: a component made visible via xsl:use-package in one included
+        // module clashes with a same-named component made visible via a distinct xsl:use-package
+        // in another module of the same package (the package-022err diamond, where an included
+        // module use-packages P and another route reaches P again leaving a symbol visible on
+        // both). Overridden symbols are already excluded before they are recorded.
+        foreach (var symbol in source.AcceptedComponentSymbols)
+        {
+            if (!target.AcceptedComponentSymbols.Add(symbol))
+                throw new XsltException(
+                    $"XTSE3050: The package contains two components of kind '{KindDisplayName(symbol.Kind)}' " +
+                    $"with the same name '{symbol.Name.LocalName}', each accepted from a used package " +
+                    "(reached via different xsl:include routes), and neither overrides the other");
+        }
     }
 
     private XsltStylesheet ParseSimplifiedStylesheet(XElement element)
