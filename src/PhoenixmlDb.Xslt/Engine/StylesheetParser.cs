@@ -138,6 +138,13 @@ public sealed class StylesheetParser
     /// </summary>
     internal PreloadedResources? PreloadedResources { get; init; }
 
+    /// <summary>
+    /// Policy for selecting among multiple available package versions that satisfy an
+    /// <c>xsl:use-package/@package-version</c> range. Defaults to
+    /// <see cref="PackageVersionResolution.Highest"/> (spec-recommended).
+    /// </summary>
+    public PackageVersionResolution VersionResolution { get; init; } = PackageVersionResolution.Highest;
+
     public StylesheetParser(IExpressionParser expressionParser)
     {
         _expressionParser = expressionParser;
@@ -1214,7 +1221,7 @@ public sealed class StylesheetParser
         var packageFile = ResolvePackageVersion(packageEntries, packageVersion, packageName, GetSourceLocation(element));
 
         // Parse the package stylesheet with a fresh parser sharing our expression parser and catalog
-        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources };
+        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources, VersionResolution = VersionResolution };
         var packageXml = System.IO.File.ReadAllText(packageFile);
         var packageBaseUri = new Uri(Path.GetFullPath(packageFile));
         var packageStylesheet = packageParser.Parse(packageXml, packageBaseUri, isLibraryPackage: true);
@@ -1319,9 +1326,10 @@ public sealed class StylesheetParser
     }
 
     /// <summary>
-    /// Resolves a package file path from the catalog using version matching.
+    /// Resolves a package file path from the catalog using version matching, selecting
+    /// among all matching versions according to <see cref="VersionResolution"/>.
     /// </summary>
-    private static string ResolvePackageVersion(
+    private string ResolvePackageVersion(
         List<(string? Version, string FilePath)> entries,
         string? requestedVersion,
         string packageName,
@@ -1330,35 +1338,73 @@ public sealed class StylesheetParser
         if (entries.Count == 0)
             throw new XsltException($"XTDE3052: Package '{packageName}' has no available versions", location);
 
-        // No version requested — take the first (or only) entry
-        if (string.IsNullOrEmpty(requestedVersion))
-            return entries[0].FilePath;
-
-        // Try match using catalog version (handles exact, wildcard, and normalized comparison)
-        foreach (var (version, filePath) in entries)
-        {
-            if (VersionMatches(version, requestedVersion))
-                return filePath;
-        }
-
-        // Fallback: the catalog version may differ from the package file's actual version.
-        // Try reading the package-version from the file itself.
-        foreach (var (_, filePath) in entries)
-        {
-            try
-            {
-                if (!System.IO.File.Exists(filePath)) continue;
-                var doc = XDocument.Load(filePath, LoadOptions.None);
-                var fileVersion = doc.Root?.Attribute("package-version")?.Value;
-                if (fileVersion != null && VersionMatches(fileVersion, requestedVersion))
-                    return filePath;
-            }
-            catch (System.IO.IOException ex) { throw new XsltException($"XTDE3052: Failed to load package '{filePath}': {ex.Message}", location); }
-            catch (System.Xml.XmlException ex) { throw new XsltException($"XTDE3052: Failed to parse package '{filePath}': {ex.Message}", location); }
-        }
+        var selected = SelectMatchingPackage(entries, requestedVersion, VersionResolution);
+        if (selected != null)
+            return selected;
 
         throw new XsltException($"XTDE3052: No matching version for package '{packageName}' " +
             $"(requested '{requestedVersion}')", location);
+    }
+
+    /// <summary>
+    /// Selects the file path of the best-matching package version for a requested
+    /// <c>@package-version</c> range. Collects every entry whose version satisfies the
+    /// range (using catalog metadata, falling back to each file's declared
+    /// <c>package-version</c>) then picks one per <paramref name="resolution"/>: the
+    /// highest matching version (default / <see cref="PackageVersionResolution.Unspecified"/>)
+    /// or the lowest. Returns <c>null</c> when nothing matches.
+    /// </summary>
+    public static string? SelectMatchingPackage(
+        IReadOnlyList<(string? Version, string FilePath)> entries,
+        string? requestedVersion,
+        PackageVersionResolution resolution)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+
+        // Gather all matching entries with a comparable effective version.
+        var matches = new List<(string EffVersion, string FilePath)>();
+        foreach (var (version, filePath) in entries)
+        {
+            if (VersionMatches(version, requestedVersion))
+                matches.Add((version ?? "1", filePath));
+        }
+
+        // Fallback: the catalog version may be absent or differ from the package file's
+        // actual version. Consult the package-version declared in each file.
+        if (matches.Count == 0)
+        {
+            foreach (var (_, filePath) in entries)
+            {
+                var fileVersion = TryReadFilePackageVersion(filePath);
+                if (fileVersion != null && VersionMatches(fileVersion, requestedVersion))
+                    matches.Add((fileVersion, filePath));
+            }
+        }
+
+        if (matches.Count == 0) return null;
+
+        // Select according to the resolution strategy. Lowest picks the minimum matching
+        // version; Highest and Unspecified pick the maximum (deterministic).
+        var best = matches[0];
+        for (var i = 1; i < matches.Count; i++)
+        {
+            var cmp = CompareVersions(matches[i].EffVersion, best.EffVersion);
+            var take = resolution == PackageVersionResolution.Lowest ? cmp < 0 : cmp > 0;
+            if (take) best = matches[i];
+        }
+        return best.FilePath;
+    }
+
+    private static string? TryReadFilePackageVersion(string filePath)
+    {
+        try
+        {
+            if (!System.IO.File.Exists(filePath)) return null;
+            var doc = XDocument.Load(filePath, LoadOptions.None);
+            return doc.Root?.Attribute("package-version")?.Value;
+        }
+        catch (System.IO.IOException) { return null; }
+        catch (System.Xml.XmlException) { return null; }
     }
 
     /// <summary>

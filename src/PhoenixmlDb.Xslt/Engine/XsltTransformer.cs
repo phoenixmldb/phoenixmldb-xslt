@@ -32124,16 +32124,9 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             if (catalog == null || !catalog.TryGetValue(packageName, out var entries))
                 throw new XsltException($"FOXT0001: Package '{packageName}' not found");
 
-            // Version matching
-            string? matchedFile = null;
-            foreach (var (ver, path) in entries)
-            {
-                if (packageVersion == null || StylesheetParser.VersionMatchesPublic(ver, packageVersion))
-                {
-                    matchedFile = path;
-                    break;
-                }
-            }
+            // Version matching — select the highest matching version.
+            var matchedFile = StylesheetParser.SelectMatchingPackage(
+                entries, packageVersion, PackageVersionResolution.Highest);
             if (matchedFile == null)
                 throw new XsltException($"FOXT0001: No matching version for package '{packageName}' (requested '{packageVersion}')");
 

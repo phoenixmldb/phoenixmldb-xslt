@@ -9,6 +9,26 @@ using PhoenixmlDb.Xslt.Engine;
 namespace PhoenixmlDb.Xslt;
 
 /// <summary>
+/// Strategy for choosing among multiple available versions of an XSLT 3.0 package that
+/// all satisfy an <c>xsl:use-package/@package-version</c> range. The XSLT 3.0 REC leaves
+/// the choice among matching versions implementation-defined; this enum selects the policy.
+/// </summary>
+public enum PackageVersionResolution
+{
+    /// <summary>Select the highest matching version (the spec-recommended default).</summary>
+    Highest = 0,
+
+    /// <summary>Select the lowest matching version.</summary>
+    Lowest,
+
+    /// <summary>
+    /// No particular policy is required; any matching version is acceptable. Resolved
+    /// deterministically as the highest matching version.
+    /// </summary>
+    Unspecified,
+}
+
+/// <summary>
 /// Primary API for running XSLT transformations in .NET.
 /// </summary>
 /// <remarks>
@@ -209,12 +229,18 @@ public sealed class XsltTransformer
     /// <c>xsl:use-package</c> to locate and load package dependencies. Each key is a
     /// package name URI; the value is a list of <c>(Version, FilePath)</c> tuples.
     /// </param>
+    /// <param name="packageVersionResolution">
+    /// Policy for choosing among multiple package versions that satisfy an
+    /// <c>xsl:use-package/@package-version</c> range. Defaults to
+    /// <see cref="PackageVersionResolution.Highest"/>.
+    /// </param>
     /// <returns>A completed task. The stylesheet is parsed synchronously.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="stylesheetXml"/> is <c>null</c>.</exception>
     /// <exception cref="XsltException">The stylesheet contains syntax errors or invalid XSLT constructs.</exception>
     public async Task LoadStylesheetAsync(string stylesheetXml, Uri? baseUri = null,
         Dictionary<string, string>? staticParams = null,
-        Dictionary<string, List<(string? Version, string FilePath)>>? packageCatalog = null)
+        Dictionary<string, List<(string? Version, string FilePath)>>? packageCatalog = null,
+        PackageVersionResolution packageVersionResolution = PackageVersionResolution.Highest)
     {
         ArgumentNullException.ThrowIfNull(stylesheetXml);
 
@@ -229,8 +255,8 @@ public sealed class XsltTransformer
 
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload }
-            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload };
+            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution }
+            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution };
         _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
         ResolveSchemaImports(_stylesheet, baseUri);
         // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
