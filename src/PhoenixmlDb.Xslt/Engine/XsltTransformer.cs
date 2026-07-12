@@ -14929,10 +14929,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     var uri = _nodeStore?.GetNamespaceUri(nsDecl.Namespace) ?? "";
                     var prefix = nsDecl.Prefix ?? "";
-                    nsBindings[prefix] = uri;
 
                     // When copy-namespaces="no", only emit namespaces that are in use
-                    // (element prefix or attribute prefix)
+                    // (element prefix or attribute prefix). A dropped namespace must NOT be
+                    // recorded in nsBindings: nsBindings is pushed as the in-scope namespace
+                    // context for descendants, so recording a namespace we never emitted would
+                    // falsely tell a descendant it is already in scope — causing the descendant
+                    // to skip its own (required) declaration and silently adopt the wrong
+                    // namespace. (copy-4901 / copy-5101: a deep-copy descendant whose default
+                    // namespace is inherited lost it entirely.)
                     if (!copyNamespaces)
                     {
                         var isUsedByElement = prefix == (elem.Prefix ?? "");
@@ -14951,6 +14956,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         if (!isUsedByElement && !isUsedByAttr)
                             continue;
                     }
+
+                    nsBindings[prefix] = uri;
 
                     // Skip if already declared by an ancestor with same prefix→URI
                     if (IsNamespaceInScope(prefix, uri))
@@ -15024,13 +15031,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // the output scope. Emit it now so re-parsing produces a well-formed document.
                 {
                     var elemPrefixForFixup = elem.Prefix ?? "";
-                    if (!string.IsNullOrEmpty(elemPrefixForFixup) && !nsBindings.ContainsKey(elemPrefixForFixup))
+                    if (!nsBindings.ContainsKey(elemPrefixForFixup))
                     {
                         var elemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
+                        // Fixup covers both prefixed elements AND the default namespace (prefix "").
+                        // The default case is essential for copy-namespaces="no": an unprefixed
+                        // element whose namespace is INHERITED (not locally declared) — e.g. a deep
+                        // copy descendant — would otherwise be emitted with no xmlns and wrongly
+                        // adopt an ancestor's default namespace in the new output context.
                         if (!string.IsNullOrEmpty(elemNsUri) && !IsNamespaceInScope(elemPrefixForFixup, elemNsUri))
                         {
-                            _output.Append(" xmlns:");
-                            _output.Append(elemPrefixForFixup);
+                            _output.Append(" xmlns");
+                            if (elemPrefixForFixup.Length > 0)
+                            {
+                                _output.Append(':');
+                                _output.Append(elemPrefixForFixup);
+                            }
                             _output.Append("=\"");
                             _output.Append(EscapeAttributeValue(elemNsUri));
                             _output.Append('"');

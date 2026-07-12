@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Serialization
+
+- **`xsl:copy-of copy-namespaces="no"` no longer drops a copied element's own default namespace.** When a deep copy retained only the namespaces used by each element's name, a descendant (or a copy root) whose default namespace was *inherited* rather than locally declared lost that namespace entirely and silently adopted an ancestor's default namespace in the new output context. A dropped (unused) namespace is no longer recorded in the serializer's in-scope tracking — so it can no longer make a descendant believe a namespace it never emitted is already in scope — and namespace fixup now covers the default namespace (prefix `""`), not only prefixed elements. Fixes copy-of of SOAP-style payloads with `copy-namespaces="no"` where a body element in a distinct default namespace was re-parented under a differently-namespaced envelope (insn/copy-4901, copy-5201).
+
 ### Packages
 
 - `xsl:key` declarations are now local to the package that declares them (XSLT 3.0 §3.6.2). A key name declared in a used (library) package is no longer visible to the using package, and two packages that each declare a key of the same name now index independently instead of merging into one shared index. `key()` resolves definitions against the package owning the executing template or function.
