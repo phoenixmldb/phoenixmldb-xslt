@@ -54,6 +54,12 @@ internal sealed class GlobalDeclaration
     public object? OriginalDeclaration { get; init; }
     public Uri? BaseUri { get; init; }
     public string? Version { get; init; }
+    /// <summary>
+    /// The used package that declared this global, or null for the principal package. Set as
+    /// the current component package while the global is evaluated so an intra-package
+    /// reference to a private sibling global resolves (private-across-boundary enforcement).
+    /// </summary>
+    public XsltStylesheet? PackageStylesheet { get; init; }
 }
 
 /// <summary>
@@ -2672,6 +2678,14 @@ public sealed class XsltTransformEngine
             var globalSbu = XsltTransformEngine.UriString(global.BaseUri);
             if (globalSbu != null)
                 context.PushStaticBaseUri(globalSbu);
+            // Report this global's owning package as the current component package while it is
+            // evaluated so an intra-package reference to a private sibling global resolves
+            // (private-across-boundary enforcement in GetVariable). null for the principal.
+            // Set BEFORE binding $xsl:original: that binding evaluates the OVERRIDDEN original,
+            // whose select may reference a private sibling of the same (used) package
+            // (override-v-001/003/004).
+            var savedGlobalPkg = context._currentGlobalPackage;
+            context._currentGlobalPackage = global.PackageStylesheet;
             // If this global is an overriding xsl:variable that references $xsl:original,
             // evaluate the overridden variable and bind $xsl:original for its select/content.
             var xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
@@ -3061,6 +3075,7 @@ public sealed class XsltTransformEngine
             }
             finally
             {
+                context._currentGlobalPackage = savedGlobalPkg;
                 if (xslOrigScopePushed)
                     context.PopScope();
                 if (globalSbu != null)
@@ -3148,6 +3163,12 @@ public sealed class XsltTransformEngine
         var globalSbu = XsltTransformEngine.UriString(global.BaseUri);
         if (globalSbu != null)
             context.PushStaticBaseUri(globalSbu);
+        // Report this global's owning package as the current component package while it is
+        // evaluated (private-across-boundary enforcement in GetVariable). null for principal.
+        // Set BEFORE binding $xsl:original (which evaluates the overridden original whose
+        // select may reference a private sibling of the used package — override-v-001/003/004).
+        var savedGlobalPkg = context._currentGlobalPackage;
+        context._currentGlobalPackage = global.PackageStylesheet;
         // Bind $xsl:original if this is an overriding xsl:variable referencing it.
         var xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
         try
@@ -3197,6 +3218,7 @@ public sealed class XsltTransformEngine
         }
         finally
         {
+            context._currentGlobalPackage = savedGlobalPkg;
             if (xslOrigScopePushed)
                 context.PopScope();
             if (globalSbu != null)
@@ -3286,7 +3308,8 @@ public sealed class XsltTransformEngine
                     As = variable.As,
                     OriginalDeclaration = variable,
                     BaseUri = variable.BaseUri,
-                    Version = variable.Version
+                    Version = variable.Version,
+                    PackageStylesheet = variable.PackageStylesheet
                 });
             }
         }
@@ -7642,6 +7665,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (pkg != null && _packageShadowGlobals.TryGetValue((pkg, name), out var shadowValue))
                 return shadowValue;
         }
+
+        // Private-across-boundary enforcement: a global that a used package declares without
+        // exposing it (private explicitly or by the package default) is invisible to any other
+        // package. It is still merged so the used package's own components can reference it, so
+        // only reject when the reference originates OUTSIDE the owning package
+        // (use-package-006 / use-package-007 → XPST0008). Intra-package references — the used
+        // package's own templates/functions/globals — carry a matching CurrentComponentPackage
+        // and resolve normally.
+        if (_stylesheet.PackagePrivateGlobals.Count > 0
+            && _stylesheet.PackagePrivateGlobals.TryGetValue(name, out var owningPackage)
+            && !ReferenceEquals(CurrentComponentPackage(), owningPackage))
+            throw Error($"XPST0008: Variable ${name.LocalName} is not visible (private to its package)");
 
         if (GlobalVariables.TryGetValue(name, out var globalValue))
         {
@@ -12563,7 +12598,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var value = GetVariable(varName);
                 return (true, ConvertRtfForXQuery(value));
             }
-            catch (XsltException ex) when (!ex.Message.Contains("XTDE0640", StringComparison.Ordinal))
+            catch (XsltException ex) when (!ex.Message.Contains("XTDE0640", StringComparison.Ordinal)
+                && !ex.Message.Contains("private to its package", StringComparison.Ordinal))
             {
                 return (false, null);
             }
@@ -12572,8 +12608,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Bind XSLT variables into XQuery context
         // Bind outer scopes first, then inner scopes, so inner scope values override (proper shadowing)
         // Convert ResultTreeFragments to XDM documents so XPath can navigate into them
+        var privateGlobals = _stylesheet.PackagePrivateGlobals;
+        var currentPkgForGlobals = privateGlobals.Count > 0 ? CurrentComponentPackage() : null;
         foreach (var (name, value) in GlobalVariables)
         {
+            // A global a used package keeps private must not be bound into an expression
+            // evaluated by a DIFFERENT package: leaving it unbound routes the reference through
+            // VariableFallback → GetVariable, which raises XPST0008 (use-package-006/007). The
+            // owning package's own components (matching CurrentComponentPackage) still see it.
+            if (privateGlobals.Count > 0
+                && privateGlobals.TryGetValue(name, out var owner)
+                && !ReferenceEquals(currentPkgForGlobals, owner))
+                continue;
             execContext.BindVariable(name, ConvertRtfForXQuery(value));
         }
         // Reverse iteration: bind outer scopes before inner scopes

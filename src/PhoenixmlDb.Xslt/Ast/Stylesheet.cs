@@ -105,6 +105,28 @@ public sealed class XsltStylesheet
     public List<XsltVariable> PackageLocalShadowVariables { get; init; } = new();
 
     /// <summary>
+    /// Global variables/parameters that a used package declares WITHOUT exposing across the
+    /// xsl:use-package boundary (private — explicitly, or by the package default). Each maps
+    /// the component's QName to its owning used package. Such a component is merged (so the
+    /// used package's own components may still reference it) but must not be resolvable from
+    /// the using package: a reference from any other package raises XPST0008
+    /// (use-package-006 / use-package-007). Empty for non-package stylesheets.
+    /// </summary>
+    public Dictionary<QName, XsltStylesheet> PackagePrivateGlobals { get; init; } = new();
+
+    /// <summary>
+    /// A global variable of a used package is visible across the xsl:use-package boundary only
+    /// when its visibility is EXPLICITLY public, final, or abstract (xsl:expose sets
+    /// <see cref="XsltVariable.ProvidedByPackage"/> directly instead). A variable whose
+    /// visibility merely defaulted to public — the parser's workaround so plain
+    /// xsl:import/xsl:include modules stay mutually visible — is private under xsl:package and
+    /// must not leak across the boundary. Callers pass <see cref="XsltVariable.VisibilityAttr"/>
+    /// (the raw attribute string, null when absent).
+    /// </summary>
+    public static bool VisibleAcrossPackageBoundary(string? visibilityAttr) =>
+        visibilityAttr is "public" or "final" or "abstract";
+
+    /// <summary>
     /// Functions (xsl:function).
     /// </summary>
     public Dictionary<(QName Name, int Arity), XsltFunction> Functions { get; init; } = new();
@@ -1792,6 +1814,17 @@ public sealed class XsltVariable
     /// (use-package-175 / use-package-176). Null for principal-package variables.
     /// </summary>
     public XsltStylesheet? PackageStylesheet { get; set; }
+
+    /// <summary>
+    /// True when the declaring used package exposes this global across its xsl:use-package
+    /// boundary — its effective visibility (after xsl:expose, BEFORE the using package's
+    /// xsl:accept) is public, final, or abstract. Captured at the boundary so a later
+    /// xsl:accept that lowers the component to private keeps it usable inside the using
+    /// package (a provided-then-accepted-private global is still visible), while a component
+    /// the used package never exposed stays invisible to any other package
+    /// (use-package-006 / use-package-007). Mirrors <see cref="XsltAttributeSet.ProvidedByPackage"/>.
+    /// </summary>
+    public bool ProvidedByPackage { get; set; }
 }
 
 /// <summary>

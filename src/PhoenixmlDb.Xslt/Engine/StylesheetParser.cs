@@ -1287,6 +1287,17 @@ public sealed class StylesheetParser
             attrSet.ProvidedByPackage =
                 attrSet.Visibility is Visibility.Public or Visibility.Final or Visibility.Abstract;
 
+        // Same capture for global variables: whether the used package exposes the variable
+        // across its boundary (explicit public/final/abstract — or exposed as such via
+        // xsl:expose, which pre-sets ProvidedByPackage). Done BEFORE xsl:accept so a later
+        // accept lowering to private keeps a provided variable usable, while a genuinely
+        // private variable (private, or the package default) stays invisible to other packages
+        // (use-package-006/007). The parser's public default (a workaround so plain
+        // xsl:import/xsl:include modules stay mutually visible) leaves VisibilityAttr null, so
+        // it is correctly treated as NOT provided. OR with any flag set by xsl:expose.
+        foreach (var variable in packageStylesheet.Variables)
+            variable.ProvidedByPackage |= XsltStylesheet.VisibleAcrossPackageBoundary(variable.VisibilityAttr);
+
         var acceptElements = new List<XElement>();
         foreach (var child in element.Elements())
         {
@@ -1729,6 +1740,9 @@ public sealed class StylesheetParser
                         if (packageStylesheet.Variables[i].Name.Equals(overrideVar.Name))
                         {
                             overrideVar.OriginalVariable = packageStylesheet.Variables[i];
+                            // An overriding variable targets a provided component of the used
+                            // package, so it is itself visible across the boundary (accept-040/046).
+                            overrideVar.ProvidedByPackage = true;
                             packageStylesheet.Variables[i] = overrideVar;
                             break;
                         }
@@ -2255,7 +2269,17 @@ public sealed class StylesheetParser
                             for (var i = 0; i < stylesheet.Variables.Count; i++)
                             {
                                 if (MatchesExposePattern(stylesheet.Variables[i].Name, token, isWildcard, expose.Element))
-                                    stylesheet.Variables[i] = CloneVariableWithVisibility(stylesheet.Variables[i], visibility);
+                                {
+                                    var exposedVar = CloneVariableWithVisibility(stylesheet.Variables[i], visibility);
+                                    // Record that xsl:expose explicitly set this variable's boundary
+                                    // visibility, so the use-package capture treats an exposed
+                                    // public/final/abstract variable as provided even though the
+                                    // clone leaves VisibilityAttr null (indistinguishable from the
+                                    // parser's public default otherwise).
+                                    exposedVar.ProvidedByPackage =
+                                        visibility is Visibility.Public or Visibility.Final or Visibility.Abstract;
+                                    stylesheet.Variables[i] = exposedVar;
+                                }
                             }
                             break;
                         case "attribute-set":
@@ -2376,7 +2400,8 @@ public sealed class StylesheetParser
         Name = v.Name, As = v.As, Select = v.Select, Content = v.Content,
         Static = v.Static, Visibility = vis, BaseUri = v.BaseUri, Version = v.Version,
         IsAbstract = v.IsAbstract || v.Visibility == Ast.Visibility.Abstract,
-        OriginalVariable = v.OriginalVariable
+        ProvidedByPackage = v.ProvidedByPackage,
+        OriginalVariable = v.OriginalVariable, PackageStylesheet = v.PackageStylesheet
     };
 
     private static Ast.XsltAttributeSet CloneAttributeSetWithVisibility(Ast.XsltAttributeSet a, Ast.Visibility v) => new()
@@ -2434,7 +2459,20 @@ public sealed class StylesheetParser
             else if (variable.Visibility is not Visibility.Hidden)
             {
                 if (!target.Variables.Any(v => v.Name.Equals(variable.Name)))
+                {
                     target.Variables.Add(variable);
+                    // A global the used package does not expose across its boundary (private —
+                    // explicitly or by the package default) is still merged so its own package's
+                    // components can reference it, but must not resolve from any other package.
+                    // Record (name → owning package); GetVariable enforces at resolution time
+                    // (use-package-006 / use-package-007). Only the global occupying the principal
+                    // QName slot is recorded — a same-named public sibling from another package
+                    // (diamond) claims the slot first and is provided, so the private one arrives
+                    // as a package-local shadow (below) and is resolved per calling package,
+                    // never entering this map.
+                    if (!variable.ProvidedByPackage)
+                        target.PackagePrivateGlobals[variable.Name] = package;
+                }
                 else
                 {
                     // A same-named global already claimed the principal QName slot (this happens
