@@ -26889,7 +26889,7 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         // Try exact QName lookup (for unprefixed names)
         var qname = new QName(NamespaceId.None, keyName);
         if (_context._stylesheet.Keys.TryGetValue(qname, out var keyDef))
-            return keyDef;
+            return FilterToCallingPackage(keyDef);
 
         // Handle namespace-prefixed key names like "baz:mykey"
         var colonIdx = keyName.IndexOf(':', StringComparison.Ordinal);
@@ -26905,13 +26905,48 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
                 var nsId = StylesheetParser.ResolveNamespaceUri(nsUri);
                 var nsQname = new QName(nsId, localName);
                 if (_context._stylesheet.Keys.TryGetValue(nsQname, out keyDef))
-                    return keyDef;
+                    return FilterToCallingPackage(keyDef);
             }
 
 
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Keys are LOCAL to their declaring package (XSLT 3.0 §3.6.2). Restrict the merged
+    /// key definition to only those component definitions declared in the CALLING package
+    /// (the package owning the executing template/function; <c>null</c> = principal).
+    /// If the calling package declares no key of this name, returns <c>null</c> so the
+    /// caller raises XTDE1260 (use-package-105); otherwise returns a view whose
+    /// definitions are exactly the calling package's (use-package-102). Non-package
+    /// stylesheets are unaffected: every key's <c>PackageStylesheet</c> is <c>null</c> and
+    /// the current package is <c>null</c>, so all definitions are retained as before.
+    /// </summary>
+    private PhoenixmlDb.Xslt.Ast.XsltKey? FilterToCallingPackage(PhoenixmlDb.Xslt.Ast.XsltKey keyDef)
+    {
+        var callingPackage = XsltFormatNumberEngine.GetCurrentPackageStylesheet(_context);
+        var kept = keyDef.AllDefinitions
+            .Where(d => ReferenceEquals(d.PackageStylesheet, callingPackage))
+            .ToList();
+        if (kept.Count == 0)
+            return null;
+        // Fast path: nothing was filtered out — return the original definition unchanged.
+        if (kept.Count == 1 && keyDef.OtherDefinitions is null && ReferenceEquals(kept[0], keyDef))
+            return keyDef;
+        var primary = kept[0];
+        return new PhoenixmlDb.Xslt.Ast.XsltKey
+        {
+            Name = primary.Name,
+            Match = primary.Match,
+            Use = primary.Use,
+            UseContent = primary.UseContent,
+            Collation = primary.Collation,
+            Composite = primary.Composite,
+            PackageStylesheet = primary.PackageStylesheet,
+            OtherDefinitions = kept.Count > 1 ? kept.Skip(1).ToList() : null
+        };
     }
 
     /// <summary>
@@ -29341,7 +29376,7 @@ internal static class XsltFormatNumberEngine
     /// Gets the PackageStylesheet from the current executing function/template.
     /// Returns null if not inside a package function.
     /// </summary>
-    private static Ast.XsltStylesheet? GetCurrentPackageStylesheet(DefaultXsltExecutionContext ctx)
+    internal static Ast.XsltStylesheet? GetCurrentPackageStylesheet(DefaultXsltExecutionContext ctx)
     {
         if (ctx._currentXsltFunctionStack.Count > 0)
             return ctx._currentXsltFunctionStack.Peek().PackageStylesheet;

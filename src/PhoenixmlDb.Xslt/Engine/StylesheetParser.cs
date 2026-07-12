@@ -2453,7 +2453,20 @@ public sealed class StylesheetParser
                 target.AttributeSets.TryAdd(name, attrSet);
         }
 
-        // Keys: merge
+        // Keys: merge into the principal registry (so eager namespace resolution and the
+        // shared key index continue to cover them), BUT stamp each definition with its
+        // owning package. Keys are LOCAL to their declaring package (XSLT 3.0 §3.6.2):
+        // key() resolves definitions only from the calling package, so a used-package key
+        // must never leak into the using package and same-named keys in different packages
+        // must index independently (use-package-102 / use-package-105). The per-package
+        // filtering happens at resolution time (XsltKeyFunction.ResolveKeyDefinition).
+        foreach (var (_, key) in package.Keys)
+        {
+            key.PackageStylesheet ??= package;
+            if (key.OtherDefinitions != null)
+                foreach (var other in key.OtherDefinitions)
+                    other.PackageStylesheet ??= package;
+        }
         foreach (var (name, key) in package.Keys)
         {
             if (target.Keys.TryGetValue(name, out var existing))

@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+### Packages
+
+- `xsl:key` declarations are now local to the package that declares them (XSLT 3.0 §3.6.2). A key name declared in a used (library) package is no longer visible to the using package, and two packages that each declare a key of the same name now index independently instead of merging into one shared index. `key()` resolves definitions against the package owning the executing template or function.
+
 ## 1.4.22 (2026-07-09)
 
 Serialization character-maps, pattern/mode conformance, and a concurrency-robustness fix. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.4. No API changes.

@@ -1843,6 +1843,16 @@ public sealed class XsltKey
 #pragma warning restore CA2227
 
     /// <summary>
+    /// The package (stylesheet) that declared this key. Keys are LOCAL to their
+    /// declaring package (XSLT 3.0 §3.6.2): a key name is resolvable only from code
+    /// in the same package. <c>null</c> means the principal (top-level) package.
+    /// Used to filter <see cref="AllDefinitions"/> to the calling package so that a
+    /// used-package key does not leak into the using package and same-named keys in
+    /// different packages index independently (use-package-102 / use-package-105).
+    /// </summary>
+    public XsltStylesheet? PackageStylesheet { get; set; }
+
+    /// <summary>
     /// Returns all definitions for this key name (including this one).
     /// </summary>
     public IEnumerable<XsltKey> AllDefinitions
