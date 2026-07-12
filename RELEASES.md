@@ -5,6 +5,10 @@
 ### Packages
 
 - `xsl:key` declarations are now local to the package that declares them (XSLT 3.0 §3.6.2). A key name declared in a used (library) package is no longer visible to the using package, and two packages that each declare a key of the same name now index independently instead of merging into one shared index. `key()` resolves definitions against the package owning the executing template or function.
+- Three more component kinds are now resolved package-locally, matching the same rule:
+  - **Global variables.** When a diamond of packages contributes a same-named global with different values — an `xsl:override` on the same variable along two routes, or two used versions of the same package — each package's components now see their own package's value instead of one shared binding.
+  - **Named `xsl:output` + `xsl:character-map`.** An `xsl:result-document`/`@format` naming an output declared in a used package now resolves that output, and its `use-character-maps`, against the declaring package (previously `XTDE1460`). A namespace that is the result namespace of an `xsl:namespace-alias` is now retained in the serialized result even when its prefix is in `exclude-result-prefixes`.
+  - **`xsl:namespace-alias`.** An alias now rewrites only literal result elements produced by components of the package that declared it, so two packages can alias the same stylesheet namespace to different result namespaces without interfering.
 
 ## 1.4.22 (2026-07-09)
 

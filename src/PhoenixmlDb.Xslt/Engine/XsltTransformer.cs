@@ -728,7 +728,11 @@ public sealed class XsltTransformEngine
 
         // Apply character maps: merge xsl:output maps with xsl:result-document maps.
         // Per XSLT 3.0 §20: result-document maps supplement and take precedence.
-        if (_stylesheet.CharacterMaps.Count > 0)
+        // Character maps are LOCAL to the package that declared the xsl:output referencing
+        // them: when outputDecl came from a used package, resolve its use-character-maps in
+        // that package's registry, not the principal's (use-package-108 / use-package-108b).
+        var charMaps = outputDecl?.PackageStylesheet?.CharacterMaps ?? _stylesheet.CharacterMaps;
+        if (charMaps.Count > 0)
         {
             var outputMaps = outputDecl?.UseCharacterMaps;
             var rdMaps = resultDocCharacterMaps;
@@ -741,7 +745,7 @@ public sealed class XsltTransformEngine
                 // When a normalization-form is in effect, bracket each replacement so the
                 // normalization pass below leaves character-map output alone (character-map-025/028).
                 output = ApplyCharacterMaps(output, mergedMaps, outputDecl?.EffectiveMethod ?? OutputMethod.Xml,
-                    protectMappedOutput: outputDecl?.NormalizationForm != null);
+                    protectMappedOutput: outputDecl?.NormalizationForm != null, charMaps: charMaps);
             }
         }
 
@@ -2183,8 +2187,11 @@ public sealed class XsltTransformEngine
     private const char MapGuardStart = '\uE000';
     private const char MapGuardEnd = '\uE001';
 
-    private string ApplyCharacterMaps(string output, List<QName> useCharacterMaps, OutputMethod method = OutputMethod.Xml, bool protectMappedOutput = false)
+    private string ApplyCharacterMaps(string output, List<QName> useCharacterMaps, OutputMethod method = OutputMethod.Xml, bool protectMappedOutput = false, Dictionary<QName, XsltCharacterMap>? charMaps = null)
     {
+        // Character maps resolve in the declaring package's registry (package-local per
+        // XSLT 3.0 §3.6.7); callers pass the used package's map when applicable.
+        charMaps ??= _stylesheet.CharacterMaps;
         // Collect character mappings from referenced maps in declaration order.
         // Later maps in the list override earlier ones (XSLT 3.0 §25.1). Keyed by Unicode
         // code point so astral characters participate (character-map-007/010).
@@ -2192,8 +2199,8 @@ public sealed class XsltTransformEngine
         var visited = new HashSet<QName>();
         foreach (var mapName in useCharacterMaps)
         {
-            if (_stylesheet.CharacterMaps.TryGetValue(mapName, out var map))
-                CollectCharacterMappings(map, allMappings, visited);
+            if (charMaps.TryGetValue(mapName, out var map))
+                CollectCharacterMappings(map, allMappings, visited, charMaps);
         }
 
         if (allMappings.Count == 0)
@@ -2522,16 +2529,17 @@ public sealed class XsltTransformEngine
         catch (System.Text.EncoderFallbackException) { return false; }
     }
 
-    private void CollectCharacterMappings(XsltCharacterMap map, Dictionary<int, string> target, HashSet<QName> visited)
+    private void CollectCharacterMappings(XsltCharacterMap map, Dictionary<int, string> target, HashSet<QName> visited, Dictionary<QName, XsltCharacterMap>? charMaps = null)
     {
+        charMaps ??= _stylesheet.CharacterMaps;
         if (!visited.Add(map.Name))
             return;
 
-        // First apply referenced character maps
+        // First apply referenced character maps (resolved in the same package registry)
         foreach (var refName in map.UseCharacterMaps)
         {
-            if (_stylesheet.CharacterMaps.TryGetValue(refName, out var refMap))
-                CollectCharacterMappings(refMap, target, visited);
+            if (charMaps.TryGetValue(refName, out var refMap))
+                CollectCharacterMappings(refMap, target, visited, charMaps);
         }
 
         // Then apply this map's own mappings (later declarations override earlier ones)
@@ -3065,6 +3073,57 @@ public sealed class XsltTransformEngine
         }
         // Clear pending map — all globals should be initialized now
         context._pendingGlobals = null;
+
+        // Initialize package-local shadow globals (same-named globals from a used package that
+        // could not take the principal QName slot). Each is evaluated in its OWN package's
+        // context and stored per (package, name) so a reference from that package resolves it
+        // ahead of the principal binding (use-package-175 / use-package-176).
+        await InitializePackageShadowGlobalsAsync(context).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Eagerly evaluates each package-local shadow global (see
+    /// <see cref="XsltStylesheet.PackageLocalShadowVariables"/>) in its declaring package's
+    /// context and records the value in the per-package overlay
+    /// (<see cref="DefaultXsltExecutionContext._packageShadowGlobals"/>). Non-package
+    /// stylesheets have no shadow variables, so this is a no-op for them.
+    /// </summary>
+    private static async Task InitializePackageShadowGlobalsAsync(DefaultXsltExecutionContext context)
+    {
+        var shadows = context._stylesheet.PackageLocalShadowVariables;
+        if (shadows.Count == 0)
+            return;
+
+        foreach (var variable in shadows)
+        {
+            var pkg = variable.PackageStylesheet;
+            if (pkg == null)
+                continue;
+            var key = (pkg, variable.Name);
+            if (context._packageShadowGlobals.ContainsKey(key))
+                continue;
+
+            // Report this package as the current one while evaluating so nested package-local
+            // resolution (this variable's select/content, decimal formats, etc.) sees it.
+            var savedGlobalPackage = context._currentGlobalPackage;
+            context._currentGlobalPackage = pkg;
+            try
+            {
+                object? value;
+                if (variable.Select != null)
+                    value = DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(
+                        await context.EvaluateAsync(variable.Select).ConfigureAwait(false), variable.As);
+                else if (variable.Content != null)
+                    value = await context.EvaluateSequenceConstructorAsync(variable.Content).ConfigureAwait(false);
+                else
+                    value = "";
+                context._packageShadowGlobals[key] = value;
+            }
+            finally
+            {
+                context._currentGlobalPackage = savedGlobalPackage;
+            }
+        }
     }
 
     /// <summary>
@@ -5135,6 +5194,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private readonly PhoenixmlDb.XQuery.ISchemaProvider? _schemaProvider;
 
     public Dictionary<QName, object?> GlobalVariables { get; } = new();
+
+    /// <summary>
+    /// Per-package overlay for package-local global variables that could not occupy the
+    /// principal QName-keyed <see cref="GlobalVariables"/> slot (a same-named global from
+    /// another package won it). Keyed by (owning package, variable name). A variable
+    /// reference resolves here FIRST when executed inside its owning package, so a diamond
+    /// override / different-version import (use-package-175 / use-package-176) sees each
+    /// package's own value. Empty (and never consulted) for non-package stylesheets.
+    /// </summary>
+    internal readonly Dictionary<(Ast.XsltStylesheet Package, QName Name), object?> _packageShadowGlobals = new();
+
+    /// <summary>
+    /// The package whose package-local global variable is currently being initialized, so
+    /// that CurrentComponentPackage()/GetCurrentPackageStylesheet() report it while no
+    /// template/function is on the stack (shadow-global eager evaluation). Null otherwise.
+    /// </summary>
+    internal Ast.XsltStylesheet? _currentGlobalPackage;
 
     // Cache optimized query plans by expression identity to avoid re-optimizing in loops
     private readonly Dictionary<XQueryExpression, PhoenixmlDb.XQuery.Execution.ExecutionPlan> _planCache = new(ReferenceEqualityComparer.Instance);
@@ -7527,6 +7603,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 return value;
             }
+        }
+
+        // Package-local shadow globals: when executing inside a used package whose same-named
+        // global lost the principal QName slot (diamond override / different version), resolve
+        // that package's own value FIRST (use-package-175 / use-package-176). Only consulted
+        // for package stylesheets; non-package code never populates this overlay.
+        if (_packageShadowGlobals.Count > 0)
+        {
+            var pkg = CurrentComponentPackage();
+            if (pkg != null && _packageShadowGlobals.TryGetValue((pkg, name), out var shadowValue))
+                return shadowValue;
         }
 
         if (GlobalVariables.TryGetValue(name, out var globalValue))
@@ -16091,7 +16178,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (_temporaryOutputDepth > 0)
             throw Error("XTDE1480: It is a dynamic error to evaluate xsl:result-document in temporary output state (e.g., within a variable or parameter)");
 
-        // XTDE1460: Validate format attribute and find matching output declaration
+        // XTDE1460: Validate format attribute and find matching output declaration.
+        // A NAMED xsl:output is LOCAL to its declaring package (XSLT 3.0 §3.6.7): when the
+        // executing xsl:result-document belongs to a used package, @format must resolve
+        // against THAT package's output declarations, not the principal's (use-package-108 /
+        // use-package-108b). Non-package code: CurrentComponentPackage is null → principal.
+        var formatOutputs = CurrentComponentPackage()?.Outputs ?? _stylesheet.Outputs;
         XsltOutput? matchedOutput = null;
         if (instruction.Format != null)
         {
@@ -16102,7 +16194,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (instruction.ResolvedFormatName != null)
                 {
                     var resolved = instruction.ResolvedFormatName.Value;
-                    matchedOutput = _stylesheet.Outputs.FirstOrDefault(o =>
+                    matchedOutput = formatOutputs.FirstOrDefault(o =>
                         o.Name != null && o.Name.Value.Namespace == resolved.Namespace && o.Name.Value.LocalName == resolved.LocalName);
                     if (matchedOutput == null)
                         throw Error($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') does not match any xsl:output declaration");
@@ -16158,7 +16250,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     if (formatNs != null)
                         formatNsId = StylesheetParser.ResolveNamespaceUri(formatNs);
 
-                    foreach (var output in _stylesheet.Outputs)
+                    foreach (var output in formatOutputs)
                     {
                         if (output.Name == null)
                             continue;
@@ -16923,7 +17015,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return _currentXsltFunctionStack.Peek().PackageStylesheet;
         if (_currentTemplateStack.Count > 0)
             return _currentTemplateStack.Peek().PackageStylesheet;
-        return null;
+        return _currentGlobalPackage;
     }
 
     internal QName ResolveAccumulatorName(string name)
@@ -22674,10 +22766,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         foreach (var (p, u) in instruction.NamespaceDeclarations)
             prefixToUri[p] = u;
 
+        // xsl:namespace-alias is LOCAL to its declaring package (XSLT 3.0 §3.6.7 / §11.1.2):
+        // it rewrites only literal result elements produced by code in the SAME package.
+        // A literal element constructed while executing a used package's component must be
+        // aliased by THAT package's declarations, not the principal's (use-package-103 /
+        // use-package-108b). Non-package stylesheets are unaffected: CurrentComponentPackage
+        // is null for principal-owned code, so the principal's merged map is used as before.
+        var nsAliases = CurrentComponentPackage()?.NamespaceAliases ?? _stylesheet.NamespaceAliases;
+
         // Apply namespace aliases to element name
         var elemPrefix = instruction.Name.Prefix;
         var elemLocalName = instruction.Name.LocalName;
-        if (_stylesheet.NamespaceAliases.Count > 0)
+        if (nsAliases.Count > 0)
         {
             // Determine the element's current namespace URI
             string elemNsUri;
@@ -22686,7 +22786,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             else
                 elemNsUri = prefixToUri.GetValueOrDefault("", ""); // Default namespace or empty
 
-            if (_stylesheet.NamespaceAliases.TryGetValue(elemNsUri, out var elemAlias))
+            if (nsAliases.TryGetValue(elemNsUri, out var elemAlias))
                 elemPrefix = string.IsNullOrEmpty(elemAlias.ResultPrefix) ? null : elemAlias.ResultPrefix;
         }
 
@@ -22710,7 +22810,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             var aPrefix = attrName.Prefix;
             if (aPrefix != null && prefixToUri.TryGetValue(aPrefix, out var aNsUri)
-                && _stylesheet.NamespaceAliases.TryGetValue(aNsUri, out var aAlias))
+                && nsAliases.TryGetValue(aNsUri, out var aAlias))
             {
                 usedPrefixes.Add(string.IsNullOrEmpty(aAlias.ResultPrefix) ? "" : aAlias.ResultPrefix);
             }
@@ -22727,7 +22827,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var effectivePrefix = prefix;
 
             // Apply namespace alias if this URI is aliased
-            if (_stylesheet.NamespaceAliases.TryGetValue(uri, out var alias))
+            if (nsAliases.TryGetValue(uri, out var alias))
             {
                 effectiveUri = alias.ResultUri;
                 effectivePrefix = alias.ResultPrefix;
@@ -22739,7 +22839,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 continue;
             // Skip XSLT namespace unless it's the result of a namespace alias
             if (effectiveUri == "http://www.w3.org/1999/XSL/Transform"
-                && !_stylesheet.NamespaceAliases.TryGetValue(uri, out _))
+                && !nsAliases.TryGetValue(uri, out _))
                 continue;
             if (effectiveUri == "http://www.w3.org/XML/1998/namespace")
                 continue;
@@ -22747,8 +22847,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (uri != effectiveUri && uri == "http://www.w3.org/1999/XSL/Transform")
                 continue;
 
+            // A namespace that is the RESULT namespace of an xsl:namespace-alias must appear
+            // in the result even if its prefix is in exclude-result-prefixes (XSLT 3.0 §11.1.3;
+            // use-package-108 / use-package-108b, W3C bug fix 2019-03-05). Exempt any binding
+            // whose (effective) URI is an alias result namespace from exclusion.
+            var isAliasResultNs = nsAliases.Count > 0
+                && nsAliases.Values.Any(a => a.ResultUri == effectiveUri);
             // Check exclude-result-prefixes using the ORIGINAL prefix (from stylesheet)
-            var isInUse = usedPrefixes.Contains(effectivePrefix);
+            var isInUse = usedPrefixes.Contains(effectivePrefix) || isAliasResultNs;
             if (!isInUse && (
                 instruction.ExcludeResultPrefixes.Contains("#all") ||
                 (!string.IsNullOrEmpty(prefix) && (_stylesheet.ExcludeResultPrefixes.Contains(prefix) || instruction.ExcludeResultPrefixes.Contains(prefix))) ||
@@ -22760,7 +22866,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         // Ensure the element's aliased namespace is declared if not already present
-        if (_stylesheet.NamespaceAliases.Count > 0 && elemPrefix != null)
+        if (nsAliases.Count > 0 && elemPrefix != null)
         {
             // The element uses an aliased prefix — make sure that prefix → URI binding exists
             string elemNsUri;
@@ -22769,7 +22875,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             else
                 elemNsUri = prefixToUri.GetValueOrDefault("", "");
 
-            if (_stylesheet.NamespaceAliases.TryGetValue(elemNsUri, out var eAlias)
+            if (nsAliases.TryGetValue(elemNsUri, out var eAlias)
                 && !nsBindings.ContainsKey(eAlias.ResultPrefix))
             {
                 nsBindings[eAlias.ResultPrefix] = eAlias.ResultUri;
@@ -22798,7 +22904,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // Apply namespace alias to attribute prefix
             var attrPrefix = name.Prefix;
             if (attrPrefix != null && prefixToUri.TryGetValue(attrPrefix, out var attrNsUri)
-                && _stylesheet.NamespaceAliases.TryGetValue(attrNsUri, out var attrAlias))
+                && nsAliases.TryGetValue(attrNsUri, out var attrAlias))
             {
                 attrPrefix = string.IsNullOrEmpty(attrAlias.ResultPrefix) ? null : attrAlias.ResultPrefix;
             }
@@ -22904,7 +23010,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         if (p == elemPrefix) { elemNsUri = u; break; }
                     }
                     // Apply namespace alias if applicable
-                    if (_stylesheet.NamespaceAliases.TryGetValue(elemNsUri, out var alias2))
+                    if (nsAliases.TryGetValue(elemNsUri, out var alias2))
                         elemNsUri = alias2.ResultUri;
                 }
                 if (xslUri != elemNsUri)
@@ -29382,7 +29488,7 @@ internal static class XsltFormatNumberEngine
             return ctx._currentXsltFunctionStack.Peek().PackageStylesheet;
         if (ctx._currentTemplateStack.Count > 0)
             return ctx._currentTemplateStack.Peek().PackageStylesheet;
-        return null;
+        return ctx._currentGlobalPackage;
     }
 
     /// <summary>

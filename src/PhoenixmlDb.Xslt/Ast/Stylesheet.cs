@@ -95,6 +95,16 @@ public sealed class XsltStylesheet
     public HashSet<QName> AbstractVariableNames { get; init; } = new();
 
     /// <summary>
+    /// Package-local global variables that could not take the principal QName-keyed slot
+    /// because a same-named global from another package already claimed it. Each is stamped
+    /// with its owning package (<see cref="XsltVariable.PackageStylesheet"/>) and resolved
+    /// per calling package at runtime, so a diamond override / different-version import
+    /// (use-package-175 / use-package-176) sees each package's own value rather than one
+    /// shared binding. Empty for non-package stylesheets.
+    /// </summary>
+    public List<XsltVariable> PackageLocalShadowVariables { get; init; } = new();
+
+    /// <summary>
     /// Functions (xsl:function).
     /// </summary>
     public Dictionary<(QName Name, int Arity), XsltFunction> Functions { get; init; } = new();
@@ -1760,6 +1770,17 @@ public sealed class XsltVariable
     /// resolves to the overridden component's value at runtime.
     /// </summary>
     public XsltVariable? OriginalVariable { get; set; }
+
+    /// <summary>
+    /// The library package (used via xsl:use-package) that declared this global variable.
+    /// Global variables are LOCAL to their declaring package (XSLT 3.0 §3.6): a reference
+    /// from a component resolves the variable as seen by THAT component's package. When two
+    /// packages contribute a same-named global with different values (diamond override or
+    /// different used versions), only one can occupy the principal QName-keyed slot; the
+    /// other is recorded as a package-local shadow and resolved per calling package
+    /// (use-package-175 / use-package-176). Null for principal-package variables.
+    /// </summary>
+    public XsltStylesheet? PackageStylesheet { get; set; }
 }
 
 /// <summary>
@@ -1896,6 +1917,16 @@ public sealed class XsltOutput
     public string? BuildTree { get; init; }
     public bool? AllowDuplicateNames { get; init; }
     public List<QName> UseCharacterMaps { get; init; } = new();
+
+    /// <summary>
+    /// The library package (used via xsl:use-package) that declared this xsl:output. Named
+    /// output declarations and their referenced xsl:character-maps are LOCAL to their
+    /// declaring package (XSLT 3.0 §3.6.7): xsl:result-document/@format naming this output
+    /// must resolve against, and its use-character-maps must be looked up in, THAT package
+    /// (use-package-108 / use-package-108b). Null for outputs declared in the principal
+    /// package; its character maps then resolve against the principal registry as before.
+    /// </summary>
+    public XsltStylesheet? PackageStylesheet { get; set; }
 #pragma warning disable CA2227 // Collection properties should be read only - needs post-init assignment
     /// <summary>
     /// Space-separated list of element QNames whose content should NOT be indented

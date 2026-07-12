@@ -2418,11 +2418,26 @@ public sealed class StylesheetParser
         // that references it is deferred rather than eagerly evaluated (accept-042/043).
         foreach (var variable in package.Variables)
         {
+            variable.PackageStylesheet ??= package;
             if (variable.Visibility is Visibility.Abstract || variable.IsAbstract)
                 target.AbstractVariableNames.Add(variable.Name);
-            else if (variable.Visibility is not Visibility.Hidden
-                && !target.Variables.Any(v => v.Name.Equals(variable.Name)))
-                target.Variables.Add(variable);
+            else if (variable.Visibility is not Visibility.Hidden)
+            {
+                if (!target.Variables.Any(v => v.Name.Equals(variable.Name)))
+                    target.Variables.Add(variable);
+                else
+                {
+                    // A same-named global already claimed the principal QName slot (this happens
+                    // in a diamond where two packages each expose a same-named global with a
+                    // different value — use-package-175/176). Globals are package-local, so keep
+                    // this one as a package-local shadow, resolved per calling package at runtime
+                    // rather than being silently dropped into the winner's single value. Key it by
+                    // the CONSUMING package boundary (the used package whose components reference
+                    // it), which is how those components' templates/functions are stamped.
+                    variable.PackageStylesheet = package;
+                    target.PackageLocalShadowVariables.Add(variable);
+                }
+            }
         }
 
         // Parameters: merge all
@@ -2503,7 +2518,15 @@ public sealed class StylesheetParser
 
         // Character maps, decimal formats, namespace aliases, and outputs are
         // package-local per XSLT 3.0 spec — they do NOT cross package boundaries.
-        // (use-package-101: "Decimal formats are local to a package")
+        // (use-package-101: "Decimal formats are local to a package"). They stay in the
+        // used package's own stylesheet and are resolved package-locally at runtime via the
+        // component's PackageStylesheet (decimal-format: FindDecimalFormatInStylesheet;
+        // namespace-alias: CreateLiteralElementCoreAsync). Stamp each named output with its
+        // owning package so xsl:result-document/@format naming it (from that package's own
+        // template) resolves the output AND its use-character-maps in that package
+        // (use-package-108 / use-package-108b).
+        foreach (var output in package.Outputs)
+            output.PackageStylesheet ??= package;
 
         // Namespace bindings: merge (needed for function name resolution across packages)
         foreach (var (prefix, uri) in package.Namespaces)
