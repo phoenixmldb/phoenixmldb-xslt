@@ -1217,7 +1217,10 @@ internal sealed class XQueryExpressionParser : IExpressionParser
 {
     // XSLT/XPath retains the namespace axis (deprecated but optional) — let it through.
     // XQuery's XQST0134 only applies when this parser is invoked from a pure XQuery context.
-    private readonly XQueryParserFacade _parser = new() { AllowNamespaceAxis = true };
+    // AllowRawAmpersand: XPath string literals have no entity references — the '&amp;' in the
+    // stylesheet source was already decoded to '&' by the XML parser before the XPath expression
+    // reached us — so a bare '&' is a literal ampersand (e.g. select="'Special characters$&amp;'").
+    private readonly XQueryParserFacade _parser = new() { AllowNamespaceAxis = true, AllowRawAmpersand = true };
 
     public XQueryExpression Parse(string expression)
     {

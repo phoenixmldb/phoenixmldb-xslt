@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Expressions
+
+- **A raw `&` in an XPath string literal no longer fails to parse.** An XPath string literal such as `select="'Special characters$&amp;'"` — where the XML parser has already decoded `&amp;` to a literal `&` before the expression reaches the XPath parser — previously raised `XPST0003: token recognition error`, because the underlying XQuery lexer treated `&` as the start of an entity reference. The stylesheet XPath parser now opts into `AllowRawAmpersand`, so a bare `&` is a literal ampersand (XPath, unlike XQuery, has no entity references). Fixes the whole W3C `misc/regex` test `regex-070` (modes a–l), which previously failed compilation as a unit because of a single `&` in one mode's default parameter.
+
 ### Serialization
 
 - **`xsl:copy-of copy-namespaces="no"` no longer drops a copied element's own default namespace.** When a deep copy retained only the namespaces used by each element's name, a descendant (or a copy root) whose default namespace was *inherited* rather than locally declared lost that namespace entirely and silently adopted an ancestor's default namespace in the new output context. A dropped (unused) namespace is no longer recorded in the serializer's in-scope tracking — so it can no longer make a descendant believe a namespace it never emitted is already in scope — and namespace fixup now covers the default namespace (prefix `""`), not only prefixed elements. Fixes copy-of of SOAP-style payloads with `copy-namespaces="no"` where a body element in a distinct default namespace was re-parented under a differently-namespaced envelope (insn/copy-4901, copy-5201).
