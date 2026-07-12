@@ -692,12 +692,23 @@ public sealed class XsltTransformEngine
 
     internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind)
     {
+        // A document (root) element in a namespace other than XHTML is "foreign" to the XHTML
+        // output method (Serialization 3.0 §XHTML): it is serialized by XML rules, so it gets no
+        // HTML empty-element minimization, no Content-Type meta, and no HTML5 DOCTYPE. An element
+        // in no namespace preserves the engine's existing lenient handling (treated as XHTML).
+        bool foreignXhtmlRoot = false;
         if (outputDecl != null)
         {
             // W3C Serialization 4.0 parameter validation. These serialization errors are
             // raised before any output is produced, matching PhoenixmlDb.XQuery's serializer
             // (SEPM0004 / SESU0007 / SESU0011 / SEPM0009 / SEPM0010).
             ValidateSerializationParameters(output, outputDecl);
+
+            if (outputDecl.EffectiveMethod == OutputMethod.Xhtml)
+            {
+                var rootNs = GetRootElementNamespace(output);
+                foreignXhtmlRoot = rootNs.Length > 0 && rootNs != "http://www.w3.org/1999/xhtml";
+            }
 
             if (outputDecl.EffectiveMethod == OutputMethod.Text)
             {
@@ -710,13 +721,15 @@ public sealed class XsltTransformEngine
                 if (kind != FinalizeKind.ResultDocument)
                     output = DefaultXsltExecutionContext.StripXmlMarkup(output);
             }
-            else if (outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml)
+            else if ((outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml)
+                     && !foreignXhtmlRoot)
             {
                 output = DefaultXsltExecutionContext.PostProcessHtmlOutput(output, outputDecl.EffectiveMethod);
             }
 
             // Insert <meta http-equiv="Content-Type"> in <head> when include-content-type is yes (default)
             if ((outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
+                !foreignXhtmlRoot &&
                 outputDecl.IncludeContentType != false)
             {
                 output = DefaultXsltExecutionContext.InsertContentTypeMeta(output, outputDecl);
@@ -803,6 +816,16 @@ public sealed class XsltTransformEngine
         if (outputDecl != null && outputDecl.DoctypeSystem != null)
         {
             output = InsertDoctype(output, outputDecl.DoctypePublic, outputDecl.DoctypeSystem);
+        }
+        // HTML5 DOCTYPE: html/xhtml output with html-version >= 5 emits "<!DOCTYPE name>" using the
+        // document element's serialized (case-preserving) name (Serialization 3.0 HTML/XHTML output
+        // methods; W3C bug 20264 ruling — a DOCTYPE is emitted even when only doctype-public is set).
+        // Skipped for a foreign-namespace XHTML root, which serializes by XML rules.
+        else if (outputDecl != null && !foreignXhtmlRoot &&
+                 outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml &&
+                 Html5DoctypeApplies(outputDecl))
+        {
+            output = InsertHtml5Doctype(output);
         }
 
         // Prepend UTF-8 BOM when byte-order-mark="yes"
@@ -1793,6 +1816,156 @@ public sealed class XsltTransformEngine
 
         // Insert before the root element, with a newline separator
         return output[..elemStart] + doctype + "\n" + output[elemStart..];
+    }
+
+    /// <summary>
+    /// True when the html/xhtml output method should emit an HTML5 DOCTYPE, i.e. the html-version
+    /// serialization parameter is present and parses to a decimal &gt;= 5.0 (leading/trailing
+    /// whitespace tolerated per attribute-value normalization).
+    /// </summary>
+    private static bool Html5DoctypeApplies(XsltOutput outputDecl)
+    {
+        var hv = outputDecl.HtmlVersion?.Trim();
+        if (string.IsNullOrEmpty(hv))
+            return false;
+        return decimal.TryParse(hv, NumberStyles.Number, CultureInfo.InvariantCulture, out var v) && v >= 5.0m;
+    }
+
+    /// <summary>
+    /// Inserts an HTML5 DOCTYPE declaration ("&lt;!DOCTYPE name&gt;") immediately before the
+    /// document element, after any XML declaration/BOM and any leading comments or processing
+    /// instructions. The doctype name is the serialized qualified name of the document element
+    /// (case-preserving) so "&lt;HTML&gt;" yields "&lt;!DOCTYPE HTML&gt;" per the serialization spec.
+    /// </summary>
+    private static string InsertHtml5Doctype(string output)
+    {
+        var searchStart = 0;
+        if (output.StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            var declEnd = output.IndexOf("?>", StringComparison.Ordinal);
+            if (declEnd >= 0)
+                searchStart = declEnd + 2;
+        }
+        if (searchStart < output.Length && output[searchStart] == '\uFEFF')
+            searchStart++;
+
+        var elemStart = FindDocumentElementStart(output, searchStart);
+        if (elemStart < 0 || elemStart >= output.Length - 1)
+            return output;
+
+        var nameStart = elemStart + 1;
+        var nameEnd = nameStart;
+        while (nameEnd < output.Length && output[nameEnd] != ' ' && output[nameEnd] != '>'
+               && output[nameEnd] != '/' && output[nameEnd] != '\t' && output[nameEnd] != '\n'
+               && output[nameEnd] != '\r')
+            nameEnd++;
+        if (nameEnd <= nameStart)
+            return output;
+
+        var rootName = output[nameStart..nameEnd];
+
+        // The HTML5 DOCTYPE is emitted only when the document element is the "html" element
+        // (Serialization 3.0; output-0213 expects no DOCTYPE when the root is e.g. <body>, and
+        // output-0724 when the root is <input>). The match is on the local name, case-insensitively
+        // (<HTML>/<HtMl> still qualify), and the emitted name preserves the element's exact spelling.
+        var localName = rootName;
+        var colon = rootName.IndexOf(':', StringComparison.Ordinal);
+        if (colon >= 0)
+            localName = rootName[(colon + 1)..];
+        if (!localName.Equals("html", StringComparison.OrdinalIgnoreCase))
+            return output;
+
+        return output[..elemStart] + $"<!DOCTYPE {rootName}>\n" + output[elemStart..];
+    }
+
+    /// <summary>
+    /// Returns the index of the '&lt;' that opens the document (root) element, skipping any
+    /// leading processing instructions and comments, starting the scan at <paramref name="from"/>.
+    /// Returns -1 if no element start tag is found.
+    /// </summary>
+    private static int FindDocumentElementStart(string output, int from)
+    {
+        var elemStart = output.IndexOf('<', from);
+        while (elemStart >= 0 && elemStart < output.Length - 1)
+        {
+            var nextChar = output[elemStart + 1];
+            if (nextChar == '?' || nextChar == '!')
+            {
+                elemStart = output.IndexOf('<', elemStart + 1);
+                continue;
+            }
+            break;
+        }
+        return elemStart;
+    }
+
+    /// <summary>
+    /// Returns the namespace URI of the document (root) element as declared in the serialized
+    /// output — the value of its default <c>xmlns</c> declaration, or the <c>xmlns:prefix</c>
+    /// declaration matching its prefix — or the empty string when the root is in no namespace.
+    /// Used to distinguish a genuine XHTML-namespace document from a foreign-namespace one.
+    /// </summary>
+    private static string GetRootElementNamespace(string output)
+    {
+        var searchStart = 0;
+        if (output.StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            var declEnd = output.IndexOf("?>", StringComparison.Ordinal);
+            if (declEnd >= 0)
+                searchStart = declEnd + 2;
+        }
+        var elemStart = FindDocumentElementStart(output, searchStart);
+        if (elemStart < 0)
+            return "";
+        var tagEnd = output.IndexOf('>', elemStart);
+        if (tagEnd < 0)
+            return "";
+        var tag = output.Substring(elemStart, tagEnd - elemStart + 1);
+
+        var nameEnd = 1;
+        while (nameEnd < tag.Length && tag[nameEnd] != ' ' && tag[nameEnd] != '>' && tag[nameEnd] != '/'
+               && tag[nameEnd] != '\t' && tag[nameEnd] != '\n' && tag[nameEnd] != '\r')
+            nameEnd++;
+        var qname = tag[1..nameEnd];
+        var colon = qname.IndexOf(':', StringComparison.Ordinal);
+        var declName = colon >= 0 ? "xmlns:" + qname[..colon] : "xmlns";
+        return ExtractStartTagAttributeValue(tag, declName);
+    }
+
+    /// <summary>
+    /// Extracts the quoted value of the attribute named <paramref name="attrName"/> from the
+    /// serialized start tag <paramref name="tag"/>, matching whole attribute names only. Returns
+    /// the empty string when the attribute is absent.
+    /// </summary>
+    private static string ExtractStartTagAttributeValue(string tag, string attrName)
+    {
+        var from = 0;
+        while (true)
+        {
+            var idx = tag.IndexOf(attrName, from, StringComparison.Ordinal);
+            if (idx < 0)
+                return "";
+            var before = idx == 0 ? ' ' : tag[idx - 1];
+            var afterIdx = idx + attrName.Length;
+            var after = afterIdx < tag.Length ? tag[afterIdx] : '\0';
+            var boundedBefore = before == ' ' || before == '\t' || before == '\n' || before == '\r';
+            var boundedAfter = after == '=' || after == ' ' || after == '\t';
+            if (boundedBefore && boundedAfter)
+            {
+                var eq = tag.IndexOf('=', afterIdx);
+                if (eq < 0)
+                    return "";
+                var q = eq + 1;
+                while (q < tag.Length && (tag[q] == ' ' || tag[q] == '\t'))
+                    q++;
+                if (q >= tag.Length || (tag[q] != '"' && tag[q] != '\''))
+                    return "";
+                var quote = tag[q];
+                var end = tag.IndexOf(quote, q + 1);
+                return end < 0 ? "" : tag.Substring(q + 1, end - q - 1);
+            }
+            from = idx + attrName.Length;
+        }
     }
 
     /// <summary>

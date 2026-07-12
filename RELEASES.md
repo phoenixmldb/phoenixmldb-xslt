@@ -1,5 +1,12 @@
 # Release History
 
+## Unreleased
+
+### Serialization
+
+- **HTML5 DOCTYPE for the `html`/`xhtml` output methods.** When `html-version` is 5 or greater and the document element is the `html` element, serialization now emits an HTML5 `<!DOCTYPE …>` immediately before the document element (after any XML declaration and any leading comment/PI). The doctype name preserves the element's exact spelling — `<HTML>` yields `<!DOCTYPE HTML>`, `<HtMl>` yields `<!DOCTYPE HtMl>` — and it is emitted even when only `doctype-public` (not `doctype-system`) is set (W3C bug 20264 ruling). No DOCTYPE is emitted when the document element is not `html` (e.g. a `<body>` or `<input>` root) (`output-0208`…`0210`, `0212`, `0229`, `0233`).
+- **Foreign-namespace XHTML documents serialize by XML rules.** For the `xhtml` output method, a document element in a namespace other than `http://www.w3.org/1999/xhtml` is treated as foreign: no HTML empty-element handling, no injected Content-Type `<meta>`, and no HTML5 DOCTYPE (`output-0214`). A document element in no namespace keeps the previous lenient handling.
+
 ## 1.4.23 (2026-07-12)
 
 A large conformance release across pattern matching, modes and accumulators, XSLT 3.0 packages, `xsl:copy` namespaces, and XPath string literals. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.5 (for the inherited-namespace `namespace::` axis and raw-`&` XPath string literals). No breaking API changes.
