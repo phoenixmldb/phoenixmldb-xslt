@@ -9,6 +9,7 @@
   - **Global variables.** When a diamond of packages contributes a same-named global with different values — an `xsl:override` on the same variable along two routes, or two used versions of the same package — each package's components now see their own package's value instead of one shared binding.
   - **Named `xsl:output` + `xsl:character-map`.** An `xsl:result-document`/`@format` naming an output declared in a used package now resolves that output, and its `use-character-maps`, against the declaring package (previously `XTDE1460`). A namespace that is the result namespace of an `xsl:namespace-alias` is now retained in the serialized result even when its prefix is in `exclude-result-prefixes`.
   - **`xsl:namespace-alias`.** An alias now rewrites only literal result elements produced by components of the package that declared it, so two packages can alias the same stylesheet namespace to different result namespaces without interfering.
+- Template-rule conflict resolution now honours cross-package import precedence (XSLT 3.0 §6.6.2). A template rule brought in via `xsl:use-package` has lower import precedence than the using package's own rules, including one supplied inside `xsl:override`. Import precedence dominates priority, so an override rule now wins over a used-package rule even when the used rule declares a higher priority; ties at the same precedence still fall back to priority then document order.
 
 ## 1.4.22 (2026-07-09)
 

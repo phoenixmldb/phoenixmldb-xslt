@@ -412,6 +412,17 @@ public sealed class XsltTemplate
     /// Reference to the originating package's stylesheet (for package-local declarations).
     /// </summary>
     public XsltStylesheet? PackageStylesheet { get; set; }
+
+    /// <summary>
+    /// Import precedence of this template rule for conflict resolution (XSLT 3.0 §6.6.2).
+    /// Higher wins. Defaults to 0. A template rule brought in via xsl:use-package has a
+    /// LOWER precedence than the using package's own declarations (including rules supplied
+    /// inside xsl:override), so import precedence dominates priority: when merging a used
+    /// package the parser shifts its rules down one level per use-package boundary. Regular
+    /// xsl:import precedence is handled structurally via nested template indexes, so this
+    /// field stays 0 for non-package template rules.
+    /// </summary>
+    public int ImportPrecedence { get; set; }
 }
 
 /// <summary>

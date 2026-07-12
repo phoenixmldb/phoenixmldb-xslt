@@ -4972,7 +4972,8 @@ internal sealed class TemplateIndex
                 Parameters = template.Parameters,
                 Body = template.Body,
                 Visibility = template.Visibility,
-                UnionGroupId = groupId
+                UnionGroupId = groupId,
+                ImportPrecedence = template.ImportPrecedence
             });
         }
         return result;
@@ -4989,10 +4990,11 @@ internal sealed class TemplateIndex
     {
         // Decorate with original index for stable sort
         var indexed = templates.Select((t, i) => (template: t, index: i)).ToList();
-        // Sort by priority descending, then by index descending (last-declared wins)
+        // Sort by import precedence descending (XSLT 3.0 §6.6.2 — precedence dominates
+        // priority), then priority descending, then by index descending (last-declared wins).
         indexed.Sort((a, b) =>
         {
-            var cmp = EffectivePriority(b.template).CompareTo(EffectivePriority(a.template));
+            var cmp = CompareForConflict(a.template, b.template);
             return cmp != 0 ? cmp : b.index.CompareTo(a.index);
         });
         for (var i = 0; i < templates.Count; i++)
@@ -5005,6 +5007,31 @@ internal sealed class TemplateIndex
     {
         return template.Priority ?? template.Match?.DefaultPriority ?? 0.5;
     }
+
+    /// <summary>Import precedence for conflict resolution; higher wins.</summary>
+    public static int EffectivePrecedence(XsltTemplate template) => template.ImportPrecedence;
+
+    /// <summary>
+    /// Orders two matching template rules for conflict resolution (XSLT 3.0 §6.6.2):
+    /// higher import precedence first, then higher priority. Returns a negative value if
+    /// <paramref name="a"/> should sort before (i.e. win over) <paramref name="b"/>.
+    /// Does not break ties by document order — callers handle that separately.
+    /// </summary>
+    private static int CompareForConflict(XsltTemplate a, XsltTemplate b)
+    {
+        var byPrec = EffectivePrecedence(b).CompareTo(EffectivePrecedence(a));
+        if (byPrec != 0)
+            return byPrec;
+        return EffectivePriority(b).CompareTo(EffectivePriority(a));
+    }
+
+    /// <summary>
+    /// True when two matching rules are genuinely ambiguous — same import precedence AND
+    /// same priority — which is the condition for XTDE0540 under on-multiple-match='fail'.
+    /// </summary>
+    public static bool SameConflictRank(XsltTemplate a, XsltTemplate b) =>
+        EffectivePrecedence(a) == EffectivePrecedence(b)
+        && EffectivePriority(a) == EffectivePriority(b);
 
     /// <summary>
     /// Resolves namespace URIs in patterns to NamespaceIds using the provided resolver.
@@ -5099,7 +5126,7 @@ internal sealed class TemplateIndex
                     templates = new List<XsltTemplate>(modeTemplates.Count + _allModeTemplates.Count);
                     templates.AddRange(modeTemplates);
                     templates.AddRange(_allModeTemplates);
-                    templates.Sort((a, b) => EffectivePriority(b).CompareTo(EffectivePriority(a)));
+                    templates.Sort(CompareForConflict);
                     _mergedModeCache[mode.Value] = templates;
                 }
             }
@@ -8170,12 +8197,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         while (next != null
                             && template.UnionGroupId != null
                             && next.UnionGroupId == template.UnionGroupId
-                            && TemplateIndex.EffectivePriority(next) == TemplateIndex.EffectivePriority(template))
+                            && TemplateIndex.SameConflictRank(next, template))
                         {
                             using var mc2 = AcquireMatchContext();
                             next = _templateIndex.FindMatchingTemplate(node, mode, mc2.Value, next);
                         }
-                        if (next != null && TemplateIndex.EffectivePriority(next) == TemplateIndex.EffectivePriority(template))
+                        if (next != null && TemplateIndex.SameConflictRank(next, template))
                             throw Error($"XTDE0540: Multiple template rules match the node in a mode with on-multiple-match='fail'");
                     }
                 }

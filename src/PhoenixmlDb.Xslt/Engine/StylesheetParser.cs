@@ -1226,6 +1226,16 @@ public sealed class StylesheetParser
         var packageBaseUri = new Uri(Path.GetFullPath(packageFile));
         var packageStylesheet = packageParser.Parse(packageXml, packageBaseUri, isLibraryPackage: true);
 
+        // Template rules brought in via xsl:use-package have LOWER import precedence than
+        // the using package's own declarations, including rules supplied inside xsl:override
+        // (XSLT 3.0 §6.6.2: import precedence dominates priority). Shift every rule already
+        // present in the used package down one level before overrides are applied; the
+        // override rules added below stay at the using package's baseline (0), so an override
+        // beats a used-package rule even when the used rule has higher priority. This shift
+        // is relative, so it composes across nested use-package boundaries.
+        foreach (var t in packageStylesheet.Templates)
+            t.ImportPrecedence -= 1;
+
         // First pass: apply overrides and collect overridden component names
         var overriddenTemplateNames = new HashSet<QName>();
         var overriddenFunctionKeys = new HashSet<(QName, int)>();
