@@ -2704,6 +2704,23 @@ public sealed class XsltTransformEngine
             }
             else if (c == '<')
             {
+                // A CDATA section is literal: an unrepresentable character inside it cannot be
+                // written as-is, so the section splits around it and the character is emitted as
+                // a numeric character reference OUTSIDE the CDATA — e.g.
+                // "<![CDATA[foo ]]>&#170;<![CDATA[ bar]]>" (W3C Serialization 4.0 §7.2;
+                // mirrors PhoenixmlDb.XQuery's WriteCDataEncodingAware). Any other "<" is markup.
+                const string cdataOpen = "<![CDATA[";
+                if (string.CompareOrdinal(output, i, cdataOpen, 0, cdataOpen.Length) == 0)
+                {
+                    var contentStart = i + cdataOpen.Length;
+                    var close = output.IndexOf("]]>", contentStart, StringComparison.Ordinal);
+                    if (close < 0) close = output.Length; // malformed; treat rest as content
+                    if (SplitCdataForEncoding(output, contentStart, close, enc, sb))
+                        changed = true;
+                    // Skip past the closing "]]>" (or to end when unterminated).
+                    i = close < output.Length ? close + 2 : output.Length - 1;
+                    continue;
+                }
                 inTag = true;
                 sb.Append(c);
                 continue;
@@ -2735,6 +2752,63 @@ public sealed class XsltTransformEngine
             }
         }
         return changed ? sb.ToString() : output;
+    }
+
+    /// <summary>
+    /// Re-serializes the CDATA content <c>output[contentStart..contentEnd)</c> into
+    /// <paramref name="sb"/>, keeping representable characters inside <c>&lt;![CDATA[…]]&gt;</c> runs
+    /// and emitting each character the target encoding cannot represent as a decimal numeric
+    /// character reference OUTSIDE the section (the section splits around it). Astral characters
+    /// (surrogate pairs) are handled as a single code point. Returns true if any character was
+    /// split out (i.e. the output differs from a single verbatim CDATA run).
+    /// </summary>
+    private static bool SplitCdataForEncoding(string output, int contentStart, int contentEnd,
+        System.Text.Encoding enc, StringBuilder sb)
+    {
+        // Preserve a genuinely-empty CDATA section verbatim (nothing to split).
+        if (contentStart >= contentEnd)
+        {
+            sb.Append("<![CDATA[]]>");
+            return false;
+        }
+        var run = new StringBuilder();
+        var changed = false;
+        void FlushRun()
+        {
+            if (run.Length == 0) return;
+            sb.Append("<![CDATA[").Append(run).Append("]]>");
+            run.Clear();
+        }
+        for (var i = contentStart; i < contentEnd; i++)
+        {
+            var c = output[i];
+            int codePoint;
+            var consumedLow = false;
+            if (char.IsHighSurrogate(c) && i + 1 < contentEnd && char.IsLowSurrogate(output[i + 1]))
+            {
+                codePoint = char.ConvertToUtf32(c, output[i + 1]);
+                consumedLow = true;
+            }
+            else
+            {
+                codePoint = c;
+            }
+
+            if (codePoint > 0x7F && !IsEncodable(codePoint, enc))
+            {
+                FlushRun();
+                sb.Append("&#").Append(codePoint.ToString(CultureInfo.InvariantCulture)).Append(';');
+                if (consumedLow) i++;
+                changed = true;
+            }
+            else
+            {
+                run.Append(c);
+                if (consumedLow) { run.Append(output[i + 1]); i++; }
+            }
+        }
+        FlushRun();
+        return changed;
     }
 
     /// <summary>Returns true if <paramref name="codePoint"/> round-trips through
