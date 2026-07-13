@@ -735,6 +735,15 @@ public sealed class XsltTransformEngine
             else if ((outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml)
                      && !foreignXhtmlRoot)
             {
+                // XHTML method: elements in the HTML5 content namespaces (XHTML, SVG, MathML) that
+                // are bound via a prefix in the result tree are serialized in the conventional
+                // default-namespace form — local element name + default xmlns declaration
+                // (Serialization 3.0 XHTML output method; output-0211/0221/0225/0226). Runs before
+                // PostProcessHtmlOutput/DOCTYPE emission so void-element handling and the HTML5
+                // DOCTYPE name see the stripped local names. Foreign-namespace elements keep their
+                // prefixes (XML rules).
+                if (outputDecl.EffectiveMethod == OutputMethod.Xhtml)
+                    output = DefaultXsltExecutionContext.RedefaultXhtmlNamespaces(output);
                 output = DefaultXsltExecutionContext.PostProcessHtmlOutput(output, outputDecl.EffectiveMethod);
             }
 
@@ -25494,6 +25503,296 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Post-processes output for HTML/XHTML method.
     /// Converts self-closing void elements to HTML style and expands non-void self-closing elements.
     /// </summary>
+    /// <summary>
+    /// The three namespaces that are serialized as HTML5 content by the XHTML output method:
+    /// XHTML, SVG, and MathML. Elements in these namespaces are emitted with their local name and
+    /// a default <c>xmlns</c> declaration (prefixes are stripped); elements in any other namespace
+    /// are foreign content and keep their prefixes (XML rules).
+    /// </summary>
+    private static readonly System.Collections.Generic.HashSet<string> Html5ContentNamespaces = new(StringComparer.Ordinal)
+    {
+        "http://www.w3.org/1999/xhtml",
+        "http://www.w3.org/2000/svg",
+        "http://www.w3.org/1998/Math/MathML",
+    };
+
+    /// <summary>
+    /// Rewrites the serialized XHTML-method output so that elements in the HTML5 content namespaces
+    /// (XHTML, SVG, MathML) which are bound via a namespace <em>prefix</em> are re-expressed in the
+    /// conventional default-namespace form: the element name becomes its local name and the
+    /// namespace is declared as the default <c>xmlns</c> (dropping the now-unused
+    /// <c>xmlns:prefix</c> declaration). Foreign-namespace elements, prefixed attributes, and
+    /// elements already using the default namespace are left untouched. The input is well-formed,
+    /// XML-escaped markup with no XML/DOCTYPE prolog yet prepended (this runs inside FinalizeOutput
+    /// before those steps). Serialization 3.0, XHTML output method; W3C output-0211/0221/0225/0226.
+    /// </summary>
+    internal static string RedefaultXhtmlNamespaces(string output)
+    {
+        // Fast path: without a prefixed namespace declaration nothing uses a prefix.
+        if (output.IndexOf("xmlns:", StringComparison.Ordinal) < 0)
+            return output;
+
+        static bool IsWs(char c) => c == ' ' || c == '\t' || c == '\n' || c == '\r';
+
+        var sb = new StringBuilder(output.Length);
+        // Namespace scope: one frame per open element, prefix -> uri ("" = default namespace).
+        var scopes = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>>();
+        // The element name to emit for each open element's matching end tag.
+        var openNames = new System.Collections.Generic.List<string>();
+
+        int i = 0, n = output.Length;
+        while (i < n)
+        {
+            char c = output[i];
+            if (c != '<')
+            {
+                sb.Append(c);
+                i++;
+                continue;
+            }
+
+            char c1 = i + 1 < n ? output[i + 1] : '\0';
+
+            // Comments, CDATA sections, and declarations are copied verbatim.
+            if (c1 == '!')
+            {
+                if (output.AsSpan(i).StartsWith("<!--"))
+                {
+                    int end = output.IndexOf("-->", i + 4, StringComparison.Ordinal);
+                    end = end < 0 ? n : end + 3;
+                    sb.Append(output, i, end - i);
+                    i = end;
+                    continue;
+                }
+                if (output.AsSpan(i).StartsWith("<![CDATA["))
+                {
+                    int end = output.IndexOf("]]>", i + 9, StringComparison.Ordinal);
+                    end = end < 0 ? n : end + 3;
+                    sb.Append(output, i, end - i);
+                    i = end;
+                    continue;
+                }
+                int gt0 = output.IndexOf('>', i);
+                gt0 = gt0 < 0 ? n : gt0 + 1;
+                sb.Append(output, i, gt0 - i);
+                i = gt0;
+                continue;
+            }
+            if (c1 == '?')
+            {
+                int end = output.IndexOf("?>", i + 2, StringComparison.Ordinal);
+                end = end < 0 ? n : end + 2;
+                sb.Append(output, i, end - i);
+                i = end;
+                continue;
+            }
+            if (c1 == '/')
+            {
+                int gt = output.IndexOf('>', i);
+                if (gt < 0)
+                {
+                    sb.Append(output, i, n - i);
+                    i = n;
+                    continue;
+                }
+                string emit;
+                if (openNames.Count > 0)
+                {
+                    emit = openNames[^1];
+                    openNames.RemoveAt(openNames.Count - 1);
+                }
+                else
+                {
+                    emit = output.Substring(i + 2, gt - (i + 2));
+                }
+                if (scopes.Count > 0)
+                    scopes.RemoveAt(scopes.Count - 1);
+                sb.Append("</").Append(emit).Append('>');
+                i = gt + 1;
+                continue;
+            }
+
+            // Start or empty-element tag: locate the closing '>' honoring quoted attribute values.
+            int p = i + 1;
+            while (p < n && output[p] != '>')
+            {
+                if (output[p] == '"' || output[p] == '\'')
+                {
+                    char q = output[p];
+                    p++;
+                    while (p < n && output[p] != q)
+                        p++;
+                }
+                p++;
+            }
+            if (p >= n)
+            {
+                sb.Append(output, i, n - i);
+                i = n;
+                continue;
+            }
+            bool selfClose = output[p - 1] == '/';
+            int innerEnd = selfClose ? p - 1 : p;
+            string inner = output.Substring(i + 1, innerEnd - (i + 1));
+
+            // Split element name from attribute text.
+            int k = 0;
+            while (k < inner.Length && !IsWs(inner[k]))
+                k++;
+            string qname = inner[..k];
+            string attrsPart = inner[k..];
+
+            // Parse attributes, preserving each attribute's leading whitespace so the tag can be
+            // rebuilt verbatim minus the dropped namespace declaration.
+            var attrs = new System.Collections.Generic.List<(string ws, string name, string eqValue)>();
+            string trailing = "";
+            int a = 0;
+            while (a < attrsPart.Length)
+            {
+                int wsStart = a;
+                while (a < attrsPart.Length && IsWs(attrsPart[a]))
+                    a++;
+                string ws = attrsPart[wsStart..a];
+                if (a >= attrsPart.Length)
+                {
+                    trailing = ws;
+                    break;
+                }
+                int nameStart = a;
+                while (a < attrsPart.Length && attrsPart[a] != '=' && !IsWs(attrsPart[a]))
+                    a++;
+                string name = attrsPart[nameStart..a];
+                while (a < attrsPart.Length && IsWs(attrsPart[a]))
+                    a++;
+                string eqValue = "";
+                if (a < attrsPart.Length && attrsPart[a] == '=')
+                {
+                    int evStart = a;
+                    a++;
+                    while (a < attrsPart.Length && IsWs(attrsPart[a]))
+                        a++;
+                    if (a < attrsPart.Length && (attrsPart[a] == '"' || attrsPart[a] == '\''))
+                    {
+                        char q = attrsPart[a];
+                        a++;
+                        while (a < attrsPart.Length && attrsPart[a] != q)
+                            a++;
+                        if (a < attrsPart.Length)
+                            a++;
+                    }
+                    eqValue = attrsPart[evStart..a];
+                }
+                attrs.Add((ws, name, eqValue));
+            }
+
+            // Namespace declarations on this element.
+            var localDecls = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var (_, name, eqValue) in attrs)
+            {
+                if (name == "xmlns")
+                    localDecls[""] = ExtractQuotedValue(eqValue);
+                else if (name.StartsWith("xmlns:", StringComparison.Ordinal))
+                    localDecls[name[6..]] = ExtractQuotedValue(eqValue);
+            }
+
+            string prefix = "";
+            string local = qname;
+            int colon = qname.IndexOf(':', StringComparison.Ordinal);
+            if (colon >= 0)
+            {
+                prefix = qname[..colon];
+                local = qname[(colon + 1)..];
+            }
+
+            string LookupInScopes(string pfx)
+            {
+                for (int s = scopes.Count - 1; s >= 0; s--)
+                    if (scopes[s].TryGetValue(pfx, out var v))
+                        return v;
+                return "";
+            }
+            string elemUri = localDecls.TryGetValue(prefix, out var eu) ? eu : LookupInScopes(prefix);
+            // The default namespace inherited from ancestors (this element's own default xmlns
+            // declaration, if any, is handled separately below).
+            string inheritedDefault = LookupInScopes("");
+
+            bool strip = prefix.Length > 0 && Html5ContentNamespaces.Contains(elemUri);
+
+            string outName;
+            if (strip)
+            {
+                outName = local;
+                bool hasOwnDefaultDecl = localDecls.ContainsKey("");
+                string? neededXmlns = !hasOwnDefaultDecl && inheritedDefault != elemUri ? elemUri : null;
+
+                sb.Append('<').Append(outName);
+                if (neededXmlns != null)
+                    sb.Append(" xmlns=\"").Append(neededXmlns).Append('"');
+                foreach (var (ws, name, eqValue) in attrs)
+                {
+                    if (name == "xmlns:" + prefix)
+                        continue;
+                    sb.Append(ws).Append(name).Append(eqValue);
+                }
+                sb.Append(trailing);
+                if (selfClose)
+                    sb.Append('/');
+                sb.Append('>');
+            }
+            else
+            {
+                outName = qname;
+                sb.Append(output, i, p + 1 - i);
+            }
+
+            if (!selfClose)
+            {
+                // Push the child scope. Reflect the output namespace state: a stripped element that
+                // gained a default declaration makes that its children's default namespace.
+                var frame = new System.Collections.Generic.Dictionary<string, string>(localDecls, StringComparer.Ordinal);
+                if (strip)
+                    frame[""] = elemUri;
+                scopes.Add(frame);
+                openNames.Add(outName);
+            }
+            i = p + 1;
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Extracts the literal value from an attribute's <c>=value</c> segment (e.g. <c>="foo"</c>),
+    /// stripping the leading <c>=</c>, surrounding whitespace, and quote characters.
+    /// </summary>
+    private static string ExtractQuotedValue(string eqValue)
+    {
+        int start = -1;
+        char quote = '"';
+        for (int j = 0; j < eqValue.Length; j++)
+        {
+            if (eqValue[j] == '"' || eqValue[j] == '\'')
+            {
+                start = j;
+                quote = eqValue[j];
+                break;
+            }
+        }
+        if (start < 0)
+            return "";
+        int end = -1;
+        for (int j = start + 1; j < eqValue.Length; j++)
+        {
+            if (eqValue[j] == quote)
+            {
+                end = j;
+                break;
+            }
+        }
+        if (end < 0)
+            return "";
+        return eqValue[(start + 1)..end];
+    }
+
     internal static string PostProcessHtmlOutput(string output, OutputMethod method = OutputMethod.Html)
     {
         // Convert <br/> → <br> (HTML) or <br /> (XHTML) for void elements,

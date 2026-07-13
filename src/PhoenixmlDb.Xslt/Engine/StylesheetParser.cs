@@ -4736,7 +4736,10 @@ public sealed class StylesheetParser
             Name = element.Attribute("name") != null
                 ? ParseQName(element.Attribute("name")!.Value, element)
                 : null,
-            Method = element.Attribute("method")?.Value switch
+            // The method value is a whitespace-collapsed token: leading/trailing whitespace is
+            // stripped before matching (output-0221 uses method=" xhtml "). Validation above already
+            // trims; the actual mapping must trim too or a padded value silently degrades to xml.
+            Method = element.Attribute("method")?.Value.Trim() switch
             {
                 "xml" => OutputMethod.Xml,
                 "html" => OutputMethod.Html,
