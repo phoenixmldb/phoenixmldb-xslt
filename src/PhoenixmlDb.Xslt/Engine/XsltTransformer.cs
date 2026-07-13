@@ -2234,20 +2234,47 @@ public sealed class XsltTransformEngine
             }
             else if (suppressDepth > 0)
             {
-                // Inside a suppressed element: skip indentation whitespace before tags
-                // (whitespace-only runs that precede a '<')
-                int wsStart = pos;
-                while (pos < output.Length && (output[pos] == ' ' || output[pos] == '\t'
-                       || output[pos] == '\n' || output[pos] == '\r'))
-                    pos++;
-                if (pos < output.Length && output[pos] == '<')
+                // Inside a suppressed element.
+                if (output[pos] == ' ' || output[pos] == '\t' || output[pos] == '\n' || output[pos] == '\r')
                 {
-                    // This was indentation whitespace before a tag — skip it
+                    // Whitespace run. The indentation the indenter inserted before a suppressed
+                    // element's closing tag is always a newline followed by spaces ('\n' + indent).
+                    // When a whitespace run both contains a newline and precedes a tag, only the
+                    // part from the FIRST newline onward is inserted indentation to drop; anything
+                    // before that newline is significant text whitespace (e.g. a trailing space in
+                    // the source content) and must be preserved. A run with no newline, or one not
+                    // followed by a tag, is entirely significant text whitespace.
+                    int wsStart = pos;
+                    int firstNewline = -1;
+                    while (pos < output.Length && (output[pos] == ' ' || output[pos] == '\t'
+                           || output[pos] == '\n' || output[pos] == '\r'))
+                    {
+                        if (firstNewline < 0 && (output[pos] == '\n' || output[pos] == '\r'))
+                            firstNewline = pos;
+                        pos++;
+                    }
+                    bool precedesTag = pos < output.Length && output[pos] == '<';
+                    if (firstNewline >= 0 && precedesTag)
+                    {
+                        // Preserve the significant prefix before the inserted indentation; drop the
+                        // '\n' + indent that the indenter added.
+                        if (firstNewline > wsStart)
+                            sb.Append(output, wsStart, firstNewline - wsStart);
+                    }
+                    else
+                    {
+                        sb.Append(output, wsStart, pos - wsStart);
+                    }
                 }
                 else
                 {
-                    // Not followed by a tag — preserve the text content
-                    sb.Append(output, wsStart, pos - wsStart);
+                    // Non-whitespace text content inside a suppressed element: preserve it
+                    // verbatim and advance. (The previous code did not advance pos here, so the
+                    // first text character inside a suppressed element — e.g. the 'L' of a
+                    // <p>Lorem…</p> under suppress-indentation="p" — spun the loop forever:
+                    // the decl/output-0725/0726 hang.)
+                    sb.Append(output[pos]);
+                    pos++;
                 }
             }
             else
