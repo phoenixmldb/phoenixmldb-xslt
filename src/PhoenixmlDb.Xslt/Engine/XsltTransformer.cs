@@ -870,6 +870,17 @@ public sealed class XsltTransformEngine
                 .Replace("\uFDD2", "&", StringComparison.Ordinal);
         }
 
+        // HTML output method: script and style are CDATA (raw-text) elements \u2014 their content is
+        // serialized verbatim with no XML escaping (Serialization 3.0, HTML output; output-0154/
+        // 0159). The element tree is escaped as normal XML up to this point so every preceding
+        // tag-scanning post-processor (PostProcessHtmlOutput, InsertContentTypeMeta, indentation,
+        // EscapeUriAttributes) sees well-formed markup; only now, as the final step, is the
+        // XML-escaping of script/style *content* reversed so <, >, & appear literally.
+        if (outputDecl?.EffectiveMethod == OutputMethod.Html)
+        {
+            output = DefaultXsltExecutionContext.UnescapeHtmlRawTextElements(output);
+        }
+
         return output;
     }
 
@@ -25475,6 +25486,124 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 sb.Append(output[i]);
                 i++;
             }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Reverses XML escaping inside the content of HTML raw-text (CDATA) elements — <c>script</c>
+    /// and <c>style</c> — for the HTML output method. Per the XSLT/XQuery Serialization 3.0 HTML
+    /// output method, the content of these elements is emitted verbatim: <c>&lt;</c>, <c>&gt;</c>
+    /// and <c>&amp;</c> are NOT escaped (output-0154/0159). The rest of the tree keeps normal XML
+    /// escaping. Element-name matching is case-insensitive; the start tag must be a real element
+    /// tag (not a comment/PI/declaration). Content ends at the matching case-insensitive
+    /// <c>&lt;/script&gt;</c> / <c>&lt;/style&gt;</c> end tag. Only the XML metacharacter entities
+    /// (<c>&amp;lt;</c>, <c>&amp;gt;</c>, <c>&amp;amp;</c>, <c>&amp;quot;</c>, <c>&amp;apos;</c>)
+    /// are reversed — numeric character references are left untouched.
+    /// </summary>
+    internal static string UnescapeHtmlRawTextElements(string output)
+    {
+        // Fast path: nothing to do when neither raw-text element is present.
+        if (output.IndexOf("script", StringComparison.OrdinalIgnoreCase) < 0
+            && output.IndexOf("style", StringComparison.OrdinalIgnoreCase) < 0)
+            return output;
+
+        StringBuilder? sb = null;
+        var i = 0;
+        var appendedFrom = 0;
+        while (i < output.Length)
+        {
+            // Look for a start tag "<script" or "<style" whose name is delimited by a tag
+            // boundary character (so "<scripting" or "<styles" do not match).
+            if (output[i] != '<' || i + 1 >= output.Length
+                || output[i + 1] == '/' || output[i + 1] == '!' || output[i + 1] == '?')
+            {
+                i++;
+                continue;
+            }
+            var name = MatchRawTextElementName(output, i + 1);
+            if (name == null)
+            {
+                i++;
+                continue;
+            }
+            // Find end of the start tag.
+            var tagEnd = output.IndexOf('>', i + 1);
+            if (tagEnd < 0)
+                break;
+            // A self-closing start tag (<script .../>) has no text content to unescape.
+            if (output[tagEnd - 1] == '/')
+            {
+                i = tagEnd + 1;
+                continue;
+            }
+            var contentStart = tagEnd + 1;
+            // Locate the matching end tag "</name" (case-insensitive).
+            var endTag = "</" + name;
+            var endIdx = output.IndexOf(endTag, contentStart, StringComparison.OrdinalIgnoreCase);
+            if (endIdx < 0)
+            {
+                i = contentStart;
+                continue;
+            }
+            // Emit everything up to the content verbatim, then the unescaped content.
+            sb ??= new StringBuilder(output.Length);
+            sb.Append(output, appendedFrom, contentStart - appendedFrom);
+            sb.Append(UnescapeXmlMetacharacters(output.AsSpan(contentStart, endIdx - contentStart)));
+            appendedFrom = endIdx;
+            i = endIdx;
+        }
+        if (sb == null)
+            return output;
+        sb.Append(output, appendedFrom, output.Length - appendedFrom);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// If the text at <paramref name="pos"/> is the local name <c>script</c> or <c>style</c>
+    /// (case-insensitive) followed by a tag-name boundary, returns the canonical lowercase name;
+    /// otherwise <c>null</c>.
+    /// </summary>
+    private static string? MatchRawTextElementName(string s, int pos)
+    {
+        foreach (var name in new[] { "script", "style" })
+        {
+            if (pos + name.Length <= s.Length
+                && s.AsSpan(pos, name.Length).Equals(name.AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                var after = pos + name.Length;
+                var boundary = after >= s.Length || s[after] is ' ' or '\t' or '\n' or '\r' or '>' or '/';
+                if (boundary)
+                    return name;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Reverses the five XML metacharacter entity references (<c>&amp;lt;</c>, <c>&amp;gt;</c>,
+    /// <c>&amp;amp;</c>, <c>&amp;quot;</c>, <c>&amp;apos;</c>) to their literal characters.
+    /// Numeric and other character references are left unchanged.
+    /// </summary>
+    private static string UnescapeXmlMetacharacters(ReadOnlySpan<char> content)
+    {
+        if (content.IndexOf('&') < 0)
+            return content.ToString();
+        var sb = new StringBuilder(content.Length);
+        var i = 0;
+        while (i < content.Length)
+        {
+            if (content[i] == '&')
+            {
+                var rest = content[i..];
+                if (rest.StartsWith("&lt;")) { sb.Append('<'); i += 4; continue; }
+                if (rest.StartsWith("&gt;")) { sb.Append('>'); i += 4; continue; }
+                if (rest.StartsWith("&amp;")) { sb.Append('&'); i += 5; continue; }
+                if (rest.StartsWith("&quot;")) { sb.Append('"'); i += 6; continue; }
+                if (rest.StartsWith("&apos;")) { sb.Append('\''); i += 6; continue; }
+            }
+            sb.Append(content[i]);
+            i++;
         }
         return sb.ToString();
     }

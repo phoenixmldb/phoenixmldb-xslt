@@ -73,4 +73,89 @@ public class HtmlSerializationMethodTests
         System.Text.RegularExpressions.Regex.Count(result, "http-equiv=\"Content-Type\"",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase).Should().Be(1);
     }
+
+    [Fact]
+    public async Task HtmlScript_ContentIsRawText_NotXmlEscaped()
+    {
+        // HTML method: script is a CDATA (raw-text) element — its content is emitted verbatim,
+        // < > & are NOT escaped (output-0154). document.write("<EM>…</EM>") stays literal.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="html" indent="no"/>
+              <xsl:template match="/"><html><head>
+                <script type="text/javascript">document.write ("&lt;EM&gt;This will work&lt;\/EM&gt;")</script>
+              </head><body/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("document.write (\"<EM>This will work<\\/EM>\")");
+        result.Should().NotContain("&lt;EM&gt;");
+    }
+
+    [Fact]
+    public async Task HtmlStyle_ContentIsRawText_NotXmlEscaped()
+    {
+        // HTML method: style is likewise a raw-text (CDATA) element (output-0159).
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="html" indent="no"/>
+              <xsl:template match="/"><html><head>
+                <style>&lt; &gt; &amp;</style>
+              </head><body/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("<style>< > &</style>");
+    }
+
+    [Fact]
+    public async Task HtmlScript_ElementNameMatchIsCaseInsensitive()
+    {
+        // HTML element-name matching is case-insensitive: SCRIPT is still a raw-text element.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="html" indent="no"/>
+              <xsl:template match="/"><html><head>
+                <SCRIPT>if (a &lt; b &amp;&amp; b &gt; c) {}</SCRIPT>
+              </head><body/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("if (a < b && b > c) {}");
+        result.Should().NotContain("&lt;");
+        result.Should().NotContain("&amp;&amp;");
+    }
+
+    [Fact]
+    public async Task XhtmlScript_ContentStillXmlEscaped_NoOverreach()
+    {
+        // Guard: the raw-text exemption is HTML-only. The XHTML method serializes script
+        // content by XML rules — < and & MUST still be escaped.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns="http://www.w3.org/1999/xhtml">
+              <xsl:output method="xhtml" indent="no"/>
+              <xsl:template match="/"><html><head>
+                <script>if (a &lt; b) x = "&amp;";</script>
+              </head><body/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("a &lt; b");
+        result.Should().Contain("\"&amp;\"");
+    }
+
+    [Fact]
+    public async Task HtmlNormalElement_StillEscapesSpecialChars()
+    {
+        // Guard: a normal element (p) is NOT raw-text — < and & are escaped as usual.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="html" indent="no"/>
+              <xsl:template match="/"><html><body><p>a &lt; b &amp; c</p></body></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("a &lt; b &amp; c");
+    }
 }
