@@ -266,6 +266,17 @@ public sealed class XsltTransformEngine
         if (isJsonOutput)
             context.BeginSequenceCollection();
 
+        // §5.7.2 sequence normalization: the item-separator serialization parameter
+        // declared on the principal xsl:output governs the whole result sequence, so
+        // seed the override before the entry point runs. Adjacent atomic items in the
+        // result sequence are then joined with this string (no extra whitespace).
+        // Absent (null / "#absent" merge sentinel) leaves the legacy single-space
+        // default in place. Instruction-level item-separator save/restores this field
+        // for its own content (see SequenceCore item-separator handling), so nested
+        // overrides still win locally. See W3C decl/output output-0703/0709/0718/0719.
+        if (principalOutput?.ItemSeparator is { } principalItemSeparator && principalItemSeparator != "#absent")
+            context.SeedItemSeparatorOverride(principalItemSeparator);
+
         // If an initial function is specified, call it directly (XSLT 3.0 "call function" invocation)
         if (options.InitialFunction != null)
         {
@@ -6624,6 +6635,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     internal Dictionary<QName, GlobalDeclaration>? _pendingGlobals; // Lazy global init: declarations not yet evaluated
     private bool _lastResultWasAtomic; // Track adjacent atomic values for space separation
     private string? _itemSeparatorOverride; // When set, overrides default space separator between sequence items
+
+    /// <summary>
+    /// Seeds the item-separator override used by §5.7.2 sequence normalization from the
+    /// principal xsl:output's item-separator serialization parameter, before the entry
+    /// point runs. Instruction-level item-separator save/restores this field for its own
+    /// content, so nested overrides still win locally.
+    /// </summary>
+    internal void SeedItemSeparatorOverride(string separator) => _itemSeparatorOverride = separator;
     private List<QName>? _principalOutputCharacterMaps; // Character maps from xsl:result-document targeting principal output
     private readonly Stack<string?> _baseUriStack = new(); // Effective base URI for node construction
     private string? EffectiveBaseUri => _baseUriStack.Count > 0 ? _baseUriStack.Peek() : XsltTransformEngine.UriString(_stylesheet.BaseUri);
