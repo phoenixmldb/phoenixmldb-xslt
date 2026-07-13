@@ -158,4 +158,99 @@ public class HtmlSerializationMethodTests
         var result = await Transform(ss);
         result.Should().Contain("a &lt; b &amp; c");
     }
+
+    [Fact]
+    public async Task XhtmlClassicVoidElements_AreWellFormedEmpty()
+    {
+        // XHTML method: the classic HTML4/XHTML1.0 empty (void) set includes basefont, frame,
+        // and isindex in addition to the HTML5 set. Each must self-close as <name /> with no
+        // end tag (output-0116 / output045.out).
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns="http://www.w3.org/1999/xhtml">
+              <xsl:output method="xhtml" indent="no"/>
+              <xsl:template match="/"><html><basefont/><frame/><isindex/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("<basefont />");
+        result.Should().Contain("<frame />");
+        result.Should().Contain("<isindex />");
+        result.Should().NotContain("<basefont></basefont>");
+        result.Should().NotContain("<frame></frame>");
+        result.Should().NotContain("<isindex></isindex>");
+    }
+
+    [Fact]
+    public async Task HtmlClassicVoidElements_HaveNoEndTagOrSlash()
+    {
+        // HTML method: the same classic void elements minimize to a bare start tag — no slash,
+        // no end tag (<basefont>, not <basefont/> or <basefont></basefont>).
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="html" indent="no"/>
+              <xsl:template match="/"><html><basefont/><frame/><isindex/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("<basefont>");
+        result.Should().Contain("<frame>");
+        result.Should().Contain("<isindex>");
+        result.Should().NotContain("<basefont />");
+        result.Should().NotContain("</basefont>");
+        result.Should().NotContain("</frame>");
+        result.Should().NotContain("</isindex>");
+    }
+
+    [Fact]
+    public async Task XhtmlVoidElement_MatchIsCaseInsensitive()
+    {
+        // Element-name matching for the void set is case-insensitive (BASEFONT == basefont).
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns="http://www.w3.org/1999/xhtml">
+              <xsl:output method="xhtml" indent="no"/>
+              <xsl:template match="/"><html><BASEFONT/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("<BASEFONT />");
+        result.Should().NotContain("</BASEFONT>");
+    }
+
+    [Fact]
+    public async Task XhtmlNonVoidEmptyElement_StillGetsEndTag()
+    {
+        // Guard: a non-void element with no content is NOT minimized — it expands to
+        // start+end tags (<span></span>), never a bare <span>.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns="http://www.w3.org/1999/xhtml">
+              <xsl:output method="xhtml" indent="no"/>
+              <xsl:template match="/"><html><span/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("<span></span>");
+    }
+
+    [Fact]
+    public async Task XmlMethod_VoidNameElement_IsUnaffectedSelfClosing()
+    {
+        // Guard: HTML void-element minimization is method-specific. Under the XML method a
+        // basefont element with no content self-closes by XML rules (<basefont />), never a
+        // bare <basefont> and never an HTML end-tag expansion.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no"/>
+              <xsl:template match="/"><html><basefont/><span/></html></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await Transform(ss);
+        // XML rules: self-closed with no space, and a non-void name (span) is NOT expanded to
+        // an end-tag pair the way the HTML/XHTML methods would treat empty content.
+        result.Should().Contain("<basefont/>");
+        result.Should().Contain("<span/>");
+        result.Should().NotContain("</basefont>");
+    }
 }

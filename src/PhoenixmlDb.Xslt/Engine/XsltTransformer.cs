@@ -25408,12 +25408,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
-    /// HTML void elements that should not have closing tags.
+    /// HTML empty (void) elements that never have an end tag. Union of the classic
+    /// HTML 4.01 / XHTML 1.0 empty set (area, base, basefont, br, col, frame, hr, img,
+    /// input, isindex, link, meta, param) and the HTML5 additions (embed, source, track,
+    /// wbr), per the XSLT/XQuery Serialization HTML/XHTML output method. Matching is
+    /// case-insensitive.
     /// </summary>
     private static readonly HashSet<string> HtmlVoidElements = new(StringComparer.OrdinalIgnoreCase)
     {
-        "area", "base", "br", "col", "embed", "hr", "img", "input",
-        "link", "meta", "param", "source", "track", "wbr"
+        "area", "base", "basefont", "br", "col", "embed", "frame", "hr", "img", "input",
+        "isindex", "link", "meta", "param", "source", "track", "wbr"
     };
 
     /// <summary>
