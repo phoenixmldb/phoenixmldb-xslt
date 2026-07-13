@@ -765,7 +765,7 @@ public sealed class StylesheetParser
                     break;
 
                 case "output":
-                    stylesheet.Outputs.Add(ParseOutput(child));
+                    stylesheet.Outputs.Add(ParseOutput(child, stylesheet));
                     break;
 
                 case "attribute-set":
@@ -4697,8 +4697,17 @@ public sealed class StylesheetParser
         };
     }
 
-    private static XsltOutput ParseOutput(XElement element)
+    private XsltOutput ParseOutput(XElement element, XsltStylesheet stylesheet)
     {
+        // XSLT 3.0 §26.1: xsl:output may reference an external serialization-parameters document
+        // via the parameter-document attribute. Merge its parameters onto the element (attributes
+        // written directly on xsl:output take precedence) and capture any inline character maps it
+        // declares so they can be applied at serialization time (output-0706/0720/0721/0722).
+        Dictionary<int, string>? paramDocCharMap = null;
+        var paramDocAttr = element.Attribute("parameter-document");
+        if (paramDocAttr != null)
+            paramDocCharMap = MergeSerializationParameterDocument(element, paramDocAttr.Value);
+
         // XTSE1570: Validate method attribute
         var methodAttr = element.Attribute("method");
         if (methodAttr != null)
@@ -4819,7 +4828,141 @@ public sealed class StylesheetParser
                 .ToHashSet();
         }
 
+        // Register the parameter document's inline character maps as an anonymous map and
+        // reference it FIRST, so any use-character-maps written directly on xsl:output (which
+        // ParseOutput already appended above) take precedence per §26.1.
+        if (paramDocCharMap is { Count: > 0 })
+        {
+            var synthName = new QName(NamespaceId.None, "param-doc-character-map" + Guid.NewGuid().ToString("N"));
+            stylesheet.CharacterMaps[synthName] = new XsltCharacterMap
+            {
+                Name = synthName,
+                Mappings = paramDocCharMap
+            };
+            output.UseCharacterMaps.Insert(0, synthName);
+        }
+
         return output;
+    }
+
+    private static readonly XNamespace SerializationParamsNs = "http://www.w3.org/2010/xslt-xquery-serialization";
+
+    /// <summary>
+    /// Loads the serialization-parameters document referenced by <c>xsl:output/@parameter-document</c>
+    /// and merges its simple parameters onto <paramref name="outputElement"/> (only where an attribute
+    /// is not already present, since direct attributes win per XSLT 3.0 §26.1). Returns the character
+    /// mappings declared by its <c>output:use-character-maps</c>, or <c>null</c> if none.
+    /// </summary>
+    private Dictionary<int, string>? MergeSerializationParameterDocument(XElement outputElement, string href)
+    {
+        var root = LoadSerializationParameterDocument(outputElement, href);
+        Dictionary<int, string>? charMap = null;
+        foreach (var child in root.Elements())
+        {
+            if (child.Name.Namespace != SerializationParamsNs)
+                continue;
+            var local = child.Name.LocalName;
+            if (local == "use-character-maps")
+            {
+                foreach (var cm in child.Elements(SerializationParamsNs + "character-map"))
+                {
+                    var ch = cm.Attribute("character")?.Value;
+                    var mapStr = cm.Attribute("map-string")?.Value;
+                    if (ch == null || mapStr == null)
+                        continue;
+                    charMap ??= new Dictionary<int, string>();
+                    if (ch.Length == 1)
+                        charMap[ch[0]] = mapStr;
+                    else if (ch.Length == 2 && char.IsHighSurrogate(ch[0]) && char.IsLowSurrogate(ch[1]))
+                        charMap[char.ConvertToUtf32(ch[0], ch[1])] = mapStr;
+                }
+                continue;
+            }
+            // Simple value parameter (method, omit-xml-declaration, indent, …): the element carries
+            // its value in a @value attribute. Only apply it when xsl:output does not already set the
+            // same-named attribute directly.
+            var value = child.Attribute("value")?.Value;
+            if (value != null && outputElement.Attribute(local) == null)
+                outputElement.SetAttributeValue(local, value);
+        }
+        return charMap;
+    }
+
+    /// <summary>
+    /// Resolves and reads the serialization-parameters document, returning its
+    /// <c>output:serialization-parameters</c> root element. The href is resolved against the base URI
+    /// of the module that declared the <c>xsl:output</c> (so a document in a subdirectory beside an
+    /// included module resolves correctly — output-0722).
+    /// </summary>
+    private XElement LoadSerializationParameterDocument(XElement outputElement, string href)
+    {
+        Uri? baseUri = null;
+        if (!string.IsNullOrEmpty(outputElement.BaseUri) &&
+            Uri.TryCreate(outputElement.BaseUri, UriKind.Absolute, out var elementBase))
+            baseUri = elementBase;
+        baseUri ??= _baseUri;
+
+        Uri resolved;
+        if (baseUri != null)
+            resolved = new Uri(baseUri, href);
+        else if (!Uri.TryCreate(href, UriKind.Absolute, out resolved!))
+            throw new XsltException(
+                $"XTSE0010: Cannot resolve serialization parameter document '{href}' without a base URI",
+                GetSourceLocation(outputElement));
+
+        if (ResourcePolicy != null &&
+            !ResourcePolicy.IsAllowed(resolved, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument))
+            throw new XsltException(
+                $"XTSE0010: Resource policy denied access to serialization parameter document '{href}'",
+                GetSourceLocation(outputElement));
+
+        string xml;
+        try
+        {
+            if (resolved.Scheme == Uri.UriSchemeHttp || resolved.Scheme == Uri.UriSchemeHttps)
+            {
+                if (PreloadedResources is { } preloaded && preloaded.TryGet(resolved, out var preloadedXml))
+                    xml = preloadedXml;
+                else if (OperatingSystem.IsBrowser())
+                    throw new XsltException(
+                        $"XTSE0010: Cannot fetch serialization parameter document '{href}' on Blazor WebAssembly synchronously.",
+                        GetSourceLocation(outputElement));
+                else
+                    xml = HttpResourceLoader.GetStringSync(resolved);
+            }
+            else
+            {
+                xml = File.ReadAllText(resolved.LocalPath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            throw new XsltException(
+                $"XTSE0010: Cannot read serialization parameter document '{href}': {ex.Message}",
+                GetSourceLocation(outputElement));
+        }
+
+        XDocument doc;
+        try
+        {
+            doc = XDocument.Parse(xml);
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            throw new XsltException(
+                $"XTSE0010: Serialization parameter document '{href}' is not well-formed: {ex.Message}",
+                GetSourceLocation(outputElement));
+        }
+
+        var root = doc.Root
+            ?? throw new XsltException(
+                $"XTSE0010: Serialization parameter document '{href}' is empty",
+                GetSourceLocation(outputElement));
+        if (root.Name.Namespace != SerializationParamsNs || root.Name.LocalName != "serialization-parameters")
+            throw new XsltException(
+                $"XTSE0010: Serialization parameter document '{href}' root must be output:serialization-parameters",
+                GetSourceLocation(outputElement));
+        return root;
     }
 
     /// <summary>
