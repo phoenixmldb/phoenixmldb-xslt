@@ -2096,7 +2096,7 @@ public sealed class XsltTransformEngine
             if (HtmlUriAttributes.Contains(attrName))
             {
                 // Percent-encode non-ASCII characters in URI attribute values
-                sb.Append(PercentEncodeNonAscii(attrValue));
+                sb.Append(EscapeUriAttributeValue(attrValue));
             }
             else
             {
@@ -2112,35 +2112,113 @@ public sealed class XsltTransformEngine
         return sb.ToString();
     }
 
-    private static string PercentEncodeNonAscii(string value)
+    /// <summary>
+    /// Serializes a URI-valued HTML/XHTML attribute value under escape-uri-attributes="yes".
+    /// The input is the already-serialized attribute text, so it may contain numeric character
+    /// references (e.g. control chars the XML serializer emitted as &amp;#x96;) and XML entity
+    /// escapes. It is first decoded to its logical characters (NFC-normalized), then re-emitted:
+    /// each character outside printable ASCII is percent-encoded as its UTF-8 octets; the
+    /// XML-significant characters &lt; &gt; &amp; " are (re-)escaped; and ASCII characters —
+    /// including an existing '%' from a %xx sequence — pass through literally so they are never
+    /// double-encoded. Matches the W3C Serialization URI-escaping rule for HTML/XHTML output
+    /// (output-0102b/0102c).
+    /// </summary>
+    private static string EscapeUriAttributeValue(string rawValue)
     {
-        bool hasNonAscii = false;
-        foreach (char c in value)
-        {
-            if (c > 127) { hasNonAscii = true; break; }
-        }
-        if (!hasNonAscii) return value;
-
+        var logical = DecodeXmlReferences(rawValue);
         // Normalize to Unicode NFC before mapping to UTF-8 octets. Source documents may hold
         // combining sequences (e.g. "a" + U+030A) that must be percent-encoded as the composed
-        // codepoint (U+00E5 → %C3%A5), matching the serialization spec's URI-escaping behavior
-        // and the XQuery serializer (output-0101/a/b).
-        value = value.Normalize(System.Text.NormalizationForm.FormC);
+        // codepoint (U+00E5 → %C3%A5), matching the serialization spec and the XQuery serializer
+        // (output-0101/a/b).
+        logical = logical.Normalize(System.Text.NormalizationForm.FormC);
 
-        var sb = new StringBuilder(value.Length * 2);
-        foreach (char c in value)
+        var sb = new StringBuilder(logical.Length * 2);
+        for (int i = 0; i < logical.Length; i++)
         {
-            if (c > 127)
+            char c = logical[i];
+            switch (c)
             {
-                // Encode the character as UTF-8 bytes, then percent-encode each byte
-                var bytes = System.Text.Encoding.UTF8.GetBytes(new[] { c });
-                foreach (var b in bytes)
-                    sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"%{b:X2}");
+                case '<': sb.Append("&lt;"); continue;
+                case '>': sb.Append("&gt;"); continue;
+                case '&': sb.Append("&amp;"); continue;
+                case '"': sb.Append("&#34;"); continue;
+            }
+            if (c <= 127)
+            {
+                sb.Append(c);
+                continue;
+            }
+            // Non-ASCII: percent-encode the codepoint's UTF-8 octets (combining surrogate pairs).
+            int cp;
+            if (char.IsHighSurrogate(c) && i + 1 < logical.Length && char.IsLowSurrogate(logical[i + 1]))
+            {
+                cp = char.ConvertToUtf32(c, logical[i + 1]);
+                i++;
             }
             else
             {
-                sb.Append(c);
+                cp = c;
             }
+            foreach (var b in System.Text.Encoding.UTF8.GetBytes(char.ConvertFromUtf32(cp)))
+                sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"%{b:X2}");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Decodes the XML entity references (&amp;lt; &amp;gt; &amp;amp; &amp;quot; &amp;apos;) and
+    /// numeric character references (&amp;#nnn; / &amp;#xhh;) that appear in a serialized attribute
+    /// value back to their logical characters. Used before URI-escaping so a control character the
+    /// serializer wrote as a character reference is percent-encoded rather than left as a reference.
+    /// </summary>
+    private static string DecodeXmlReferences(string s)
+    {
+        if (s.IndexOf('&', StringComparison.Ordinal) < 0)
+            return s;
+
+        var sb = new StringBuilder(s.Length);
+        int i = 0;
+        while (i < s.Length)
+        {
+            if (s[i] == '&')
+            {
+                int semi = s.IndexOf(';', i + 1);
+                if (semi > i)
+                {
+                    var ent = s.Substring(i + 1, semi - i - 1);
+                    string? decoded = ent switch
+                    {
+                        "lt" => "<",
+                        "gt" => ">",
+                        "amp" => "&",
+                        "quot" => "\"",
+                        "apos" => "'",
+                        _ => null
+                    };
+                    if (decoded == null && ent.Length > 1 && ent[0] == '#')
+                    {
+                        var num = ent.AsSpan(1);
+                        bool ok;
+                        int cp;
+                        if (num.Length > 1 && (num[0] == 'x' || num[0] == 'X'))
+                            ok = int.TryParse(num[1..], System.Globalization.NumberStyles.HexNumber,
+                                System.Globalization.CultureInfo.InvariantCulture, out cp);
+                        else
+                            ok = int.TryParse(num, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out cp);
+                        if (ok && cp >= 0 && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF))
+                            decoded = char.ConvertFromUtf32(cp);
+                    }
+                    if (decoded != null)
+                    {
+                        sb.Append(decoded);
+                        i = semi + 1;
+                        continue;
+                    }
+                }
+            }
+            sb.Append(s[i]);
+            i++;
         }
         return sb.ToString();
     }
