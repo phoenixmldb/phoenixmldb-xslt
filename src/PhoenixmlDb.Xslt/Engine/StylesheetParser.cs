@@ -7047,8 +7047,10 @@ public sealed class StylesheetParser
         }
         var rdDoctypePublic = element.Attribute("doctype-public");
         if (rdDoctypePublic != null && !rdDoctypePublic.Value.Contains('{', StringComparison.Ordinal)
+            && rdDoctypePublic.Value.Length != 0
             && !IsValidPublicId(rdDoctypePublic.Value))
             throw new XsltException($"XTSE0020: Invalid doctype-public value '{rdDoctypePublic.Value}' on xsl:result-document: not a valid public identifier", location);
+        var rdDoctypeSystem = element.Attribute("doctype-system");
 
         // XTSE1660: Non-schema-aware processor must reject type attribute
         if (typeAttr != null && ShouldRejectSchemaAware)
@@ -7101,6 +7103,8 @@ public sealed class StylesheetParser
             OmitXmlDeclaration = omitXmlDeclAttr != null ? ParseAvt(omitXmlDeclAttr.Value, element, omitXmlDeclAttr) : null,
             Encoding = encodingAttr != null ? ParseAvt(encodingAttr.Value, element, encodingAttr) : null,
             Indent = indentAttr != null ? ParseAvt(indentAttr.Value, element, indentAttr) : null,
+            DoctypePublic = rdDoctypePublic != null ? ParseAvt(rdDoctypePublic.Value, element, rdDoctypePublic) : null,
+            DoctypeSystem = rdDoctypeSystem != null ? ParseAvt(rdDoctypeSystem.Value, element, rdDoctypeSystem) : null,
             BuildTree = ParseYesNo(buildTreeAttr),
             ItemSeparator = itemSeparatorAttr != null ? ParseAvt(itemSeparatorAttr.Value, element, itemSeparatorAttr) : null,
             AllowDuplicateNames = allowDupNamesAttr != null ? ParseAvt(allowDupNamesAttr.Value, element, allowDupNamesAttr) : null,

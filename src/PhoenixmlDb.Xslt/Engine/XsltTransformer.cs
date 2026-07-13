@@ -823,8 +823,11 @@ public sealed class XsltTransformEngine
             output = decl + output;
         }
 
-        // Emit DOCTYPE declaration if doctype-system (and optionally doctype-public) is set
-        if (outputDecl != null && outputDecl.DoctypeSystem != null)
+        // Emit DOCTYPE declaration if doctype-system (and optionally doctype-public) is set.
+        // A zero-length doctype-system value is treated as if the parameter were absent, so no
+        // DOCTYPE is emitted (Serialization erratum E31; XSLT tests output-0312/0313 use an empty
+        // doctype-system to override an imported/named non-empty value back to "none").
+        if (outputDecl != null && !string.IsNullOrEmpty(outputDecl.DoctypeSystem))
         {
             output = InsertDoctype(output, outputDecl.DoctypePublic, outputDecl.DoctypeSystem);
         }
@@ -1829,16 +1832,27 @@ public sealed class XsltTransformEngine
 
         var rootName = output[nameStart..nameEnd];
 
-        // Build the DOCTYPE declaration
+        // Build the DOCTYPE declaration. Each identifier is wrapped in double quotes,
+        // unless it contains a '"' character, in which case single quotes are used so the
+        // output stays well-formed (Serialization 3.0; XSLT test output-0311). An identifier
+        // containing both quote characters is a serialization error, but is not emitted here.
         string doctype;
         if (doctypePublic != null)
-            doctype = $"<!DOCTYPE {rootName} PUBLIC \"{doctypePublic}\" \"{doctypeSystem}\">";
+            doctype = $"<!DOCTYPE {rootName} PUBLIC {QuoteDoctypeId(doctypePublic)} {QuoteDoctypeId(doctypeSystem)}>";
         else
-            doctype = $"<!DOCTYPE {rootName} SYSTEM \"{doctypeSystem}\">";
+            doctype = $"<!DOCTYPE {rootName} SYSTEM {QuoteDoctypeId(doctypeSystem)}>";
 
         // Insert before the root element, with a newline separator
         return output[..elemStart] + doctype + "\n" + output[elemStart..];
     }
+
+    /// <summary>
+    /// Wraps a doctype public/system identifier in quotes for the DOCTYPE declaration.
+    /// Uses double quotes normally, but single quotes when the identifier contains a '"'
+    /// character so the declaration remains well-formed (Serialization 3.0).
+    /// </summary>
+    private static string QuoteDoctypeId(string id)
+        => id.Contains('"', StringComparison.Ordinal) ? $"'{id}'" : $"\"{id}\"";
 
     /// <summary>
     /// True when the html/xhtml output method should emit an HTML5 DOCTYPE, i.e. the html-version
@@ -16812,6 +16826,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             resultIndent = indentStr.Trim() is "yes" or "true" or "1";
         }
 
+        // Evaluate doctype-public / doctype-system from xsl:result-document (AVTs). When present
+        // (even as a zero-length string, per erratum E31), they override the matched xsl:output.
+        string? resultDoctypePublic = instruction.DoctypePublic != null
+            ? await EvaluateAvtAsync(instruction.DoctypePublic).ConfigureAwait(false)
+            : null;
+        string? resultDoctypeSystem = instruction.DoctypeSystem != null
+            ? await EvaluateAvtAsync(instruction.DoctypeSystem).ConfigureAwait(false)
+            : null;
+
         // Determine effective output method for this result-document
         // Priority: method attribute on xsl:result-document > matched xsl:output declaration
         OutputMethod? resultMethod = null;
@@ -17037,8 +17060,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     Encoding = rdBaseOutput?.Encoding,
                     Version = rdBaseOutput?.Version,
                     Standalone = rdBaseOutput?.Standalone,
-                    DoctypePublic = rdBaseOutput?.DoctypePublic,
-                    DoctypeSystem = rdBaseOutput?.DoctypeSystem,
+                    DoctypePublic = resultDoctypePublic ?? rdBaseOutput?.DoctypePublic,
+                    DoctypeSystem = resultDoctypeSystem ?? rdBaseOutput?.DoctypeSystem,
                     MediaType = rdBaseOutput?.MediaType,
                     IncludeContentType = rdBaseOutput?.IncludeContentType,
                     EscapeUriAttributes = rdBaseOutput?.EscapeUriAttributes,
@@ -17064,16 +17087,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // When result-document has explicit method but no format attribute,
                 // create a synthetic output declaration so the final serialization
                 // uses the correct method (not the xsl:output default)
-                _primaryOutputMatchedDeclaration = matchedOutput
-                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl, resultIndent) : null);
+                _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
+                    matchedOutput
+                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl, resultIndent) : null),
+                    resultDoctypePublic, resultDoctypeSystem);
             }
             else
             {
                 // XTDE1490: Mark that the primary output has been claimed by an explicit
                 // result-document href="", preventing further implicit writes
                 _primaryOutputClaimedByResultDocument = true;
-                _primaryOutputMatchedDeclaration = matchedOutput
-                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl, resultIndent) : null);
+                _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
+                    matchedOutput
+                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl, resultIndent) : null),
+                    resultDoctypePublic, resultDoctypeSystem);
             }
         }
         finally
@@ -17121,6 +17148,49 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// (omit-xml-declaration, encoding, etc.) from the stylesheet's default output declaration.
     /// Used when xsl:result-document has an explicit method attribute but no format attribute.
     /// </summary>
+    /// <summary>
+    /// Returns <paramref name="baseDecl"/> with the doctype-public/doctype-system parameters
+    /// overridden by the values specified on an xsl:result-document. Used when a result-document
+    /// targeting the principal output supplies its own doctype parameters (which may be a
+    /// zero-length string to override an inherited non-empty value back to "none"; erratum E31,
+    /// XSLT test output-0313). Returns <paramref name="baseDecl"/> unchanged if neither override
+    /// is present.
+    /// </summary>
+    private static Ast.XsltOutput? ApplyResultDocumentDoctype(
+        Ast.XsltOutput? baseDecl, string? doctypePublic, string? doctypeSystem)
+    {
+        if (baseDecl == null || (doctypePublic == null && doctypeSystem == null))
+            return baseDecl;
+        return new Ast.XsltOutput
+        {
+            Name = baseDecl.Name,
+            ImportPrecedence = baseDecl.ImportPrecedence,
+            Method = baseDecl.Method,
+            Version = baseDecl.Version,
+            Encoding = baseDecl.Encoding,
+            OmitXmlDeclaration = baseDecl.OmitXmlDeclaration,
+            Standalone = baseDecl.Standalone,
+            DoctypePublic = doctypePublic ?? baseDecl.DoctypePublic,
+            DoctypeSystem = doctypeSystem ?? baseDecl.DoctypeSystem,
+            CdataSectionElements = baseDecl.CdataSectionElements,
+            Indent = baseDecl.Indent,
+            MediaType = baseDecl.MediaType,
+            IncludeContentType = baseDecl.IncludeContentType,
+            EscapeUriAttributes = baseDecl.EscapeUriAttributes,
+            UndeclarePrefixes = baseDecl.UndeclarePrefixes,
+            NormalizationForm = baseDecl.NormalizationForm,
+            ItemSeparator = baseDecl.ItemSeparator,
+            HtmlVersion = baseDecl.HtmlVersion,
+            BuildTree = baseDecl.BuildTree,
+            AllowDuplicateNames = baseDecl.AllowDuplicateNames,
+            UseCharacterMaps = baseDecl.UseCharacterMaps,
+            PackageStylesheet = baseDecl.PackageStylesheet,
+            SuppressIndentation = baseDecl.SuppressIndentation,
+            ByteOrderMark = baseDecl.ByteOrderMark,
+            JsonNodeOutputMethod = baseDecl.JsonNodeOutputMethod,
+        };
+    }
+
     private Ast.XsltOutput CreateSyntheticOutput(OutputMethod method, bool? omitXmlDecl = null, bool? indent = null)
     {
         var baseOutput = _stylesheet.Outputs.FirstOrDefault();

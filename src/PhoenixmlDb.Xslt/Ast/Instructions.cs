@@ -728,6 +728,8 @@ public sealed class XsltResultDocument : XsltInstruction
     public XsltAttributeValueTemplate? OmitXmlDeclaration { get; init; }
     public XsltAttributeValueTemplate? Encoding { get; init; }
     public XsltAttributeValueTemplate? Indent { get; init; }
+    public XsltAttributeValueTemplate? DoctypePublic { get; init; }
+    public XsltAttributeValueTemplate? DoctypeSystem { get; init; }
     public bool? BuildTree { get; init; }
     public XsltAttributeValueTemplate? ItemSeparator { get; init; }
     public XsltAttributeValueTemplate? AllowDuplicateNames { get; init; }

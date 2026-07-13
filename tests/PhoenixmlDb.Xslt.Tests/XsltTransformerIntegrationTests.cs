@@ -137,6 +137,108 @@ public class XsltTransformerIntegrationTests
     }
 
     [Fact]
+    public async Task Output_doctype_system_containing_double_quote_uses_single_quotes()
+    {
+        // Serialization 3.0: an identifier containing '"' must be delimited with single quotes.
+        // XSLT test output-0311: doctype-public="ABC'DEF", doctype-system='ABC"DEF'.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no"
+                          doctype-public="ABC'DEF"
+                          doctype-system="ABC&#34;DEF"/>
+              <xsl:template match="/"><a/></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<input/>");
+
+        result.Should().Contain("<!DOCTYPE a PUBLIC \"ABC'DEF\" 'ABC\"DEF'>");
+    }
+
+    [Fact]
+    public async Task Output_doctype_public_and_system_use_double_quotes_by_default()
+    {
+        // Guard: normal identifiers (no embedded '"') stay double-quoted.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no"
+                          doctype-public="-//EX//DTD//EN"
+                          doctype-system="ex.dtd"/>
+              <xsl:template match="/"><a/></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<input/>");
+
+        result.Should().Contain("<!DOCTYPE a PUBLIC \"-//EX//DTD//EN\" \"ex.dtd\">");
+    }
+
+    [Fact]
+    public async Task Output_doctype_system_only_uses_SYSTEM_keyword()
+    {
+        // Guard: only doctype-system set -> SYSTEM "sys" form.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" doctype-system="ex.dtd"/>
+              <xsl:template match="/"><a/></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<input/>");
+
+        result.Should().Contain("<!DOCTYPE a SYSTEM \"ex.dtd\">");
+    }
+
+    [Fact]
+    public async Task Output_empty_doctype_system_via_import_emits_no_doctype()
+    {
+        // Erratum E31 / XSLT test output-0312: doctype-system="" (higher import precedence)
+        // overrides an imported non-empty value back to "none" -> no DOCTYPE is emitted.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no" omit-xml-declaration="yes"
+                          doctype-system="" doctype-public=""/>
+              <xsl:template match="/"><a><b/></a></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<input/>");
+
+        result.Should().NotContain("<!DOCTYPE");
+        result.Should().Contain("<a><b/></a>");
+    }
+
+    [Fact]
+    public async Task ResultDocument_empty_doctype_system_overrides_named_output_to_none()
+    {
+        // XSLT test output-0313: xsl:result-document doctype-system=""/doctype-public="" (empty)
+        // overrides the referenced xsl:output's non-empty values -> no DOCTYPE is emitted.
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output name="n" method="xml" indent="no" omit-xml-declaration="yes"
+                          doctype-public="-//W3C//DTD XHTML 1.0 Transitional//EN"
+                          doctype-system="http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"/>
+              <xsl:param name="zls" select="''"/>
+              <xsl:template match="/">
+                <xsl:result-document format="n" doctype-system="{$zls}" doctype-public="{$zls}">
+                  <a><b/></a>
+                </xsl:result-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var result = await transformer.TransformAsync("<input/>");
+
+        result.Should().NotContain("<!DOCTYPE");
+        result.Should().Contain("<a><b/></a>");
+    }
+
+    [Fact]
     public async Task Output_method_html()
     {
         var transformer = new XsltTransformer();
