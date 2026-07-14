@@ -486,7 +486,7 @@ public sealed class XsltTransformEngine
     /// Identifies which delivery path invoked <see cref="FinalizeOutput"/>. Later tasks may
     /// branch on this; the post-processing body is currently identical for all kinds.
     /// </summary>
-    internal enum FinalizeKind { Primary, ResultDocument, StreamingSink }
+    internal enum FinalizeKind { Primary, ResultDocument, StreamingSink, StreamingBuffered }
 
     /// <summary>
     /// Applies the shared serialization post-processing pipeline (text/html post-process,
@@ -703,6 +703,27 @@ public sealed class XsltTransformEngine
 
     internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind)
     {
+        // Default output method (Serialization 4.0 §Default Output Method): when no method was
+        // specified on xsl:output, a serialized result whose document element is `html` resolves to
+        // the html method (html element in no namespace) or the xhtml method (html element in the
+        // XHTML namespace) instead of falling back to xml; that in turn applies the Content-Type
+        // meta, HTML5 doctype, and html indentation default (output-0715 / output-0130). An explicit
+        // method always wins, so only resolve when Method is absent.
+        //
+        // STREAMING SAFETY: this resolution is deliberately restricted to FinalizeKind.Primary — the
+        // normal, fully-buffered non-streamed result. The streamed/LRE for-each-group path buffers
+        // and finalizes under FinalizeKind.StreamingBuffered, and MUST NOT pick up the html/xhtml
+        // treatment: doing so previously indented streamed <html>-rooted output and inserted a meta,
+        // which regressed the su-absorbing streaming set and the for-each-group unit test. Streamed
+        // results therefore keep their existing (xml-default) serialization byte-for-byte.
+        if (kind == FinalizeKind.Primary
+            && (outputDecl == null || outputDecl.Method == null)
+            && ResolveDefaultOutputMethod(output) is OutputMethod defaultedMethod)
+        {
+            outputDecl = outputDecl?.CloneWithMethod(defaultedMethod)
+                ?? new XsltOutput { Method = defaultedMethod };
+        }
+
         // A document (root) element in a namespace other than XHTML is "foreign" to the XHTML
         // output method (Serialization 3.0 §XHTML): it is serialized by XML rules, so it gets no
         // HTML empty-element minimization, no Content-Type meta, and no HTML5 DOCTYPE. An element
@@ -1950,6 +1971,56 @@ public sealed class XsltTransformEngine
     /// declaration matching its prefix — or the empty string when the root is in no namespace.
     /// Used to distinguish a genuine XHTML-namespace document from a foreign-namespace one.
     /// </summary>
+    /// <summary>
+    /// Resolves the Serialization 4.0 default output method from a serialized result tree, for use
+    /// only when <c>xsl:output</c> specified no explicit method. Returns <see cref="OutputMethod.Html"/>
+    /// when the document element is named <c>html</c> (case-insensitive) in no namespace,
+    /// <see cref="OutputMethod.Xhtml"/> when it is <c>html</c> in the XHTML namespace, and
+    /// <c>null</c> (keep the xml default) for any other document element or a foreign-namespace
+    /// <c>html</c>.
+    /// </summary>
+    private static OutputMethod? ResolveDefaultOutputMethod(string output)
+    {
+        var searchStart = 0;
+        if (output.StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            var declEnd = output.IndexOf("?>", StringComparison.Ordinal);
+            if (declEnd >= 0)
+                searchStart = declEnd + 2;
+        }
+        if (searchStart < output.Length && output[searchStart] == '\uFEFF')
+            searchStart++;
+
+        var elemStart = FindDocumentElementStart(output, searchStart);
+        if (elemStart < 0 || elemStart >= output.Length - 1)
+            return null;
+
+        var nameStart = elemStart + 1;
+        var nameEnd = nameStart;
+        while (nameEnd < output.Length)
+        {
+            var c = output[nameEnd];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '>' || c == '/')
+                break;
+            nameEnd++;
+        }
+        if (nameEnd <= nameStart)
+            return null;
+
+        var qname = output[nameStart..nameEnd];
+        var colon = qname.IndexOf(':', StringComparison.Ordinal);
+        var localName = colon >= 0 ? qname[(colon + 1)..] : qname;
+        if (!localName.Equals("html", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var rootNs = GetRootElementNamespace(output);
+        if (rootNs.Length == 0)
+            return OutputMethod.Html;
+        if (rootNs == "http://www.w3.org/1999/xhtml")
+            return OutputMethod.Xhtml;
+        return null; // foreign-namespace <html> is not an HTML/XHTML result — keep xml.
+    }
+
     private static string GetRootElementNamespace(string output)
     {
         var searchStart = 0;
@@ -4285,7 +4356,7 @@ public sealed class XsltTransformEngine
 
             var docOutput = outputBuilder.ToString();
             var docOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-            docOutput = FinalizeOutput(docOutput, docOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
+            docOutput = FinalizeOutput(docOutput, docOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered);
             outputBuilder.Clear();
             outputBuilder.Append(docOutput);
             return;
@@ -4325,7 +4396,7 @@ public sealed class XsltTransformEngine
         // step for XML/HTML/XHTML methods, so JSON already serialized via FinalizeJsonOutput above
         // is not re-indented or corrupted.
         var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-        output = FinalizeOutput(output, streamOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
+        output = FinalizeOutput(output, streamOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered);
 
         // Replace the builder's contents with the post-processed output so the calling
         // wrapper sees the same string the original method returned.
