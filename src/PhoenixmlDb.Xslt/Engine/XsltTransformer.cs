@@ -2575,15 +2575,46 @@ public sealed class XsltTransformEngine
 
                 bool isBlock = elemName != null && HtmlBlockElements.Contains(elemName);
 
+                // An empty block element (start tag immediately followed by its end tag, e.g.
+                // <title></title> produced by PostProcessHtmlOutput from <title/>) must serialize
+                // inline: the HTML serializer does not insert indentation between a start tag and
+                // its matching end tag when there is no content (result-document-0209/0214/0223/
+                // 0224 assert an exact <title></title>). Detect this by checking that the tag
+                // immediately preceding this closing tag in the source is the matching opening tag.
+                bool emptyBlockClose = false;
+                if (isBlock && isClosing && elemName != null && i > 0 && output[i - 1] == '>')
+                {
+                    var prevStart = output.LastIndexOf('<', i - 1);
+                    if (prevStart >= 0)
+                    {
+                        var prevTag = output.AsSpan(prevStart, i - prevStart);
+                        bool prevClosing = prevTag.Length > 1 && prevTag[1] == '/';
+                        bool prevSelfClosing = prevTag.Length > 1 && prevTag[^2] == '/';
+                        if (!prevClosing && !prevSelfClosing)
+                        {
+                            int pn = 1, pe = 1;
+                            while (pe < prevTag.Length && prevTag[pe] != ' ' && prevTag[pe] != '>'
+                                   && prevTag[pe] != '/' && prevTag[pe] != '\t' && prevTag[pe] != '\n')
+                                pe++;
+                            emptyBlockClose = pe > pn
+                                && prevTag[pn..pe].Equals(elemName.AsSpan(), StringComparison.OrdinalIgnoreCase);
+                        }
+                    }
+                }
+
                 if (isBlock)
                 {
                     if (isClosing)
                         depth = Math.Max(0, depth - 1);
 
-                    // Add newline and indentation before block elements
-                    if (sb.Length > 0 && sb[^1] != '\n')
-                        sb.Append('\n');
-                    sb.Append(' ', depth * 2);
+                    // Add newline and indentation before block elements, except when closing an
+                    // empty element inline (see emptyBlockClose above).
+                    if (!emptyBlockClose)
+                    {
+                        if (sb.Length > 0 && sb[^1] != '\n')
+                            sb.Append('\n');
+                        sb.Append(' ', depth * 2);
+                    }
 
                     if (!isClosing && !isSelfClosing)
                         depth++;
@@ -16965,6 +16996,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             ? await EvaluateAvtAsync(instruction.DoctypeSystem).ConfigureAwait(false)
             : null;
 
+        // Evaluate media-type / include-content-type from xsl:result-document (AVTs). These drive
+        // the HTML/XHTML Content-Type meta and serialized media type; the result-document's own
+        // values take precedence over the matched xsl:output (result-document-0223 / 0224).
+        string? resultMediaType = instruction.MediaType != null
+            ? await EvaluateAvtAsync(instruction.MediaType).ConfigureAwait(false)
+            : null;
+        bool? resultIncludeContentType = null;
+        if (instruction.IncludeContentType != null)
+        {
+            var ictStr = (await EvaluateAvtAsync(instruction.IncludeContentType).ConfigureAwait(false)).Trim();
+            resultIncludeContentType = ictStr is "yes" or "true" or "1";
+        }
+
         // Determine effective output method for this result-document
         // Priority: method attribute on xsl:result-document > matched xsl:output declaration
         OutputMethod? resultMethod = null;
@@ -17192,8 +17236,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     Standalone = resultStandaloneSpecified ? resultStandalone : rdBaseOutput?.Standalone,
                     DoctypePublic = resultDoctypePublic ?? rdBaseOutput?.DoctypePublic,
                     DoctypeSystem = resultDoctypeSystem ?? rdBaseOutput?.DoctypeSystem,
-                    MediaType = rdBaseOutput?.MediaType,
-                    IncludeContentType = rdBaseOutput?.IncludeContentType,
+                    MediaType = resultMediaType ?? rdBaseOutput?.MediaType,
+                    IncludeContentType = resultIncludeContentType ?? rdBaseOutput?.IncludeContentType,
                     EscapeUriAttributes = rdBaseOutput?.EscapeUriAttributes,
                     NormalizationForm = rdBaseOutput?.NormalizationForm,
                     ByteOrderMark = rdBaseOutput?.ByteOrderMark,
@@ -17221,7 +17265,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
                     matchedOutput
                     ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
-                        resultStandalone, resultStandaloneSpecified, resultVersion),
+                        resultStandalone, resultStandaloneSpecified, resultVersion,
+                        resultMediaType, resultIncludeContentType),
                     resultDoctypePublic, resultDoctypeSystem);
             }
             else
@@ -17232,7 +17277,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
                     matchedOutput
                     ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
-                        resultStandalone, resultStandaloneSpecified, resultVersion),
+                        resultStandalone, resultStandaloneSpecified, resultVersion,
+                        resultMediaType, resultIncludeContentType),
                     resultDoctypePublic, resultDoctypeSystem);
             }
         }
@@ -17326,7 +17372,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     private Ast.XsltOutput CreateSyntheticOutput(
         OutputMethod? method, bool? omitXmlDecl = null, bool? indent = null,
-        bool? standalone = null, bool standaloneSpecified = false, string? version = null)
+        bool? standalone = null, bool standaloneSpecified = false, string? version = null,
+        string? mediaType = null, bool? includeContentType = null)
     {
         var baseOutput = _stylesheet.Outputs.FirstOrDefault();
         return new Ast.XsltOutput
@@ -17341,6 +17388,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             Standalone = standaloneSpecified ? standalone : baseOutput?.Standalone,
             Indent = indent ?? baseOutput?.Indent,
             Version = version ?? baseOutput?.Version,
+            // media-type / include-content-type drive the HTML/XHTML Content-Type meta
+            // (result-document-0223 / 0224); the result-document's own values win over the base.
+            MediaType = mediaType ?? baseOutput?.MediaType,
+            IncludeContentType = includeContentType ?? baseOutput?.IncludeContentType,
         };
     }
 

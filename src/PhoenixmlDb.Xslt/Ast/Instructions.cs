@@ -734,6 +734,11 @@ public sealed class XsltResultDocument : XsltInstruction
     public XsltAttributeValueTemplate? Indent { get; init; }
     public XsltAttributeValueTemplate? DoctypePublic { get; init; }
     public XsltAttributeValueTemplate? DoctypeSystem { get; init; }
+    /// <summary>The <c>media-type</c> serialization attribute (may be an AVT); drives the
+    /// HTML/XHTML Content-Type meta and the serialized media type.</summary>
+    public XsltAttributeValueTemplate? MediaType { get; init; }
+    /// <summary>The <c>include-content-type</c> serialization attribute (yes/no; may be an AVT).</summary>
+    public XsltAttributeValueTemplate? IncludeContentType { get; init; }
     public bool? BuildTree { get; init; }
     public XsltAttributeValueTemplate? ItemSeparator { get; init; }
     public XsltAttributeValueTemplate? AllowDuplicateNames { get; init; }

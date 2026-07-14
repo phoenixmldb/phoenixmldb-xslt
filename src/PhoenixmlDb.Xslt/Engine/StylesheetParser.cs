@@ -7019,6 +7019,8 @@ public sealed class StylesheetParser
         var buildTreeAttr = element.Attribute("build-tree");
         var itemSeparatorAttr = element.Attribute("item-separator");
         var htmlVersionAttr = element.Attribute("html-version");
+        var mediaTypeAttr = element.Attribute("media-type");
+        var includeContentTypeAttr = element.Attribute("include-content-type");
         var useCharMapsAttr = element.Attribute("use-character-maps");
         var allowDupNamesAttr = element.Attribute("allow-duplicate-names");
 
@@ -7110,6 +7112,8 @@ public sealed class StylesheetParser
             Indent = indentAttr != null ? ParseAvt(indentAttr.Value, element, indentAttr) : null,
             DoctypePublic = rdDoctypePublic != null ? ParseAvt(rdDoctypePublic.Value, element, rdDoctypePublic) : null,
             DoctypeSystem = rdDoctypeSystem != null ? ParseAvt(rdDoctypeSystem.Value, element, rdDoctypeSystem) : null,
+            MediaType = mediaTypeAttr != null ? ParseAvt(mediaTypeAttr.Value, element, mediaTypeAttr) : null,
+            IncludeContentType = includeContentTypeAttr != null ? ParseAvt(includeContentTypeAttr.Value, element, includeContentTypeAttr) : null,
             BuildTree = ParseYesNo(buildTreeAttr),
             ItemSeparator = itemSeparatorAttr != null ? ParseAvt(itemSeparatorAttr.Value, element, itemSeparatorAttr) : null,
             AllowDuplicateNames = allowDupNamesAttr != null ? ParseAvt(allowDupNamesAttr.Value, element, allowDupNamesAttr) : null,
