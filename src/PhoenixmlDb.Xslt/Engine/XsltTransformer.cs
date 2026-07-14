@@ -756,15 +756,17 @@ public sealed class XsltTransformEngine
             else if ((outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml)
                      && !foreignXhtmlRoot)
             {
-                // XHTML method: elements in the HTML5 content namespaces (XHTML, SVG, MathML) that
-                // are bound via a prefix in the result tree are serialized in the conventional
-                // default-namespace form — local element name + default xmlns declaration
-                // (Serialization 3.0 XHTML output method; output-0211/0221/0225/0226). Runs before
-                // PostProcessHtmlOutput/DOCTYPE emission so void-element handling and the HTML5
-                // DOCTYPE name see the stripped local names. Foreign-namespace elements keep their
-                // prefixes (XML rules).
-                if (outputDecl.EffectiveMethod == OutputMethod.Xhtml)
-                    output = DefaultXsltExecutionContext.RedefaultXhtmlNamespaces(output);
+                // HTML/XHTML methods: elements in the HTML5 content namespaces (XHTML, SVG, MathML)
+                // that are bound via a prefix in the result tree are serialized in the conventional
+                // default-namespace form — local element name + default xmlns declaration — and the
+                // namespace declarations for those three namespaces are prefix-normalized away
+                // (Serialization 3.0 XHTML output method; output-0211/0221/0225/0226, output-0602a/
+                // 0602b/0603a). The HTML method performs the same prefix normalization as XHTML (W3C
+                // decl/output MHK ruling 2019-04-11: the spec is inadequate for HTML here and the
+                // XHTML rules are treated as definitive). Runs before PostProcessHtmlOutput/DOCTYPE
+                // emission so void-element handling and the HTML5 DOCTYPE name see the stripped local
+                // names. Foreign-namespace elements keep their prefixes (XML rules).
+                output = DefaultXsltExecutionContext.RedefaultXhtmlNamespaces(output);
                 output = DefaultXsltExecutionContext.PostProcessHtmlOutput(output, outputDecl.EffectiveMethod);
             }
 
@@ -25621,8 +25623,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         static bool IsWs(char c) => c == ' ' || c == '\t' || c == '\n' || c == '\r';
 
         var sb = new StringBuilder(output.Length);
-        // Namespace scope: one frame per open element, prefix -> uri ("" = default namespace).
-        var scopes = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>>();
+        // Input namespace scope: one frame per open element, prefix -> uri ("" = default namespace).
+        // Used to resolve the namespace URI of element and attribute prefixes as they appeared in
+        // the source result tree.
+        var inputScopes = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>>();
+        // Output namespace scope, tracking the declarations actually emitted. This lets prefix
+        // normalization decide whether a stripped element still needs an xmlns default declaration
+        // and whether a prefixed foreign-content attribute needs its xmlns:prefix re-declared (the
+        // original ancestor declaration for the three HTML5 namespaces having been dropped).
+        var outDefaults = new System.Collections.Generic.List<string>();
+        var outPrefixDecls = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>>();
         // The element name to emit for each open element's matching end tag.
         var openNames = new System.Collections.Generic.List<string>();
 
@@ -25691,8 +25701,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     emit = output.Substring(i + 2, gt - (i + 2));
                 }
-                if (scopes.Count > 0)
-                    scopes.RemoveAt(scopes.Count - 1);
+                if (inputScopes.Count > 0)
+                    inputScopes.RemoveAt(inputScopes.Count - 1);
+                if (outDefaults.Count > 0)
+                    outDefaults.RemoveAt(outDefaults.Count - 1);
+                if (outPrefixDecls.Count > 0)
+                    outPrefixDecls.RemoveAt(outPrefixDecls.Count - 1);
                 sb.Append("</").Append(emit).Append('>');
                 i = gt + 1;
                 continue;
@@ -25729,7 +25743,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             string attrsPart = inner[k..];
 
             // Parse attributes, preserving each attribute's leading whitespace so the tag can be
-            // rebuilt verbatim minus the dropped namespace declaration.
+            // rebuilt verbatim minus any dropped namespace declaration.
             var attrs = new System.Collections.Generic.List<(string ws, string name, string eqValue)>();
             string trailing = "";
             int a = 0;
@@ -25771,7 +25785,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 attrs.Add((ws, name, eqValue));
             }
 
-            // Namespace declarations on this element.
+            // Namespace declarations on this element (input).
             var localDecls = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var (_, name, eqValue) in attrs)
             {
@@ -25790,55 +25804,113 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 local = qname[(colon + 1)..];
             }
 
-            string LookupInScopes(string pfx)
+            string InputLookup(string pfx)
             {
-                for (int s = scopes.Count - 1; s >= 0; s--)
-                    if (scopes[s].TryGetValue(pfx, out var v))
+                if (localDecls.TryGetValue(pfx, out var lv))
+                    return lv;
+                for (int s = inputScopes.Count - 1; s >= 0; s--)
+                    if (inputScopes[s].TryGetValue(pfx, out var v))
                         return v;
                 return "";
             }
-            string elemUri = localDecls.TryGetValue(prefix, out var eu) ? eu : LookupInScopes(prefix);
-            // The default namespace inherited from ancestors (this element's own default xmlns
-            // declaration, if any, is handled separately below).
-            string inheritedDefault = LookupInScopes("");
+            string OutLookupPrefix(string pfx)
+            {
+                for (int s = outPrefixDecls.Count - 1; s >= 0; s--)
+                    if (outPrefixDecls[s].TryGetValue(pfx, out var v))
+                        return v;
+                return "";
+            }
+            string OutDefault() => outDefaults.Count > 0 ? outDefaults[^1] : "";
 
+            string elemUri = InputLookup(prefix);
+            // "Prefix normalization" for the three HTML5 content namespaces (XHTML/SVG/MathML):
+            // an element bound to one of them via a prefix is re-expressed with its local name and,
+            // if necessary, a default xmlns declaration; the prefix is dropped.
             bool strip = prefix.Length > 0 && Html5ContentNamespaces.Contains(elemUri);
+            bool unprefixedOut = strip || prefix.Length == 0;
+            string outName = strip ? local : qname;
 
-            string outName;
-            if (strip)
+            // Decide the default (xmlns) declaration for this element and the resulting in-scope
+            // default namespace for its children.
+            bool hasOwnDefaultDecl = localDecls.ContainsKey("");
+            string curDefault = OutDefault();
+            string newDefault = curDefault;
+            string? addDefaultDecl = null;
+            if (unprefixedOut)
             {
-                outName = local;
-                bool hasOwnDefaultDecl = localDecls.ContainsKey("");
-                string? neededXmlns = !hasOwnDefaultDecl && inheritedDefault != elemUri ? elemUri : null;
-
-                sb.Append('<').Append(outName);
-                if (neededXmlns != null)
-                    sb.Append(" xmlns=\"").Append(neededXmlns).Append('"');
-                foreach (var (ws, name, eqValue) in attrs)
+                string wantUri = elemUri; // for prefix-less elements elemUri is the inherited/own default
+                if (hasOwnDefaultDecl)
+                    newDefault = localDecls[""]; // kept among the attributes below
+                else if (wantUri != curDefault)
                 {
-                    if (name == "xmlns:" + prefix)
-                        continue;
-                    sb.Append(ws).Append(name).Append(eqValue);
+                    addDefaultDecl = wantUri;
+                    newDefault = wantUri;
                 }
-                sb.Append(trailing);
-                if (selfClose)
-                    sb.Append('/');
-                sb.Append('>');
             }
-            else
+
+            // Emit attributes, dropping declarations for the three HTML5 namespaces (they are
+            // normalized away) and keeping foreign declarations. Track which prefixes remain
+            // declared in the output so prefixed foreign-content attributes can be re-declared.
+            var emittedPrefixDecls = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+            var neededAttrDecls = new System.Collections.Generic.List<(string prefix, string uri)>();
+            var attrsBuilder = new StringBuilder();
+            foreach (var (ws, name, eqValue) in attrs)
             {
-                outName = qname;
-                sb.Append(output, i, p + 1 - i);
+                if (name == "xmlns")
+                {
+                    attrsBuilder.Append(ws).Append(name).Append(eqValue);
+                    continue;
+                }
+                if (name.StartsWith("xmlns:", StringComparison.Ordinal))
+                {
+                    string dpfx = name[6..];
+                    string duri = ExtractQuotedValue(eqValue);
+                    if (Html5ContentNamespaces.Contains(duri))
+                        continue; // drop: prefix-normalized away (re-added below only if an attribute needs it)
+                    attrsBuilder.Append(ws).Append(name).Append(eqValue);
+                    emittedPrefixDecls[dpfx] = duri;
+                    continue;
+                }
+                attrsBuilder.Append(ws).Append(name).Append(eqValue);
+                // A prefixed attribute in one of the three HTML5 namespaces keeps its prefix
+                // (attributes have no default namespace) and therefore needs its xmlns:prefix
+                // declaration re-established on this element.
+                int ac = name.IndexOf(':', StringComparison.Ordinal);
+                if (ac > 0)
+                {
+                    string apfx = name[..ac];
+                    string auri = InputLookup(apfx);
+                    if (Html5ContentNamespaces.Contains(auri))
+                        neededAttrDecls.Add((apfx, auri));
+                }
             }
+
+            var addedDeclSuffix = new StringBuilder();
+            foreach (var (apfx, auri) in neededAttrDecls)
+            {
+                if (emittedPrefixDecls.TryGetValue(apfx, out var already) && already == auri)
+                    continue;
+                if (OutLookupPrefix(apfx) == auri)
+                    continue;
+                addedDeclSuffix.Append(" xmlns:").Append(apfx).Append("=\"").Append(auri).Append('"');
+                emittedPrefixDecls[apfx] = auri;
+            }
+
+            sb.Append('<').Append(outName);
+            if (addDefaultDecl != null)
+                sb.Append(" xmlns=\"").Append(addDefaultDecl).Append('"');
+            sb.Append(attrsBuilder);
+            sb.Append(addedDeclSuffix);
+            sb.Append(trailing);
+            if (selfClose)
+                sb.Append('/');
+            sb.Append('>');
 
             if (!selfClose)
             {
-                // Push the child scope. Reflect the output namespace state: a stripped element that
-                // gained a default declaration makes that its children's default namespace.
-                var frame = new System.Collections.Generic.Dictionary<string, string>(localDecls, StringComparer.Ordinal);
-                if (strip)
-                    frame[""] = elemUri;
-                scopes.Add(frame);
+                inputScopes.Add(new System.Collections.Generic.Dictionary<string, string>(localDecls, StringComparer.Ordinal));
+                outDefaults.Add(newDefault);
+                outPrefixDecls.Add(emittedPrefixDecls);
                 openNames.Add(outName);
             }
             i = p + 1;
