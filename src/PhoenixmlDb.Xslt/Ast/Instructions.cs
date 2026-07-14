@@ -732,6 +732,10 @@ public sealed class XsltResultDocument : XsltInstruction
     /// <summary>The <c>output-version</c> serialization attribute (may be an AVT).</summary>
     public XsltAttributeValueTemplate? OutputVersion { get; init; }
     public XsltAttributeValueTemplate? Indent { get; init; }
+    /// <summary>The <c>html-version</c> serialization attribute (may be an AVT). For the html/xhtml
+    /// output methods a value &gt;= 5.0 selects HTML5 serialization, which emits <c>&lt;!DOCTYPE html&gt;</c>
+    /// (result-document-0242 / 0244).</summary>
+    public XsltAttributeValueTemplate? HtmlVersion { get; init; }
     public XsltAttributeValueTemplate? DoctypePublic { get; init; }
     public XsltAttributeValueTemplate? DoctypeSystem { get; init; }
     /// <summary>The <c>media-type</c> serialization attribute (may be an AVT); drives the

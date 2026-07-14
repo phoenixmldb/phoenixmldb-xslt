@@ -17065,6 +17065,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             ? (await EvaluateAvtAsync(instruction.OutputVersion).ConfigureAwait(false)).Trim()
             : null;
 
+        // Evaluate html-version from xsl:result-document (AVT). For html/xhtml a value >= 5.0
+        // selects HTML5 serialization, which emits "<!DOCTYPE html>" (result-document-0242 / 0244).
+        string? resultHtmlVersion = instruction.HtmlVersion != null
+            ? (await EvaluateAvtAsync(instruction.HtmlVersion).ConfigureAwait(false)).Trim()
+            : null;
+
         // Evaluate doctype-public / doctype-system from xsl:result-document (AVTs). When present
         // (even as a zero-length string, per erratum E31), they override the matched xsl:output.
         string? resultDoctypePublic = instruction.DoctypePublic != null
@@ -17340,6 +17346,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     Method = resultMethod ?? matchedOutput?.Method,
                     Indent = resultIndent ?? matchedOutput?.Indent,
+                    HtmlVersion = resultHtmlVersion ?? rdBaseOutput?.HtmlVersion,
                     OmitXmlDeclaration = resultOmitXmlDecl ?? rdBaseOutput?.OmitXmlDeclaration,
                     Encoding = rdBaseOutput?.Encoding,
                     Version = resultVersion ?? rdBaseOutput?.Version,
@@ -17380,7 +17387,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
                         resultStandalone, resultStandaloneSpecified, resultVersion,
                         resultMediaType, resultIncludeContentType,
-                        resultByteOrderMark, resultEscapeUriAttributes),
+                        resultByteOrderMark, resultEscapeUriAttributes, resultHtmlVersion),
                     resultDoctypePublic, resultDoctypeSystem);
             }
             else
@@ -17393,7 +17400,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
                         resultStandalone, resultStandaloneSpecified, resultVersion,
                         resultMediaType, resultIncludeContentType,
-                        resultByteOrderMark, resultEscapeUriAttributes),
+                        resultByteOrderMark, resultEscapeUriAttributes, resultHtmlVersion),
                     resultDoctypePublic, resultDoctypeSystem);
             }
         }
@@ -17562,7 +17569,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         OutputMethod? method, bool? omitXmlDecl = null, bool? indent = null,
         bool? standalone = null, bool standaloneSpecified = false, string? version = null,
         string? mediaType = null, bool? includeContentType = null,
-        bool? byteOrderMark = null, bool? escapeUriAttributes = null)
+        bool? byteOrderMark = null, bool? escapeUriAttributes = null,
+        string? htmlVersion = null)
     {
         var baseOutput = _stylesheet.Outputs.FirstOrDefault();
         return new Ast.XsltOutput
@@ -17577,6 +17585,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             Standalone = standaloneSpecified ? standalone : baseOutput?.Standalone,
             Indent = indent ?? baseOutput?.Indent,
             Version = version ?? baseOutput?.Version,
+            // html-version >= 5.0 on an html/xhtml result-document triggers the HTML5 DOCTYPE
+            // "<!DOCTYPE html>" (result-document-0242 / 0244); otherwise inherit the base value.
+            HtmlVersion = htmlVersion ?? baseOutput?.HtmlVersion,
             // media-type / include-content-type drive the HTML/XHTML Content-Type meta
             // (result-document-0223 / 0224); the result-document's own values win over the base.
             MediaType = mediaType ?? baseOutput?.MediaType,

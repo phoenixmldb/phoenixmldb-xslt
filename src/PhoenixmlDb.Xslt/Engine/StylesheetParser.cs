@@ -7118,6 +7118,7 @@ public sealed class StylesheetParser
             Standalone = rdStandalone != null ? ParseAvt(rdStandalone.Value, element, rdStandalone) : null,
             OutputVersion = element.Attribute("output-version") is { } ov ? ParseAvt(ov.Value, element, ov) : null,
             Indent = indentAttr != null ? ParseAvt(indentAttr.Value, element, indentAttr) : null,
+            HtmlVersion = htmlVersionAttr != null ? ParseAvt(htmlVersionAttr.Value, element, htmlVersionAttr) : null,
             DoctypePublic = rdDoctypePublic != null ? ParseAvt(rdDoctypePublic.Value, element, rdDoctypePublic) : null,
             DoctypeSystem = rdDoctypeSystem != null ? ParseAvt(rdDoctypeSystem.Value, element, rdDoctypeSystem) : null,
             MediaType = mediaTypeAttr != null ? ParseAvt(mediaTypeAttr.Value, element, mediaTypeAttr) : null,

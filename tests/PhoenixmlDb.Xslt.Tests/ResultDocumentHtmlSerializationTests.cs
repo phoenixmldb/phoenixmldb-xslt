@@ -108,4 +108,48 @@ public sealed class ResultDocumentHtmlSerializationTests
         result.Should().NotContain("text/html;version='3.0'");
         result.Should().Contain("<title></title>");
     }
+
+    [Fact]
+    public async Task XhtmlMethod_HtmlVersion5_EmitsHtml5Doctype()
+    {
+        // insn/result-document-0242: method="xhtml" html-version="5" on an href-less
+        // result-document must emit the HTML5 DOCTYPE "<!DOCTYPE html>" ahead of the
+        // <html> root, exactly as the method="html" path does (#217).
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="3.0">
+               <t:template match="/">
+                  <t:result-document method="xhtml" html-version="5">
+                     <html xmlns="http://www.w3.org/1999/xhtml">
+                        <head><title>Heading</title></head>
+                        <body><p>Hello, world!</p></body>
+                     </html>
+                  </t:result-document>
+               </t:template>
+            </t:transform>
+            """;
+        var result = await Transform(ss);
+        result.Should().MatchRegex(@"<!DOCTYPE\s+html\s*>");
+    }
+
+    [Fact]
+    public async Task XhtmlMethod_DynamicHtmlVersion5_EmitsHtml5Doctype()
+    {
+        // insn/result-document-0244: html-version supplied via AVT ({$param}, param=5.0)
+        // must be evaluated at runtime and still trigger the HTML5 DOCTYPE.
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="3.0">
+               <t:template match="/">
+                  <t:result-document method="xhtml" html-version="{$param}">
+                     <html xmlns="http://www.w3.org/1999/xhtml">
+                        <head><title>Heading</title></head>
+                        <body><p>Hello, world!</p></body>
+                     </html>
+                  </t:result-document>
+               </t:template>
+               <t:param name="param" select="5.0"/>
+            </t:transform>
+            """;
+        var result = await Transform(ss);
+        result.Should().MatchRegex(@"<!DOCTYPE\s+html\s*>");
+    }
 }
