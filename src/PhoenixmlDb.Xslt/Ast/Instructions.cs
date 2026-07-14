@@ -1099,6 +1099,14 @@ public sealed class XsltArrayMember : XsltInstruction
 public sealed class XsltLiteralResultElement : XsltInstruction
 {
     public required QName Name { get; init; }
+
+    /// <summary>
+    /// The element's namespace URI as written in the stylesheet (empty string for no namespace).
+    /// <see cref="Name"/> only carries the source prefix (its <see cref="QName.Namespace"/> is
+    /// unresolved), so this is the authoritative expanded-namespace for serialization-time
+    /// matching such as <c>cdata-section-elements</c>. (W3C decl/output output-0138.)
+    /// </summary>
+    public string? SourceNamespaceName { get; init; }
     public Dictionary<QName, XsltAttributeValueTemplate> Attributes { get; init; } = new();
     public Dictionary<string, string> NamespaceDeclarations { get; init; } = new();
     public List<QName> UseAttributeSets { get; init; } = new();

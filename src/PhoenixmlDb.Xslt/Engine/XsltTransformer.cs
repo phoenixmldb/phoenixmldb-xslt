@@ -13495,7 +13495,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var colonIdx2 = name.IndexOf(':', StringComparison.Ordinal);
         if (colonIdx2 > 0)
             localName = name[(colonIdx2 + 1)..];
-        _outputElementStack.Push(new QName(NamespaceId.None, localName));
+        // Carry the element's resolved namespace so cdata-section-elements matches by expanded
+        // name (decl/output-0138). nsUri is the element's serialized namespace URI (or null).
+        _outputElementStack.Push(new QName(
+            string.IsNullOrEmpty(nsUri) ? NamespaceId.None : StylesheetParser.ResolveNamespaceUri(nsUri),
+            localName));
         _outputElementHasNsStack.Push(nsUri != null || colonIdx2 > 0);
         _outputElementIsLreStack.Push(false); // xsl:element — not an LRE
         _xslNamespaceBindings.Push(new Dictionary<string, string>());
@@ -23562,8 +23566,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var savedLastAtomic = _lastResultWasAtomic;
         _lastResultWasAtomic = false;
 
-        // Track element name for CDATA section serialization
-        _outputElementStack.Push(instruction.Name);
+        // Track element name (with its EXPANDED namespace) for CDATA section serialization.
+        // instruction.Name only carries the source prefix — its NamespaceId is unresolved — so
+        // resolve the element's serialized namespace URI (applying any namespace-alias) and intern
+        // it, giving cdata-section-elements a correct expanded-name comparison. (decl/output-0138.)
+        var cdataNsUri = instruction.SourceNamespaceName;
+        if (nsAliases.Count > 0 && !string.IsNullOrEmpty(cdataNsUri)
+            && nsAliases.TryGetValue(cdataNsUri, out var cdataAlias))
+            cdataNsUri = cdataAlias.ResultUri;
+        var cdataNsId = string.IsNullOrEmpty(cdataNsUri)
+            ? NamespaceId.None
+            : StylesheetParser.ResolveNamespaceUri(cdataNsUri);
+        _outputElementStack.Push(new QName(cdataNsId, instruction.Name.LocalName, instruction.Name.Prefix));
         // Track whether element is in a namespace (for XTDE0440)
         var elemHasNs = elemPrefix != null
             || (nsBindings.TryGetValue("", out var defNs) && !string.IsNullOrEmpty(defNs))

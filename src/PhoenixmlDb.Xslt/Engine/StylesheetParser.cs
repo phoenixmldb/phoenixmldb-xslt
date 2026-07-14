@@ -4811,7 +4811,7 @@ public sealed class StylesheetParser
         {
             output.CdataSectionElements = cdataAttr.Value
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(n => ParseQName(n, element))
+                .Select(n => ParseCdataSectionQName(n, element))
                 .ToHashSet();
         }
 
@@ -8149,6 +8149,7 @@ public sealed class StylesheetParser
         {
             Location = location,
             Name = name,
+            SourceNamespaceName = element.Name.NamespaceName,
             Attributes = attributes,
             NamespaceDeclarations = namespaceDeclarations,
             UseAttributeSets = useAttributeSets,
@@ -10342,6 +10343,31 @@ public sealed class StylesheetParser
         }
 
         return new QName(NamespaceId.None, name);
+    }
+
+    /// <summary>
+    /// Parses a QName appearing in <c>xsl:output/@cdata-section-elements</c>. Unlike a bare
+    /// <see cref="ParseQName"/>, an <em>unprefixed</em> name is resolved against the default
+    /// namespace in scope on the <c>xsl:output</c> element (XSLT 2.0+), so a name like
+    /// <c>h1</c> under <c>xmlns="…xhtml"</c> expands to <c>{…xhtml}h1</c>. This lets the
+    /// element expanded-name match at serialization time carry the correct namespace on both
+    /// sides. Prefixed and <c>Q{uri}local</c> names are resolved as usual. (W3C decl/output
+    /// output-0138.)
+    /// </summary>
+    private static QName ParseCdataSectionQName(string name, XElement context)
+    {
+        var q = ParseQName(name, context);
+        var trimmed = name.Trim();
+        var isUnprefixed = q.Prefix == null && q.ExpandedNamespace == null
+            && q.Namespace == NamespaceId.None
+            && !trimmed.StartsWith("Q{", StringComparison.Ordinal);
+        if (isUnprefixed)
+        {
+            var defNs = context.GetDefaultNamespace().NamespaceName;
+            if (!string.IsNullOrEmpty(defNs))
+                return new QName(ResolveNamespaceUri(defNs), q.LocalName);
+        }
+        return q;
     }
 
     /// <summary>
