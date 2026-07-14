@@ -727,6 +727,10 @@ public sealed class XsltResultDocument : XsltInstruction
     public XsltAttributeValueTemplate? Method { get; init; }
     public XsltAttributeValueTemplate? OmitXmlDeclaration { get; init; }
     public XsltAttributeValueTemplate? Encoding { get; init; }
+    /// <summary>The <c>standalone</c> serialization attribute (yes/no/omit; may be an AVT).</summary>
+    public XsltAttributeValueTemplate? Standalone { get; init; }
+    /// <summary>The <c>output-version</c> serialization attribute (may be an AVT).</summary>
+    public XsltAttributeValueTemplate? OutputVersion { get; init; }
     public XsltAttributeValueTemplate? Indent { get; init; }
     public XsltAttributeValueTemplate? DoctypePublic { get; init; }
     public XsltAttributeValueTemplate? DoctypeSystem { get; init; }

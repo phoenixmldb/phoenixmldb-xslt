@@ -16935,6 +16935,27 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             resultIndent = indentStr.Trim() is "yes" or "true" or "1";
         }
 
+        // Evaluate standalone from xsl:result-document (AVT). Tri-state: yes/no set the
+        // attribute, "omit" (or absent) leaves it off. When specified, it overrides the
+        // matched xsl:output — including an explicit "omit" that clears an inherited value.
+        bool? resultStandalone = null;
+        var resultStandaloneSpecified = instruction.Standalone != null;
+        if (resultStandaloneSpecified)
+        {
+            var saStr = (await EvaluateAvtAsync(instruction.Standalone!).ConfigureAwait(false)).Trim();
+            resultStandalone = saStr switch
+            {
+                "yes" or "true" or "1" => true,
+                "no" or "false" or "0" => false,
+                _ => null, // "omit" → no standalone attribute
+            };
+        }
+
+        // Evaluate output-version from xsl:result-document (AVT) → XML declaration version.
+        string? resultVersion = instruction.OutputVersion != null
+            ? (await EvaluateAvtAsync(instruction.OutputVersion).ConfigureAwait(false)).Trim()
+            : null;
+
         // Evaluate doctype-public / doctype-system from xsl:result-document (AVTs). When present
         // (even as a zero-length string, per erratum E31), they override the matched xsl:output.
         string? resultDoctypePublic = instruction.DoctypePublic != null
@@ -17167,8 +17188,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     Indent = resultIndent ?? matchedOutput?.Indent,
                     OmitXmlDeclaration = resultOmitXmlDecl ?? rdBaseOutput?.OmitXmlDeclaration,
                     Encoding = rdBaseOutput?.Encoding,
-                    Version = rdBaseOutput?.Version,
-                    Standalone = rdBaseOutput?.Standalone,
+                    Version = resultVersion ?? rdBaseOutput?.Version,
+                    Standalone = resultStandaloneSpecified ? resultStandalone : rdBaseOutput?.Standalone,
                     DoctypePublic = resultDoctypePublic ?? rdBaseOutput?.DoctypePublic,
                     DoctypeSystem = resultDoctypeSystem ?? rdBaseOutput?.DoctypeSystem,
                     MediaType = rdBaseOutput?.MediaType,
@@ -17193,12 +17214,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // capture the content as pending primary output
                 _pendingPrimaryContent = _output.ToString();
                 _primaryOutputClaimedByResultDocument = true;
-                // When result-document has explicit method but no format attribute,
-                // create a synthetic output declaration so the final serialization
-                // uses the correct method (not the xsl:output default)
+                // When result-document targets primary output with no matched format, create a
+                // synthetic output declaration so serialization honours its method/standalone/
+                // output-version/omit-xml-declaration (not the xsl:output default). A null method
+                // still defaults to xml, so the XML declaration is emitted even with no attributes.
                 _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
                     matchedOutput
-                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl, resultIndent) : null),
+                    ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
+                        resultStandalone, resultStandaloneSpecified, resultVersion),
                     resultDoctypePublic, resultDoctypeSystem);
             }
             else
@@ -17208,7 +17231,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _primaryOutputClaimedByResultDocument = true;
                 _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
                     matchedOutput
-                    ?? (resultMethod != null ? CreateSyntheticOutput(resultMethod.Value, resultOmitXmlDecl, resultIndent) : null),
+                    ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
+                        resultStandalone, resultStandaloneSpecified, resultVersion),
                     resultDoctypePublic, resultDoctypeSystem);
             }
         }
@@ -17300,17 +17324,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         };
     }
 
-    private Ast.XsltOutput CreateSyntheticOutput(OutputMethod method, bool? omitXmlDecl = null, bool? indent = null)
+    private Ast.XsltOutput CreateSyntheticOutput(
+        OutputMethod? method, bool? omitXmlDecl = null, bool? indent = null,
+        bool? standalone = null, bool standaloneSpecified = false, string? version = null)
     {
         var baseOutput = _stylesheet.Outputs.FirstOrDefault();
         return new Ast.XsltOutput
         {
+            // A null method leaves EffectiveMethod at its default (xml), so the XML
+            // declaration is still emitted for an href-less result-document with no method.
             Method = method,
             OmitXmlDeclaration = omitXmlDecl ?? baseOutput?.OmitXmlDeclaration,
             Encoding = baseOutput?.Encoding,
-            Standalone = baseOutput?.Standalone,
+            // An explicit standalone on xsl:result-document (including "omit" → null) overrides
+            // the stylesheet-level xsl:output; otherwise inherit the base value.
+            Standalone = standaloneSpecified ? standalone : baseOutput?.Standalone,
             Indent = indent ?? baseOutput?.Indent,
-            Version = baseOutput?.Version,
+            Version = version ?? baseOutput?.Version,
         };
     }
 

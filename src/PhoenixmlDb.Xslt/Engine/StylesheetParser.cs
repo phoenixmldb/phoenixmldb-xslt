@@ -7105,6 +7105,8 @@ public sealed class StylesheetParser
             Method = methodAttr != null ? ParseAvt(methodAttr.Value, element, methodAttr) : null,
             OmitXmlDeclaration = omitXmlDeclAttr != null ? ParseAvt(omitXmlDeclAttr.Value, element, omitXmlDeclAttr) : null,
             Encoding = encodingAttr != null ? ParseAvt(encodingAttr.Value, element, encodingAttr) : null,
+            Standalone = rdStandalone != null ? ParseAvt(rdStandalone.Value, element, rdStandalone) : null,
+            OutputVersion = element.Attribute("output-version") is { } ov ? ParseAvt(ov.Value, element, ov) : null,
             Indent = indentAttr != null ? ParseAvt(indentAttr.Value, element, indentAttr) : null,
             DoctypePublic = rdDoctypePublic != null ? ParseAvt(rdDoctypePublic.Value, element, rdDoctypePublic) : null,
             DoctypeSystem = rdDoctypeSystem != null ? ParseAvt(rdDoctypeSystem.Value, element, rdDoctypeSystem) : null,

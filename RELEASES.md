@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+### Serialization
+
+- **`xsl:result-document` targeting the principal output now honours its own `standalone`, `output-version`, and XML-declaration settings.** An href-less `xsl:result-document` claims the primary output, but its serialization attributes were being dropped in favour of the (often absent) stylesheet-level `xsl:output`: `standalone="yes"`/`standalone="no"` never reached the XML declaration (so `<?xml … standalone="yes"?>` was emitted without the `standalone` pseudo-attribute), `output-version` was neither parsed nor applied, and a bare `<xsl:result-document/>` with no attributes emitted no XML declaration at all (falling through with `null` output declaration). The result-document now builds a synthetic output declaration even when it names no `method` (defaulting to the `xml` method so the declaration is still emitted), carrying its evaluated `standalone` (with `standalone="omit"` correctly suppressing the pseudo-attribute) and `output-version`; the same values also flow through the secondary (href) result-document path. `omit-xml-declaration="yes"` still suppresses the declaration, and the SEPM0009/SEPM0004 conflict checks are unaffected (`insn/result-document/result-document-0206`, `-0229`, `-0230`, `-0231`, `-0234`).
+
 ## 1.4.24 (2026-07-14)
 
 A focused output-serialization release: the HTML, XHTML, and JSON output methods and the serialization parameters. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.5. No breaking API changes.
