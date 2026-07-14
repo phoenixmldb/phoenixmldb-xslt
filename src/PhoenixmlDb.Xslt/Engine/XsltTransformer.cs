@@ -274,7 +274,12 @@ public sealed class XsltTransformEngine
         // default in place. Instruction-level item-separator save/restores this field
         // for its own content (see SequenceCore item-separator handling), so nested
         // overrides still win locally. See W3C decl/output output-0703/0709/0718/0719.
-        if (principalOutput?.ItemSeparator is { } principalItemSeparator && principalItemSeparator != "#absent")
+        // The item-separator that governs the whole principal result sequence comes ONLY from the
+        // unnamed (principal) xsl:output declaration. A NAMED xsl:output is a named output definition
+        // referenced by xsl:result-document/@format and must never seed the principal sequence, even
+        // when it is the stylesheet's only output declaration (insn/result-document/result-document-0305).
+        var principalUnnamedOutput = _stylesheet.Outputs.FirstOrDefault(o => o.Name == null);
+        if (principalUnnamedOutput?.ItemSeparator is { } principalItemSeparator && principalItemSeparator != "#absent")
             context.SeedItemSeparatorOverride(principalItemSeparator);
 
         // If an initial function is specified, call it directly (XSLT 3.0 "call function" invocation)
@@ -16976,6 +16981,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
             }
         }
+
+        // An xsl:result-document with no @format uses the unnamed (default) xsl:output declaration
+        // (XSLT 3.0 §27.1): its serialization parameters — including method — govern this result
+        // document. When the unnamed output declares e.g. method="text", an href-less result-document
+        // must serialize as text, not fall through to the xml default (insn/result-document/result-document-0202).
+        if (matchedOutput == null && instruction.Format == null)
+            matchedOutput = formatOutputs.FirstOrDefault(o => o.Name == null);
 
         // XTDE1490: Check for duplicate result-document URIs
         string effectiveHref = "";
