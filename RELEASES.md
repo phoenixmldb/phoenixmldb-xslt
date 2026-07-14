@@ -1,6 +1,8 @@
 # Release History
 
-## Unreleased
+## 1.4.24 (2026-07-14)
+
+A focused output-serialization release: the HTML, XHTML, and JSON output methods and the serialization parameters. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.5. No breaking API changes.
 
 ### Serialization
 
