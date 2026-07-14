@@ -6976,6 +6976,43 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private bool _lastResultWasAtomic; // Track adjacent atomic values for space separation
     private string? _itemSeparatorOverride; // When set, overrides default space separator between sequence items
 
+    // §5.7.2 sequence normalization: when an explicit (non-absent) item-separator is in effect
+    // on the TOP LEVEL of a result sequence (xsl:result-document / principal output content, not
+    // inside any constructed element/attribute/text-content), a copy of the separator is inserted
+    // between EVERY pair of adjacent items — not only between adjacent atomic values (so comment
+    // and PI nodes participate too). This flag records whether a top-level item has already been
+    // emitted, so the next one is preceded by the separator.
+    private bool _topLevelItemEmitted;
+
+    /// <summary>
+    /// True when output is being written directly into the top level of a result sequence that
+    /// carries an explicit item-separator: an override is set, and we are not inside a constructed
+    /// element, attribute, simple-text content, or a sequence-value accumulator. In this state the
+    /// separator is inserted between all adjacent items regardless of node/atomic kind.
+    /// </summary>
+    private bool InTopLevelItemSeparatorSequence
+        => _itemSeparatorOverride != null
+           && _serializingElementDepth == 0
+           && _attributeContentDepth == 0
+           && _textContentDepth == 0
+           && _sequenceAccumulator == null;
+
+    /// <summary>
+    /// When operating in <see cref="InTopLevelItemSeparatorSequence"/> mode, writes the
+    /// item-separator before the next top-level item (if one was already emitted) and records that
+    /// an item has now been emitted. Returns true when in that mode so callers skip the legacy
+    /// atomic-only separator logic; returns false otherwise (leaving legacy behaviour intact).
+    /// </summary>
+    private bool TryWriteTopLevelItemSeparator()
+    {
+        if (!InTopLevelItemSeparatorSequence)
+            return false;
+        if (_topLevelItemEmitted)
+            WriteText(_itemSeparatorOverride!, false);
+        _topLevelItemEmitted = true;
+        return true;
+    }
+
     /// <summary>
     /// Seeds the item-separator override used by §5.7.2 sequence normalization from the
     /// principal xsl:output's item-separator serialization parameter, before the entry
@@ -15828,7 +15865,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                         else
                         {
-                            if (_lastResultWasAtomic && _attributeContentDepth == 0)
+                            // Top-level item-separator mode separates every adjacent item uniformly
+                            // (including after a node); otherwise fall back to the legacy
+                            // "separate adjacent atomic values" rule.
+                            if (InTopLevelItemSeparatorSequence)
+                            {
+                                var wroteTopSep = _topLevelItemEmitted;
+                                TryWriteTopLevelItemSeparator();
+                                if (wroteTopSep && _contentTrackingStack.Count > 0)
+                                    _separatorCharsWritten += _itemSeparatorOverride!.Length;
+                            }
+                            else if (_lastResultWasAtomic && _attributeContentDepth == 0)
                             {
                                 var sep = _itemSeparatorOverride ?? " ";
                                 WriteText(sep, false);
@@ -16005,7 +16052,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (_textContentDepth > 0)
                 WriteText(StringValueOf(result), false);
             else
+            {
+                // Top-level item-separator: a node participates in §5.7.2 separation just like an
+                // atomic value, so a copy of the separator precedes it when in that mode.
+                TryWriteTopLevelItemSeparator();
                 SerializeNode(result);
+            }
             _lastResultWasAtomic = false;
         }
         else if (result is ResultTreeFragment rtf)
@@ -16055,8 +16107,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         else
         {
-            // Atomic value: add separator if previous result was also atomic
-            if (_lastResultWasAtomic && _attributeContentDepth == 0)
+            // Atomic value: add separator. In top-level item-separator mode, the separator is
+            // inserted before every item that follows an already-emitted one (including after a
+            // node); otherwise fall back to the legacy "separate adjacent atomic values" rule.
+            if (!TryWriteTopLevelItemSeparator()
+                && _lastResultWasAtomic && _attributeContentDepth == 0)
                 WriteText(_itemSeparatorOverride ?? " ", false);
             if (result is bool b)
                 WriteText(b ? "true" : "false", false);
@@ -16122,6 +16177,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     private void SerializeSequenceItems(System.Collections.IList items)
     {
+        // Top-level item-separator mode: every item (node or atomic) is separated uniformly, so
+        // delegate the separator to the per-item SerializeResult branches (which call
+        // TryWriteTopLevelItemSeparator) rather than applying the atomic-only local rule here.
+        if (InTopLevelItemSeparatorSequence)
+        {
+            foreach (var item in items)
+            {
+                if (item == null)
+                    continue;
+                _lastResultWasAtomic = false;
+                SerializeResult(item);
+            }
+            return;
+        }
+
         // Use local tracking for inter-item spacing within the sequence.
         // Inherit _lastResultWasAtomic for space before first item (cross-call continuity).
         var lastWasAtomic = _lastResultWasAtomic;
@@ -16242,6 +16312,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             value = "";
         }
 
+        // Top-level item-separator: a copy of the separator precedes this comment when an item was
+        // already emitted in the enclosing result sequence (§5.7.2 sequence normalization).
+        TryWriteTopLevelItemSeparator();
+
         _output.Append("<!--");
         _output.Append(EscapeCommentValue(value));
         _output.Append("-->");
@@ -16315,6 +16389,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XSLT spec: strip leading whitespace from PI value
         value = value.TrimStart();
+
+        // Top-level item-separator: a copy of the separator precedes this PI when an item was
+        // already emitted in the enclosing result sequence (§5.7.2 sequence normalization).
+        TryWriteTopLevelItemSeparator();
 
         _output.Append("<?");
         _output.Append(name);
@@ -17070,10 +17148,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             allowDuplicateNames = adnStr.Trim() is "yes" or "true" or "1";
         }
 
-        // Apply item-separator override during content execution
+        // Apply item-separator override during content execution. Each result-document is its own
+        // top-level result sequence, so reset the "item already emitted" tracking for its content.
         var savedItemSeparator = _itemSeparatorOverride;
+        var savedTopLevelItemEmitted = _topLevelItemEmitted;
         if (itemSeparator != null)
             _itemSeparatorOverride = itemSeparator;
+        _topLevelItemEmitted = false;
 
         // When href is non-empty, redirect output to a separate buffer for the secondary result document
         var redirectToSecondary = !string.IsNullOrEmpty(effectiveHref);
@@ -17320,6 +17401,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             _activeResultDocumentOutput = savedActiveOutput;
             _itemSeparatorOverride = savedItemSeparator;
+            _topLevelItemEmitted = savedTopLevelItemEmitted;
             if (redirectToSecondary || redirectToPrimary)
             {
                 if (redirectToSecondary)
