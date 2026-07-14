@@ -1574,12 +1574,27 @@ public sealed class XsltTransformEngine
                 if (adaptive)
                     return SerializeXdmNodeAsXml(node, store);
                 // JSON mode: json-node-output-method controls how nodes are serialized
-                // Default is "xml" per XSLT 3.0 spec §26.1
+                // Default is "xml" per XSLT 3.0 spec §26.1. When "html"/"xhtml", the node is
+                // serialized using that output method (markup, Content-Type meta, HTML void-element
+                // handling) and the resulting markup becomes the JSON string value — NOT reduced to
+                // the node's string-value (output-0702 / output-0716 / output-0717).
                 var nodeMethod = jsonNodeOutputMethod ?? "xml";
                 if (nodeMethod == "xml")
                 {
                     var xml = SerializeXdmNodeAsXml(node, store, omitXmlDeclaration: true);
                     return $"\"{JsonEscapeString(xml)}\"";
+                }
+                if (nodeMethod == "html" || nodeMethod == "xhtml")
+                {
+                    var htmlMethod = nodeMethod == "xhtml" ? OutputMethod.Xhtml : OutputMethod.Html;
+                    var markup = SerializeXdmNodeAsXml(node, store, omitXmlDeclaration: true);
+                    // Reuse the primary html/xhtml serialization: void-element minimization and the
+                    // injected Content-Type <meta> as the first child of <head> (same treatment the
+                    // non-streaming primary path applies).
+                    markup = DefaultXsltExecutionContext.PostProcessHtmlOutput(markup, htmlMethod);
+                    markup = DefaultXsltExecutionContext.InsertContentTypeMeta(
+                        markup, new XsltOutput { Method = htmlMethod });
+                    return $"\"{JsonEscapeString(markup)}\"";
                 }
                 // text method: use string value
                 var nodeStr = node.StringValue ?? "";
