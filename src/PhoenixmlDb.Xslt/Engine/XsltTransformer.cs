@@ -17025,6 +17025,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             resultEscapeUriAttributes = euaStr is "yes" or "true" or "1";
         }
 
+        // Evaluate cdata-section-elements from xsl:result-document. This is an AVT (result-document-0401);
+        // the value is split on whitespace and each token resolved to a QName against the
+        // result-document element's in-scope namespaces. The effective set is the UNION of this list
+        // and the matched xsl:output declaration's cdata-section-elements (result-document-0240).
+        var resultCdataSectionElements = await EvaluateCdataSectionElementsAsync(instruction).ConfigureAwait(false);
+
         // Determine effective output method for this result-document
         // Priority: method attribute on xsl:result-document > matched xsl:output declaration
         OutputMethod? resultMethod = null;
@@ -17110,7 +17116,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         var savedActiveOutput = _activeResultDocumentOutput;
-        _activeResultDocumentOutput = matchedOutput;
+        // CDATA-section wrapping happens at text-emission time via IsInCdataSectionElement(), which
+        // reads _activeResultDocumentOutput.CdataSectionElements. The matched xsl:output alone omits
+        // the result-document's own cdata-section-elements, so compute the effective union here and
+        // expose it through the active output declaration for the duration of content emission.
+        var effectiveCdata = UnionCdataSectionElements(resultCdataSectionElements, matchedOutput?.CdataSectionElements);
+        _activeResultDocumentOutput = effectiveCdata == null
+            ? matchedOutput
+            : (matchedOutput ?? new Ast.XsltOutput()).CloneWithCdataSectionElements(effectiveCdata);
         try
         {
             if (resultMethod == OutputMethod.Text)
@@ -17257,6 +17270,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     EscapeUriAttributes = resultEscapeUriAttributes ?? rdBaseOutput?.EscapeUriAttributes,
                     NormalizationForm = rdBaseOutput?.NormalizationForm,
                     ByteOrderMark = resultByteOrderMark ?? rdBaseOutput?.ByteOrderMark,
+                    // CDATA wrapping is applied at emission time (via _activeResultDocumentOutput), not
+                    // in FinalizeOutput; carry the effective union here for declaration consistency.
+                    CdataSectionElements = effectiveCdata ?? matchedOutput?.CdataSectionElements,
                     SuppressIndentation = matchedOutput?.SuppressIndentation ?? _stylesheet.Outputs.FirstOrDefault()?.SuppressIndentation,
                 };
                 secondaryContent = Owner!.FinalizeOutput(
@@ -17386,6 +17402,78 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             ByteOrderMark = baseDecl.ByteOrderMark,
             JsonNodeOutputMethod = baseDecl.JsonNodeOutputMethod,
         };
+    }
+
+    /// <summary>
+    /// Evaluates the <c>cdata-section-elements</c> AVT on an xsl:result-document (result-document-0401)
+    /// into a set of QNames, resolving each whitespace-separated token against the result-document
+    /// element's in-scope namespace bindings (including the default namespace, per the
+    /// cdata-section-elements resolution rules). Returns <c>null</c> if the attribute is absent or empty.
+    /// </summary>
+    private async ValueTask<HashSet<QName>?> EvaluateCdataSectionElementsAsync(Ast.XsltResultDocument instruction)
+    {
+        if (instruction.CdataSectionElements == null)
+            return null;
+        var raw = await EvaluateAvtAsync(instruction.CdataSectionElements).ConfigureAwait(false);
+        HashSet<QName>? set = null;
+        foreach (var token in raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            (set ??= []).Add(ResolveCdataSectionQName(token, instruction.NamespaceBindings));
+        }
+        return set;
+    }
+
+    /// <summary>
+    /// Resolves a single <c>cdata-section-elements</c> token to a QName. Mirrors
+    /// StylesheetParser.ParseCdataSectionQName: EQName (<c>Q{uri}local</c>) and prefixed names use
+    /// their namespace; an unprefixed name adopts the in-scope default namespace when one is declared.
+    /// </summary>
+    private static QName ResolveCdataSectionQName(string token, IReadOnlyDictionary<string, string>? nsBindings)
+    {
+        if (token.StartsWith("Q{", StringComparison.Ordinal))
+        {
+            var close = token.IndexOf('}', 2);
+            if (close > 1)
+            {
+                var uri = token[2..close];
+                var local = token[(close + 1)..];
+                return uri.Length == 0
+                    ? new QName(NamespaceId.None, local)
+                    : new QName(StylesheetParser.ResolveNamespaceUri(uri), local) { ExpandedNamespace = uri };
+            }
+        }
+
+        var colon = token.IndexOf(':', StringComparison.Ordinal);
+        if (colon > 0)
+        {
+            var prefix = token[..colon];
+            var local = token[(colon + 1)..];
+            if (nsBindings != null && nsBindings.TryGetValue(prefix, out var ns) && ns.Length > 0)
+                return new QName(StylesheetParser.ResolveNamespaceUri(ns), local, prefix);
+            // Undeclared prefix: a static value would have been rejected at parse time; a dynamic AVT
+            // yielding an unbound prefix falls back to no namespace rather than throwing mid-serialization.
+            return new QName(NamespaceId.None, local, prefix);
+        }
+
+        // Unprefixed: adopt the default namespace if one is in scope.
+        if (nsBindings != null && nsBindings.TryGetValue("", out var defNs) && defNs.Length > 0)
+            return new QName(StylesheetParser.ResolveNamespaceUri(defNs), token);
+        return new QName(NamespaceId.None, token);
+    }
+
+    /// <summary>
+    /// Returns the union of two cdata-section-elements sets (either may be <c>null</c>), or <c>null</c>
+    /// if the union would be empty. Used to merge an xsl:result-document's own cdata-section-elements
+    /// with those of its matched xsl:output declaration (result-document-0240).
+    /// </summary>
+    private static HashSet<QName>? UnionCdataSectionElements(HashSet<QName>? a, HashSet<QName>? b)
+    {
+        if ((a == null || a.Count == 0) && (b == null || b.Count == 0))
+            return null;
+        var union = a != null ? new HashSet<QName>(a) : [];
+        if (b != null)
+            union.UnionWith(b);
+        return union.Count > 0 ? union : null;
     }
 
     private Ast.XsltOutput CreateSyntheticOutput(

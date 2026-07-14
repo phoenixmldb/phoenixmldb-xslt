@@ -2046,6 +2046,46 @@ public sealed class XsltOutput
             clone.UseCharacterMaps.Add(m);
         return clone;
     }
+
+    /// <summary>
+    /// Returns a shallow copy of this declaration with an overridden set of cdata-section-elements.
+    /// Used by xsl:result-document to expose the effective union (its own cdata-section-elements plus
+    /// those of its matched xsl:output) during content emission, without mutating the shared
+    /// xsl:output AST node. Every other serialization parameter is preserved unchanged.
+    /// </summary>
+    internal XsltOutput CloneWithCdataSectionElements(HashSet<QName> cdataSectionElements)
+    {
+        var clone = new XsltOutput
+        {
+            Name = Name,
+            Method = Method,
+            Version = Version,
+            Encoding = Encoding,
+            OmitXmlDeclaration = OmitXmlDeclaration,
+            Standalone = Standalone,
+            DoctypePublic = DoctypePublic,
+            DoctypeSystem = DoctypeSystem,
+            Indent = Indent,
+            MediaType = MediaType,
+            IncludeContentType = IncludeContentType,
+            EscapeUriAttributes = EscapeUriAttributes,
+            UndeclarePrefixes = UndeclarePrefixes,
+            NormalizationForm = NormalizationForm,
+            ItemSeparator = ItemSeparator,
+            HtmlVersion = HtmlVersion,
+            BuildTree = BuildTree,
+            AllowDuplicateNames = AllowDuplicateNames,
+            ByteOrderMark = ByteOrderMark,
+            JsonNodeOutputMethod = JsonNodeOutputMethod,
+        };
+        clone.ImportPrecedence = ImportPrecedence;
+        clone.CdataSectionElements = cdataSectionElements;
+        clone.PackageStylesheet = PackageStylesheet;
+        clone.SuppressIndentation = SuppressIndentation;
+        foreach (var m in UseCharacterMaps)
+            clone.UseCharacterMaps.Add(m);
+        return clone;
+    }
 }
 
 /// <summary>

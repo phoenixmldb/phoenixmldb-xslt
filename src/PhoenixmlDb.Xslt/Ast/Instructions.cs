@@ -745,6 +745,13 @@ public sealed class XsltResultDocument : XsltInstruction
     /// <summary>The <c>escape-uri-attributes</c> serialization attribute (yes/no; may be an AVT);
     /// controls percent-encoding of non-ASCII characters in URI-valued HTML/XHTML attributes.</summary>
     public XsltAttributeValueTemplate? EscapeUriAttributes { get; init; }
+    /// <summary>The <c>cdata-section-elements</c> serialization attribute: a whitespace-separated
+    /// list of element QNames whose text content is serialized inside <c>&lt;![CDATA[…]]&gt;</c>.
+    /// Stored as an AVT because it is an attribute value template on xsl:result-document
+    /// (result-document-0401). Evaluated at runtime, split on whitespace and resolved to QNames
+    /// against <see cref="NamespaceBindings"/>; the effective set is the union with the matched
+    /// xsl:output declaration's cdata-section-elements (result-document-0240).</summary>
+    public XsltAttributeValueTemplate? CdataSectionElements { get; init; }
     public bool? BuildTree { get; init; }
     public XsltAttributeValueTemplate? ItemSeparator { get; init; }
     public XsltAttributeValueTemplate? AllowDuplicateNames { get; init; }

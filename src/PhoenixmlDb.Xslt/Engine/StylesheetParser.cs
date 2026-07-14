@@ -7025,6 +7025,7 @@ public sealed class StylesheetParser
         var escapeUriAttributesAttr = element.Attribute("escape-uri-attributes");
         var useCharMapsAttr = element.Attribute("use-character-maps");
         var allowDupNamesAttr = element.Attribute("allow-duplicate-names");
+        var cdataSectionElementsAttr = element.Attribute("cdata-section-elements");
 
         // XTSE0020: html-version must be a valid decimal number (static check only — AVTs validated at runtime)
         if (htmlVersionAttr != null && !htmlVersionAttr.Value.Contains('{', StringComparison.Ordinal))
@@ -7078,9 +7079,14 @@ public sealed class StylesheetParser
             resolvedFormat = ParseQName(formatAttr.Value.Trim(), element);
         }
 
-        // Collect namespace bindings for runtime resolution of prefixed format names
+        var cdataSectionElementsAvt = cdataSectionElementsAttr != null
+            ? ParseAvt(cdataSectionElementsAttr.Value, element, cdataSectionElementsAttr) : null;
+
+        // Collect namespace bindings for runtime resolution of prefixed format names and of the
+        // QNames in cdata-section-elements (which are resolved against the result-document element's
+        // in-scope namespaces, including the default namespace, per §cdata-section-elements).
         IReadOnlyDictionary<string, string>? nsBindings = null;
-        if (formatAvt != null && resolvedFormat == null)
+        if ((formatAvt != null && resolvedFormat == null) || cdataSectionElementsAvt != null)
         {
             var bindings = new Dictionary<string, string>();
             foreach (var ns in element.AncestorsAndSelf().SelectMany(e => e.Attributes().Where(a => a.IsNamespaceDeclaration)))
@@ -7118,6 +7124,7 @@ public sealed class StylesheetParser
             IncludeContentType = includeContentTypeAttr != null ? ParseAvt(includeContentTypeAttr.Value, element, includeContentTypeAttr) : null,
             ByteOrderMark = byteOrderMarkAttr != null ? ParseAvt(byteOrderMarkAttr.Value, element, byteOrderMarkAttr) : null,
             EscapeUriAttributes = escapeUriAttributesAttr != null ? ParseAvt(escapeUriAttributesAttr.Value, element, escapeUriAttributesAttr) : null,
+            CdataSectionElements = cdataSectionElementsAvt,
             BuildTree = ParseYesNo(buildTreeAttr),
             ItemSeparator = itemSeparatorAttr != null ? ParseAvt(itemSeparatorAttr.Value, element, itemSeparatorAttr) : null,
             AllowDuplicateNames = allowDupNamesAttr != null ? ParseAvt(allowDupNamesAttr.Value, element, allowDupNamesAttr) : null,
