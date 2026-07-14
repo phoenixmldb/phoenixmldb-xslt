@@ -882,11 +882,14 @@ public sealed class XsltTransformEngine
 
         // escape-uri-attributes: in HTML/XHTML output, percent-encode non-ASCII characters
         // in URI-valued attributes (href, src, action, cite, data, formaction, poster, srcset, usemap)
+        // when "yes" (the default). Even when "no", a URI-valued attribute still requires a literal
+        // double quote to be emitted as a numeric character reference (&#34;) rather than the named
+        // entity &quot; (output-0103c); the pass runs unconditionally for HTML/XHTML and the
+        // percent-encoding half is gated on escape-uri-attributes.
         if (outputDecl != null &&
-            (outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
-            outputDecl.EscapeUriAttributes != false)
+            (outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml))
         {
-            output = EscapeUriAttributes(output);
+            output = EscapeUriAttributes(output, percentEncode: outputDecl.EscapeUriAttributes != false);
         }
 
         // undeclare-prefixes="yes" only has effect for XML 1.1 output. Since this engine
@@ -2114,7 +2117,7 @@ public sealed class XsltTransformEngine
     /// Applies URI escaping to URI-valued HTML attributes: percent-encodes non-ASCII characters
     /// as required by the serialization spec when escape-uri-attributes="yes".
     /// </summary>
-    internal static string EscapeUriAttributes(string output)
+    internal static string EscapeUriAttributes(string output, bool percentEncode = true)
     {
         // Process attribute values in URI-valued attributes
         var sb = new StringBuilder(output.Length);
@@ -2131,7 +2134,7 @@ public sealed class XsltTransformEngine
 
                 // Check for attributes within the tag
                 var tagStr = output[pos..(tagEnd + 1)];
-                var processed = EscapeUriAttributesInTag(tagStr);
+                var processed = EscapeUriAttributesInTag(tagStr, percentEncode);
                 sb.Append(processed);
                 pos = tagEnd + 1;
             }
@@ -2144,7 +2147,7 @@ public sealed class XsltTransformEngine
         return sb.ToString();
     }
 
-    private static string EscapeUriAttributesInTag(string tag)
+    private static string EscapeUriAttributesInTag(string tag, bool percentEncode)
     {
         // Simple attribute pattern: attrname="value" or attrname='value'
         var sb = new StringBuilder(tag.Length);
@@ -2217,8 +2220,13 @@ public sealed class XsltTransformEngine
 
             if (HtmlUriAttributes.Contains(attrName))
             {
-                // Percent-encode non-ASCII characters in URI attribute values
-                sb.Append(EscapeUriAttributeValue(attrValue));
+                // Percent-encode non-ASCII characters in URI attribute values when
+                // escape-uri-attributes="yes". When "no", leave the value otherwise untouched but
+                // still emit a double quote as a numeric character reference (&#34;) rather than the
+                // named entity &quot; (output-0103c).
+                sb.Append(percentEncode
+                    ? EscapeUriAttributeValue(attrValue)
+                    : attrValue.Replace("&quot;", "&#34;", StringComparison.Ordinal));
             }
             else
             {

@@ -112,6 +112,34 @@ public class XhtmlUriAttributeEscapingTests
     }
 
     [Fact]
+    public async Task Xhtml_EscapeNo_UriAttributeQuote_IsNumericCharacterReference()
+    {
+        // output-0103c: escape-uri-attributes="no" leaves %xx, control-char refs and non-ASCII
+        // raw, BUT a literal double quote inside a URI-valued attribute must be a NUMERIC character
+        // reference (&#34; / &#x22;), never the named entity &quot;.
+        var ss = Head +
+            "<xsl:output method=\"xhtml\" encoding=\"UTF-8\" escape-uri-attributes=\"no\" indent=\"no\"/>" +
+            "<xsl:template match=\"/\"><a href='% %C2%96 &#x96; a \"  &#xA1; &lt; &gt; &amp; end'>t</a></xsl:template></xsl:stylesheet>";
+        var r = await Transform(ss);
+        r.Should().MatchRegex("href=\"% %C2%96 &#0*(x96|150); a &#0*(34|x22);  ¡ &lt; &gt; &amp; end\"");
+        r.Should().NotContain("&quot;");
+    }
+
+    [Fact]
+    public async Task Xhtml_EscapeNo_OrdinaryAttributeQuote_StaysNamedEntity()
+    {
+        // Guard: a double quote in an ORDINARY (non-URI) attribute is unaffected by the URI-attribute
+        // numeric-reference rule and continues to serialize as the named entity &quot;.
+        var ss = Head +
+            "<xsl:output method=\"xhtml\" encoding=\"UTF-8\" escape-uri-attributes=\"no\" indent=\"no\"/>" +
+            "<xsl:template match=\"/\"><a title='x&quot;y'>t</a></xsl:template></xsl:stylesheet>";
+        var r = await Transform(ss);
+        r.Should().Contain("title=\"x&quot;y\"");
+        r.Should().NotContain("&#34;");
+        r.Should().NotContain("&#x22;");
+    }
+
+    [Fact]
     public async Task Xhtml_EscapeYes_XmlSpecialChars_StayEscaped()
     {
         // '<', '>', '&' inside a URI attribute remain XML-escaped, not percent-encoded.
