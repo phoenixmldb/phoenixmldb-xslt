@@ -739,6 +739,12 @@ public sealed class XsltResultDocument : XsltInstruction
     public XsltAttributeValueTemplate? MediaType { get; init; }
     /// <summary>The <c>include-content-type</c> serialization attribute (yes/no; may be an AVT).</summary>
     public XsltAttributeValueTemplate? IncludeContentType { get; init; }
+    /// <summary>The <c>byte-order-mark</c> serialization attribute (yes/no; may be an AVT).
+    /// When truthy, a U+FEFF is prepended to the serialized result document.</summary>
+    public XsltAttributeValueTemplate? ByteOrderMark { get; init; }
+    /// <summary>The <c>escape-uri-attributes</c> serialization attribute (yes/no; may be an AVT);
+    /// controls percent-encoding of non-ASCII characters in URI-valued HTML/XHTML attributes.</summary>
+    public XsltAttributeValueTemplate? EscapeUriAttributes { get; init; }
     public bool? BuildTree { get; init; }
     public XsltAttributeValueTemplate? ItemSeparator { get; init; }
     public XsltAttributeValueTemplate? AllowDuplicateNames { get; init; }

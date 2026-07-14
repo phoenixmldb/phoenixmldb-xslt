@@ -17009,6 +17009,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             resultIncludeContentType = ictStr is "yes" or "true" or "1";
         }
 
+        // Evaluate byte-order-mark / escape-uri-attributes from xsl:result-document (AVTs). When
+        // present they override the matched xsl:output: byte-order-mark drives the leading U+FEFF,
+        // escape-uri-attributes gates percent-encoding of URI-valued HTML/XHTML attributes.
+        bool? resultByteOrderMark = null;
+        if (instruction.ByteOrderMark != null)
+        {
+            var bomStr = (await EvaluateAvtAsync(instruction.ByteOrderMark).ConfigureAwait(false)).Trim();
+            resultByteOrderMark = bomStr is "yes" or "true" or "1";
+        }
+        bool? resultEscapeUriAttributes = null;
+        if (instruction.EscapeUriAttributes != null)
+        {
+            var euaStr = (await EvaluateAvtAsync(instruction.EscapeUriAttributes).ConfigureAwait(false)).Trim();
+            resultEscapeUriAttributes = euaStr is "yes" or "true" or "1";
+        }
+
         // Determine effective output method for this result-document
         // Priority: method attribute on xsl:result-document > matched xsl:output declaration
         OutputMethod? resultMethod = null;
@@ -17238,9 +17254,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     DoctypeSystem = resultDoctypeSystem ?? rdBaseOutput?.DoctypeSystem,
                     MediaType = resultMediaType ?? rdBaseOutput?.MediaType,
                     IncludeContentType = resultIncludeContentType ?? rdBaseOutput?.IncludeContentType,
-                    EscapeUriAttributes = rdBaseOutput?.EscapeUriAttributes,
+                    EscapeUriAttributes = resultEscapeUriAttributes ?? rdBaseOutput?.EscapeUriAttributes,
                     NormalizationForm = rdBaseOutput?.NormalizationForm,
-                    ByteOrderMark = rdBaseOutput?.ByteOrderMark,
+                    ByteOrderMark = resultByteOrderMark ?? rdBaseOutput?.ByteOrderMark,
                     SuppressIndentation = matchedOutput?.SuppressIndentation ?? _stylesheet.Outputs.FirstOrDefault()?.SuppressIndentation,
                 };
                 secondaryContent = Owner!.FinalizeOutput(
@@ -17266,7 +17282,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     matchedOutput
                     ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
                         resultStandalone, resultStandaloneSpecified, resultVersion,
-                        resultMediaType, resultIncludeContentType),
+                        resultMediaType, resultIncludeContentType,
+                        resultByteOrderMark, resultEscapeUriAttributes),
                     resultDoctypePublic, resultDoctypeSystem);
             }
             else
@@ -17278,7 +17295,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     matchedOutput
                     ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
                         resultStandalone, resultStandaloneSpecified, resultVersion,
-                        resultMediaType, resultIncludeContentType),
+                        resultMediaType, resultIncludeContentType,
+                        resultByteOrderMark, resultEscapeUriAttributes),
                     resultDoctypePublic, resultDoctypeSystem);
             }
         }
@@ -17373,7 +17391,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private Ast.XsltOutput CreateSyntheticOutput(
         OutputMethod? method, bool? omitXmlDecl = null, bool? indent = null,
         bool? standalone = null, bool standaloneSpecified = false, string? version = null,
-        string? mediaType = null, bool? includeContentType = null)
+        string? mediaType = null, bool? includeContentType = null,
+        bool? byteOrderMark = null, bool? escapeUriAttributes = null)
     {
         var baseOutput = _stylesheet.Outputs.FirstOrDefault();
         return new Ast.XsltOutput
@@ -17392,6 +17411,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // (result-document-0223 / 0224); the result-document's own values win over the base.
             MediaType = mediaType ?? baseOutput?.MediaType,
             IncludeContentType = includeContentType ?? baseOutput?.IncludeContentType,
+            // byte-order-mark / escape-uri-attributes on xsl:result-document win over the base
+            // xsl:output; otherwise inherit (result-document-0256/0258/0260/1203, -0264/0266/0268).
+            ByteOrderMark = byteOrderMark ?? baseOutput?.ByteOrderMark,
+            EscapeUriAttributes = escapeUriAttributes ?? baseOutput?.EscapeUriAttributes,
         };
     }
 

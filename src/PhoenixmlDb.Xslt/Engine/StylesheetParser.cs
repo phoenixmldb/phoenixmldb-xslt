@@ -7021,6 +7021,8 @@ public sealed class StylesheetParser
         var htmlVersionAttr = element.Attribute("html-version");
         var mediaTypeAttr = element.Attribute("media-type");
         var includeContentTypeAttr = element.Attribute("include-content-type");
+        var byteOrderMarkAttr = element.Attribute("byte-order-mark");
+        var escapeUriAttributesAttr = element.Attribute("escape-uri-attributes");
         var useCharMapsAttr = element.Attribute("use-character-maps");
         var allowDupNamesAttr = element.Attribute("allow-duplicate-names");
 
@@ -7114,6 +7116,8 @@ public sealed class StylesheetParser
             DoctypeSystem = rdDoctypeSystem != null ? ParseAvt(rdDoctypeSystem.Value, element, rdDoctypeSystem) : null,
             MediaType = mediaTypeAttr != null ? ParseAvt(mediaTypeAttr.Value, element, mediaTypeAttr) : null,
             IncludeContentType = includeContentTypeAttr != null ? ParseAvt(includeContentTypeAttr.Value, element, includeContentTypeAttr) : null,
+            ByteOrderMark = byteOrderMarkAttr != null ? ParseAvt(byteOrderMarkAttr.Value, element, byteOrderMarkAttr) : null,
+            EscapeUriAttributes = escapeUriAttributesAttr != null ? ParseAvt(escapeUriAttributesAttr.Value, element, escapeUriAttributesAttr) : null,
             BuildTree = ParseYesNo(buildTreeAttr),
             ItemSeparator = itemSeparatorAttr != null ? ParseAvt(itemSeparatorAttr.Value, element, itemSeparatorAttr) : null,
             AllowDuplicateNames = allowDupNamesAttr != null ? ParseAvt(allowDupNamesAttr.Value, element, allowDupNamesAttr) : null,
