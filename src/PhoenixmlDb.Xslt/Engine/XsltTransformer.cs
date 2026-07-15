@@ -2035,8 +2035,8 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// Resolves the Serialization 4.0 default output method from a serialized result tree, for use
     /// only when <c>xsl:output</c> specified no explicit method. Returns <see cref="OutputMethod.Html"/>
-    /// when the document element is named <c>html</c> (case-insensitive) in no namespace,
-    /// <see cref="OutputMethod.Xhtml"/> when it is <c>html</c> in the XHTML namespace, and
+    /// when the document element is named <c>html</c> (matched case-sensitively, lowercase) in no
+    /// namespace, <see cref="OutputMethod.Xhtml"/> when it is <c>html</c> in the XHTML namespace, and
     /// <c>null</c> (keep the xml default) for any other document element or a foreign-namespace
     /// <c>html</c>.
     /// </summary>
@@ -2071,7 +2071,18 @@ public sealed class XsltTransformEngine
         var qname = output[nameStart..nameEnd];
         var colon = qname.IndexOf(':', StringComparison.Ordinal);
         var localName = colon >= 0 ? qname[(colon + 1)..] : qname;
-        if (!localName.Equals("html", StringComparison.OrdinalIgnoreCase))
+        // Match the document-element local name `html` CASE-SENSITIVELY (lowercase only). The
+        // default output-method resolution promotes an html-rooted result to the html/xhtml method,
+        // which injects the Content-Type meta, the HTML5 DOCTYPE, and the html indentation default.
+        // The W3C conformance suite pins this to lowercase: a lowercase <html> root defaults to the
+        // html method with an injected meta (decl/output output-0715/0130), while an UPPERCASE
+        // <HTML> document element keeps the xml default and gets NO injected meta (insn/sequence
+        // sequence-0601, a copy transform of an uppercase-HTML source). A case-insensitive match
+        // wrongly promoted <HTML> to the html method and corrupted that assert-xml result tree.
+        // Note: this is only the default-method *selection*. Once a method is chosen, the html/xhtml
+        // method's own element handling (void elements, script/style raw text, the HTML5 DOCTYPE
+        // name) remains case-insensitive as the serialization spec requires.
+        if (!localName.Equals("html", StringComparison.Ordinal))
             return null;
 
         var rootNs = GetRootElementNamespace(output);
