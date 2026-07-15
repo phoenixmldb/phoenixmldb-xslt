@@ -128,4 +128,26 @@ public sealed class ResultDocumentXmlDeclarationTests
         result.Should().NotContain("<?xml");
         result.Should().Contain("<out>hello</out>");
     }
+
+    [Fact]
+    public async Task TextMethod_OmitDeclWithStandalone_DoesNotRaiseSepm0009()
+    {
+        // insn/result-document-0239: a named xsl:output with method="text" carrying
+        // omit-xml-declaration="yes" and standalone="no" (the latter surviving an import
+        // override) must serialize as text without raising SEPM0009 — the omit-xml-declaration
+        // and standalone parameters do not apply to the text output method.
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="2.0"
+              xmlns:my="http://example1.com">
+               <t:output name="my:temp" method="text" omit-xml-declaration="yes" standalone="no"/>
+               <t:template match="/">
+                  <t:result-document format="my:temp"><out>plain text</out></t:result-document>
+               </t:template>
+            </t:transform>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("plain text");
+        result.Should().NotContain("<out>");
+        result.Should().NotContain("SEPM0009");
+    }
 }

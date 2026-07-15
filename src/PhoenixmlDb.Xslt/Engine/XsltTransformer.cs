@@ -547,7 +547,13 @@ public sealed class XsltTransformEngine
 
         // SEPM0009: omit-xml-declaration="yes" conflicts with a standalone value other than
         // "omit", OR with (version != 1.0 AND doctype-system specified).
-        if (outputDecl.OmitXmlDeclaration == true)
+        // The omit-xml-declaration and standalone serialization parameters apply only to the
+        // xml and xhtml output methods; for text/html/json/adaptive no XML declaration is ever
+        // emitted, so the conflict cannot arise and SEPM0009 must not be raised. When a named
+        // xsl:output overrides another across import precedence (method="text" winning over an
+        // imported method="html"), the surviving standalone/omit values are inert and must not
+        // trip this check (insn/result-document/result-document-0239).
+        if (outputDecl.OmitXmlDeclaration == true && method is OutputMethod.Xml or OutputMethod.Xhtml)
         {
             if (outputDecl.Standalone.HasValue)
                 throw new XsltException(
@@ -2607,14 +2613,25 @@ public sealed class XsltTransformEngine
                     }
                 }
 
+                // A block element whose closing tag is immediately preceded by character data
+                // (e.g. <body>hello</body>, <h1>Section 1 of 3</h1>, <p>x</p>) serializes inline:
+                // the HTML serializer must not insert a newline between an element's text content
+                // and its closing tag, which would inject insignificant whitespace into the
+                // element's string value (result-document-0701 serialization match; result-
+                // document-1301 assert-xml). Only a '>' (child-element boundary) or existing '\n'
+                // immediately before the close keeps the normal block indentation.
+                bool textContentClose = isBlock && isClosing && !emptyBlockClose && i > 0
+                    && output[i - 1] != '>' && !char.IsWhiteSpace(output[i - 1]);
+
                 if (isBlock)
                 {
                     if (isClosing)
                         depth = Math.Max(0, depth - 1);
 
                     // Add newline and indentation before block elements, except when closing an
-                    // empty element inline (see emptyBlockClose above).
-                    if (!emptyBlockClose)
+                    // empty element inline (emptyBlockClose) or an element with text content
+                    // (textContentClose).
+                    if (!emptyBlockClose && !textContentClose)
                     {
                         if (sb.Length > 0 && sb[^1] != '\n')
                             sb.Append('\n');

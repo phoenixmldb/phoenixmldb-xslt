@@ -152,4 +152,57 @@ public sealed class ResultDocumentHtmlSerializationTests
         var result = await Transform(ss);
         result.Should().MatchRegex(@"<!DOCTYPE\s+html\s*>");
     }
+
+    [Fact]
+    public async Task HtmlMethod_TextContentElement_ClosesInlineWithoutIndentationWhitespace()
+    {
+        // insn/result-document-0701: an HTML block element containing character data
+        // (<body>hello</body>) must serialize inline — HTML indentation must not insert a
+        // newline between the text content and the closing tag, which would break the
+        // serialization-match "<body>hello</body>".
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="2.0">
+               <t:template match="/">
+                  <t:result-document method="html">
+                     <html><head><title/></head><body>hello</body></html>
+                  </t:result-document>
+               </t:template>
+            </t:transform>
+            """;
+        var result = await Transform(ss);
+        result.Should().Contain("<body>hello</body>");
+        result.Should().Contain("<title></title>");
+    }
+
+    [Fact]
+    public async Task HtmlMethod_SecondaryDocs_TextElementsHaveNoInsignificantWhitespace()
+    {
+        // insn/result-document-1301: multiple secondary result documents whose text-content
+        // elements (<h1>, <p>) must serialize inline so an assert-xml tree comparison sees no
+        // insignificant whitespace in their string values. Also confirms position()/last() are
+        // evaluated per for-each iteration.
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="2.0">
+               <t:template match="/">
+                  <t:for-each select="//section">
+                     <t:result-document method="html" href="section{position()}.html">
+                        <html><body>
+                           <h1>Section <t:value-of select="concat(position(),' of ', last())"/></h1>
+                           <p>eq <t:value-of select="position() eq last()"/></p>
+                        </body></html>
+                     </t:result-document>
+                  </t:for-each>
+               </t:template>
+            </t:transform>
+            """;
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync(ss, new Uri("file:///sheet.xsl"));
+        await t.TransformAsync("<doc><section>a</section><section>b</section><section>c</section></doc>");
+
+        t.SecondaryResultDocuments.Should().ContainKey("section1.html");
+        t.SecondaryResultDocuments["section1.html"].Should().Contain("<h1>Section 1 of 3</h1>");
+        t.SecondaryResultDocuments["section1.html"].Should().Contain("<p>eq false</p>");
+        t.SecondaryResultDocuments["section3.html"].Should().Contain("<h1>Section 3 of 3</h1>");
+        t.SecondaryResultDocuments["section3.html"].Should().Contain("<p>eq true</p>");
+    }
 }
