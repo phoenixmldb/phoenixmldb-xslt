@@ -7104,6 +7104,13 @@ public sealed class StylesheetParser
                 useCharMaps.Add(ParseQName(n, element));
         }
 
+        // XSLT 3.0 §27.1: parameter-document is an attribute value template on xsl:result-document
+        // (its URI may reference variables — result-document-1406 uses "{$o}-params.xml"), so it is
+        // resolved and loaded at runtime, not here. The base URI of the declaring module is captured
+        // so the runtime loader can resolve a relative href against the right module.
+        var paramDocAttr = element.Attribute("parameter-document");
+        var paramDocAvt = paramDocAttr != null ? ParseAvt(paramDocAttr.Value, element, paramDocAttr) : null;
+
         return new XsltResultDocument
         {
             Location = location,
@@ -7130,6 +7137,7 @@ public sealed class StylesheetParser
             ItemSeparator = itemSeparatorAttr != null ? ParseAvt(itemSeparatorAttr.Value, element, itemSeparatorAttr) : null,
             AllowDuplicateNames = allowDupNamesAttr != null ? ParseAvt(allowDupNamesAttr.Value, element, allowDupNamesAttr) : null,
             UseCharacterMaps = useCharMaps,
+            ParameterDocument = paramDocAvt,
             NamespaceBindings = nsBindings,
             Content = ParseSequenceConstructor(element)
         };

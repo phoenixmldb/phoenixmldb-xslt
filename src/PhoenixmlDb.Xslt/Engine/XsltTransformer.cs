@@ -71,6 +71,24 @@ public sealed class XsltTransformEngine
     private readonly TemplateIndex _templateIndex;
     private readonly PhoenixmlDb.XQuery.ISchemaProvider? _schemaProvider;
 
+    // Character maps loaded at runtime from an xsl:result-document/@parameter-document (XSLT 3.0
+    // §27.1). The parameter-document URI is an AVT resolved at runtime, so its inline character maps
+    // cannot be registered in the compiled stylesheet's map table; they are registered here under a
+    // synthetic GUID QName and merged in by FinalizeOutput. Cleared at the start of every transform,
+    // so it only ever holds the current transform's maps (no cross-transform accumulation).
+    private readonly Dictionary<QName, XsltCharacterMap> _runtimeCharacterMaps = new();
+
+    /// <summary>
+    /// Registers a character map loaded at runtime (from an xsl:result-document parameter-document)
+    /// under a fresh synthetic QName and returns that name, for inclusion in a use-character-maps list.
+    /// </summary>
+    internal QName RegisterRuntimeCharacterMap(Dictionary<int, string> mappings)
+    {
+        var name = new QName(NamespaceId.None, "rd-param-doc-character-map" + Guid.NewGuid().ToString("N"));
+        _runtimeCharacterMaps[name] = new XsltCharacterMap { Name = name, Mappings = mappings };
+        return name;
+    }
+
     // Temp-tree base-URI preservation sentinel. Emitted by the temp-tree serializer only
     // (gated by _tempTreeSerializeDepth) and always stripped by the reparse, so it never
     // appears in any user-visible output. See TryEmitBaseSentinel / ReadXdmElementFromReader
@@ -172,6 +190,7 @@ public sealed class XsltTransformEngine
             nodeStore,
             _schemaProvider);
         context.Owner = this;
+        _runtimeCharacterMaps.Clear();
 
         // When there is no source document, the context item is absent during global variable
         // evaluation (XSLT 3.0 §5.4.1: global variables are evaluated with the initial focus).
@@ -805,6 +824,17 @@ public sealed class XsltTransformEngine
         // them: when outputDecl came from a used package, resolve its use-character-maps in
         // that package's registry, not the principal's (use-package-108 / use-package-108b).
         var charMaps = outputDecl?.PackageStylesheet?.CharacterMaps ?? _stylesheet.CharacterMaps;
+        // Merge in any character maps loaded at runtime from an xsl:result-document parameter-document
+        // (§27.1). These live outside the compiled stylesheet's map table because their URI is an AVT
+        // resolved at runtime (result-document-1406). The union is taken lazily so the common no-runtime
+        // case keeps referencing the compiled table directly.
+        if (_runtimeCharacterMaps.Count > 0)
+        {
+            var merged = new Dictionary<QName, XsltCharacterMap>(charMaps);
+            foreach (var (k, v) in _runtimeCharacterMaps)
+                merged[k] = v;
+            charMaps = merged;
+        }
         if (charMaps.Count > 0)
         {
             var outputMaps = outputDecl?.UseCharacterMaps;
@@ -4171,6 +4201,7 @@ public sealed class XsltTransformEngine
     /// </summary>
     private async Task<string> TransformStreamingAsync(string xmlSource, XsltTransformOptions? options)
     {
+        _runtimeCharacterMaps.Clear();
         using var stringReader = new System.IO.StringReader(xmlSource);
         var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = true };
         using var xmlReader = XmlReader.Create(stringReader, settings,
@@ -16897,6 +16928,118 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    private static readonly System.Xml.Linq.XNamespace RdSerializationParamsNs =
+        "http://www.w3.org/2010/xslt-xquery-serialization";
+
+    /// <summary>
+    /// Loads the serialization-parameters document referenced by an xsl:result-document
+    /// <c>parameter-document</c> (with the href already evaluated), returning its output method (if
+    /// declared) and the combined character mappings declared by its <c>output:use-character-maps</c>
+    /// children. The URI is resolved against the stylesheet base URI. Other simple serialization
+    /// parameters are not yet consumed from a result-document parameter document — only the two that
+    /// XSLT 3.0 §27.1 test result-document-1406 exercises (method + character maps). (XTDE0010 on
+    /// resolution/read/well-formedness failure, matching xsl:output/@parameter-document handling.)
+    /// </summary>
+    private (OutputMethod? Method, Dictionary<int, string>? CharacterMap) LoadResultDocumentParameterDocument(string href)
+    {
+        // Resolve against the effective (static, xml:base-aware) base URI, falling back to the module base.
+        Uri? baseUri = _stylesheet.BaseUri;
+        if (StaticBaseUri is { } sbu && Uri.TryCreate(sbu, UriKind.Absolute, out var staticBase))
+            baseUri = staticBase;
+        Uri resolvedUri;
+        if (Uri.TryCreate(href, UriKind.Absolute, out var absUri))
+            resolvedUri = absUri;
+        else if (baseUri != null)
+            resolvedUri = new Uri(baseUri, href);
+        else
+            throw Error($"XTDE0010: Cannot resolve result-document parameter document '{href}' without a base URI");
+
+        if (_options?.ResourcePolicy is { } policy &&
+            !policy.IsAllowed(resolvedUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument))
+            throw Error($"XTDE0010: Resource policy denied access to result-document parameter document '{href}'");
+
+        string xml;
+        try
+        {
+            if (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps)
+            {
+                if (_options?.PreloadedResources is { } preloaded && preloaded.TryGet(resolvedUri, out var preloadedXml))
+                    xml = preloadedXml;
+                else if (OperatingSystem.IsBrowser())
+                    throw Error($"XTDE0010: Cannot fetch result-document parameter document '{href}' on Blazor WebAssembly synchronously.");
+                else
+                {
+                    using var stream = HttpDocumentLoader.OpenRead(resolvedUri);
+                    using var reader = new System.IO.StreamReader(stream);
+                    xml = reader.ReadToEnd();
+                }
+            }
+            else if (resolvedUri.IsFile)
+            {
+                xml = System.IO.File.ReadAllText(resolvedUri.LocalPath);
+            }
+            else
+            {
+                throw Error($"XTDE0010: Cannot read result-document parameter document '{href}': unsupported URI scheme '{resolvedUri.Scheme}'");
+            }
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            throw Error($"XTDE0010: Cannot read result-document parameter document '{href}': {ex.Message}");
+        }
+
+        System.Xml.Linq.XDocument doc;
+        try
+        {
+            doc = System.Xml.Linq.XDocument.Parse(xml);
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            throw Error($"XTDE0010: Result-document parameter document '{href}' is not well-formed: {ex.Message}");
+        }
+
+        var root = doc.Root;
+        if (root == null || root.Name.Namespace != RdSerializationParamsNs || root.Name.LocalName != "serialization-parameters")
+            throw Error($"XTDE0010: Result-document parameter document '{href}' root must be output:serialization-parameters");
+
+        OutputMethod? method = null;
+        Dictionary<int, string>? charMap = null;
+        foreach (var child in root.Elements())
+        {
+            if (child.Name.Namespace != RdSerializationParamsNs)
+                continue;
+            if (child.Name.LocalName == "use-character-maps")
+            {
+                foreach (var cm in child.Elements(RdSerializationParamsNs + "character-map"))
+                {
+                    var ch = cm.Attribute("character")?.Value;
+                    var mapStr = cm.Attribute("map-string")?.Value;
+                    if (ch == null || mapStr == null)
+                        continue;
+                    charMap ??= new Dictionary<int, string>();
+                    if (ch.Length == 1)
+                        charMap[ch[0]] = mapStr;
+                    else if (ch.Length == 2 && char.IsHighSurrogate(ch[0]) && char.IsLowSurrogate(ch[1]))
+                        charMap[char.ConvertToUtf32(ch[0], ch[1])] = mapStr;
+                }
+            }
+            else if (child.Name.LocalName == "method")
+            {
+                method = child.Attribute("value")?.Value.Trim() switch
+                {
+                    "xml" => OutputMethod.Xml,
+                    "html" => OutputMethod.Html,
+                    "xhtml" => OutputMethod.Xhtml,
+                    "text" => OutputMethod.Text,
+                    "json" => OutputMethod.Json,
+                    "adaptive" => OutputMethod.Adaptive,
+                    _ => method
+                };
+            }
+        }
+        return (method, charMap);
+    }
+
     public override async ValueTask ResultDocumentAsync(XsltResultDocument instruction)
     {
         // XTDE1480: Cannot use result-document in temporary output state (e.g., inside a variable)
@@ -17144,8 +17287,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // and the matched xsl:output declaration's cdata-section-elements (result-document-0240).
         var resultCdataSectionElements = await EvaluateCdataSectionElementsAsync(instruction).ConfigureAwait(false);
 
+        // XSLT 3.0 §27.1: load the parameter-document (an AVT — its URI may reference variables, so
+        // it is resolved here at runtime, not at compile time — result-document-1406). It contributes
+        // an output method and inline character maps that supplement this result-document, but any
+        // parameter set directly on xsl:result-document takes precedence over the parameter document.
+        OutputMethod? paramDocMethod = null;
+        QName? paramDocCharMapName = null;
+        if (instruction.ParameterDocument != null)
+        {
+            var paramDocHref = await EvaluateAvtAsync(instruction.ParameterDocument).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(paramDocHref))
+            {
+                var (loadedMethod, loadedCharMap) = LoadResultDocumentParameterDocument(paramDocHref);
+                paramDocMethod = loadedMethod;
+                if (loadedCharMap is { Count: > 0 })
+                    paramDocCharMapName = Owner!.RegisterRuntimeCharacterMap(loadedCharMap);
+            }
+        }
+
         // Determine effective output method for this result-document
-        // Priority: method attribute on xsl:result-document > matched xsl:output declaration
+        // Priority: method attribute on xsl:result-document > parameter-document > matched xsl:output
         OutputMethod? resultMethod = null;
         if (instruction.Method != null)
         {
@@ -17161,6 +17322,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _ => null
             };
         }
+        resultMethod ??= paramDocMethod;
         resultMethod ??= matchedOutput?.Method;
 
         // Resolve item-separator: instruction attribute > matched xsl:output > default
@@ -17197,11 +17359,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // back to primary output by saving/restoring the secondary buffer
         var redirectToPrimary = !redirectToSecondary && _resultDocumentRedirectDepth > 0;
 
+        // Effective use-character-maps: the parameter-document's inline maps apply FIRST, then any
+        // use-character-maps written directly on xsl:result-document (which override, per §27.1).
+        List<QName>? effectiveCharMaps = null;
+        if (paramDocCharMapName != null || instruction.UseCharacterMaps.Count > 0)
+        {
+            effectiveCharMaps = new List<QName>();
+            if (paramDocCharMapName != null)
+                effectiveCharMaps.Add(paramDocCharMapName.Value);
+            effectiveCharMaps.AddRange(instruction.UseCharacterMaps);
+        }
+
         // Track character maps from xsl:result-document targeting principal output.
         // These persist until SerializeResult runs (no save/restore needed since only
         // one result-document can target principal output per XTDE1490).
-        if (instruction.UseCharacterMaps.Count > 0 && !redirectToSecondary)
-            _principalOutputCharacterMaps = instruction.UseCharacterMaps;
+        if (effectiveCharMaps != null && !redirectToSecondary)
+            _principalOutputCharacterMaps = effectiveCharMaps;
         string? savedOutputContent = null;
         List<Dictionary<string, string>>? savedNsScopes = null;
         List<QName>? savedElementStack = null;
@@ -17367,9 +17540,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // for doctype/BOM/suppress-indentation/etc. This reproduces the previous effective
                 // method/indent/doctype/BOM resolution exactly while adding the rest of the pipeline.
                 //
-                // Character maps: the previous secondary path applied NO character maps, so we leave
-                // UseCharacterMaps empty and pass no supplementary list, keeping char-map behavior
-                // unchanged (FinalizeOutput's character-map step is a no-op in that case).
+                // Character maps: a secondary result-document's own use-character-maps were previously
+                // not applied; the effective list (parameter-document maps first, then direct
+                // use-character-maps) is now supplied so a parameter-document targeting a secondary
+                // result document also rewrites its serialized output (§27.1).
                 var rdBaseOutput = matchedOutput ?? _stylesheet.Outputs.FirstOrDefault();
                 var rdOutputDecl = new Ast.XsltOutput
                 {
@@ -17393,7 +17567,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     SuppressIndentation = matchedOutput?.SuppressIndentation ?? _stylesheet.Outputs.FirstOrDefault()?.SuppressIndentation,
                 };
                 secondaryContent = Owner!.FinalizeOutput(
-                    secondaryContent, rdOutputDecl, resultDocCharacterMaps: null, XsltTransformEngine.FinalizeKind.ResultDocument);
+                    secondaryContent, rdOutputDecl, effectiveCharMaps, XsltTransformEngine.FinalizeKind.ResultDocument);
 
                 if (MaxResultDocuments > 0 && _secondaryResultDocuments.Count >= MaxResultDocuments)
                     throw Error($"XTDE1490: Maximum number of secondary result documents ({MaxResultDocuments}) exceeded. " +

@@ -761,6 +761,15 @@ public sealed class XsltResultDocument : XsltInstruction
     public XsltAttributeValueTemplate? AllowDuplicateNames { get; init; }
     public List<QName> UseCharacterMaps { get; init; } = [];
     /// <summary>
+    /// The <c>parameter-document</c> serialization attribute (an AVT; XSLT 3.0 §27.1). References an
+    /// external <c>output:serialization-parameters</c> document whose parameters (notably
+    /// <c>method</c>) and inline character maps supplement this result-document's serialization.
+    /// Resolved and loaded at runtime because the URI may reference variables
+    /// (insn/result-document/result-document-1406 uses <c>"{$o}-params.xml"</c>). Values set directly
+    /// on xsl:result-document take precedence over the parameter document per §27.1.
+    /// </summary>
+    public XsltAttributeValueTemplate? ParameterDocument { get; init; }
+    /// <summary>
     /// Namespace bindings from the source element, for resolving prefixed format names at runtime.
     /// </summary>
     public IReadOnlyDictionary<string, string>? NamespaceBindings { get; init; }
