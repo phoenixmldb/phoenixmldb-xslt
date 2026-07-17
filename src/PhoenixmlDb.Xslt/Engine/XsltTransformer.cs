@@ -19102,6 +19102,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedAttrContentDepth2 = _attributeContentDepth;
                 _textContentDepth = 0;
                 _attributeContentDepth = 0;
+                // Install an AsBodyCapture so xsl:sequence items appended during body
+                // execution record the _output offset at which they occur. Without this,
+                // literal-result-elements (which stream to _output) and xsl:sequence
+                // select= atomics (which go to the accumulator) form two segregated buckets;
+                // recording positions lets the combine phase below weave them back into
+                // document order (insn/sequence-0137a). OutputBaseLen is the buffer length
+                // at body start, matching savedScope so positions index into textContent.
+                var savedAsBodyCapture = _currentAsBodyCapture;
+                var asBodyCapture = new AsBodyCapture
+                {
+                    Accumulator = _sequenceAccumulator,
+                    OutputBaseLen = savedScope.SavedLength,
+                };
+                _currentAsBodyCapture = asBodyCapture;
                 // When the target type allows multiple items (text()*, node()*, item()*),
                 // collect each text write as a separate accumulator item so they remain
                 // individual text nodes (not merged via string concatenation).
@@ -19145,6 +19159,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _attributeContentDepth = savedAttrContentDepth2;
                     _collectTextAsSequenceItems = savedCollectText;
                     _serializingElementDepth = savedElemDepth;
+                    _currentAsBodyCapture = savedAsBodyCapture;
                 }
                 var textContent = savedScope.GetWritten();
 
@@ -19158,14 +19173,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
                 // Combine sequence accumulator items with any serialized output.
                 // Literal result elements go to the output buffer; xsl:sequence items go
-                // to the accumulator. We need to merge them into a single sequence.
+                // to the accumulator. We must merge them into a single sequence — and,
+                // crucially, in construction (document) order. An `xsl:sequence` with
+                // content interleaves LREs and nested `xsl:sequence select=` results
+                // (insn/sequence-0137a); segregating "all atomics, then all nodes" reorders
+                // the result. The AsBodyCapture installed above recorded, for each
+                // accumulator item, the _output offset at which it was produced, so the
+                // interleave below places each item at its true position in textContent.
                 var sequenceItems = new List<object?>();
-
-                // Add accumulated items (from xsl:sequence select="...")
                 var accBaseUri = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
+                var seqBaseUri = accBaseUri;
                 var wrapAsTextNode = _nodeStore != null && instruction.As != null
                     && instruction.As.ItemType is ItemType.Text or ItemType.Node or ItemType.Item;
-                foreach (var item in _sequenceAccumulator)
+
+                // Appends one accumulated item (from xsl:sequence select="..." / xsl:attribute /
+                // xsl:document) to sequenceItems, applying base-URI fixup and text-node wrapping.
+                void AddAccItem(object? item)
                 {
                     if (item != null)
                     {
@@ -19184,51 +19207,115 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         if (wrapAsTextNode && item is string strItem)
                         {
                             var textId = _nodeStore!.NextId();
-                            var textNode = new Xdm.Nodes.XdmText
+                            sequenceItems.Add(new Xdm.Nodes.XdmText
                             {
                                 Id = textId,
                                 Document = DocumentId.None,
                                 Parent = NodeId.None,
                                 Value = strItem
-                            };
-                            sequenceItems.Add(textNode);
+                            });
                         }
                         else if (wrapAsTextNode && item is Xdm.TextNodeItem tni)
                         {
                             var textId = _nodeStore!.NextId();
-                            var textNode = new Xdm.Nodes.XdmText
+                            sequenceItems.Add(new Xdm.Nodes.XdmText
                             {
                                 Id = textId,
                                 Document = DocumentId.None,
                                 Parent = NodeId.None,
                                 Value = tni.Value
-                            };
-                            sequenceItems.Add(textNode);
+                            });
                         }
                         else
                         {
                             sequenceItems.Add(item);
                         }
                     }
-                    else if (wrapAsTextNode)
-                    {
-                        // null items (from empty xsl:text) also need to be text nodes
-                        // to preserve count — skip nulls for non-node types
-                    }
+                    // null items (from empty xsl:text) contribute nothing for non-node types.
                 }
 
-                // Parse serialized literal result elements into individual XDM nodes
-                if (!string.IsNullOrEmpty(textContent) && _nodeStore != null && textContent.Contains('<', StringComparison.Ordinal))
+                // Parses a serialized-LRE chunk into individual XDM nodes, appending them to
+                // sequenceItems. Each LRE carries its own namespace declarations (output
+                // namespace scopes were cleared before body execution), so a chunk is
+                // self-contained and safe to parse in isolation.
+                void AddElementChunk(string chunk)
                 {
                     try
                     {
-                        var seqBaseUri = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
-
-                        // When as="document-node()", create a proper XDM document node
-                        // wrapping the content, rather than extracting individual children
-                        if (instruction.As?.ItemType == ItemType.Document)
+                        var settings = new System.Xml.XmlReaderSettings
                         {
-                            // Stream-parse rather than allocating a full XmlDocument.
+                            DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                            IgnoreWhitespace = false,
+                            IgnoreComments = false,
+                            IgnoreProcessingInstructions = false,
+                        };
+                        using var stringReader = new System.IO.StringReader($"<_seq_root_>{chunk}</_seq_root_>");
+                        using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                        var parsedChildren = new List<object?>();
+                        ReadAsBodyChunkChildren(reader, parsedChildren);
+                        foreach (var child in parsedChildren)
+                        {
+                            if (child is XdmNode cn)
+                            {
+                                cn.Parent = null;
+                                // Don't clobber a base URI recovered from the temp-tree base
+                                // sentinel (a source element copied into the body): that
+                                // preserved source base must win over the construction base,
+                                // mirroring the accumulator handling above.
+                                if (seqBaseUri != null && cn.CopySourceBaseUri == null)
+                                    cn.BaseUri = seqBaseUri;
+                            }
+                            sequenceItems.Add(child);
+                        }
+                    }
+                    catch (System.Xml.XmlException)
+                    {
+                        // If parsing fails, wrap as RTF.
+                        sequenceItems.Add(new ResultTreeFragment(chunk, accBaseUri));
+                    }
+                }
+
+                // Appends a chunk of serialized body output: parse as nodes when it contains
+                // markup, else treat as plain text (a text node for node-ish types, an atomic
+                // string otherwise, XML entities decoded).
+                void AddTextChunk(string chunk)
+                {
+                    if (string.IsNullOrEmpty(chunk))
+                        return;
+                    if (_nodeStore != null && chunk.Contains('<', StringComparison.Ordinal))
+                    {
+                        AddElementChunk(chunk);
+                    }
+                    else if (_nodeStore != null && instruction.As != null
+                        && instruction.As.ItemType is ItemType.Text or ItemType.Node or ItemType.Item)
+                    {
+                        var textId = _nodeStore.NextId();
+                        sequenceItems.Add(new Xdm.Nodes.XdmText
+                        {
+                            Id = textId,
+                            Document = DocumentId.None,
+                            Parent = NodeId.None,
+                            Value = StripXmlMarkup(chunk)
+                        });
+                    }
+                    else
+                    {
+                        sequenceItems.Add(StripXmlMarkup(chunk));
+                    }
+                }
+
+                if (instruction.As?.ItemType == ItemType.Document)
+                {
+                    // as="document-node()" produces a single node wrapping the whole body,
+                    // so interleaving is meaningless. Preserve the historical ordering:
+                    // accumulator items first, then the serialized body as one document node.
+                    foreach (var item in _sequenceAccumulator)
+                        AddAccItem(item);
+
+                    if (!string.IsNullOrEmpty(textContent) && _nodeStore != null && textContent.Contains('<', StringComparison.Ordinal))
+                    {
+                        try
+                        {
                             var settings = new System.Xml.XmlReaderSettings
                             {
                                 DtdProcessing = System.Xml.DtdProcessing.Prohibit,
@@ -19263,97 +19350,63 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                 DocumentElement = docElementId,
                                 Children = children,
                                 DocumentElementLocalName = docElemLocalName2,
-                                // XSLT 3.0: a temporary tree's document node takes the static
-                                // base URI of the constructing instruction (never null), so
-                                // constructed descendants inherit a usable base URI for
-                                // resolve-uri()/doc(). Copied descendants still override via
-                                // their preserved CopySourceBaseUri.
                                 BaseUri = seqBaseUri
                             };
                             _nodeStore.Register(docNode);
                             sequenceItems.Add(docNode);
                         }
-                        else
+                        catch (System.Xml.XmlException)
                         {
-                            // Stream-parse instead of going through XmlDocument. Hot path for
-                            // `xsl:variable as="element(…)"` inside a for-each — fired once per
-                            // iteration in workloads like Schxslt2 transpile / Dataverse projection.
-                            var settings = new System.Xml.XmlReaderSettings
-                            {
-                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
-                                IgnoreWhitespace = false,
-                                IgnoreComments = false,
-                                IgnoreProcessingInstructions = false,
-                            };
-                            using var stringReader = new System.IO.StringReader($"<_seq_root_>{textContent}</_seq_root_>");
-                            using var reader = System.Xml.XmlReader.Create(stringReader, settings);
-                            var parsedChildren = new List<object?>();
-                            ReadAsBodyChunkChildren(reader, parsedChildren);
-                            foreach (var child in parsedChildren)
-                            {
-                                if (child is XdmNode cn)
-                                {
-                                    cn.Parent = null;
-                                    // Don't clobber a base URI recovered from the temp-tree base
-                                    // sentinel (a source element copied into the body): that
-                                    // preserved source base must win over the construction base,
-                                    // mirroring the accumulator handling above.
-                                    if (seqBaseUri != null && cn.CopySourceBaseUri == null)
-                                        cn.BaseUri = seqBaseUri;
-                                }
-                                sequenceItems.Add(child);
-                            }
+                            sequenceItems.Add(new ResultTreeFragment(textContent, accBaseUri));
                         }
                     }
-                    catch (System.Xml.XmlException)
+                    else if (!string.IsNullOrEmpty(textContent))
                     {
-                        // If parsing fails, wrap as RTF
-                        sequenceItems.Add(new ResultTreeFragment(textContent, XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri));
+                        AddTextChunk(textContent);
                     }
                 }
-                else if (!string.IsNullOrEmpty(textContent))
+                else
                 {
-                    // When as="text()" or as="node()", create actual text nodes
-                    // so the value is a proper XDM node (can be matched by templates)
-                    if (_nodeStore != null && instruction.As != null
-                        && instruction.As.ItemType is ItemType.Text or ItemType.Node or ItemType.Item)
+                    // Interleave accumulator items with parsed LRE chunks in construction
+                    // order, using the offsets AsBodyCapture recorded (insn/sequence-0137a).
+                    var positions = asBodyCapture.Positions;
+                    var cursor = 0;
+                    for (var i = 0; i < _sequenceAccumulator.Count; i++)
                     {
-                        var textId = _nodeStore.NextId();
-                        var textNode = new Xdm.Nodes.XdmText
+                        var pos = i < positions.Count ? positions[i] : textContent.Length;
+                        if (pos > textContent.Length) pos = textContent.Length;
+                        if (pos < cursor) pos = cursor;
+                        if (pos > cursor)
                         {
-                            Id = textId,
-                            Document = DocumentId.None,
-                            Parent = NodeId.None,
-                            Value = StripXmlMarkup(textContent)
-                        };
-                        sequenceItems.Add(textNode);
+                            AddTextChunk(textContent.Substring(cursor, pos - cursor));
+                            cursor = pos;
+                        }
+                        AddAccItem(_sequenceAccumulator[i]);
                     }
-                    else
+                    if (cursor < textContent.Length)
+                        AddTextChunk(textContent[cursor..]);
+
+                    // XSLT 3.0: an empty xsl:value-of body still creates a zero-length text
+                    // node — only when nothing else was produced.
+                    if (sequenceItems.Count == 0 && textContent != null && textContent.Length == 0
+                        && instruction.As != null
+                        && instruction.As.ItemType is ItemType.Item or ItemType.Text or ItemType.Node)
                     {
-                        // Plain text content — add as atomic value (decode XML entities)
-                        sequenceItems.Add(StripXmlMarkup(textContent));
-                    }
-                }
-                else if (textContent != null && textContent.Length == 0 && sequenceItems.Count == 0
-                    && instruction.As != null
-                    && instruction.As.ItemType is ItemType.Item or ItemType.Text or ItemType.Node)
-                {
-                    // XSLT 3.0: empty xsl:value-of creates a zero-length text node
-                    if (_nodeStore != null)
-                    {
-                        var textId = _nodeStore.NextId();
-                        var textNode = new Xdm.Nodes.XdmText
+                        if (_nodeStore != null)
                         {
-                            Id = textId,
-                            Document = DocumentId.None,
-                            Parent = NodeId.None,
-                            Value = ""
-                        };
-                        sequenceItems.Add(textNode);
-                    }
-                    else
-                    {
-                        sequenceItems.Add(textContent);
+                            var textId = _nodeStore.NextId();
+                            sequenceItems.Add(new Xdm.Nodes.XdmText
+                            {
+                                Id = textId,
+                                Document = DocumentId.None,
+                                Parent = NodeId.None,
+                                Value = ""
+                            });
+                        }
+                        else
+                        {
+                            sequenceItems.Add(textContent);
+                        }
                     }
                 }
 

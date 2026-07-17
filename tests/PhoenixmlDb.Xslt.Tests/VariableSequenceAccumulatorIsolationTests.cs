@@ -122,4 +122,38 @@ public class VariableSequenceAccumulatorIsolationTests
         var result = await TransformAsync(stylesheet, "<i/>");
         result.Should().Contain(">42<");
     }
+
+    [Fact]
+    public async Task xsl_sequence_with_interleaved_lre_and_select_preserves_document_order()
+    {
+        // insn/sequence-0137a: an xsl:sequence WITH content whose children interleave
+        // literal-result-elements (<e>5</e>, <f>6</f>, <g>7</g>) with nested
+        // xsl:sequence select= atomic values. Under as="xs:integer*" the element nodes
+        // atomize to their integer values; the result MUST preserve construction order,
+        // not segregate atomic-producing instructions ahead of node-producing ones.
+        var stylesheet = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema" version="3.0">
+              <xsl:template match="doc">
+                <xsl:variable name="q" as="xs:integer *">
+                  <xsl:for-each select="1 to 3">
+                     <xsl:sequence>
+                        <e>5</e>
+                        <xsl:sequence select=".*10"/>
+                        <f>6</f>
+                        <xsl:sequence select=".*10 + 1"/>
+                        <g>7</g>
+                     </xsl:sequence>
+                  </xsl:for-each>
+                </xsl:variable>
+                <zzz><xsl:value-of select="$q" separator=" "/></zzz>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var result = await TransformAsync(stylesheet, "<doc/>");
+        result.Should().Contain(">5 10 6 11 7 5 20 6 21 7 5 30 6 31 7</zzz>",
+            "xsl:sequence-with-content children must contribute to one ordered sequence in source order");
+    }
 }
