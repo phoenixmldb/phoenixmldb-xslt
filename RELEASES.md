@@ -1,6 +1,10 @@
 # Release History
 
-## Unreleased
+## 1.4.25 (2026-07-16)
+
+A conformance release that completes `xsl:result-document` serialization, fixes a default-output-method regression introduced in 1.4.24, and corrects `xsl:sequence`-with-content construction order. `xsl:result-document` now honours its own full serialization-attribute set (XML declaration `standalone`/`output-version`, `byte-order-mark`, `escape-uri-attributes`, `cdata-section-elements`, `media-type`/`include-content-type`, `html-version`, `item-separator`, `doctype-public`/`doctype-system`, and `parameter-document`) across the `xml`, `html`, `xhtml`, `text`, and `json` output methods — bringing the W3C `insn/result-document` set to 140/140. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.5 (unchanged from 1.4.24). No breaking API changes.
+
+**Regression fixed (introduced in 1.4.24):** the default-output-method resolution matched an `html` document element case-insensitively, so an uppercase `<HTML>` copy/identity transform was wrongly promoted to the `html` method and had a Content-Type `<meta>` injected into its `<HEAD>`. Default-method *selection* is now case-sensitive (lowercase `html` only); see the Serialization note below.
 
 ### Instructions
 
