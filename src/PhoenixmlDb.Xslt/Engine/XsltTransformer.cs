@@ -19954,10 +19954,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else
             {
-                // Multiple start-at values for level="multiple"
-                for (var i = 0; i < numbers.Count && i < startAtParts.Length; i++)
+                // Multiple start-at values for level="multiple" or a value sequence.
+                // XSLT 3.0: when there are more numbers than start-at values, the LAST
+                // start-at value is reused for every remaining number (not defaulted to 1).
+                for (var i = 0; i < numbers.Count; i++)
                 {
-                    if (long.TryParse(startAtParts[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out var startAt) && startAt != 1)
+                    var partIdx = i < startAtParts.Length ? i : startAtParts.Length - 1;
+                    if (long.TryParse(startAtParts[partIdx], NumberStyles.Integer, CultureInfo.InvariantCulture, out var startAt) && startAt != 1)
                         if (numbers[i] is double d && !double.IsNaN(d))
                             numbers[i] = d + startAt - 1;
                         else if (numbers[i] is BigInteger bi)
@@ -21273,9 +21276,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             "A" => ToAlpha(number, lowercase: false, lang: lang),
             "i" => ToRoman(number, lowercase: true),
             "I" => ToRoman(number, lowercase: false),
-            "w" => !string.IsNullOrEmpty(ordinal) ? ToOrdinalWords(number, lowercase: true, lang: lang) : ToWords(number, lowercase: true, lang: lang),
-            "W" => !string.IsNullOrEmpty(ordinal) ? ToOrdinalWords(number, lowercase: false, lang: lang) : ToWords(number, lowercase: false, lang: lang),
-            "Ww" => !string.IsNullOrEmpty(ordinal) ? ToOrdinalWords(number, titleCase: true, lang: lang) : ToWords(number, titleCase: true, lang: lang),
+            "w" => !string.IsNullOrEmpty(ordinal) ? ToOrdinalWords(number, lowercase: true, lang: lang, ordinalScheme: ordinal) : ToWords(number, lowercase: true, lang: lang),
+            "W" => !string.IsNullOrEmpty(ordinal) ? ToOrdinalWords(number, lowercase: false, lang: lang, ordinalScheme: ordinal) : ToWords(number, lowercase: false, lang: lang),
+            "Ww" => !string.IsNullOrEmpty(ordinal) ? ToOrdinalWords(number, titleCase: true, lang: lang, ordinalScheme: ordinal) : ToWords(number, titleCase: true, lang: lang),
             _ when token.Length > 0 && char.IsDigit(token[0]) =>
                 number.ToString($"D{token.Length}", CultureInfo.InvariantCulture),
             _ => number.ToString(CultureInfo.InvariantCulture)
@@ -21693,6 +21696,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return result;
     }
 
+    /// <summary>
+    /// Upper-cases number words. German ß has no simple upper-case mapping under
+    /// ToUpperInvariant (it stays ß), but the orthographically correct upper-case form is
+    /// "SS" (e.g. "dreißig" → "DREISSIG"), which the W3C number corpus expects. Other
+    /// languages contain no ß, so the replacement is a no-op for them.
+    /// </summary>
+    private static string UpperCaseWords(string words)
+        => words.ToUpperInvariant().Replace("ß", "SS", StringComparison.Ordinal);
+
     private static string ToWords(long number, bool lowercase = false, bool titleCase = false, string? lang = null)
     {
         // Normalize language code (e.g., "de-DE" -> "de")
@@ -21703,7 +21715,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         string minusWord = isGerman ? "minus " : "minus ";
 
         if (number == 0)
-            return lowercase ? zeroWord : titleCase ? CultureInfo.InvariantCulture.TextInfo.ToTitleCase(zeroWord) : zeroWord.ToUpperInvariant();
+            return lowercase ? zeroWord : titleCase ? CultureInfo.InvariantCulture.TextInfo.ToTitleCase(zeroWord) : UpperCaseWords(zeroWord);
 
         var words = isGerman ? NumberToWordsGerman(Math.Abs(number)) : NumberToWordsEnglish(Math.Abs(number));
         if (number < 0)
@@ -21713,10 +21725,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return words;
         if (titleCase)
             return TitleCaseNumberWords(words);
-        return words.ToUpperInvariant();
+        return UpperCaseWords(words);
     }
 
-    private static string ToOrdinalWords(long number, bool lowercase = false, bool titleCase = false, string? lang = null)
+    private static string ToOrdinalWords(long number, bool lowercase = false, bool titleCase = false, string? lang = null, string? ordinalScheme = null)
     {
         var langCode = lang?.Split('-')[0];
         var isGerman = string.Equals(langCode, "de", StringComparison.OrdinalIgnoreCase);
@@ -21726,13 +21738,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var zeroOrd = isGerman ? "nullte" : "zeroth";
             if (lowercase) return zeroOrd;
             if (titleCase) return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(zeroOrd);
-            return zeroOrd.ToUpperInvariant();
+            return UpperCaseWords(zeroOrd);
         }
 
         string words;
         if (isGerman)
         {
-            words = NumberToWordsGerman(Math.Abs(number)) + "ste";
+            words = NumberToOrdinalWordsGerman(Math.Abs(number), GermanOrdinalEnding(ordinalScheme));
         }
         else
         {
@@ -21744,7 +21756,54 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (lowercase) return words;
         if (titleCase) return TitleCaseNumberWords(words);
-        return words.ToUpperInvariant();
+        return UpperCaseWords(words);
+    }
+
+    /// <summary>
+    /// Resolves the German ordinal inflection ending. XSLT's <c>ordinal</c> attribute may carry
+    /// an explicit ending token such as <c>-e</c>, <c>-er</c>, <c>-es</c>, <c>-en</c> (used by the
+    /// legacy per-form corpus), or a CLDR scheme name like <c>%spellout-ordinal</c> (no explicit
+    /// inflection), in which case the default nominative ending <c>-e</c> is used.
+    /// </summary>
+    private static string GermanOrdinalEnding(string? ordinalScheme)
+    {
+        if (!string.IsNullOrEmpty(ordinalScheme)
+            && ordinalScheme[0] == '-'
+            && ordinalScheme.Length > 1)
+        {
+            return ordinalScheme[1..];
+        }
+        return "e";
+    }
+
+    /// <summary>
+    /// German ordinal word: the cardinal form with its final component turned into an ordinal
+    /// stem and the requested inflection ending appended. Numbers 1–19 take a "-t" stem (with the
+    /// irregular stems erst/dritt/siebt/acht), while 20+ and round hundreds/thousands take "-st".
+    /// Only the trailing spoken component is ordinalized (e.g. 210 → "zweihundertzehnter").
+    /// </summary>
+    private static string NumberToOrdinalWordsGerman(long number, string ending)
+    {
+        // Standalone cardinal forms of 1–19 and their ordinal stems (without the inflection ending).
+        string[] card19 = ["", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
+            "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn"];
+        string[] stem19 = ["", "erst", "zweit", "dritt", "viert", "fünft", "sechst", "siebt", "acht", "neunt",
+            "zehnt", "elft", "zwölft", "dreizehnt", "vierzehnt", "fünfzehnt", "sechzehnt", "siebzehnt", "achtzehnt", "neunzehnt"];
+
+        var cardinal = NumberToWordsGerman(number);
+        var r100 = number % 100;
+
+        if (r100 >= 1 && r100 <= 19)
+        {
+            // Trailing component is a ones/teens word: swap it for its ordinal stem.
+            var trailing = card19[r100];
+            if (cardinal.EndsWith(trailing, StringComparison.Ordinal))
+                return string.Concat(cardinal.AsSpan(0, cardinal.Length - trailing.Length), stem19[r100], ending);
+            return cardinal + stem19[r100] + ending;
+        }
+
+        // Round hundreds/thousands (r100 == 0) and the tens 20–99 take the "-st" ordinal stem.
+        return cardinal + "st" + ending;
     }
 
     /// <summary>Title-case for number words, keeping "and"/"und" lowercase.</summary>
@@ -21904,8 +21963,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 string groupWord;
                 if (divisor == 1000)
                 {
-                    // "tausend" is lowercase and doesn't use "ein" for 1000
-                    groupWord = count == 1 ? "tausend" : $"{NumberToWordsGerman(count)}tausend";
+                    // "tausend" is lowercase; 1000 is "eintausend" (the ordinal/cardinal
+                    // W3C corpus, e.g. number-0812, expects the explicit "ein" prefix).
+                    groupWord = count == 1 ? "eintausend" : $"{NumberToWordsGerman(count)}tausend";
                 }
                 else
                 {
@@ -21913,7 +21973,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var countWord = count == 1 ? "eine" : NumberToWordsGerman(count);
                     groupWord = count == 1 ? $"{countWord} {singular}" : $"{countWord} {plural}";
                 }
-                return rest > 0 ? $"{groupWord} {NumberToWordsGerman(rest)}".Trim() : groupWord;
+                if (rest == 0)
+                    return groupWord;
+                // German writes values below a million as a single word (no space around
+                // "tausend"): "eintausendfünf", "einhundertvierunddreißigtausendachthundertsechzehn".
+                // At and above a million, the group noun ("Million" …) is a separate word.
+                var restWord = NumberToWordsGerman(rest);
+                return divisor == 1000
+                    ? $"{groupWord}{restWord}"
+                    : $"{groupWord} {restWord}".Trim();
             }
         }
 

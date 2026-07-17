@@ -404,6 +404,90 @@ Line2</xsl:text></out>
         result.Should().Contain("1+1: Level B");
     }
 
+    private static async Task<string> RunAsync(string stylesheet, string xml)
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(stylesheet);
+        return await transformer.TransformAsync(xml);
+    }
+
+    [Fact]
+    public async Task StartAt_ReusesLastValue_WhenSequenceLonger()
+    {
+        // XSLT 3.0: when the value sequence has more items than the start-at list,
+        // the LAST start-at value is reused for the remaining items (not defaulted to 1).
+        var stylesheet = @"<?xml version=""1.0""?>
+<xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""3.0"">
+<xsl:template match=""/""><out><xsl:number value=""10,10,10"" start-at=""0 5""/></out></xsl:template>
+</xsl:stylesheet>";
+        var result = await RunAsync(stylesheet, "<doc/>");
+        // item0: 10+0-1=9, item1: 10+5-1=14, item2 reuses start-at[1]=5: 10+5-1=14
+        result.Should().Be("<out>9.14.14</out>");
+    }
+
+    [Fact]
+    public async Task GermanCardinal_EinTausend_And_UppercaseSharpS()
+    {
+        var stylesheet = @"<?xml version=""1.0""?>
+<xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""2.0"">
+<xsl:template match=""/""><out>
+<a><xsl:number value=""1000"" format=""W"" lang=""de""/></a>
+<b><xsl:number value=""1005"" format=""W"" lang=""de""/></b>
+<c><xsl:number value=""134"" format=""W"" lang=""de""/></c>
+</out></xsl:template>
+</xsl:stylesheet>";
+        var result = await RunAsync(stylesheet, "<doc/>");
+        result.Should().Contain("<a>EINTAUSEND</a>");
+        result.Should().Contain("<b>EINTAUSENDFÜNF</b>");
+        result.Should().Contain("<c>EINHUNDERTVIERUNDDREISSIG</c>");
+    }
+
+    [Fact]
+    public async Task GermanOrdinal_ExplicitEndings()
+    {
+        var stylesheet = @"<?xml version=""1.0""?>
+<xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""2.0"">
+<xsl:template match=""/""><out>
+<n3><xsl:number value=""3"" format=""w"" lang=""de"" ordinal=""-e""/></n3>
+<n10><xsl:number value=""10"" format=""w"" lang=""de"" ordinal=""-er""/></n10>
+<n13><xsl:number value=""13"" format=""w"" lang=""de"" ordinal=""-es""/></n13>
+<n20><xsl:number value=""20"" format=""w"" lang=""de"" ordinal=""-en""/></n20>
+<n201><xsl:number value=""201"" format=""w"" lang=""de"" ordinal=""-e""/></n201>
+<n210><xsl:number value=""210"" format=""w"" lang=""de"" ordinal=""-er""/></n210>
+<n1000><xsl:number value=""1000"" format=""W"" lang=""de"" ordinal=""-en""/></n1000>
+<n1005><xsl:number value=""1005"" format=""W"" lang=""de"" ordinal=""-e""/></n1005>
+<n134><xsl:number value=""134"" format=""W"" lang=""de"" ordinal=""-es""/></n134>
+</out></xsl:template>
+</xsl:stylesheet>";
+        var result = await RunAsync(stylesheet, "<doc/>");
+        result.Should().Contain("<n3>dritte</n3>");
+        result.Should().Contain("<n10>zehnter</n10>");
+        result.Should().Contain("<n13>dreizehntes</n13>");
+        result.Should().Contain("<n20>zwanzigsten</n20>");
+        result.Should().Contain("<n201>zweihunderterste</n201>");
+        result.Should().Contain("<n210>zweihundertzehnter</n210>");
+        result.Should().Contain("<n1000>EINTAUSENDSTEN</n1000>");
+        result.Should().Contain("<n1005>EINTAUSENDFÜNFTE</n1005>");
+        result.Should().Contain("<n134>EINHUNDERTVIERUNDDREISSIGSTES</n134>");
+    }
+
+    [Fact]
+    public async Task GermanOrdinal_CldrDefaultEnding()
+    {
+        var stylesheet = @"<?xml version=""1.0""?>
+<xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""2.0"">
+<xsl:template match=""/""><out>
+<n3><xsl:number value=""3"" format=""w"" lang=""de"" ordinal=""%spellout-ordinal""/></n3>
+<n20><xsl:number value=""20"" format=""w"" lang=""de"" ordinal=""%spellout-ordinal""/></n20>
+<n100><xsl:number value=""100"" format=""W"" lang=""de"" ordinal=""%spellout-ordinal""/></n100>
+</out></xsl:template>
+</xsl:stylesheet>";
+        var result = await RunAsync(stylesheet, "<doc/>");
+        result.Should().Contain("<n3>dritte</n3>");
+        result.Should().Contain("<n20>zwanzigste</n20>");
+        result.Should().Contain("<n100>EINHUNDERTSTE</n100>");
+    }
+
     [Fact]
     public async Task NumberLevelMultiple_FullStructure()
     {
