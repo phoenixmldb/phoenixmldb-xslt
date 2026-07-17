@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+### Serialization
+
+- **`fn:xml-to-json` now emits `<number>` values in canonical JSON-number form and `\u`-escapes DEL and the C1 controls, escaping the solidus as `\/`.** A `<number>` element's text is an `xs:double` lexical form, but the emitter echoed it verbatim, so `007`, `-0e0`, `1E6`, `-1E-6`, `.001`, and `23.` serialized unchanged instead of as their canonical `7`, `-0`, `1.0E6`, `-0.000001`, `0.001`, and `23`. The number case now parses the text to `xs:double` and formats it with the shared XPath double-to-string rules (leading zeros stripped, `-0` preserved, canonical exponent/fixed-notation boundary). Separately, the string escaper for `escaped="true"` content passed DEL (U+007F) and the C1 control block (U+0080–U+009F) through verbatim and left the solidus unescaped; both are now handled — U+007F–U+009F are output as `\uXXXX` and `/` as `\/` (bug 29665) — bringing the W3C `fn/xml-to-json` set to 114/114. The change is scoped to the `fn:xml-to-json` code paths; the shared `json` output method and adaptive serialization are unaffected.
+
 ## 1.4.25 (2026-07-16)
 
 A conformance release that completes `xsl:result-document` serialization, fixes a default-output-method regression introduced in 1.4.24, and corrects `xsl:sequence`-with-content construction order. `xsl:result-document` now honours its own full serialization-attribute set (XML declaration `standalone`/`output-version`, `byte-order-mark`, `escape-uri-attributes`, `cdata-section-elements`, `media-type`/`include-content-type`, `html-version`, `item-separator`, `doctype-public`/`doctype-system`, and `parameter-document`) across the `xml`, `html`, `xhtml`, `text`, and `json` output methods — bringing the W3C `insn/result-document` set to 140/140. Requires PhoenixmlDb.Core 1.2.2 and PhoenixmlDb.XQuery 1.5.5 (unchanged from 1.4.24). No breaking API changes.

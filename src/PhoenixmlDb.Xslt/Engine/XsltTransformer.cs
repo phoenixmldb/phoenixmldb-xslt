@@ -32568,7 +32568,11 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                 // Validate it's a valid JSON number
                 if (!IsValidJsonNumber(text))
                     throw new XsltException($"FOJS0006: Invalid number value: '{text}'");
-                sb.Append(text);
+                // The lexical form is an xs:double; emit its canonical JSON-number form
+                // (strip leading zeros, preserve -0, canonical exponent, etc.).
+                var numVal = double.Parse(text, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture);
+                sb.Append(PhoenixmlDb.XQuery.Functions.XmlToJsonFunction.FormatJsonNumber(numVal));
                 break;
             }
 
@@ -32754,6 +32758,22 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     }
 
     /// <summary>
+    /// Appends a single non-backslash character to fn:xml-to-json string output. On top of
+    /// the shared JSON per-character escaper this applies the two fn:xml-to-json-specific
+    /// rules: the solidus is escaped as <c>\/</c> (bug 29665), and DEL together with the C1
+    /// control block (#x7F–#x9F) are output as <c>\uXXXX</c>.
+    /// </summary>
+    internal static void AppendJsonChar(System.Text.StringBuilder sb, char c)
+    {
+        if (c == '/')
+            sb.Append("\\/");
+        else if (c >= '\x7F' && c <= '\x9F')
+            sb.Append("\\u").Append(((int)c).ToString("X4", System.Globalization.CultureInfo.InvariantCulture));
+        else
+            CharacterEscaper.AppendJsonEscapedChar(sb, c);
+    }
+
+    /// <summary>
     /// Appends a string to the JSON output, escaping characters that need it per JSON spec.
     /// Used when escaped="false" (or absent) — the input is plain text.
     /// </summary>
@@ -32802,7 +32822,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                 }
             }
 
-            CharacterEscaper.AppendJsonEscapedChar(sb, c);
+            AppendJsonChar(sb, c);
         }
     }
 
@@ -32964,7 +32984,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                 }
             }
 
-            CharacterEscaper.AppendJsonEscapedChar(sb, c);
+            AppendJsonChar(sb, c);
         }
     }
 
