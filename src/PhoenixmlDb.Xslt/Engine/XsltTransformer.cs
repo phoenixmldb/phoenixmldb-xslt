@@ -19506,9 +19506,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _serializeBaseContext = drainBaseUri;
                     try
                     {
+                        // §5.7.2 complex-content construction: adjacent atomic values in the
+                        // body sequence are separated by a single space. The xsl:sequence
+                        // accumulator branch appended each atomic as-is (no separator) and the
+                        // plain string branch of SerializeResult treats strings as non-atomic
+                        // text, so draining via a bare SerializeResult loop concatenates
+                        // adjacent atomics with no separator (two empty strings collapse to ""
+                        // rather than a single space — seqtor-036a/037a/039a/040a). Route the
+                        // drain through SerializeSequenceItems, which inserts the single-space
+                        // separator between adjacent atomic items while leaving nodes untouched.
+                        var drainItems = new System.Collections.ArrayList(capturedAccumulator.Count);
                         foreach (var item in capturedAccumulator)
                             if (item != null)
-                                SerializeResult(item);
+                                drainItems.Add(item);
+                        SerializeSequenceItems(drainItems);
                     }
                     finally
                     {
