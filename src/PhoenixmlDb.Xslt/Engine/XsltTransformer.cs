@@ -11466,14 +11466,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             _ => [key]                               // single atomic value
                         };
 
+                        // When the key expression yields a sequence with DUPLICATE
+                        // values for a single item (e.g. (5, 5)), the item joins the
+                        // corresponding group only ONCE — track which group's item
+                        // list this item was already added to. (XSLT 3.0 §18.2)
+                        var joinedLists = new HashSet<List<object>>();
                         foreach (var singleKey in keyValues)
                         {
                             var keyStr = GroupingKeyString(singleKey);
-                            bool added = false;
+                            List<object>? targetItems = null;
                             if (groups.TryGetValue(keyStr, out var entry))
                             {
-                                entry.Items.Add(item);
-                                added = true;
+                                targetItems = entry.Items;
                             }
                             else if (IsNumeric(singleKey))
                             {
@@ -11484,18 +11488,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                     var existingEntry = groups[existingKey];
                                     if (IsNumeric(existingEntry.Key) && ValuesEqual(singleKey, existingEntry.Key))
                                     {
-                                        existingEntry.Items.Add(item);
-                                        added = true;
+                                        targetItems = existingEntry.Items;
                                         break;
                                     }
                                 }
                             }
-                            if (!added)
+                            if (targetItems == null)
                             {
-                                var newEntry = (singleKey ?? (object)keyStr, new List<object> { item });
+                                targetItems = new List<object>();
+                                var newEntry = (singleKey ?? (object)keyStr, targetItems);
                                 groups[keyStr] = newEntry;
                                 orderedKeys.Add(keyStr);
                             }
+                            if (joinedLists.Add(targetItems))
+                                targetItems.Add(item);
                         }
                     }
                     finally
@@ -25958,6 +25964,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var ns = qn.ResolvedNamespace ?? _nodeStore?.GetNamespaceUri(qn.Namespace) ?? "";
             return string.IsNullOrEmpty(ns) ? qn.LocalName : $"Q{{{ns}}}{qn.LocalName}";
         }
+        // dateTime grouping keys compare by their INSTANT with the implicit
+        // timezone applied to timezone-less values (XPath F&O §10.4), so two
+        // equal instants written in different timezones (13:00+02:00 vs
+        // 11:00Z) fall into the SAME group. The "DT:" prefix keeps a dateTime
+        // key distinct from any string/numeric key of the same lexical form —
+        // cross-type keys are unequal, not an error (XSLT 3.0 §18.2).
+        if (key is XsDateTime xdt)
+        {
+            var instant = xdt.HasTimezone
+                ? xdt.Value
+                : new DateTimeOffset(xdt.Value.DateTime, DateTimeOffset.Now.Offset);
+            return "DT:" + xdt.EffectiveYear.ToString(CultureInfo.InvariantCulture)
+                + ":" + instant.UtcDateTime.Ticks.ToString(CultureInfo.InvariantCulture);
+        }
+        if (key is DateTimeOffset dto)
+            return "DT:" + dto.UtcDateTime.Ticks.ToString(CultureInfo.InvariantCulture);
         return StringValueOf(key);
     }
 
@@ -27829,7 +27851,16 @@ internal sealed class XsltCurrentGroupingKeyFunction : PhoenixmlDb.XQuery.Ast.XQ
         IReadOnlyList<object?> arguments, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         if (_context.TryGetVariable(new QName(NamespaceId.None, "current-grouping-key"), out var key) && key != null)
+        {
+            // A composite grouping key (composite="yes") is a SEQUENCE of atomic
+            // values. Unwrap the backing List<object?> to object?[] so downstream
+            // sequence access (indexing, count()) yields the tuple items
+            // individually rather than treating the whole list as a single XDM
+            // item that string-joins to "italy 5". (XSLT 3.0 §18.2)
+            if (key is List<object?> compositeKey)
+                return ValueTask.FromResult<object?>(compositeKey.ToArray());
             return ValueTask.FromResult<object?>(key);
+        }
 
         // XSLT 3.0: calling current-grouping-key() when there is no current grouping key is a dynamic error
         throw new XsltException("XTDE1071: current-grouping-key() called when there is no current grouping key");
