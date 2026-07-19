@@ -15128,62 +15128,108 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var staged = new List<XdmElement>(sourceElems.Count);
         for (int i = 0; i < sourceElems.Count; i++)
         {
-            // Serialize the source element into an isolated buffer, then reparse into an
-            // orphaned XdmElement (same mechanism as the xsl:copy accumulator path).
-            var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
-            var savedLogicalStart = _outputLogicalStart;
-            _outputLogicalStart = _output.Length;
-            string elemXml;
-            try
-            {
-                SerializeNode(sourceElems[i], copyNamespaces);
-                elemXml = savedScope.GetWritten();
-            }
-            finally
-            {
-                savedScope.Dispose();
-                _outputLogicalStart = savedLogicalStart;
-            }
-
-            XdmElement? copiedRoot = null;
-            try
-            {
-                var settingsCopy = new System.Xml.XmlReaderSettings
-                {
-                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
-                    IgnoreWhitespace = false,
-                    IgnoreComments = false,
-                    IgnoreProcessingInstructions = false,
-                };
-                using var stringReaderCopy = new System.IO.StringReader($"<_copy_root_>{elemXml}</_copy_root_>");
-                using var readerCopy = System.Xml.XmlReader.Create(stringReaderCopy, settingsCopy);
-                var copyChildren = new List<object?>();
-                ReadAsBodyChunkChildren(readerCopy, copyChildren);
-                foreach (var child in copyChildren)
-                {
-                    if (child is XdmElement copyElem)
-                    {
-                        copyElem.Parent = null;
-                        // Never overwrite a non-null value (e.g. a nested copy already stamped).
-                        copyElem.CopySourceBaseUri ??= baseUris[i];
-                        copiedRoot = copyElem;
-                        break;
-                    }
-                }
-            }
-            catch (System.Xml.XmlException)
-            {
-                copiedRoot = null;
-            }
-
-            if (copiedRoot == null)
-                return new ValueTask<bool>(false); // reparse failed — let caller fall back to text
+            // Deep-clone the source element directly into the node store (node-model copy),
+            // preserving ALL in-scope namespaces — including those an ancestor already declared,
+            // which the old serialize→reparse path incorrectly dropped ("in-scope namespaces of a
+            // copied node are correct", copy-3702 / copy-1221). Bail to text on any non-element.
+            if (_nodeStore is null)
+                return new ValueTask<bool>(false);
+            var cloneId = CloneSubtreeDeep(sourceElems[i], null, copyNamespaces);
+            if (_nodeStore.GetNode(cloneId) is not XdmElement copiedRoot)
+                return new ValueTask<bool>(false);
+            // Never overwrite a non-null value (e.g. a nested copy already stamped).
+            copiedRoot.CopySourceBaseUri ??= baseUris[i];
             staged.Add(copiedRoot);
         }
 
         foreach (var copiedRoot in staged)
             AppendToSeqAccumulator(copiedRoot);
         return new ValueTask<bool>(true);
+    }
+
+    /// <summary>
+    /// Deep-clones a source node subtree directly into the node store — the node-model
+    /// replacement for the copy-of serialize-then-reparse path. Reproduces the
+    /// <c>copy-namespaces</c> filtering (a dropped namespace is one used by neither the
+    /// element's own name nor an attribute name) without the XML-text round-trip, so a copied
+    /// element retains all its in-scope namespace nodes (which the reparse path dropped when a
+    /// namespace happened to be in scope in the transient serialization context). Returns the
+    /// clone's NodeId. Temp-tree node-model migration (SP1: copy-of seam).
+    /// </summary>
+    private NodeId CloneSubtreeDeep(XdmNode src, NodeId? parent, bool copyNamespaces)
+    {
+        switch (src)
+        {
+            case XdmElement e:
+            {
+                var id = _nodeStore!.NextId();
+                var decls = System.Collections.Immutable.ImmutableArray.CreateBuilder<Xdm.NamespaceBinding>();
+                foreach (var nb in e.NamespaceDeclarations)
+                {
+                    if (!copyNamespaces)
+                    {
+                        var prefix = nb.Prefix ?? "";
+                        var usedByElem = prefix == (e.Prefix ?? "");
+                        var usedByAttr = false;
+                        if (!string.IsNullOrEmpty(prefix))
+                        {
+                            foreach (var a in _nodeStore.GetAttributes(e))
+                            {
+                                if (a.Prefix == prefix) { usedByAttr = true; break; }
+                            }
+                        }
+                        if (!usedByElem && !usedByAttr)
+                            continue;
+                    }
+                    decls.Add(nb);
+                }
+                var attrIds = new List<NodeId>();
+                foreach (var a in _nodeStore.GetAttributes(e))
+                {
+                    var aid = _nodeStore.NextId();
+                    _nodeStore.Register(new XdmAttribute
+                    {
+                        Id = aid, Document = e.Document, Namespace = a.Namespace,
+                        LocalName = a.LocalName, Prefix = a.Prefix, Value = a.Value, Parent = id,
+                    });
+                    attrIds.Add(aid);
+                }
+                var childIds = new List<NodeId>();
+                foreach (var c in _nodeStore.GetChildren(e))
+                    childIds.Add(CloneSubtreeDeep(c, id, copyNamespaces));
+                var clone = new XdmElement
+                {
+                    Id = id, Document = e.Document, Namespace = e.Namespace,
+                    LocalName = e.LocalName, Prefix = e.Prefix,
+                    Attributes = attrIds.Count == 0 ? XdmElement.EmptyAttributes : System.Collections.Immutable.ImmutableArray.CreateRange(attrIds),
+                    Children = childIds.Count == 0 ? XdmElement.EmptyChildren : System.Collections.Immutable.ImmutableArray.CreateRange(childIds),
+                    NamespaceDeclarations = decls.Count == 0 ? XdmElement.EmptyNamespaceDeclarations : decls.ToImmutable(),
+                    Parent = parent,
+                };
+                _nodeStore.Register(clone);
+                return id;
+            }
+            case XdmText t:
+            {
+                var id = _nodeStore!.NextId();
+                _nodeStore.Register(new XdmText { Id = id, Document = t.Document, Value = t.Value, Parent = parent });
+                return id;
+            }
+            case XdmComment cm:
+            {
+                var id = _nodeStore!.NextId();
+                _nodeStore.Register(new XdmComment { Id = id, Document = cm.Document, Value = cm.Value, Parent = parent });
+                return id;
+            }
+            case XdmProcessingInstruction pi:
+            {
+                var id = _nodeStore!.NextId();
+                _nodeStore.Register(new XdmProcessingInstruction { Id = id, Document = pi.Document, Target = pi.Target, Value = pi.Value, Parent = parent });
+                return id;
+            }
+            default:
+                return src.Id;
+        }
     }
 
     /// <summary>
