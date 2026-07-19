@@ -116,4 +116,14 @@ public class TreeConstructorTests
         Assert.IsType<XdmElement>(store.GetNode(outElem.Children[1]));
         Assert.IsType<XdmText>(store.GetNode(outElem.Children[2]));
     }
+
+    [Fact]
+    public void TreeEqual_DetectsMismatch()
+    {
+        var store = new XdmInMemoryStore();
+        var a = new TreeConstructor(store, 1); a.StartElement(NamespaceId.None, "a", null); a.EndElement();
+        var b = new TreeConstructor(store, 1); b.StartElement(NamespaceId.None, "b", null); b.EndElement();
+        Assert.Null(TempTreeDifferential.TreeEqual(a.FinishFragment()[0], a.FinishFragment()[0], store)); // same → equal
+        Assert.NotNull(TempTreeDifferential.TreeEqual(a.FinishFragment()[0], b.FinishFragment()[0], store)); // a vs b → diff
+    }
 }
