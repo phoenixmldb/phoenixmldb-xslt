@@ -126,6 +126,87 @@ internal sealed class TreeConstructor
         AddChild(id);
     }
 
+    /// <summary>
+    /// Adds an attribute node to the currently open element. Attributes are separate
+    /// <see cref="XdmAttribute"/> nodes registered in the store and referenced by
+    /// <see cref="NodeId"/> from <see cref="XdmElement.Attributes"/>, not inline objects.
+    /// </summary>
+    public void AddAttribute(NamespaceId ns, string localName, string? prefix, string value)
+    {
+        if (_open.Count == 0)
+            throw new InvalidOperationException("AddAttribute requires an open element.");
+
+        var frame = _open.Peek();
+        var id = _store.NextId();
+        var attr = new XdmAttribute
+        {
+            Id = id,
+            Document = frame.DocumentId,
+            Namespace = ns,
+            LocalName = localName,
+            Prefix = string.IsNullOrEmpty(prefix) ? null : prefix,
+            Value = value,
+            Parent = frame.Id,
+        };
+        _store.Register(attr);
+        frame.Attributes.Add(id);
+    }
+
+    public void AppendComment(string value)
+    {
+        var id = _store.NextId();
+        var comment = new XdmComment
+        {
+            Id = id,
+            Document = _documentId,
+            Value = value,
+            Parent = _open.Count > 0 ? _open.Peek().Id : (NodeId?)null,
+        };
+        _store.Register(comment);
+        AddChild(id);
+    }
+
+    public void AppendProcessingInstruction(string target, string data)
+    {
+        var id = _store.NextId();
+        var pi = new XdmProcessingInstruction
+        {
+            Id = id,
+            Document = _documentId,
+            Target = target,
+            Value = data,
+            Parent = _open.Count > 0 ? _open.Peek().Id : (NodeId?)null,
+        };
+        _store.Register(pi);
+        AddChild(id);
+    }
+
+    /// <summary>
+    /// Appends an already-built/source node as a child of the currently open element (or
+    /// as a fragment root) in document order. Replaces the old serialize/reparse interleave
+    /// path — the node keeps its identity, and is simply re-parented and linked in.
+    /// </summary>
+    public void AppendNode(NodeId existing)
+    {
+        var node = _store.GetNode(existing);
+        if (node is not null)
+            node.Parent = _open.Count > 0 ? _open.Peek().Id : (NodeId?)null;
+        AddChild(existing);
+    }
+
+    /// <summary>
+    /// Sets the base URI of the currently open element, applied to
+    /// <see cref="XdmNode.BaseUri"/>/<see cref="XdmNode.CopySourceBaseUri"/> at
+    /// <see cref="EndElement"/>.
+    /// </summary>
+    public void SetBaseUri(string baseUri)
+    {
+        if (_open.Count == 0)
+            throw new InvalidOperationException("SetBaseUri requires an open element.");
+
+        _open.Peek().BaseUri = baseUri;
+    }
+
     public void EndElement()
     {
         var frame = _open.Pop();
@@ -143,6 +224,11 @@ internal sealed class TreeConstructor
                 : frame.NamespaceDeclarations.ToImmutableArray(),
             Parent = frame.Parent,
         };
+        if (frame.BaseUri is not null)
+        {
+            elem.BaseUri = frame.BaseUri;
+            elem.CopySourceBaseUri = frame.BaseUri;
+        }
         elem._stringValue = ComputeStringValue(frame);
         _store.Register(elem);
         _inScopeByElement[frame.Id] = frame.InScope;
@@ -201,5 +287,6 @@ internal sealed class TreeConstructor
         public required NodeId? Parent;
         public required List<NodeId> Children;
         public required Dictionary<string, NamespaceId> InScope;
+        public string? BaseUri;
     }
 }
