@@ -9406,11 +9406,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             var attrName = !string.IsNullOrEmpty(attrPrefix)
                                 ? $"{attrPrefix}:{attr.LocalName}"
                                 : attr.LocalName;
-                            _output.Append(' ');
-                            _output.Append(attrName);
-                            _output.Append("=\"");
-                            _output.Append(EscapeAttributeValue(attr.Value));
-                            _output.Append('"');
+                            _sink.Attribute(attrName, attr.Value);
                         }
                     }
                 }
@@ -9496,11 +9492,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var attrName = !string.IsNullOrEmpty(attr2.Prefix)
                     ? $"{attr2.Prefix}:{attr2.LocalName}"
                     : attr2.LocalName;
-                attrTarget.Append(' ');
-                attrTarget.Append(attrName);
-                attrTarget.Append("=\"");
-                attrTarget.Append(EscapeAttributeValue(attr2.Value));
-                attrTarget.Append('"');
+                if (attrTarget == _output)
+                {
+                    _sink.Attribute(attrName, attr2.Value);
+                }
+                else
+                {
+                    attrTarget.Append(' ');
+                    attrTarget.Append(attrName);
+                    attrTarget.Append("=\"");
+                    attrTarget.Append(EscapeAttributeValue(attr2.Value));
+                    attrTarget.Append('"');
+                }
                 break;
             }
             case XdmComment comment:
@@ -10201,11 +10204,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var attrName = !string.IsNullOrEmpty(attr.Prefix)
                     ? $"{attr.Prefix}:{attr.LocalName}"
                     : attr.LocalName;
-                attrTarget.Append(' ');
-                attrTarget.Append(attrName);
-                attrTarget.Append("=\"");
-                attrTarget.Append(EscapeAttributeValue(attr.Value));
-                attrTarget.Append('"');
+                if (attrTarget == _output)
+                {
+                    _sink.Attribute(attrName, attr.Value);
+                }
+                else
+                {
+                    attrTarget.Append(' ');
+                    attrTarget.Append(attrName);
+                    attrTarget.Append("=\"");
+                    attrTarget.Append(EscapeAttributeValue(attr.Value));
+                    attrTarget.Append('"');
+                }
                 break;
             }
             case XdmComment comment:
@@ -10298,11 +10308,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var attrName0 = !string.IsNullOrEmpty(attrPrefix0)
                     ? $"{attrPrefix0}:{attr.LocalName}"
                     : attr.LocalName;
-                _output.Append(' ');
-                _output.Append(attrName0);
-                _output.Append("=\"");
-                _output.Append(EscapeAttributeValue(attr.Value));
-                _output.Append('"');
+                _sink.Attribute(attrName0, attr.Value);
             }
             var childElements = new List<XdmNode>();
             foreach (var child in _nodeStore.GetChildren(elem))
@@ -10313,11 +10319,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var attrName = !string.IsNullOrEmpty(attrPrefix)
                         ? $"{attrPrefix}:{attr.LocalName}"
                         : attr.LocalName;
-                    _output.Append(' ');
-                    _output.Append(attrName);
-                    _output.Append("=\"");
-                    _output.Append(EscapeAttributeValue(attr.Value));
-                    _output.Append('"');
+                    _sink.Attribute(attrName, attr.Value);
                 }
                 else
                 {
@@ -14064,11 +14066,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         var target = _attributeCollecting ? _collectedAttributes! : _output;
-        target.Append(' ');
-        target.Append(name);
-        target.Append("=\"");
-        target.Append(EscapeAttributeValue(value));
-        target.Append('"');
+        if (target == _output)
+        {
+            _sink.Attribute(name, value);
+        }
+        else
+        {
+            target.Append(' ');
+            target.Append(name);
+            target.Append("=\"");
+            target.Append(EscapeAttributeValue(value));
+            target.Append('"');
+        }
     }
 
     public override void WriteText(string value, bool disableOutputEscaping)
@@ -14797,11 +14806,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
 
                 var attrName = !string.IsNullOrEmpty(copyPrefix) ? $"{copyPrefix}:{attr.LocalName}" : attr.LocalName;
-                target.Append(' ');
-                target.Append(attrName);
-                target.Append("=\"");
-                target.Append(EscapeAttributeValue(attr.Value));
-                target.Append('"');
+                if (target == _output)
+                {
+                    _sink.Attribute(attrName, attr.Value);
+                }
+                else
+                {
+                    target.Append(' ');
+                    target.Append(attrName);
+                    target.Append("=\"");
+                    target.Append(EscapeAttributeValue(attr.Value));
+                    target.Append('"');
+                }
                 break;
             }
 
@@ -15593,13 +15609,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _output.Append(XsltTransformEngine.BaseSentinelPrefix);
         _output.Append("=\"");
         _output.Append(EscapeAttributeValue(XsltTransformEngine.BaseSentinelNs));
-        _output.Append("\" ");
-        _output.Append(XsltTransformEngine.BaseSentinelPrefix);
-        _output.Append(':');
-        _output.Append(XsltTransformEngine.BaseSentinelLocalName);
-        _output.Append("=\"");
-        _output.Append(EscapeAttributeValue(srcBase));
         _output.Append('"');
+        _sink.Attribute(
+            $"{XsltTransformEngine.BaseSentinelPrefix}:{XsltTransformEngine.BaseSentinelLocalName}",
+            srcBase);
         context = srcBase;
     }
 
@@ -15759,11 +15772,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     foreach (var a in _nodeStore.GetAttributes(elem))
                     {
                         var aName = a.Prefix != null ? $"{a.Prefix}:{a.LocalName}" : a.LocalName;
-                        _output.Append(' ');
-                        _output.Append(aName);
-                        _output.Append("=\"");
-                        _output.Append(EscapeAttributeValue(a.Value));
-                        _output.Append('"');
+                        _sink.Attribute(aName, a.Value);
                     }
                 }
 
@@ -15839,11 +15848,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
 
                 var aName = attrPrefix != null ? $"{attrPrefix}:{attrLocalName}" : attrLocalName;
-                target.Append(' ');
-                target.Append(aName);
-                target.Append("=\"");
-                target.Append(EscapeAttributeValue(attr.Value));
-                target.Append('"');
+                if (target == _output)
+                {
+                    _sink.Attribute(aName, attr.Value);
+                }
+                else
+                {
+                    target.Append(' ');
+                    target.Append(aName);
+                    target.Append("=\"");
+                    target.Append(EscapeAttributeValue(attr.Value));
+                    target.Append('"');
+                }
                 break;
             }
 
