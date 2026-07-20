@@ -9350,28 +9350,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var localName = elem.LocalName;
                 var qname = !string.IsNullOrEmpty(prefix) ? $"{prefix}:{localName}" : localName;
 
-                _output.Append('<');
-                _output.Append(qname);
+                _sink.StartElementOpen(qname);
 
                 // Copy namespace declarations
                 foreach (var nsDecl in elem.NamespaceDeclarations)
                 {
                     var nsDeclUri = _nodeStore?.GetNamespaceUri(nsDecl.Namespace) ?? "";
                     var nsDeclPrefix = nsDecl.Prefix ?? "";
-                    if (string.IsNullOrEmpty(nsDeclPrefix))
-                    {
-                        _output.Append(" xmlns=\"");
-                        _output.Append(EscapeAttributeValue(nsDeclUri));
-                        _output.Append('"');
-                    }
-                    else
-                    {
-                        _output.Append(" xmlns:");
-                        _output.Append(nsDeclPrefix);
-                        _output.Append("=\"");
-                        _output.Append(EscapeAttributeValue(nsDeclUri));
-                        _output.Append('"');
-                    }
+                    _sink.Namespace(nsDeclPrefix, nsDeclUri);
                 }
 
                 // EMIT (temp-tree base-URI preservation): built-in shallow-copy writes the
@@ -9438,7 +9424,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _output.Append(collectedAttrs);
                 }
 
-                _output.Append('>');
+                _sink.StartElementClose(false);
 
                 // Insert any non-attribute content from matched attribute templates as children
                 if (templateChildContent.Length > 0)
@@ -9476,9 +9462,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         _serializeBaseContext = savedShallowCopyBaseContext;
                     }
 
-                    _output.Append("</");
-                    _output.Append(qname);
-                    _output.Append('>');
+                    _sink.EndElement(qname);
                 }
                 break;
             }
@@ -9693,9 +9677,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     internal void WriteStreamingEndTag(string qname)
     {
-        _output.Append("</");
-        _output.Append(qname);
-        _output.Append('>');
+        _sink.EndElement(qname);
     }
 
     /// <summary>
@@ -10270,28 +10252,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var localName = elem.LocalName;
         var qname = !string.IsNullOrEmpty(prefix) ? $"{prefix}:{localName}" : localName;
 
-        _output.Append('<');
-        _output.Append(qname);
+        _sink.StartElementOpen(qname);
 
         // Namespace declarations
         foreach (var nsDecl in elem.NamespaceDeclarations)
         {
             var nsDeclUri = _nodeStore?.GetNamespaceUri(nsDecl.Namespace) ?? "";
             var nsDeclPrefix = nsDecl.Prefix ?? "";
-            if (string.IsNullOrEmpty(nsDeclPrefix))
-            {
-                _output.Append(" xmlns=\"");
-                _output.Append(EscapeAttributeValue(nsDeclUri));
-                _output.Append('"');
-            }
-            else
-            {
-                _output.Append(" xmlns:");
-                _output.Append(nsDeclPrefix);
-                _output.Append("=\"");
-                _output.Append(EscapeAttributeValue(nsDeclUri));
-                _output.Append('"');
-            }
+            _sink.Namespace(nsDeclPrefix, nsDeclUri);
         }
 
         // Attributes and then child nodes
@@ -10326,7 +10294,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     childElements.Add(child);
                 }
             }
-            _output.Append('>');
+            _sink.StartElementClose(false);
             foreach (var child in childElements)
             {
                 switch (child)
@@ -10357,12 +10325,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         else
         {
-            _output.Append('>');
+            _sink.StartElementClose(false);
         }
 
-        _output.Append("</");
-        _output.Append(qname);
-        _output.Append('>');
+        _sink.EndElement(qname);
     }
 
     /// <summary>
@@ -13723,8 +13689,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
 
-        _output.Append('<');
-        _output.Append(name);
+        _sink.StartElementOpen(name);
 
         // Emit namespace declaration if not already in scope
         if (nsUri != null && nsUri.Length > 0)
@@ -13735,20 +13700,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var prefix = name[..colonIdx];
                 if (!IsNamespaceInScope(prefix, nsUri))
                 {
-                    _output.Append(" xmlns:");
-                    _output.Append(prefix);
-                    _output.Append("=\"");
-                    _output.Append(EscapeAttributeValue(nsUri));
-                    _output.Append('"');
+                    _sink.Namespace(prefix, nsUri);
                 }
             }
             else
             {
                 if (!IsNamespaceInScope("", nsUri))
                 {
-                    _output.Append(" xmlns=\"");
-                    _output.Append(EscapeAttributeValue(nsUri));
-                    _output.Append('"');
+                    _sink.Namespace("", nsUri);
                 }
             }
         }
@@ -13762,7 +13721,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var parentDefaultNs = GetInScopeDefaultNamespace();
                 if (parentDefaultNs != null)
                 {
-                    _output.Append(" xmlns=\"\"");
+                    _sink.Namespace("", "");
                 }
             }
         }
@@ -13782,15 +13741,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (content.Length > 0)
         {
-            _output.Append('>');
+            _sink.StartElementClose(false);
             _output.Append(content);
-            _output.Append("</");
-            _output.Append(name);
-            _output.Append('>');
+            _sink.EndElement(name);
         }
         else
         {
-            _output.Append("/>");
+            _sink.StartElementClose(true);
         }
 
         // Element is "significant" for where-populated only if it has child content
@@ -14648,27 +14605,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     ? $"{elem.Prefix}:{elem.LocalName}"
                     : elem.LocalName;
 
-                // Build namespace declaration string, skipping already-in-scope
-                var nsDecls = new StringBuilder();
+                var elemStartPos = _output.Length;
+                _sink.StartElementOpen(elemName);
+
+                // Namespace declarations, skipping already-in-scope
                 foreach (var (prefix, uri) in copyNsBindings)
                 {
                     if (IsNamespaceInScope(prefix, uri))
                         continue;
-                    nsDecls.Append(" xmlns");
-                    if (!string.IsNullOrEmpty(prefix))
-                    {
-                        nsDecls.Append(':');
-                        nsDecls.Append(prefix);
-                    }
-                    nsDecls.Append("=\"");
-                    nsDecls.Append(EscapeAttributeValue(uri));
-                    nsDecls.Append('"');
+                    _sink.Namespace(prefix, uri);
                 }
-
-                var elemStartPos = _output.Length;
-                _output.Append('<');
-                _output.Append(elemName);
-                _output.Append(nsDecls);
 
                 // Deduplicate attributes (last-wins) like CreateElementCoreAsync
                 var attrs = new Dictionary<string, string>();
@@ -14691,21 +14637,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // subsequent child events (h1, p, …) would leak out as siblings
                     // of body. Reported by Martin Honnen against 1.3.10
                     // (group-starting-with / group-adjacent in streamable mode).
-                    _output.Append('>');
+                    _sink.StartElementClose(false);
                     _output.Append(content);
                     _streamingOpenElements.Push(elemName);
                 }
                 else if (content.Length > 0)
                 {
-                    _output.Append('>');
+                    _sink.StartElementClose(false);
                     _output.Append(content);
-                    _output.Append("</");
-                    _output.Append(elemName);
-                    _output.Append('>');
+                    _sink.EndElement(elemName);
                 }
                 else
                 {
-                    _output.Append("/>");
+                    _sink.StartElementClose(true);
                 }
 
                 // XSLT 3.0 §11.9.1: xsl:copy preserves the source element's base URI.
@@ -15605,11 +15549,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var srcBase = elem.CopySourceBaseUri ?? ComputeSourceBaseUri(elem);
         if (string.IsNullOrEmpty(srcBase) || string.Equals(srcBase, context, StringComparison.Ordinal))
             return;
-        _output.Append(" xmlns:");
-        _output.Append(XsltTransformEngine.BaseSentinelPrefix);
-        _output.Append("=\"");
-        _output.Append(EscapeAttributeValue(XsltTransformEngine.BaseSentinelNs));
-        _output.Append('"');
+        _sink.Namespace(XsltTransformEngine.BaseSentinelPrefix, XsltTransformEngine.BaseSentinelNs);
         _sink.Attribute(
             $"{XsltTransformEngine.BaseSentinelPrefix}:{XsltTransformEngine.BaseSentinelLocalName}",
             srcBase);
@@ -15631,8 +15571,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             case XdmElement elem:
             {
                 var eName = !string.IsNullOrEmpty(elem.Prefix) ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName;
-                _output.Append('<');
-                _output.Append(eName);
+                _sink.StartElementOpen(eName);
 
                 // Serialize namespace declarations, skipping those already in scope
                 var nsBindings = new Dictionary<string, string>();
@@ -15674,15 +15613,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     if (IsNamespaceInScope(prefix, uri))
                         continue;
 
-                    _output.Append(" xmlns");
-                    if (!string.IsNullOrEmpty(prefix))
-                    {
-                        _output.Append(':');
-                        _output.Append(prefix);
-                    }
-                    _output.Append("=\"");
-                    _output.Append(EscapeAttributeValue(uri));
-                    _output.Append('"');
+                    _sink.Namespace(prefix, uri);
                 }
 
                 // Default namespace undeclaration: if the element has no default namespace
@@ -15729,7 +15660,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         var parentDefaultNs = GetInScopeDefaultNamespace();
                         if (parentDefaultNs != null)
                         {
-                            _output.Append(" xmlns=\"\"");
+                            _sink.Namespace("", "");
                             nsBindings[""] = "";
                         }
                     }
@@ -15752,15 +15683,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         // adopt an ancestor's default namespace in the new output context.
                         if (!string.IsNullOrEmpty(elemNsUri) && !IsNamespaceInScope(elemPrefixForFixup, elemNsUri))
                         {
-                            _output.Append(" xmlns");
-                            if (elemPrefixForFixup.Length > 0)
-                            {
-                                _output.Append(':');
-                                _output.Append(elemPrefixForFixup);
-                            }
-                            _output.Append("=\"");
-                            _output.Append(EscapeAttributeValue(elemNsUri));
-                            _output.Append('"');
+                            _sink.Namespace(elemPrefixForFixup, elemNsUri);
                             nsBindings[elemPrefixForFixup] = elemNsUri;
                         }
                     }
@@ -15793,18 +15716,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     if (children.Count > 0)
                     {
                         hasChildren = true;
-                        _output.Append('>');
+                        _sink.StartElementClose(false);
                         PushOutputNsScope(nsBindings);
                         foreach (var child in children)
                             SerializeNode(child, copyNamespaces, faithfulNamespaces);
                         PopOutputNsScope();
-                        _output.Append("</");
-                        _output.Append(eName);
-                        _output.Append('>');
+                        _sink.EndElement(eName);
                     }
                 }
                 if (!hasChildren)
-                    _output.Append("/>");
+                    _sink.StartElementClose(true);
                 _serializeBaseContext = savedBaseContext;
                 break;
             }
@@ -24403,8 +24324,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         // Build element output
-        _output.Append('<');
-        _output.Append(elemName);
+        _sink.StartElementOpen(elemName);
 
         // Namespace declarations — emit only those not already in scope from ancestor elements
         foreach (var (prefix, uri) in nsBindings)
@@ -24419,15 +24339,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 && GetInScopeDefaultNamespace() == null)
                 continue;
 
-            _output.Append(" xmlns");
-            if (!string.IsNullOrEmpty(prefix))
-            {
-                _output.Append(':');
-                _output.Append(prefix);
-            }
-            _output.Append("=\"");
-            _output.Append(EscapeAttributeValue(uri));
-            _output.Append('"');
+            _sink.Namespace(prefix, uri);
         }
 
         // Default namespace undeclaration: if this element is in the null namespace
@@ -24438,7 +24350,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var parentDefaultNs = GetInScopeDefaultNamespace();
             if (parentDefaultNs != null)
             {
-                _output.Append(" xmlns=\"\"");
+                _sink.Namespace("", "");
             }
         }
         // inherit-namespaces="no": also undeclare inherited default namespace
@@ -24447,7 +24359,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var inheritedDefaultNs = GetInScopeDefaultNamespace();
             if (inheritedDefaultNs != null)
             {
-                _output.Append(" xmlns=\"\"");
+                _sink.Namespace("", "");
             }
         }
 
@@ -24463,15 +24375,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (content.Length > 0)
         {
-            _output.Append('>');
+            _sink.StartElementClose(false);
             _output.Append(content);
-            _output.Append("</");
-            _output.Append(elemName);
-            _output.Append('>');
+            _sink.EndElement(elemName);
         }
         else
         {
-            _output.Append("/>");
+            _sink.StartElementClose(true);
         }
 
         // LRE element is "significant" (populated) only if it has child content
