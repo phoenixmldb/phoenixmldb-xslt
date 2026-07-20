@@ -5824,10 +5824,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private readonly Stack<(int position, int last)> _contextPositions = new();
     private readonly Stack<object?> _currentItems = new(); // For XSLT current() function
     private readonly StringBuilder _output;
-    // Emission abstraction (SP-A). Inert in this task: nothing calls it yet — all
-    // emission still goes through direct `_output` appends. StringOutputSink wraps
-    // the same StringBuilder so the two stay byte-identical by construction.
+    // Emission abstraction (SP-A). Text/RawText call sites route through this (Task 2);
+    // element/attribute/comment/PI sites still append directly to `_output` (later tasks).
+    // StringOutputSink wraps the same StringBuilder so the two stay byte-identical by construction.
+    // Deliberately typed as the interface, not StringOutputSink: a second implementation
+    // (TreeConstructor-backed node builder) is planned, per SP1 decomposition.
+#pragma warning disable CA1859
     private readonly IOutputSink _sink;
+#pragma warning restore CA1859
     internal readonly XsltTransformOptions _options;
     internal readonly XdmInMemoryStore? _nodeStore;
     private readonly PhoenixmlDb.XQuery.Functions.FunctionLibrary _functionLibrary;
@@ -14105,7 +14109,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _output.Append(' ');
             if (_attributeContentDepth == 0)
                 _simpleContentLastWasNode = false;
-            _output.Append(value);
+            _sink.RawText(value);
         }
         else if (IsInCdataSectionElement())
         {
@@ -14116,7 +14120,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         else
         {
-            _output.Append(EscapeText(value));
+            _sink.Text(value);
         }
 
         // Non-whitespace text counts as "populated" for xsl:where-populated,
@@ -14160,11 +14164,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // text and LRE elements preserve their source order when the function
             // result is assembled from both _sequenceAccumulator and _output.
             if (_functionBodyDepth > 0 && _textContentDepth == 0)
-                _output.Append(EscapeText(value));
+                _sink.Text(value);
         }
         else
         {
-            _output.Append(EscapeText(value));
+            _sink.Text(value);
         }
         // Text output (even zero-length) breaks adjacent atomic value chain.
         // Per XSLT 3.0 spec, text nodes in a sequence (even empty from xsl:text/xsl:value-of)
@@ -26171,7 +26175,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var text = StringValueOf(value);
         if (!string.IsNullOrEmpty(text))
         {
-            _output.Append(EscapeText(text));
+            _sink.Text(text);
         }
     }
 
@@ -26207,7 +26211,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         var text = StringValueOf(arr[i]);
                         if (!string.IsNullOrEmpty(text))
-                            _output.Append(EscapeText(text));
+                            _sink.Text(text);
                     }
                 }
                 return;
