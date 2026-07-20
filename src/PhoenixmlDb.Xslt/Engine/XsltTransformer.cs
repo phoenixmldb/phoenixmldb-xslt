@@ -5824,6 +5824,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private readonly Stack<(int position, int last)> _contextPositions = new();
     private readonly Stack<object?> _currentItems = new(); // For XSLT current() function
     private readonly StringBuilder _output;
+    // Emission abstraction (SP-A). Inert in this task: nothing calls it yet — all
+    // emission still goes through direct `_output` appends. StringOutputSink wraps
+    // the same StringBuilder so the two stay byte-identical by construction.
+    private readonly IOutputSink _sink;
     internal readonly XsltTransformOptions _options;
     internal readonly XdmInMemoryStore? _nodeStore;
     private readonly PhoenixmlDb.XQuery.Functions.FunctionLibrary _functionLibrary;
@@ -8010,6 +8014,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _stylesheet = stylesheet;
         _templateIndex = templateIndex;
         _output = output;
+        _sink = new StringOutputSink(_output);
         _options = options;
         _nodeStore = nodeStore;
         _schemaProvider = schemaProvider;
@@ -26235,10 +26240,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return true;
     }
 
-    private static string EscapeText(string text)
+    internal static string EscapeText(string text)
         => CharacterEscaper.EscapeXmlText(text);
 
-    private static string EscapeAttributeValue(string value)
+    internal static string EscapeAttributeValue(string value)
         => EscapeControlCharsAsNcr(CharacterEscaper.EscapeXmlAttribute(value));
 
     /// <summary>
@@ -26282,7 +26287,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return $"ns{_nsPrefixCounter++}";
     }
 
-    private static string EscapeCommentValue(string value)
+    internal static string EscapeCommentValue(string value)
     {
         value = value.Replace("--", "- -", StringComparison.Ordinal);
         if (value.EndsWith('-'))
@@ -26290,7 +26295,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return value;
     }
 
-    private static string EscapePIValue(string value)
+    internal static string EscapePIValue(string value)
     {
         return value.Replace("?>", "? >", StringComparison.Ordinal);
     }
