@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **`xsl:copy-of` of source elements into a temporary tree now performs a direct node-model deep copy** instead of serializing to XML text and reparsing it. A copied element retains all of its in-scope namespaces — including those an ancestor declared — which the text round-trip could silently drop when a namespace happened to already be in scope in the transient serialization context, so `in-scope-prefixes()` on the copy is now correct (`insn/copy` copy-3702). First step of the temp-tree node-model migration; other temp-tree paths are unchanged.
+- **Internal: the result serializer's emission layer now routes through a single `IOutputSink` abstraction** (no behavior change). This is groundwork for building constructed temporary trees directly in the node model instead of serializing-and-reparsing; no user-visible effect in this release.
 
 ### Simple content construction (`xsl:variable` temporary trees)
 

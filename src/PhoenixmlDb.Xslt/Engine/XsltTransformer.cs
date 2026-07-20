@@ -5823,10 +5823,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private readonly Stack<object?> _contextItems = new();
     private readonly Stack<(int position, int last)> _contextPositions = new();
     private readonly Stack<object?> _currentItems = new(); // For XSLT current() function
+    // Direct appends to `_output` are now confined to buffer-level string passes only
+    // (attribute dedup/prefix-fixup re-emission, buffer save/restore swaps, result-document
+    // JSON/text serialization, suppress-indentation). ALL structured emission — element/
+    // attribute/namespace/text/comment/PI — goes through `_sink`. Do not add new structured
+    // emission as a raw `_output.Append`; route it through `_sink` so the future
+    // TreeConstructor-backed sink (SP-B) receives it as a node event.
     private readonly StringBuilder _output;
-    // Emission abstraction (SP-A). Text/RawText call sites route through this (Task 2);
-    // element/attribute/comment/PI sites still append directly to `_output` (later tasks).
-    // StringOutputSink wraps the same StringBuilder so the two stay byte-identical by construction.
+    // Emission abstraction (SP-A). All structured emission routes through this sink;
+    // `StringOutputSink` reproduces today's markup byte-for-byte (gated by SerializationMatrixTests).
     // Deliberately typed as the interface, not StringOutputSink: a second implementation
     // (TreeConstructor-backed node builder) is planned, per SP1 decomposition.
 #pragma warning disable CA1859
