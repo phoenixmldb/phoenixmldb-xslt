@@ -9491,19 +9491,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 break;
             }
             case XdmComment comment:
-                _output.Append("<!--");
-                _output.Append(EscapeCommentValue(comment.Value));
-                _output.Append("-->");
+                _sink.Comment(comment.Value);
                 break;
             case XdmProcessingInstruction pi:
-                _output.Append("<?");
-                _output.Append(pi.Target);
-                if (!string.IsNullOrEmpty(pi.Value))
-                {
-                    _output.Append(' ');
-                    _output.Append(pi.Value);
-                }
-                _output.Append("?>");
+                // Note: deep-copy path intentionally does not apply EscapePIValue (matches
+                // pre-existing behavior at this call site) — use RawText, not
+                // _sink.ProcessingInstruction, to keep byte-identical output.
+                _sink.RawText("<?" + pi.Target + (string.IsNullOrEmpty(pi.Value) ? "" : " " + pi.Value) + "?>");
                 break;
             case XdmNamespace ns2:
             {
@@ -10201,19 +10195,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 break;
             }
             case XdmComment comment:
-                _output.Append("<!--");
-                _output.Append(EscapeCommentValue(comment.Value));
-                _output.Append("-->");
+                _sink.Comment(comment.Value);
                 break;
             case XdmProcessingInstruction pi:
-                _output.Append("<?");
-                _output.Append(pi.Target);
-                if (!string.IsNullOrEmpty(pi.Value))
-                {
-                    _output.Append(' ');
-                    _output.Append(pi.Value);
-                }
-                _output.Append("?>");
+                // Note: deep-copy path intentionally does not apply EscapePIValue (matches
+                // pre-existing behavior at this call site) — use RawText, not
+                // _sink.ProcessingInstruction, to keep byte-identical output.
+                _sink.RawText("<?" + pi.Target + (string.IsNullOrEmpty(pi.Value) ? "" : " " + pi.Value) + "?>");
                 break;
             case XdmNamespace ns3:
             {
@@ -10306,19 +10294,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         WriteText(text.Value, false);
                         break;
                     case XdmComment comment:
-                        _output.Append("<!--");
-                        _output.Append(EscapeCommentValue(comment.Value));
-                        _output.Append("-->");
+                        _sink.Comment(comment.Value);
                         break;
                     case XdmProcessingInstruction pi:
-                        _output.Append("<?");
-                        _output.Append(pi.Target);
-                        if (!string.IsNullOrEmpty(pi.Value))
-                        {
-                            _output.Append(' ');
-                            _output.Append(pi.Value);
-                        }
-                        _output.Append("?>");
+                        // Note: deep-copy path intentionally does not apply EscapePIValue
+                        // (matches pre-existing behavior at this call site) — use RawText,
+                        // not _sink.ProcessingInstruction, to keep byte-identical output.
+                        _sink.RawText("<?" + pi.Target + (string.IsNullOrEmpty(pi.Value) ? "" : " " + pi.Value) + "?>");
                         break;
                 }
             }
@@ -14766,20 +14748,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
 
             case XdmComment comment:
-                _output.Append("<!--");
-                _output.Append(EscapeCommentValue(comment.Value));
-                _output.Append("-->");
+                _sink.Comment(comment.Value);
                 break;
 
             case XdmProcessingInstruction pi:
-                _output.Append("<?");
-                _output.Append(pi.Target);
-                if (!string.IsNullOrEmpty(pi.Value))
-                {
-                    _output.Append(' ');
-                    _output.Append(EscapePIValue(pi.Value));
-                }
-                _output.Append("?>");
+                _sink.ProcessingInstruction(pi.Target, pi.Value);
                 break;
 
             default:
@@ -15021,13 +14994,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     break;
                 }
                 case XmlNodeType.Comment:
-                    _output.Append("<!--").Append(reader.Value).Append("-->");
+                    // Note: raw reader value is not passed through EscapeCommentValue at this
+                    // call site (matches pre-existing behavior) — use RawText to keep
+                    // byte-identical output.
+                    _sink.RawText("<!--" + reader.Value + "-->");
                     break;
                 case XmlNodeType.ProcessingInstruction:
-                    _output.Append("<?").Append(reader.Name);
-                    if (!string.IsNullOrEmpty(reader.Value))
-                        _output.Append(' ').Append(reader.Value);
-                    _output.Append("?>");
+                    // Note: raw reader value is not passed through EscapePIValue at this call
+                    // site (matches pre-existing behavior) — use RawText, not
+                    // _sink.ProcessingInstruction, to keep byte-identical output.
+                    _sink.RawText("<?" + reader.Name + (string.IsNullOrEmpty(reader.Value) ? "" : " " + reader.Value) + "?>");
                     break;
                 // Document-level whitespace text is stripped (streamed-input strip-space
                 // default); other node kinds cannot appear as document children.
@@ -15827,20 +15803,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 break;
 
             case XdmComment comment:
-                _output.Append("<!--");
-                _output.Append(EscapeCommentValue(comment.Value));
-                _output.Append("-->");
+                _sink.Comment(comment.Value);
                 break;
 
             case XdmProcessingInstruction pi:
-                _output.Append("<?");
-                _output.Append(pi.Target);
-                if (!string.IsNullOrEmpty(pi.Value))
-                {
-                    _output.Append(' ');
-                    _output.Append(EscapePIValue(pi.Value));
-                }
-                _output.Append("?>");
+                _sink.ProcessingInstruction(pi.Target, pi.Value);
                 break;
 
             case ResultTreeFragment rtf:
@@ -16378,9 +16345,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // already emitted in the enclosing result sequence (§5.7.2 sequence normalization).
         TryWriteTopLevelItemSeparator();
 
-        _output.Append("<!--");
-        _output.Append(EscapeCommentValue(value));
-        _output.Append("-->");
+        _sink.Comment(value);
 
         // Comments count as "populated" for xsl:where-populated
         MarkContentProduced();
@@ -16456,14 +16421,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // already emitted in the enclosing result sequence (§5.7.2 sequence normalization).
         TryWriteTopLevelItemSeparator();
 
-        _output.Append("<?");
-        _output.Append(name);
-        if (!string.IsNullOrEmpty(value))
-        {
-            _output.Append(' ');
-            _output.Append(EscapePIValue(value));
-        }
-        _output.Append("?>");
+        _sink.ProcessingInstruction(name, value);
 
         // Processing instructions count as "populated" for xsl:where-populated
         MarkContentProduced();
