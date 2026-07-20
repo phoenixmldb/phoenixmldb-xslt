@@ -9055,7 +9055,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                 bool firstIsAtomic = firstItem is not (XdmNode or ResultTreeFragment);
                                 if (firstIsAtomic && lastTemplateResultWasAtomic && _textContentDepth == 0)
                                 {
-                                    _output.Append(' ');
+                                    _sink.RawText(" ");
                                     // Reset so SerializeSequenceItems doesn't add a duplicate separator
                                     _lastResultWasAtomic = false;
                                 }
@@ -9064,7 +9064,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                     // Append bodyOutput directly to preserve DOE text,
                                     // xmlns="" undeclarations, and other serialization details
                                     // that would be lost by XDM round-trip re-serialization.
-                                    _output.Append(bodyOutput);
+                                    _sink.RawText(bodyOutput);
                                     _lastResultWasAtomic = false;
                                 }
                                 else
@@ -9421,14 +9421,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var collectedAttrs = _collectedAttributesStack.Pop();
                     templateChildContent = scope.GetWritten();
                     scope.Dispose();
-                    _output.Append(collectedAttrs);
+                    _sink.RawText(collectedAttrs.ToString());
                 }
 
                 _sink.StartElementClose(false);
 
                 // Insert any non-attribute content from matched attribute templates as children
                 if (templateChildContent.Length > 0)
-                    _output.Append(templateChildContent);
+                    _sink.RawText(templateChildContent);
 
                 // Apply templates to children — suspend accumulator and track element depth
                 // so inner templates with 'as' serialize to _output (child content)
@@ -10677,7 +10677,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             // Append bodyOutput directly to preserve DOE text,
                             // xmlns="" undeclarations, and other serialization details
                             // that would be lost by XDM round-trip re-serialization.
-                            _output.Append(bodyOutput);
+                            _sink.RawText(bodyOutput);
                             _lastResultWasAtomic = false;
                         }
                         else
@@ -13473,7 +13473,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // Simple content construction: space between items from different nodes
             // (only for comment/PI content; attribute content uses empty-string separator)
             if (_attributeContentDepth == 0 && _output.Length > 0)
-                _output.Append(' ');
+                _sink.RawText(" ");
             if (instruction.Content != null)
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
             if (_attributeContentDepth == 0)
@@ -13724,7 +13724,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (content.Length > 0)
         {
             _sink.StartElementClose(false);
-            _output.Append(content);
+            _sink.RawText(content);
             _sink.EndElement(name);
         }
         else
@@ -14054,7 +14054,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // Simple content: insert space when transitioning from node-contributed text to new text
             // (only for comment/PI content; attribute content uses empty-string separator)
             if (_simpleContentLastWasNode && _textContentDepth > 0 && _attributeContentDepth == 0 && _output.Length > 0)
-                _output.Append(' ');
+                _sink.RawText(" ");
             if (_attributeContentDepth == 0)
                 _simpleContentLastWasNode = false;
             _sink.RawText(value);
@@ -14062,9 +14062,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         else if (IsInCdataSectionElement())
         {
             // Wrap in CDATA section — escape any embedded "]]>" sequences
-            _output.Append("<![CDATA[");
-            _output.Append(value.Replace("]]>", "]]]]><![CDATA[>", StringComparison.Ordinal));
-            _output.Append("]]>");
+            _sink.RawText("<![CDATA[" + value.Replace("]]>", "]]]]><![CDATA[>", StringComparison.Ordinal) + "]]>");
         }
         else
         {
@@ -14444,7 +14442,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                         catch (System.Xml.XmlException)
                         {
-                            _output.Append(content);
+                            _sink.RawText(content);
                         }
                     }
                     else
@@ -14620,13 +14618,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // of body. Reported by Martin Honnen against 1.3.10
                     // (group-starting-with / group-adjacent in streamable mode).
                     _sink.StartElementClose(false);
-                    _output.Append(content);
+                    _sink.RawText(content);
                     _streamingOpenElements.Push(elemName);
                 }
                 else if (content.Length > 0)
                 {
                     _sink.StartElementClose(false);
-                    _output.Append(content);
+                    _sink.RawText(content);
                     _sink.EndElement(elemName);
                 }
                 else
@@ -14829,11 +14827,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 var items = result is object?[] a ? a : ((IEnumerable<object?>)result).ToArray();
                 foreach (var item in items)
-                    _output.Append(StringValueOf(item));
+                    _sink.RawText(StringValueOf(item));
             }
             else
             {
-                _output.Append(StringValueOf(result));
+                _sink.RawText(StringValueOf(result));
             }
             return;
         }
@@ -14919,12 +14917,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (rtfDoc != null)
                 SerializeNode(rtfDoc, copyNs);
             else
-                _output.Append(rtf.XmlContent);
+                _sink.RawText(rtf.XmlContent);
         }
         else if (result is System.Xml.Linq.XNode linqNode)
         {
             // LINQ XML nodes (from fn:analyze-string, fn:json-to-xml, etc.)
-            _output.Append(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
+            _sink.RawText(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
         }
         else if (result is object?[] arr)
         {
@@ -15811,11 +15809,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 break;
 
             case ResultTreeFragment rtf:
-                _output.Append(rtf.XmlContent);
+                _sink.RawText(rtf.XmlContent);
                 break;
 
             case System.Xml.Linq.XNode linqNode:
-                _output.Append(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
+                _sink.RawText(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
                 break;
 
             case Xdm.TextNodeItem tni:
@@ -16096,7 +16094,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (rtfDoc != null)
                 SerializeNode(rtfDoc);
             else
-                _output.Append(rtf.XmlContent);
+                _sink.RawText(rtf.XmlContent);
             _lastResultWasAtomic = false;
         }
         else if (result is System.Xml.Linq.XNode linqNode)
@@ -16105,7 +16103,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (_textContentDepth > 0)
                 WriteText(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting), false);
             else
-                _output.Append(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
+                _sink.RawText(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
             _lastResultWasAtomic = false;
         }
         else if (result is object?[] arr)
@@ -16263,7 +16261,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 continue;
             if (item is ResultTreeFragment r)
             {
-                _output.Append(r.XmlContent);
+                _sink.RawText(r.XmlContent);
                 lastWasAtomic = false;
             }
             else if (item is XdmNode || item is XdmDocument)
@@ -16658,7 +16656,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 catch (System.Xml.XmlException)
                 {
                     // If XML parsing fails, fall through to text output
-                    _output.Append(content);
+                    _sink.RawText(content);
                 }
             }
             else
@@ -16736,14 +16734,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             or System.Xml.XmlNodeType.SignificantWhitespace
                             or System.Xml.XmlNodeType.Whitespace)
                         {
-                            _output.Append(docReader.Value);
+                            _sink.RawText(docReader.Value);
                         }
                     }
                 }
                 catch (System.Xml.XmlException)
                 {
                     // Fallback: use raw text content
-                    _output.Append(xmlContent);
+                    _sink.RawText(xmlContent);
                 }
                 MarkContentProduced();
             }
@@ -16772,7 +16770,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             RunValidation(instruction.Validation, textContent, ValidationKind.Fragment,
                 "xsl:document", instruction.Location);
-            _output.Append(textContent);
+            _sink.RawText(textContent);
             // A non-empty document node is significant for where-populated tracking
             MarkContentProduced();
         }
@@ -19975,7 +19973,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Format the numbers
         var formatted = FormatNumbers(numbers, format, groupSep, groupSize, ordinal, lang);
-        _output.Append(formatted);
+        _sink.RawText(formatted);
     }
 
     private static double ConvertToNumberDouble(object? value)
@@ -23991,7 +23989,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // Simple content construction: space between items from different nodes
             // (only for comment/PI content; attribute content uses empty-string separator)
             if (_attributeContentDepth == 0 && _output.Length > 0)
-                _output.Append(' ');
+                _sink.RawText(" ");
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
             if (_attributeContentDepth == 0)
                 _simpleContentLastWasNode = true;
@@ -24334,7 +24332,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (content.Length > 0)
         {
             _sink.StartElementClose(false);
-            _output.Append(content);
+            _sink.RawText(content);
             _sink.EndElement(elemName);
         }
         else
@@ -27333,7 +27331,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             for (var i = 0; i < arr.Length; i++)
             {
                 if (i > 0)
-                    _output.Append(' ');
+                    _sink.RawText(" ");
                 SerializeFunctionResult(arr[i], outputBuilder);
             }
             return;
@@ -27348,12 +27346,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (result is ResultTreeFragment rtf)
         {
-            _output.Append(rtf.XmlContent);
+            _sink.RawText(rtf.XmlContent);
             return;
         }
 
         // Atomic values: serialize as string
-        _output.Append(StringValueOf(result));
+        _sink.RawText(StringValueOf(result));
     }
 
     /// <summary>
