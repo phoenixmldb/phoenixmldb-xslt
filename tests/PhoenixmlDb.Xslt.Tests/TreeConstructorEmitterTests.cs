@@ -256,6 +256,71 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task CopyOf_SubtreeWithNestedXmlBaseDescendant_InFlippingBody_DescendantBaseUriMatchesReparse()
+    {
+        // SP-C Task 2 follow-up (Important finding VERIFY). Task 2 stamps CopySourceBaseUri only on
+        // the TOP-LEVEL copied roots (tcCopyElems). A copied SUBTREE whose DESCENDANT carries its
+        // own xml:base is the untested case: that clone descendant keeps CopySourceBaseUri=null.
+        //   copy-of select="/doc/wrap/outer" -> tcCopyElems == [outer] (stamped)
+        //   <inner xml:base="sub/"> is a clone DESCENDANT of outer -> NOT stamped (CopySourceBaseUri=null)
+        // On the production reparse path, SerializeNode's per-element TryEmitBaseSentinel fires for
+        // <inner> too and the reparse recovers CopySourceBaseUri=http://ex/base/sub/ onto it. The
+        // flip path relies instead on base-uri() recomputing from the copied xml:base chain: <inner>'s
+        // xml:base="sub/" resolves against base-uri(outer clone), and outer clone (a stamped top-level
+        // root) carries CopySourceBaseUri=http://ex/base/, so base-uri($v/outer/inner)=http://ex/base/sub/.
+        // This pins that the flip descendant's base-uri() equals the reparse's — proving the finding
+        // benign (the xml:base attribute CloneSubtreeDeep copies fully drives the computation).
+        // Enclosing xsl:copy of /doc/wrap flips (mirrors CopyOf_NestedInsideXslCopy_OfSourceElement).
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="v" as="element()">
+                  <xsl:copy select="/doc/wrap">
+                    <xsl:copy-of select="/doc/wrap/outer"/>
+                  </xsl:copy>
+                </xsl:variable>
+                <out>[{base-uri($v/outer/inner)}]</out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(xslt, new System.Uri("http://doc/stylesheet.xsl"));
+        var result = await transformer.TransformAsync(
+            """<doc xml:base="http://ex/base/"><wrap><outer><inner xml:base="sub/">X</inner></outer></wrap></doc>""");
+        // xml:base="sub/" resolved against outer's inherited base http://ex/base/ = http://ex/base/sub/.
+        result.Should().Contain("<out>[http://ex/base/sub/]</out>");
+    }
+
+    [Fact]
+    public async Task CopyOf_SubtreeRedeclaringInScopeNamespace_BailsToLegacy_OutputUnchanged()
+    {
+        // SP-C Task 2 review (Minor guard pin). CloneDeclaresRedundantNamespace bails a body to the
+        // legacy serialize-reparse path (no flip) when a copied subtree redeclares a prefix already
+        // in scope at the copy point — the shape f:graft-to-parent (fn/snapshot) builds. Here xmlns:foo
+        // is in scope on <wrap>, and the copied <sub> redeclares xmlns:foo="http://foo/" (redundant).
+        // The native clone keeps the redundant declaration (copy-namespaces retains in-scope decls),
+        // which would flip to a DIFFERENT namespace-declaration set than the reparse (which strips it);
+        // the guard detects that and stays on legacy so production output is byte-identical. This pins
+        // the guard so a future change that drops it (letting such a body flip) fails loudly.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/">
+                <xsl:variable name="v" as="element()">
+                  <wrap xmlns:foo="http://foo/">
+                    <xsl:copy-of select="/doc/sub"/>
+                  </wrap>
+                </xsl:variable>
+                <xsl:copy-of select="$v"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt,
+            """<doc><sub xmlns:foo="http://foo/"><foo:x/></sub></doc>""");
+        // Redundant xmlns:foo on <sub> is stripped (already in scope on <wrap>); foo:x keeps its binding.
+        result.Should().Contain("""<wrap xmlns:foo="http://foo/"><sub><foo:x/></sub></wrap>""");
+    }
+
+    [Fact]
     public void DifferentialCoverageCounters_AreResettableAndReadable()
     {
         // slice 5a observability: Compared/Skipped are exposed so a differential run can measure
