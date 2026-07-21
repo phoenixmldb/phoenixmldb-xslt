@@ -20,6 +20,13 @@ internal sealed class TreeConstructor
     private readonly Stack<Frame> _open = new();
     private readonly List<NodeId> _roots = new();
     private readonly Dictionary<NodeId, IReadOnlyDictionary<string, NamespaceId>> _inScopeByElement = new();
+    // Adjacent-text coalescing buffer for the current context (open frame, or the fragment
+    // root when no element is open). Live child text is accumulated here and materialized as a
+    // single XdmText node only when a non-text sibling arrives or the context closes — matching
+    // how the serialize-then-reparse path (XmlReader) merges a contiguous character run into
+    // one text node (SP-B slice 4). Root-level pending text uses <see cref="_rootPendingText"/>;
+    // per-frame pending text lives on <see cref="Frame.PendingText"/>.
+    private System.Text.StringBuilder? _rootPendingText;
 
     public TreeConstructor(XdmInMemoryStore store, ulong documentId)
     {
@@ -80,6 +87,20 @@ internal sealed class TreeConstructor
     public IReadOnlyDictionary<string, NamespaceId> InScopeOf(NodeId elementId)
         => _inScopeByElement.TryGetValue(elementId, out var map) ? map : EmptyInScope;
 
+    /// <summary>
+    /// Updates the currently open element's prefix without changing its expanded name. Used for
+    /// XSLT namespace fixup (§11.7), where an <c>xsl:namespace</c> in the element's content
+    /// redefines the element's prefix to a conflicting URI and the serializer renames the prefix.
+    /// The rename is decided only after the content (and therefore this element's children) has
+    /// executed, so the open frame is patched in place before <see cref="EndElement"/>.
+    /// </summary>
+    public void SetOpenElementPrefix(string? prefix)
+    {
+        if (_open.Count == 0)
+            throw new InvalidOperationException("SetOpenElementPrefix requires an open element.");
+        _open.Peek().Prefix = string.IsNullOrEmpty(prefix) ? null : prefix;
+    }
+
     private void StartElementCore(
         NamespaceId ns,
         string localName,
@@ -87,6 +108,9 @@ internal sealed class TreeConstructor
         IReadOnlyDictionary<string, NamespaceId> inScope,
         bool inheritNamespaces)
     {
+        // Text preceding this child element belongs to the parent context and must be
+        // materialized before the element node is interposed.
+        FlushPendingText();
         var effectiveInScope = new Dictionary<string, NamespaceId>();
         if (inheritNamespaces)
         {
@@ -114,6 +138,28 @@ internal sealed class TreeConstructor
 
     public void AppendText(string value)
     {
+        if (value.Length == 0)
+            return; // empty text nodes are never stored (XDM); an empty run adds nothing
+        // Accumulate into the current context's pending buffer so adjacent text runs coalesce
+        // into one node, matching the reparse path. The node is created on the next flush.
+        if (_open.Count > 0)
+            (_open.Peek().PendingText ??= new System.Text.StringBuilder()).Append(value);
+        else
+            (_rootPendingText ??= new System.Text.StringBuilder()).Append(value);
+    }
+
+    /// <summary>
+    /// Materializes any buffered adjacent text for the current context (open frame, or the
+    /// fragment root) into a single <see cref="XdmText"/> node and links it in document order.
+    /// A no-op when there is no pending text.
+    /// </summary>
+    private void FlushPendingText()
+    {
+        var sb = _open.Count > 0 ? _open.Peek().PendingText : _rootPendingText;
+        if (sb is null || sb.Length == 0)
+            return;
+        var value = sb.ToString();
+        sb.Clear();
         var id = _store.NextId();
         var text = new XdmText
         {
@@ -123,7 +169,7 @@ internal sealed class TreeConstructor
             Parent = _open.Count > 0 ? _open.Peek().Id : (NodeId?)null,
         };
         _store.Register(text);
-        AddChild(id);
+        AddChildRaw(id);
     }
 
     /// <summary>
@@ -225,6 +271,8 @@ internal sealed class TreeConstructor
 
     public void EndElement()
     {
+        // Materialize this element's trailing text into its own children before it is sealed.
+        FlushPendingText();
         var frame = _open.Pop();
         var elem = new XdmElement
         {
@@ -253,10 +301,15 @@ internal sealed class TreeConstructor
         AddChild(frame.Id);
     }
 
-    public IReadOnlyList<NodeId> FinishFragment() => _roots;
+    public IReadOnlyList<NodeId> FinishFragment()
+    {
+        FlushPendingText(); // trailing fragment-root text
+        return _roots;
+    }
 
     public XdmDocument FinishDocument()
     {
+        FlushPendingText(); // trailing document-root text
         var docNodeId = _store.NextId();
         var doc = new XdmDocument
         {
@@ -269,6 +322,13 @@ internal sealed class TreeConstructor
     }
 
     private void AddChild(NodeId id)
+    {
+        // Any text preceding this node (comment/PI/element/appended node) comes first.
+        FlushPendingText();
+        AddChildRaw(id);
+    }
+
+    private void AddChildRaw(NodeId id)
     {
         if (_open.Count > 0)
             _open.Peek().Children.Add(id);
@@ -307,5 +367,7 @@ internal sealed class TreeConstructor
         public required Dictionary<string, NamespaceId> InScope;
         public string? BaseUri;
         public string? CopySourceBaseUri;
+        // Adjacent-text coalescing buffer for this element's direct children (SP-B slice 4).
+        public System.Text.StringBuilder? PendingText;
     }
 }

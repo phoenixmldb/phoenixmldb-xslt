@@ -5846,6 +5846,76 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     // this field is inert and behavior is byte-unchanged.
     private TreeConstructor? _activeTreeConstructor;
 
+    // SP-B slice 4: set while an active constructor's body executed content that could NOT be
+    // faithfully routed into the node tree (an attribute whose prefix could not be resolved, or
+    // — reported empirically by the differential — a node-producing construct that serializes to
+    // the string buffer without a routed emitter, e.g. xsl:copy-of / built-in deep copy). When
+    // set, RunTreeConstructorDifferential skips the structural comparison for that body: the live
+    // tree is known-incomplete, so a divergence would be a false positive, not a real parity bug.
+    // Reset each time the body seam installs a fresh constructor.
+    private bool _tcFragmentIncomplete;
+
+    /// <summary>
+    /// SP-B slice 4: opens <paramref name="name"/>/<paramref name="nsUri"/> as an element on the
+    /// active constructor BEFORE its content executes, so child text/comment/PI/nested elements
+    /// build natively into it in document order. The frame stays open (and
+    /// <see cref="_activeTreeConstructor"/> stays active) through content; namespaces, attributes,
+    /// and any prefix fixup are applied at <see cref="TcFinishElement"/> before the frame is
+    /// sealed.
+    /// </summary>
+    private void TcOpenElement(TreeConstructor tc, string name, string? nsUri)
+    {
+        var colon = name.IndexOf(':', StringComparison.Ordinal);
+        var local = colon > 0 ? name[(colon + 1)..] : name;
+        var prefix = colon > 0 ? name[..colon] : null;
+        var ns = string.IsNullOrEmpty(nsUri) ? NamespaceId.None : _nodeStore!.InternNamespace(nsUri);
+        tc.StartElement(ns, local, prefix);
+    }
+
+    /// <summary>
+    /// SP-B slice 4: seals an element opened by <see cref="TcOpenElement"/> whose children have
+    /// already built natively during content. Applies the string path's finalized namespace
+    /// declarations and (deduplicated, last-wins) attributes to the still-open frame, mirrors any
+    /// post-content prefix fixup, preserves an <c>xsl:copy</c> source base URI, then ends the
+    /// element. <paramref name="abort"/> (an attribute prefix that couldn't be resolved) marks the
+    /// whole body incomplete so the differential skips it rather than reporting a false divergence.
+    /// </summary>
+    private void TcFinishElement(
+        TreeConstructor tc,
+        string name,
+        List<(string Prefix, NamespaceId Ns)> nsDecls,
+        List<(NamespaceId Ns, string Local, string? Prefix, string Value)> attrs,
+        bool abort,
+        string? copySourceBaseUri = null)
+    {
+        // Namespace fixup (§11.7) may have renamed the element's prefix after content executed;
+        // keep the open frame's name in sync (expanded name is unchanged).
+        var colon = name.IndexOf(':', StringComparison.Ordinal);
+        tc.SetOpenElementPrefix(colon > 0 ? name[..colon] : null);
+        foreach (var (prefix, ns) in nsDecls)
+            tc.AddNamespace(prefix, ns);
+        foreach (var (ns, l, p, v) in attrs)
+            tc.AddAttribute(ns, l, p, v);
+        if (copySourceBaseUri != null)
+            tc.SetCopySourceBaseUri(copySourceBaseUri);
+        tc.EndElement();
+        if (abort)
+            _tcFragmentIncomplete = true;
+    }
+
+    /// <summary>
+    /// SP-B slice 4: marks the active constructor's body incomplete (see
+    /// <see cref="_tcFragmentIncomplete"/>) when a node-producing construct emits to the string
+    /// buffer without routing into the node tree. Called from the copy/copy-of paths so the
+    /// differential skips bodies whose live tree cannot be complete. Inert when no constructor
+    /// is active (production) or when nothing is open to be built.
+    /// </summary>
+    private void MarkTcIncompleteIfActive()
+    {
+        if (_activeTreeConstructor != null)
+            _tcFragmentIncomplete = true;
+    }
+
     /// <summary>
     /// RAII install/restore for <see cref="_activeTreeConstructor"/>: sets it on construction
     /// and restores the prior value on <see cref="Dispose"/>, so nested construction scopes
@@ -9367,6 +9437,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     private async ValueTask ApplyBuiltInShallowCopyAsync(object node, QName? mode, List<XsltWithParam> withParams)
     {
+        // SP-B slice 4: the built-in shallow-copy of a source node emits the copied node directly
+        // to the sink (bypassing the routed emitters), so an active constructor's live tree can't
+        // capture it — mark the body incomplete so the differential skips it (element-content
+        // level only). The document case dispatches to apply-templates and emits nothing itself.
+        if (_textContentDepth == 0 && node is not XdmDocument)
+            MarkTcIncompleteIfActive();
         switch (node)
         {
             case XdmDocument:
@@ -10191,6 +10267,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     private async ValueTask ApplyBuiltInDeepCopyAsync(object node, QName? mode, List<XsltWithParam> withParams)
     {
+        // SP-B slice 4: the built-in deep-copy serializes an entire source subtree to the sink
+        // without routing into the active constructor — mark the body incomplete so the
+        // differential skips it (element-content level only). The document case only dispatches
+        // to apply-templates (its children route through their own templates).
+        if (_textContentDepth == 0 && node is not XdmDocument)
+            MarkTcIncompleteIfActive();
         // Deep copy: serialize the entire node subtree
         switch (node)
         {
@@ -13656,20 +13738,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Push xml:base onto static base URI stack so resolve-uri() resolves against it
         if (instruction.BaseUri != null)
             _staticBaseUriStack.Push(XsltTransformEngine.UriString(instruction.BaseUri)!);
-        // SP-B: capture the active tree constructor (installed by the as="element()" body seam
-        // under the differential) and suspend it while executing THIS element's content, so
-        // nested from-scratch elements serialize into `content` (reparsed as children below)
-        // rather than each independently capturing into the constructor. Restored after content,
-        // so sibling elements at this level are still captured.
+        // SP-B slice 4: capture the active tree constructor (installed by the as="element()" body
+        // seam under the differential) and open THIS element on it BEFORE executing content, so
+        // child text/comment/PI/nested elements build natively into it in document order. The
+        // constructor stays active through content (no suspend), and the element is sealed after
+        // content in TcFinishElement. Namespaces/attributes/fixup are decided post-content and
+        // applied to the still-open frame there.
         var tcForThisElement = _activeTreeConstructor;
-        _activeTreeConstructor = null;
+        if (tcForThisElement != null)
+            TcOpenElement(tcForThisElement, name, nsUri);
         try
         {
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
         }
         finally
         {
-            _activeTreeConstructor = tcForThisElement;
             if (instruction.BaseUri != null)
                 _staticBaseUriStack.Pop();
             _forceDefaultNsUndeclaration = savedForceNsUndecl;
@@ -13793,9 +13876,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (content.Length > 0)
             MarkContentProduced();
 
-        // SP-B: build the same element directly as XDM nodes via the active constructor.
-        if (tcForThisElement is { } tc && !tcAbort)
-            TryBuildElementViaTree(tc, name, nsUri, tcNsDecls!, tcAttrs!, content);
+        // SP-B slice 4: seal the element opened before content; its children built natively in
+        // document order. Namespaces/attributes/fixup applied to the still-open frame here.
+        if (tcForThisElement is { } tc)
+            TcFinishElement(tc, name, tcNsDecls!, tcAttrs!, tcAbort);
     }
 
     /// <summary>
@@ -13932,93 +14016,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (elemNsBindings.TryGetValue(prefix, out var uri) && !string.IsNullOrEmpty(uri))
             return _nodeStore!.InternNamespace(uri);
         return null;
-    }
-
-    /// <summary>
-    /// SP-B: builds an element directly as XDM nodes via <paramref name="tc"/>, byte-identical
-    /// to what the string path just serialized. The element's own name/namespaces/attributes
-    /// are supplied as typed data (mirroring the string path's exact decisions); child content
-    /// is reparsed from the just-serialized <paramref name="content"/> markup (wrapped with
-    /// this element's namespace context so it is self-contained) and linked in as nodes.
-    /// Slice-1 scaffolding: children are recovered by reparse here; later slices route child
-    /// construction directly into the constructor.
-    /// </summary>
-    private void TryBuildElementViaTree(
-        TreeConstructor tc,
-        string name,
-        string? nsUri,
-        List<(string Prefix, NamespaceId Ns)> nsDecls,
-        List<(NamespaceId Ns, string Local, string? Prefix, string Value)> attributes,
-        string content,
-        string? copySourceBaseUri = null)
-    {
-        // Parse child content FIRST, before opening the element on the constructor: a parse
-        // failure then leaves the constructor untouched (no dangling open frame that would
-        // corrupt sibling element builds).
-        List<object?>? kids = null;
-        if (content.Length > 0)
-        {
-            try
-            {
-                var sb = new StringBuilder("<_tc_root_");
-                // Reproduce this element's start-tag namespace context so children resolve
-                // exactly as they do in the whole-element serialize-reparse.
-                foreach (var (prefix, ns) in nsDecls)
-                {
-                    if (ns == NamespaceId.None)
-                        continue; // undeclaration — nothing for a child to inherit
-                    var uri = _nodeStore!.GetNamespaceUri(ns);
-                    if (string.IsNullOrEmpty(uri))
-                        continue;
-                    if (prefix.Length > 0)
-                        sb.Append(" xmlns:").Append(prefix).Append("=\"").Append(EscapeAttributeValue(uri)).Append('"');
-                    else
-                        sb.Append(" xmlns=\"").Append(EscapeAttributeValue(uri)).Append('"');
-                }
-                sb.Append('>').Append(content).Append("</_tc_root_>");
-                var settings = new System.Xml.XmlReaderSettings
-                {
-                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
-                    IgnoreWhitespace = false,
-                    IgnoreComments = false,
-                    IgnoreProcessingInstructions = false,
-                };
-                using var stringReader = new System.IO.StringReader(sb.ToString());
-                using var reader = System.Xml.XmlReader.Create(stringReader, settings);
-                kids = new List<object?>();
-                ReadAsBodyChunkChildren(reader, kids);
-            }
-            catch (System.Xml.XmlException)
-            {
-                // Content not self-contained under this wrapper (e.g. a child prefix declared
-                // via xsl:namespace): skip the node build for this element.
-                return;
-            }
-        }
-
-        var colon = name.IndexOf(':', StringComparison.Ordinal);
-        var prefixName = colon > 0 ? name[..colon] : null;
-        var local = colon > 0 ? name[(colon + 1)..] : name;
-        var elemNs = string.IsNullOrEmpty(nsUri) ? NamespaceId.None : _nodeStore!.InternNamespace(nsUri);
-
-        tc.StartElement(elemNs, local, prefixName);
-        foreach (var (prefix, ns) in nsDecls)
-            tc.AddNamespace(prefix, ns);
-        foreach (var (ns, l, p, v) in attributes)
-            tc.AddAttribute(ns, l, p, v);
-        // SP-B (xsl:copy): preserve the source element's base URI onto CopySourceBaseUri only
-        // (never BaseUri) — matching §11.9.1 and the serialize-reparse path being replaced.
-        if (copySourceBaseUri != null)
-            tc.SetCopySourceBaseUri(copySourceBaseUri);
-        if (kids != null)
-        {
-            foreach (var k in kids)
-            {
-                if (k is XdmNode kn)
-                    tc.AppendNode(kn.Id);
-            }
-        }
-        tc.EndElement();
     }
 
     /// <summary>
@@ -14360,6 +14357,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override void WriteText(string value, bool disableOutputEscaping)
     {
+        // SP-B slice 4: the node model stores raw (unescaped) text; capture the value before any
+        // text-output-mode sentinel mangling below so the constructor gets the true text.
+        var rawTextValue = value;
         // XTDE1490: Reject writes to primary output after it was claimed by result-document href=""
         if (_primaryOutputClaimedByResultDocument && _resultDocumentRedirectDepth == 0
             && _temporaryOutputDepth == 0 && _textContentDepth == 0
@@ -14408,6 +14408,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _sink.Text(value);
         }
 
+        // SP-B slice 4: route element-content text into the active constructor as a child text
+        // node (raw value; the constructor coalesces adjacent runs to match the reparse). Excluded:
+        // comment/PI/attribute body text (_textContentDepth > 0), which the parent instruction
+        // consumes, and the simple-content accumulator branch above, which never reaches _output.
+        if (_activeTreeConstructor is { } wtc && _textContentDepth == 0
+            && !(_collectTextAsSequenceItems && _serializingElementDepth == 0 && _sequenceAccumulator != null))
+        {
+            wtc.AppendText(rawTextValue);
+        }
+
         // Non-whitespace text counts as "populated" for xsl:where-populated,
         // but only when at the element content level (not inside attribute/comment/PI body).
         // Use XML whitespace definition (only #x20, #x9, #xD, #xA), not .NET's broader one.
@@ -14441,6 +14451,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         // If sequence accumulation is active, add as a TextNodeItem marker
         // to distinguish text nodes from atomic strings (for §5.7.2 processing)
+        var emittedToOutput = false;
         if (_sequenceAccumulator != null)
         {
             AppendToSeqAccumulator(new Xdm.TextNodeItem(value));
@@ -14449,12 +14460,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // text and LRE elements preserve their source order when the function
             // result is assembled from both _sequenceAccumulator and _output.
             if (_functionBodyDepth > 0 && _textContentDepth == 0)
+            {
                 _sink.Text(value);
+                emittedToOutput = true;
+            }
         }
         else
         {
             _sink.Text(value);
+            emittedToOutput = true;
         }
+
+        // SP-B slice 4: when this text reached the output buffer as element content (not the
+        // accumulator-only path, and not a comment/PI/attribute body), route it into the active
+        // constructor as a child text node. Text-value-templates (expand-text {…}) and value-of
+        // in some contexts emit through WriteTextItem, so the WriteText routing alone would miss
+        // an LRE's own textual content (e.g. <field>{.}</field>).
+        if (emittedToOutput && _textContentDepth == 0 && _activeTreeConstructor is { } wtc)
+            wtc.AppendText(value);
         // Text output (even zero-length) breaks adjacent atomic value chain.
         // Per XSLT 3.0 spec, text nodes in a sequence (even empty from xsl:text/xsl:value-of)
         // break adjacency between atomic values, preventing space insertion.
@@ -14888,13 +14911,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedForceNsUndecl2 = _forceDefaultNsUndeclaration;
                 _forceDefaultNsUndeclaration = instruction.InheritNamespaces == false
                     && copyNsBindings.ContainsKey("") && !string.IsNullOrEmpty(copyNsBindings.GetValueOrDefault(""));
-                // SP-B: capture and suspend the active tree constructor for the duration of this
-                // copy's content, so nested from-scratch elements serialize into `content`
-                // (reparsed as children below) rather than each capturing into the constructor.
-                // Restored after content so siblings at this level are still captured. Mirrors
-                // CreateElementCoreAsync / CreateLiteralElementCoreAsync.
+                // SP-B slice 4: open THIS copied element on the active constructor BEFORE content
+                // (constructor stays active — no suspend), so child text/comment/PI/nested
+                // elements build natively in document order. The source element's name/namespace
+                // are known up front (copy preserves them); sealed after content in TcFinishElement.
+                var copyElemName = !string.IsNullOrEmpty(elem.Prefix)
+                    ? $"{elem.Prefix}:{elem.LocalName}"
+                    : elem.LocalName;
+                var copyElemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
                 var tcForThisElement = _activeTreeConstructor;
-                _activeTreeConstructor = null;
+                if (tcForThisElement != null)
+                    TcOpenElement(tcForThisElement, copyElemName, copyElemNsUri);
                 try
                 {
                     if (instruction.Content != null)
@@ -14904,7 +14931,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 finally
                 {
-                    _activeTreeConstructor = tcForThisElement;
                     _forceDefaultNsUndeclaration = savedForceNsUndecl2;
                     _lastResultWasAtomic = savedLastResultWasAtomic2;
                     _serializingElementDepth--;
@@ -15006,18 +15032,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _sink.StartElementClose(true);
                 }
 
-                // SP-B: build the copy directly as XDM nodes via the active constructor
-                // (differential), carrying the source element's base URI onto CopySourceBaseUri
-                // without a serialize-then-reparse. In production (no active constructor) the
-                // legacy reparse below recovers the base URI exactly as before (byte-unchanged).
+                // SP-B slice 4: seal the copied element opened before content; children built
+                // natively in document order, and the source element's base URI carried onto
+                // CopySourceBaseUri without a serialize-then-reparse. In production (no active
+                // constructor) the legacy reparse below recovers the base URI as before.
                 if (tcForThisElement is { } tc)
                 {
-                    if (!tcAbort)
-                    {
-                        var elemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
-                        var sourceBaseUri = ComputeSourceBaseUri(elem);
-                        TryBuildElementViaTree(tc, elemName, elemNsUri, tcNsDecls!, tcAttrs!, content, sourceBaseUri);
-                    }
+                    var sourceBaseUri = ComputeSourceBaseUri(elem);
+                    TcFinishElement(tc, elemName, tcNsDecls!, tcAttrs!, tcAbort, sourceBaseUri);
                 }
                 // XSLT 3.0 §11.9.1: xsl:copy preserves the source element's base URI.
                 // When inside a variable/param (sequence accumulator active), extract the
@@ -15919,6 +15941,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     private void SerializeNode(object node, bool copyNamespaces = true, bool faithfulNamespaces = false)
     {
+        // SP-B slice 4: node-to-string serialization (xsl:copy-of, sequence-of-nodes, etc.)
+        // writes markup straight to the sink without routing into the active constructor, so the
+        // live tree would be missing these children. Mark the body incomplete so the differential
+        // skips it rather than reporting a false divergence. (Element-content level only; inside a
+        // comment/PI/attribute body this contributes to an atomized string, not a child node.)
+        if (_textContentDepth == 0)
+            MarkTcIncompleteIfActive();
         switch (node)
         {
             case XdmDocument doc:
@@ -16732,6 +16761,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         _sink.Comment(value);
 
+        // SP-B slice 4: route a comment child into the active constructor (element-content level
+        // only; a comment collected inside another comment/PI body has _textContentDepth > 0).
+        if (_textContentDepth == 0 && _activeTreeConstructor is { } ctc)
+            ctc.AppendComment(value);
+
         // Comments count as "populated" for xsl:where-populated
         MarkContentProduced();
         // Comment is a node, so it breaks adjacent atomic value chain
@@ -16808,6 +16842,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         _sink.ProcessingInstruction(name, value);
 
+        // SP-B slice 4: route a PI child into the active constructor (element-content level only).
+        if (_textContentDepth == 0 && _activeTreeConstructor is { } ptc)
+            ptc.AppendProcessingInstruction(name, value);
+
         // Processing instructions count as "populated" for xsl:where-populated
         MarkContentProduced();
         // PI is a node, so it breaks adjacent atomic value chain
@@ -16844,7 +16882,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // content from leaking TextNodeItems into the function's accumulator
             var savedAccumNs = _sequenceAccumulator;
             _sequenceAccumulator = null;
-            await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+            // SP-B slice 4: this content is captured into the scoped buffer as the namespace URI
+            // (a string value), not emitted as element children — so suspend the active tree
+            // constructor to keep its text (routed by WriteText) from being appended as a spurious
+            // child text node on the enclosing element's frame. Unlike xsl:comment/PI/attribute,
+            // xsl:namespace does not raise _textContentDepth, so the WriteText guard needs this.
+            var savedTcNs = _activeTreeConstructor;
+            _activeTreeConstructor = null;
+            try
+            {
+                await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+            }
+            finally
+            {
+                _activeTreeConstructor = savedTcNs;
+            }
             _sequenceAccumulator = savedAccumNs;
             uri = savedScope.GetWritten();
             savedScope.Dispose();
@@ -19493,10 +19545,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // executes exactly as before and the production value path is byte-unchanged.
                 TreeConstructor? diffTc = null;
                 var savedActiveTc = _activeTreeConstructor;
+                var savedTcIncomplete = _tcFragmentIncomplete;
                 if (TempTreeDifferential.Enabled && _nodeStore != null)
                 {
                     diffTc = new TreeConstructor(_nodeStore, 1UL);
                     _activeTreeConstructor = diffTc;
+                    _tcFragmentIncomplete = false;
                 }
                 try
                 { await instruction.Content.ExecuteAsync(this).ConfigureAwait(false); }
@@ -19526,8 +19580,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _outputNsScopes.Push(scope);
 
                 // SP-B differential: node build vs legacy reparse (structural parity check).
-                if (diffTc != null)
+                // Skip when the body had content that couldn't be routed into the node tree
+                // (marked incomplete) — the live tree is known-partial there, so a comparison
+                // would report a false divergence, not a real parity bug.
+                if (diffTc != null && !_tcFragmentIncomplete)
                     RunTreeConstructorDifferential(diffTc, textContent);
+                _tcFragmentIncomplete = savedTcIncomplete;
 
                 // Combine sequence accumulator items with any serialized output.
                 // Literal result elements go to the output buffer; xsl:sequence items go
@@ -24605,20 +24663,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Push xml:base onto static base URI stack so document()/resolve-uri() resolve against it
         if (instruction.StaticBaseUri != null)
             _staticBaseUriStack.Push(instruction.StaticBaseUri);
-        // SP-B: capture the active tree constructor (installed by the as="element()" body seam
-        // under the differential) and suspend it while executing THIS element's content, so
-        // nested from-scratch elements serialize into `content` (reparsed as children below)
-        // rather than each independently capturing into the constructor. Restored after content,
-        // so sibling elements at this level are still captured. Mirrors CreateElementCoreAsync.
+        // SP-B slice 4: open THIS literal result element on the active constructor BEFORE content
+        // (constructor stays active — no suspend), so child text/comment/PI/nested elements build
+        // natively in document order. Sealed after content in TcFinishElement. Uses the pre-fixup
+        // elemName / post-alias namespace URI (cdataNsUri); a post-content prefix fixup is mirrored
+        // onto the open frame there. Mirrors CreateElementCoreAsync.
         var tcForThisElement = _activeTreeConstructor;
-        _activeTreeConstructor = null;
+        if (tcForThisElement != null)
+            TcOpenElement(tcForThisElement, elemName, cdataNsUri);
         try
         {
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
         }
         finally
         {
-            _activeTreeConstructor = tcForThisElement;
             if (instruction.StaticBaseUri != null)
                 _staticBaseUriStack.Pop();
             _forceDefaultNsUndeclaration = savedForceNsUndecl3;
@@ -24770,10 +24828,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (content.Length > 0)
             MarkContentProduced();
 
-        // SP-B: build the same element directly as XDM nodes via the active constructor.
-        // cdataNsUri is the element's serialized (post-alias) namespace URI, computed above.
-        if (tcForThisElement is { } tc && !tcAbort)
-            TryBuildElementViaTree(tc, elemName, cdataNsUri, tcNsDecls!, tcAttrs!, content);
+        // SP-B slice 4: seal the element opened before content; children built natively in order.
+        // elemName carries any post-content prefix fixup applied to the open frame in TcFinishElement.
+        if (tcForThisElement is { } tc)
+            TcFinishElement(tc, elemName, tcNsDecls!, tcAttrs!, tcAbort);
     }
 
     /// <summary>
