@@ -35,4 +35,21 @@ public class TreeConstructorEmitterTests
         var result = await TransformAsync(xslt, "<r/>");
         result.Should().Contain("<out>a|1|hi</out>");
     }
+
+    [Fact]
+    public async Task Lre_NestedWithNamespace_BuildsNodeTree()
+    {
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="v" as="element()">
+                  <a xmlns:p="urn:p"><p:b>x</p:b></a>
+                </xsl:variable>
+                <out>{$v/*/local-name()}|{namespace-uri($v/*)}</out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, "<r/>");
+        result.Should().Contain("<out>b|urn:p</out>");
+    }
 }

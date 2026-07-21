@@ -24550,12 +24550,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Push xml:base onto static base URI stack so document()/resolve-uri() resolve against it
         if (instruction.StaticBaseUri != null)
             _staticBaseUriStack.Push(instruction.StaticBaseUri);
+        // SP-B: capture the active tree constructor (installed by the as="element()" body seam
+        // under the differential) and suspend it while executing THIS element's content, so
+        // nested from-scratch elements serialize into `content` (reparsed as children below)
+        // rather than each independently capturing into the constructor. Restored after content,
+        // so sibling elements at this level are still captured. Mirrors CreateElementCoreAsync.
+        var tcForThisElement = _activeTreeConstructor;
+        _activeTreeConstructor = null;
         try
         {
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
         }
         finally
         {
+            _activeTreeConstructor = tcForThisElement;
             if (instruction.StaticBaseUri != null)
                 _staticBaseUriStack.Pop();
             _forceDefaultNsUndeclaration = savedForceNsUndecl3;
@@ -24628,6 +24636,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
 
+        // SP-B: when a tree constructor is active, mirror the exact namespace/attribute
+        // decisions the string path makes below into typed lists, then build a byte-identical
+        // XDM element via the constructor after the string element is fully emitted. Same
+        // machinery as CreateElementCoreAsync (slice 1); only the emission source differs.
+        List<(string Prefix, NamespaceId Ns)>? tcNsDecls = tcForThisElement != null ? new() : null;
+        List<(NamespaceId Ns, string Local, string? Prefix, string Value)>? tcAttrs = tcForThisElement != null ? new() : null;
+        var tcAbort = false;
+
         // Build element output
         _sink.StartElementOpen(elemName);
 
@@ -24645,6 +24661,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 continue;
 
             _sink.Namespace(prefix, uri);
+            tcNsDecls?.Add((prefix, string.IsNullOrEmpty(uri) ? NamespaceId.None : _nodeStore!.InternNamespace(uri)));
         }
 
         // Default namespace undeclaration: if this element is in the null namespace
@@ -24656,6 +24673,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (parentDefaultNs != null)
             {
                 _sink.Namespace("", "");
+                tcNsDecls?.Add(("", NamespaceId.None));
             }
         }
         // inherit-namespaces="no": also undeclare inherited default namespace
@@ -24665,6 +24683,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (inheritedDefaultNs != null)
             {
                 _sink.Namespace("", "");
+                tcNsDecls?.Add(("", NamespaceId.None));
             }
         }
 
@@ -24676,6 +24695,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _output.Append("=\"");
             _output.Append(attrValue);
             _output.Append('"');
+            if (tcAttrs != null)
+                RecordTreeAttribute(attrName, attrValue, nsBindings, tcNsDecls!, tcAttrs, ref tcAbort);
         }
 
         if (content.Length > 0)
@@ -24693,6 +24714,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // (attributes alone don't count as "populated" per XSLT 3.0 spec)
         if (content.Length > 0)
             MarkContentProduced();
+
+        // SP-B: build the same element directly as XDM nodes via the active constructor.
+        // cdataNsUri is the element's serialized (post-alias) namespace URI, computed above.
+        if (tcForThisElement is { } tc && !tcAbort)
+            TryBuildElementViaTree(tc, elemName, cdataNsUri, tcNsDecls!, tcAttrs!, content);
     }
 
     /// <summary>
