@@ -88,6 +88,16 @@ internal sealed class TreeConstructor
         => _inScopeByElement.TryGetValue(elementId, out var map) ? map : EmptyInScope;
 
     /// <summary>
+    /// The in-scope namespace map of the currently open element, or an empty map when nothing
+    /// is open (fragment-root context). A node appended here inherits exactly these bindings, so
+    /// a callers that re-parents a copied subtree can detect which of the subtree's own namespace
+    /// declarations are already in scope (and would therefore be dropped by the serialize-reparse
+    /// path it must stay byte-identical to).
+    /// </summary>
+    public IReadOnlyDictionary<string, NamespaceId> CurrentInScope
+        => _open.Count > 0 ? _open.Peek().InScope : EmptyInScope;
+
+    /// <summary>
     /// Updates the currently open element's prefix without changing its expanded name. Used for
     /// XSLT namespace fixup (§11.7), where an <c>xsl:namespace</c> in the element's content
     /// redefines the element's prefix to a conflicting URI and the serializer renames the prefix.

@@ -227,6 +227,35 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task CopyOf_NestedInsideXslCopy_OfSourceElement_RoundTrips()
+    {
+        // SP-C slice 2 pin (the nested-copy divergence). A migrated temp-tree body whose xsl:copy
+        // of a source element CONTAINS an inner xsl:copy-of of another source element — the shape
+        // f:graft-to-parent (fn/snapshot) builds. Lifting Task 1's tc.Depth==0 restriction lets
+        // this nested copy-of route into the constructor and the enclosing xsl:copy body flip.
+        // Two byte-parity gaps that surfaced, pinned here against the production reparse:
+        //   (1) double text-append: the copied <inner>'s own text ("X") was ALSO routed into the
+        //       enclosing frame as a spurious extra child -> count($p/node())==2, string($p)=="XX".
+        //   (2) base-uri: the copied <inner> must carry the source base URI (xml:base), so the
+        //       copy's base-uri() resolves to it rather than ().
+        // Correct (legacy reparse AND fixed node build): one child, string "X", base http://ex/base/.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="p" as="element()">
+                  <xsl:copy select="/doc/outer">
+                    <xsl:copy-of select="/doc/outer/inner"/>
+                  </xsl:copy>
+                </xsl:variable>
+                <out>[{count($p/node())}|{string($p)}|{base-uri($p/inner)}]</out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, """<doc xml:base="http://ex/base/"><outer><inner>X</inner></outer></doc>""");
+        result.Should().Contain("<out>[1|X|http://ex/base/]</out>");
+    }
+
+    [Fact]
     public void DifferentialCoverageCounters_AreResettableAndReadable()
     {
         // slice 5a observability: Compared/Skipped are exposed so a differential run can measure

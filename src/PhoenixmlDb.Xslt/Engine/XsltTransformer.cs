@@ -14409,7 +14409,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // node (raw value; the constructor coalesces adjacent runs to match the reparse). Excluded:
         // comment/PI/attribute body text (_textContentDepth > 0), which the parent instruction
         // consumes, and the simple-content accumulator branch above, which never reaches _output.
-        if (_activeTreeConstructor is { } wtc && _textContentDepth == 0
+        // Also excluded while an xsl:copy-of of source nodes serializes after its clones were
+        // already routed into the constructor (_suppressTcIncomplete): the copied subtrees' own
+        // descendant text belongs INSIDE those cloned nodes, so re-routing it here would flatten
+        // it into the enclosing frame as a spurious extra child (SP-C slice 2).
+        if (_activeTreeConstructor is { } wtc && _textContentDepth == 0 && !_suppressTcIncomplete
             && !(_collectTextAsSequenceItems && _serializingElementDepth == 0 && _sequenceAccumulator != null))
         {
             wtc.AppendText(rawTextValue);
@@ -14473,7 +14477,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // constructor as a child text node. Text-value-templates (expand-text {…}) and value-of
         // in some contexts emit through WriteTextItem, so the WriteText routing alone would miss
         // an LRE's own textual content (e.g. <field>{.}</field>).
-        if (emittedToOutput && _textContentDepth == 0 && _activeTreeConstructor is { } wtc)
+        if (emittedToOutput && _textContentDepth == 0 && !_suppressTcIncomplete && _activeTreeConstructor is { } wtc)
             wtc.AppendText(value);
         // Text output (even zero-length) breaks adjacent atomic value chain.
         // Per XSLT 3.0 spec, text nodes in a sequence (even empty from xsl:text/xsl:value-of)
@@ -15328,24 +15332,64 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // keeps flip ⊆ compared — the clone is delivered only when the differential verified it
         // byte-identical to that reparse.
         //
-        // Gated on tc.Depth == 0 (no constructed element open): only a copy-of at the fragment
-        // root is migrated. A copy-of NESTED inside an open LRE / xsl:element / xsl:copy is left
-        // on the legacy serialize-then-reparse path (it still marks the body incomplete, so the
-        // body does not flip). That keeps enclosing xsl:copy-of-source bodies exactly as they are
-        // today (insn/copy unchanged) — their native build has base-URI parity gaps that belong
-        // to a later slice, not Task 1. Only engages when a constructor is active (production for
-        // non-flipping bodies is unchanged, since _suppressTcIncomplete stays false).
+        // SP-C slice 2: nested copy-of routes too (the Task-1 tc.Depth==0 fragment-root
+        // restriction is lifted), so a copy-of inside an open LRE / xsl:element / xsl:copy also
+        // clones directly into the constructor and lets the enclosing body flip. Two parity gaps
+        // that lifting exposed are closed here: (1) the copied subtrees' descendant text is
+        // suppressed from the tc text-routing during the follow-on serialization (see
+        // _suppressTcIncomplete in WriteText/WriteTextItem) so it stays INSIDE the cloned nodes
+        // rather than flattening into the enclosing frame; (2) the clone's CopySourceBaseUri is
+        // stamped to mirror the reparse's recovered base sentinel exactly (below). Only engages
+        // when a constructor is active (production for non-flipping bodies is unchanged, since
+        // _suppressTcIncomplete stays false).
         var routedCopyOfToTree = false;
-        if (_activeTreeConstructor is { } tc && tc.Depth == 0 && _nodeStore != null
+        var savedSuppressTcIncomplete = _suppressTcIncomplete;
+        if (_activeTreeConstructor is { } tc && _nodeStore != null
             && TryGetCopyOfElements(result, out var tcCopyElems))
         {
+            // Stage the clones first, then commit them together, so a byte-parity guard can
+            // abandon the whole routing (leaving the legacy serialize-reparse path to mark the
+            // body incomplete) without half-appending.
+            var staged = new List<NodeId>(tcCopyElems!.Count);
+            var enclosingScope = tc.CurrentInScope;
+            var parityUnsafe = false;
             foreach (var srcElem in tcCopyElems!)
             {
                 var cloneId = CloneSubtreeDeep(srcElem, null, copyNs);
-                tc.AppendNode(cloneId);
+                // Parity with the reparse fallback (base-URI preservation): when this copy-of
+                // serializes below, SerializeNode emits a base sentinel for a copied source
+                // element whose source base URI differs from the enclosing serialization context
+                // (TryEmitBaseSentinel), and the reparse recovers it onto CopySourceBaseUri.
+                // Mirror that EXACT decision on the natively-cloned node — same inputs, read
+                // before serialization mutates them — so the flipped node is byte-identical to
+                // the reparse (and the differential agrees). When no sentinel would be emitted
+                // (base equals context, or not a temp-tree serialize), leave it null to match.
+                var srcBase = srcElem.CopySourceBaseUri ?? ComputeSourceBaseUri(srcElem);
+                if (_tempTreeSerializeDepth > 0 && !string.IsNullOrEmpty(srcBase)
+                    && !string.Equals(srcBase, _serializeBaseContext, StringComparison.Ordinal)
+                    && _nodeStore.GetNode(cloneId) is XdmElement cloneElem)
+                {
+                    cloneElem.CopySourceBaseUri = srcBase;
+                }
+                // Byte-parity guard (SP-C slice 2): the serialize-reparse path STRIPS namespace
+                // declarations that are already in scope at the insertion point (see the RTF note
+                // below and the serializer's IsNamespaceInScope skip). The native clone keeps them
+                // (copy-namespaces retains in-scope namespaces — the deliberately-more-correct
+                // node model), so a copied subtree carrying a redundant in-scope declaration would
+                // flip to a DIFFERENT namespace set than production delivers. Reconciling that is
+                // the Task-4 namespace work; until then, detect it and leave this body on the
+                // legacy path (no flip) rather than deliver a divergent tree.
+                if (CloneDeclaresRedundantNamespace(cloneId, enclosingScope))
+                    parityUnsafe = true;
+                staged.Add(cloneId);
             }
-            routedCopyOfToTree = true;
-            _suppressTcIncomplete = true;
+            if (!parityUnsafe)
+            {
+                foreach (var cloneId in staged)
+                    tc.AppendNode(cloneId);
+                routedCopyOfToTree = true;
+                _suppressTcIncomplete = true;
+            }
         }
 
         try
@@ -15396,7 +15440,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         finally
         {
             if (routedCopyOfToTree)
-                _suppressTcIncomplete = false;
+                _suppressTcIncomplete = savedSuppressTcIncomplete;
         }
     }
 
@@ -15536,6 +15580,38 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         foreach (var copiedRoot in staged)
             AppendToSeqAccumulator(copiedRoot);
         return new ValueTask<bool>(true);
+    }
+
+    /// <summary>
+    /// Byte-parity guard for the SP-C copy-of routing: walks a freshly-cloned subtree carrying an
+    /// accumulating in-scope namespace map (seeded from <paramref name="inheritedScope"/>, the tree
+    /// constructor's insertion frame) and reports whether any element declares a namespace binding
+    /// (same prefix → same URI) that is ALREADY in scope. The serialize-reparse path this routing
+    /// must stay byte-identical to strips exactly those redundant declarations; the native clone
+    /// keeps them, so a subtree that trips this must NOT flip until the Task-4 namespace work
+    /// reconciles the two representations. Undeclarations (URI = <see cref="NamespaceId.None"/>) are
+    /// never "redundant" — they change scope — so they never trip the guard.
+    /// </summary>
+    private bool CloneDeclaresRedundantNamespace(NodeId cloneId, IReadOnlyDictionary<string, NamespaceId> inheritedScope)
+    {
+        if (_nodeStore!.GetNode(cloneId) is not XdmElement e)
+            return false;
+        var scope = new Dictionary<string, NamespaceId>(inheritedScope);
+        foreach (var nb in e.NamespaceDeclarations)
+        {
+            var prefix = nb.Prefix ?? "";
+            if (nb.Namespace != NamespaceId.None
+                && scope.TryGetValue(prefix, out var existing) && existing == nb.Namespace)
+                return true;
+            if (nb.Namespace == NamespaceId.None)
+                scope.Remove(prefix);
+            else
+                scope[prefix] = nb.Namespace;
+        }
+        foreach (var c in _nodeStore.GetChildren(e))
+            if (c is XdmElement && CloneDeclaresRedundantNamespace(c.Id, scope))
+                return true;
+        return false;
     }
 
     /// <summary>
