@@ -13938,6 +13938,190 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// SP-C slice 3 scope guard: returns <c>false</c> when the constructor's fragment
+    /// <paramref name="roots"/> would NOT reparse byte-identically under the legacy
+    /// serialize-then-reparse reference, so the flip must fall back to the RTF. Two Task-6
+    /// model differences are excluded:
+    /// <list type="bullet">
+    /// <item><b>Preserved copy-source base URI:</b> any node carrying <c>CopySourceBaseUri</c>
+    /// (or an entity <c>BaseUri</c>) — the plain untyped-RTF serialize path emits no base
+    /// sentinel, so the reparse would recover <c>null</c> there.</item>
+    /// <item><b>Inherited namespace over-declaration:</b> any element with a non-empty in-scope
+    /// namespace set that has an element child — the reparse records the child's FULL in-scope
+    /// set as its namespace declarations, where the constructor records only local ones.</item>
+    /// </list>
+    /// </summary>
+    private bool IsUntypedRtfFlipByteParitySafe(IReadOnlyList<NodeId> roots, TreeConstructor bodyTc)
+    {
+        foreach (var id in roots)
+            if (!FlipSafeNode(id, bodyTc))
+                return false;
+        return true;
+    }
+
+    private bool FlipSafeNode(NodeId id, TreeConstructor bodyTc)
+    {
+        if (_nodeStore!.GetNode(id) is not XdmElement elem)
+            return true; // text/comment/PI carry no namespace or copy-base divergence
+
+        // (1) A preserved copy-source (or entity) base URI has no reparse counterpart here.
+        if (elem.CopySourceBaseUri != null || elem.BaseUri != null)
+            return false;
+
+        // (1b) An xml:base attribute drives base-uri() resolution that the reparse performs
+        // (XmlDocument resolves it) but the constructor stores only as a raw attribute — a
+        // base-uri divergence. Excluded pending Task-6 base-uri resolution.
+        foreach (var attrId in elem.Attributes)
+            if (_nodeStore.GetNode(attrId) is XdmAttribute xa
+                && xa.Namespace == NamespaceId.Xml && xa.LocalName == "base")
+                return false;
+
+        // (2) If this element declares/inherits any namespace AND has an element child, the
+        // reparse re-declares the full in-scope set on that child — a namespace-set divergence.
+        if (bodyTc.InScopeOf(id).Count > 0)
+        {
+            foreach (var childId in elem.Children)
+                if (_nodeStore.GetNode(childId) is XdmElement)
+                    return false;
+        }
+
+        foreach (var childId in elem.Children)
+            if (!FlipSafeNode(childId, bodyTc))
+                return false;
+        return true;
+    }
+
+    /// <summary>
+    /// SP-C slice 3: builds the delivered document node for a fully node-native untyped RTF
+    /// body from the constructor's fragment roots, byte-identical to what
+    /// <see cref="ParseResultTreeFragment"/> would produce by serialize-then-reparse.
+    /// </summary>
+    /// <remarks>
+    /// The reparse takes one of two shapes, which this mirrors exactly:
+    /// <list type="bullet">
+    /// <item><b>Non-wrapped</b> (<c>XmlDocument.LoadXml(content)</c> succeeds — content is a
+    /// single well-formed root element with only whitespace/comment/PI misc around it):
+    /// <c>ConvertToXdm</c> DROPS document-level text nodes (which can only be whitespace, else
+    /// LoadXml would have failed). We detect this shape as "exactly one element root and every
+    /// text root is whitespace-only" and omit those whitespace text roots from the children.</item>
+    /// <item><b>Wrapped</b> (LoadXml fails — a fragment: multiple element roots, or non-whitespace
+    /// text at the top level): the reparse wraps in <c>_rtf_root_</c> and reparents ALL its
+    /// children (text included) onto the document. We keep every root.</item>
+    /// </list>
+    /// The document string value is the concatenation of the kept children's string values,
+    /// which matches the reparse in both shapes (the non-wrapped reparse uses
+    /// <c>DocumentElement.InnerText</c> — equal to the sole element's string value once the
+    /// dropped whitespace is excluded).
+    /// </remarks>
+    private XdmDocument BuildUntypedRtfFlipDocument(IReadOnlyList<NodeId> roots, string? varBaseUri)
+    {
+        var elementRootCount = 0;
+        var allTextRootsWhitespace = true;
+        foreach (var id in roots)
+        {
+            switch (_nodeStore!.GetNode(id))
+            {
+                case XdmElement:
+                    elementRootCount++;
+                    break;
+                case XdmText t when !IsXmlWhitespace(t.Value):
+                    allTextRootsWhitespace = false;
+                    break;
+            }
+        }
+        // The reparse's non-wrapped path (single root element) discards document-level text.
+        var dropDocLevelText = elementRootCount == 1 && allTextRootsWhitespace;
+
+        var docId = _nodeStore!.NextId();
+        var docChildren = new List<NodeId>();
+        var flipDocElementId = NodeId.None;
+        foreach (var id in roots)
+        {
+            if (_nodeStore.GetNode(id) is not XdmNode cn)
+                continue;
+            if (dropDocLevelText && cn is XdmText)
+                continue; // matches ConvertToXdm dropping document-level (whitespace) text
+            cn.Parent = docId;
+            docChildren.Add(cn.Id);
+            if (cn is XdmElement && flipDocElementId == NodeId.None)
+                flipDocElementId = cn.Id;
+        }
+
+        string? flipDocElemLocalName = flipDocElementId != NodeId.None
+            ? (_nodeStore.GetNode(flipDocElementId) as XdmElement)?.LocalName : null;
+
+        var svBuilder = new System.Text.StringBuilder();
+        foreach (var childId in docChildren)
+            CollectStringValue(childId, svBuilder);
+
+        var flipDoc = new XdmDocument
+        {
+            Id = docId,
+            Document = new DocumentId(1),
+            Parent = NodeId.None,
+            DocumentElement = flipDocElementId,
+            DocumentUri = null, // temp trees have no document URI (XSLT 3.0 §11.9.1)
+            Children = docChildren,
+            DocumentElementLocalName = flipDocElemLocalName,
+        };
+        flipDoc.BaseUri = varBaseUri;
+        flipDoc._stringValue = svBuilder.ToString();
+        _nodeStore.Register(flipDoc);
+        return flipDoc;
+    }
+
+    /// <summary>
+    /// SP-C slice 3 static scope guard: returns <c>true</c> when the untyped RTF body contains a
+    /// construct whose node build would NOT be byte-identical to the legacy serialize-reparse
+    /// path, so the constructor must NOT be installed (the body runs exactly as before the seam,
+    /// no flip). Blocks copies of source nodes (<c>xsl:copy</c> / <c>xsl:copy-of</c>) and template
+    /// dispatch that may copy out of view (<c>xsl:apply-templates</c> / <c>call-template</c> /
+    /// <c>apply-imports</c> / <c>next-match</c>) — these reroute base-URI preservation off the
+    /// legacy accumulator+drain path — and any <c>xml:base</c> in the body, whose base-uri()
+    /// resolution the reparse performs but the node build does not (all Task-6 base-uri work).
+    /// </summary>
+    private static bool UntypedRtfFlipBlocked(XsltSequenceConstructor content)
+    {
+        var scanner = new UntypedRtfFlipBlockScanner();
+        scanner.Walk(content);
+        return scanner.Blocked;
+    }
+
+    private sealed class UntypedRtfFlipBlockScanner : XsltInstructionWalker
+    {
+        public bool Blocked { get; private set; }
+
+        public override void Walk(XsltInstruction insn)
+        {
+            if (Blocked)
+                return;
+            // xml:base anywhere in the body drives base-uri() resolution the reparse performs.
+            if (insn.StaticBaseUri != null)
+            {
+                Blocked = true;
+                return;
+            }
+            base.Walk(insn);
+        }
+
+        public override object? VisitCopy(XsltCopy insn) { Blocked = true; return null; }
+        public override object? VisitCopyOf(XsltCopyOf insn) { Blocked = true; return null; }
+        public override object? VisitApplyTemplates(XsltApplyTemplates insn) { Blocked = true; return null; }
+        public override object? VisitApplyImports(XsltApplyImports insn) { Blocked = true; return null; }
+        public override object? VisitNextMatch(XsltNextMatch insn) { Blocked = true; return null; }
+        public override object? VisitCallTemplate(XsltCallTemplate insn) { Blocked = true; return null; }
+    }
+
+    /// <summary>True when <paramref name="s"/> is empty or only XML whitespace (space, tab, CR, LF).</summary>
+    private static bool IsXmlWhitespace(string s)
+    {
+        foreach (var c in s)
+            if (c is not (' ' or '\t' or '\r' or '\n'))
+                return false;
+        return true;
+    }
+
+    /// <summary>
     /// SP-B: records one already-serialized attribute (name + XML-escaped value) as typed
     /// data for the <see cref="TreeConstructor"/> build. xmlns declarations are routed to the
     /// namespace-declaration list (they are namespace nodes, not attributes, in the node
@@ -15673,6 +15857,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     NamespaceDeclarations = decls.Count == 0 ? XdmElement.EmptyNamespaceDeclarations : decls.ToImmutable(),
                     Parent = parent,
                 };
+                // XdmElement.StringValue returns the cached _stringValue (it is NOT computed
+                // lazily from children), so a clone with a null cache reports an empty string
+                // value — string($clone)/xsl:value-of would be blank. The source element carries
+                // the correct cached value (ConvertToXdm / the reparse set it), and the clone's
+                // descendant text is identical, so copy it over to stay byte-identical to the
+                // serialize-then-reparse path.
+                clone._stringValue = e.StringValue;
                 _nodeStore.Register(clone);
                 return id;
             }
@@ -20096,11 +20287,44 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _sequenceAccumulator = new List<object?>();
                 _documentNodeDepth++;
                 _temporaryOutputDepth++;
+                // SP-C slice 3: install a fresh TreeConstructor for the duration of this
+                // untyped (no `as=`) RTF body so from-scratch element/LRE/text emitters build
+                // XDM nodes directly. When the body is fully node-native we DELIVER that node
+                // document via ResultTreeFragment.CachedDocumentNode below, so consumers'
+                // ParseResultTreeFragment short-circuits to the node build with no
+                // serialize-reparse. The string buffer stays populated as the fallback (for
+                // incomplete bodies, xsl:copy-of source nodes, unresolvable prefixes) and as the
+                // differential reference. Mirrors the as="..."-typed seam above.
+                // Only install the constructor when a static scan proves the body free of
+                // base-URI-perturbing / copy-rerouting constructs. Installing it reroutes xsl:copy /
+                // xsl:copy-of of a SOURCE node away from the legacy accumulator+drain base-URI
+                // preservation onto the constructor branch, which (without Task-6 base sentinel
+                // work) drops the copy-source base URI from the serialized fallback; and an
+                // xml:base inside the body needs the reparse's resolution the node build does not
+                // reproduce. Excluding those bodies keeps them byte-identical to the pre-seam path
+                // (no flip, unchanged content) while the common copy-free / xml:base-free body still
+                // builds nodes and flips. See UntypedRtfFlipBlocked.
+                TreeConstructor? bodyTc = null;
+                var savedActiveTcU = _activeTreeConstructor;
+                var savedTcIncompleteU = _tcFragmentIncomplete;
+                var bodyTcIncompleteU = false;
+                if (_nodeStore != null && !UntypedRtfFlipBlocked(instruction.Content))
+                {
+                    bodyTc = new TreeConstructor(_nodeStore, 1UL);
+                    _activeTreeConstructor = bodyTc;
+                    _tcFragmentIncomplete = false;
+                }
                 List<object?>? capturedAccumulator;
                 try
                 { await instruction.Content.ExecuteAsync(this).ConfigureAwait(false); }
                 finally
                 {
+                    if (bodyTc != null)
+                    {
+                        _activeTreeConstructor = savedActiveTcU;
+                        bodyTcIncompleteU = _tcFragmentIncomplete;
+                        _tcFragmentIncomplete = savedTcIncompleteU;
+                    }
                     capturedAccumulator = _sequenceAccumulator;
                     _sequenceAccumulator = savedAccumulatorVar;
                     _temporaryOutputDepth--;
@@ -20168,7 +20392,68 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // content that should remain as-is (e.g., namespace-node(), atomic types).
                 var varBaseUri = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
                 if (instruction.As == null)
-                    value = new ResultTreeFragment(content, varBaseUri);
+                {
+                    var rtf = new ResultTreeFragment(content, varBaseUri);
+                    // A body is a migrated candidate when nothing forced the string buffer
+                    // (`_tcFragmentIncomplete` — xsl:copy-of of a source node, built-in copy, an
+                    // unresolvable attribute prefix), the accumulator drain above did not run (its
+                    // items go to the string buffer, NOT the constructor), and the body actually
+                    // produced markup (a pure-text body has no node structure to deliver). We then
+                    // build a document node from the constructor's roots — byte-identical to what
+                    // ParseResultTreeFragment(content) would reparse — and pre-populate the RTF's
+                    // CachedDocumentNode so every consumer uses it with no reparse.
+                    var migratedCandidate = bodyTc != null && !bodyTcIncompleteU
+                        && content.Contains('<', StringComparison.Ordinal)
+                        && (capturedAccumulator == null || capturedAccumulator.Count == 0);
+                    // SP-C slice 3 scope guard: the legacy reparse (the mandated byte-parity
+                    // reference for THIS task) diverges from the node build on two Task-6 shapes:
+                    //   (1) it LOSES an xsl:copy source element's base URI (no base sentinel is
+                    //       emitted on the plain untyped-RTF serialize path), where the constructor
+                    //       faithfully preserves CopySourceBaseUri; and
+                    //   (2) it OVER-DECLARES namespaces — ConvertToXdm records each element's FULL
+                    //       in-scope set (GetNamespacesInScope(All)) as NamespaceDeclarations, so a
+                    //       nested element re-lists every inherited namespace, where the constructor
+                    //       records only local declarations.
+                    // Both are Task-6 (namespace/base-uri model) corrections, out of scope here.
+                    // Exclude those shapes so the flip stays byte-identical to the reparse; the
+                    // common namespace-free / copy-free body still flips.
+                    IReadOnlyList<NodeId>? flipRoots = null;
+                    if (migratedCandidate && _nodeStore != null)
+                    {
+                        flipRoots = bodyTc!.FinishFragment();
+                        if (!IsUntypedRtfFlipByteParitySafe(flipRoots, bodyTc))
+                            migratedCandidate = false;
+                    }
+                    if (migratedCandidate && flipRoots != null && _nodeStore != null)
+                    {
+                        var flipDoc = BuildUntypedRtfFlipDocument(flipRoots, varBaseUri);
+                        rtf.CachedDocumentNode = flipDoc;
+                        // Differential: assert the node build equals the legacy reparse. Build the
+                        // reparse reference from a FRESH RTF so its cache isn't the node doc we just
+                        // set. CompareDocuments checks children recursively (kinds, names, ns sets,
+                        // attributes, text, base URIs) — the structural parity that matters.
+                        if (TempTreeDifferential.Enabled)
+                        {
+                            var reference = ParseResultTreeFragment(new ResultTreeFragment(content, varBaseUri));
+                            if (reference != null)
+                            {
+                                var diff = TempTreeDifferential.TreeEqual(flipDoc.Id, reference.Id, _nodeStore);
+                                if (diff != null && !TempTreeDifferential.IsExpectedDivergence(diff))
+                                    throw new System.InvalidOperationException($"TEMPTREE-DIFF (untyped-rtf): {diff}");
+                                TempTreeDifferential.Compared++;
+                            }
+                            else
+                            {
+                                TempTreeDifferential.Skipped++;
+                            }
+                        }
+                    }
+                    else if (TempTreeDifferential.Enabled && bodyTc != null)
+                    {
+                        TempTreeDifferential.Skipped++;
+                    }
+                    value = rtf;
+                }
                 else if (capturedAccumulator is { Count: > 0 } && content.Length == 0)
                 {
                     // The body produced typed items via xsl:sequence (or similar) — preserve

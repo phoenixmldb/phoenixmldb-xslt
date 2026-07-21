@@ -321,6 +321,27 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task UntypedVariable_LreAttributeTextNested_RoundTripsViaNodeBuild()
+    {
+        // SP-C slice 3: an untyped xsl:variable (no as=) is a temporary tree (document node).
+        // Its body — an LRE with an attribute, text, and a nested element — is fully node-native,
+        // so the flip delivers the constructor's document via CachedDocumentNode with no reparse.
+        // Navigating it through several consumers must be byte-identical to the legacy reparse.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="v">
+                  <a k="1">hi<x>deep</x></a>
+                </xsl:variable>
+                <out>{name($v/a)}|{$v/a/@k}|{$v//x}|{count($v//*)}|{string($v)}</out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, "<r/>");
+        result.Should().Contain("<out>a|1|deep|2|hideep</out>");
+    }
+
+    [Fact]
     public void DifferentialCoverageCounters_AreResettableAndReadable()
     {
         // slice 5a observability: Compared/Skipped are exposed so a differential run can measure
