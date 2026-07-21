@@ -5837,6 +5837,33 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 #pragma warning disable CA1859
     private readonly IOutputSink _sink;
 #pragma warning restore CA1859
+
+    // SP-B: when non-null, from-scratch element emitters build XDM nodes directly into
+    // _nodeStore via this constructor (in addition to the unchanged string emission, so the
+    // legacy serialize-reparse path still produces the production value). Installed for the
+    // duration of an as="element()"-typed body's execution by the differential dual-run seam,
+    // and only when TempTreeDifferential.Enabled — production (toggle off) never sets it, so
+    // this field is inert and behavior is byte-unchanged.
+    private TreeConstructor? _activeTreeConstructor;
+
+    /// <summary>
+    /// RAII install/restore for <see cref="_activeTreeConstructor"/>: sets it on construction
+    /// and restores the prior value on <see cref="Dispose"/>, so nested construction scopes
+    /// compose correctly.
+    /// </summary>
+    private readonly struct TreeConstructorScope : System.IDisposable
+    {
+        private readonly DefaultXsltExecutionContext _ctx;
+        private readonly TreeConstructor? _prior;
+        public TreeConstructorScope(DefaultXsltExecutionContext ctx, TreeConstructor tc)
+        {
+            _ctx = ctx;
+            _prior = ctx._activeTreeConstructor;
+            ctx._activeTreeConstructor = tc;
+        }
+        public void Dispose() => _ctx._activeTreeConstructor = _prior;
+    }
+
     internal readonly XsltTransformOptions _options;
     internal readonly XdmInMemoryStore? _nodeStore;
     private readonly PhoenixmlDb.XQuery.Functions.FunctionLibrary _functionLibrary;
@@ -13629,12 +13656,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Push xml:base onto static base URI stack so resolve-uri() resolves against it
         if (instruction.BaseUri != null)
             _staticBaseUriStack.Push(XsltTransformEngine.UriString(instruction.BaseUri)!);
+        // SP-B: capture the active tree constructor (installed by the as="element()" body seam
+        // under the differential) and suspend it while executing THIS element's content, so
+        // nested from-scratch elements serialize into `content` (reparsed as children below)
+        // rather than each independently capturing into the constructor. Restored after content,
+        // so sibling elements at this level are still captured.
+        var tcForThisElement = _activeTreeConstructor;
+        _activeTreeConstructor = null;
         try
         {
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
         }
         finally
         {
+            _activeTreeConstructor = tcForThisElement;
             if (instruction.BaseUri != null)
                 _staticBaseUriStack.Pop();
             _forceDefaultNsUndeclaration = savedForceNsUndecl;
@@ -13676,6 +13711,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
 
+        // SP-B: when a tree constructor is active, mirror the exact namespace/attribute
+        // decisions the string path makes below into typed lists, then build a byte-identical
+        // XDM element via the constructor after the string element is fully emitted. `tcAbort`
+        // is set if some decision can't be faithfully represented yet (e.g. an attribute prefix
+        // not declared on this element); the constructor build is then skipped, which the
+        // differential seam treats as "not captured" (no false divergence).
+        List<(string Prefix, NamespaceId Ns)>? tcNsDecls = tcForThisElement != null ? new() : null;
+        List<(NamespaceId Ns, string Local, string? Prefix, string Value)>? tcAttrs = tcForThisElement != null ? new() : null;
+        var tcAbort = false;
+
         _sink.StartElementOpen(name);
 
         // Emit namespace declaration if not already in scope
@@ -13688,6 +13733,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (!IsNamespaceInScope(prefix, nsUri))
                 {
                     _sink.Namespace(prefix, nsUri);
+                    tcNsDecls?.Add((prefix, _nodeStore!.InternNamespace(nsUri)));
                 }
             }
             else
@@ -13695,6 +13741,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (!IsNamespaceInScope("", nsUri))
                 {
                     _sink.Namespace("", nsUri);
+                    tcNsDecls?.Add(("", _nodeStore!.InternNamespace(nsUri)));
                 }
             }
         }
@@ -13709,6 +13756,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (parentDefaultNs != null)
                 {
                     _sink.Namespace("", "");
+                    // xmlns="" is a real namespace undeclaration in the node model.
+                    tcNsDecls?.Add(("", NamespaceId.None));
                 }
             }
         }
@@ -13724,6 +13773,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _output.Append("=\"");
             _output.Append(attrValue);
             _output.Append('"');
+            if (tcAttrs != null)
+                RecordTreeAttribute(attrName, attrValue, elemNsBindings, tcNsDecls!, tcAttrs, ref tcAbort);
         }
 
         if (content.Length > 0)
@@ -13741,6 +13792,282 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // (attributes alone don't count as "populated" per XSLT 3.0 spec)
         if (content.Length > 0)
             MarkContentProduced();
+
+        // SP-B: build the same element directly as XDM nodes via the active constructor.
+        if (tcForThisElement is { } tc && !tcAbort)
+            TryBuildElementViaTree(tc, name, nsUri, tcNsDecls!, tcAttrs!, content);
+    }
+
+    /// <summary>
+    /// SP-B differential dual-run: compares the XDM element(s) a <see cref="TreeConstructor"/>
+    /// built during an as="..."-typed body against a raw reparse of the same serialized body
+    /// (<paramref name="serializedBody"/>), node-model to node-model. Only compares when the
+    /// constructor accounted for EVERY top-level node — i.e. the body was built entirely by the
+    /// migrated emitters (slice 1: <c>xsl:element</c>). A partial capture (LRE, <c>xsl:copy</c>,
+    /// text, value-of not yet routed) is expected and inert, not a divergence. Any real
+    /// structural divergence (not on the <see cref="TempTreeDifferential.IsExpectedDivergence"/>
+    /// allowlist) throws, surfacing as a conformance test failure under <c>PXDB_TEMPTREE_DIFF=1</c>.
+    /// </summary>
+    private void RunTreeConstructorDifferential(TreeConstructor tc, string serializedBody)
+    {
+        var nodeRoots = tc.FinishFragment();
+        if (nodeRoots.Count == 0)
+            return;
+
+        var rawRoots = new List<object?>();
+        if (!string.IsNullOrEmpty(serializedBody) && serializedBody.Contains('<', StringComparison.Ordinal))
+        {
+            try
+            {
+                var settings = new System.Xml.XmlReaderSettings
+                {
+                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                    IgnoreWhitespace = false,
+                    IgnoreComments = false,
+                    IgnoreProcessingInstructions = false,
+                };
+                using var stringReader = new System.IO.StringReader($"<_tc_diff_root_>{serializedBody}</_tc_diff_root_>");
+                using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                ReadAsBodyChunkChildren(reader, rawRoots);
+            }
+            catch (System.Xml.XmlException)
+            {
+                return; // body not self-contained for an isolated reparse: skip the check
+            }
+        }
+
+        var rawNodeIds = new List<NodeId>();
+        foreach (var r in rawRoots)
+        {
+            if (r is XdmNode rn)
+                rawNodeIds.Add(rn.Id);
+        }
+
+        if (nodeRoots.Count != rawNodeIds.Count)
+            return; // constructor captured only some top-level nodes — not an all-migrated body
+
+        for (var i = 0; i < nodeRoots.Count; i++)
+        {
+            var diff = TempTreeDifferential.TreeEqual(nodeRoots[i], rawNodeIds[i], _nodeStore!);
+            if (diff != null && !TempTreeDifferential.IsExpectedDivergence(diff))
+                throw new System.InvalidOperationException($"TEMPTREE-DIFF (xsl:element): {diff}");
+        }
+    }
+
+    /// <summary>
+    /// SP-B: records one already-serialized attribute (name + XML-escaped value) as typed
+    /// data for the <see cref="TreeConstructor"/> build. xmlns declarations are routed to the
+    /// namespace-declaration list (they are namespace nodes, not attributes, in the node
+    /// model); real attributes get their prefix resolved to a <see cref="NamespaceId"/> and
+    /// their value decoded to the raw (unescaped) string the node model stores. Sets
+    /// <paramref name="abort"/> if a prefixed attribute's prefix is not declared on this
+    /// element (so the node build — which must be byte-identical — is skipped rather than
+    /// guessed).
+    /// </summary>
+    private void RecordTreeAttribute(
+        string attrName,
+        string escapedValue,
+        Dictionary<string, string> elemNsBindings,
+        List<(string Prefix, NamespaceId Ns)> nsDecls,
+        List<(NamespaceId Ns, string Local, string? Prefix, string Value)> attrs,
+        ref bool abort)
+    {
+        var value = DecodeXmlEntitiesForTree(escapedValue);
+        if (attrName == "xmlns")
+        {
+            nsDecls.Add(("", _nodeStore!.InternNamespace(value)));
+            return;
+        }
+        if (attrName.StartsWith("xmlns:", StringComparison.Ordinal))
+        {
+            nsDecls.Add((attrName[6..], _nodeStore!.InternNamespace(value)));
+            return;
+        }
+        var colon = attrName.IndexOf(':', StringComparison.Ordinal);
+        if (colon < 0)
+        {
+            attrs.Add((NamespaceId.None, attrName, null, value));
+            return;
+        }
+        var prefix = attrName[..colon];
+        var local = attrName[(colon + 1)..];
+        NamespaceId ns;
+        if (prefix == "xml")
+        {
+            ns = NamespaceId.Xml;
+        }
+        else
+        {
+            var resolved = ResolveTreeAttributeNs(prefix, nsDecls, elemNsBindings);
+            if (resolved is not { } r)
+            {
+                abort = true;
+                return;
+            }
+            ns = r;
+        }
+        attrs.Add((ns, local, prefix, value));
+    }
+
+    /// <summary>
+    /// SP-B: resolves an attribute prefix to a <see cref="NamespaceId"/> using the namespace
+    /// declarations physically emitted on THIS element (the same ones the serialize-reparse
+    /// path would see on the start tag). Returns <c>null</c> when the prefix isn't declared
+    /// here — ancestor-inherited prefixes are out of scope for slice 1 (the as="element()"
+    /// body seam clears ancestor output namespaces, so a valid serialization declares them
+    /// locally).
+    /// </summary>
+    private NamespaceId? ResolveTreeAttributeNs(
+        string prefix,
+        List<(string Prefix, NamespaceId Ns)> nsDecls,
+        Dictionary<string, string> elemNsBindings)
+    {
+        for (var i = nsDecls.Count - 1; i >= 0; i--)
+        {
+            if (nsDecls[i].Prefix == prefix && nsDecls[i].Ns != NamespaceId.None)
+                return nsDecls[i].Ns;
+        }
+        if (elemNsBindings.TryGetValue(prefix, out var uri) && !string.IsNullOrEmpty(uri))
+            return _nodeStore!.InternNamespace(uri);
+        return null;
+    }
+
+    /// <summary>
+    /// SP-B: builds an element directly as XDM nodes via <paramref name="tc"/>, byte-identical
+    /// to what the string path just serialized. The element's own name/namespaces/attributes
+    /// are supplied as typed data (mirroring the string path's exact decisions); child content
+    /// is reparsed from the just-serialized <paramref name="content"/> markup (wrapped with
+    /// this element's namespace context so it is self-contained) and linked in as nodes.
+    /// Slice-1 scaffolding: children are recovered by reparse here; later slices route child
+    /// construction directly into the constructor.
+    /// </summary>
+    private void TryBuildElementViaTree(
+        TreeConstructor tc,
+        string name,
+        string? nsUri,
+        List<(string Prefix, NamespaceId Ns)> nsDecls,
+        List<(NamespaceId Ns, string Local, string? Prefix, string Value)> attributes,
+        string content)
+    {
+        // Parse child content FIRST, before opening the element on the constructor: a parse
+        // failure then leaves the constructor untouched (no dangling open frame that would
+        // corrupt sibling element builds).
+        List<object?>? kids = null;
+        if (content.Length > 0)
+        {
+            try
+            {
+                var sb = new StringBuilder("<_tc_root_");
+                // Reproduce this element's start-tag namespace context so children resolve
+                // exactly as they do in the whole-element serialize-reparse.
+                foreach (var (prefix, ns) in nsDecls)
+                {
+                    if (ns == NamespaceId.None)
+                        continue; // undeclaration — nothing for a child to inherit
+                    var uri = _nodeStore!.GetNamespaceUri(ns);
+                    if (string.IsNullOrEmpty(uri))
+                        continue;
+                    if (prefix.Length > 0)
+                        sb.Append(" xmlns:").Append(prefix).Append("=\"").Append(EscapeAttributeValue(uri)).Append('"');
+                    else
+                        sb.Append(" xmlns=\"").Append(EscapeAttributeValue(uri)).Append('"');
+                }
+                sb.Append('>').Append(content).Append("</_tc_root_>");
+                var settings = new System.Xml.XmlReaderSettings
+                {
+                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                    IgnoreWhitespace = false,
+                    IgnoreComments = false,
+                    IgnoreProcessingInstructions = false,
+                };
+                using var stringReader = new System.IO.StringReader(sb.ToString());
+                using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                kids = new List<object?>();
+                ReadAsBodyChunkChildren(reader, kids);
+            }
+            catch (System.Xml.XmlException)
+            {
+                // Content not self-contained under this wrapper (e.g. a child prefix declared
+                // via xsl:namespace): skip the node build for this element.
+                return;
+            }
+        }
+
+        var colon = name.IndexOf(':', StringComparison.Ordinal);
+        var prefixName = colon > 0 ? name[..colon] : null;
+        var local = colon > 0 ? name[(colon + 1)..] : name;
+        var elemNs = string.IsNullOrEmpty(nsUri) ? NamespaceId.None : _nodeStore!.InternNamespace(nsUri);
+
+        tc.StartElement(elemNs, local, prefixName);
+        foreach (var (prefix, ns) in nsDecls)
+            tc.AddNamespace(prefix, ns);
+        foreach (var (ns, l, p, v) in attributes)
+            tc.AddAttribute(ns, l, p, v);
+        if (kids != null)
+        {
+            foreach (var k in kids)
+            {
+                if (k is XdmNode kn)
+                    tc.AppendNode(kn.Id);
+            }
+        }
+        tc.EndElement();
+    }
+
+    /// <summary>
+    /// SP-B: decodes the XML character/entity references an attribute value may carry after
+    /// serialization (the node model stores raw, unescaped text) — the named entities plus
+    /// decimal/hex numeric references, matching what an XML reader would produce.
+    /// </summary>
+    private static string DecodeXmlEntitiesForTree(string s)
+    {
+        if (s.IndexOf('&', StringComparison.Ordinal) < 0)
+            return s;
+        var sb = new StringBuilder(s.Length);
+        var i = 0;
+        while (i < s.Length)
+        {
+            if (s[i] == '&')
+            {
+                var semi = s.IndexOf(';', i + 1);
+                if (semi > i)
+                {
+                    var ent = s.Substring(i + 1, semi - i - 1);
+                    string? decoded = ent switch
+                    {
+                        "lt" => "<",
+                        "gt" => ">",
+                        "amp" => "&",
+                        "quot" => "\"",
+                        "apos" => "'",
+                        _ => null,
+                    };
+                    if (decoded == null && ent.Length > 1 && ent[0] == '#')
+                    {
+                        var num = ent.AsSpan(1);
+                        bool ok;
+                        int cp;
+                        if (num.Length > 1 && (num[0] == 'x' || num[0] == 'X'))
+                            ok = int.TryParse(num[1..], System.Globalization.NumberStyles.HexNumber,
+                                System.Globalization.CultureInfo.InvariantCulture, out cp);
+                        else
+                            ok = int.TryParse(num, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out cp);
+                        if (ok && cp >= 0 && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF))
+                            decoded = char.ConvertFromUtf32(cp);
+                    }
+                    if (decoded != null)
+                    {
+                        sb.Append(decoded);
+                        i = semi + 1;
+                        continue;
+                    }
+                }
+            }
+            sb.Append(s[i]);
+            i++;
+        }
+        return sb.ToString();
     }
 
     public override async ValueTask CreateAttributeAsync(XsltAttribute instruction)
@@ -19104,10 +19431,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _tempTreeSerializeDepth++;
                     _serializeBaseContext = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
                 }
+                // SP-B differential dual-run: install a fresh TreeConstructor for the duration
+                // of this as="..."-typed body so from-scratch element emitters ALSO build XDM
+                // nodes directly, then assert byte-parity against a raw reparse below. Only when
+                // the toggle is on — production (toggle off) never installs one, so the body
+                // executes exactly as before and the production value path is byte-unchanged.
+                TreeConstructor? diffTc = null;
+                var savedActiveTc = _activeTreeConstructor;
+                if (TempTreeDifferential.Enabled && _nodeStore != null)
+                {
+                    diffTc = new TreeConstructor(_nodeStore, 1UL);
+                    _activeTreeConstructor = diffTc;
+                }
                 try
                 { await instruction.Content.ExecuteAsync(this).ConfigureAwait(false); }
                 finally
                 {
+                    _activeTreeConstructor = savedActiveTc;
                     if (raiseTempTreeDepth)
                     {
                         _tempTreeSerializeDepth--;
@@ -19129,6 +19469,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _outputNsScopes.Clear();
                 foreach (var scope in savedNsScopes.AsEnumerable().Reverse())
                     _outputNsScopes.Push(scope);
+
+                // SP-B differential: node build vs legacy reparse (structural parity check).
+                if (diffTc != null)
+                    RunTreeConstructorDifferential(diffTc, textContent);
 
                 // Combine sequence accumulator items with any serialized output.
                 // Literal result elements go to the output buffer; xsl:sequence items go
