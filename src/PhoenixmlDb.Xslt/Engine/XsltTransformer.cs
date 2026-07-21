@@ -13894,11 +13894,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// structural divergence (not on the <see cref="TempTreeDifferential.IsExpectedDivergence"/>
     /// allowlist) throws, surfacing as a conformance test failure under <c>PXDB_TEMPTREE_DIFF=1</c>.
     /// </summary>
-    private void RunTreeConstructorDifferential(TreeConstructor tc, string serializedBody)
+    private void RunTreeConstructorDifferential(IReadOnlyList<NodeId> nodeRoots, string serializedBody)
     {
-        var nodeRoots = tc.FinishFragment();
         if (nodeRoots.Count == 0)
+        {
+            TempTreeDifferential.Skipped++;
             return;
+        }
 
         var rawRoots = new List<object?>();
         if (!string.IsNullOrEmpty(serializedBody) && serializedBody.Contains('<', StringComparison.Ordinal))
@@ -13918,6 +13920,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             catch (System.Xml.XmlException)
             {
+                TempTreeDifferential.Skipped++;
                 return; // body not self-contained for an isolated reparse: skip the check
             }
         }
@@ -13930,7 +13933,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         if (nodeRoots.Count != rawNodeIds.Count)
+        {
+            TempTreeDifferential.Skipped++;
             return; // constructor captured only some top-level nodes — not an all-migrated body
+        }
 
         for (var i = 0; i < nodeRoots.Count; i++)
         {
@@ -13938,6 +13944,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (diff != null && !TempTreeDifferential.IsExpectedDivergence(diff))
                 throw new System.InvalidOperationException($"TEMPTREE-DIFF (xsl:element): {diff}");
         }
+
+        TempTreeDifferential.Compared++;
     }
 
     /// <summary>
@@ -19538,18 +19546,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _tempTreeSerializeDepth++;
                     _serializeBaseContext = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
                 }
-                // SP-B differential dual-run: install a fresh TreeConstructor for the duration
-                // of this as="..."-typed body so from-scratch element emitters ALSO build XDM
-                // nodes directly, then assert byte-parity against a raw reparse below. Only when
-                // the toggle is on — production (toggle off) never installs one, so the body
-                // executes exactly as before and the production value path is byte-unchanged.
-                TreeConstructor? diffTc = null;
+                // SP-B slice 5a: install a fresh TreeConstructor for the duration of this
+                // as="..."-typed body so from-scratch element/LRE/xsl:copy emitters build XDM
+                // nodes directly. In PRODUCTION we now DELIVER those node roots when the body is
+                // fully migrated (see the completeness gate below); when the differential toggle
+                // is on we additionally assert byte-parity against a raw reparse. The legacy
+                // serialize-reparse still runs unconditionally to (a) produce the fallback value
+                // for incomplete bodies and (b) supply the reparse node count for the gate.
+                TreeConstructor? bodyTc = null;
                 var savedActiveTc = _activeTreeConstructor;
                 var savedTcIncomplete = _tcFragmentIncomplete;
-                if (TempTreeDifferential.Enabled && _nodeStore != null)
+                if (_nodeStore != null)
                 {
-                    diffTc = new TreeConstructor(_nodeStore, 1UL);
-                    _activeTreeConstructor = diffTc;
+                    bodyTc = new TreeConstructor(_nodeStore, 1UL);
+                    _activeTreeConstructor = bodyTc;
                     _tcFragmentIncomplete = false;
                 }
                 try
@@ -19579,12 +19589,33 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 foreach (var scope in savedNsScopes.AsEnumerable().Reverse())
                     _outputNsScopes.Push(scope);
 
-                // SP-B differential: node build vs legacy reparse (structural parity check).
-                // Skip when the body had content that couldn't be routed into the node tree
-                // (marked incomplete) — the live tree is known-partial there, so a comparison
-                // would report a false divergence, not a real parity bug.
-                if (diffTc != null && !_tcFragmentIncomplete)
-                    RunTreeConstructorDifferential(diffTc, textContent);
+                // SP-B slice 5a: finish the native node build ONCE and decide whether it is the
+                // authoritative delivered result. A body is a "migrated candidate" when nothing
+                // forced the string buffer (`_tcFragmentIncomplete` — xsl:copy-of of a source
+                // node, built-in copy, an unresolvable attribute prefix) AND no item bypassed the
+                // constructor into the sequence accumulator (xsl:sequence select=, xsl:attribute,
+                // xsl:document). The final count-guard (reparse node count == node-root count) and
+                // an all-nodes check happen below once sequenceItems is built. `_sequenceAccumulator`
+                // is still the raw body accumulator here (the interleave consumes it later).
+                IReadOnlyList<NodeId>? bodyNodeRoots = null;
+                var migratedCandidate = false;
+                if (bodyTc != null)
+                {
+                    bodyNodeRoots = bodyTc.FinishFragment();
+                    migratedCandidate = !_tcFragmentIncomplete
+                        && _sequenceAccumulator.Count == 0
+                        && bodyNodeRoots.Count > 0;
+                    // Differential: node build vs legacy reparse (structural parity check). Skip
+                    // when the body is incomplete — the live tree is known-partial there, so a
+                    // comparison would be a false divergence, not a real parity bug (counted Skipped).
+                    if (TempTreeDifferential.Enabled)
+                    {
+                        if (!_tcFragmentIncomplete)
+                            RunTreeConstructorDifferential(bodyNodeRoots, textContent);
+                        else
+                            TempTreeDifferential.Skipped++;
+                    }
+                }
                 _tcFragmentIncomplete = savedTcIncomplete;
 
                 // Combine sequence accumulator items with any serialized output.
@@ -19822,6 +19853,73 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         else
                         {
                             sequenceItems.Add(textContent);
+                        }
+                    }
+                }
+
+                // SP-B slice 5a: deliver the natively-built node roots as the authoritative result
+                // when the body was fully migrated. Byte-parity with the reparse today (Task 4
+                // proved node == reparse structurally at 147/0); this flip is what lets slice 5b's
+                // node-build bug fixes take effect. The final gate reuses the differential's
+                // count-guard: the node-root count must equal the reparse node count, and every
+                // delivered item must be a node (no atomics/RTF/accumulator items) — so we only
+                // ever swap in shapes the differential verified equal, never an unverified one.
+                if (migratedCandidate && bodyNodeRoots != null && _nodeStore != null)
+                {
+                    if (instruction.As?.ItemType == ItemType.Document)
+                    {
+                        // as="document-node()": the reparse wrapped the body in a single
+                        // XdmDocument. Rewrap the node roots identically (byte-parity with the
+                        // legacy doc build above) so slice 5b can improve the wrapped children.
+                        if (sequenceItems.Count == 1 && sequenceItems[0] is XdmDocument reparseDoc
+                            && reparseDoc.Children.Count == bodyNodeRoots.Count)
+                        {
+                            var docId = _nodeStore.NextId();
+                            var docChildren = new List<NodeId>();
+                            NodeId flipDocElementId = NodeId.None;
+                            foreach (var id in bodyNodeRoots)
+                            {
+                                if (_nodeStore.GetNode(id) is not XdmNode cn)
+                                    continue;
+                                cn.Parent = docId;
+                                docChildren.Add(cn.Id);
+                                if (cn is XdmElement && flipDocElementId == NodeId.None)
+                                    flipDocElementId = cn.Id;
+                            }
+                            string? flipDocElemLocalName = flipDocElementId != NodeId.None
+                                ? (_nodeStore.GetNode(flipDocElementId) as XdmElement)?.LocalName : null;
+                            var flipDocNode = new XdmDocument
+                            {
+                                Id = docId,
+                                Document = new DocumentId(1),
+                                Parent = NodeId.None,
+                                DocumentElement = flipDocElementId,
+                                Children = docChildren,
+                                DocumentElementLocalName = flipDocElemLocalName,
+                                BaseUri = seqBaseUri
+                            };
+                            _nodeStore.Register(flipDocNode);
+                            sequenceItems.Clear();
+                            sequenceItems.Add(flipDocNode);
+                        }
+                    }
+                    else if (sequenceItems.Count == bodyNodeRoots.Count
+                        && sequenceItems.All(static x => x is XdmNode))
+                    {
+                        // Non-document: with the accumulator empty there was no interleave, so
+                        // sequenceItems is exactly the reparse node roots in document order. Swap
+                        // in the constructor's node roots, applying the SAME construction base-URI
+                        // fixup AddElementChunk applies to the reparse nodes (plain seqBaseUri,
+                        // never clobbering a preserved xsl:copy CopySourceBaseUri).
+                        sequenceItems.Clear();
+                        foreach (var id in bodyNodeRoots)
+                        {
+                            if (_nodeStore.GetNode(id) is not XdmNode cn)
+                                continue;
+                            cn.Parent = null;
+                            if (seqBaseUri != null && cn.CopySourceBaseUri == null)
+                                cn.BaseUri = seqBaseUri;
+                            sequenceItems.Add(cn);
                         }
                     }
                 }

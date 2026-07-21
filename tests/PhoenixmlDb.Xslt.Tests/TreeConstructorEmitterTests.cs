@@ -115,4 +115,56 @@ public class TreeConstructorEmitterTests
         var result = await TransformAsync(xslt, "<r/>");
         result.Should().Contain("<out>5</out>"); // t1, b, t2, comment, pi
     }
+
+    [Fact]
+    public async Task FullyMigratedTempTree_ProductionNodePath_RoundTripsIdentically()
+    {
+        // slice 5a regression pin: a fully-migrated temp tree (LRE + attribute + text + nested
+        // element, no xsl:copy-of / built-in copy / accumulator items) is now DELIVERED from the
+        // native node build in PRODUCTION (toggle off). Assert the delivered tree's shape and
+        // values through the public surface — byte-parity with the legacy reparse (zero behavior
+        // change). If the flip ever diverges, the counts/values below break.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="v" as="element()">
+                  <a k="1"><b>hi</b><c/></a>
+                </xsl:variable>
+                <out>{name($v)}|{$v/@k}|{name($v/*[1])}|{string($v/b)}|{count($v/*)}|{$v/self::a and true()}</out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, "<r/>");
+        result.Should().Contain("<out>a|1|b|hi|2|true</out>");
+    }
+
+    [Fact]
+    public async Task MigratedTempTree_SerializedOutput_ByteParity()
+    {
+        // slice 5a: the delivered node tree must serialize byte-identically when copied to
+        // final output, including attribute and nested-element markup.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" indent="no"/>
+              <xsl:template match="/">
+                <xsl:variable name="v" as="element()">
+                  <a k="1"><b>hi</b></a>
+                </xsl:variable>
+                <xsl:copy-of select="$v"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, "<r/>");
+        result.Should().Contain("""<a k="1"><b>hi</b></a>""");
+    }
+
+    [Fact]
+    public void DifferentialCoverageCounters_AreResettableAndReadable()
+    {
+        // slice 5a observability: Compared/Skipped are exposed so a differential run can measure
+        // how much of the corpus flips. They stay at 0 when the toggle is off (no production cost).
+        PhoenixmlDb.Xslt.Engine.TempTreeDifferential.ResetCounters();
+        PhoenixmlDb.Xslt.Engine.TempTreeDifferential.Compared.Should().Be(0);
+        PhoenixmlDb.Xslt.Engine.TempTreeDifferential.Skipped.Should().Be(0);
+    }
 }

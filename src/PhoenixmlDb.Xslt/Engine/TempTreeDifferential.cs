@@ -46,6 +46,26 @@ internal static class TempTreeDifferential
     internal static bool IsExpectedDivergence(string key) => ExpectedDivergences.Contains(key);
 
     /// <summary>
+    /// Observability counters (Task 5a): how many as-typed temp-tree bodies the differential
+    /// structurally compared (<see cref="Compared"/>) vs skipped (<see cref="Skipped"/>) because
+    /// the body was incomplete (<c>_tcFragmentIncomplete</c>), the constructor captured only some
+    /// top-level nodes (count-guard), or the reparse wasn't self-contained (XmlException). Only
+    /// mutated when <see cref="Enabled"/>, so they cost nothing in production. A test resets and
+    /// reads them to measure how much of the corpus flips to the node path.
+    /// </summary>
+    internal static long Compared;
+
+    /// <summary>Companion to <see cref="Compared"/>: bodies the differential skipped.</summary>
+    internal static long Skipped;
+
+    /// <summary>Resets the <see cref="Compared"/>/<see cref="Skipped"/> observability counters.</summary>
+    internal static void ResetCounters()
+    {
+        Compared = 0;
+        Skipped = 0;
+    }
+
+    /// <summary>
     /// Structurally compares the subtrees rooted at <paramref name="a"/> and
     /// <paramref name="b"/> in <paramref name="store"/>, node-model to node-model (never by
     /// serializing to text). Returns <c>null</c> if the trees are equal, or a
