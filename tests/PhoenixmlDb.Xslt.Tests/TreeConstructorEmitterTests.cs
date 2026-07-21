@@ -364,6 +364,45 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task CopyOf_TypedBodySource_DescendantInheritedNamespace_SurvivesDocument0Clone()
+    {
+        // SP-C targeted follow-up (regression). The divergent copy-of routing clones copied source
+        // elements into Document 0 so the namespace axis reads their own in-scope set with NO
+        // ancestor walk (avoiding the enclosing LRE's default namespace — copy-1220/1221). But the
+        // SOURCE here is an as="node()*" TYPED body, parsed via the reader path, which records only
+        // each element's LOCAL xmlns declarations. `p` is declared on <outer>; <inner> uses it via
+        // p:x but declares nothing itself. If the Document-0 clone carries only <inner>'s local
+        // (empty) declarations, the no-ancestor-walk read reports NO in-scope prefixes for <inner>
+        // even though its own attribute is prefix-bound — WRONG. The clone must materialise each
+        // element's COMPLETE in-scope set (gathered from the source, ancestor walk) so `p=uri:p`
+        // stays in scope on <inner>.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:f="f"
+                exclude-result-prefixes="xs f" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="typed" as="node()*">
+                  <outer xmlns:p="uri:p"><inner p:x="1"/></outer>
+                  <xsl:text>gap</xsl:text>
+                </xsl:variable>
+                <xsl:variable name="result">
+                  <doc xmlns="http://out/"><xsl:copy-of select="$typed"/></doc>
+                </xsl:variable>
+                <out>{f:ns($result/*/*[1])}|{f:ns($result/*/*[1]/*[1])}</out>
+              </xsl:template>
+              <xsl:function name="f:ns" as="xs:string">
+                <xsl:param name="e" as="element()"/>
+                <xsl:sequence select="string-join(sort(in-scope-prefixes($e)[. != 'xml'] ! (. || '=' || namespace-uri-for-prefix(., $e))), ',')"/>
+              </xsl:function>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, "<r/>");
+        // outer declares p; inner inherits it (used by p:x). Neither acquires http://out/.
+        result.Should().Contain("<out>p=uri:p|p=uri:p</out>");
+        result.Should().NotContain("http://out/");
+    }
+
+    [Fact]
     public async Task UntypedVariable_LreAttributeTextNested_RoundTripsViaNodeBuild()
     {
         // SP-C slice 3: an untyped xsl:variable (no as=) is a temporary tree (document node).

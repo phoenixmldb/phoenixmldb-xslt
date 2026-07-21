@@ -15560,21 +15560,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             foreach (var srcElem in tcCopyElems!)
             {
                 var cloneId = CloneSubtreeDeep(srcElem, null, copyNs);
-                // Parity with the reparse fallback (base-URI preservation): when this copy-of
-                // serializes below, SerializeNode emits a base sentinel for a copied source
-                // element whose source base URI differs from the enclosing serialization context
-                // (TryEmitBaseSentinel), and the reparse recovers it onto CopySourceBaseUri.
-                // Mirror that EXACT decision on the natively-cloned node — same inputs, read
-                // before serialization mutates them — so the flipped node is byte-identical to
-                // the reparse (and the differential agrees). When no sentinel would be emitted
-                // (base equals context, or not a temp-tree serialize), leave it null to match.
-                var srcBase = srcElem.CopySourceBaseUri ?? ComputeSourceBaseUri(srcElem);
-                if (_tempTreeSerializeDepth > 0 && !string.IsNullOrEmpty(srcBase)
-                    && !string.Equals(srcBase, _serializeBaseContext, StringComparison.Ordinal)
-                    && _nodeStore.GetNode(cloneId) is XdmElement cloneElem)
-                {
-                    cloneElem.CopySourceBaseUri = srcBase;
-                }
+                StampCopySourceBaseSentinel(srcElem, cloneId);
                 // Byte-parity guard (SP-C slice 2): the serialize-reparse path STRIPS namespace
                 // declarations that are already in scope at the insertion point (see the RTF note
                 // below and the serializer's IsNamespaceInScope skip). The native clone keeps them
@@ -15815,6 +15801,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// append verbatim in order. The clone's copy-source base URI is stamped to mirror the reparse's
     /// recovered base sentinel exactly, as in the byte-parity routing.
     /// </summary>
+    /// <summary>
+    /// Parity with the reparse fallback (base-URI preservation): when a copy-of serializes, the
+    /// serializer emits a base sentinel for a copied source element whose source base URI differs
+    /// from the enclosing serialization context (TryEmitBaseSentinel), and the reparse recovers it
+    /// onto <see cref="XdmNode.CopySourceBaseUri"/>. This mirrors that EXACT decision on the
+    /// natively-cloned node — same inputs, read before serialization mutates them — so the flipped
+    /// node is byte-identical to the reparse. When no sentinel would be emitted (base equals
+    /// context, or not a temp-tree serialize), the clone is left untouched to match.
+    /// </summary>
+    private void StampCopySourceBaseSentinel(XdmElement srcElem, NodeId cloneId)
+    {
+        var srcBase = srcElem.CopySourceBaseUri ?? ComputeSourceBaseUri(srcElem);
+        if (_tempTreeSerializeDepth > 0 && !string.IsNullOrEmpty(srcBase)
+            && !string.Equals(srcBase, _serializeBaseContext, StringComparison.Ordinal)
+            && _nodeStore!.GetNode(cloneId) is XdmElement cloneElem)
+        {
+            cloneElem.CopySourceBaseUri = srcBase;
+        }
+    }
+
     private void RouteDivergentCopyOfInto(TreeConstructor tc, IReadOnlyList<XdmNode> nodes, bool copyNs)
     {
         foreach (var n in nodes)
@@ -15824,13 +15830,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 case XdmElement srcElem:
                 {
                     var cloneId = CloneSubtreeDeep(srcElem, null, copyNs, new DocumentId(0));
-                    var srcBase = srcElem.CopySourceBaseUri ?? ComputeSourceBaseUri(srcElem);
-                    if (_tempTreeSerializeDepth > 0 && !string.IsNullOrEmpty(srcBase)
-                        && !string.Equals(srcBase, _serializeBaseContext, StringComparison.Ordinal)
-                        && _nodeStore!.GetNode(cloneId) is XdmElement cloneElem)
-                    {
-                        cloneElem.CopySourceBaseUri = srcBase;
-                    }
+                    StampCopySourceBaseSentinel(srcElem, cloneId);
                     tc.AppendNode(cloneId);
                     break;
                 }
@@ -15935,7 +15935,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var id = _nodeStore!.NextId();
                 var cloneDoc = forceDocument ?? e.Document;
                 var decls = System.Collections.Immutable.ImmutableArray.CreateBuilder<Xdm.NamespaceBinding>();
-                foreach (var nb in e.NamespaceDeclarations)
+                // When materialising into Document 0 (the divergent copy-of routing), the
+                // namespace axis reads a constructed element's own NamespaceDeclarations with NO
+                // ancestor walk (GatherInScopeNamespaces' DocumentId-0 branch). A source parsed via
+                // the reader path / streaming records only each element's LOCAL declarations, so a
+                // descendant that inherits a binding from an ancestor WITHIN the copied subtree
+                // would lose it under the no-walk read. Materialise each clone's COMPLETE in-scope
+                // set — gathered from the source with an ancestor walk — so the Document-0 read is
+                // correct for every source convention. (Non-forced callers keep the local-decls
+                // behaviour; their non-zero-document read still walks ancestors.)
+                var sourceBindings = forceDocument is { } fdoc && fdoc.Value == 0
+                    ? GatherSourceInScopeBindings(e)
+                    : (IEnumerable<Xdm.NamespaceBinding>)e.NamespaceDeclarations;
+                foreach (var nb in sourceBindings)
                 {
                     if (!copyNamespaces)
                     {
@@ -16007,6 +16019,68 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             default:
                 return src.Id;
+        }
+    }
+
+    /// <summary>
+    /// Gathers the COMPLETE in-scope namespace bindings of a source element — its own xmlns
+    /// declarations plus every binding inherited from an ancestor (XDM §6.2), nearest-prefix
+    /// wins, honouring <c>xmlns=""</c> default undeclarations and the element's own name prefix.
+    /// Mirrors the parsed-element branch of the XQuery engine's <c>GatherInScopeNamespaces</c>
+    /// (the single source of truth the namespace axis / <c>fn:in-scope-prefixes</c> use), walking
+    /// ancestors through the main node store so a colliding supplementary id can never skew it.
+    /// Used only by the Document-0 divergent copy-of clone, where the axis reads a constructed
+    /// element's declarations WITHOUT an ancestor walk, so each clone must carry its full set.
+    /// A constructed (DocumentId 0) source already holds its complete set, so no walk is done.
+    /// </summary>
+    private IEnumerable<Xdm.NamespaceBinding> GatherSourceInScopeBindings(XdmElement src)
+    {
+        // Constructed source (DocumentId 0): NamespaceDeclarations already hold the full in-scope
+        // set. Surface everything except an xmlns="" undeclaration (not a binding).
+        if (src.Document.Value == 0)
+        {
+            foreach (var nb in src.NamespaceDeclarations)
+            {
+                var prefix = nb.Prefix ?? "";
+                if (string.IsNullOrEmpty(prefix) && nb.Namespace == NamespaceId.None)
+                    continue;
+                yield return nb;
+            }
+            yield break;
+        }
+
+        // Parsed source (non-zero DocumentId): the source records only the xmlns declarations
+        // physically present on each element, so inherited bindings are collected by walking
+        // ancestors (nearest wins).
+        var seen = new HashSet<string>();
+        var undeclared = new HashSet<string>();
+        XdmNode? current = src;
+        while (current is not null)
+        {
+            if (current is XdmElement ce)
+            {
+                foreach (var nb in ce.NamespaceDeclarations)
+                {
+                    var prefix = nb.Prefix ?? "";
+                    // xmlns="" undeclaration: the default namespace is out of scope from here up.
+                    if (string.IsNullOrEmpty(prefix) && nb.Namespace == NamespaceId.None)
+                    {
+                        undeclared.Add("");
+                        seen.Add("");
+                        continue;
+                    }
+                    if (undeclared.Contains(prefix) || !seen.Add(prefix))
+                        continue;
+                    yield return nb;
+                }
+                // The element's own name prefix is in scope even if declared by an ancestor.
+                if (!string.IsNullOrEmpty(ce.Prefix) && ce.Namespace != NamespaceId.None
+                    && !undeclared.Contains(ce.Prefix) && seen.Add(ce.Prefix))
+                {
+                    yield return new Xdm.NamespaceBinding(ce.Prefix, ce.Namespace);
+                }
+            }
+            current = current.Parent is { } pid && pid != NodeId.None ? _nodeStore!.GetNode(pid) : null;
         }
     }
 
