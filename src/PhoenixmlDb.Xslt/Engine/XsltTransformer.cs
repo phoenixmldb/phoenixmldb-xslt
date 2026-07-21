@@ -13803,8 +13803,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// built during an as="..."-typed body against a raw reparse of the same serialized body
     /// (<paramref name="serializedBody"/>), node-model to node-model. Only compares when the
     /// constructor accounted for EVERY top-level node — i.e. the body was built entirely by the
-    /// migrated emitters (slice 1: <c>xsl:element</c>). A partial capture (LRE, <c>xsl:copy</c>,
-    /// text, value-of not yet routed) is expected and inert, not a divergence. Any real
+    /// migrated emitters (<c>xsl:element</c>, literal result elements, and <c>xsl:copy</c> of an
+    /// element; their children are still reparse-recovered until slice 4). A partial capture
+    /// (text, value-of, and other not-yet-routed constructs) is expected and inert, not a
+    /// divergence. Any real
     /// structural divergence (not on the <see cref="TempTreeDifferential.IsExpectedDivergence"/>
     /// allowlist) throws, surfacing as a conformance test failure under <c>PXDB_TEMPTREE_DIFF=1</c>.
     /// </summary>
@@ -13947,7 +13949,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         string? nsUri,
         List<(string Prefix, NamespaceId Ns)> nsDecls,
         List<(NamespaceId Ns, string Local, string? Prefix, string Value)> attributes,
-        string content)
+        string content,
+        string? copySourceBaseUri = null)
     {
         // Parse child content FIRST, before opening the element on the constructor: a parse
         // failure then leaves the constructor untouched (no dangling open frame that would
@@ -14003,6 +14006,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             tc.AddNamespace(prefix, ns);
         foreach (var (ns, l, p, v) in attributes)
             tc.AddAttribute(ns, l, p, v);
+        // SP-B (xsl:copy): preserve the source element's base URI onto CopySourceBaseUri only
+        // (never BaseUri) — matching §11.9.1 and the serialize-reparse path being replaced.
+        if (copySourceBaseUri != null)
+            tc.SetCopySourceBaseUri(copySourceBaseUri);
         if (kids != null)
         {
             foreach (var k in kids)
@@ -14881,6 +14888,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedForceNsUndecl2 = _forceDefaultNsUndeclaration;
                 _forceDefaultNsUndeclaration = instruction.InheritNamespaces == false
                     && copyNsBindings.ContainsKey("") && !string.IsNullOrEmpty(copyNsBindings.GetValueOrDefault(""));
+                // SP-B: capture and suspend the active tree constructor for the duration of this
+                // copy's content, so nested from-scratch elements serialize into `content`
+                // (reparsed as children below) rather than each capturing into the constructor.
+                // Restored after content so siblings at this level are still captured. Mirrors
+                // CreateElementCoreAsync / CreateLiteralElementCoreAsync.
+                var tcForThisElement = _activeTreeConstructor;
+                _activeTreeConstructor = null;
                 try
                 {
                     if (instruction.Content != null)
@@ -14890,6 +14904,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 finally
                 {
+                    _activeTreeConstructor = tcForThisElement;
                     _forceDefaultNsUndeclaration = savedForceNsUndecl2;
                     _lastResultWasAtomic = savedLastResultWasAtomic2;
                     _serializingElementDepth--;
@@ -14917,6 +14932,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     ? $"{elem.Prefix}:{elem.LocalName}"
                     : elem.LocalName;
 
+                // SP-B: when a tree constructor is active (differential), mirror the exact
+                // namespace/attribute decisions the string path makes below into typed lists,
+                // then build a byte-identical XDM element via the constructor. `tcAbort` is set
+                // if some decision can't be faithfully represented; the node build is then
+                // skipped (the differential seam treats that as "not captured", no divergence).
+                List<(string Prefix, NamespaceId Ns)>? tcNsDecls = tcForThisElement != null ? new() : null;
+                List<(NamespaceId Ns, string Local, string? Prefix, string Value)>? tcAttrs = tcForThisElement != null ? new() : null;
+                var tcAbort = false;
+
                 var elemStartPos = _output.Length;
                 _sink.StartElementOpen(elemName);
 
@@ -14926,6 +14950,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     if (IsNamespaceInScope(prefix, uri))
                         continue;
                     _sink.Namespace(prefix, uri);
+                    // xmlns="" (empty URI) is a real undeclaration in the node model.
+                    tcNsDecls?.Add((prefix, string.IsNullOrEmpty(uri) ? NamespaceId.None : _nodeStore!.InternNamespace(uri)));
+                }
+
+                // SP-B: under the differential the copy stays in textContent (the base-uri
+                // reparse below is skipped for the node-build path). Mirror built-in
+                // shallow-copy and stamp the source base URI as a sentinel so the combine-phase
+                // reparse AND the differential's own reparse both recover it onto
+                // CopySourceBaseUri — matching the node the constructor builds. Save/restore the
+                // serialize context so each sibling copy emits independently. In production
+                // (no active constructor) nothing is emitted; the legacy reparse recovers it.
+                if (tcForThisElement != null)
+                {
+                    var savedCopyBaseCtx = _serializeBaseContext;
+                    TryEmitBaseSentinel(elem, ref _serializeBaseContext);
+                    _serializeBaseContext = savedCopyBaseCtx;
                 }
 
                 // Deduplicate attributes (last-wins) like CreateElementCoreAsync
@@ -14938,6 +14978,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _output.Append("=\"");
                     _output.Append(attrValue);
                     _output.Append('"');
+                    if (tcAttrs != null)
+                        RecordTreeAttribute(attrName, attrValue, copyNsBindings, tcNsDecls!, tcAttrs, ref tcAbort);
                 }
                 if (_isStreamingExecution && _activeStreamingReader != null)
                 {
@@ -14964,11 +15006,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _sink.StartElementClose(true);
                 }
 
+                // SP-B: build the copy directly as XDM nodes via the active constructor
+                // (differential), carrying the source element's base URI onto CopySourceBaseUri
+                // without a serialize-then-reparse. In production (no active constructor) the
+                // legacy reparse below recovers the base URI exactly as before (byte-unchanged).
+                if (tcForThisElement is { } tc)
+                {
+                    if (!tcAbort)
+                    {
+                        var elemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
+                        var sourceBaseUri = ComputeSourceBaseUri(elem);
+                        TryBuildElementViaTree(tc, elemName, elemNsUri, tcNsDecls!, tcAttrs!, content, sourceBaseUri);
+                    }
+                }
                 // XSLT 3.0 §11.9.1: xsl:copy preserves the source element's base URI.
                 // When inside a variable/param (sequence accumulator active), extract the
                 // serialized element, reparse it, and set CopySourceBaseUri so orphaned
                 // copies return the correct base-uri() while attached copies inherit parent.
-                if (_sequenceAccumulator != null && _nodeStore != null)
+                else if (_sequenceAccumulator != null && _nodeStore != null)
                 {
                     var sourceBaseUri = ComputeSourceBaseUri(elem);
                     if (sourceBaseUri != null)

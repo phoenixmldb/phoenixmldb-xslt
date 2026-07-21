@@ -207,6 +207,22 @@ internal sealed class TreeConstructor
         _open.Peek().BaseUri = baseUri;
     }
 
+    /// <summary>
+    /// Records the source element's base URI on the currently open element, applied to
+    /// <see cref="XdmNode.CopySourceBaseUri"/> ONLY (leaving <see cref="XdmNode.BaseUri"/>
+    /// null) at <see cref="EndElement"/>. This is the shape an <c>xsl:copy</c> of a source
+    /// element produces (§11.9.1): base-uri() reads the preserved copy-source base, and the
+    /// serialize-then-reparse path it replaces likewise sets only CopySourceBaseUri, so a
+    /// differential BaseUri comparison stays in parity.
+    /// </summary>
+    public void SetCopySourceBaseUri(string baseUri)
+    {
+        if (_open.Count == 0)
+            throw new InvalidOperationException("SetCopySourceBaseUri requires an open element.");
+
+        _open.Peek().CopySourceBaseUri = baseUri;
+    }
+
     public void EndElement()
     {
         var frame = _open.Pop();
@@ -229,6 +245,8 @@ internal sealed class TreeConstructor
             elem.BaseUri = frame.BaseUri;
             elem.CopySourceBaseUri = frame.BaseUri;
         }
+        if (frame.CopySourceBaseUri is not null)
+            elem.CopySourceBaseUri = frame.CopySourceBaseUri;
         elem._stringValue = ComputeStringValue(frame);
         _store.Register(elem);
         _inScopeByElement[frame.Id] = frame.InScope;
@@ -288,5 +306,6 @@ internal sealed class TreeConstructor
         public required List<NodeId> Children;
         public required Dictionary<string, NamespaceId> InScope;
         public string? BaseUri;
+        public string? CopySourceBaseUri;
     }
 }

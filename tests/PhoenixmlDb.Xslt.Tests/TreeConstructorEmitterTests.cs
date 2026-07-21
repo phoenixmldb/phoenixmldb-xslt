@@ -52,4 +52,21 @@ public class TreeConstructorEmitterTests
         var result = await TransformAsync(xslt, "<r/>");
         result.Should().Contain("<out>b|urn:p</out>");
     }
+
+    [Fact]
+    public async Task XslCopy_ElementWithCopiedAttributes_BuildsNodeTree()
+    {
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="v" as="element()">
+                  <xsl:for-each select="a"><xsl:copy><xsl:copy-of select="@*"/></xsl:copy></xsl:for-each>
+                </xsl:variable>
+                <out>{name($v)}|{$v/@k}</out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, """<a k="7"/>""");
+        result.Should().Contain("<out>a|7</out>");
+    }
 }
