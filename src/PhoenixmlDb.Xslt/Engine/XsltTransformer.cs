@@ -5862,6 +5862,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     // runs to keep the reparse fallback / flip count-guard / differential a byte-parity target.
     private bool _suppressTcIncomplete;
 
+    // SP-C targeted: true only while an untyped-RTF-flip constructor is installed (the copy-of-only
+    // body seam). Gates the divergent copy-of routing (mixed element+text sequences, and clones that
+    // would over-declare relative to the enclosing frame) so that path never runs in the typed as=
+    // seam or nested contexts, which must stay byte-parity with the reparse.
+    private bool _untypedRtfFlipActive;
+
+    // SP-C targeted: set when a copy-of routed into the untyped-RTF-flip constructor and the node
+    // build is the AUTHORITATIVE result that intentionally diverges from the serialize-reparse
+    // oracle (XSLT 3.0 §11.7.2 namespace fixup the reparse gets wrong — W3C copy-1220/1221). When
+    // set, the flip is delivered without the IsUntypedRtfFlipByteParitySafe veto and the differential
+    // comparison for that body is skipped (the reparse is a known-wrong oracle for this shape).
+    private bool _untypedRtfFlipDivergent;
+
     /// <summary>
     /// SP-B slice 4: opens <paramref name="name"/>/<paramref name="nsUri"/> as an element on the
     /// active constructor BEFORE its content executes, so child text/comment/PI/nested elements
@@ -14105,7 +14118,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         public override object? VisitCopy(XsltCopy insn) { Blocked = true; return null; }
-        public override object? VisitCopyOf(XsltCopyOf insn) { Blocked = true; return null; }
+        // xsl:copy-of is NOT blocked: the copy-of routing (CopyOfCoreAsync) clones source nodes
+        // directly into the active constructor. A benign (namespace-free) copy-of flips
+        // byte-identically to the reparse (verified by the differential); a namespace-bearing
+        // copy-of that would diverge is either vetoed by IsUntypedRtfFlipByteParitySafe (no flip,
+        // reparse unchanged) or — for the §11.7.2 fixup shapes the reparse gets wrong (W3C
+        // copy-1220/1221) — delivered as the authoritative node build with the differential
+        // skipped (_untypedRtfFlipDivergent). xsl:copy stays blocked (its base-uri rerouting is
+        // still Task-6 work).
         public override object? VisitApplyTemplates(XsltApplyTemplates insn) { Blocked = true; return null; }
         public override object? VisitApplyImports(XsltApplyImports insn) { Blocked = true; return null; }
         public override object? VisitNextMatch(XsltNextMatch insn) { Blocked = true; return null; }
@@ -15574,6 +15594,31 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 routedCopyOfToTree = true;
                 _suppressTcIncomplete = true;
             }
+            else if (_untypedRtfFlipActive)
+            {
+                // SP-C targeted: the redundant-in-scope declarations the reparse strips (and the
+                // enclosing default namespace it re-contaminates the copy with) make the reparse a
+                // known-wrong oracle for this shape. The node build is authoritative — deliver it
+                // and skip the differential. Re-clone into Document 0 so the namespace axis reads
+                // the copy's own complete in-scope set (no ancestor walk into the enclosing LRE).
+                RouteDivergentCopyOfInto(tc, tcCopyElems!.ConvertAll(e => (XdmNode)e), copyNs);
+                routedCopyOfToTree = true;
+                _suppressTcIncomplete = true;
+                _untypedRtfFlipDivergent = true;
+            }
+        }
+        else if (_untypedRtfFlipActive && _activeTreeConstructor is { } mixedTc && _nodeStore != null
+            && TryGetCopyOfNodes(result, out var flipNodes))
+        {
+            // SP-C targeted: mixed element+text/comment/PI copy-of sequence (copy-1220's
+            // `wrapper/child::node()` — <a/>, text "sandwich", <a/>). TryGetCopyOfElements is
+            // element-only, so this shape never routed; route the full ordered sequence into the
+            // flip constructor as the authoritative node build (§11.7.2 fixup as node data) and
+            // skip the differential (reparse re-contaminates copied namespaces — copy-1220/1221).
+            RouteDivergentCopyOfInto(mixedTc, flipNodes!, copyNs);
+            routedCopyOfToTree = true;
+            _suppressTcIncomplete = true;
+            _untypedRtfFlipDivergent = true;
         }
 
         try
@@ -15723,6 +15768,80 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// SP-C targeted: extracts an ordered node sequence from an xsl:copy-of result, admitting a
+    /// MIXED sequence of element / text / comment / processing-instruction nodes (copy-1220's
+    /// <c>wrapper/child::node()</c>). Returns false if any item is not one of those kinds
+    /// (attributes, document nodes, atomics need other handling) so those results fall through to
+    /// the unchanged serialization path. Used only by the untyped-RTF-flip divergent routing.
+    /// </summary>
+    private static bool TryGetCopyOfNodes(object? result, out List<XdmNode>? nodes)
+    {
+        nodes = null;
+        static bool IsRoutable(object? o) =>
+            o is XdmElement or XdmText or XdmComment or XdmProcessingInstruction;
+        if (IsRoutable(result))
+        {
+            nodes = new List<XdmNode> { (XdmNode)result! };
+            return true;
+        }
+        IEnumerable<object?>? items = result switch
+        {
+            object?[] arr => arr,
+            IEnumerable<object?> seq when result is not string => seq,
+            _ => null
+        };
+        if (items == null)
+            return false;
+        var collected = new List<XdmNode>();
+        foreach (var item in items)
+        {
+            if (!IsRoutable(item))
+                return false;
+            collected.Add((XdmNode)item!);
+        }
+        if (collected.Count == 0)
+            return false;
+        nodes = collected;
+        return true;
+    }
+
+    /// <summary>
+    /// SP-C targeted: routes an ordered copy-of node sequence into the untyped-RTF-flip
+    /// constructor as the AUTHORITATIVE node build. Elements are deep-cloned into Document 0 —
+    /// constructed nodes whose in-scope namespace enumeration (GatherInScopeNamespaces)
+    /// reads their own complete (copy-namespaces-filtered) in-scope set with NO ancestor walk, so a
+    /// copied element does NOT acquire the enclosing LRE's default namespace (XSLT 3.0 §11.7.2; the
+    /// serialize-reparse fallback gets this wrong — W3C copy-1220/1221). Text / comment / PI nodes
+    /// append verbatim in order. The clone's copy-source base URI is stamped to mirror the reparse's
+    /// recovered base sentinel exactly, as in the byte-parity routing.
+    /// </summary>
+    private void RouteDivergentCopyOfInto(TreeConstructor tc, IReadOnlyList<XdmNode> nodes, bool copyNs)
+    {
+        foreach (var n in nodes)
+        {
+            switch (n)
+            {
+                case XdmElement srcElem:
+                {
+                    var cloneId = CloneSubtreeDeep(srcElem, null, copyNs, new DocumentId(0));
+                    var srcBase = srcElem.CopySourceBaseUri ?? ComputeSourceBaseUri(srcElem);
+                    if (_tempTreeSerializeDepth > 0 && !string.IsNullOrEmpty(srcBase)
+                        && !string.Equals(srcBase, _serializeBaseContext, StringComparison.Ordinal)
+                        && _nodeStore!.GetNode(cloneId) is XdmElement cloneElem)
+                    {
+                        cloneElem.CopySourceBaseUri = srcBase;
+                    }
+                    tc.AppendNode(cloneId);
+                    break;
+                }
+                case XdmText t: tc.AppendText(t.Value); break;
+                case XdmComment cm: tc.AppendComment(cm.Value); break;
+                case XdmProcessingInstruction pi: tc.AppendProcessingInstruction(pi.Target, pi.Value); break;
+            }
+        }
+    }
+
+    /// <summary>
     /// XSLT 3.0 §11.9.1 write-side: serialize each source element, reparse it into an
     /// orphaned <see cref="XdmElement"/>, stamp <see cref="XdmNode.CopySourceBaseUri"/>
     /// from the source's computed base URI, and append to the active sequence accumulator.
@@ -15807,13 +15926,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// namespace happened to be in scope in the transient serialization context). Returns the
     /// clone's NodeId. Temp-tree node-model migration (SP1: copy-of seam).
     /// </summary>
-    private NodeId CloneSubtreeDeep(XdmNode src, NodeId? parent, bool copyNamespaces)
+    private NodeId CloneSubtreeDeep(XdmNode src, NodeId? parent, bool copyNamespaces, DocumentId? forceDocument = null)
     {
         switch (src)
         {
             case XdmElement e:
             {
                 var id = _nodeStore!.NextId();
+                var cloneDoc = forceDocument ?? e.Document;
                 var decls = System.Collections.Immutable.ImmutableArray.CreateBuilder<Xdm.NamespaceBinding>();
                 foreach (var nb in e.NamespaceDeclarations)
                 {
@@ -15840,17 +15960,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var aid = _nodeStore.NextId();
                     _nodeStore.Register(new XdmAttribute
                     {
-                        Id = aid, Document = e.Document, Namespace = a.Namespace,
+                        Id = aid, Document = cloneDoc, Namespace = a.Namespace,
                         LocalName = a.LocalName, Prefix = a.Prefix, Value = a.Value, Parent = id,
                     });
                     attrIds.Add(aid);
                 }
                 var childIds = new List<NodeId>();
                 foreach (var c in _nodeStore.GetChildren(e))
-                    childIds.Add(CloneSubtreeDeep(c, id, copyNamespaces));
+                    childIds.Add(CloneSubtreeDeep(c, id, copyNamespaces, forceDocument));
                 var clone = new XdmElement
                 {
-                    Id = id, Document = e.Document, Namespace = e.Namespace,
+                    Id = id, Document = cloneDoc, Namespace = e.Namespace,
                     LocalName = e.LocalName, Prefix = e.Prefix,
                     Attributes = attrIds.Count == 0 ? XdmElement.EmptyAttributes : System.Collections.Immutable.ImmutableArray.CreateRange(attrIds),
                     Children = childIds.Count == 0 ? XdmElement.EmptyChildren : System.Collections.Immutable.ImmutableArray.CreateRange(childIds),
@@ -15870,19 +15990,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             case XdmText t:
             {
                 var id = _nodeStore!.NextId();
-                _nodeStore.Register(new XdmText { Id = id, Document = t.Document, Value = t.Value, Parent = parent });
+                _nodeStore.Register(new XdmText { Id = id, Document = forceDocument ?? t.Document, Value = t.Value, Parent = parent });
                 return id;
             }
             case XdmComment cm:
             {
                 var id = _nodeStore!.NextId();
-                _nodeStore.Register(new XdmComment { Id = id, Document = cm.Document, Value = cm.Value, Parent = parent });
+                _nodeStore.Register(new XdmComment { Id = id, Document = forceDocument ?? cm.Document, Value = cm.Value, Parent = parent });
                 return id;
             }
             case XdmProcessingInstruction pi:
             {
                 var id = _nodeStore!.NextId();
-                _nodeStore.Register(new XdmProcessingInstruction { Id = id, Document = pi.Document, Target = pi.Target, Value = pi.Value, Parent = parent });
+                _nodeStore.Register(new XdmProcessingInstruction { Id = id, Document = forceDocument ?? pi.Document, Target = pi.Target, Value = pi.Value, Parent = parent });
                 return id;
             }
             default:
@@ -20307,12 +20427,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 TreeConstructor? bodyTc = null;
                 var savedActiveTcU = _activeTreeConstructor;
                 var savedTcIncompleteU = _tcFragmentIncomplete;
+                var savedFlipActiveU = _untypedRtfFlipActive;
+                var savedFlipDivergentU = _untypedRtfFlipDivergent;
                 var bodyTcIncompleteU = false;
+                var bodyFlipDivergentU = false;
                 if (_nodeStore != null && !UntypedRtfFlipBlocked(instruction.Content))
                 {
                     bodyTc = new TreeConstructor(_nodeStore, 1UL);
                     _activeTreeConstructor = bodyTc;
                     _tcFragmentIncomplete = false;
+                    _untypedRtfFlipActive = true;
+                    _untypedRtfFlipDivergent = false;
                 }
                 List<object?>? capturedAccumulator;
                 try
@@ -20324,6 +20449,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         _activeTreeConstructor = savedActiveTcU;
                         bodyTcIncompleteU = _tcFragmentIncomplete;
                         _tcFragmentIncomplete = savedTcIncompleteU;
+                        bodyFlipDivergentU = _untypedRtfFlipDivergent;
+                        _untypedRtfFlipActive = savedFlipActiveU;
+                        _untypedRtfFlipDivergent = savedFlipDivergentU;
                     }
                     capturedAccumulator = _sequenceAccumulator;
                     _sequenceAccumulator = savedAccumulatorVar;
@@ -20417,11 +20545,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // Both are Task-6 (namespace/base-uri model) corrections, out of scope here.
                     // Exclude those shapes so the flip stays byte-identical to the reparse; the
                     // common namespace-free / copy-free body still flips.
+                    // SP-C targeted: when a copy-of routed into the flip constructor produced the
+                    // AUTHORITATIVE node build that intentionally diverges from the reparse (§11.7.2
+                    // namespace fixup the reparse gets wrong — W3C copy-1220/1221), deliver it
+                    // WITHOUT the byte-parity-safe veto (which would otherwise reject the divergent
+                    // shape) and skip the differential comparison below.
                     IReadOnlyList<NodeId>? flipRoots = null;
                     if (migratedCandidate && _nodeStore != null)
                     {
                         flipRoots = bodyTc!.FinishFragment();
-                        if (!IsUntypedRtfFlipByteParitySafe(flipRoots, bodyTc))
+                        if (!bodyFlipDivergentU && !IsUntypedRtfFlipByteParitySafe(flipRoots, bodyTc))
                             migratedCandidate = false;
                     }
                     if (migratedCandidate && flipRoots != null && _nodeStore != null)
@@ -20432,7 +20565,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         // reparse reference from a FRESH RTF so its cache isn't the node doc we just
                         // set. CompareDocuments checks children recursively (kinds, names, ns sets,
                         // attributes, text, base URIs) — the structural parity that matters.
-                        if (TempTreeDifferential.Enabled)
+                        if (TempTreeDifferential.Enabled && bodyFlipDivergentU)
+                        {
+                            // Known-divergent §11.7.2 shape: the reparse is a wrong oracle, so the
+                            // structural comparison would be a false positive. Skip it.
+                            TempTreeDifferential.Skipped++;
+                        }
+                        else if (TempTreeDifferential.Enabled)
                         {
                             var reference = ParseResultTreeFragment(new ResultTreeFragment(content, varBaseUri));
                             if (reference != null)

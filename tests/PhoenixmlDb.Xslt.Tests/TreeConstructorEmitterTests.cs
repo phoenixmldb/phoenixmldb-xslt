@@ -321,6 +321,49 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task CopyOf_MixedSequenceIntoLreWithDefaultNs_CopyNamespacesNo_NoParentAcquiredNamespace()
+    {
+        // SP-C targeted (W3C copy-1221). An untyped xsl:variable body wraps a MIXED
+        // element+text copy-of (wrapper/child::node() = <a/>, "mid", <a/>) in an LRE that
+        // carries a default namespace (xmlns="http://out/"). With copy-namespaces="no" the
+        // copied elements retain ONLY the namespaces their own name / attributes require; and
+        // per XSLT 3.0 §11.7.2 an element does NOT acquire an in-scope namespace merely because
+        // it is present on the enclosing constructor's element — so http://out/ must appear on
+        // none of the copied elements. The serialize-reparse fallback gets this wrong (re-nests
+        // the copy under the default ns and reports it); the node build is authoritative and this
+        // pins it.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:f="f" expand-text="yes">
+              <xsl:variable name="fragment">
+                <wrapper xmlns:w="http://w/">
+                  <a xmlns:a="http://a/" a:att="A"><aa xmlns="http://aa/"/></a>
+                  <xsl:text>mid</xsl:text>
+                  <a xmlns="http://a/"><aa xmlns:aa="http://aa/"/></a>
+                </wrapper>
+              </xsl:variable>
+              <xsl:template match="/">
+                <xsl:variable name="result">
+                  <doc xmlns="http://out/">
+                    <xsl:copy-of select="$fragment/wrapper/child::node()" copy-namespaces="no"/>
+                  </doc>
+                </xsl:variable>
+                <out>{f:ns($result/*/*[1])}|{f:ns($result/*/*[1]/*[1])}|{f:ns($result/*/*[2])}|{f:ns($result/*/*[2]/*[1])}</out>
+              </xsl:template>
+              <xsl:function name="f:ns" as="xs:string">
+                <xsl:param name="e" as="element()"/>
+                <xsl:sequence select="string-join(sort(in-scope-prefixes($e)[. != 'xml'] ! (. || '=' || namespace-uri-for-prefix(., $e))), ',')"/>
+              </xsl:function>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, "<r/>");
+        // a[0] needs only its a:att prefix; aa[0] only its default (http://aa/); a[1] and aa[1]
+        // only the default (http://a/). None acquires http://out/ from the enclosing <doc>.
+        result.Should().Contain(">a=http://a/|=http://aa/|=http://a/|=http://a/</out>");
+        result.Should().NotContain("http://out/");
+    }
+
+    [Fact]
     public async Task UntypedVariable_LreAttributeTextNested_RoundTripsViaNodeBuild()
     {
         // SP-C slice 3: an untyped xsl:variable (no as=) is a temporary tree (document node).
