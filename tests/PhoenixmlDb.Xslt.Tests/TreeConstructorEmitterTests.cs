@@ -159,6 +159,31 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task PureTextTypedBody_ParentlessTextNode_HasEmptyBaseUri()
+    {
+        // SP-B 5a byte-parity: a pure-text (no-'<') as="text()" body must NOT flip to the native
+        // node root. That path (AddTextChunk) creates a parentless XdmText with BaseUri left null,
+        // so base-uri($v) is (). Flipping would apply the markup base-URI fixup (seqBaseUri) and
+        // regress base-uri to the stylesheet URI. The differential skips this class (no '<'), so it
+        // is never proven byte-equal — hence it must stay on the reparse path.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="v" as="text()">hello</xsl:variable>
+                <out>[{base-uri($v)}]</out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        // A non-null stylesheet base URI is required to expose the regression: the buggy flip
+        // sets the text node's BaseUri = seqBaseUri (the stylesheet URI), so base-uri($v) would
+        // return that URI instead of ().
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(xslt, new System.Uri("http://example.com/test.xsl"));
+        var result = await transformer.TransformAsync("<r/>");
+        result.Should().Contain("<out>[]</out>");
+    }
+
+    [Fact]
     public void DifferentialCoverageCounters_AreResettableAndReadable()
     {
         // slice 5a observability: Compared/Skipped are exposed so a differential run can measure

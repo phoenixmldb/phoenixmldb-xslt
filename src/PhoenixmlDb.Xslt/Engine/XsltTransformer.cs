@@ -19903,14 +19903,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             sequenceItems.Add(flipDocNode);
                         }
                     }
-                    else if (sequenceItems.Count == bodyNodeRoots.Count
+                    else if (textContent != null && textContent.Contains('<', StringComparison.Ordinal)
+                        && sequenceItems.Count == bodyNodeRoots.Count
                         && sequenceItems.All(static x => x is XdmNode))
                     {
                         // Non-document: with the accumulator empty there was no interleave, so
                         // sequenceItems is exactly the reparse node roots in document order. Swap
-                        // in the constructor's node roots, applying the SAME construction base-URI
-                        // fixup AddElementChunk applies to the reparse nodes (plain seqBaseUri,
+                        // in the constructor's node roots, applying the construction base-URI fixup
+                        // AddElementChunk applies to markup-bearing reparse nodes (plain seqBaseUri,
                         // never clobbering a preserved xsl:copy CopySourceBaseUri).
+                        //
+                        // Gate on textContent containing '<' — the SAME predicate
+                        // RunTreeConstructorDifferential uses (:13906) to decide whether it builds
+                        // rawNodeIds and compares. A pure-text (no-'<') body is reparsed by
+                        // AddTextChunk (:19739), which creates an XdmText with BaseUri left null; the
+                        // differential skips it (rawNodeIds empty vs 1 text root → count-guard skip),
+                        // so it is never proven byte-equal. Applying the markup fixup here would set
+                        // BaseUri = seqBaseUri, regressing base-uri($v) from () to the stylesheet URI.
+                        // Keeping this in lockstep with the differential means flip ⊆ compared.
                         sequenceItems.Clear();
                         foreach (var id in bodyNodeRoots)
                         {
