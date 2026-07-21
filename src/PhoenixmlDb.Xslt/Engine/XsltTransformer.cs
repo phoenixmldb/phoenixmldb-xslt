@@ -5916,24 +5916,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _tcFragmentIncomplete = true;
     }
 
-    /// <summary>
-    /// RAII install/restore for <see cref="_activeTreeConstructor"/>: sets it on construction
-    /// and restores the prior value on <see cref="Dispose"/>, so nested construction scopes
-    /// compose correctly.
-    /// </summary>
-    private readonly struct TreeConstructorScope : System.IDisposable
-    {
-        private readonly DefaultXsltExecutionContext _ctx;
-        private readonly TreeConstructor? _prior;
-        public TreeConstructorScope(DefaultXsltExecutionContext ctx, TreeConstructor tc)
-        {
-            _ctx = ctx;
-            _prior = ctx._activeTreeConstructor;
-            ctx._activeTreeConstructor = tc;
-        }
-        public void Dispose() => _ctx._activeTreeConstructor = _prior;
-    }
-
     internal readonly XsltTransformOptions _options;
     internal readonly XdmInMemoryStore? _nodeStore;
     private readonly PhoenixmlDb.XQuery.Functions.FunctionLibrary _functionLibrary;
@@ -15046,7 +15028,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // constructor) the legacy reparse below recovers the base URI as before.
                 if (tcForThisElement is { } tc)
                 {
-                    var sourceBaseUri = ComputeSourceBaseUri(elem);
+                    // Reproduce the base sentinel's value EXACTLY (TryEmitBaseSentinel: an
+                    // already-copied source element carries CopySourceBaseUri that
+                    // ComputeSourceBaseUri does not consult). Otherwise the flip path would
+                    // deliver a different base-uri() than the legacy reparse for a copy of a copy.
+                    var sourceBaseUri = elem.CopySourceBaseUri ?? ComputeSourceBaseUri(elem);
                     TcFinishElement(tc, elemName, tcNsDecls!, tcAttrs!, tcAbort, sourceBaseUri);
                 }
                 // XSLT 3.0 §11.9.1: xsl:copy preserves the source element's base URI.
@@ -19556,6 +19542,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 TreeConstructor? bodyTc = null;
                 var savedActiveTc = _activeTreeConstructor;
                 var savedTcIncomplete = _tcFragmentIncomplete;
+                // Snapshot of the body's own incomplete flag, captured in the finally before the
+                // field is restored, so the migrated-candidate/differential gates below read the
+                // value the body left behind rather than the outer saved value.
+                var bodyTcIncomplete = false;
                 if (_nodeStore != null)
                 {
                     bodyTc = new TreeConstructor(_nodeStore, 1UL);
@@ -19567,6 +19557,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 finally
                 {
                     _activeTreeConstructor = savedActiveTc;
+                    bodyTcIncomplete = _tcFragmentIncomplete;
+                    _tcFragmentIncomplete = savedTcIncomplete;
                     if (raiseTempTreeDepth)
                     {
                         _tempTreeSerializeDepth--;
@@ -19602,7 +19594,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (bodyTc != null)
                 {
                     bodyNodeRoots = bodyTc.FinishFragment();
-                    migratedCandidate = !_tcFragmentIncomplete
+                    migratedCandidate = !bodyTcIncomplete
                         && _sequenceAccumulator.Count == 0
                         && bodyNodeRoots.Count > 0;
                     // Differential: node build vs legacy reparse (structural parity check). Skip
@@ -19610,13 +19602,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // comparison would be a false divergence, not a real parity bug (counted Skipped).
                     if (TempTreeDifferential.Enabled)
                     {
-                        if (!_tcFragmentIncomplete)
+                        if (!bodyTcIncomplete)
                             RunTreeConstructorDifferential(bodyNodeRoots, textContent);
                         else
                             TempTreeDifferential.Skipped++;
                     }
                 }
-                _tcFragmentIncomplete = savedTcIncomplete;
 
                 // Combine sequence accumulator items with any serialized output.
                 // Literal result elements go to the output buffer; xsl:sequence items go

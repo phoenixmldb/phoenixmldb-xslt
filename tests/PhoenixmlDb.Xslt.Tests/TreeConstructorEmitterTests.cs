@@ -184,6 +184,35 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task XslCopy_OfAlreadyCopiedElement_PreservesCopySourceBaseUri()
+    {
+        // SP-B whole-branch review finding #1 (byte-parity gap). A migrated temp-tree body that
+        // xsl:copies a source element which is ITSELF a prior copy carrying CopySourceBaseUri.
+        //   $c  : orphan copy of source <e> (xml:base gives it CopySourceBaseUri = http://ex/base/)
+        //   $c2 : copy of $c inside a fully-migrated body -> hits the xsl:copy element-shell flip.
+        // At the flip site the constructor must reproduce the base sentinel's value
+        //   elem.CopySourceBaseUri ?? ComputeSourceBaseUri(elem)
+        // For $c: ComputeSourceBaseUri($c) is () (orphan, no xml:base) but $c.CopySourceBaseUri is
+        // http://ex/base/. Pre-fix the flip passed plain ComputeSourceBaseUri(elem) -> base-uri($c2)
+        // regressed to (). Post-fix (and on the legacy reparse path) base-uri($c2) = http://ex/base/.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/">
+                <xsl:variable name="c" as="element()">
+                  <xsl:for-each select="/doc/e"><xsl:copy/></xsl:for-each>
+                </xsl:variable>
+                <xsl:variable name="c2" as="element()">
+                  <xsl:for-each select="$c"><xsl:copy/></xsl:for-each>
+                </xsl:variable>
+                <out>[{base-uri($c2)}]</out>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, """<doc xml:base="http://ex/base/"><e/></doc>""");
+        result.Should().Contain("<out>[http://ex/base/]</out>");
+    }
+
+    [Fact]
     public void DifferentialCoverageCounters_AreResettableAndReadable()
     {
         // slice 5a observability: Compared/Skipped are exposed so a differential run can measure

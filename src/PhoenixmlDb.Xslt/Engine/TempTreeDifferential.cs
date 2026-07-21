@@ -229,9 +229,15 @@ internal static class TempTreeDifferential
             : $"{path}: {label} differs (a={a}, b={b})";
 
     private static string? CompareBaseUri(XdmNode a, XdmNode b, string path)
-        => string.Equals(a.BaseUri, b.BaseUri, StringComparison.Ordinal)
-            ? null
-            : $"{path}: base URI differs (a={a.BaseUri ?? "(null)"}, b={b.BaseUri ?? "(null)"})";
+    {
+        if (!string.Equals(a.BaseUri, b.BaseUri, StringComparison.Ordinal))
+            return $"{path}: base URI differs (a={a.BaseUri ?? "(null)"}, b={b.BaseUri ?? "(null)"})";
+        // Also compare the preserved xsl:copy source base URI: base-uri() consults it for
+        // orphaned copies, so a divergence here is a real parity gap even when BaseUri agrees.
+        if (!string.Equals(a.CopySourceBaseUri, b.CopySourceBaseUri, StringComparison.Ordinal))
+            return $"{path}: copy-source base URI differs (a={a.CopySourceBaseUri ?? "(null)"}, b={b.CopySourceBaseUri ?? "(null)"})";
+        return null;
+    }
 
     private static string ExpandedName(XdmElement e, XdmInMemoryStore store)
         => $"{{{store.GetNamespaceUri(e.Namespace) ?? string.Empty}}}{e.LocalName}";
