@@ -213,6 +213,20 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task CopyOf_SourceElement_InMigratedBody_RoundTrips()
+    {
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+              <xsl:template match="/"><xsl:variable name="v" as="element()*">
+                <xsl:copy-of select="a"/>
+              </xsl:variable><out>{count($v)}|{$v/@k}|{local-name($v)}</out></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var result = await TransformAsync(xslt, """<a k="7"/>""");
+        result.Should().Contain("<out>1|7|a</out>");
+    }
+
+    [Fact]
     public void DifferentialCoverageCounters_AreResettableAndReadable()
     {
         // slice 5a observability: Compared/Skipped are exposed so a differential run can measure

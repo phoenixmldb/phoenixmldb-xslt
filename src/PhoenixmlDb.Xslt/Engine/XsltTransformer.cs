@@ -5855,6 +5855,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     // Reset each time the body seam installs a fresh constructor.
     private bool _tcFragmentIncomplete;
 
+    // SP-C slice 1: set only while an xsl:copy-of of source nodes serializes to the string buffer
+    // AFTER its clones were already routed into the active constructor (see CopyOfCoreAsync). The
+    // live tree is NOT missing those children, so SerializeNode's MarkTcIncompleteIfActive must be
+    // suppressed — the body stays a migrated candidate and can flip — while the serialization still
+    // runs to keep the reparse fallback / flip count-guard / differential a byte-parity target.
+    private bool _suppressTcIncomplete;
+
     /// <summary>
     /// SP-B slice 4: opens <paramref name="name"/>/<paramref name="nsUri"/> as an element on the
     /// active constructor BEFORE its content executes, so child text/comment/PI/nested elements
@@ -5912,7 +5919,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     private void MarkTcIncompleteIfActive()
     {
-        if (_activeTreeConstructor != null)
+        if (_activeTreeConstructor != null && !_suppressTcIncomplete)
             _tcFragmentIncomplete = true;
     }
 
@@ -15311,47 +15318,85 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 return;
         }
 
-        if (result is ResultTreeFragment rtf)
+        // SP-C slice 1: when building a temp-tree node fragment, clone copy-of'd source
+        // elements directly into the active constructor as top-level fragment roots so the body
+        // stays node-native and can flip (it no longer trips _tcFragmentIncomplete). Mirrors
+        // TryAccumulateCopyOfElementsWithBaseUriAsync but targets the active TreeConstructor
+        // rather than the sequence accumulator. Serialization to the string buffer STILL runs
+        // (below, under _suppressTcIncomplete): the reparse fallback, the flip count-guard, and
+        // the PXDB_TEMPTREE_DIFF differential all need a byte-parity comparison target, so this
+        // keeps flip ⊆ compared — the clone is delivered only when the differential verified it
+        // byte-identical to that reparse.
+        //
+        // Gated on tc.Depth == 0 (no constructed element open): only a copy-of at the fragment
+        // root is migrated. A copy-of NESTED inside an open LRE / xsl:element / xsl:copy is left
+        // on the legacy serialize-then-reparse path (it still marks the body incomplete, so the
+        // body does not flip). That keeps enclosing xsl:copy-of-source bodies exactly as they are
+        // today (insn/copy unchanged) — their native build has base-URI parity gaps that belong
+        // to a later slice, not Task 1. Only engages when a constructor is active (production for
+        // non-flipping bodies is unchanged, since _suppressTcIncomplete stays false).
+        var routedCopyOfToTree = false;
+        if (_activeTreeConstructor is { } tc && tc.Depth == 0 && _nodeStore != null
+            && TryGetCopyOfElements(result, out var tcCopyElems))
         {
-            // Parse RTF to XDM and serialize through SerializeNode for proper namespace fixup.
-            // This ensures redundant namespace declarations are stripped and missing undeclarations
-            // are added based on the current output namespace context.
-            var rtfDoc = ParseResultTreeFragment(rtf);
-            if (rtfDoc != null)
-                SerializeNode(rtfDoc, copyNs);
-            else
-                _sink.RawText(rtf.XmlContent);
-        }
-        else if (result is System.Xml.Linq.XNode linqNode)
-        {
-            // LINQ XML nodes (from fn:analyze-string, fn:json-to-xml, etc.)
-            _sink.RawText(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
-        }
-        else if (result is object?[] arr)
-        {
-            SerializeCopyOfItems(arr, copyNs);
-        }
-        else if (result is IEnumerable<object> seq)
-        {
-            SerializeCopyOfItems(seq.ToArray(), copyNs);
-        }
-        else if (result != null)
-        {
-            // For atomic values (string, number, etc.), add space separator between
-            // adjacent atomic values per XSLT 3.0 §5.7.2
-            if (result is not XdmNode and not XdmDocument and not ResultTreeFragment
-                and not System.Xml.Linq.XNode and not Xdm.TextNodeItem)
+            foreach (var srcElem in tcCopyElems!)
             {
-                if (_lastResultWasAtomic && _attributeContentDepth == 0)
-                    WriteText(" ", false);
-                SerializeNode(result, copyNs);
-                _lastResultWasAtomic = true;
+                var cloneId = CloneSubtreeDeep(srcElem, null, copyNs);
+                tc.AppendNode(cloneId);
             }
-            else
+            routedCopyOfToTree = true;
+            _suppressTcIncomplete = true;
+        }
+
+        try
+        {
+            if (result is ResultTreeFragment rtf)
             {
-                SerializeNode(result, copyNs, faithfulNamespaces: result is XdmDocument);
-                _lastResultWasAtomic = false;
+                // Parse RTF to XDM and serialize through SerializeNode for proper namespace fixup.
+                // This ensures redundant namespace declarations are stripped and missing undeclarations
+                // are added based on the current output namespace context.
+                var rtfDoc = ParseResultTreeFragment(rtf);
+                if (rtfDoc != null)
+                    SerializeNode(rtfDoc, copyNs);
+                else
+                    _sink.RawText(rtf.XmlContent);
             }
+            else if (result is System.Xml.Linq.XNode linqNode)
+            {
+                // LINQ XML nodes (from fn:analyze-string, fn:json-to-xml, etc.)
+                _sink.RawText(linqNode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
+            }
+            else if (result is object?[] arr)
+            {
+                SerializeCopyOfItems(arr, copyNs);
+            }
+            else if (result is IEnumerable<object> seq)
+            {
+                SerializeCopyOfItems(seq.ToArray(), copyNs);
+            }
+            else if (result != null)
+            {
+                // For atomic values (string, number, etc.), add space separator between
+                // adjacent atomic values per XSLT 3.0 §5.7.2
+                if (result is not XdmNode and not XdmDocument and not ResultTreeFragment
+                    and not System.Xml.Linq.XNode and not Xdm.TextNodeItem)
+                {
+                    if (_lastResultWasAtomic && _attributeContentDepth == 0)
+                        WriteText(" ", false);
+                    SerializeNode(result, copyNs);
+                    _lastResultWasAtomic = true;
+                }
+                else
+                {
+                    SerializeNode(result, copyNs, faithfulNamespaces: result is XdmDocument);
+                    _lastResultWasAtomic = false;
+                }
+            }
+        }
+        finally
+        {
+            if (routedCopyOfToTree)
+                _suppressTcIncomplete = false;
         }
     }
 
