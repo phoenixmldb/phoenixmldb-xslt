@@ -15792,16 +15792,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
-    /// SP-C targeted: routes an ordered copy-of node sequence into the untyped-RTF-flip
-    /// constructor as the AUTHORITATIVE node build. Elements are deep-cloned into Document 0 —
-    /// constructed nodes whose in-scope namespace enumeration (GatherInScopeNamespaces)
-    /// reads their own complete (copy-namespaces-filtered) in-scope set with NO ancestor walk, so a
-    /// copied element does NOT acquire the enclosing LRE's default namespace (XSLT 3.0 §11.7.2; the
-    /// serialize-reparse fallback gets this wrong — W3C copy-1220/1221). Text / comment / PI nodes
-    /// append verbatim in order. The clone's copy-source base URI is stamped to mirror the reparse's
-    /// recovered base sentinel exactly, as in the byte-parity routing.
-    /// </summary>
-    /// <summary>
     /// Parity with the reparse fallback (base-URI preservation): when a copy-of serializes, the
     /// serializer emits a base sentinel for a copied source element whose source base URI differs
     /// from the enclosing serialization context (TryEmitBaseSentinel), and the reparse recovers it
@@ -15821,6 +15811,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// SP-C targeted: routes an ordered copy-of node sequence into the untyped-RTF-flip
+    /// constructor as the AUTHORITATIVE node build. Elements are deep-cloned into Document 0 —
+    /// constructed nodes whose in-scope namespace enumeration (GatherInScopeNamespaces)
+    /// reads their own complete (copy-namespaces-filtered) in-scope set with NO ancestor walk, so a
+    /// copied element does NOT acquire the enclosing LRE's default namespace (XSLT 3.0 §11.7.2; the
+    /// serialize-reparse fallback gets this wrong — W3C copy-1220/1221). Text / comment / PI nodes
+    /// append verbatim in order. The clone's copy-source base URI is stamped to mirror the reparse's
+    /// recovered base sentinel exactly, as in the byte-parity routing.
+    /// </summary>
     private void RouteDivergentCopyOfInto(TreeConstructor tc, IReadOnlyList<XdmNode> nodes, bool copyNs)
     {
         foreach (var n in nodes)
