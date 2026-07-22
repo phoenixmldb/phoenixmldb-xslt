@@ -7444,6 +7444,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     internal bool _collectTextAsSequenceItems;
     internal int _serializingElementDepth; // >0 when inside element serialization
     private bool _forceDefaultNsUndeclaration; // inherit-namespaces="no" requires children to emit xmlns=""
+    // SP-C copy-0612 family: true while constructing the content of an element (xsl:copy / LRE /
+    // xsl:element) declared inherit-namespaces="no". Under it, constructed content — including a
+    // grafted xsl:copy-of subtree — must NOT acquire any namespace from the constructing element
+    // (XSLT 3.0 §11.7.2), not just the default namespace that _forceDefaultNsUndeclaration covers.
+    // The untyped-RTF-flip copy-of routing reads it to clone into Document 0 (no ancestor walk) so
+    // the copied element carries only its own copy-namespaces-filtered in-scope set.
+    private bool _inheritNamespacesNo;
+    // SP-C copy-0612 family: the base URI of the untyped-RTF-flip variable currently executing (the
+    // base the content-reparse fallback uses). Non-null only while a flip constructor is installed;
+    // read by CopyAsync to force a base sentinel for a copy of a base-URI-bearing SOURCE element so
+    // the content fallback keeps base-uri() without a global temp-tree-depth raise.
+    private string? _untypedFlipBaseContext;
 
     // Base-URI preservation across the temp-tree serialize→reparse boundary.
     //
@@ -13737,6 +13749,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var savedForceNsUndecl = _forceDefaultNsUndeclaration;
         _forceDefaultNsUndeclaration = instruction.InheritNamespaces == false
             && elemNsBindings.ContainsKey("") && !string.IsNullOrEmpty(elemNsBindings[""]);
+        var savedInheritNsNoLre = _inheritNamespacesNo;
+        _inheritNamespacesNo = instruction.InheritNamespaces == false;
         // Push xml:base onto static base URI stack so resolve-uri() resolves against it
         if (instruction.BaseUri != null)
             _staticBaseUriStack.Push(XsltTransformEngine.UriString(instruction.BaseUri)!);
@@ -13758,6 +13772,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (instruction.BaseUri != null)
                 _staticBaseUriStack.Pop();
             _forceDefaultNsUndeclaration = savedForceNsUndecl;
+            _inheritNamespacesNo = savedInheritNsNoLre;
             _serializingElementDepth--;
             _sequenceAccumulator = savedSeqAccum1;
             PopScope();
@@ -14117,16 +14132,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             base.Walk(insn);
         }
 
-        public override object? VisitCopy(XsltCopy insn) { Blocked = true; return null; }
-        // xsl:copy-of is NOT blocked: the copy-of routing (CopyOfCoreAsync) clones source nodes
-        // directly into the active constructor. A benign (namespace-free) copy-of flips
-        // byte-identically to the reparse (verified by the differential); a namespace-bearing
-        // copy-of that would diverge is either vetoed by IsUntypedRtfFlipByteParitySafe (no flip,
-        // reparse unchanged) or — for the §11.7.2 fixup shapes the reparse gets wrong (W3C
-        // copy-1220/1221) — delivered as the authoritative node build with the differential
-        // skipped (_untypedRtfFlipDivergent). xsl:copy stays blocked (its base-uri rerouting is
-        // still Task-6 work).
-        public override object? VisitApplyTemplates(XsltApplyTemplates insn) { Blocked = true; return null; }
+        // xsl:copy is NOT blocked (SP-C copy-0612 family): when a tree constructor is active,
+        // CopyAsync builds the copied element natively via TcOpenElement/TcFinishElement and its
+        // string emission still runs byte-identically (flip ⊆ compared). Its base-uri rerouting is
+        // gated on the xml:base block below (StaticBaseUri) — the shapes that perturbed base-uri()
+        // (fn/snapshot) all carry xml:base and stay on the reparse. xsl:copy-of is likewise not
+        // blocked: the copy-of routing (CopyOfCoreAsync) clones source nodes directly into the
+        // active constructor. A benign (namespace-free) copy flips byte-identically to the reparse
+        // (verified by the differential); a namespace-bearing copy that would diverge is either
+        // vetoed by IsUntypedRtfFlipByteParitySafe (no flip, reparse unchanged) or — for the
+        // §11.7.2 fixup shapes the reparse gets wrong (W3C copy-1220/1221/0613/0615/0621/0623) —
+        // delivered as the authoritative node build with the differential skipped
+        // (_untypedRtfFlipDivergent).
+        // xsl:apply-templates is NOT blocked (SP-C copy-0612 family): the recursive
+        // shallow-copy + xsl:copy identity chain builds nodes into the active constructor. Template
+        // dispatch that could copy a node out of view via a different module is still blocked below
+        // (apply-imports / next-match / call-template) — those are not exercised by the copy-0612
+        // family and keep the base-uri/namespace risk contained.
         public override object? VisitApplyImports(XsltApplyImports insn) { Blocked = true; return null; }
         public override object? VisitNextMatch(XsltNextMatch insn) { Blocked = true; return null; }
         public override object? VisitCallTemplate(XsltCallTemplate insn) { Blocked = true; return null; }
@@ -15095,9 +15117,47 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 await ApplyAttributeSetsAsync(instruction.UseAttributeSets, attrSetParts).ConfigureAwait(false);
                 _collectedAttributes!.Append(attrSetParts);
 
-                // inherit-namespaces="no" on parent: add default ns undeclaration
+                // SP-C copy-0612 family: a COPIED element under an inherit-namespaces="no" ancestor
+                // (xsl:copy identity chain: match="*" → <xsl:copy inherit-namespaces="no">) carries
+                // its OWN namespace nodes (XSLT 3.0 §11.9.1) — the COMPLETE in-scope set of the
+                // source element — regardless of the ancestor's inherit-namespaces="no". Under the
+                // untyped-RTF flip we materialise those as the copied element's LOCAL declarations
+                // (self-contained, the same over-declared shape the serialize-reparse produces) for
+                // two reasons: (1) fn:namespace-uri-for-prefix reads only local declarations (no
+                // ancestor walk), so a minimal-decl copy relying on the walk would report an empty
+                // default; (2) it prevents the inherit-namespaces="no" default-undeclaration logic
+                // below from wrongly stripping a default the copy legitimately carries. This is a
+                // known-divergent shape (the reparse cannot undeclare prefixed namespaces on the
+                // grafted content — XML 1.0), so it also marks the body divergent.
+                List<(string Prefix, NamespaceId Ns)>? divergentCopyFullDecls = null;
+                if (_untypedRtfFlipActive && _inheritNamespacesNo && _activeTreeConstructor != null && _nodeStore != null)
+                {
+                    var copyNamespaces = instruction.CopyNamespaces ?? true;
+                    divergentCopyFullDecls = new List<(string, NamespaceId)>();
+                    foreach (var nb in GatherSourceInScopeBindings(elem))
+                    {
+                        var p = nb.Prefix ?? "";
+                        if (!copyNamespaces)
+                        {
+                            // copy-namespaces="no": keep only namespaces used by the element name
+                            // or an attribute name (mirrors CloneSubtreeDeep's filter).
+                            var usedByElem = p == (elem.Prefix ?? "");
+                            var usedByAttr = false;
+                            if (!string.IsNullOrEmpty(p))
+                                foreach (var a in _nodeStore.GetAttributes(elem))
+                                    if (a.Prefix == p) { usedByAttr = true; break; }
+                            if (!usedByElem && !usedByAttr)
+                                continue;
+                        }
+                        divergentCopyFullDecls.Add((p, nb.Namespace));
+                    }
+                    _untypedRtfFlipDivergent = true;
+                }
+                // inherit-namespaces="no" on parent: add default ns undeclaration (for CONSTRUCTED
+                // content only — a self-contained copy above carries its own default, so skip it).
                 if (_forceDefaultNsUndeclaration && !copyNsBindings.ContainsKey("")
-                    && GetInScopeDefaultNamespace() != null)
+                    && GetInScopeDefaultNamespace() != null
+                    && divergentCopyFullDecls == null)
                 {
                     copyNsBindings[""] = "";
                 }
@@ -15116,6 +15176,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedForceNsUndecl2 = _forceDefaultNsUndeclaration;
                 _forceDefaultNsUndeclaration = instruction.InheritNamespaces == false
                     && copyNsBindings.ContainsKey("") && !string.IsNullOrEmpty(copyNsBindings.GetValueOrDefault(""));
+                var savedInheritNsNo2 = _inheritNamespacesNo;
+                _inheritNamespacesNo = instruction.InheritNamespaces == false;
                 // SP-B slice 4: open THIS copied element on the active constructor BEFORE content
                 // (constructor stays active — no suspend), so child text/comment/PI/nested
                 // elements build natively in document order. The source element's name/namespace
@@ -15137,6 +15199,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 finally
                 {
                     _forceDefaultNsUndeclaration = savedForceNsUndecl2;
+                    _inheritNamespacesNo = savedInheritNsNo2;
                     _lastResultWasAtomic = savedLastResultWasAtomic2;
                     _serializingElementDepth--;
                     _sequenceAccumulator = savedSeqAccum2;
@@ -15185,6 +15248,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     tcNsDecls?.Add((prefix, string.IsNullOrEmpty(uri) ? NamespaceId.None : _nodeStore!.InternNamespace(uri)));
                 }
 
+                // SP-C copy-0612 family: for a self-contained divergent copy, the NODE must carry
+                // the copied element's COMPLETE in-scope namespace set as local declarations (see
+                // the divergentCopyFullDecls note above) — not just the ones not already in the
+                // constructor's scope. The serialized content string keeps the minimal set emitted
+                // above (it is not delivered — the node build is authoritative and the differential
+                // is skipped), but the tree constructor's declarations are replaced with the full
+                // set so fn:namespace-uri-for-prefix (local-only) and fn:in-scope-prefixes agree.
+                if (divergentCopyFullDecls != null && tcNsDecls != null)
+                {
+                    tcNsDecls.Clear();
+                    tcNsDecls.AddRange(divergentCopyFullDecls);
+                }
+
                 // SP-B: under the differential the copy stays in textContent (the base-uri
                 // reparse below is skipped for the node-build path). Mirror built-in
                 // shallow-copy and stamp the source base URI as a sentinel so the combine-phase
@@ -15195,7 +15271,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (tcForThisElement != null)
                 {
                     var savedCopyBaseCtx = _serializeBaseContext;
-                    TryEmitBaseSentinel(elem, ref _serializeBaseContext);
+                    // Under the untyped-RTF flip the temp-tree serialize depth is not raised (a
+                    // blanket raise regresses fn/base-uri), so force the sentinel here — but ONLY
+                    // when the flip variable has NO enclosing base URI (no stylesheet xml:base, no
+                    // variable xml:base). In that case a copy of a base-URI-bearing SOURCE element
+                    // must preserve the SOURCE base (the content-reparse fallback loses it without
+                    // the sentinel — the identity-copy-into-variable case). When an enclosing base
+                    // IS present (stylesheet/variable xml:base), the copy inherits THAT base and the
+                    // reparse already resolves it correctly (fn/base-uri-025/029/030/…), so forcing
+                    // a source-base sentinel there would wrongly override it — leave those alone.
+                    if (_untypedRtfFlipActive && string.IsNullOrEmpty(_untypedFlipBaseContext))
+                    {
+                        _serializeBaseContext = _untypedFlipBaseContext;
+                        TryEmitBaseSentinel(elem, ref _serializeBaseContext, force: true);
+                    }
+                    else
+                    {
+                        TryEmitBaseSentinel(elem, ref _serializeBaseContext);
+                    }
                     _serializeBaseContext = savedCopyBaseCtx;
                 }
 
@@ -15548,7 +15641,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // _suppressTcIncomplete stays false).
         var routedCopyOfToTree = false;
         var savedSuppressTcIncomplete = _suppressTcIncomplete;
-        if (_activeTreeConstructor is { } tc && _nodeStore != null
+        if (_untypedRtfFlipActive && _inheritNamespacesNo
+            && _activeTreeConstructor is { } inhTc && _nodeStore != null
+            && TryGetCopyOfNodesForDivergent(result, out var inhNodes))
+        {
+            // SP-C copy-0612 family: this copy-of is grafting content INTO an element declared
+            // inherit-namespaces="no" (xsl:copy / LRE / xsl:element). Per XSLT 3.0 §11.7.2 the
+            // copied content must NOT acquire any namespace from the constructing element — not the
+            // default namespace and not any prefixed ancestor binding. The byte-parity route below
+            // would keep the clone in its source document (non-zero) so the tree-constructor's
+            // ancestor walk re-introduces the constructing element's b/d/default bindings (the
+            // inherit-namespaces="yes" answer). Route the whole sequence as the authoritative
+            // Document-0 build instead: each element carries only its own copy-namespaces-filtered
+            // in-scope set (no ancestor walk), and the reparse — which cannot undeclare prefixed
+            // namespaces in XML 1.0 — is a known-wrong oracle, so skip the differential.
+            RouteDivergentCopyOfInto(inhTc, inhNodes!, copyNs);
+            routedCopyOfToTree = true;
+            _suppressTcIncomplete = true;
+            _untypedRtfFlipDivergent = true;
+        }
+        else if (_activeTreeConstructor is { } tc && _nodeStore != null
             && TryGetCopyOfElements(result, out var tcCopyElems))
         {
             // Stage the clones first, then commit them together, so a byte-parity guard can
@@ -15789,6 +15901,44 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return false;
         nodes = collected;
         return true;
+    }
+
+    /// <summary>
+    /// SP-C copy-0612 family: like <see cref="TryGetCopyOfNodes"/>, but first UNWRAPS a single
+    /// document node (or an untyped-RTF whose node build is available) into its element / text /
+    /// comment / PI children — <c>xsl:copy-of select="$doc"</c> copies the document's children, not
+    /// a document node. Used only by the inherit-namespaces="no" divergent copy-of routing, so the
+    /// grafted document content (copy-0612's <c>copy-of select="$inner"</c>) routes the same way an
+    /// element selection (copy-0620's <c>$inner//*:r</c>) does. Returns false for anything else so
+    /// those results fall through to the unchanged paths.
+    /// </summary>
+    private bool TryGetCopyOfNodesForDivergent(object? result, out List<XdmNode>? nodes)
+    {
+        nodes = null;
+        XdmDocument? doc = result switch
+        {
+            XdmDocument d => d,
+            ResultTreeFragment rtf => ParseResultTreeFragment(rtf),
+            _ => null,
+        };
+        if (doc != null)
+        {
+            if (_nodeStore == null)
+                return false;
+            var collected = new List<XdmNode>();
+            foreach (var child in _nodeStore.GetChildren(doc))
+            {
+                if (child is XdmElement or XdmText or XdmComment or XdmProcessingInstruction)
+                    collected.Add(child);
+                else
+                    return false;
+            }
+            if (collected.Count == 0)
+                return false;
+            nodes = collected;
+            return true;
+        }
+        return TryGetCopyOfNodes(result, out nodes);
     }
 
     /// <summary>
@@ -16424,8 +16574,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// always strips it.
     /// </summary>
     private void TryEmitBaseSentinel(XdmElement elem, ref string? context)
+        => TryEmitBaseSentinel(elem, ref context, force: false);
+
+    // SP-C copy-0612 family: with force=true, emit even when _tempTreeSerializeDepth is 0. The
+    // untyped-RTF flip seam does NOT raise the temp-tree depth (a blanket raise perturbs base-uri
+    // resolution across the body — regressing fn/base-uri), but when the flip installs the
+    // constructor an xsl:copy of a SOURCE element takes the TcOpenElement path instead of the
+    // sequence-accumulator base-URI path, so its serialized CONTENT (the reparse fallback used
+    // when the flip is byte-parity-vetoed) would drop the base sentinel and lose base-uri() on the
+    // copy. Forcing the sentinel HERE — only at the xsl:copy site, only under the flip — restores
+    // the content-reparse base URI without the global depth-raise side effects.
+    private void TryEmitBaseSentinel(XdmElement elem, ref string? context, bool force)
     {
-        if (_tempTreeSerializeDepth <= 0 || _nodeStore == null)
+        if ((_tempTreeSerializeDepth <= 0 && !force) || _nodeStore == null)
             return;
         // Prefer an already-preserved source base URI (set by an earlier copy that hasn't
         // yet crossed a text boundary); otherwise compute it from the source tree position.
@@ -20505,6 +20666,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedFlipDivergentU = _untypedRtfFlipDivergent;
                 var bodyTcIncompleteU = false;
                 var bodyFlipDivergentU = false;
+                var savedFlipBaseContextU = _untypedFlipBaseContext;
                 if (_nodeStore != null && !UntypedRtfFlipBlocked(instruction.Content))
                 {
                     bodyTc = new TreeConstructor(_nodeStore, 1UL);
@@ -20512,6 +20674,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _tcFragmentIncomplete = false;
                     _untypedRtfFlipActive = true;
                     _untypedRtfFlipDivergent = false;
+                    _untypedFlipBaseContext = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
                 }
                 List<object?>? capturedAccumulator;
                 try
@@ -20526,6 +20689,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         bodyFlipDivergentU = _untypedRtfFlipDivergent;
                         _untypedRtfFlipActive = savedFlipActiveU;
                         _untypedRtfFlipDivergent = savedFlipDivergentU;
+                        _untypedFlipBaseContext = savedFlipBaseContextU;
                     }
                     capturedAccumulator = _sequenceAccumulator;
                     _sequenceAccumulator = savedAccumulatorVar;
@@ -25378,6 +25542,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var savedForceNsUndecl3 = _forceDefaultNsUndeclaration;
         _forceDefaultNsUndeclaration = instruction.InheritNamespaces == false
             && nsBindings.ContainsKey("") && !string.IsNullOrEmpty(nsBindings.GetValueOrDefault(""));
+        var savedInheritNsNoElem = _inheritNamespacesNo;
+        _inheritNamespacesNo = instruction.InheritNamespaces == false;
         // Push xml:base onto static base URI stack so document()/resolve-uri() resolve against it
         if (instruction.StaticBaseUri != null)
             _staticBaseUriStack.Push(instruction.StaticBaseUri);
@@ -25398,6 +25564,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (instruction.StaticBaseUri != null)
                 _staticBaseUriStack.Pop();
             _forceDefaultNsUndeclaration = savedForceNsUndecl3;
+            _inheritNamespacesNo = savedInheritNsNoElem;
             _serializingElementDepth--;
             _sequenceAccumulator = savedSeqAccum3;
             PopScope();

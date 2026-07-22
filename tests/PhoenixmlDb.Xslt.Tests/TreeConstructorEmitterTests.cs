@@ -403,6 +403,71 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
+    public async Task ApplyTemplatesCopyChain_InheritNamespacesNo_GraftedCopyOfDoesNotInherit()
+    {
+        // SP-C copy-0612 family (W3C copy-0613 / copy-0615). An untyped xsl:variable body runs a
+        // recursive identity: on-no-match="shallow-copy" over a temp tree whose elements are
+        // <xsl:copy inherit-namespaces="no"> plus a graft template that xsl:copy-of's an inner
+        // fragment. Per XSLT 3.0 §11.7.2 + §11.9.1:
+        //   • a COPIED element (b:b, c) carries its OWN namespace nodes — the complete in-scope set
+        //     of the source — so `b` retains the ancestor-declared default (=uri:a) even though the
+        //     enclosing xsl:copy is inherit-namespaces="no";
+        //   • the GRAFTED copy-of content (p/q/r) does NOT inherit the constructing element's
+        //     namespaces, so p keeps only =uri:p (not b=uri:b, d=uri:d from the ancestor c);
+        //   • copy-namespaces="no" drops the unused s=uri:s from r.
+        // The serialize-reparse fallback gets both wrong (XML 1.0 cannot undeclare prefixed
+        // namespaces on the graft), so this is a known-divergent node build. Two variants pin the
+        // copy-namespaces yes/no distinction on r.
+        static string Sheet(string copyNamespaces) => $$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:f="http://local-functions/" xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                exclude-result-prefixes="f xs">
+              <xsl:variable name="outer">
+                <a xmlns="uri:a"><b:b xmlns:b="uri:b"><c xmlns="uri:c" xmlns:d="uri:d"><graft xmlns=""/></c></b:b></a>
+              </xsl:variable>
+              <xsl:variable name="inner">
+                <p xmlns="uri:p"><q xmlns="uri:q"><r xmlns="uri:r" xmlns:s="uri:s"/></q></p>
+              </xsl:variable>
+              <xsl:mode on-no-match="shallow-copy"/>
+              <xsl:template match="*">
+                <xsl:copy inherit-namespaces="no"><xsl:apply-templates/></xsl:copy>
+              </xsl:template>
+              <xsl:template match="graft">
+                <xsl:copy-of select="$inner" copy-namespaces="{{copyNamespaces}}"/>
+              </xsl:template>
+              <xsl:template name="main">
+                <xsl:variable name="capture"><xsl:apply-templates select="$outer"/></xsl:variable>
+                <out><xsl:for-each select="$capture//*"><e n="{local-name()}" in-scope="{f:isn(.)}"/></xsl:for-each></out>
+              </xsl:template>
+              <xsl:function name="f:isn" as="xs:string">
+                <xsl:param name="e" as="element(*)"/>
+                <xsl:value-of><xsl:for-each select="in-scope-prefixes($e)[. != 'xml']"><xsl:sort select="."/><xsl:value-of select="concat('|', ., '=', namespace-uri-for-prefix(., $e))"/></xsl:for-each></xsl:value-of>
+              </xsl:function>
+            </xsl:stylesheet>
+            """;
+        var t1 = new XsltTransformer();
+        await t1.LoadStylesheetAsync(Sheet("yes"));
+        t1.SetInitialTemplate("main");
+        var yes = await t1.TransformAsync((string?)null);
+        // copy-0613: a=|=uri:a; b keeps ancestor default; c keeps b; p/q/r don't inherit; r keeps s.
+        yes.Should().Contain("""<e n="a" in-scope="|=uri:a"/>""");
+        yes.Should().Contain("""<e n="b" in-scope="|=uri:a|b=uri:b"/>""");
+        yes.Should().Contain("""<e n="c" in-scope="|=uri:c|b=uri:b|d=uri:d"/>""");
+        yes.Should().Contain("""<e n="p" in-scope="|=uri:p"/>""");
+        yes.Should().Contain("""<e n="q" in-scope="|=uri:q"/>""");
+        yes.Should().Contain("""<e n="r" in-scope="|=uri:r|s=uri:s"/>""");
+
+        var t2 = new XsltTransformer();
+        await t2.LoadStylesheetAsync(Sheet("no"));
+        t2.SetInitialTemplate("main");
+        var no = await t2.TransformAsync((string?)null);
+        // copy-0615: identical except copy-namespaces="no" drops the unused s on r.
+        no.Should().Contain("""<e n="b" in-scope="|=uri:a|b=uri:b"/>""");
+        no.Should().Contain("""<e n="p" in-scope="|=uri:p"/>""");
+        no.Should().Contain("""<e n="r" in-scope="|=uri:r"/>""");
+    }
+
+    [Fact]
     public async Task UntypedVariable_LreAttributeTextNested_RoundTripsViaNodeBuild()
     {
         // SP-C slice 3: an untyped xsl:variable (no as=) is a temporary tree (document node).
