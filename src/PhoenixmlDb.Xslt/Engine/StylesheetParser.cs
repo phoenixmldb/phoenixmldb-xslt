@@ -7255,13 +7255,13 @@ public sealed class StylesheetParser
         for (int i = xmlBaseAttrs.Count - 1; i >= 0; i--)
         {
             var xmlBase = xmlBaseAttrs[i];
-            // Check for genuine absolute URI (with explicit scheme like http:, https:, etc.)
-            // On Linux, Uri.TryCreate("/path", Absolute) succeeds as file:///path, but in
-            // XML Base spec /path is a relative URI reference that should resolve against the parent.
-            if (Uri.TryCreate(xmlBase, UriKind.Absolute, out var absUri)
-                && xmlBase.Contains(':', StringComparison.Ordinal)
-                && !xmlBase.StartsWith('/')
-                && !xmlBase.StartsWith('.'))
+            // Check for a genuine absolute URI reference: one that begins with an RFC 3986
+            // scheme ("[A-Za-z][A-Za-z0-9+.-]*:"), e.g. http:, https:, urn:, or the
+            // single-letter d: scheme. This is NOT a bare "/path" (which .NET would mis-parse
+            // as file:///path on Linux, though XML Base treats it as a relative reference) and
+            // NOT a "./..." relative reference. An absolute xml:base replaces the accumulated
+            // base rather than resolving against it.
+            if (HasUriScheme(xmlBase) && Uri.TryCreate(xmlBase, UriKind.Absolute, out var absUri))
                 result = absUri;
             else if (result != null)
                 result = new Uri(result, xmlBase);
@@ -7270,6 +7270,25 @@ public sealed class StylesheetParser
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// True when <paramref name="s"/> begins with an RFC 3986 URI scheme
+    /// ("[A-Za-z][A-Za-z0-9+.-]*:") — i.e. it is an absolute URI reference, not a relative
+    /// path such as "/xml/" or "./foo".
+    /// </summary>
+    private static bool HasUriScheme(string s)
+    {
+        int colon = s.IndexOf(':', StringComparison.Ordinal);
+        if (colon <= 0 || !char.IsAsciiLetter(s[0]))
+            return false;
+        for (int i = 1; i < colon; i++)
+        {
+            char c = s[i];
+            if (!char.IsAsciiLetterOrDigit(c) && c != '+' && c != '.' && c != '-')
+                return false;
+        }
+        return true;
     }
 
     private XsltMessage ParseMessage(XElement element, SourceLocation? location)

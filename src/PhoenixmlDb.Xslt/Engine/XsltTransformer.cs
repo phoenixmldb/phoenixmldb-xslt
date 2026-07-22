@@ -155,7 +155,12 @@ public sealed class XsltTransformEngine
         if (s.Length < 3) return false;
         if (!char.IsAsciiLetter(s[0])) return false;
         if (s[1] != ':') return false;
-        return s[2] == '\\' || s[2] == '/';
+        if (s[2] != '\\' && s[2] != '/') return false;
+        // A "://" authority (e.g. "d://tests/") is a scheme-based URI whose single-letter
+        // scheme .NET mis-parses as a drive letter — NOT a Windows drive path. Its
+        // OriginalString must survive intact rather than be canonicalised to file:///.
+        if (s[2] == '/' && s.Length > 3 && s[3] == '/') return false;
+        return true;
     }
 
     private static XQueryExpression ToLiteralExpression(object? value) => value switch
@@ -3143,6 +3148,23 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// True when <paramref name="elem"/> carries its own explicit xml:base attribute.
+    /// Used by the base-uri-046 fixup to distinguish a copy that keeps a relative xml:base
+    /// (whose base must be resolved against the construction base) from a plain source copy
+    /// (whose base is its preserved CopySourceBaseUri).
+    /// </summary>
+    private static bool ElementHasExplicitXmlBaseAttr(XdmInMemoryStore nodeStore, XdmElement elem)
+    {
+        foreach (var attrId in elem.Attributes)
+        {
+            if (nodeStore.GetNode(attrId) is Xdm.Nodes.XdmAttribute attr
+                && attr.Namespace == NamespaceId.Xml && attr.LocalName == "base")
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Initializes global parameters and variables in dependency order.
     /// This ensures that if param $x references $y, then $y is initialized first.
     /// Also handles transitive dependencies through function calls.
@@ -3391,6 +3413,31 @@ public sealed class XsltTransformEngine
                             else
                             {
                                 seqItems.Add(item);
+                            }
+                        }
+                    }
+                    // base-uri-046: a parentless deep xsl:copy-of ROOT that KEEPS a RELATIVE
+                    // xml:base attribute arrives here via the sequence accumulator (textContent
+                    // is empty, so the reparse fixup below is bypassed). fn:base-uri needs the
+                    // construction base stamped on BaseUri: ComputeBaseUri's explicit-xml:base
+                    // branch resolves the relative xml:base against elem.BaseUri when the node is
+                    // parentless. Scope strictly to roots that (a) have an explicit xml:base and
+                    // (b) have no BaseUri yet, so no-xml:base source copies — which must keep
+                    // returning their preserved CopySourceBaseUri — are untouched.
+                    if (context._nodeStore != null)
+                    {
+                        var rootBaseUri = XsltTransformEngine.UriString(global.BaseUri)
+                            ?? XsltTransformEngine.UriString(_stylesheet.BaseUri);
+                        if (rootBaseUri != null)
+                        {
+                            foreach (var it in seqItems)
+                            {
+                                if (it is XdmElement rootEl && rootEl.BaseUri == null
+                                    && (!rootEl.Parent.HasValue || rootEl.Parent.Value == NodeId.None)
+                                    && ElementHasExplicitXmlBaseAttr(context._nodeStore, rootEl))
+                                {
+                                    rootEl.BaseUri = rootBaseUri;
+                                }
                             }
                         }
                     }
