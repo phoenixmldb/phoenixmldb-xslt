@@ -7204,6 +7204,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Computes the base URI of a source XDM element by checking xml:base attributes
     /// and walking up ancestors. Used by xsl:copy to preserve source base URI.
     /// </summary>
+    // True when the element carries its OWN xml:base attribute. Used by the untyped-RTF flip
+    // base-sentinel guard: a shallow xsl:copy discards this attribute, so only an element that
+    // HAD one needs the sentinel to carry its resolved base across the content reparse.
+    private bool ElementHasOwnXmlBase(Xdm.Nodes.XdmElement elem)
+    {
+        foreach (var attrId in elem.Attributes)
+        {
+            if (_nodeStore!.GetNode(attrId) is Xdm.Nodes.XdmAttribute attr
+                && attr.Namespace == NamespaceId.Xml && attr.LocalName == "base")
+                return true;
+        }
+        return false;
+    }
+
     private string? ComputeSourceBaseUri(Xdm.Nodes.XdmElement elem)
     {
         // Check for xml:base attribute on the element
@@ -14117,6 +14131,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     private sealed class UntypedRtfFlipBlockScanner : XsltInstructionWalker
     {
+        // LEXICAL-only: this walks the STATIC body instructions. It blocks an xml:base written
+        // literally in the body (StaticBaseUri), but it does NOT and cannot see an xml:base
+        // reached at RUNTIME through dispatch — an xsl:copy/xsl:copy-of/xsl:apply-templates of a
+        // SOURCE element that itself carries xml:base. Those flip; their base URI is preserved by
+        // the base-sentinel path at the xsl:copy site (TryEmitBaseSentinel, force under the flip),
+        // not by this scanner. (apply-imports/next-match/call-template are blocked below because
+        // they can copy out of view through another module, not for base-uri reasons.)
         public bool Blocked { get; private set; }
 
         public override void Walk(XsltInstruction insn)
@@ -15272,15 +15293,28 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     var savedCopyBaseCtx = _serializeBaseContext;
                     // Under the untyped-RTF flip the temp-tree serialize depth is not raised (a
-                    // blanket raise regresses fn/base-uri), so force the sentinel here — but ONLY
-                    // when the flip variable has NO enclosing base URI (no stylesheet xml:base, no
-                    // variable xml:base). In that case a copy of a base-URI-bearing SOURCE element
-                    // must preserve the SOURCE base (the content-reparse fallback loses it without
-                    // the sentinel — the identity-copy-into-variable case). When an enclosing base
-                    // IS present (stylesheet/variable xml:base), the copy inherits THAT base and the
-                    // reparse already resolves it correctly (fn/base-uri-025/029/030/…), so forcing
-                    // a source-base sentinel there would wrongly override it — leave those alone.
-                    if (_untypedRtfFlipActive && string.IsNullOrEmpty(_untypedFlipBaseContext))
+                    // blanket raise regresses fn/base-uri), so force the sentinel here — only at the
+                    // xsl:copy site, only under the flip. The shallow xsl:copy drops the source
+                    // element's attributes, so its serialized form is <e> with no xml:base; the
+                    // content-reparse fallback (used when the flip is byte-parity-vetoed) then has to
+                    // recompute base-uri() structurally. Two sub-cases, both seeded with the flip
+                    // variable's enclosing base so TryEmitBaseSentinel's srcBase-vs-context guard
+                    // only emits when the source base actually differs:
+                    //   • NO enclosing base ("" — no stylesheet/variable xml:base): force always. A
+                    //     base-URI-bearing source element (own xml:base OR source-doc entity base) is
+                    //     the identity-copy-into-variable case; the reparse would give (), so emit the
+                    //     source base (§11.9.1).
+                    //   • enclosing base PRESENT: force ONLY when the copied element carries its OWN
+                    //     xml:base. That attribute — which the shallow copy discarded — is what makes
+                    //     the copy's base differ from the enclosing parent base, and the reparse can no
+                    //     longer see it, so the sentinel must carry the resolved base (the vetoed-flip
+                    //     corner: a source element with its own xml:base copied into a variable that has
+                    //     a stylesheet/variable base). A copy WITHOUT its own xml:base correctly INHERITS
+                    //     the enclosing parent base on reparse (base-uri-025/029/030/033/035/038/040 —
+                    //     substring1 nested under a constructed <e1>); forcing there would wrongly
+                    //     override it with the source-ancestor base, so leave it to the reparse.
+                    if (_untypedRtfFlipActive
+                        && (string.IsNullOrEmpty(_untypedFlipBaseContext) || ElementHasOwnXmlBase(elem)))
                     {
                         _serializeBaseContext = _untypedFlipBaseContext;
                         TryEmitBaseSentinel(elem, ref _serializeBaseContext, force: true);
@@ -20667,6 +20701,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var bodyTcIncompleteU = false;
                 var bodyFlipDivergentU = false;
                 var savedFlipBaseContextU = _untypedFlipBaseContext;
+                // Hardening: the inherit-namespaces="no" context flag is owned by the construction
+                // sites (xsl:copy/LRE/xsl:element) that save-restore it. Reset it at the variable
+                // seam so a stale value from an OUTER inherit-namespaces="no" construction can't
+                // leak into a bare xsl:copy-of body inside this variable (which has no enclosing
+                // construction site of its own to reset it). Restored in the finally.
+                var savedInheritNsNoU = _inheritNamespacesNo;
                 if (_nodeStore != null && !UntypedRtfFlipBlocked(instruction.Content))
                 {
                     bodyTc = new TreeConstructor(_nodeStore, 1UL);
@@ -20675,6 +20715,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _untypedRtfFlipActive = true;
                     _untypedRtfFlipDivergent = false;
                     _untypedFlipBaseContext = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
+                    _inheritNamespacesNo = false;
                 }
                 List<object?>? capturedAccumulator;
                 try
@@ -20690,6 +20731,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         _untypedRtfFlipActive = savedFlipActiveU;
                         _untypedRtfFlipDivergent = savedFlipDivergentU;
                         _untypedFlipBaseContext = savedFlipBaseContextU;
+                        _inheritNamespacesNo = savedInheritNsNoU;
                     }
                     capturedAccumulator = _sequenceAccumulator;
                     _sequenceAccumulator = savedAccumulatorVar;

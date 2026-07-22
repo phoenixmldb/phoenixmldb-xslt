@@ -467,6 +467,65 @@ public class TreeConstructorEmitterTests
         no.Should().Contain("""<e n="r" in-scope="|=uri:r"/>""");
     }
 
+    [Theory]
+    [InlineData("<xsl:sequence select=\"'x'\"/>")] // accumulator item -> byte-parity VETOED -> reparse fallback
+    [InlineData("")]                                // no veto -> flip delivers, still via reparse fallback here
+    public async Task UntypedFlip_XslCopyOfDistinctBaseSource_NonEmptyEnclosingBase_PreservesSourceBase(string tail)
+    {
+        // SP-C copy-0612 follow-up (review finding #1/#2, empirically CONFIRMED regression). An
+        // untyped xsl:variable body that installs the flip constructor and xsl:copies a SOURCE
+        // element whose own base URI (absolute xml:base here) DIFFERS from a NON-EMPTY enclosing
+        // base (stylesheet base http://doc/stylesheet.xsl). Pre-fix such bodies were BLOCKED from
+        // flipping (pure reparse, correct); unblocking the flip rerouted the xsl:copy off the
+        // sequence-accumulator base-URI path, and the base sentinel was forced ONLY when the
+        // enclosing base was empty — so with a non-empty enclosing base the content-reparse fallback
+        // dropped the sentinel and base-uri() of the copy resolved to the WRONG (enclosing) base.
+        // The byte differential could not see it (§11.9.1 base preservation is not byte-visible).
+        // Fix: force the sentinel at the xsl:copy site for the general non-empty-enclosing-base case
+        // too, seeded with the enclosing base so the srcBase-vs-context guard emits ONLY when the
+        // source base actually differs. Correct value (and the typed-seam reference below) = the
+        // SOURCE element's base, http://ex/base/, NOT the enclosing stylesheet base.
+        var xslt = $$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:template match="/">
+                <xsl:variable name="v">
+                  <xsl:for-each select="/doc/e"><xsl:copy/></xsl:for-each>
+                  {{tail}}
+                </xsl:variable>
+                <xsl:value-of select="base-uri($v/e)"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync(xslt, new System.Uri("http://doc/stylesheet.xsl"));
+        var result = await t.TransformAsync("""<doc><e xml:base="http://ex/base/"/></doc>""");
+        result.Trim().Should().Be("http://ex/base/");
+    }
+
+    [Fact]
+    public async Task TypedFlip_XslCopyOfDistinctBaseSource_NonEmptyEnclosingBase_ReferenceValue()
+    {
+        // Reference oracle for the untyped pin above: the shipped typed seam (as="element()")
+        // raises _tempTreeSerializeDepth so the base sentinel already rides through; its base-uri()
+        // is the authoritative correct value the untyped path must match.
+        const string xslt = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:template match="/">
+                <xsl:variable name="v" as="element()">
+                  <xsl:for-each select="/doc/e"><xsl:copy/></xsl:for-each>
+                </xsl:variable>
+                <xsl:value-of select="base-uri($v)"/>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync(xslt, new System.Uri("http://doc/stylesheet.xsl"));
+        var result = await t.TransformAsync("""<doc><e xml:base="http://ex/base/"/></doc>""");
+        result.Trim().Should().Be("http://ex/base/");
+    }
+
     [Fact]
     public async Task UntypedVariable_LreAttributeTextNested_RoundTripsViaNodeBuild()
     {
