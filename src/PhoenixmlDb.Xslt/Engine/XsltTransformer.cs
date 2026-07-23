@@ -9520,9 +9520,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             MarkTcIncompleteIfActive();
         switch (node)
         {
-            case XdmDocument:
-                // In streaming mode, child recursion is handled by the streaming loop.
-                if (!_isStreamingExecution)
+            case XdmDocument builtinShallowDoc:
+                // Built-in shallow-copy of a document node is
+                // `<xsl:copy><xsl:apply-templates mode="#current"/></xsl:copy>` (XSLT 3.0 §6.7.4).
+                // When capturing into a sequence, materialise a real document node whose children
+                // are the apply-templates result and whose base URI is the SOURCE document's base
+                // URI, so base-uri() of the copy reports the source URI (the serialize dispatch
+                // produced no doc node at all → empty). (fn/base-uri 053: shallow-copy-doc2.)
+                // Direct-output / streaming keep the existing child-recursion dispatch, as does
+                // the untyped-RTF flip (whose namespace-inheritance machinery must run unchanged).
+                if (!_isStreamingExecution && !_untypedRtfFlipActive
+                    && _sequenceAccumulator != null && _nodeStore != null)
+                    await BuildBuiltInCopyDocNodeAsync(builtinShallowDoc, mode, withParams).ConfigureAwait(false);
+                else if (!_isStreamingExecution)
                     await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 break;
             case XdmElement elem:
@@ -10351,12 +10361,41 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Deep copy: serialize the entire node subtree
         switch (node)
         {
-            case XdmDocument:
-                // In streaming mode, child recursion is handled by the streaming loop.
-                if (!_isStreamingExecution)
+            case XdmDocument builtinDeepDoc:
+                // Built-in deep-copy of a document node is `<xsl:copy-of select="."/>` (XSLT
+                // 3.0 §6.7.4). When capturing into a sequence (as="node()*" etc.), materialise
+                // a real document node carrying the SOURCE document's base URI so base-uri() of
+                // the copy reports the source URI — not the fragmented RTFs the serialize path
+                // produced. (fn/base-uri 053: deep-copy-doc2.) Direct-output / streaming keep the
+                // existing child-recursion dispatch (a doc node serializes as its children), as
+                // does the untyped-RTF flip (its namespace-inheritance machinery must run unchanged).
+                if (!_isStreamingExecution && !_untypedRtfFlipActive
+                    && _sequenceAccumulator != null && _nodeStore != null)
+                    await BuildBuiltInCopyDocNodeAsync(builtinDeepDoc, mode, withParams).ConfigureAwait(false);
+                else if (!_isStreamingExecution)
                     await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 break;
             case XdmElement elem:
+                // Built-in deep-copy of an element is `<xsl:copy-of select="."/>`. When
+                // capturing into a sequence, clone the subtree as a node-model copy and stamp
+                // CopySourceBaseUri from the source's computed base URI (mirroring the xsl:copy-of
+                // accumulator path) so base-uri() of the copy reports the source base. Serializing
+                // to the sink here would fragment into ResultTreeFragments under the item()* text
+                // collection and lose the base URI. The untyped-RTF flip keeps the serialize path
+                // (its namespace-inheritance machinery must run unchanged). (fn/base-uri 053:
+                // deep-copy-elem2.)
+                if (!_isStreamingExecution && !_untypedRtfFlipActive
+                    && _sequenceAccumulator != null && _nodeStore != null
+                    && _textContentDepth == 0)
+                {
+                    var deepCloneId = CloneSubtreeDeep(elem, null, copyNamespaces: true);
+                    if (_nodeStore.GetNode(deepCloneId) is XdmElement deepClone)
+                    {
+                        deepClone.CopySourceBaseUri ??= ComputeSourceBaseUri(elem);
+                        AppendToSeqAccumulator(deepClone);
+                        break;
+                    }
+                }
                 SerializeElement(elem);
                 break;
             case XdmText text:
@@ -10420,6 +10459,103 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     WriteText(StringValueOf(node), false);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Materialises the built-in shallow-/deep-copy of a DOCUMENT node into the active sequence
+    /// accumulator as a real <see cref="XdmDocument"/> whose base URI is the SOURCE document's
+    /// base URI. The built-in rules for a document node are
+    /// <c>&lt;xsl:copy&gt;&lt;xsl:apply-templates mode="#current"/&gt;&lt;/xsl:copy&gt;</c>
+    /// (shallow-copy) and <c>&lt;xsl:copy-of select="."/&gt;</c> (deep-copy); in both the copied
+    /// node is a document node that preserves the source's base URI (dm:base-uri). The child
+    /// content is produced by dispatching apply-templates in the current mode (which for
+    /// deep-copy deep-copies each child, for shallow-copy applies the mode's rules), captured as
+    /// serialized text, and reparsed into the new document's children. Mirrors
+    /// <see cref="CreateDocumentAsync"/>'s doc-node build. (fn/base-uri 053:
+    /// shallow-copy-doc2 / deep-copy-doc2.)
+    /// </summary>
+    private async ValueTask BuildBuiltInCopyDocNodeAsync(XdmDocument sourceDoc, QName? mode, List<XsltWithParam> withParams)
+    {
+        var scope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+        var savedAccumulator = _sequenceAccumulator;
+        _sequenceAccumulator = null;
+        var savedTextContentDepth = _textContentDepth;
+        var savedCollectText = _collectTextAsSequenceItems;
+        var savedAttrStack = new List<StringBuilder>(_collectedAttributesStack);
+        _collectedAttributesStack.Clear();
+        // Force a clean node-serialization context: the enclosing item()* body sets
+        // _collectTextAsSequenceItems, which would fragment the copied child markup.
+        _textContentDepth = 0;
+        _collectTextAsSequenceItems = false;
+        _documentNodeDepth++;
+        try
+        {
+            await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+        }
+        finally
+        {
+            _documentNodeDepth--;
+            _sequenceAccumulator = savedAccumulator;
+            _textContentDepth = savedTextContentDepth;
+            _collectTextAsSequenceItems = savedCollectText;
+            _collectedAttributesStack.Clear();
+            foreach (var sb in savedAttrStack)
+                _collectedAttributesStack.Push(sb);
+        }
+
+        var content = scope.GetWritten();
+        scope.Dispose();
+
+        var docId = _nodeStore!.NextId();
+        var children = new List<NodeId>();
+        NodeId docElemId = NodeId.None;
+        if (content.Length > 0)
+        {
+            try
+            {
+                var settings = new System.Xml.XmlReaderSettings
+                {
+                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                    IgnoreWhitespace = false,
+                    IgnoreComments = false,
+                    IgnoreProcessingInstructions = false,
+                };
+                using var stringReader = new System.IO.StringReader($"<_seq_root_>{content}</_seq_root_>");
+                using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+                var parsedChildren = new List<object?>();
+                ReadAsBodyChunkChildren(reader, parsedChildren);
+                foreach (var item in parsedChildren)
+                {
+                    if (item is XdmNode cn)
+                    {
+                        cn.Parent = docId;
+                        children.Add(cn.Id);
+                        if (cn is XdmElement && docElemId == NodeId.None)
+                            docElemId = cn.Id;
+                    }
+                }
+            }
+            catch (System.Xml.XmlException)
+            {
+                // Fall through to an empty document node (base-uri still preserved).
+                children.Clear();
+                docElemId = NodeId.None;
+            }
+        }
+        string? docElemLocalName = docElemId != NodeId.None
+            ? (_nodeStore.GetNode(docElemId) as XdmElement)?.LocalName : null;
+        var docNode = new XdmDocument
+        {
+            Id = docId,
+            Document = new DocumentId(1),
+            Parent = NodeId.None,
+            DocumentElement = docElemId,
+            Children = children,
+            DocumentElementLocalName = docElemLocalName,
+            BaseUri = sourceDoc.BaseUri,
+        };
+        _nodeStore.Register(docNode);
+        AppendToSeqAccumulator(docNode);
     }
 
     private void SerializeElement(XdmElement elem)
@@ -15022,8 +15158,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         switch (node)
         {
-            case XdmDocument:
-                // Copy of document node: create a new document node (XSLT 3.0 §11.9.1)
+            case XdmDocument srcCopyDoc:
+                // Copy of document node: create a new document node (XSLT 3.0 §11.9.1).
+                // The copy preserves the SOURCE document's base URI (dm:base-uri): stamp it
+                // on the new doc node below so base-uri() of the copy — and of any content
+                // placed inside it, which inherits the doc node's base — reports the source
+                // document URI, not the construction (stylesheet) base the sequence-materialize
+                // path would otherwise apply to an unstamped orphan doc node. (fn/base-uri 053:
+                // shallow-doc / shallow-doc-deeper.)
                 if (_sequenceAccumulator != null && _nodeStore != null && instruction.Content != null)
                 {
                     // Create a proper XDM document node in sequence accumulator mode
@@ -15092,7 +15234,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                 Parent = NodeId.None,
                                 DocumentElement = docElemId2,
                                 Children = children2,
-                                DocumentElementLocalName = docElemLocalName2
+                                DocumentElementLocalName = docElemLocalName2,
+                                BaseUri = srcCopyDoc.BaseUri,
                             };
                             _nodeStore.Register(docNode2);
                             AppendToSeqAccumulator(docNode2);
@@ -15111,7 +15254,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             Document = new DocumentId(1),
                             Parent = NodeId.None,
                             DocumentElement = NodeId.None,
-                            Children = new List<NodeId>()
+                            Children = new List<NodeId>(),
+                            BaseUri = srcCopyDoc.BaseUri,
                         };
                         _nodeStore.Register(docNode2);
                         AppendToSeqAccumulator(docNode2);
@@ -16392,7 +16536,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             Parent = NodeId.None,
             DocumentElement = newDocElem,
             Children = newChildren,
-            DocumentElementLocalName = docElemLocalName
+            DocumentElementLocalName = docElemLocalName,
+            // A deep copy (xsl:copy-of) of a document node preserves the source document's
+            // base URI (dm:base-uri). Without this the materialize path stamps the orphan
+            // copy with the construction (stylesheet) base. (fn/base-uri 053: deep-doc.)
+            BaseUri = original.BaseUri,
         };
         _nodeStore.Register(newDoc);
         return newDoc;

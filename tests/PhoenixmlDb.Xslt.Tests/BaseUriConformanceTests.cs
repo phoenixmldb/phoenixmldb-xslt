@@ -75,4 +75,44 @@ public class BaseUriConformanceTests
         result.Should().Contain("<out>d://tests/</out>");
         result.Should().NotContain("file:///");
     }
+
+    // base-uri-053 (Cluster C): base URI of DOCUMENT-node copies must equal the SOURCE
+    // document's base URI across every copy path — xsl:copy (shallow), xsl:copy-of (deep),
+    // and the built-in shallow-copy / deep-copy template rules via apply-templates. The
+    // built-in DEEP-copy of an ELEMENT must likewise preserve the source element's base URI.
+    // Prior bug: shallow/deep xsl:copy of a doc node reported the STYLESHEET URI (the
+    // construction base), and the built-in-copy-via-apply-templates paths reported EMPTY.
+    [Fact]
+    public async Task BaseUri053_document_node_copies_preserve_source_base_uri()
+    {
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <t:mode name="shallow-doc" on-no-match="shallow-copy"/>
+              <t:template match="/*" mode="shallow-doc"/>
+              <t:mode name="deep" on-no-match="deep-copy"/>
+              <t:template match="/">
+                <t:variable name="d" select="."/>
+                <t:variable name="shallow" as="item()*"><t:copy select="$d"><z/></t:copy></t:variable>
+                <t:variable name="deep" as="item()*"><t:copy-of select="$d"/></t:variable>
+                <t:variable name="binShallow" as="item()*"><t:apply-templates select="$d" mode="shallow-doc"/></t:variable>
+                <t:variable name="binDeep" as="item()*"><t:apply-templates select="$d" mode="deep"/></t:variable>
+                <t:variable name="binDeepElem" as="item()*"><t:apply-templates select="$d/*" mode="deep"/></t:variable>
+                <out shallowDoc="{base-uri($shallow[1])}"
+                     shallowChild="{base-uri($shallow[1]/z)}"
+                     deepDoc="{base-uri($deep[1])}"
+                     builtinShallowDoc="{base-uri($binShallow[1])}"
+                     builtinDeepDoc="{base-uri($binDeep[1])}"
+                     builtinDeepElem="{base-uri($binDeepElem[1])}"/>
+              </t:template>
+            </t:transform>
+            """;
+        const string input = "<output><out>x</out></output>";
+        const string src = "file:///tmp/baseuri-test/base-uri-001.out";
+        var result = await RunAsync(ss, input,
+            stylesheetUri: "file:///tmp/baseuri-test/base-uri-053.xsl",
+            sourceUri: src);
+        result.Should().Be(
+            $"<out shallowDoc=\"{src}\" shallowChild=\"{src}\" deepDoc=\"{src}\" "
+            + $"builtinShallowDoc=\"{src}\" builtinDeepDoc=\"{src}\" builtinDeepElem=\"{src}\"/>");
+    }
 }
