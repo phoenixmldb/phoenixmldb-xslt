@@ -150,4 +150,62 @@ public class BaseUriConformanceTests
         // and the deep-copied document children directly — no materialized XdmDocument node.
         result.Should().Be("<out><foo xml:base=\"x\"/><r><a>hi</a></r></out>");
     }
+
+    // Review finding #2: a deep xsl:copy-of of a document node whose SOURCE has NO base URI
+    // (built by fn:parse-xml) must report the empty base URI on the copy (dm:base-uri = ()),
+    // NOT the construction (stylesheet) base. Before the fix the sequence-materialize re-stamp
+    // (AddAccItem) overwrote the copy's null base with the stylesheet URI.
+    [Fact]
+    public async Task CopyOf_of_base_uri_less_document_reports_empty_base_uri()
+    {
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <t:template match="/">
+                <t:variable name="d" select="parse-xml('&lt;r/&gt;')"/>
+                <t:variable name="c" as="item()*"><t:copy-of select="$d"/></t:variable>
+                <out>[<t:value-of select="base-uri($c[1])"/>]count=<t:value-of select="count($c)"/> doc=<t:value-of select="$c[1] instance of document-node()"/></out>
+              </t:template>
+            </t:transform>
+            """;
+        var result = await RunAsync(ss, "<x/>",
+            stylesheetUri: "http://ss/mod.xsl", sourceUri: "http://ss/in.xml");
+        result.Should().Be("<out>[]count=1 doc=true</out>");
+    }
+
+    // Regression pin (must NOT change with the fix above): a genuinely-constructed LRE, which
+    // never passes through the doc-copy sites, still receives the construction (stylesheet) base.
+    [Fact]
+    public async Task Constructed_LRE_still_gets_construction_base_uri()
+    {
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <t:template match="/">
+                <t:variable name="c" as="item()*"><foo/></t:variable>
+                <out>[<t:value-of select="base-uri($c[1])"/>]</out>
+              </t:template>
+            </t:transform>
+            """;
+        var result = await RunAsync(ss, "<x/>",
+            stylesheetUri: "http://ss/mod.xsl", sourceUri: "http://ss/in.xml");
+        result.Should().Be("<out>[http://ss/mod.xsl]</out>");
+    }
+
+    // Regression pin: a genuinely-constructed document node (xsl:document) still receives the
+    // construction (stylesheet) base — the sentinel is only stamped on COPIES of base-uri-less
+    // source docs, never on constructed doc nodes.
+    [Fact]
+    public async Task Constructed_document_node_still_gets_construction_base_uri()
+    {
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <t:template match="/">
+                <t:variable name="c" as="item()*"><t:document><foo/></t:document></t:variable>
+                <out>[<t:value-of select="base-uri($c[1])"/>]doc=<t:value-of select="$c[1] instance of document-node()"/></out>
+              </t:template>
+            </t:transform>
+            """;
+        var result = await RunAsync(ss, "<x/>",
+            stylesheetUri: "http://ss/mod.xsl", sourceUri: "http://ss/in.xml");
+        result.Should().Be("<out>[http://ss/mod.xsl]doc=true</out>");
+    }
 }

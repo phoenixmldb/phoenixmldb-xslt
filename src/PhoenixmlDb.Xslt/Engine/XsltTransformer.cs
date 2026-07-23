@@ -5864,6 +5864,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     internal XsltTransformEngine? Owner { get; set; }
 
+    /// <summary>
+    /// Sentinel stamped on <see cref="XdmNode.CopySourceBaseUri"/> of a COPIED DOCUMENT node
+    /// whose source document had NO base URI (dm:base-uri = ()). Its sole purpose is to mark
+    /// the copy as "base-URI-less by preservation, not by omission" so the sequence-materialize
+    /// re-stamp in <c>AddAccItem</c> (guarded on <c>CopySourceBaseUri == null</c>) does NOT
+    /// overwrite the copy's null base with the construction (stylesheet) base — a genuinely
+    /// constructed document/LRE, which never passes through the doc-copy sites, still gets the
+    /// construction base. The VALUE is never read as a base URI: <see cref="XsltTransformEngine"/>'s
+    /// base-uri computation returns <c>doc.BaseUri</c> (null → ()) for document nodes and only
+    /// consults <c>CopySourceBaseUri</c> for ELEMENT nodes, and this sentinel is only ever set on
+    /// XdmDocument copies (never propagated to element children). See fn/base-uri review finding #2.
+    /// </summary>
+    private const string DocCopyNullSourceBaseSentinel = "copy-of-base-uri-less-document";
+
     internal readonly XsltStylesheet _stylesheet;
     private readonly TemplateIndex _templateIndex;
     private readonly Stack<Scope> _scopes = new();
@@ -10568,6 +10582,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             Children = children,
             DocumentElementLocalName = docElemLocalName,
             BaseUri = sourceDoc.BaseUri,
+            // Base-URI-less source: mark the copy so the AddAccItem re-stamp doesn't apply
+            // the construction base to the preserved null base (dm:base-uri = ()).
+            CopySourceBaseUri = sourceDoc.BaseUri == null ? DocCopyNullSourceBaseSentinel : null,
         };
         _nodeStore.Register(docNode);
         AppendToSeqAccumulator(docNode);
@@ -15251,6 +15268,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                 Children = children2,
                                 DocumentElementLocalName = docElemLocalName2,
                                 BaseUri = srcCopyDoc.BaseUri,
+                                CopySourceBaseUri = srcCopyDoc.BaseUri == null ? DocCopyNullSourceBaseSentinel : null,
                             };
                             _nodeStore.Register(docNode2);
                             AppendToSeqAccumulator(docNode2);
@@ -15271,6 +15289,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             DocumentElement = NodeId.None,
                             Children = new List<NodeId>(),
                             BaseUri = srcCopyDoc.BaseUri,
+                            CopySourceBaseUri = srcCopyDoc.BaseUri == null ? DocCopyNullSourceBaseSentinel : null,
                         };
                         _nodeStore.Register(docNode2);
                         AppendToSeqAccumulator(docNode2);
@@ -16556,6 +16575,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // base URI (dm:base-uri). Without this the materialize path stamps the orphan
             // copy with the construction (stylesheet) base. (fn/base-uri 053: deep-doc.)
             BaseUri = original.BaseUri,
+            // When the source doc had NO base URI, mark the copy so AddAccItem's re-stamp
+            // (guarded on CopySourceBaseUri == null) leaves its null base intact → base-uri() = ().
+            CopySourceBaseUri = original.BaseUri == null ? DocCopyNullSourceBaseSentinel : null,
         };
         _nodeStore.Register(newDoc);
         return newDoc;
