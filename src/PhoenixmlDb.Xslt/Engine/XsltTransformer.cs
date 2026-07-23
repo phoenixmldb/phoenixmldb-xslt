@@ -6063,6 +6063,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     private AsBodyCapture? _currentAsBodyCapture;
 
+    /// <summary>
+    /// True when execution is DIRECTLY inside a typed `as="item()*"`/`node()*` (etc.) body
+    /// whose capture accumulator is the live <c>_sequenceAccumulator</c> — the context that
+    /// base-uri-053's doc-node / element deep-copy builders must engage in (copy results append
+    /// into that typed sequence and are delivered as node items). It is FALSE for an untyped-RTF
+    /// body — <em>whether flip-active or blocked</em> — because that seam installs its OWN fresh
+    /// <c>_sequenceAccumulator</c> (so a leaked outer capture no longer reference-matches) and
+    /// never installs a capture at top level; those bodies must keep the legacy serialize-reparse
+    /// dispatch. This is the correct signal to gate the new builders on: <c>_untypedRtfFlipActive</c>
+    /// is a flip-STATE flag that is also false in a BLOCKED untyped-RTF body, so it would wrongly
+    /// let the new builders run there. Mirrors the <see cref="AppendToSeqAccumulator"/> guard.
+    /// </summary>
+    private bool InTypedAsBodyAccumulator =>
+        _currentAsBodyCapture is { } cap && ReferenceEquals(_sequenceAccumulator, cap.Accumulator);
+
     private int _textOutputModeDepth; // >0 when inside method="text" result-document; text from xsl:sequence/value-of gets sentinel-escaped to protect from StripXmlMarkup
     private int _insideXslEvaluateDepth; // >0 when inside xsl:evaluate; XSLT-specific functions raise XTDE3160
     private int _templateDepth; // Nesting depth for trace output
@@ -9528,9 +9543,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // URI, so base-uri() of the copy reports the source URI (the serialize dispatch
                 // produced no doc node at all → empty). (fn/base-uri 053: shallow-copy-doc2.)
                 // Direct-output / streaming keep the existing child-recursion dispatch, as does
-                // the untyped-RTF flip (whose namespace-inheritance machinery must run unchanged).
-                if (!_isStreamingExecution && !_untypedRtfFlipActive
-                    && _sequenceAccumulator != null && _nodeStore != null)
+                // any untyped-RTF body (flip-active OR blocked): only a typed as-body sequence
+                // accumulator (InTypedAsBodyAccumulator) delivers the copy as a node item.
+                if (!_isStreamingExecution && InTypedAsBodyAccumulator && _nodeStore != null)
                     await BuildBuiltInCopyDocNodeAsync(builtinShallowDoc, mode, withParams).ConfigureAwait(false);
                 else if (!_isStreamingExecution)
                     await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
@@ -10368,9 +10383,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // the copy reports the source URI — not the fragmented RTFs the serialize path
                 // produced. (fn/base-uri 053: deep-copy-doc2.) Direct-output / streaming keep the
                 // existing child-recursion dispatch (a doc node serializes as its children), as
-                // does the untyped-RTF flip (its namespace-inheritance machinery must run unchanged).
-                if (!_isStreamingExecution && !_untypedRtfFlipActive
-                    && _sequenceAccumulator != null && _nodeStore != null)
+                // does any untyped-RTF body (flip-active OR blocked): only a typed as-body
+                // sequence accumulator (InTypedAsBodyAccumulator) delivers the copy as a node item.
+                if (!_isStreamingExecution && InTypedAsBodyAccumulator && _nodeStore != null)
                     await BuildBuiltInCopyDocNodeAsync(builtinDeepDoc, mode, withParams).ConfigureAwait(false);
                 else if (!_isStreamingExecution)
                     await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
@@ -10381,11 +10396,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // CopySourceBaseUri from the source's computed base URI (mirroring the xsl:copy-of
                 // accumulator path) so base-uri() of the copy reports the source base. Serializing
                 // to the sink here would fragment into ResultTreeFragments under the item()* text
-                // collection and lose the base URI. The untyped-RTF flip keeps the serialize path
-                // (its namespace-inheritance machinery must run unchanged). (fn/base-uri 053:
+                // collection and lose the base URI. Any untyped-RTF body (flip-active OR blocked)
+                // keeps the serialize path; only a typed as-body sequence accumulator
+                // (InTypedAsBodyAccumulator) takes the node-clone branch. (fn/base-uri 053:
                 // deep-copy-elem2.)
-                if (!_isStreamingExecution && !_untypedRtfFlipActive
-                    && _sequenceAccumulator != null && _nodeStore != null
+                if (!_isStreamingExecution && InTypedAsBodyAccumulator && _nodeStore != null
                     && _textContentDepth == 0)
                 {
                     var deepCloneId = CloneSubtreeDeep(elem, null, copyNamespaces: true);

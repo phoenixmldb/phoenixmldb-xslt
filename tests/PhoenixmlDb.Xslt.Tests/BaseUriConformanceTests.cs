@@ -115,4 +115,39 @@ public class BaseUriConformanceTests
             $"<out shallowDoc=\"{src}\" shallowChild=\"{src}\" deepDoc=\"{src}\" "
             + $"builtinShallowDoc=\"{src}\" builtinDeepDoc=\"{src}\" builtinDeepElem=\"{src}\"/>");
     }
+
+    // Guard for base-uri-053 review #1b: the doc-node/element deep-copy builders added for
+    // base-uri-053 must engage ONLY inside a typed as-body sequence accumulator, NOT inside an
+    // untyped-RTF body that the UntypedRtfFlipBlockScanner BLOCKED (literal xml:base /
+    // apply-imports / next-match / call-template). A blocked body still installs a non-null
+    // _sequenceAccumulator while leaving _untypedRtfFlipActive FALSE, so the original
+    // `!_untypedRtfFlipActive` gate wrongly ran the new builders there and switched the
+    // construction path (build XdmDocument → drain re-serialize) — a path with no byte-parity
+    // coverage. Retargeting the gate to the positive InTypedAsBodyAccumulator signal keeps such a
+    // blocked body on the UNCHANGED legacy child-recursion dispatch. Here the untyped $v is
+    // blocked by the literal `xml:base` on <foo/> and contains a built-in DEEP-COPY of a document
+    // node ($d, mode="deep"); the serialized RTF must be exactly the legacy serialize-of-children
+    // output. (This same output is what the pre-053 engine produced, since the fixed gate routes
+    // the doc-node copy back through the identical ApplyTemplatesAsync child-recursion dispatch.)
+    [Fact]
+    public async Task BaseUri053Guard_blocked_untyped_rtf_docnode_copy_takes_legacy_dispatch()
+    {
+        const string ss = """
+            <t:transform xmlns:t="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <t:mode name="deep" on-no-match="deep-copy"/>
+              <t:template match="/">
+                <t:variable name="d" select="."/>
+                <t:variable name="v"><foo xml:base="x"/><t:apply-templates select="$d" mode="deep"/></t:variable>
+                <out><t:copy-of select="$v"/></out>
+              </t:template>
+            </t:transform>
+            """;
+        const string input = "<r><a>hi</a></r>";
+        var result = await RunAsync(ss, input,
+            stylesheetUri: "file:///tmp/baseuri-test/base-uri-053-guard.xsl",
+            sourceUri: "file:///tmp/baseuri-test/in.xml");
+        // Legacy serialize-of-children dispatch: the blocked untyped body serializes the LRE
+        // and the deep-copied document children directly — no materialized XdmDocument node.
+        result.Should().Be("<out><foo xml:base=\"x\"/><r><a>hi</a></r></out>");
+    }
 }
