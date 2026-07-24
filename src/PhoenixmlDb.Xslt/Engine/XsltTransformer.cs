@@ -4172,13 +4172,21 @@ public sealed class XsltTransformEngine
                 ?? throw new XsltException(
                     "ExpandXInclude requires a source base URI. Provide SourceDocumentUri "
                     + "(XsltTransformer.SetSourceDocumentUri) so relative xi:include hrefs resolve.");
-            PhoenixmlDb.Core.Xml.XIncludeProcessor.Expand(doc, xiBaseUri,
-                new PhoenixmlDb.Core.Xml.XIncludeOptions
-                {
-                    Enabled = true,
-                    AllowRemote = options.AllowRemoteXInclude,
-                    Resolver = options.XIncludeResolver,
-                });
+            try
+            {
+                PhoenixmlDb.Core.Xml.XIncludeProcessor.Expand(doc, xiBaseUri,
+                    new PhoenixmlDb.Core.Xml.XIncludeOptions
+                    {
+                        Enabled = true,
+                        AllowRemote = options.AllowRemoteXInclude,
+                        Resolver = options.XIncludeResolver,
+                    });
+            }
+            catch (PhoenixmlDb.Core.Xml.XIncludeException xie)
+            {
+                throw new XsltException(
+                    $"XInclude expansion of the source document failed: {xie.Message}", xie);
+            }
         }
 
         var nodeStore = new XdmInMemoryStore();
