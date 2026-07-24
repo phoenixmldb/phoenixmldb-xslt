@@ -97,6 +97,9 @@ public sealed class XsltTransformer
     private string? _initialFunctionNamespace;
     private readonly List<object?> _initialFunctionArgs = [];
     private Uri? _sourceDocumentUri;
+    private bool _expandXInclude;
+    private bool _allowRemoteXInclude;
+    private PhoenixmlDb.Core.Xml.IXmlResourceResolver? _xIncludeResolver;
     private string? _sourceSelect;
     private string? _initialModeSelect;
     private readonly Dictionary<string, List<string>> _collections = new();
@@ -552,6 +555,32 @@ public sealed class XsltTransformer
     public void SetSourceDocumentUri(Uri uri)
     {
         _sourceDocumentUri = uri;
+    }
+
+    /// <summary>
+    /// Enables XInclude 1.0 expansion of the principal source document. When on, any
+    /// <c>xi:include</c> (<c>parse="xml"</c>) elements in the input passed to
+    /// <see cref="TransformAsync(string?, CancellationToken)"/> are expanded before the
+    /// document is transformed. Off by default.
+    /// </summary>
+    /// <param name="allowRemote">
+    /// When <see langword="true"/>, remote (<c>http:</c>/<c>https:</c>) include targets may be
+    /// fetched. Defaults to <see langword="false"/> (only <c>file:</c>/relative targets resolve).
+    /// </param>
+    /// <param name="resolver">
+    /// Optional host resolver for include targets; when <see langword="null"/> a built-in
+    /// local-file resolver honoring <paramref name="allowRemote"/> is used.
+    /// </param>
+    /// <remarks>
+    /// A source base URI is required so relative <c>href</c>s resolve — set it via
+    /// <see cref="SetSourceDocumentUri(Uri)"/> before transforming.
+    /// </remarks>
+    public void EnableXInclude(bool allowRemote = false,
+        PhoenixmlDb.Core.Xml.IXmlResourceResolver? resolver = null)
+    {
+        _expandXInclude = true;
+        _allowRemoteXInclude = allowRemote;
+        _xIncludeResolver = resolver;
     }
 
     /// <summary>
@@ -1037,6 +1066,9 @@ public sealed class XsltTransformer
             InitialTunnelParameters = _initialTunnelParams,
             CancellationToken = ct,
             SourceDocumentUri = _sourceDocumentUri,
+            ExpandXInclude = _expandXInclude,
+            AllowRemoteXInclude = _allowRemoteXInclude,
+            XIncludeResolver = _xIncludeResolver,
             HasSourceDocument = hasSource,
             SourceSelect = _sourceSelect,
             InitialModeSelect = _initialModeSelect,

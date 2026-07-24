@@ -4139,6 +4139,9 @@ public sealed class XsltTransformEngine
         var initialModeKey = options?.InitialMode ?? new QName(NamespaceId.None, "");
         if (_stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable
             && !entryIsInitialTemplate
+            // XInclude expansion needs the whole input buffered into a DOM before ConvertToXdm;
+            // the streaming forward pass bypasses that, so fall through to the buffered path.
+            && options?.ExpandXInclude != true
             && !DocNodeTemplateRequiresWholeInputBuffer(options))
         {
             return await TransformStreamingAsync(xmlSource, options).ConfigureAwait(false);
@@ -4158,6 +4161,24 @@ public sealed class XsltTransformEngine
         else
         {
             doc.LoadXml(xmlSource);
+        }
+
+        // XInclude 1.0 (opt-in): expand xi:include in the principal source before it becomes
+        // XDM. A source base URI is required so relative hrefs resolve; the fixup stamps
+        // xml:base on included content so base-uri() reflects the origin file (W3C base-uri-052).
+        if (options?.ExpandXInclude == true)
+        {
+            var xiBaseUri = options.SourceDocumentUri ?? options.BaseUri
+                ?? throw new XsltException(
+                    "ExpandXInclude requires a source base URI. Provide SourceDocumentUri "
+                    + "(XsltTransformer.SetSourceDocumentUri) so relative xi:include hrefs resolve.");
+            PhoenixmlDb.Core.Xml.XIncludeProcessor.Expand(doc, xiBaseUri,
+                new PhoenixmlDb.Core.Xml.XIncludeOptions
+                {
+                    Enabled = true,
+                    AllowRemote = options.AllowRemoteXInclude,
+                    Resolver = options.XIncludeResolver,
+                });
         }
 
         var nodeStore = new XdmInMemoryStore();
@@ -5410,6 +5431,27 @@ public sealed class XsltTransformOptions
     /// Document URI for the source document (used by fn:base-uri, fn:document-uri).
     /// </summary>
     public Uri? SourceDocumentUri { get; init; }
+
+    /// <summary>
+    /// When <c>true</c>, <c>xi:include</c> elements in the principal source document are
+    /// expanded (XInclude 1.0, <c>parse="xml"</c>) before the document is converted to XDM
+    /// and transformed. Off by default. Expansion requires a source base URI — supply it via
+    /// <see cref="SourceDocumentUri"/> (or <see cref="BaseUri"/>) so relative <c>href</c>s resolve.
+    /// </summary>
+    public bool ExpandXInclude { get; init; }
+
+    /// <summary>
+    /// When <see cref="ExpandXInclude"/> is on, controls whether remote (<c>http:</c>/<c>https:</c>)
+    /// XInclude targets may be fetched. Off by default — only <c>file:</c>/relative targets resolve.
+    /// </summary>
+    public bool AllowRemoteXInclude { get; init; }
+
+    /// <summary>
+    /// Optional host-supplied resolver for XInclude targets. When null, a
+    /// <see cref="PhoenixmlDb.Core.Xml.LocalFileResourceResolver"/> honoring
+    /// <see cref="AllowRemoteXInclude"/> is used.
+    /// </summary>
+    public PhoenixmlDb.Core.Xml.IXmlResourceResolver? XIncludeResolver { get; init; }
 
     /// <summary>
     /// Message listener for xsl:message output. Receives (message, terminate).
