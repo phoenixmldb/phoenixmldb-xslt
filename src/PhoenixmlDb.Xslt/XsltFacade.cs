@@ -209,6 +209,41 @@ public sealed class XsltTransformer
     public PhoenixmlDb.XQuery.ISchemaProvider? SchemaProvider { get; set; }
         = new PhoenixmlDb.XQuery.XsdSchemaProvider();
 
+    // Upper bound on stylesheet element-nesting, a little above StylesheetParser.MaxNestingDepth
+    // (the binding limit the instruction/executor passes enforce) so it never rejects a stylesheet
+    // those passes would accept, while keeping every recursive pass shallow enough to be stack-safe.
+    private const int MaxParseNestingDepth = StylesheetParser.MaxNestingDepth + 10;
+
+    // Iteratively (via XmlReader.Depth — no recursion, so this scan cannot itself overflow) reject a
+    // stylesheet nested past MaxParseNestingDepth with a catchable error, before any recursive pass
+    // touches it. Uses the same DTD/entity posture as the real parse so it never rejects otherwise-
+    // valid input; a malformed stylesheet surfaces its normal error from the real parser below.
+    private static void GuardStylesheetNestingDepth(string stylesheetXml)
+    {
+        var settings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Parse,
+            MaxCharactersFromEntities = 1_000_000,
+            XmlResolver = null,
+        };
+        try
+        {
+            using var reader = XmlReader.Create(new StringReader(stylesheetXml), settings);
+            while (reader.Read())
+            {
+                if (reader.NodeType == XmlNodeType.Element && reader.Depth > MaxParseNestingDepth)
+                {
+                    throw new XsltException(
+                        $"Stylesheet nesting depth exceeds the maximum of {MaxParseNestingDepth}.");
+                }
+            }
+        }
+        catch (XmlException)
+        {
+            // Not our concern here — let the real parser produce its normal diagnostic.
+        }
+    }
+
     /// <summary>
     /// Compiles and loads an XSLT stylesheet from its XML source text.
     /// </summary>
@@ -246,6 +281,12 @@ public sealed class XsltTransformer
         PackageVersionResolution packageVersionResolution = PackageVersionResolution.Highest)
     {
         ArgumentNullException.ThrowIfNull(stylesheetXml);
+
+        // Reject a pathologically deep stylesheet up front, before ANY pass touches it: the HTTP
+        // import walk, XDocument parse, instruction-tree build, streamability classification and the
+        // executor all recurse per element-nesting level and would StackOverflow the host (an
+        // uncatchable crash) on untrusted deep input. One iterative pre-scan here bounds them all.
+        GuardStylesheetNestingDepth(stylesheetXml);
 
         // Pre-fetch HTTP-resolved xsl:import / xsl:include hrefs into the preload cache
         // BEFORE invoking the synchronous parser. The parser's import resolver consults

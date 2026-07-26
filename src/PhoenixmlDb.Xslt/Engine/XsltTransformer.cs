@@ -4155,7 +4155,7 @@ public sealed class XsltTransformEngine
         if (options?.SourceDocumentUri != null)
         {
             using var sr = new System.IO.StringReader(xmlSource);
-            using var reader = XmlReader.Create(sr, new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse }, options.SourceDocumentUri.AbsoluteUri);
+            using var reader = XmlReader.Create(sr, new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, MaxCharactersFromEntities = 1_000_000 }, options.SourceDocumentUri.AbsoluteUri);
             doc.Load(reader);
         }
         else
@@ -4290,7 +4290,7 @@ public sealed class XsltTransformEngine
     {
         _runtimeCharacterMaps.Clear();
         using var stringReader = new System.IO.StringReader(xmlSource);
-        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = true };
+        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = true, MaxCharactersFromEntities = 1_000_000 };
         using var xmlReader = XmlReader.Create(stringReader, settings,
             options?.SourceDocumentUri?.AbsoluteUri ?? "");
         var sb = new StringBuilder();
@@ -20042,7 +20042,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var readerSettings = new XmlReaderSettings
                 {
                     DtdProcessing = DtdProcessing.Parse,
-                    Async = true
+                    Async = true,
+                    MaxCharactersFromEntities = 1_000_000
                 };
                 using var xmlReader = XmlReader.Create(fileStream, readerSettings, resolvedUri.AbsoluteUri);
 

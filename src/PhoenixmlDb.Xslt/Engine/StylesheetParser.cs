@@ -5477,6 +5477,43 @@ public sealed class StylesheetParser
 
     private XsltSequenceConstructor ParseSequenceConstructor(XElement element)
     {
+        // Bound the nesting depth of the constructed instruction tree. ParseInstruction <->
+        // ParseSequenceConstructor recurse one level per body, and — critically — every LATER pass
+        // that walks the instruction tree (streamability classification, the executor at transform
+        // time) recurses to the same depth. Guarding only the parser leaves those passes to
+        // overflow the native stack on a pathologically deep (untrusted) stylesheet — an uncatchable
+        // StackOverflowException that crashes the host. Capping the tree depth here bounds them all
+        // at once; a stylesheet nested past the cap is rejected with a catchable compile error.
+        if (++_sequenceConstructorDepth > MaxNestingDepth)
+        {
+            _sequenceConstructorDepth--;
+            throw new XsltException(
+                $"Stylesheet nesting depth exceeds the maximum of {MaxNestingDepth}.",
+                GetSourceLocation(element));
+        }
+
+        try
+        {
+            return ParseSequenceConstructorCore(element);
+        }
+        finally
+        {
+            _sequenceConstructorDepth--;
+        }
+    }
+
+    // Deliberately conservative: real (human- or machine-authored) stylesheets nest only a handful
+    // of levels deep, while every recursive pass over the instruction tree — including the executor
+    // at transform time, whose heavy async frames are the limiting factor — must survive a tree at
+    // this depth on a normal ~1 MB thread stack. The executor was measured to transform a 50-deep
+    // tree safely but overflow well before 100; 30 is far above any legitimate stylesheet and holds
+    // a comfortable margin below that. (Raising the executor's own usable depth is a separate,
+    // larger hardening — a large-stack transform worker — tracked outside this cap.)
+    internal const int MaxNestingDepth = 30;
+    private int _sequenceConstructorDepth;
+
+    private XsltSequenceConstructor ParseSequenceConstructorCore(XElement element)
+    {
         var instructions = new List<XsltInstruction>();
         var expandText = IsExpandTextActive(element);
 
