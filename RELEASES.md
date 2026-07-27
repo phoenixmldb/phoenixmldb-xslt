@@ -1,6 +1,10 @@
 # Release History
 
-## Unreleased
+## 1.5.0 — 2026-07-27
+
+### Hardening (untrusted input)
+- **Stylesheet nesting-depth bound.** The stylesheet load path recurses per element-nesting level (XML build, instruction-tree parse, and the executor at transform time); a pathologically deep stylesheet is now rejected up front with a catchable `XsltException` rather than overflowing the native stack. Real stylesheets are unaffected.
+- **Internal-entity expansion cap on the source/`document()` parse paths.** The `parse="xml"` source, streaming, and `document()` readers now bound internal-entity expansion, matching the rest of the engine, so a billion-laughs input cannot exhaust memory.
 
 - **Opt-in XInclude expansion of the principal source document.** When enabled (`XsltTransformer.EnableXInclude(...)`), `<xi:include>` elements in the input document are expanded — via Core's `XIncludeProcessor` — before transformation, so `base-uri()` of nodes that exist only after inclusion reports the included file's origin URI (W3C `fn/base-uri` base-uri-052). `parse="xml"`, `parse="text"`, and `xi:fallback` recovery are all supported (via Core); XPointer is the only unsupported feature (a clear error is raised). Resolution is local-file-only by default (remote off unless explicitly allowed); a host may inject its own `IXmlResourceResolver`. Off by default — no behavior change unless enabled. Requires PhoenixmlDb.Core with `XIncludeProcessor`.
 - **A fatal XInclude expansion failure on the source document now surfaces as an `XsltException`** (message + cause preserved), consistent with other source-load failures, instead of escaping as a raw `XIncludeException`.
