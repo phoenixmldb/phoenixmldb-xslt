@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Grouping
+
+- **`current-group()` / `current-grouping-key()` are now absent inside a template called with `xsl:context-item use="absent"`.** These functions belong to the focus established by `xsl:for-each-group`; a template invoked with an absent context item has no focus, so per XSLT 3.0 §18.2 the current group and grouping key are unavailable there and the functions must raise XTDE1061 / XTDE1071. The engine leaked the caller's group instead, so a context-absent template called from within `xsl:for-each-group` saw the enclosing group rather than the dynamic error the stylesheet expects (`strm/si-fork` si-fork-113, si-fork-114). The two grouping pseudo-variables are now shadowed as absent on the `xsl:call-template` / `xsl:next-match` context-absent path; a normal call-template retains the focus and still sees the group. Scoped to the context-absent invocation path.
+
 ### Pattern matching
 
 - **A relative path pattern `A/B` no longer matches a free-standing element that has no parent.** Per XSLT 3.0 §5.5.3 a pattern `ITEM/*` matches an element only when its parent is an `ITEM`; the matcher's "child-or-top" fallback wrongly reported a match for any parentless element (a temporary-tree / constructed element with no ancestors) as soon as it matched the last step, so a grounded `$insertion` element routed through `apply-templates select="[…, $insertion]?*"` under a `deep-skip` mode was processed instead of skipped, leaking its content into the output. A parentless **element** now correctly fails a multi-step name pattern, while a parentless **attribute** (which in XDM always has an owner element, but may be materialised detached from it during a streaming pass — `match="w/@id"`) still matches optimistically. Absolute (`/…`), `//…`, and parenthesised patterns are unaffected. Closes `strm/sx-SquareArrayConstructor` sx-square-array-018/019/118, `strm/sx-CommaExpr` sx-comma-018/118, `strm/sx-ExceptExpr` sx-except-118, and `strm/sx-UnionExpr` sx-union-018/118.

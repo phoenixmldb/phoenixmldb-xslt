@@ -8879,6 +8879,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         SetVariable(new QName(NamespaceId.None, "current-merge-key"), null);
     }
 
+    /// <summary>
+    /// XSLT 3.0: when a called template makes the context item absent
+    /// (<c>xsl:context-item use="absent"</c>), the current group and current grouping key are
+    /// absent too, so <c>current-group()</c>/<c>current-grouping-key()</c> must raise
+    /// XTDE1061/XTDE1071 rather than leak the caller's group (si-fork-113/114). Shadows both
+    /// grouping pseudo-variables with null in the callee scope; the caller's group is restored
+    /// when that scope pops. Only called on the context-absent invocation path — a normal
+    /// call-template retains the focus and correctly keeps the current group visible.
+    /// </summary>
+    private void SuppressGroupingFocus()
+    {
+        SetVariable(new QName(NamespaceId.None, "current-group"), null);
+        SetVariable(new QName(NamespaceId.None, "current-grouping-key"), null);
+    }
+
     public override async ValueTask ApplyTemplatesAsync(
         XQueryExpression? select,
         QName? mode,
@@ -10920,7 +10935,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
             // If use="absent" or optional type mismatch, make context item absent
             if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
+            {
                 PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+                SuppressGroupingFocus();
+            }
 
             // Forward inherited tunnel parameters from parent scopes.
             // NOTE: Only store in TunnelParameters, NOT as variables.
@@ -11247,7 +11265,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 // If use="absent" or optional type mismatch, push absent focus
                 if (nextTemplate.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
+                {
                     PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+                    SuppressGroupingFocus();
+                }
 
                 // Propagate tunnel parameters from parent scopes
                 foreach (var scope in _scopes.Skip(1))
