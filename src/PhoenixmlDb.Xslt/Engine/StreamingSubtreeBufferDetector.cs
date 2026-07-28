@@ -265,17 +265,20 @@ internal static class StreamingSubtreeBufferDetector
                 return vo.Select != null
                     && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select)
                         || SelectNavigatesViaClimbingAxis(vo.Select)
+                        || SelectCopiesWholeContextItem(vo.Select)
                         || SelectReferencesContextAccumulator(vo.Select));
 
             case XsltCopyOf cof:
                 return SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select)
                     || SelectNavigatesViaClimbingAxis(cof.Select)
+                    || SelectCopiesWholeContextItem(cof.Select)
                     || SelectReferencesContextAccumulator(cof.Select);
 
             case XsltSequence sq:
                 return sq.Select != null
                     && (SelectAbsorbsInput(sq.Select) || SelectNavigatesViaUnstreamableOperator(sq.Select)
                         || SelectNavigatesViaClimbingAxis(sq.Select)
+                        || SelectCopiesWholeContextItem(sq.Select)
                         || SelectReferencesContextAccumulator(sq.Select));
 
             // xsl:variable binds a sequence captured from the stream. Its select / content is
@@ -287,6 +290,7 @@ internal static class StreamingSubtreeBufferDetector
                 return (var.Select != null
                         && (SelectAbsorbsInput(var.Select) || SelectNavigatesViaUnstreamableOperator(var.Select)
                             || SelectNavigatesViaClimbingAxis(var.Select)
+                            || SelectCopiesWholeContextItem(var.Select)
                             || SelectReferencesContextAccumulator(var.Select)))
                     || RequiresWholeInputBuffer(var.Content);
 
@@ -771,6 +775,43 @@ internal static class StreamingSubtreeBufferDetector
                 return false;
         }
     }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> is (or, after peeling a wrapping single-item
+    /// sequence / filter, resolves to) a <c>snapshot(.)</c> / <c>copy-of(.)</c> — or the
+    /// zero-argument <c>snapshot()</c> / <c>copy-of()</c>, which default to the context item
+    /// — whose argument is the BARE context item. At the <c>xsl:source-document</c> body /
+    /// <c>match="/"</c> document level the context item is the document node, so this copies
+    /// the WHOLE streamed input. There is no per-node streaming dispatch for a whole-document
+    /// copy: the select evaluates against the synthetic empty document node and silently
+    /// yields nothing (sf-copy-of-011 / sf-snapshot-0311 dropped the copied <c>BOOKLIST</c>,
+    /// emitting only the surrounding grounded <c>&lt;head/&gt;&lt;tail/&gt;</c>). Route to the
+    /// whole-input buffer so the copy runs against the real document root. This is deliberately
+    /// NARROW — only the bare context item qualifies; a <c>copy-of(downward/path)</c> stays on
+    /// the streaming Snapshot-watcher path (buffering a large input would time out). (#143)
+    /// </summary>
+    private static bool SelectCopiesWholeContextItem(XQueryExpression expr)
+    {
+        switch (expr)
+        {
+            case FilterExpression filt:
+                return SelectCopiesWholeContextItem(filt.Primary);
+            case SequenceExpression seq when seq.Items.Count == 1:
+                return SelectCopiesWholeContextItem(seq.Items[0]);
+            case FunctionCallExpression fc when IsSnapshotOrCopyOf(fc):
+                if (fc.Arguments.Count == 0) return true;
+                return fc.Arguments.Count == 1 && IsBareContextItem(fc.Arguments[0]);
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsBareContextItem(XQueryExpression expr) => expr switch
+    {
+        ContextItemExpression => true,
+        SequenceExpression seq when seq.Items.Count == 1 => IsBareContextItem(seq.Items[0]),
+        _ => false,
+    };
 
     private static bool IsClimbingAxis(Axis axis) => axis switch
     {
