@@ -15048,9 +15048,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             else if (result is List<object?> arrayItems)
             {
-                // XSLT 3.0: arrays in serialization contexts are expanded to their members
+                // XSLT/XPath 4.0: value-of atomizes its select. fn:data of an array recursively
+                // flattens ALL members into one atomic sequence, so a member that is itself a
+                // sequence (or a nested array) contributes each of its atoms individually — each
+                // separated by the value-of separator, NOT collapsed into one space-joined token
+                // per member. (sx-square-array 032-035.)
                 var sep = resolvedSeparator ?? " ";
-                value = MergeSimpleContent(arrayItems, sep);
+                var flat = new List<object?>();
+                FlattenArrayMembers(arrayItems, flat);
+                value = MergeSimpleContent(flat, sep);
             }
             else if (result is IDictionary<object, object?> or XQueryFunction)
             {
@@ -17593,6 +17599,37 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Step 3: Convert to strings and join with separator
         return string.Join(separator, merged.Select(StringValueOf));
+    }
+
+    /// <summary>
+    /// Recursively flattens an XDM array (a <see cref="List{T}"/> of <see cref="object"/>) and any
+    /// sub-sequences (<c>object?[]</c>) among its members into individual items, mirroring
+    /// <c>fn:data</c>'s recursive atomization of arrays (the result of atomizing an array is the
+    /// concatenation of atomizing each member). A nested array recurses; an empty member
+    /// (<c>null</c>) contributes nothing; atomic/node items are appended as-is (they are atomized
+    /// downstream by <see cref="MergeSimpleContent"/>). Used by <c>xsl:value-of</c> so an array
+    /// whose members are sequences joins every atom with the value-of separator rather than
+    /// string-valuing each member into one token. (sx-square-array 032-035.)
+    /// </summary>
+    private static void FlattenArrayMembers(IEnumerable<object?> items, List<object?> sink)
+    {
+        foreach (var item in items)
+        {
+            switch (item)
+            {
+                case null:
+                    break;
+                case List<object?> nestedArray:   // nested XDM array → recurse over its members
+                    FlattenArrayMembers(nestedArray, sink);
+                    break;
+                case object?[] subSequence:       // a member holding a multi-item sequence → spread
+                    FlattenArrayMembers(subSequence, sink);
+                    break;
+                default:
+                    sink.Add(item);
+                    break;
+            }
+        }
     }
 
     private void SerializeSequenceItems(System.Collections.IList items)

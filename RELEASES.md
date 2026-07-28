@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+### Arrays
+
+- **`xsl:value-of` now atomizes an array select by recursively flattening all members, so a member that is itself a sequence contributes each of its atoms separated by the value-of separator.** `fn:data` of an array is the concatenation of `fn:data` applied to each member, but `xsl:value-of` expanded the array only one level and string-valued each sequence-valued member into a single space-joined token — so `<xsl:value-of select="[('MHK','MMP'),('A','B')]" separator="|"/>` produced `MHK MMP|A B` instead of `MHK|MMP|A|B`. Array members (and any nested arrays / sub-sequences within them) are now flattened to their individual atoms before the separator join, matching `string-join(data($array), $sep)`. The change is scoped to the array branch of the value-of merge path; plain-sequence and node/text merging are unaffected (`strm/sx-SquareArrayConstructor` sx-square-array-032, -033, -034, -035, -135).
+
 ## 1.5.0 — 2026-07-27
 
 ### Hardening (untrusted input)
