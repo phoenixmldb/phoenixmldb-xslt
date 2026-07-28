@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Sorting
+
+- **`xsl:sort` with no `collation` and no `lang` now uses the Unicode codepoint collation (the default collation's default), not a locale-aware comparison.** Per XPath F&O §5.3.4 the default collation, absent a declared `default-collation`, is the codepoint collation, so uppercase (`A` = U+0041) sorts before lowercase (`a` = U+0061); the engine's fallback used `CompareOptions.None` on the invariant culture, giving an effectively case-insensitive order (`a B c Z` instead of `B Z a c`). The codepoint default is applied only when neither `lang` nor an explicit `collation` is present — a `lang`-qualified sort keeps its locale-aware comparison, and named collations (codepoint / html-ascii-case-insensitive / UCA / case-order upper-first/lower-first) are unchanged. Closes `strm/si-iterate` si-iterate-135; the existing `insn/sort` set is unaffected (78/80, no change).
+
 ### Grouping
 
 - **`current-group()` / `current-grouping-key()` are now absent inside a template called with `xsl:context-item use="absent"`.** These functions belong to the focus established by `xsl:for-each-group`; a template invoked with an absent context item has no focus, so per XSLT 3.0 §18.2 the current group and grouping key are unavailable there and the functions must raise XTDE1061 / XTDE1071. The engine leaked the caller's group instead, so a context-absent template called from within `xsl:for-each-group` saw the enclosing group rather than the dynamic error the stylesheet expects (`strm/si-fork` si-fork-113, si-fork-114). The two grouping pseudo-variables are now shadowed as absent on the `xsl:call-template` / `xsl:next-match` context-absent path; a normal call-template retains the focus and still sees the group. Scoped to the context-absent invocation path.

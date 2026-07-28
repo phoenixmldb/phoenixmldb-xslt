@@ -26438,6 +26438,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return -string.Compare(aStr, bStr, StringComparison.Ordinal);
         }
 
+        // With no collation and no lang, xsl:sort uses the default collation, whose default is the
+        // Unicode codepoint collation (XPath F&O §5.3.4) — uppercase (A=0x41) sorts before
+        // lowercase (a=0x61), not the locale-aware, effectively case-insensitive order. A lang or
+        // an (unknown) explicit collation keeps the locale-aware fallback.
+        if (string.IsNullOrEmpty(lang) && string.IsNullOrEmpty(collation))
+            return string.Compare(aStr, bStr, StringComparison.Ordinal);
+
         return string.Compare(aStr, bStr, culture, options);
     }
 #pragma warning restore CA1309
