@@ -732,10 +732,10 @@ public sealed class PathPattern : XsltPattern
             if (DisableChildOrTop)
                 return false;
 
-            // XSLT 3.0 §5.5.3: "child-or-top" matching — parentless nodes
-            // match A/B if they match B, regardless of A ancestor steps.
-            // BUT: absolute patterns (starting with /) require a document ancestor,
-            // so parentless nodes should NOT match /B or //B patterns.
+            // We have run out of ancestors while an ancestor step (Steps[stepIndex]) is still
+            // unmatched. Per XSLT 3.0 §5.5.3 a relative path pattern A/B matches N iff N matches B
+            // AND N's parent matches A — equivalently N is selected by root(N)/descendant-or-self::
+            // node()/A/B.
             var firstStep = Steps[0];
             if (firstStep.Axis == Axis.Self && firstStep.NodeTest is KindTest { Kind: XdmNodeKind.Document })
                 return false; // Absolute pattern — needs document root
@@ -749,7 +749,21 @@ public sealed class PathPattern : XsltPattern
                 try { return EvaluatePredicates(defStepTop, origNodeTop, context); }
                 finally { context.DescendantPositionAncestor = savedAncestorTop; }
             }
-            return true;
+
+            // The node has no reachable parent for the still-unmatched ancestor step. Two cases:
+            //  • An ELEMENT (or document) that is genuinely rooted here — a free-standing
+            //    constructed element / temporary-tree root. Its ancestors really do not exist, so
+            //    it does NOT match a multi-step pattern: <x/> passed to `match="ITEM/*"` must not
+            //    be selected (sx-square-array-018/019, sx-union-018).
+            //  • An ATTRIBUTE. In XDM an attribute always has an owner element, so a null parent
+            //    here means the owner was not threaded onto the node — e.g. a streaming pass that
+            //    materialises the attribute detached from its element (si-apply-templates-008,
+            //    `match="w/@id"`). The ancestor step cannot be verified, so match optimistically;
+            //    the streaming dispatch only offered this attribute because its owner was in scope.
+            // (currentNode is the still-unmatched node; an attribute only ever appears here as the
+            // original matched node — attributes are leaves, so the ancestor walk never climbs to
+            // one.)
+            return currentNode is XdmAttribute;
         }
 
         var parent = context.NodeResolver!(parentId.Value);
