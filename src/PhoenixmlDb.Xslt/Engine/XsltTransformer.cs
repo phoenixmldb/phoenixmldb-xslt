@@ -7288,6 +7288,25 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>The ambient operand usage (§19.6/§19.7) currently in effect at this point in the descent.</summary>
     internal Usage CurrentUsage => _posture.Current;
 
+    /// <summary>
+    /// Executes a streamed for-each body with the subscription's operand usage pushed for the
+    /// duration, so posture-driven serialization (e.g. document-node §5.7.1 transmission) can
+    /// consult <see cref="CurrentUsage"/>. Restores the prior usage on exit.
+    /// </summary>
+    internal async System.Threading.Tasks.ValueTask RunBodyWithPostureAsync(
+        Ast.XsltSequenceConstructor body, Usage usage)
+    {
+        var saved = _posture.Push(usage);
+        try
+        {
+            await body.ExecuteAsync(this).ConfigureAwait(false);
+        }
+        finally
+        {
+            _posture.Pop(saved);
+        }
+    }
+
     // §5.7.2 sequence normalization: when an explicit (non-absent) item-separator is in effect
     // on the TOP LEVEL of a result sequence (xsl:result-document / principal output content, not
     // inside any constructed element/attribute/text-content), a copy of the separator is inserted
@@ -18237,6 +18256,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var savedLogicalStart = _outputLogicalStart;
         _outputLogicalStart = _output.Length;
 
+        // XSLT 3.0 §5.7.1: a document node emitted into element/complex content transmits its
+        // children; the node itself is not an atomic value, so it neither takes a §5.7.2 separator
+        // from a preceding sibling document nor leaves a trailing atomic for the next one. Under
+        // streaming, the transmit-vs-absorb distinction was stamped on the for-each subscription at
+        // scan time (the fused variable+data() wrapper is gone by now) and threaded here via
+        // CurrentUsage. Transmission → reset the atomic run around the body so adjacent constructed
+        // documents concatenate (si-document-001/007/010); Absorption → leave the flag as the body
+        // set it so a downstream data() atomization keeps its separators (si-document-003).
+        var transmit = CurrentUsage == Usage.Transmission;
+        if (transmit)
+            _lastResultWasAtomic = false;
+
         _documentNodeDepth++;
         try
         {
@@ -18258,6 +18289,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // A non-empty document node is significant for where-populated tracking
             MarkContentProduced();
         }
+
+        // §5.7.1: a transmitted document node breaks the atomic run — the next sibling item does
+        // not separate from this document's trailing atomic content.
+        if (transmit)
+            _lastResultWasAtomic = false;
     }
 
     /// <summary>
@@ -20028,7 +20064,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // PrefixItems/SuffixItems drain only ever applies to a for-each
                     // subscription (Body always set); an SM-ctx subscription carries
                     // no prefix/suffix operands, so Body is non-null here.
-                    await sub.Body!.ExecuteAsync(this).ConfigureAwait(false);
+                    await RunBodyWithPostureAsync(sub.Body!, sub.OperandUsage).ConfigureAwait(false);
                 }
                 finally
                 {

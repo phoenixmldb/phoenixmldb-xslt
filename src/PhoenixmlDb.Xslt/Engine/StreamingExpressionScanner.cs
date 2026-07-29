@@ -1,6 +1,7 @@
 using PhoenixmlDb.Core;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.Xslt.Ast;
+using PhoenixmlDb.Xslt.Engine.Streamability;
 
 namespace PhoenixmlDb.Xslt.Engine;
 
@@ -21,6 +22,15 @@ internal sealed class StreamingExpressionScanner
     // emitted around its output. A for-each at depth 0 is a BARE top-of-body for-each
     // and keeps the forward-pass subscription-dispatch path unchanged.
     private int _constructionDepth;
+
+    // The XSLT 3.0 §19.6/§19.7 operand usage in effect at the current scan position — the role
+    // the enclosing construct imposes on the items produced here. Transmission by default (the
+    // source-document body content is emitted into element/complex content, §5.7.1); Absorption
+    // while scanning a variable's captured content (§5.7.2: the value is absorbed into the binding
+    // and any later data() re-separates it). Stamped onto each ForEachSubscription so the runtime
+    // document-node serializer can distinguish transmit (concatenate) from atomize (separate) —
+    // the distinction is otherwise erased once streaming fuses the variable+data() wrapper away.
+    private Usage _ambientUsage = Usage.Transmission;
 
     // Stack index of the context-root element that emitted watchers anchor against.
     // -1 for xsl:source-document (the document NODE, above element index 0); the
@@ -71,6 +81,7 @@ internal sealed class StreamingExpressionScanner
         _watchers.Clear();
         _subscriptions.Clear();
         _constructionDepth = 0;
+        _ambientUsage = Usage.Transmission;
         _contextRootDepth = contextRootDepth;
         if (body != null)
         {
@@ -84,10 +95,17 @@ internal sealed class StreamingExpressionScanner
         switch (instruction)
         {
             case XsltVariableInstruction variable:
+                // A variable's value is CAPTURED into its binding (§19: absorbed), so a for-each
+                // producing that value is Absorption — a later data($var) re-separates it. This is
+                // the sole surviving signal distinguishing si-document-003 (variable+data(), keep
+                // separators) from si-document-001 (direct element content, concatenate).
+                var savedVarUsage = _ambientUsage;
+                _ambientUsage = Usage.Absorption;
                 if (variable.Select != null)
                     ScanExpression(variable.Select);
                 if (variable.Content != null)
                     ScanInstructions(variable.Content);
+                _ambientUsage = savedVarUsage;
                 break;
 
             case XsltValueOf valueOf:
@@ -1759,6 +1777,7 @@ internal sealed class StreamingExpressionScanner
 
         _subscriptions.Add(new ForEachSubscription
         {
+            OperandUsage = _ambientUsage,
             SourceInstruction = forEach,
             PathMatcher = path,
             Body = forEach.Body,
@@ -1861,6 +1880,7 @@ internal sealed class StreamingExpressionScanner
 
         _subscriptions.Add(new ForEachSubscription
         {
+            OperandUsage = _ambientUsage,
             SourceInstruction = forEach,
             PathMatcher = new StreamPathMatcher(extracted.Value.Path),
             Body = forEach.Body,
@@ -1965,6 +1985,7 @@ internal sealed class StreamingExpressionScanner
 
         _subscriptions.Add(new ForEachSubscription
         {
+            OperandUsage = _ambientUsage,
             SourceInstruction = null,
             PathMatcher = matcher,
             Body = null,
@@ -2031,6 +2052,7 @@ internal sealed class StreamingExpressionScanner
 
         _subscriptions.Add(new ForEachSubscription
         {
+            OperandUsage = _ambientUsage,
             SourceInstruction = null,
             PathMatcher = matcher,
             Body = null,

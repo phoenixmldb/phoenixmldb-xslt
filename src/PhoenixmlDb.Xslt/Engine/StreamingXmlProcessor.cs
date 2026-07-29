@@ -592,7 +592,7 @@ internal sealed class StreamingXmlProcessor
                                                     if (sub.PerItemSelect != null)
                                                         await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
                                                     else
-                                                        await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
+                                                        await _context.RunBodyWithPostureAsync(sub.Body!, sub.OperandUsage).ConfigureAwait(false);
                                                 }
                                                 finally
                                                 {
@@ -622,7 +622,7 @@ internal sealed class StreamingXmlProcessor
                                                         if (sub.PerItemSelect != null)
                                                             await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
                                                         else
-                                                            await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
+                                                            await _context.RunBodyWithPostureAsync(sub.Body!, sub.OperandUsage).ConfigureAwait(false);
                                                     }
                                                     finally
                                                     {
@@ -645,7 +645,7 @@ internal sealed class StreamingXmlProcessor
                                                     else if (sub.PerItemSelect != null)
                                                         await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
                                                     else
-                                                        await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
+                                                        await _context.RunBodyWithPostureAsync(sub.Body!, sub.OperandUsage).ConfigureAwait(false);
                                                 }
                                                 finally
                                                 {
@@ -1356,7 +1356,7 @@ internal sealed class StreamingXmlProcessor
                     if (sub.PerItemSelect != null)
                         await _context.EmitSimpleMapContextResultAsync(sub.PerItemSelect).ConfigureAwait(false);
                     else
-                        await sub.Body!.ExecuteAsync(_context).ConfigureAwait(false);
+                        await _context.RunBodyWithPostureAsync(sub.Body!, sub.OperandUsage).ConfigureAwait(false);
                 }
                 finally
                 {

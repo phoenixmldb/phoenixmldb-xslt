@@ -1,5 +1,6 @@
 using PhoenixmlDb.Core;
 using PhoenixmlDb.XQuery.Ast;
+using PhoenixmlDb.Xslt.Engine.Streamability;
 
 namespace PhoenixmlDb.Xslt.Engine;
 
@@ -113,6 +114,19 @@ internal sealed class ForEachSubscription
     /// </summary>
     public IReadOnlyList<XQueryExpression> Predicates { get; init; }
         = System.Array.Empty<XQueryExpression>();
+
+    /// <summary>
+    /// The XSLT 3.0 §19.6/§19.7 operand usage of this for-each's RESULT — the role the
+    /// enclosing construct imposes on the items the body emits. <see cref="Usage.Transmission"/>
+    /// when the for-each sits directly in element/complex content (§5.7.1: constructed nodes are
+    /// transmitted, so a document/element node breaks the atomic run and adjacent nodes are NOT
+    /// space-separated); <see cref="Usage.Absorption"/> (the default, preserving legacy behavior)
+    /// when the result is captured into a variable and later atomized (§5.7.2: space-separated).
+    /// Stamped by the streaming scanner from its ambient usage — the one place the transmit/atomize
+    /// distinction survives, since streaming fuses the variable+data() wrapper away before dispatch.
+    /// Consumed by the document-node serializer (<c>CreateDocumentAsync</c> via <c>CurrentUsage</c>).
+    /// </summary>
+    public Usage OperandUsage { get; init; } = Usage.Absorption;
 
     /// <summary>
     /// Forward-countable-positional (<c>employee[1]</c>) / motionless
