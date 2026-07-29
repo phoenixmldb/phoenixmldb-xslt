@@ -7278,6 +7278,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private bool _lastResultWasAtomic; // Track adjacent atomic values for space separation
     private string? _itemSeparatorOverride; // When set, overrides default space separator between sequence items
 
+    // Ambient operand-usage role (XSLT 3.0 §19.6/§19.7), threaded as the executor descends.
+    // Root default is Absorption so any path reaching the serializer without an explicit push
+    // behaves as before (atomic separators preserved). Set to Transmission when descending into
+    // element/document complex content (§5.7.1); the serializer's atomic-separator insertion
+    // gates on this so §5.7.1 content is concatenated, not space-separated.
+    private PostureContext _posture = new();
+
+    /// <summary>The ambient operand usage (§19.6/§19.7) currently in effect at this point in the descent.</summary>
+    internal Usage CurrentUsage => _posture.Current;
+
     // §5.7.2 sequence normalization: when an explicit (non-absent) item-separator is in effect
     // on the TOP LEVEL of a result sequence (xsl:result-document / principal output content, not
     // inside any constructed element/attribute/text-content), a copy of the separator is inserted
