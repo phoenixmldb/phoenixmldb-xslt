@@ -1786,6 +1786,7 @@ internal sealed class StreamingExpressionScanner
             TextNodeTail = textNodeTail,
             AttributeName = attributeName,
             AtomizeContextItem = atomize,
+            ContextItemUsage = UsageClassifier.ClassifyBodyContextItemUsage(forEach.Body, atomize),
             Predicates = predicates,
             IntermediatePredicates = intermediatePredicates,
             SubsequenceStart = subseqStart,

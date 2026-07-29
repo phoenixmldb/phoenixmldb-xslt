@@ -109,6 +109,16 @@ internal sealed class ForEachSubscription
     public bool AtomizeContextItem { get; init; }
 
     /// <summary>
+    /// XSLT 3.0 §19.6/§19.7 usage of the matched context item <c>.</c> by the for-each BODY — the
+    /// second usage axis, orthogonal to <see cref="OperandUsage"/> (which is the for-each RESULT's
+    /// usage by its enclosing construct). Drives the materialize-vs-atomize dispatch decision:
+    /// <see cref="Usage.Absorption"/> ⇒ deliver a lightweight atomized value (the perf-safe default);
+    /// otherwise ⇒ deliver the real node (e.g. a streamed <c>@attr</c> copied by <c>xsl:copy-of</c>).
+    /// Stamped by the scanner via <see cref="UsageClassifier.ClassifyBodyContextItemUsage"/>.
+    /// </summary>
+    public Usage ContextItemUsage { get; init; } = Usage.Absorption;
+
+    /// <summary>
     /// When non-empty, predicates to evaluate against the matched element's snapshot.
     /// Body only dispatches if ALL predicates evaluate to true.
     /// </summary>

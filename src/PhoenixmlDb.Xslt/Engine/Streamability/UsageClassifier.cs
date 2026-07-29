@@ -51,4 +51,45 @@ public static class UsageClassifier
         ConstructKind.AxisStepSource => Usage.Navigation,
         _ => Usage.Absorption
     };
+
+    /// <summary>
+    /// The §19.6/§19.7 usage a streamable for-each body imposes on the matched context item
+    /// <c>.</c>, driving the materialize-vs-atomize dispatch decision. An explicit <c>fn:data(...)</c>
+    /// wrapper on the for-each select forces <see cref="Usage.Absorption"/> (the atomized value is
+    /// load-bearing — si-copy-002). Otherwise a body that COPIES the context item
+    /// (<c>xsl:copy-of select="."</c> or a bare <c>xsl:copy</c>) TRANSMITS it and needs a real node;
+    /// anything else (value-of / atomize / unknown) absorbs — the conservative, non-materializing
+    /// default that keeps streaming cheap.
+    /// </summary>
+    public static Usage ClassifyBodyContextItemUsage(
+        PhoenixmlDb.Xslt.Ast.XsltSequenceConstructor body, bool selectAtomized)
+    {
+        System.ArgumentNullException.ThrowIfNull(body);
+        if (selectAtomized)
+            return Usage.Absorption;
+
+        return FirstEffectiveInstruction(body) switch
+        {
+            PhoenixmlDb.Xslt.Ast.XsltCopyOf co when IsContextItemRef(co.Select) => Usage.Transmission,
+            PhoenixmlDb.Xslt.Ast.XsltCopy => Usage.Transmission,
+            _ => Usage.Absorption
+        };
+    }
+
+    /// <summary>The first instruction that is not insignificant whitespace-only literal text.</summary>
+    private static PhoenixmlDb.Xslt.Ast.XsltInstruction? FirstEffectiveInstruction(
+        PhoenixmlDb.Xslt.Ast.XsltSequenceConstructor body)
+    {
+        foreach (var insn in body.Instructions)
+        {
+            if (insn is PhoenixmlDb.Xslt.Ast.XsltLiteralText { Value: var v } && string.IsNullOrWhiteSpace(v))
+                continue;
+            return insn;
+        }
+        return null;
+    }
+
+    /// <summary>True when the expression is the context item reference <c>.</c>.</summary>
+    private static bool IsContextItemRef(PhoenixmlDb.XQuery.Ast.XQueryExpression? e) =>
+        e is PhoenixmlDb.XQuery.Ast.ContextItemExpression;
 }
