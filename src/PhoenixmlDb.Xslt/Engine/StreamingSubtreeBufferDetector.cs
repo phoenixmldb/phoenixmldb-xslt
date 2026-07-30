@@ -317,7 +317,16 @@ internal static class StreamingSubtreeBufferDetector
                 return AttributesNavigateInput(lre.Attributes) || RequiresWholeInputBuffer(lre.Content);
 
             case XsltCopy cp:
-                return cp.Content != null && RequiresWholeInputBuffer(cp.Content);
+                // xsl:copy select="path" navigates INTO the input to pick the node to copy,
+                // but a top-level xsl:copy has no document-level streaming dispatch for that
+                // select — it evaluates against the synthetic empty document node and copies
+                // nothing (si-copy-028: a nested xsl:copy select chain folds to <out/>).
+                // Buffer when the select navigates the input; a grounded/absent select
+                // (shallow copy of the context item — the common streamed for-each + xsl:copy
+                // shape, which this doc-level detector never sees inside a for-each body)
+                // stays on the streaming path. Content is analysed recursively as before.
+                return (cp.Select != null && NavigatesInput(cp.Select))
+                    || (cp.Content != null && RequiresWholeInputBuffer(cp.Content));
 
             // xsl:if / xsl:choose run their chosen branch linearly within the constructed body,
             // so a branch is treated exactly like the body it sits in — recurse with the same
