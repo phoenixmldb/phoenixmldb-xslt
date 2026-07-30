@@ -2350,7 +2350,13 @@ internal sealed class StreamingExpressionScanner
         {
             IntegerLiteral or DecimalLiteral or DoubleLiteral or StringLiteral or BooleanLiteral => true,
             VariableReference => true,
-            PathExpression => false,
+            // A path ROOTED AT a grounded expression (e.g. `$extra/@value`) navigates a
+            // buffered in-scope value, not the streamed source document, so it can be
+            // evaluated outside the streaming pass. Reject absolute paths (`/foo`) and
+            // context-relative paths (no initial expression) — those DO consume the
+            // streamed document. si-copy-004: `account/transaction[…]/@value, $extra/@value`.
+            PathExpression p => !p.IsAbsolute && p.InitialExpression != null
+                && IsGroundedForStreaming(p.InitialExpression),
             _ => false,
         };
     }
