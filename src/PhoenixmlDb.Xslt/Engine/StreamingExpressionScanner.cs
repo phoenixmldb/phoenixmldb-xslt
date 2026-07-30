@@ -2401,6 +2401,21 @@ internal sealed class StreamingExpressionScanner
             select = dataCall.Arguments[0];
             atomize = true;
         }
+        // Peek through a LEADING copy-of(path)/snapshot(path) wrapper — e.g.
+        // `copy-of(/*/*:description)`. copy-of grounds the streamed subtree into a deep
+        // (materialized) copy; the for-each then iterates that copy. For a streamable
+        // for-each the subscription already delivers each matched element's materialized
+        // snapshot as the context item — which IS the grounded copy — so the wrapper is a
+        // no-op for path-matching. Unlike data(), it does NOT atomize: the body sees a
+        // node, so <xsl:copy> re-copies the element and preserves its in-scope namespaces
+        // (si-copy-025/026).
+        if (select is FunctionCallExpression copyOfCall
+            && copyOfCall.Arguments.Count == 1
+            && (copyOfCall.Name.Namespace == NamespaceId.None || copyOfCall.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            && copyOfCall.Name.LocalName is "copy-of" or "snapshot")
+        {
+            select = copyOfCall.Arguments[0];
+        }
         // Peek through a trailing copy-of()/snapshot() step — e.g.
         // `records/record/copy-of()`. The parser builds this as a SimpleMap whose
         // Left is the streamable path and whose Right is a zero-argument
