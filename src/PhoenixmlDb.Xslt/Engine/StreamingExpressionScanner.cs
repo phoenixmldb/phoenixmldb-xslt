@@ -104,7 +104,20 @@ internal sealed class StreamingExpressionScanner
                 if (variable.Select != null)
                     ScanExpression(variable.Select);
                 if (variable.Content != null)
+                {
+                    // Treat variable content as WRAPPED construction so a streamable for-each
+                    // inside it runs InlineDriven (its output captured into the variable value)
+                    // rather than as a bare stream-driven subscription that emits to the sink and
+                    // skips the rest of the body (si-copy-003 attribute-leaf `<xsl:copy/>`).
+                    // EXCEPTION: a document-node()*-typed variable is handled by SP-A's
+                    // document-node serialization consumer via the BARE forward-pass path
+                    // (si-document-001/003/007/010) — flipping it to InlineDriven breaks that
+                    // fusion. Keep document-node variable content on the bare path.
+                    bool isDocNodeVar = variable.As?.ItemType == ItemType.Document;
+                    if (!isDocNodeVar) _constructionDepth++;
                     ScanInstructions(variable.Content);
+                    if (!isDocNodeVar) _constructionDepth--;
+                }
                 _ambientUsage = savedVarUsage;
                 break;
 

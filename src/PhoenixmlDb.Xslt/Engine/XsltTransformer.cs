@@ -20577,6 +20577,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedAttrContentDepth2 = _attributeContentDepth;
                 _textContentDepth = 0;
                 _attributeContentDepth = 0;
+                // A variable's value is an independent temp tree / sequence, so its content must
+                // NOT inherit the enclosing element's attribute-collection state. Otherwise an
+                // xsl:copy / xsl:attribute inside the variable content — whose accumulator capture
+                // is gated on !_attributeCollecting (CopySingleItemAsync attribute branch) — leaks
+                // the constructed attribute onto the enclosing open element's start tag instead of
+                // into $var. si-copy-003/004: a streamed `<xsl:for-each select="P/@v"><xsl:copy/>`
+                // inside `<xsl:variable as="attribute(*)*">` under an open `<out>` LRE.
+                var savedAttrCollectStack = new List<StringBuilder>(_collectedAttributesStack);
+                _collectedAttributesStack.Clear();
                 // Install an AsBodyCapture so xsl:sequence items appended during body
                 // execution record the _output offset at which they occur. Without this,
                 // literal-result-elements (which stream to _output) and xsl:sequence
@@ -20658,6 +20667,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _collectTextAsSequenceItems = savedCollectText;
                     _serializingElementDepth = savedElemDepth;
                     _currentAsBodyCapture = savedAsBodyCapture;
+                    // Restore the enclosing element's attribute-collection stack (bottom-first so
+                    // the original top-of-stack ends up on top again).
+                    _collectedAttributesStack.Clear();
+                    for (int ci = savedAttrCollectStack.Count - 1; ci >= 0; ci--)
+                        _collectedAttributesStack.Push(savedAttrCollectStack[ci]);
                 }
                 var textContent = savedScope.GetWritten();
 
