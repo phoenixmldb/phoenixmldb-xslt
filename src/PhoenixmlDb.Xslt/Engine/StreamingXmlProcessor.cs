@@ -2056,8 +2056,25 @@ internal sealed class StreamingXmlProcessor
             {
                 if (entry.Watcher.Predicates.Count > 0)
                 {
-                    var av = entry.Attributes?.GetValueOrDefault(entry.Watcher.ValueAttribute);
-                    attrPredicateContext = MaterializeStandaloneAttribute(entry.Watcher.ValueAttribute, av ?? string.Empty);
+                    if (entry.Watcher.LeafPredicateOnElement)
+                    {
+                        // The leaf predicate lives on the HOST ELEMENT carrying the
+                        // attribute (e.g. transaction[@value < 0]/@value), so its `@value`
+                        // must resolve against that element — NOT the standalone attribute
+                        // node (where `@value` would find nothing and drop every match,
+                        // sf-copy-of-003). Materialize a childless host element with the
+                        // matched attributes only (no subtree): cheap, and reached only for
+                        // this narrow shape, so the sf-sum-019 O(1) attribute fast path below
+                        // is unaffected.
+                        attrPredicateContext = MaterializeLeafElement(
+                            entry.ElementName, entry.Attributes, string.Empty,
+                            entry.Prefix, entry.NamespaceUri, entry.InScopeNamespaces);
+                    }
+                    else
+                    {
+                        var av = entry.Attributes?.GetValueOrDefault(entry.Watcher.ValueAttribute);
+                        attrPredicateContext = MaterializeStandaloneAttribute(entry.Watcher.ValueAttribute, av ?? string.Empty);
+                    }
                 }
             }
             else
@@ -2172,6 +2189,24 @@ internal sealed class StreamingXmlProcessor
                     entry.Watcher.FillSnapshotSlot(entry.ReservedSlot, materialized);
                 else
                     entry.Watcher.OnLeafElementCaptured(materialized);
+            }
+            // Snapshot over an ATTRIBUTE leaf — copy-of(path/@attr): fn:copy-of returns the
+            // selected attribute NODES, and a typed `attribute()*` variable + data() consumer
+            // needs real nodes. FillSequenceSlot above stored only the atomized value in
+            // _items, so BuildSnapshotResult (nodes only when _snapshots is 1:1 with _items)
+            // would otherwise yield empty and drop the whole result (sf-copy-of-003).
+            // Materialize a standalone attribute node in lockstep with the value slot.
+            // Snapshot ONLY: Sequence attribute watchers deliberately stay atomized (the
+            // sx-GeneralComp-019/119 XPTY0004 numeric-promotion path).
+            else if (entry.Watcher.ValueAttribute != null
+                && entry.Watcher.Aggregation is WatcherAggregation.Snapshot)
+            {
+                var snapAttrVal = entry.Attributes?.GetValueOrDefault(entry.Watcher.ValueAttribute);
+                var snapAttrNode = MaterializeStandaloneAttribute(entry.Watcher.ValueAttribute, snapAttrVal ?? string.Empty);
+                if (entry.ReservedSlot >= 0)
+                    entry.Watcher.FillSnapshotSlot(entry.ReservedSlot, snapAttrNode);
+                else
+                    entry.Watcher.OnLeafElementCaptured(snapAttrNode);
             }
             _pendingTextWatcherMatches.RemoveAt(i);
         }

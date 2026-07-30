@@ -208,6 +208,17 @@ internal sealed class StreamWatcher
         = Array.Empty<XQueryExpression>();
 
     /// <summary>
+    /// True when this watcher has an attribute tail (<see cref="ValueAttribute"/> set)
+    /// AND its leaf <see cref="Predicates"/> live on the ELEMENT step carrying that
+    /// attribute — e.g. <c>transaction[@value &lt; 0]/@value</c>. Such a predicate must be
+    /// evaluated against the host element (so <c>@value</c> resolves to the attribute),
+    /// NOT the standalone attribute node used for attribute-step predicates
+    /// (<c>@v[xs:decimal(.) gt 0]</c>). Set from
+    /// <see cref="StreamingExpressionScanner.ExtractedPath.LeafPredicateOnElement"/>.
+    /// </summary>
+    public bool LeafPredicateOnElement { get; init; }
+
+    /// <summary>
     /// Motionless predicates carried by ancestor (intermediate) element steps of the
     /// matched path — e.g. the <c>[@CAT='P']</c> on <c>ITEM</c> in
     /// <c>BOOKLIST/BOOKS/ITEM[@CAT='P']/PRICE</c>. Each entry records how many element

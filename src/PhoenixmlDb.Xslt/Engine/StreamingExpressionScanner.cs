@@ -313,6 +313,7 @@ internal sealed class StreamingExpressionScanner
                         ValueAttribute = pathInfo.Value.Attribute,
                         Predicates = pathInfo.Value.Predicates,
                         IntermediatePredicates = pathInfo.Value.IntermediatePredicates,
+                        LeafPredicateOnElement = pathInfo.Value.LeafPredicateOnElement,
                         Separator = aggType == WatcherAggregation.StringJoin && fc.Arguments.Count > 1
                             ? ExtractStringLiteral(fc.Arguments[1])
                             : null,
@@ -345,7 +346,8 @@ internal sealed class StreamingExpressionScanner
                         Aggregation = WatcherAggregation.Head,
                         ValueAttribute = headPathInfo.Value.Attribute,
                         Predicates = headPathInfo.Value.Predicates,
-                        IntermediatePredicates = headPathInfo.Value.IntermediatePredicates
+                        IntermediatePredicates = headPathInfo.Value.IntermediatePredicates,
+                        LeafPredicateOnElement = headPathInfo.Value.LeafPredicateOnElement
                     });
                     return;
                 }
@@ -364,7 +366,8 @@ internal sealed class StreamingExpressionScanner
                         Aggregation = WatcherAggregation.Sequence,
                         ValueAttribute = seqPath.Value.Attribute,
                         Predicates = seqPath.Value.Predicates,
-                        IntermediatePredicates = seqPath.Value.IntermediatePredicates
+                        IntermediatePredicates = seqPath.Value.IntermediatePredicates,
+                        LeafPredicateOnElement = seqPath.Value.LeafPredicateOnElement
                     });
                     return;
                 }
@@ -404,7 +407,8 @@ internal sealed class StreamingExpressionScanner
                         Aggregation = WatcherAggregation.Snapshot,
                         ValueAttribute = snapPath.Value.Attribute,
                         Predicates = snapPath.Value.Predicates,
-                        IntermediatePredicates = snapPath.Value.IntermediatePredicates
+                        IntermediatePredicates = snapPath.Value.IntermediatePredicates,
+                        LeafPredicateOnElement = snapPath.Value.LeafPredicateOnElement
                     });
                     return;
                 }
@@ -998,7 +1002,17 @@ internal sealed class StreamingExpressionScanner
         string? Attribute,
         IReadOnlyList<XQueryExpression> Predicates,
         IReadOnlyList<IntermediatePredicate> IntermediatePredicates,
-        bool TextNodeTail = false);
+        bool TextNodeTail = false,
+        // True when this path has an attribute tail (<see cref="Attribute"/> set) AND the
+        // captured leaf <see cref="Predicates"/> live on the ELEMENT step carrying that
+        // attribute (e.g. <c>transaction[@value &lt; 0]/@value</c>), NOT on the attribute
+        // step itself (<c>transaction/@v[xs:decimal(.) gt 0]</c>). The two shapes need
+        // DIFFERENT predicate-evaluation contexts: an element-step predicate must see the
+        // host element (so <c>@value</c> resolves to the attribute), whereas an
+        // attribute-step predicate sees the standalone attribute node (<c>.</c> = its value).
+        // Collapsing them made <c>elem[@a op x]/@a</c> filter every match to false (the
+        // predicate's <c>@a</c> found nothing on an attribute-node context). sf-copy-of-003.
+        bool LeafPredicateOnElement = false);
 
     /// <summary>
     /// A motionless predicate carried by an ancestor (intermediate) element step of
@@ -1140,6 +1154,11 @@ internal sealed class StreamingExpressionScanner
         string? attribute = null;
         bool textNodeTail = false;
         IReadOnlyList<XQueryExpression> predicates = Array.Empty<XQueryExpression>();
+        // True when the captured leaf `predicates` were taken from an ELEMENT (or
+        // descendant) step rather than the attribute/text leaf. Combined with an
+        // attribute tail below, this signals the processor to evaluate the predicate
+        // against the host element, not the standalone attribute node. sf-copy-of-003.
+        bool leafPredicateFromElementStep = false;
         List<IntermediatePredicate>? intermediatePredicates = null;
 
         var current = expr;
@@ -1251,6 +1270,7 @@ internal sealed class StreamingExpressionScanner
                             if (si == lastElementStepIdx && step.Predicates.Count > 0)
                             {
                                 predicates = step.Predicates;
+                                leafPredicateFromElementStep = true;
                             }
                             else if (si != lastElementStepIdx && step.Predicates.Count > 0)
                             {
@@ -1321,6 +1341,7 @@ internal sealed class StreamingExpressionScanner
                             if (si == lastElementStepIdx && step.Predicates.Count > 0)
                             {
                                 predicates = step.Predicates;
+                                leafPredicateFromElementStep = true;
                             }
                             // Predicate on an intermediate descendant-axis step: the
                             // ancestor offset is ambiguous under //, so it is not
@@ -1349,7 +1370,8 @@ internal sealed class StreamingExpressionScanner
             attribute,
             predicates,
             (IReadOnlyList<IntermediatePredicate>?)intermediatePredicates ?? Array.Empty<IntermediatePredicate>(),
-            textNodeTail);
+            textNodeTail,
+            LeafPredicateOnElement: leafPredicateFromElementStep && attribute != null && predicates.Count > 0);
     }
 
     /// <summary>
