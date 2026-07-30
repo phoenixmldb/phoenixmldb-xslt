@@ -440,7 +440,13 @@ internal sealed class StreamingXmlProcessor
                                 // Materialize the current element subtree from the live reader.
                                 // Reader is left at the matching EndElement (or still on the
                                 // empty element) — same contract as ExecuteWithBufferedSubtreeAsync.
-                                var snapshot = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore, new DocumentId(0));
+                                // Capture the reader's in-scope namespaces (ancestor-inherited xmlns
+                                // bindings) BEFORE Materialize consumes the element, so a
+                                // copy-namespaces="yes" xsl:copy of the snapshot re-emits the full
+                                // in-scope set, not just declarations local to the matched element
+                                // (si-copy-021).
+                                var snapshot = StreamingSubtreeMaterializer.Materialize(
+                                    reader, _nodeStore, new DocumentId(0), CaptureInScopeNamespaces(reader));
                                 if (snapshot != null)
                                 {
                                     // Synthesize an ancestor chain on the snapshot root so the

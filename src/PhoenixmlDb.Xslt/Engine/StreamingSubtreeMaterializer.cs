@@ -20,7 +20,8 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </remarks>
 internal static class StreamingSubtreeMaterializer
 {
-    public static XdmElement? Materialize(XmlReader reader, XdmInMemoryStore store, DocumentId documentId)
+    public static XdmElement? Materialize(XmlReader reader, XdmInMemoryStore store, DocumentId documentId,
+        IReadOnlyList<KeyValuePair<string, string>>? rootInScopeNamespaces = null)
     {
         if (reader.NodeType != XmlNodeType.Element) return null;
 
@@ -30,6 +31,24 @@ internal static class StreamingSubtreeMaterializer
 
         // Push root frame
         var rootFrame = ReadElementStart(reader, store, documentId, parent: null);
+        // Streaming carries only the namespace declarations that appear literally ON
+        // the matched element; ancestor-declared xmlns bindings are lost. When the caller
+        // supplies the reader's full in-scope set, merge the ancestor-inherited bindings
+        // onto the snapshot ROOT so a copy-namespaces="yes" xsl:copy re-emits them all
+        // (si-copy-021). copy-namespaces="no" still filters to element/attribute-used at
+        // serialization, so attaching the full set is safe for both.
+        if (rootInScopeNamespaces is { Count: > 0 })
+        {
+            foreach (var kv in rootInScopeNamespaces)
+            {
+                if (kv.Key == "xml" || kv.Key == "xmlns") continue;
+                bool present = false;
+                foreach (var nb in rootFrame.NamespaceDeclarations)
+                    if (nb.Prefix == kv.Key) { present = true; break; }
+                if (!present)
+                    rootFrame.NamespaceDeclarations.Add(new NamespaceBinding(kv.Key, store.InternNamespace(kv.Value)));
+            }
+        }
         stack.Push(rootFrame);
 
         if (rootIsEmpty)
