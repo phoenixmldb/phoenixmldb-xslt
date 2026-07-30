@@ -582,7 +582,7 @@ internal sealed class StreamingXmlProcessor
                                                 // ATOMIZED attribute value, so <xsl:copy/> copies an atomic
                                                 // (text) instead of re-emitting a leaked attribute node
                                                 // onto the constructed element (si-copy-002).
-                                                object attrCtxItem = sub.AtomizeContextItem
+                                                object attrCtxItem = sub.ContextItemUsage == PhoenixmlDb.Xslt.Engine.Streamability.Usage.Absorption
                                                     ? new PhoenixmlDb.Xdm.XsUntypedAtomic(matchedAttr.Value)
                                                     : matchedAttr;
                                                 _context.PushContextItem(attrCtxItem, NextSubscriptionPosition(sub), 1);
@@ -612,7 +612,7 @@ internal sealed class StreamingXmlProcessor
                                                 // materialization).
                                                 foreach (var textChild in EnumerateTextChildren(snapshot))
                                                 {
-                                                    object textCtxItem = sub.AtomizeContextItem
+                                                    object textCtxItem = sub.ContextItemUsage == PhoenixmlDb.Xslt.Engine.Streamability.Usage.Absorption
                                                         ? new PhoenixmlDb.Xdm.XsUntypedAtomic(textChild.Value)
                                                         : textChild;
                                                     _context.PushContextItem(textCtxItem, NextSubscriptionPosition(sub), 1);
@@ -633,7 +633,7 @@ internal sealed class StreamingXmlProcessor
                                             }
                                             else
                                             {
-                                                object elemCtxItem = sub.AtomizeContextItem
+                                                object elemCtxItem = sub.ContextItemUsage == PhoenixmlDb.Xslt.Engine.Streamability.Usage.Absorption
                                                     ? new PhoenixmlDb.Xdm.XsUntypedAtomic(snapshot.StringValue)
                                                     : (object)snapshot;
                                                 _context.PushContextItem(elemCtxItem, NextSubscriptionPosition(sub), 1);

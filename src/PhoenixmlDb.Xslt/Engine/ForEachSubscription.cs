@@ -96,27 +96,16 @@ internal sealed class ForEachSubscription
     public string? AttributeName { get; init; }
 
     /// <summary>
-    /// True when the streamable path was wrapped in <c>fn:data(...)</c> in the
-    /// for-each select (e.g. <c>data(account/transaction/@value), 101, 102</c>).
-    /// The per-match context item is then the ATOMIZED value of the matched node
-    /// (an <c>xs:untypedAtomic</c>) rather than the node itself, so a body that
-    /// <em>copies</em> the context item (<c>&lt;xsl:copy/&gt;</c>) produces the atomic
-    /// value's text — not a leaked attribute/element node. Without this, peeling the
-    /// <c>data()</c> wrapper silently delivered the raw node, so <c>&lt;xsl:copy/&gt;</c>
-    /// re-emitted the last attribute onto the constructed element and dropped the
-    /// atomized values (si-copy-002).
-    /// </summary>
-    public bool AtomizeContextItem { get; init; }
-
-    /// <summary>
     /// XSLT 3.0 §19.6/§19.7 usage of the matched context item <c>.</c> by the for-each BODY — the
     /// second usage axis, orthogonal to <see cref="OperandUsage"/> (which is the for-each RESULT's
     /// usage by its enclosing construct). Drives the materialize-vs-atomize dispatch decision:
     /// <see cref="Usage.Absorption"/> ⇒ deliver a lightweight atomized value (the perf-safe default);
     /// otherwise ⇒ deliver the real node (e.g. a streamed <c>@attr</c> copied by <c>xsl:copy-of</c>).
-    /// Stamped by the scanner via <see cref="UsageClassifier.ClassifyBodyContextItemUsage"/>.
+    /// Stamped by the scanner via <see cref="UsageClassifier.ClassifyContextItemUsage"/>. Defaults to
+    /// <see cref="Usage.Transmission"/> (deliver the node) — the legacy default for subscriptions that
+    /// do not atomize their select; only a <c>data()</c>-wrapped select yields Absorption.
     /// </summary>
-    public Usage ContextItemUsage { get; init; } = Usage.Absorption;
+    public Usage ContextItemUsage { get; init; } = Usage.Transmission;
 
     /// <summary>
     /// When non-empty, predicates to evaluate against the matched element's snapshot.

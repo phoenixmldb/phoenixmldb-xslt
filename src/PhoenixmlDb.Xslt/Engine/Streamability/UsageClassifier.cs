@@ -53,43 +53,15 @@ public static class UsageClassifier
     };
 
     /// <summary>
-    /// The §19.6/§19.7 usage a streamable for-each body imposes on the matched context item
-    /// <c>.</c>, driving the materialize-vs-atomize dispatch decision. An explicit <c>fn:data(...)</c>
-    /// wrapper on the for-each select forces <see cref="Usage.Absorption"/> (the atomized value is
-    /// load-bearing — si-copy-002). Otherwise a body that COPIES the context item
-    /// (<c>xsl:copy-of select="."</c> or a bare <c>xsl:copy</c>) TRANSMITS it and needs a real node;
-    /// anything else (value-of / atomize / unknown) absorbs — the conservative, non-materializing
-    /// default that keeps streaming cheap.
+    /// The §19.6/§19.7 usage a streamable for-each imposes on each matched context item <c>.</c>,
+    /// driving the materialize-vs-atomize dispatch decision. When the for-each select explicitly
+    /// atomizes the item (a <c>fn:data(...)</c> wrapper — <paramref name="selectAtomized"/>), the
+    /// item is <see cref="Usage.Absorption"/>: the dispatch delivers the atomized value (a bare
+    /// <c>xsl:copy</c> then copies the atomic as text — si-copy-002). Otherwise the matched item is
+    /// <see cref="Usage.Transmission"/>: the dispatch delivers the real node (already materialized on
+    /// the snapshot), which every body — value-of, copy-of, axis navigation — consumes correctly.
+    /// The body does not refine this: the atom-vs-node signal is the select's atomization alone.
     /// </summary>
-    public static Usage ClassifyBodyContextItemUsage(
-        PhoenixmlDb.Xslt.Ast.XsltSequenceConstructor body, bool selectAtomized)
-    {
-        System.ArgumentNullException.ThrowIfNull(body);
-        if (selectAtomized)
-            return Usage.Absorption;
-
-        return FirstEffectiveInstruction(body) switch
-        {
-            PhoenixmlDb.Xslt.Ast.XsltCopyOf co when IsContextItemRef(co.Select) => Usage.Transmission,
-            PhoenixmlDb.Xslt.Ast.XsltCopy => Usage.Transmission,
-            _ => Usage.Absorption
-        };
-    }
-
-    /// <summary>The first instruction that is not insignificant whitespace-only literal text.</summary>
-    private static PhoenixmlDb.Xslt.Ast.XsltInstruction? FirstEffectiveInstruction(
-        PhoenixmlDb.Xslt.Ast.XsltSequenceConstructor body)
-    {
-        foreach (var insn in body.Instructions)
-        {
-            if (insn is PhoenixmlDb.Xslt.Ast.XsltLiteralText { Value: var v } && string.IsNullOrWhiteSpace(v))
-                continue;
-            return insn;
-        }
-        return null;
-    }
-
-    /// <summary>True when the expression is the context item reference <c>.</c>.</summary>
-    private static bool IsContextItemRef(PhoenixmlDb.XQuery.Ast.XQueryExpression? e) =>
-        e is PhoenixmlDb.XQuery.Ast.ContextItemExpression;
+    public static Usage ClassifyContextItemUsage(bool selectAtomized) =>
+        selectAtomized ? Usage.Absorption : Usage.Transmission;
 }
