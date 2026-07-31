@@ -1,6 +1,6 @@
 # Release History
 
-## Unreleased
+## 1.6.0 — 2026-07-31
 
 ### Fixes
 

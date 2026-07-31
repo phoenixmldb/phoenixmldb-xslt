@@ -21,7 +21,7 @@ public sealed class MartinKindTestPrefixTests
         return t;
     }
 
-    [Fact(Skip = "Requires PhoenixmlDb.XQuery > 1.6.0 (kind-test prefix deferral + URI-compare). Unskip when the XSLT XQuery pin is bumped to the release carrying XQueryAstBuilder.ValidateKindTestPrefix deferral.")]
+    [Fact]
     public async Task AttributeKindTest_WithStylesheetPrefix_MatchesByNamespace()
     {
         const string ss = """
@@ -47,7 +47,7 @@ public sealed class MartinKindTestPrefixTests
         r.Should().Contain("http://example.com/x");
     }
 
-    [Fact(Skip = "Requires PhoenixmlDb.XQuery > 1.6.0 (kind-test prefix deferral + URI-compare). Unskip when the XSLT XQuery pin is bumped to the release carrying XQueryAstBuilder.ValidateKindTestPrefix deferral.")]
+    [Fact]
     public async Task AttributeKindTest_PrefixInDifferentNamespace_DoesNotMatch()
     {
         // A same-local-name attribute in a DIFFERENT namespace must NOT be selected —
