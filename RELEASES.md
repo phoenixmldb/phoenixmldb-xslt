@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **A prefixed name in an `element()`/`attribute()` kind test is now resolved against the stylesheet's namespaces.** A test such as `self::attribute(x:expand-text)` — where `x` is declared on an ancestor `xsl:*` element — resolves its prefix to the correct namespace, so the kind test matches the intended nodes. Previously the underlying XPath parser rejected the prefix with a spurious `XPST0081` (it saw only XQuery-prolog namespaces, never the stylesheet's), and even past that the kind test compared by local name only. Reported by Martin Honnen (XSpec `gather-specs.xsl`). Requires the companion PhoenixmlDb.XQuery release carrying the kind-test prefix deferral.
+
 ### Streaming
 
 - **Document nodes constructed directly into element content now concatenate their content instead of being space-separated.** A streamed `xsl:for-each` producing `xsl:document` nodes into element content transmits each document's children (XSLT 3.0 §5.7.1), so adjacent documents do not take the §5.7.2 atomic separator; when the same documents are captured into a variable and later atomized (`data($docs)`), the separation is correctly preserved (§5.7.2). Under streaming the variable-and-`data()` wrapper is fused away before serialization, so the transmit-vs-atomize distinction is carried on the for-each subscription from scan time (element content ⇒ transmission; captured variable content ⇒ absorption) and consulted at the document-node serializer. Closes `strm/si-document` si-document-001/007/010; si-document-003 (data-atomized) is unchanged.
