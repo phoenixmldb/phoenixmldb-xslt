@@ -681,6 +681,16 @@ internal sealed class StreamingXmlProcessor
                             }
                         }
 
+                        // Snapshot the open-element depth BEFORE dispatch. A matched template
+                        // that leaves an element open (built-in shallow-copy, xsl:copy) pushes
+                        // onto _streamingOpenElements; one that fully constructs its result
+                        // (apply-templates select="copy-of()" mode=…, si-copy-200) leaves the
+                        // stack unchanged. The subtree-buffer-consumed branch below uses this to
+                        // decide whether it owns an open tag to close — WITHOUT it, a
+                        // fully-constructing matched template nested in shallow-copied ancestors
+                        // would pop and prematurely close an ANCESTOR.
+                        int openElementsBeforeMatch = _context._streamingOpenElements.Count;
+
                         // In subscription-dispatch-only mode the source-document body has
                         // no xsl:apply-templates — non-subscribed elements must not trigger
                         // the default template machinery (which would emit text children).
@@ -710,7 +720,11 @@ internal sealed class StreamingXmlProcessor
                             {
                                 await FireWatchersEndElement(current.LocalName).ConfigureAwait(false);
                             }
-                            if (_context._streamingOpenElements.Count > 0)
+                            // Only close a tag this matched element actually left open. A
+                            // fully-constructing body (e.g. apply-templates copy-of() mode=…)
+                            // pushes nothing, so popping here would close an enclosing ancestor
+                            // (si-copy-200 mis-nesting). A shallow-copy/xsl:copy body pushed one.
+                            if (_context._streamingOpenElements.Count > openElementsBeforeMatch)
                             {
                                 var qname = _context._streamingOpenElements.Pop();
                                 _context.WriteStreamingEndTag(qname);

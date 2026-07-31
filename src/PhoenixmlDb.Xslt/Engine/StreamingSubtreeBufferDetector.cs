@@ -156,6 +156,16 @@ internal static class StreamingSubtreeBufferDetector
                 return (one.Content != null && RequiresSubtreeBuffer(one.Content))
                        || (one.Select != null && ExpressionUsesSnapshot(one.Select));
 
+            // xsl:apply-templates whose select re-dispatches a MATERIALIZED snapshot of the
+            // matched subtree — copy-of()/snapshot() (possibly in a different mode, the classic
+            // Saxon-bug-2630 shape: <xsl:apply-templates select="copy-of()" mode="change"/>).
+            // The snapshot must be COMPLETE before the body re-applies templates to it, so it
+            // cannot run mid-stream against a partially-read element (the matched element's
+            // children have not streamed in yet). Materialise the matched subtree first
+            // (si-copy-200). A bare downward/striding select stays on the live streaming path.
+            case XsltApplyTemplates at:
+                return at.Select != null && ExpressionUsesSnapshot(at.Select);
+
             case XsltSequenceConstructor ctor:
                 return RequiresSubtreeBuffer(ctor);
 
@@ -1139,7 +1149,11 @@ internal static class StreamingSubtreeBufferDetector
         switch (expr)
         {
             case FunctionCallExpression fc when IsSnapshotOrCopyOf(fc):
-                return fc.Arguments.Count > 0 && TouchesMatchedSubtree(fc.Arguments[0]);
+                // Zero-argument copy-of()/snapshot() takes the CONTEXT node — for a matched
+                // template that is the matched element, so the call snapshots the whole
+                // matched subtree (si-copy-200). The one-argument form touches the subtree
+                // when its argument does.
+                return fc.Arguments.Count == 0 || TouchesMatchedSubtree(fc.Arguments[0]);
 
             case FunctionCallExpression fc:
                 foreach (var arg in fc.Arguments)
@@ -1193,7 +1207,11 @@ internal static class StreamingSubtreeBufferDetector
 
             // snapshot()/copy-of() of an already-grounded subtree (rare nesting)
             case FunctionCallExpression fc when IsSnapshotOrCopyOf(fc):
-                return fc.Arguments.Count > 0 && TouchesMatchedSubtree(fc.Arguments[0]);
+                // Zero-argument copy-of()/snapshot() takes the CONTEXT node — for a matched
+                // template that is the matched element, so the call snapshots the whole
+                // matched subtree (si-copy-200). The one-argument form touches the subtree
+                // when its argument does.
+                return fc.Arguments.Count == 0 || TouchesMatchedSubtree(fc.Arguments[0]);
 
             // a ! b (or a / b parsed as SimpleMap) — the streaming context flows
             // through the left-hand operand, so the whole expression touches the
