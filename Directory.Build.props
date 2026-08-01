@@ -7,9 +7,6 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Version>1.6.0</Version>
-    <PackageReleaseNotes>
-      A prefixed name in an element()/attribute() kind test (e.g. self::attribute(x:expand-text), where x is declared on an ancestor xsl:* element) now resolves its prefix against the stylesheet's namespaces and matches the intended nodes, instead of raising a spurious XPST0081 at parse time (reported by Martin Honnen, running XSpec). Streaming (XSLT 3.0 §19 posture/sweep): a large batch of streamable xsl:copy / xsl:copy-of / copy-of() / snapshot() shapes now stream correctly — a for-each of streamed attributes captured into a typed attribute()* variable; mixed streamed+grounded for-each selects; copy-namespaces="yes" preserving ancestor in-scope namespaces on a copied streamed element; a leading copy-of(path)/snapshot(path) for-each select; a nested/navigating xsl:copy select that must buffer; and apply-templates select="copy-of()" switching modes on the matched subtree (Saxon bug 2630). Document nodes constructed into element content transmit their content (concatenated) rather than being atomized/space-separated, while the same nodes captured into a variable and atomized keep separation. Requires PhoenixmlDb.Core 1.3.0 and PhoenixmlDb.XQuery 1.6.1. No breaking API changes. See RELEASES.md for full notes.
-    </PackageReleaseNotes>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-all</AnalysisLevel>
