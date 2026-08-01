@@ -3645,6 +3645,19 @@ public sealed class XsltTransformEngine
                     }
                     else
                     {
+                        // An executing-but-empty body (e.g. an xsl:if with a false test, or an
+                        // xsl:for-each over an empty sequence) produces no content. For a declared
+                        // type that permits the empty sequence (?, *) the value is the EMPTY
+                        // SEQUENCE — NOT an empty string. Binding "" here made a value comparison
+                        // against the variable atomize it as xs:string: XSpec's x:saxon-version
+                        // (as="xs:integer?", empty for a non-Saxon processor) raised a spurious
+                        // XPTY0004 on `$x:saxon-version lt x:pack-version((11,0))`. Mirrors the
+                        // local-variable guard (see BindVariableAsync).
+                        if (content.Length == 0
+                            && global.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
+                        {
+                            context.GlobalVariables[global.Name] = null;
+                        }
                         // For global xsl:variable with as="atomic-type" body, coerce the body's
                         // text content to the declared type. Without this, the variable was
                         // bound to the raw STRING (e.g. "2147483647") and downstream comparisons
@@ -3652,7 +3665,7 @@ public sealed class XsltTransformEngine
                         // numeric type"). Found in Docbook xslTNG `vp:section-toc-depth`
                         // (as="xs:integer" with xsl:choose+xsl:sequence body) — minimal repro:
                         // `<xsl:variable as="xs:integer"><xsl:sequence select="2147483647"/></xsl:variable>`.
-                        if (DefaultXsltExecutionContext.IsCastableAtomicTypePublic(global.As.ItemType)
+                        else if (DefaultXsltExecutionContext.IsCastableAtomicTypePublic(global.As.ItemType)
                             && !content.Contains('<', StringComparison.Ordinal))
                         {
                             // Cast the body's text value to the declared atomic type via the
@@ -3835,7 +3848,14 @@ public sealed class XsltTransformEngine
                     await global.Content.ExecuteAsync(context).ConfigureAwait(false);
                     var content = outputBuilder.ToString(savedLen, outputBuilder.Length - savedLen);
                     outputBuilder.Length = savedLen;
-                    context.GlobalVariables[global.Name] = content.Length > 0 ? content : "";
+                    // An empty body binds the empty sequence for a type that permits it (?, *) —
+                    // not "". See the main global-binding path for the XSpec x:saxon-version case.
+                    context.GlobalVariables[global.Name] = content.Length > 0
+                        ? content
+                        : (global.As != null
+                            && global.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore
+                                ? null
+                                : (object)"");
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
             }

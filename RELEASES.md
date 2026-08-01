@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+### Fixes
+
+- **A typed global `xsl:variable`/`xsl:param` with an optional type (`as="xs:T?"` / `as="xs:T*"`) whose sequence-constructor body executes but produces nothing now binds the empty sequence, not the empty string.** A body such as `<xsl:if test="…">` that does not fire, or `<xsl:for-each select="()">`, produced no content; for a type that permits the empty sequence the value must be `()`. The engine bound `""`, so a later value comparison atomized the variable as `xs:string` and raised a spurious `XPTY0004` (e.g. `$v lt 65536`). Both the eager and the lazily-initialized global-binding paths are corrected; the local-variable path already behaved correctly. Reported by Martin Honnen (XSpec `version-utils.xsl` `x:saxon-version`, which is empty for a non-Saxon processor). Requires the companion PhoenixmlDb.XQuery release for full XPath 3.1 §3.7.1 empty-operand comparison semantics, but this fix alone resolves the reported error.
+
 ## 1.6.0 — 2026-07-31
 
 ### Fixes
