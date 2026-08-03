@@ -66,4 +66,47 @@ public sealed class NodeKindTestPredicateMatchTests
             """;
         (await RunAsync(ss, "<desc><leaf/></desc>")).Should().Be("ok");
     }
+
+    [Fact]
+    public async Task DocumentNodeKindTest_WithPredicate_EvaluatesThePredicate()
+    {
+        // Sibling of the node() case: document-node()[pred] also short-circuited on
+        // kind alone. A false predicate must stop the (higher-priority) rule matching.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:template match="document-node()[false()]" priority="5">WRONG</xsl:template>
+              <xsl:template match="/" priority="1">RIGHT</xsl:template>
+            </xsl:stylesheet>
+            """;
+        (await RunAsync(ss, "<b/>")).Should().Be("RIGHT");
+    }
+
+    [Fact]
+    public async Task DocumentNodeElementTest_WithPredicate_EvaluatesBoth()
+    {
+        // document-node(element(E))[pred]: the element test AND the predicate must hold.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:template match="document-node(element(b))[false()]" priority="5">WRONG</xsl:template>
+              <xsl:template match="/" priority="1">RIGHT</xsl:template>
+            </xsl:stylesheet>
+            """;
+        (await RunAsync(ss, "<b/>")).Should().Be("RIGHT");
+    }
+
+    [Fact]
+    public async Task DocumentNodeElementTest_TruePredicate_StillMatches()
+    {
+        // Guard against over-correction: a TRUE predicate must still match.
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:template match="document-node(element(b))[true()]" priority="5">MATCHED</xsl:template>
+              <xsl:template match="/" priority="1">FALLBACK</xsl:template>
+            </xsl:stylesheet>
+            """;
+        (await RunAsync(ss, "<b/>")).Should().Be("MATCHED");
+    }
 }

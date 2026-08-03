@@ -638,10 +638,15 @@ public sealed class PathPattern : XsltPattern
                 return false;
             if (kt.Kind == XdmNodeKind.Document && node is XdmDocument doc)
             {
-                if (kt.DocumentElementTest == null)
-                    return true;
-                // document-node(element(E)) — check document element name
-                return MatchesDocumentElementTest(doc, kt.DocumentElementTest, context);
+                // document-node(element(E)) — the document element must match first.
+                if (kt.DocumentElementTest != null
+                    && !MatchesDocumentElementTest(doc, kt.DocumentElementTest, context))
+                    return false;
+                // …and, as for root()/node() above, any predicates on the step
+                // (match="document-node()[pred]") MUST still be evaluated. Both
+                // returns here previously short-circuited on kind alone, silently
+                // dropping the predicate.
+                return lastStep.Predicates.Count == 0 || EvaluatePredicates(lastStep, node, context);
             }
             // node() on child axis doesn't match attributes (attributes are on the attribute axis)
             // node() on self axis matches any node except documents
