@@ -647,9 +647,19 @@ public sealed class PathPattern : XsltPattern
             // node() on self axis matches any node except documents
             if (kt.Kind == XdmNodeKind.None)
             {
-                if (lastStep.Axis == Axis.Child)
-                    return node is XdmNode and not XdmDocument and not XdmAttribute;
-                return node is XdmNode and not XdmDocument;
+                // A bare node() kind test matches by node kind, but any predicates on
+                // the step (e.g. match="node()[self::x]") MUST still be evaluated. The
+                // previous predicate-less short-circuit dropped them, so node()[pred]
+                // behaved like bare node() and matched nodes the predicate should reject
+                // — then, at higher priority, wrongly pre-empted more specific templates.
+                // Mirrors the root() handling above. Reported via XSpec gather-specs.xsl
+                // (match="node()[x:is-user-content(.)]").
+                bool kindMatches = lastStep.Axis == Axis.Child
+                    ? node is XdmNode and not XdmDocument and not XdmAttribute
+                    : node is XdmNode and not XdmDocument;
+                if (!kindMatches)
+                    return false;
+                return lastStep.Predicates.Count == 0 || EvaluatePredicates(lastStep, node, context);
             }
         }
 
