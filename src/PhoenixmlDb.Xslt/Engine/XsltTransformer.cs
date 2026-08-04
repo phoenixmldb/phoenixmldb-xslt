@@ -8787,6 +8787,46 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// Copies tunnel parameters from the caller's scopes into the current
+    /// (just-pushed) scope, stopping at the nearest function boundary — tunnel
+    /// parameters do not propagate through functions. The nearest scope wins: an
+    /// entry already present in the current scope is never overwritten.
+    /// </summary>
+    /// <remarks>
+    /// Single implementation shared by every template-invocation path
+    /// (apply-templates, the built-in rules, both streaming variants,
+    /// call-template, apply-imports, next-match). Each of those carried its own
+    /// copy of this loop. Five of them read <c>scope.TunnelParameters</c>, which
+    /// lazily ALLOCATES the dictionary, so an ordinary dispatch allocated one
+    /// empty dictionary per ancestor scope; reading <c>TunnelParametersOrNull</c>
+    /// and materialising the target only when there is something to copy keeps
+    /// the common case (no tunnel parameters in scope) allocation-free.
+    /// </remarks>
+    private void InheritTunnelParameters()
+    {
+        Dictionary<QName, object?>? target = null;
+        var skippedCurrent = false;
+        foreach (var scope in _scopes)
+        {
+            // Skip the current (just-pushed) scope — it is the one being populated.
+            if (!skippedCurrent)
+            {
+                skippedCurrent = true;
+                continue;
+            }
+            if (scope.TunnelParametersOrNull is { Count: > 0 } inherited)
+            {
+                target ??= _scopes.Peek().TunnelParameters;
+                foreach (var (name, value) in inherited)
+                    target.TryAdd(name, value);
+            }
+            if (scope.IsTunnelBarrier)
+                break;
+        }
+    }
+
+
+    /// <summary>
     /// Tries to get a variable value without throwing if not found.
     /// Used by context-dependent functions like current-group() that should
     /// return empty sequence when called outside their expected context.
@@ -9155,18 +9195,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // then override with explicitly provided tunnel params.
                 // NOTE: We only store in TunnelParameters here, NOT as variables.
                 // Variables are bound later based on each template param's tunnel flag.
-                foreach (var scope in _scopes.Skip(1)) // Skip current (just-pushed) scope
-                {
-                    foreach (var (name, value) in scope.TunnelParameters)
-                    {
-                        if (!_scopes.Peek().TunnelParameters.ContainsKey(name))
-                        {
-                            _scopes.Peek().TunnelParameters[name] = value;
-                        }
-                    }
-                    if (scope.IsTunnelBarrier)
-                        break;
-                }
+                InheritTunnelParameters();
                 foreach (var param in withParams.Where(p => p.Tunnel))
                 {
                     var value = preEvaluatedParams[param.Name];
@@ -9881,16 +9910,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         ClearMergeGroupContext();
 
         // Propagate tunnel parameters from parent scopes
-        foreach (var scope in _scopes.Skip(1))
-        {
-            foreach (var (name, value) in scope.TunnelParameters)
-            {
-                if (!_scopes.Peek().TunnelParameters.ContainsKey(name))
-                    _scopes.Peek().TunnelParameters[name] = value;
-            }
-            if (scope.IsTunnelBarrier)
-                break;
-        }
+        InheritTunnelParameters();
         foreach (var param in withParams.Where(p => p.Tunnel))
         {
             var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
@@ -10114,19 +10134,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var forwardedParams = _streamingForwardedParams;
 
                 // Propagate tunnel parameters from parent scopes into this scope.
-                foreach (var scope in _scopes.Skip(1))
-                {
-                    if (scope.TunnelParametersOrNull is { } parentTunnels)
-                    {
-                        foreach (var (name, value) in parentTunnels)
-                        {
-                            if (!_scopes.Peek().TunnelParameters.ContainsKey(name))
-                                _scopes.Peek().TunnelParameters[name] = value;
-                        }
-                    }
-                    if (scope.IsTunnelBarrier)
-                        break;
-                }
+                InheritTunnelParameters();
                 // Register forwarded tunnel params in this scope's tunnel table.
                 foreach (var param in forwardedParams.Where(p => p.Tunnel))
                 {
@@ -10315,19 +10323,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // matched template whose body needs the buffered subtree (e.g. copy-of(node()))
         // silently lost its params (si-apply-templates-005 tunnel $a).
         var forwardedParams = _streamingForwardedParams;
-        foreach (var scope in _scopes.Skip(1))
-        {
-            if (scope.TunnelParametersOrNull is { } parentTunnels)
-            {
-                foreach (var (name, value) in parentTunnels)
-                {
-                    if (!_scopes.Peek().TunnelParameters.ContainsKey(name))
-                        _scopes.Peek().TunnelParameters[name] = value;
-                }
-            }
-            if (scope.IsTunnelBarrier)
-                break;
-        }
+        InheritTunnelParameters();
         foreach (var param in forwardedParams.Where(p => p.Tunnel))
         {
             var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
@@ -10992,18 +10988,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // Forward inherited tunnel parameters from parent scopes.
             // NOTE: Only store in TunnelParameters, NOT as variables.
             // Variables are bound later based on each template param's tunnel flag.
-            foreach (var scope in _scopes.Skip(1))
-            {
-                foreach (var (tName, tValue) in scope.TunnelParameters)
-                {
-                    if (!_scopes.Peek().TunnelParameters.ContainsKey(tName))
-                    {
-                        _scopes.Peek().TunnelParameters[tName] = tValue;
-                    }
-                }
-                if (scope.IsTunnelBarrier)
-                    break;
-            }
+            InheritTunnelParameters();
 
             // Track explicitly provided tunnel params (using pre-evaluated values)
             foreach (var wp in withParams.Where(p => p.Tunnel))
@@ -11210,16 +11195,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             try
             {
                 // Propagate tunnel parameters from parent scopes
-                foreach (var scope in _scopes.Skip(1))
-                {
-                    foreach (var (tName, tValue) in scope.TunnelParameters)
-                    {
-                        if (!_scopes.Peek().TunnelParameters.ContainsKey(tName))
-                            _scopes.Peek().TunnelParameters[tName] = tValue;
-                    }
-                    if (scope.IsTunnelBarrier)
-                        break;
-                }
+                InheritTunnelParameters();
 
                 // Store explicit tunnel with-params
                 foreach (var param in withParams.Where(p => p.Tunnel))
@@ -11320,16 +11296,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
 
                 // Propagate tunnel parameters from parent scopes
-                foreach (var scope in _scopes.Skip(1))
-                {
-                    foreach (var (tName, tValue) in scope.TunnelParameters)
-                    {
-                        if (!_scopes.Peek().TunnelParameters.ContainsKey(tName))
-                            _scopes.Peek().TunnelParameters[tName] = tValue;
-                    }
-                    if (scope.IsTunnelBarrier)
-                        break;
-                }
+                InheritTunnelParameters();
 
                 // Store explicit tunnel with-params
                 foreach (var param in withParams.Where(p => p.Tunnel))
