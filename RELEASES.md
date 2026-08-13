@@ -1,5 +1,17 @@
 # Release History
 
+## 1.6.2 — 2026-08-13
+
+### Fixes
+
+- **An `xsl:attribute` (or `xsl:namespace`) inside a typed `xsl:variable` / `xsl:param` / `xsl:with-param` body no longer raises a spurious `XTDE0420` when the construction happens inside a temporary tree.** An `as=`-typed sequence-constructor body builds a *sequence*, not a temporary tree (XSLT 3.0 §9.3) — no document node wraps it, so attribute and namespace nodes are legal members of the result. The engine left the document-construction depth at whatever the enclosing scope had, so `<xsl:attribute>` inside `<xsl:variable as="attribute()*">` looked like an attempt to attach an attribute to a document node and failed with `XTDE0420: Cannot add an attribute node to a document node`. The typed variable, param, with-param, and param-default-body seams now neutralize that depth for the body and restore it afterwards, matching what the user-function seam already did. `as="document-node()"` is deliberately excluded — that body really is wrapped in a document node. Reported by Martin Honnen against DocBook xslTNG 2.8.0 and 2.8.3 (`modules/attributes.xsl:421`), where the `<xsl:variable name="attr" as="attribute()*"><xsl:apply-templates select="@*"/></xsl:variable>` idiom appears roughly twenty times; the whole document transform failed on the sample article. Regression since the DocBook support landed in the 1.4.x–1.5.x line.
+
+- **An `xsl:namespace` that re-declares a binding the element already has is now a no-op instead of emitting a duplicate declaration.** Adding a namespace node for a (prefix, URI) the element under construction already carries is not an error — `XTDE0430` covers only the case where the URIs *differ* — but the engine emitted both, producing two identical `xmlns:p` attributes on one start tag and output that is not well-formed XML. A conflicting URI still raises `XTDE0430`, and a redundant re-declaration of a binding an ancestor already provides is now omitted (same infoset, one fewer declaration). Found while generating DocBook xslTNG's `param.xsl` with our own engine: `tools/generate-parameters.xsl` uses `xsl:namespace-alias` to put the result root in the XSL namespace and then re-declares that same binding with `<xsl:namespace name="xsl">`, so the generated stylesheet could not be reparsed.
+
+### Testing
+
+- Both fixes carry regression tests (`MartinDocBookTypedAttributeVariableTests`, `NamespaceDuplicateDeclarationTests`) covering the reported shapes, the guard cases that must keep failing, and the `as="document-node()"` exclusion. Neither bug was reachable by the existing suites: the unit suite was green at 1196 and the W3C conformance suite asserts only that some tests passed, so it cannot fail on a regression. A repro harness that runs the engine against the real DocBook xslTNG stylesheets now ships in `.claude/skills/engine-repro/`; it builds a runnable xslTNG tree from a source checkout using the engine itself, with no Java, Gradle, or network dependency.
+
 ## 1.6.1 — 2026-08-04
 
 ### Fixes
