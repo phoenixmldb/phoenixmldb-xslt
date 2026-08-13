@@ -6104,6 +6104,64 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private int _documentNodeDepth; // >0 when inside xsl:document (cannot add attributes/namespaces)
     private SourceLocation? _currentInstructionLocation; // Most-recent attribute-emitting instruction location, for XTDE0410/0420 messages
 
+#pragma warning disable
+    // Opt-in diagnostic, off unless PHXDIAG_XTDE0420=1 is set in the environment.
+    //
+    // XTDE0420 is raised from five places and is almost always a symptom: the instruction
+    // that trips it is legal, and the real fault is the construction scope whose rules are
+    // being applied to it (that is exactly how the 1.6.2 typed-variable bug presented). This
+    // dumps the construction state and the filtered managed stack at the raise site so the
+    // owning scope is identifiable without a debugger — see the `engine-repro` skill.
+    //
+    // The blanket pragma is deliberate: this is diagnostic-only code under an
+    // AnalysisLevel=latest-all / TreatWarningsAsErrors build, and the console writes,
+    // literal strings, and stack walk each trip a different analyzer. It is scoped to this
+    // one method by the matching restore below.
+    // TEMPORARY DIAGNOSTIC — remove before commit. Enable with PHXDIAG_DOCDEPTH=1.
+    // Traces every mutation of _documentNodeDepth so an unbalanced ++ (a scope that raised
+    // the depth and never restored it) is visible as a `+` with no matching `-`.
+
+
+    private void DiagXtde0420(string site, string? attrName = null)
+    {
+        if (Environment.GetEnvironmentVariable("PHXDIAG_XTDE0420") != "1") return;
+        var accum = _sequenceAccumulator is null ? "null" : $"count={_sequenceAccumulator.Count}";
+        Console.Error.WriteLine(
+            $"\n[XTDE0420 @{site}] attr={attrName ?? "?"} "
+            + $"docDepth={_documentNodeDepth} attrCollecting={_attributeCollecting} "
+            + $"attrStack={_collectedAttributesStack.Count} seqAccum={accum} "
+            + $"outLen={_output.Length} logicalStart={_outputLogicalStart} "
+            + $"wherePop={_wherePopulatedDepth} serElemDepth={_serializingElementDepth} "
+            + $"textDepth={_textContentDepth} loc={_currentInstructionLocation}");
+
+        // The bytes between the logical start of the current scope and the end of _output are
+        // "children already emitted here". If this is non-empty while docDepth>0 we are almost
+        // certainly inside a scope whose _documentNodeDepth leaked in from an enclosing one.
+        var start = Math.Clamp(_outputLogicalStart, 0, _output.Length);
+        var scoped = _output.ToString(start, _output.Length - start);
+        var tail = _output.ToString(Math.Max(0, _output.Length - 160), Math.Min(160, _output.Length));
+        Console.Error.WriteLine($"    scopedLen={scoped.Length} scoped={Trunc(scoped, 160)}");
+        Console.Error.WriteLine($"    outTail={Trunc(tail, 160)}");
+
+        // StackTrace(true) carries file+line, so the frame that did the live _documentNodeDepth++
+        // is identifiable directly — it is still on the stack (every ++ sits in a try/finally
+        // wrapped around body execution). Look for the innermost of lines 10652/15331/15423/
+        // 18097/18218/18290/21097 in the dump below.
+        var frames = new System.Diagnostics.StackTrace(true).ToString()
+            .Split('\n')
+            .Where(f => f.Contains("PhoenixmlDb", StringComparison.Ordinal))
+            .Where(f => f.Contains(".cs:line", StringComparison.Ordinal)) // drop the duplicate async-shim frames
+            .Take(120);
+        foreach (var f in frames) Console.Error.WriteLine("    " + f.TrimEnd());
+
+        static string Trunc(string s, int n)
+        {
+            s = s.Replace("\n", "\\n", StringComparison.Ordinal).Replace("\r", "", StringComparison.Ordinal);
+            return s.Length <= n ? s : s[..n] + "…";
+        }
+    }
+#pragma warning restore
+
     // Offset in `_output` below which content is considered "outer" — owned by an enclosing
     // scope, not by anything currently executing. Updated by `ScopedOutputBuffer` to the
     // saved length on entry and restored to the previous value on dispose.
@@ -8938,6 +8996,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _sequenceAccumulator = new List<object?>();
         var savedLen = _output.Length;
         _temporaryOutputDepth++;
+        // This evaluates a body to a SEQUENCE value — never a temporary tree — so attribute
+        // and namespace nodes are legal members of the result and the XTDE0410/0420 guards
+        // must not see a document depth inherited from an enclosing construction scope. Same
+        // rule as the typed seams in BindVariableAsync / BindParamAsync (XSLT 3.0 §9.3); a
+        // body that really does produce an attribute for an `as="document-node()"` parameter
+        // is caught by the type check on the resulting value, not by this guard.
+        var savedDocNodeDepthBody = _documentNodeDepth;
+        _documentNodeDepth = 0;
         List<object?> captured;
         try
         {
@@ -8947,6 +9013,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             captured = _sequenceAccumulator;
             _sequenceAccumulator = savedAccumulator;
+            _documentNodeDepth = savedDocNodeDepthBody;
             _temporaryOutputDepth--;
         }
         var content = _output.ToString(savedLen, _output.Length - savedLen);
@@ -14629,7 +14696,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0420: Cannot add attribute to a document node
         if (_documentNodeDepth > 0 && !_attributeCollecting)
+        {
+            DiagXtde0420("CreateAttributeAsync", instruction.Name?.ToString());
             throw new XsltException("XTDE0420: Cannot add an attribute node to a document node", instruction.Location);
+        }
 
         // XTDE0410: Cannot add attribute after child content has been added to the element
         // Inside xsl:where-populated, defer this check until after insignificant items are filtered
@@ -15761,7 +15831,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 // XTDE0420: Cannot add attribute to a document node
                 if (_documentNodeDepth > 0 && !_attributeCollecting)
+                {
+                    DiagXtde0420("CopySingleItem/XdmAttribute", $"{attr.NodeName}={attr.Value}");
                     throw new XsltException("XTDE0420: Cannot add an attribute node to a document node", _currentInstructionLocation);
+                }
                 // XTDE0410: Cannot add attribute after child content has been added
                 // Inside xsl:where-populated, defer this check until after filtering
                 if (_attributeCollecting && _output.Length > _outputLogicalStart && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
@@ -17144,7 +17217,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 // XTDE0420: Cannot add attribute to a document node
                 if (_documentNodeDepth > 0 && !_attributeCollecting)
+                {
+                    DiagXtde0420("SerializeNode/XdmAttribute", $"{attr.NodeName}={attr.Value}");
                     throw new XsltException("XTDE0420: Cannot add an attribute node to a document node", _currentInstructionLocation);
+                }
                 // XTDE0410: Cannot add attribute after child content has been added
                 // Inside xsl:where-populated, defer this check until after filtering
                 if (_attributeCollecting && _output.Length > _outputLogicalStart && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
@@ -17203,7 +17279,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // whose `xsl:copy-of select="@*,namespace::*[…]"` poisoned every locale
                 // template with a leading docbook-namespace text node.
                 if (_documentNodeDepth > 0 && !_attributeCollecting)
+                {
+                    DiagXtde0420("SerializeNode/XdmNamespace(0440)", $"xmlns:{nsNode.Prefix}={nsNode.Uri}");
                     throw new XsltException("XTDE0440: Cannot add a namespace node to a document node", _currentInstructionLocation);
+                }
                 if (_attributeCollecting && _output.Length > _outputLogicalStart && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
                     throw new XsltException("XTDE0410: Cannot add a namespace node to an element after children have been added", _currentInstructionLocation);
 
@@ -17986,7 +18065,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // XTDE0420: Cannot add namespace to a document node
         if (_documentNodeDepth > 0 && !_attributeCollecting)
+        {
+            DiagXtde0420("CreateNamespaceAsync", $"xmlns:{prefix}={uri}");
             throw Error("XTDE0420: Cannot add a namespace node to a document node");
+        }
 
         // XTDE0440: Cannot define a default namespace when the element is in no namespace
         if (string.IsNullOrEmpty(prefix) && !string.IsNullOrEmpty(uri)
@@ -18025,6 +18107,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Namespace declarations should appear in the element's start tag,
         // so write to _collectedAttributes when in attribute collection mode
         var target = _attributeCollecting ? _collectedAttributes! : _output;
+
+        // Adding a namespace node for a (prefix, uri) the element under construction already
+        // has is a no-op, not a duplicate declaration: XTDE0430 covers only the case where the
+        // URIs differ (checked above). Emitting it again yields two identical xmlns:p
+        // attributes on one start tag, which is not well-formed XML — the output cannot be
+        // reparsed at all.
+        //
+        // The construction sites (LRE / xsl:element / xsl:copy) each push exactly two scopes
+        // for the element being built: its own declarations, then an empty scope for
+        // attribute-emitted ones. Checking those two covers both "the element already declares
+        // this" and "an earlier xsl:namespace on this element already emitted it".
+        //
+        // This also suppresses the case where the element's binding was itself dropped as
+        // redundant with an identical ancestor declaration. That is still correct: the
+        // namespace node is in scope either way, and omitting a redundant re-declaration is
+        // valid serialization of the same infoset.
+        //
+        // Hit by DocBook xslTNG's tools/generate-parameters.xsl, where xsl:namespace-alias puts
+        // the result root in the XSL namespace and <xsl:namespace name="xsl"> re-declares that
+        // same binding — producing a stylesheet no parser would accept.
+        var scopesChecked = 0;
+        foreach (var scope in _outputNsScopes)
+        {
+            if (scopesChecked++ >= 2) break;
+            if (scope.TryGetValue(nsPrefix, out var declaredUri) && declaredUri == uri)
+                return;
+        }
+
         target.Append(" xmlns");
         if (!string.IsNullOrEmpty(prefix))
         {
@@ -20555,6 +20665,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _outputLogicalStart = _output.Length;
                 var savedAtomic = _lastResultWasAtomic;
                 _lastResultWasAtomic = false;
+                // An `as=`-typed body constructs a SEQUENCE, not a temporary tree (XSLT 3.0
+                // §9.3): no document node wraps it, so attribute and namespace nodes are legal
+                // members of the result. The XTDE0410/0420 guards key off _documentNodeDepth,
+                // which we inherit from whatever construction scope encloses us; leaving it
+                // raised makes an xsl:attribute inside the body look like an attempt to attach
+                // an attribute to a document node. Neutralize it for the body and restore in
+                // the finally, exactly as the user-function seam does around a function body.
+                //
+                // as="document-node()" is the exception: there the body's content really is
+                // wrapped in a document node below, so the guard must stay armed.
+                //
+                // Without this the DocBook xslTNG idiom
+                //     <xsl:variable name="attr" as="attribute()*">
+                //       <xsl:apply-templates select="@*"/>   <!-- templates emit xsl:attribute -->
+                //     </xsl:variable>
+                // fails with XTDE0420 whenever it sits inside an enclosing document scope.
+                var neutralizeDocDepth = instruction.As?.ItemType != ItemType.Document;
+                var savedDocNodeDepthSeq = _documentNodeDepth;
+                if (neutralizeDocDepth)
+                    _documentNodeDepth = 0;
                 // Save and clear namespace scopes so RTF content has all needed declarations
                 var savedNsScopes = new List<Dictionary<string, string>>(_outputNsScopes);
                 _outputNsScopes.Clear();
@@ -20649,6 +20779,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         _serializeBaseContext = savedSeqBaseContext;
                     }
                     _temporaryOutputDepth--;
+                    _documentNodeDepth = savedDocNodeDepthSeq;
                     _textContentDepth = savedTextDepth2;
                     _attributeContentDepth = savedAttrContentDepth2;
                     _collectTextAsSequenceItems = savedCollectText;
@@ -21534,11 +21665,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _outputLogicalStart = _output.Length;
                 var savedAtomic = _lastResultWasAtomic;
                 _lastResultWasAtomic = false;
+                // See BindVariableAsync: an `as=`-typed body builds a sequence, not a temp tree,
+                // so attribute/namespace nodes are legal in it and the XTDE0410/0420 guards must
+                // not see a document depth inherited from an enclosing construction scope.
+                var neutralizeDocDepth = instruction.As?.ItemType != ItemType.Document;
+                var savedDocNodeDepthSeq = _documentNodeDepth;
+                if (neutralizeDocDepth)
+                    _documentNodeDepth = 0;
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
                 var textContent = savedScope.GetWritten();
                 savedScope.Dispose();
                 _outputLogicalStart = savedLogicalStart;
                 _lastResultWasAtomic = savedAtomic;
+                _documentNodeDepth = savedDocNodeDepthSeq;
 
                 var sequenceItems = new List<object?>();
                 foreach (var item in _sequenceAccumulator)
@@ -26543,9 +26682,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var savedLogicalStart = _outputLogicalStart;
                 _outputLogicalStart = _output.Length;
                 _temporaryOutputDepth++;
+                // See BindVariableAsync: an `as=`-typed body builds a sequence, not a temp
+                // tree, so attribute/namespace nodes are legal in it and the XTDE0410/0420
+                // guards must not see an inherited document depth. DocBook xslTNG hits this
+                // via <xsl:with-param name="extra-attributes" as="attribute()*"> bodies.
+                var neutralizeDocDepth = param.As?.ItemType != ItemType.Document;
+                var savedDocNodeDepthParam = _documentNodeDepth;
+                if (neutralizeDocDepth)
+                    _documentNodeDepth = 0;
                 try
                 { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
-                finally { _temporaryOutputDepth--; }
+                finally
+                {
+                    _temporaryOutputDepth--;
+                    _documentNodeDepth = savedDocNodeDepthParam;
+                }
                 var textContent = savedScope.GetWritten();
                 savedScope.Dispose();
                 _outputLogicalStart = savedLogicalStart;
