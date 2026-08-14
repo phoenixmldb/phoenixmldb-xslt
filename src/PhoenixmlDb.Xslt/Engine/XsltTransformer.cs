@@ -29081,6 +29081,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // assembly code already coerces TextNodeItem to atomic types when as= is set.
             var savedSerializingElementDepth = _serializingElementDepth;
             _serializingElementDepth = 0;
+            // When the declared return type admits multiple items and text is one of them
+            // (text()*, node()*, item()*), collect each text write as its own accumulator
+            // entry so it stays a TEXT NODE. Without this, text produced in the body — most
+            // often by the built-in rule copying a source text node — falls through to the
+            // output buffer, and the result assembly below hands back the buffer as a plain
+            // string. A caller declaring as="node()*" then gets a String and raises
+            // XTTE0780. The typed xsl:variable seam has done this since it was written; the
+            // function seam simply never did, so the two disagreed on identical bodies.
+            //
+            // Reported by Martin Honnen: XSpec's x:resolve-import (as="node()*") applies
+            // templates over an x:description whose children include ordinary text, which
+            // made it the single largest XSpec blocker — 87 of 162 suites.
+            var needsTextCollectionFunc = func.As != null
+                && func.As.ItemType is ItemType.Text or ItemType.Node or ItemType.Item
+                && func.As.Occurrence is Occurrence.ZeroOrMore or Occurrence.OneOrMore;
+            var savedCollectTextFunc = _collectTextAsSequenceItems;
+            if (needsTextCollectionFunc)
+                _collectTextAsSequenceItems = true;
             _collectedAttributesStack.Clear();
             _temporaryOutputDepth++;
             _functionBodyDepth++;
@@ -29097,6 +29115,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // Restore serialization state
                 _documentNodeDepth = savedDocNodeDepth;
                 _serializingElementDepth = savedSerializingElementDepth;
+                _collectTextAsSequenceItems = savedCollectTextFunc;
 
                 _collectedAttributesStack.Clear();
                 foreach (var sb in savedAttrStackFunc.AsEnumerable().Reverse())
@@ -29108,6 +29127,38 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var accumulatedItems = _sequenceAccumulator;
             _sequenceAccumulator = savedAccumulator;
             _lastResultWasAtomic = savedLastResultWasAtomic;
+
+            // A declared node-ish return type wants TEXT NODES, so materialize the text the
+            // body produced (collected above as TextNodeItem, or written as a bare string)
+            // into XdmText. Without this the type check sees a TextNodeItem/String and raises
+            // XTTE0780 for a body that legitimately returned text. Mirrors the wrapAsTextNode
+            // step the typed xsl:variable and global-variable paths already perform, and is
+            // deliberately limited to Text/Node the same way they are — an atomic return type
+            // is handled by the CoerceToType calls below, and item() must keep whatever the
+            // body actually produced.
+            if (_nodeStore != null && func.As != null
+                && func.As.ItemType is ItemType.Text or ItemType.Node)
+            {
+                for (var i = 0; i < accumulatedItems.Count; i++)
+                {
+                    var value = accumulatedItems[i] switch
+                    {
+                        Xdm.TextNodeItem tniWrap => tniWrap.Value,
+                        string strWrap => strWrap,
+                        _ => null,
+                    };
+                    if (value != null)
+                    {
+                        accumulatedItems[i] = new Xdm.Nodes.XdmText
+                        {
+                            Id = _nodeStore.NextId(),
+                            Document = DocumentId.None,
+                            Parent = NodeId.None,
+                            Value = value,
+                        };
+                    }
+                }
+            }
 
             // Determine function return value from accumulated items and/or text output
             object? funcResult;
