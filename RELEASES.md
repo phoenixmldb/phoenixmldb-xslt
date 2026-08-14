@@ -1,5 +1,11 @@
 # Release History
 
+## 1.6.3 — 2026-08-13
+
+### Fixes
+
+- **A nested `xsl:copy` inside a typed (`as=`) template no longer vanishes from the output, taking a spurious `XTTE0505` with it.** A typed template installs a sequence accumulator, which routes `xsl:copy` of an element down its serialize-then-reparse path: the copy is written to the output buffer, sliced back out, and reparsed into an XDM node inside a synthetic wrapper element. That serialized fragment carries only the namespace declarations it needed *at its position* — any an ancestor already declares are suppressed as redundant — so a **nested** copy reparsed on its own had an undeclared prefix and threw, and the handler had already truncated the buffer: the element was destroyed outright. Validating the declared cardinality against the resulting empty capture then reported `XTTE0505: … expected exactly one item, got 0`. The synthetic wrapper now declares the in-scope namespaces so the fragment stands alone, and the parse-failure fallback restores the markup it truncated instead of dropping it. The failure required all three of a declared `as=` type, nesting, and an `xsl:copy` parent — a literal result element parent uses a different construction path and was unaffected. Reported by Martin Honnen against XSpec 4.0.3 `src/compiler/base/resolve-import/gather/gather-specs.xsl`, which this unblocks: the resolve-import stage sits on the critical path for running XSpec suites at all.
+
 ## 1.6.2 — 2026-08-13
 
 ### Fixes
