@@ -15774,9 +15774,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var sourceBaseUri = ComputeSourceBaseUri(elem);
                     if (sourceBaseUri != null)
                     {
+                        var elemXml = _output.ToString(elemStartPos, _output.Length - elemStartPos);
                         try
                         {
-                            var elemXml = _output.ToString(elemStartPos, _output.Length - elemStartPos);
                             _output.Length = elemStartPos;
                             // Stream-parse rather than allocating an XmlDocument and
                             // re-converting. Wrap in a synthetic root so we can reuse
@@ -15788,7 +15788,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                                 IgnoreComments = false,
                                 IgnoreProcessingInstructions = false,
                             };
-                            using var stringReaderCopy = new System.IO.StringReader($"<_copy_root_>{elemXml}</_copy_root_>");
+                            // The serialized element only carries the namespace declarations it
+                            // actually needed at its position in the output — IsNamespaceInScope
+                            // above suppresses any the ancestors already declare. Reparsed bare,
+                            // such a fragment has an UNDECLARED PREFIX and throws, which used to
+                            // silently drop the element (the truncation above had already run).
+                            // Declare the in-scope set on the synthetic wrapper so the fragment
+                            // stands alone. This is exactly what BuildInScopeNamespaceDeclarations
+                            // exists for. Reported by Martin Honnen against XSpec gather-specs.xsl:
+                            // a nested x:scenario copied inside its parent's xsl:copy vanished, and
+                            // the empty result then raised a spurious XTTE0505.
+                            using var stringReaderCopy = new System.IO.StringReader(
+                                $"<_copy_root_{BuildInScopeNamespaceDeclarations()}>{elemXml}</_copy_root_>");
                             using var readerCopy = System.Xml.XmlReader.Create(stringReaderCopy, settingsCopy);
                             var copyChildren = new List<object?>();
                             ReadAsBodyChunkChildren(readerCopy, copyChildren);
@@ -15805,7 +15816,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         }
                         catch (System.Xml.XmlException)
                         {
-                            // Fallback: leave serialized in _output
+                            // Fallback: leave the element serialized in _output. The truncation
+                            // above has already run, so put the markup back — otherwise an
+                            // unparseable fragment is destroyed rather than degraded to the
+                            // string path, which is how the XSpec loss above went unnoticed.
+                            _output.Length = elemStartPos;
+                            _output.Append(elemXml);
                         }
                     }
                 }
