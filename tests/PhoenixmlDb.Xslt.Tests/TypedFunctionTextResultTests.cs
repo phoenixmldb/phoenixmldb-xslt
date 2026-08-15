@@ -121,4 +121,57 @@ public sealed class TypedFunctionTextResultTests
         await t.LoadStylesheetAsync(ss);
         (await t.TransformAsync("<desc>abc</desc>")).Trim().Should().Be("abc/true");
     }
+
+    /// <summary>
+    /// Text written by <c>xsl:text</c> — as opposed to the built-in rule copying a source text
+    /// node — must not be double-counted. <c>WriteTextItem</c> deliberately writes such text to
+    /// BOTH the sequence accumulator and the output buffer inside a function body, so the result
+    /// assembly can restore source order between text and elements; it recognises the duplicate
+    /// by its TextNodeItem type. Materializing those items to XdmText before the assembly ran
+    /// blinded that check and returned the text twice — `A` + `B` came back as `AB`, `A`, `B`.
+    ///
+    /// Regression guard: every other test in this class produces text via built-in rules, which
+    /// take a different path and would not have caught it.
+    /// </summary>
+    [Fact]
+    public async Task TypedFunction_XslTextInBody_IsNotDoubleCounted()
+    {
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:x="urn:x" exclude-result-prefixes="#all">
+              <xsl:output method="text"/>
+              <xsl:function name="x:f" as="node()*">
+                <xsl:text>A</xsl:text><xsl:text>B</xsl:text>
+              </xsl:function>
+              <xsl:template match="/"><xsl:value-of
+                select="count(x:f()) || '|' || string-join(x:f() ! string(.), '')"/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync(ss);
+        // Adjacent xsl:text merges into a single text node.
+        (await t.TransformAsync("<r/>")).Trim().Should().Be("1|AB");
+    }
+
+    /// <summary>
+    /// The reason the dual-channel write exists: text and elements interleaved in a function
+    /// body must come back in source order, exactly once each.
+    /// </summary>
+    [Fact]
+    public async Task TypedFunction_TextAndElementsInterleaved_KeepSourceOrderWithoutDuplication()
+    {
+        const string ss = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:x="urn:x" exclude-result-prefixes="#all">
+              <xsl:output method="xml" indent="no"/>
+              <xsl:function name="x:f" as="node()*">
+                <xsl:text>one</xsl:text><e/><xsl:text>two</xsl:text>
+              </xsl:function>
+              <xsl:template match="/"><out><xsl:copy-of select="x:f()"/></out></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync(ss);
+        (await t.TransformAsync("<r/>")).Should().Contain("<out>one<e/>two</out>");
+    }
 }

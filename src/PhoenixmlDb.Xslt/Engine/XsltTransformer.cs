@@ -13977,12 +13977,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // (not text nodes), so they get space separators in the final join (step 5).
             if (_collectTextAsSequenceItems && _sequenceAccumulator != null && _serializingElementDepth == 0)
             {
-                // Flush any pending text in _output as a TextNodeItem
-                var pending = _output.ToString();
+                // Flush any pending text in _output as a TextNodeItem.
+                //
+                // Slice and truncate from the CURRENT SCOPE's base, never from 0. Inside a
+                // stylesheet function (or any scope that recorded a base) the buffer already
+                // holds the caller's content below _outputLogicalStart; taking ToString() from
+                // 0 and Clear()ing stole that content and left _output shorter than the offset
+                // the caller saved, so the caller's own ToString(saved, …) then threw
+                // "startIndex cannot be larger than length of string".
+                var pendingBase = Math.Clamp(_outputLogicalStart, 0, _output.Length);
+                var pending = _output.ToString(pendingBase, _output.Length - pendingBase);
                 if (pending.Length > 0)
                 {
                     AppendToSeqAccumulator(new Xdm.TextNodeItem(pending));
-                    _output.Clear();
+                    _output.Length = pendingBase;
                 }
                 // Execute element content with _collectTextAsSequenceItems disabled
                 // so text goes to _output (not accumulator) for this element only
@@ -13996,9 +14004,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     _collectTextAsSequenceItems = true;
                 }
-                // Add the element's atomized content as a plain string (separate item)
-                var elementText = _output.ToString();
-                _output.Clear();
+                // Add the element's atomized content as a plain string (separate item),
+                // again relative to this scope's base rather than the whole buffer.
+                var elementBase = Math.Clamp(_outputLogicalStart, 0, _output.Length);
+                var elementText = _output.ToString(elementBase, _output.Length - elementBase);
+                _output.Length = elementBase;
                 if (elementText.Length > 0)
                     AppendToSeqAccumulator(elementText);
                 return;
@@ -29087,6 +29097,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
             // Also capture any text output (function body is temporary output state)
             var savedOutput = _output.Length;
+            // Declare the function body's base offset. _outputLogicalStart is the engine's
+            // "content below here belongs to an enclosing scope" marker, and the body may run
+            // code that flushes or resets the buffer; without a base it slices and clears from
+            // 0, stealing the caller's content and leaving _output SHORTER than savedOutput —
+            // after which the ToString(savedOutput, …) below throws
+            // "startIndex cannot be larger than length of string".
+            var savedLogicalStartFunc = _outputLogicalStart;
+            _outputLogicalStart = savedOutput;
             // Save and clear namespace scopes so LRE elements in the function body
             // emit all needed namespace declarations. The function output is extracted
             // as a separate text fragment, so it must be self-contained.
@@ -29138,6 +29156,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _documentNodeDepth = savedDocNodeDepth;
                 _serializingElementDepth = savedSerializingElementDepth;
                 _collectTextAsSequenceItems = savedCollectTextFunc;
+                _outputLogicalStart = savedLogicalStartFunc;
 
                 _collectedAttributesStack.Clear();
                 foreach (var sb in savedAttrStackFunc.AsEnumerable().Reverse())
@@ -29158,8 +29177,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // deliberately limited to Text/Node the same way they are — an atomic return type
             // is handled by the CoerceToType calls below, and item() must keep whatever the
             // body actually produced.
+            // Only when the accumulator is the SOLE channel. WriteTextItem deliberately writes
+            // text to both the accumulator and _output inside a function body so the assembly
+            // below can restore source order between text and elements; that assembly
+            // recognises the duplicate by its TextNodeItem type, so materializing to XdmText
+            // first made it emit the same text twice (xsl:text A + B came back as AB, A, B).
             if (_nodeStore != null && func.As != null
-                && func.As.ItemType is ItemType.Text or ItemType.Node)
+                && func.As.ItemType is ItemType.Text or ItemType.Node
+                && string.IsNullOrEmpty(textOutput))
             {
                 for (var i = 0; i < accumulatedItems.Count; i++)
                 {
