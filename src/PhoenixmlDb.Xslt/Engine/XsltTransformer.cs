@@ -9844,10 +9844,32 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // elements (e.g. shallow-copy of parent elements in streaming mode).
                     var savedLogicalStartForAttrTemplate = _outputLogicalStart;
                     _outputLogicalStart = scope.SavedLength;
-                    foreach (var (matchedTemplate, matchedAttr) in templateMatches)
+                    // Suspend any enclosing sequence accumulator for the duration, exactly as
+                    // the child application below already does. A matched attribute template
+                    // with a declared type (as="attribute()") captures its own result and then
+                    // propagates it to whatever accumulator is active; with an enclosing
+                    // node()*-typed function or variable body that is the OUTER accumulator, so
+                    // the attribute escaped the element being copied and surfaced as a loose
+                    // attribute node in the caller's sequence — later fatal as XTDE0420 when
+                    // that sequence is dropped into an xsl:document.
+                    //
+                    // XSpec gather-specs.xsl has exactly this shape: mode x:gather-specs is
+                    // on-no-match="shallow-copy" and carries a typed template for
+                    // @as|@function|@mode|@name|@port|@template, so every x:variable/x:param
+                    // shed its attributes into x:resolve-import's result.
+                    var savedSeqAccumAttrs = _sequenceAccumulator;
+                    _sequenceAccumulator = null;
+                    try
                     {
-                        await ExecuteMatchedTemplateAsync(matchedTemplate, matchedAttr, mode, withParams)
-                            .ConfigureAwait(false);
+                        foreach (var (matchedTemplate, matchedAttr) in templateMatches)
+                        {
+                            await ExecuteMatchedTemplateAsync(matchedTemplate, matchedAttr, mode, withParams)
+                                .ConfigureAwait(false);
+                        }
+                    }
+                    finally
+                    {
+                        _sequenceAccumulator = savedSeqAccumAttrs;
                     }
                     _outputLogicalStart = savedLogicalStartForAttrTemplate;
                     var collectedAttrs = _collectedAttributesStack.Pop();
