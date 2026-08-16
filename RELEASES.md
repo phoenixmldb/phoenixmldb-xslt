@@ -1,5 +1,25 @@
 # Release History
 
+## 1.6.4 — 2026-08-16
+
+### Fixes
+
+- **A typed function returning `node()*` now yields text NODES for text its body produces.** A stylesheet function whose declared return type admits text (`node()*`, `text()*`, `item()*`) never enabled text-node collection for its body, so text produced inside — most often by the built-in rule copying a source text node — fell through to the output buffer and the result was handed back as a plain string. A caller declaring `as="node()*"` then received a String and raised `XTTE0780`. The typed `xsl:variable` seam had always done this correctly, so the two disagreed on identical bodies. Reported by Martin Honnen: XSpec's `x:resolve-import` is exactly this shape, and it was the single largest blocker in that compiler.
+
+- **A typed attribute template no longer escapes a shallow copy.** A matched attribute template with a declared type (`as="attribute()"`) captures its own result and propagates it to whatever sequence accumulator is active; under the built-in shallow-copy rule that was the *enclosing* one, so the attribute escaped the element being copied and surfaced as a loose attribute node in the caller's sequence, with the element losing it. Later fatal where that sequence is dropped into an `xsl:document` (`XTDE0420`). The child half of shallow-copy already suspended the accumulator for this reason; the attribute half now does too. Surfaced via XSpec's `gather-specs.xsl`, where every `x:variable`/`x:param` shed its attributes.
+
+- **A function body's output slice is now relative to its own base.** The simple-content flush (reached inside comment / PI / attribute content while text is collected as sequence items) sliced and cleared the whole output buffer. Inside a stylesheet function that buffer already holds the caller's content, so the flush stole it and left the buffer shorter than the offset the function had saved — producing `ArgumentOutOfRangeException: startIndex cannot be larger than length of string`, and before that a silently corrupted document (the caller's text pulled inside a constructed comment). Reported by Martin Honnen.
+
+- **A node result now atomizes for an atomic function return type.** Per the function conversion rules an atomic declared return type atomizes its result before converting it, so returning an attribute or element where `xs:decimal` is declared is legal. The result assembly coerced text items but left XDM nodes alone, raising `XTTE0780: … requires type Decimal but got XdmAttribute`. XSpec's `x:xslt-version` is exactly this — `as="xs:decimal"` over an expression yielding an attribute node whenever a stylesheet declares its version — and clearing it took XSpec from 1 to 63 suites reaching execution.
+
+### Internal
+
+- **One shared construction context for every `as=`-typed body.** The seams behind `xsl:variable`, `xsl:param`, `xsl:with-param`, a parameter's default value and `xsl:function` each grew their own save/reset/restore block and had diverged; every capture bug above was a field one seam handled and another did not. They now share a single context covering the body's base offset, document-construction depth, text collection, text/attribute content depth, the collected-attribute stack and atomic spacing, so that class of divergence is no longer representable. Result assembly stays per-seam.
+
+### Dependencies
+
+- Requires **PhoenixmlDb.XQuery 1.6.2**, which carries the companion `fn:QName` and `fn:namespace-uri-for-prefix` fixes.
+
 ## 1.6.3 — 2026-08-13
 
 ### Fixes
