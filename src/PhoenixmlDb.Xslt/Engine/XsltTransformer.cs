@@ -29219,6 +29219,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // Includes string/anyURI types — atomization of text nodes always produces a string.
                 if (funcResult is Xdm.TextNodeItem tni && func.As != null && IsAtomicReturnType(func.As.ItemType))
                     funcResult = CoerceToType(tni.Value, func.As);
+                // An ATOMIC declared return type atomizes the result first (function conversion
+                // rules): a node's typed value is taken and then converted, so returning an
+                // attribute or element where xs:decimal is declared is legal, not XTTE0780.
+                // XSpec's x:xslt-version is exactly this — as="xs:decimal" over
+                // `(ancestor-or-self::*[@xslt-version][1]/@xslt-version, 3.0)[1]`, which yields
+                // an attribute node whenever the stylesheet declares the version.
+                else if (funcResult is XdmNode && func.As != null && IsAtomicReturnType(func.As.ItemType))
+                    funcResult = CoerceToType(funcResult, func.As);
                 ValidateFunctionReturnType(funcResult, func);
             }
             else if (accumulatedItems.Count > 1 && string.IsNullOrEmpty(textOutput))
