@@ -6179,6 +6179,102 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private int _outputLogicalStart;
 
     /// <summary>
+    /// Construction state saved on entry to an <c>as=</c>-typed sequence-constructor body,
+    /// restored on exit. See <see cref="EnterTypedBody"/>.
+    /// </summary>
+    private readonly struct TypedBodyState
+    {
+        public int LogicalStart { get; init; }
+        public int DocumentNodeDepth { get; init; }
+        public int TextContentDepth { get; init; }
+        public int AttributeContentDepth { get; init; }
+        public int SerializingElementDepth { get; init; }
+        public bool CollectTextAsSequenceItems { get; init; }
+        public bool LastResultWasAtomic { get; init; }
+        public List<StringBuilder> CollectedAttributes { get; init; }
+    }
+
+    /// <summary>
+    /// Establishes the construction context shared by every <c>as=</c>-typed body — the seams
+    /// behind <c>xsl:variable</c>, <c>xsl:param</c>, <c>xsl:with-param</c>, a parameter's
+    /// default value, <c>xsl:function</c> and a typed template.
+    /// </summary>
+    /// <remarks>
+    /// These seams each grew their own save/reset/restore block, and they diverged. Every one of
+    /// the five capture bugs found while unblocking XSpec was a field one seam handled and
+    /// another did not:
+    /// <list type="bullet">
+    /// <item><c>_documentNodeDepth</c> — variable had it, param/with-param/default did not, so an
+    /// <c>xsl:attribute</c> inside <c>as="attribute()*"</c> raised a spurious XTDE0420.</item>
+    /// <item><c>_collectTextAsSequenceItems</c> — variable had it, function did not, so a typed
+    /// function returned a string where the caller declared <c>node()*</c> (XTTE0780).</item>
+    /// <item><c>_outputLogicalStart</c> — variable had it, function did not, so a nested flush
+    /// truncated the caller's buffer and crashed with ArgumentOutOfRangeException.</item>
+    /// </list>
+    /// Centralising the context makes that class of divergence unrepresentable. Result ASSEMBLY
+    /// stays per-seam: each genuinely differs in how it turns the captured channels into a value,
+    /// and unifying that is a separate change.
+    ///
+    /// A typed body constructs a SEQUENCE, not a temporary tree (XSLT 3.0 §9.3), so the document
+    /// depth is neutralized — except for <c>as="document-node()"</c>, whose body really is
+    /// wrapped in a document node and must keep the guard armed.
+    /// </remarks>
+    private TypedBodyState EnterTypedBody(XdmSequenceType? declaredType)
+    {
+        var saved = new TypedBodyState
+        {
+            LogicalStart = _outputLogicalStart,
+            DocumentNodeDepth = _documentNodeDepth,
+            TextContentDepth = _textContentDepth,
+            AttributeContentDepth = _attributeContentDepth,
+            SerializingElementDepth = _serializingElementDepth,
+            CollectTextAsSequenceItems = _collectTextAsSequenceItems,
+            LastResultWasAtomic = _lastResultWasAtomic,
+            CollectedAttributes = new List<StringBuilder>(_collectedAttributesStack),
+        };
+
+        // Declare this body's base: content below it belongs to an enclosing scope and must
+        // never be sliced or truncated by anything running inside.
+        _outputLogicalStart = _output.Length;
+
+        if (declaredType?.ItemType != ItemType.Document)
+            _documentNodeDepth = 0;
+
+        // A body whose declared type admits multiple items INCLUDING text must keep each text
+        // write as its own item so it stays a text node rather than being merged into the buffer.
+        if (declaredType != null
+            && declaredType.ItemType is ItemType.Text or ItemType.Node or ItemType.Item
+            && declaredType.Occurrence is Occurrence.ZeroOrMore or Occurrence.OneOrMore)
+        {
+            _collectTextAsSequenceItems = true;
+            _serializingElementDepth = 0;
+        }
+
+        // The body is not inside an attribute/comment/PI value, whatever the caller was doing.
+        _textContentDepth = 0;
+        _attributeContentDepth = 0;
+        _lastResultWasAtomic = false;
+        _collectedAttributesStack.Clear();
+
+        return saved;
+    }
+
+    /// <summary>Restores the state captured by <see cref="EnterTypedBody"/>.</summary>
+    private void ExitTypedBody(in TypedBodyState saved)
+    {
+        _outputLogicalStart = saved.LogicalStart;
+        _documentNodeDepth = saved.DocumentNodeDepth;
+        _textContentDepth = saved.TextContentDepth;
+        _attributeContentDepth = saved.AttributeContentDepth;
+        _serializingElementDepth = saved.SerializingElementDepth;
+        _collectTextAsSequenceItems = saved.CollectTextAsSequenceItems;
+        _lastResultWasAtomic = saved.LastResultWasAtomic;
+        _collectedAttributesStack.Clear();
+        for (var i = saved.CollectedAttributes.Count - 1; i >= 0; i--)
+            _collectedAttributesStack.Push(saved.CollectedAttributes[i]);
+    }
+
+    /// <summary>
     /// Optional external sink for incremental streaming output. When non-null, the
     /// <see cref="StreamingXmlProcessor"/> calls <see cref="DrainStreamingOutputAsync"/>
     /// at each safe event boundary to flush <see cref="_output"/> here and reset its
@@ -8996,14 +9092,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _sequenceAccumulator = new List<object?>();
         var savedLen = _output.Length;
         _temporaryOutputDepth++;
-        // This evaluates a body to a SEQUENCE value — never a temporary tree — so attribute
-        // and namespace nodes are legal members of the result and the XTDE0410/0420 guards
-        // must not see a document depth inherited from an enclosing construction scope. Same
-        // rule as the typed seams in BindVariableAsync / BindParamAsync (XSLT 3.0 §9.3); a
-        // body that really does produce an attribute for an `as="document-node()"` parameter
-        // is caught by the type check on the resulting value, not by this guard.
-        var savedDocNodeDepthBody = _documentNodeDepth;
-        _documentNodeDepth = 0;
+        // Shared typed-body context (see EnterTypedBody). This evaluates a body to a SEQUENCE
+        // value — never a temporary tree — so the caller's declared type is not available here
+        // and the neutral form applies: attribute and namespace nodes are legal members of the
+        // result, and a body that really does produce an attribute for an
+        // `as="document-node()"` parameter is caught by the type check on the resulting value.
+        var typedBody = EnterTypedBody(null);
         List<object?> captured;
         try
         {
@@ -9013,7 +9107,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             captured = _sequenceAccumulator;
             _sequenceAccumulator = savedAccumulator;
-            _documentNodeDepth = savedDocNodeDepthBody;
+            ExitTypedBody(typedBody);
             _temporaryOutputDepth--;
         }
         var content = _output.ToString(savedLen, _output.Length - savedLen);
@@ -20709,39 +20803,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _sequenceAccumulator = new List<object?>();
 
                 var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
-                var savedLogicalStart = _outputLogicalStart;
-                _outputLogicalStart = _output.Length;
-                var savedAtomic = _lastResultWasAtomic;
-                _lastResultWasAtomic = false;
-                // An `as=`-typed body constructs a SEQUENCE, not a temporary tree (XSLT 3.0
-                // §9.3): no document node wraps it, so attribute and namespace nodes are legal
-                // members of the result. The XTDE0410/0420 guards key off _documentNodeDepth,
-                // which we inherit from whatever construction scope encloses us; leaving it
-                // raised makes an xsl:attribute inside the body look like an attempt to attach
-                // an attribute to a document node. Neutralize it for the body and restore in
-                // the finally, exactly as the user-function seam does around a function body.
-                //
-                // as="document-node()" is the exception: there the body's content really is
-                // wrapped in a document node below, so the guard must stay armed.
-                //
-                // Without this the DocBook xslTNG idiom
-                //     <xsl:variable name="attr" as="attribute()*">
-                //       <xsl:apply-templates select="@*"/>   <!-- templates emit xsl:attribute -->
-                //     </xsl:variable>
-                // fails with XTDE0420 whenever it sits inside an enclosing document scope.
-                var neutralizeDocDepth = instruction.As?.ItemType != ItemType.Document;
-                var savedDocNodeDepthSeq = _documentNodeDepth;
-                if (neutralizeDocDepth)
-                    _documentNodeDepth = 0;
+                // Shared typed-body context (see EnterTypedBody). This seam is the reference
+                // the others were compared against while consolidating; it uses the same helper
+                // so the definition lives in one place rather than being copied here.
+                var typedBody = EnterTypedBody(instruction.As);
                 // Save and clear namespace scopes so RTF content has all needed declarations
                 var savedNsScopes = new List<Dictionary<string, string>>(_outputNsScopes);
                 _outputNsScopes.Clear();
                 // Save and reset text/attribute content depth so LREs in variable content
                 // are processed fully (not suppressed as in attribute/comment/PI bodies)
-                var savedTextDepth2 = _textContentDepth;
-                var savedAttrContentDepth2 = _attributeContentDepth;
-                _textContentDepth = 0;
-                _attributeContentDepth = 0;
+
                 // A variable's value is an independent temp tree / sequence, so its content must
                 // NOT inherit the enclosing element's attribute-collection state. Otherwise an
                 // xsl:copy / xsl:attribute inside the variable content — whose accumulator capture
@@ -20749,8 +20820,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // the constructed attribute onto the enclosing open element's start tag instead of
                 // into $var. si-copy-003/004: a streamed `<xsl:for-each select="P/@v"><xsl:copy/>`
                 // inside `<xsl:variable as="attribute(*)*">` under an open `<out>` LRE.
-                var savedAttrCollectStack = new List<StringBuilder>(_collectedAttributesStack);
-                _collectedAttributesStack.Clear();
+
                 // Install an AsBodyCapture so xsl:sequence items appended during body
                 // execution record the _output offset at which they occur. Without this,
                 // literal-result-elements (which stream to _output) and xsl:sequence
@@ -20771,13 +20841,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var needsTextCollection = instruction.As != null &&
                     instruction.As.ItemType is ItemType.Text or ItemType.Node or ItemType.Item
                     && instruction.As.Occurrence is Occurrence.ZeroOrMore or Occurrence.OneOrMore;
-                var savedCollectText = _collectTextAsSequenceItems;
-                var savedElemDepth = _serializingElementDepth;
-                if (needsTextCollection)
-                {
-                    _collectTextAsSequenceItems = true;
-                    _serializingElementDepth = 0;
-                }
+
                 _temporaryOutputDepth++;
                 // EMIT context (temp-tree base-URI preservation): when the declared type is a
                 // node type whose body is serialized to TEXT and reparsed below (e.g.
@@ -20827,23 +20891,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         _serializeBaseContext = savedSeqBaseContext;
                     }
                     _temporaryOutputDepth--;
-                    _documentNodeDepth = savedDocNodeDepthSeq;
-                    _textContentDepth = savedTextDepth2;
-                    _attributeContentDepth = savedAttrContentDepth2;
-                    _collectTextAsSequenceItems = savedCollectText;
-                    _serializingElementDepth = savedElemDepth;
+                    ExitTypedBody(typedBody);
                     _currentAsBodyCapture = savedAsBodyCapture;
                     // Restore the enclosing element's attribute-collection stack (bottom-first so
                     // the original top-of-stack ends up on top again).
-                    _collectedAttributesStack.Clear();
-                    for (int ci = savedAttrCollectStack.Count - 1; ci >= 0; ci--)
-                        _collectedAttributesStack.Push(savedAttrCollectStack[ci]);
+
                 }
                 var textContent = savedScope.GetWritten();
 
                 savedScope.Dispose();
-                _outputLogicalStart = savedLogicalStart;
-                _lastResultWasAtomic = savedAtomic;
+
                 // Restore namespace scopes
                 _outputNsScopes.Clear();
                 foreach (var scope in savedNsScopes.AsEnumerable().Reverse())
@@ -21709,23 +21766,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _sequenceAccumulator = new List<object?>();
 
                 var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
-                var savedLogicalStart = _outputLogicalStart;
-                _outputLogicalStart = _output.Length;
-                var savedAtomic = _lastResultWasAtomic;
-                _lastResultWasAtomic = false;
-                // See BindVariableAsync: an `as=`-typed body builds a sequence, not a temp tree,
-                // so attribute/namespace nodes are legal in it and the XTDE0410/0420 guards must
-                // not see a document depth inherited from an enclosing construction scope.
-                var neutralizeDocDepth = instruction.As?.ItemType != ItemType.Document;
-                var savedDocNodeDepthSeq = _documentNodeDepth;
-                if (neutralizeDocDepth)
-                    _documentNodeDepth = 0;
-                await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+                // Shared typed-body context (see EnterTypedBody).
+                var typedBody = EnterTypedBody(instruction.As);
+                try
+                {
+                    await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+                }
+                finally
+                {
+                    ExitTypedBody(typedBody);
+                }
                 var textContent = savedScope.GetWritten();
                 savedScope.Dispose();
-                _outputLogicalStart = savedLogicalStart;
-                _lastResultWasAtomic = savedAtomic;
-                _documentNodeDepth = savedDocNodeDepthSeq;
 
                 var sequenceItems = new List<object?>();
                 foreach (var item in _sequenceAccumulator)
@@ -26727,27 +26779,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _sequenceAccumulator = new List<object?>();
 
                 var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
-                var savedLogicalStart = _outputLogicalStart;
-                _outputLogicalStart = _output.Length;
+                // Shared typed-body context (see EnterTypedBody). DocBook xslTNG reaches this
+                // seam via <xsl:with-param name="extra-attributes" as="attribute()*"> bodies.
+                var typedBody = EnterTypedBody(param.As);
                 _temporaryOutputDepth++;
-                // See BindVariableAsync: an `as=`-typed body builds a sequence, not a temp
-                // tree, so attribute/namespace nodes are legal in it and the XTDE0410/0420
-                // guards must not see an inherited document depth. DocBook xslTNG hits this
-                // via <xsl:with-param name="extra-attributes" as="attribute()*"> bodies.
-                var neutralizeDocDepth = param.As?.ItemType != ItemType.Document;
-                var savedDocNodeDepthParam = _documentNodeDepth;
-                if (neutralizeDocDepth)
-                    _documentNodeDepth = 0;
                 try
                 { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
                 finally
                 {
                     _temporaryOutputDepth--;
-                    _documentNodeDepth = savedDocNodeDepthParam;
+                    ExitTypedBody(typedBody);
                 }
                 var textContent = savedScope.GetWritten();
                 savedScope.Dispose();
-                _outputLogicalStart = savedLogicalStart;
 
                 var sequenceItems = new List<object?>();
                 foreach (var item in _sequenceAccumulator)
@@ -29093,52 +29137,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
             // Save _lastResultWasAtomic — function body's internal text/sequence ops
             // must not leak into the caller's atomic spacing state
-            var savedLastResultWasAtomic = _lastResultWasAtomic;
-
             // Also capture any text output (function body is temporary output state)
             var savedOutput = _output.Length;
-            // Declare the function body's base offset. _outputLogicalStart is the engine's
-            // "content below here belongs to an enclosing scope" marker, and the body may run
-            // code that flushes or resets the buffer; without a base it slices and clears from
-            // 0, stealing the caller's content and leaving _output SHORTER than savedOutput —
-            // after which the ToString(savedOutput, …) below throws
-            // "startIndex cannot be larger than length of string".
-            var savedLogicalStartFunc = _outputLogicalStart;
-            _outputLogicalStart = savedOutput;
-            // Save and clear namespace scopes so LRE elements in the function body
-            // emit all needed namespace declarations. The function output is extracted
-            // as a separate text fragment, so it must be self-contained.
+            // Shared typed-body context (see EnterTypedBody): declares this body's base in
+            // _outputLogicalStart, neutralizes the document depth, enables text-as-items for a
+            // node()*/text()*/item()* return type, and isolates text/attribute-content depth and
+            // the collected-attribute stack. Two of the five capture bugs found while unblocking
+            // XSpec were this seam lacking a field the xsl:variable seam already had.
+            var typedBody = EnterTypedBody(func.As);
+            // Namespace scopes are function-specific: the body's output is extracted as a
+            // separate text fragment, so its LREs must emit self-contained declarations.
             var savedNsScopesFunc = new List<Dictionary<string, string>>(_outputNsScopes);
             _outputNsScopes.Clear();
-            // Save/restore serialization state so nested function calls
-            // (e.g., recursive copy within document construction) don't inherit
-            // the caller's element/document/attribute collection context
-            var savedDocNodeDepth = _documentNodeDepth;
-            var savedAttrStackFunc = new List<StringBuilder>(_collectedAttributesStack);
-            _documentNodeDepth = 0;
-            // Reset _serializingElementDepth so xsl:value-of inside functions produces
-            // TextNodeItem (proper text nodes) instead of plain text strings. The result
-            // assembly code already coerces TextNodeItem to atomic types when as= is set.
-            var savedSerializingElementDepth = _serializingElementDepth;
-            _serializingElementDepth = 0;
-            // When the declared return type admits multiple items and text is one of them
-            // (text()*, node()*, item()*), collect each text write as its own accumulator
-            // entry so it stays a TEXT NODE. Without this, text produced in the body — most
-            // often by the built-in rule copying a source text node — falls through to the
-            // output buffer, and the result assembly below hands back the buffer as a plain
-            // string. A caller declaring as="node()*" then gets a String and raises
-            // XTTE0780. The typed xsl:variable seam has done this since it was written; the
-            // function seam simply never did, so the two disagreed on identical bodies.
-            //
-            // Reported by Martin Honnen: XSpec's x:resolve-import (as="node()*") applies
-            // templates over an x:description whose children include ordinary text, which
-            // made it the single largest XSpec blocker — 87 of 162 suites.
-            var needsTextCollectionFunc = func.As != null
-                && func.As.ItemType is ItemType.Text or ItemType.Node or ItemType.Item
-                && func.As.Occurrence is Occurrence.ZeroOrMore or Occurrence.OneOrMore;
-            var savedCollectTextFunc = _collectTextAsSequenceItems;
-            if (needsTextCollectionFunc)
-                _collectTextAsSequenceItems = true;
             _collectedAttributesStack.Clear();
             _temporaryOutputDepth++;
             _functionBodyDepth++;
@@ -29152,22 +29162,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _outputNsScopes.Clear();
                 foreach (var scope in savedNsScopesFunc.AsEnumerable().Reverse())
                     _outputNsScopes.Push(scope);
-                // Restore serialization state
-                _documentNodeDepth = savedDocNodeDepth;
-                _serializingElementDepth = savedSerializingElementDepth;
-                _collectTextAsSequenceItems = savedCollectTextFunc;
-                _outputLogicalStart = savedLogicalStartFunc;
-
-                _collectedAttributesStack.Clear();
-                foreach (var sb in savedAttrStackFunc.AsEnumerable().Reverse())
-                    _collectedAttributesStack.Push(sb);
+                // Restore serialization state (document depth, element depth, text collection,
+                // buffer base, collected attributes) — all owned by the shared typed-body scope.
+                ExitTypedBody(typedBody);
             }
             var textOutput = _output.ToString(savedOutput, _output.Length - savedOutput);
             _output.Length = savedOutput;
 
             var accumulatedItems = _sequenceAccumulator;
             _sequenceAccumulator = savedAccumulator;
-            _lastResultWasAtomic = savedLastResultWasAtomic;
 
             // A declared node-ish return type wants TEXT NODES, so materialize the text the
             // body produced (collected above as TextNodeItem, or written as a bare string)
