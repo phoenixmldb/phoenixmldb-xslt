@@ -6122,6 +6122,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     // the depth and never restored it) is visible as a `+` with no matching `-`.
 
 
+
+
+
     private void DiagXtde0420(string site, string? attrName = null)
     {
         if (Environment.GetEnvironmentVariable("PHXDIAG_XTDE0420") != "1") return;
@@ -11936,10 +11939,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         ResolvePatternNamespacesLocal(instruction.GroupEndingWith);
 
         // Streaming for-each-group: when inside a streamable template with the active
-        // XmlReader available, drive the reader directly instead of pre-evaluating
-        // select. Currently handles the two patterns Martin Honnen reported against
-        // 1.3.10 — group-starting-with and group-adjacent — for select="*" or
-        // similar child-axis expressions. group-by needs full materialization (later).
+        // XmlReader available, drive the reader directly instead of pre-evaluating select.
+        //
+        // Currently dispatches group-starting-with, group-ending-with and group-adjacent.
+        // group-by is excluded: see the note in ForEachGroupStreamingAsync's group-by branch.
         if (_isStreamingExecution && _activeStreamingReader != null
             && (instruction.GroupStartingWith != null
                 || instruction.GroupEndingWith != null
@@ -11957,147 +11960,33 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (instruction.GroupBy != null)
         {
-            // Group by key value — items with the same key are grouped together
-            if (instruction.Composite)
+            // Group by key value — items with the same key are grouped together. The grouping
+            // semantics live in GroupByAccumulator, shared with the streaming path.
+            string? groupByCollation = instruction.Collation != null
+                ? await EvaluateAvtAsync(instruction.Collation).ConfigureAwait(false)
+                : DefaultCollation;
+            ValidateCollation(groupByCollation, "XTDE1110");
+            StringComparer groupByComparer = GetCollationComparer(groupByCollation);
+            var accumulator = new GroupByAccumulator(instruction.Composite, groupByComparer);
+
+            var pos = 0;
+            foreach (var item in items)
             {
-                // XSLT 3.0 composite keys: use value-based comparison
-                // Resolve collation for composite key string comparison
-                string? compositeCollation = instruction.Collation != null
-                    ? await EvaluateAvtAsync(instruction.Collation).ConfigureAwait(false)
-                    : DefaultCollation;
-                ValidateCollation(compositeCollation, "XTDE1110");
-                StringComparer compositeComparer = GetCollationComparer(compositeCollation);
-
-                var compositeGroups = new List<(List<object?> Key, List<object> Items)>();
-
-                var pos = 0;
-                foreach (var item in items)
+                pos++;
+                PushContextItem(item, pos, items.Count);
+                try
                 {
-                    pos++;
-                    PushContextItem(item, pos, items.Count);
-                    try
-                    {
-                        var key = await EvaluateAsync(instruction.GroupBy).ConfigureAwait(false);
-
-                        // Convert key to list for composite comparison. An empty
-                        // sequence yields an empty composite key (the item still
-                        // joins a group keyed by the empty tuple — composite="yes"
-                        // permits empty/multi-value keys, XSLT 3.0 §19.2).
-                        var keyList = key switch
-                        {
-                            null => new List<object?>(),
-                            object?[] arr => arr.ToList(),
-                            string s => new List<object?> { s },
-                            IEnumerable<object?> seq => seq.ToList(),
-                            _ => new List<object?> { key }
-                        };
-
-                        // Find existing group with matching composite key
-                        var found = false;
-                        foreach (var group in compositeGroups)
-                        {
-                            if (CompositeKeysEqual(group.Key, keyList, compositeComparer))
-                            {
-                                group.Items.Add(item);
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found)
-                        {
-                            compositeGroups.Add((keyList, new List<object> { item }));
-                        }
-                    }
-                    finally
-                    {
-                        PopContextItem();
-                    }
+                    var key = await EvaluateAsync(instruction.GroupBy).ConfigureAwait(false);
+                    accumulator.Add(item, key, GroupingKeyString, IsNumeric,
+                                    (a, b) => ValuesEqual(a, b), CompositeKeysEqual, groupByComparer);
                 }
-
-                groupList = compositeGroups.Select(g => ((object)g.Key, g.Items)).ToList();
-            }
-            else
-            {
-                // Non-composite: string-based comparison with optional collation,
-                // with value-based fallback for mixed numeric types.
-                // Per XSLT 3.0 §15.3, grouping uses the eq operator, which means
-                // numeric types follow promotion rules (float/decimal/double interop).
-                string? resolvedCollation = instruction.Collation != null
-                    ? await EvaluateAvtAsync(instruction.Collation).ConfigureAwait(false)
-                    : DefaultCollation;
-                ValidateCollation(resolvedCollation, "XTDE1110");
-                StringComparer groupByComparer = GetCollationComparer(resolvedCollation);
-                var groups = new Dictionary<string, (object Key, List<object> Items)>(groupByComparer);
-                var orderedKeys = new List<string>();
-
-                var pos = 0;
-                foreach (var item in items)
+                finally
                 {
-                    pos++;
-                    PushContextItem(item, pos, items.Count);
-                    try
-                    {
-                        var key = await EvaluateAsync(instruction.GroupBy).ConfigureAwait(false);
-
-                        // Non-composite: if the key expression returns a sequence,
-                        // the item is added to a group for EACH value (XSLT 3.0 §19.2).
-                        // If it atomizes to the EMPTY SEQUENCE, the item contributes
-                        // ZERO grouping keys and joins NO group — it is skipped.
-                        IEnumerable<object?> keyValues = key switch
-                        {
-                            null => [],                              // empty sequence → no group
-                            object?[] keyArr => keyArr,              // sequence → one group per value
-                            string => [key],                         // strings are atomic, not sequences
-                            IEnumerable<object?> keySeq => keySeq,
-                            _ => [key]                               // single atomic value
-                        };
-
-                        // When the key expression yields a sequence with DUPLICATE
-                        // values for a single item (e.g. (5, 5)), the item joins the
-                        // corresponding group only ONCE — track which group's item
-                        // list this item was already added to. (XSLT 3.0 §18.2)
-                        var joinedLists = new HashSet<List<object>>();
-                        foreach (var singleKey in keyValues)
-                        {
-                            var keyStr = GroupingKeyString(singleKey);
-                            List<object>? targetItems = null;
-                            if (groups.TryGetValue(keyStr, out var entry))
-                            {
-                                targetItems = entry.Items;
-                            }
-                            else if (IsNumeric(singleKey))
-                            {
-                                // For numeric keys, check value-based equality against existing
-                                // groups to handle cross-type promotion (float/decimal/double)
-                                foreach (var existingKey in orderedKeys)
-                                {
-                                    var existingEntry = groups[existingKey];
-                                    if (IsNumeric(existingEntry.Key) && ValuesEqual(singleKey, existingEntry.Key))
-                                    {
-                                        targetItems = existingEntry.Items;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (targetItems == null)
-                            {
-                                targetItems = new List<object>();
-                                var newEntry = (singleKey ?? (object)keyStr, targetItems);
-                                groups[keyStr] = newEntry;
-                                orderedKeys.Add(keyStr);
-                            }
-                            if (joinedLists.Add(targetItems))
-                                targetItems.Add(item);
-                        }
-                    }
-                    finally
-                    {
-                        PopContextItem();
-                    }
+                    PopContextItem();
                 }
-
-                groupList = orderedKeys.Select(k => groups[k]).ToList();
             }
+
+            groupList = accumulator.ToGroupList();
         }
         else if (instruction.GroupAdjacent != null)
         {
@@ -12862,6 +12751,40 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // yields null → every child element is a member.
         var selectLeafName = StreamingForEachGroupSelectLeafName(instruction.Select);
 
+        // group-by accumulates across the WHOLE population before any group can be emitted, so
+        // it uses the shared accumulator rather than the running currentGroup the adjacent modes
+        // fill. Collation is resolved once, up front, exactly as the buffered path does.
+        //
+        // NOT REACHED. Enabling it needs two upstream changes, and the second is unsolved:
+        //
+        //   1. StreamingSubtreeBufferDetector forces a materialized subtree for group-by, on the
+        //      stated grounds that group-by has no streaming dispatch. Retiring that rule does
+        //      clear the buffer decision (verified: detector goes False, output unchanged), and
+        //      the Streamability planner was always content to stream these bodies.
+        //
+        //   2. Even then this branch does not run: at the for-each-group, _isStreamingExecution
+        //      is false and _activeStreamingReader is null, though the template-dispatch site saw
+        //      reader != null moments earlier. The streaming context is torn down before the
+        //      template BODY executes. That affects every grouping mode, not just group-by, so
+        //      the streamed dispatch appears unreachable for these shapes generally — worth
+        //      confirming against StreamingForEachGroupTest, whose assertions pass either way and
+        //      so do not prove which path served them.
+        //
+        // Measure before pursuing: peak RSS on a 7.7 MB input was ~284 MB via the buffered path,
+        // dominated by the source tree rather than by grouping, so the ceiling on this win is
+        // smaller than it looks.
+        GroupByAccumulator? groupByAccumulator = null;
+        StringComparer? groupByComparer = null;
+        if (instruction.GroupBy != null)
+        {
+            var groupByCollation = instruction.Collation != null
+                ? await EvaluateAvtAsync(instruction.Collation).ConfigureAwait(false)
+                : DefaultCollation;
+            ValidateCollation(groupByCollation, "XTDE1110");
+            groupByComparer = GetCollationComparer(groupByCollation);
+            groupByAccumulator = new GroupByAccumulator(instruction.Composite, groupByComparer);
+        }
+
         // Helper: build a full XdmElement subtree starting from the current
         // StartElement event, delegating to the shared streaming materializer so
         // the accumulated group members are REAL nodes: text descendants captured
@@ -12891,7 +12814,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             SetVariable(new QName(NamespaceId.None, "current-group"), currentGroup);
             // current-grouping-key is bound only for group-by/group-adjacent
             SetVariable(new QName(NamespaceId.None, "current-grouping-key"),
-                instruction.GroupAdjacent != null ? currentKey : null);
+                instruction.GroupAdjacent != null || instruction.GroupBy != null ? currentKey : null);
             var savedTemplate = _currentTemplate;
             _currentTemplate = null; // current template rule is absent inside for-each-group
             try
@@ -12938,6 +12861,35 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var child = ReadElementSubtree();
 
             // Apply grouping decision
+            if (groupByAccumulator != null)
+            {
+                // Evaluate the key against this member, then hand it to the shared accumulator.
+                // Nothing is emitted yet: a later member may carry an earlier group's key.
+                selectedPosition++;
+                PushContextItem(child, selectedPosition, selectedPosition);
+                try
+                {
+                    var savedStreamingKey = _isStreamingExecution;
+                    _isStreamingExecution = false; // key runs over the materialized member
+                    object? key;
+                    try
+                    {
+                        key = await EvaluateAsync(instruction.GroupBy!).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _isStreamingExecution = savedStreamingKey;
+                    }
+                    groupByAccumulator.Add(child, key, GroupingKeyString, IsNumeric,
+                        (a, b) => ValuesEqual(a, b), CompositeKeysEqual, groupByComparer!);
+                }
+                finally
+                {
+                    PopContextItem();
+                }
+                continue;
+            }
+
             if (instruction.GroupStartingWith != null)
             {
                 var matches = MatchesPattern(child, instruction.GroupStartingWith);
@@ -12989,7 +12941,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
 
-        // Final flush
+        // Final flush. For the adjacent modes this emits the run still in hand; for group-by the
+        // population is only now complete, so every group is emitted here in first-appearance
+        // order — the same order the buffered path produces.
+        if (groupByAccumulator != null)
+        {
+            foreach (var (key, members) in groupByAccumulator.ToGroupList())
+            {
+                currentGroup = members;
+                currentKey = key;
+                await FlushAsync().ConfigureAwait(false);
+            }
+            return;
+        }
         await FlushAsync().ConfigureAwait(false);
     }
 
@@ -13009,6 +12973,111 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// that happen to string-concatenate alike are still separated. Single atomic
     /// keys fall back to value-then-string comparison.
     /// </summary>
+    /// <summary>
+    /// Accumulates <c>xsl:for-each-group group-by</c> members into groups, holding the whole
+    /// of the grouping semantics in one place: collation, composite keys, sequence-valued keys
+    /// (the item joins one group per value), an empty-sequence key (the item joins none), a key
+    /// sequence with duplicates (the item joins each group once), numeric cross-type promotion
+    /// so 1.0 and 1 group together, and first-appearance group order.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the buffered path, which feeds it items from an evaluated <c>select</c>, and by
+    /// the streaming path, which feeds it members materialized off the reader. Both must agree —
+    /// group-by is far too subtle to implement twice, and this engine has already paid for
+    /// letting two seams reimplement one contract.
+    ///
+    /// Key EVALUATION stays with the callers: they differ in what context they push (buffered
+    /// knows the population size up front, streaming does not), and only the accumulation
+    /// itself is common.
+    /// </remarks>
+    private sealed class GroupByAccumulator(bool composite, StringComparer comparer)
+    {
+        private readonly List<(List<object?> Key, List<object> Items)> _composite = new();
+        private readonly Dictionary<string, (object Key, List<object> Items)> _byKey = new(comparer);
+        private readonly List<string> _orderedKeys = new();
+
+        /// <summary>Adds one member under the grouping key its expression produced.</summary>
+        public void Add(object item, object? key, Func<object?, string> keyString,
+                        Func<object?, bool> isNumeric, Func<object?, object?, bool> valuesEqual,
+                        Func<List<object?>, List<object?>, StringComparer, bool> compositeEquals,
+                        StringComparer compositeComparer)
+        {
+            if (composite)
+            {
+                // composite="yes" permits empty and multi-value keys; the key is the whole tuple.
+                var keyList = key switch
+                {
+                    null => new List<object?>(),
+                    object?[] arr => arr.ToList(),
+                    string s => new List<object?> { s },
+                    IEnumerable<object?> seq => seq.ToList(),
+                    _ => new List<object?> { key }
+                };
+                foreach (var group in _composite)
+                {
+                    if (compositeEquals(group.Key, keyList, compositeComparer))
+                    {
+                        group.Items.Add(item);
+                        return;
+                    }
+                }
+                _composite.Add((keyList, new List<object> { item }));
+                return;
+            }
+
+            // Non-composite: one group per key VALUE. An empty sequence contributes no key, so
+            // the item joins no group at all (XSLT 3.0 §19.2).
+            IEnumerable<object?> keyValues = key switch
+            {
+                null => [],
+                object?[] keyArr => keyArr,
+                string => [key],
+                IEnumerable<object?> keySeq => keySeq,
+                _ => [key]
+            };
+
+            // A key sequence with duplicates (e.g. (5, 5)) joins the item to that group once.
+            var joinedLists = new HashSet<List<object>>();
+            foreach (var singleKey in keyValues)
+            {
+                var keyStr = keyString(singleKey);
+                List<object>? targetItems = null;
+                if (_byKey.TryGetValue(keyStr, out var entry))
+                {
+                    targetItems = entry.Items;
+                }
+                else if (isNumeric(singleKey))
+                {
+                    // Numeric keys compare by VALUE across types, so xs:double 1 and
+                    // xs:decimal 1.0 land in the same group despite differing lexically.
+                    foreach (var existingKey in _orderedKeys)
+                    {
+                        var existingEntry = _byKey[existingKey];
+                        if (isNumeric(existingEntry.Key) && valuesEqual(singleKey, existingEntry.Key))
+                        {
+                            targetItems = existingEntry.Items;
+                            break;
+                        }
+                    }
+                }
+                if (targetItems == null)
+                {
+                    targetItems = new List<object>();
+                    _byKey[keyStr] = (singleKey ?? (object)keyStr, targetItems);
+                    _orderedKeys.Add(keyStr);
+                }
+                if (joinedLists.Add(targetItems))
+                    targetItems.Add(item);
+            }
+        }
+
+        /// <summary>The groups in first-appearance order.</summary>
+        public List<(object Key, List<object> Items)> ToGroupList() =>
+            composite
+                ? _composite.Select(g => ((object)g.Key, g.Items)).ToList()
+                : _orderedKeys.Select(k => _byKey[k]).ToList();
+    }
+
     private static bool GroupAdjacentKeysEqual(object? a, object? b)
     {
         if (a == null && b == null) return true;
