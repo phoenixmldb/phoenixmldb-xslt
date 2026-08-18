@@ -427,8 +427,7 @@ public sealed class XsltTestFixture : IAsyncLifetime
 
     public XsltTestFixture()
     {
-        var assemblyPath = Path.GetDirectoryName(typeof(XsltTestFixture).Assembly.Location)!;
-        _testDataPath = Path.Combine(assemblyPath, "TestData", "xslt30-test");
+        _testDataPath = ConformanceSuites.Locate("xslt30-test", "XSLT30_TEST_SUITE");
     }
 
     public ValueTask InitializeAsync()

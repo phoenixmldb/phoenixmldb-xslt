@@ -28,7 +28,12 @@
 
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="TestData/**/*">
+    <!-- The W3C suites are excluded from this copy on purpose. They are ~470 MB / ~30,000
+         files; globbing them into the output directory adds roughly seven minutes to every
+         build. ConformanceSuites.Locate reads them in place instead, via XSLT30_TEST_SUITE /
+         QT3_TEST_SUITE. Any other TestData content is still copied normally. -->
+    <None Include="TestData/**/*"
+          Exclude="TestData/xslt30-test/**;TestData/qt3tests/**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

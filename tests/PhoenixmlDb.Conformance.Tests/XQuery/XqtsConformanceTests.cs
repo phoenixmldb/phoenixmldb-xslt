@@ -332,8 +332,7 @@ public sealed class XqtsTestFixture : IAsyncLifetime
 
     public XqtsTestFixture()
     {
-        var assemblyPath = Path.GetDirectoryName(typeof(XqtsTestFixture).Assembly.Location)!;
-        _testDataPath = Path.Combine(assemblyPath, "TestData", "qt3tests");
+        _testDataPath = ConformanceSuites.Locate("qt3tests", "QT3_TEST_SUITE");
     }
 
     public ValueTask InitializeAsync()
