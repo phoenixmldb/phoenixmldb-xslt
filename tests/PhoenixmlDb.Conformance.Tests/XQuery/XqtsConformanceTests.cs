@@ -245,7 +245,9 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
         if (!_fixture.IsTestDataAvailable)
         {
             _output.WriteLine("XQTS test data not available. Skipping test.");
-            return;
+            // Assert.Skip, not return: an early return is recorded as a PASS, so a missing
+            // suite made this file report green having executed nothing.
+            Assert.Skip("W3C QT3 suite not found. Set QT3_TEST_SUITE, or run scripts/fetch-conformance-suites.sh.");
         }
 
         var testCases = await _fixture.LoadTestSetAsync(category, testSetName);
@@ -289,9 +291,9 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
         if (!_fixture.IsTestDataAvailable)
         {
             _output.WriteLine("XQTS test data not available. Skipping full test suite.");
-            _output.WriteLine("To run these tests, clone the W3C qt3tests repository:");
-            _output.WriteLine("  git clone https://github.com/w3c/qt3tests TestData/qt3tests");
-            return;
+            // Assert.Skip, not return: an early return is recorded as a PASS, so a missing
+            // suite made this file report green having executed nothing.
+            Assert.Skip("W3C QT3 suite not found. Set QT3_TEST_SUITE, or run scripts/fetch-conformance-suites.sh.");
         }
 
         var testCases = await _fixture.LoadAllTestsAsync();

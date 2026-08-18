@@ -29,7 +29,9 @@ public class XsltMiscRegexSyntaxTests : IClassFixture<XsltTestFixture>
         if (!_fixture.IsTestDataAvailable)
         {
             _output.WriteLine("XSLT test data not available. Skipping test.");
-            return;
+            // Assert.Skip, not return: an early return is recorded as a PASS, so a missing
+            // suite made this file report green having executed nothing.
+            Assert.Skip("W3C XSLT 3.0 suite not found. Set XSLT30_TEST_SUITE, or run scripts/fetch-conformance-suites.sh.");
         }
 
         var testCases = await _fixture.LoadTestSetAsync(testSetPath);
