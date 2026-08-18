@@ -32,7 +32,10 @@ env:
 jobs:
   conformance:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Measured, not guessed: the engine repo's equivalent full run took 1h29m, and this
+    # repo's exceeded 40 min before a local timeout cut it short — QT3 is the long pole
+    # in both. 90 was set before either had ever completed and would kill the job.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
 
