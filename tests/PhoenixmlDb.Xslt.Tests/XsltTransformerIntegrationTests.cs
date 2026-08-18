@@ -3246,6 +3246,51 @@ public class XsltTransformerIntegrationTests
             $"the function returns xsl:evaluate(. = 'any-context'), which equals true. Got: {output} ({output?.GetType().Name})");
     }
 
+    // fn:transform's "initial-template" is an xs:QName per spec, and the provider read it
+    // with GetStringOption — keeping the local name and silently dropping the namespace.
+    // A stylesheet declaring name="app:main" was then looked up as {}main and reported
+    // "Named template 'main' not found", a message naming the template it had just failed
+    // to qualify. initial-function one line below had already been fixed for exactly this
+    // (RuntimeNamespace vs ExpandedNamespace); initial-template had not.
+    //
+    // W3C qt3tests fn-transform-2 / -10 / -11 are this shape.
+    [Fact]
+    public async Task XsltTransformProvider_honors_a_namespaced_initial_template_QName()
+    {
+        var stylesheet = """
+            <xsl:stylesheet version="2.0"
+                            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:app="http://www.example.com">
+              <xsl:template name="app:main"><out>hit</out></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var provider = new PhoenixmlDb.Xslt.XsltTransformProvider();
+        var nodeStore = new PhoenixmlDb.Xslt.XdmInMemoryStore();
+        using var qec = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+            new PhoenixmlDb.Core.ContainerId(1),
+            nodeProvider: nodeStore);
+
+        var options = new Dictionary<object, object?>
+        {
+            ["stylesheet-text"] = stylesheet,
+            // fn:QName('http://www.example.com','main') populates RuntimeNamespace rather
+            // than ExpandedNamespace; ResolvedNamespace is what returns whichever is set.
+            ["initial-template"] = new PhoenixmlDb.Core.QName(
+                PhoenixmlDb.Core.NamespaceId.None, "main", "app")
+            { ExpandedNamespace = "http://www.example.com" },
+        };
+
+        var result = await ((PhoenixmlDb.XQuery.Functions.ITransformProvider)provider)
+            .TransformAsync(options, qec);
+
+        var resultMap = result as IDictionary<object, object?>;
+        resultMap.Should().NotBeNull();
+        resultMap!.Should().ContainKey("output");
+        resultMap!["output"]?.ToString().Should().Contain("hit",
+            "the named template is declared in the app namespace and must be found by its full QName");
+    }
+
     // Martin Honnen follow-up (2026-05-15): the same fn:transform call works from
     // XQuery (XsltTransformProvider) but returns empty when issued from an
     // XSLT stylesheet. Root cause: XsltTransformFunction (the XSLT-internal path)

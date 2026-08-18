@@ -43,7 +43,12 @@ public sealed class XsltTransformProvider : ITransformProvider
         var stylesheetNode = GetOption(options, "stylesheet-node");
         var stylesheetText = GetStringOption(options, "stylesheet-text");
         var deliveryFormat = GetStringOption(options, "delivery-format") ?? "document";
-        var initialTemplate = GetStringOption(options, "initial-template");
+        // initial-template is an xs:QName per spec, exactly like initial-function below.
+        // Reading it only as a string kept the local name and silently dropped the namespace.
+        var initialTemplateQName = GetOption(options, "initial-template") as QName?;
+        var initialTemplate = initialTemplateQName is null
+            ? GetStringOption(options, "initial-template")
+            : null;
         var initialMode = GetStringOption(options, "initial-mode");
         // initial-function is a QName (xs:QName per spec); function-params is an array.
         // Used by Saxon-style fn:transform invocations that target an xsl:function rather
@@ -168,8 +173,23 @@ public sealed class XsltTransformProvider : ITransformProvider
         await transformer.LoadStylesheetAsync(stylesheetXml, baseUri, staticParams).ConfigureAwait(false);
 
         // Set initial template / mode / function
-        if (initialTemplate != null)
+        if (initialTemplateQName is { } tmplQName)
+        {
+            // Same RuntimeNamespace/ExpandedNamespace subtlety as initial-function below:
+            // fn:QName(uri, local) populates RuntimeNamespace, so ResolvedNamespace is the
+            // one to read. Dropping it looked up {}main for a template declared
+            // name="app:main" and reported "Named template 'main' not found" — a message
+            // naming the template it had just failed to qualify.
+            transformer.SetInitialTemplate(
+                tmplQName.LocalName,
+                !string.IsNullOrEmpty(tmplQName.ResolvedNamespace) ? tmplQName.ResolvedNamespace : null);
+        }
+        else if (initialTemplate != null)
+        {
+            // A plain string stays supported: it is what a lenient caller passes, and it
+            // carries no namespace to lose.
             transformer.SetInitialTemplate(initialTemplate);
+        }
         if (initialMode != null)
             transformer.SetInitialMode(initialMode);
         if (initialFunctionQName is { } funcQName)
