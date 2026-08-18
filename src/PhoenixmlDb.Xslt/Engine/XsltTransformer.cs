@@ -6222,6 +6222,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// depth is neutralized — except for <c>as="document-node()"</c>, whose body really is
     /// wrapped in a document node and must keep the guard armed.
     /// </remarks>
+    /// <summary>
+    /// The default return type of an <c>xsl:function</c> that declares no <c>as=</c>:
+    /// <c>item()*</c> (XSLT 3.0 §10.3).
+    /// </summary>
+    private static readonly XdmSequenceType ItemStarSequenceType =
+        new() { ItemType = ItemType.Item, Occurrence = Occurrence.ZeroOrMore };
+
     private TypedBodyState EnterTypedBody(XdmSequenceType? declaredType)
     {
         var saved = new TypedBodyState
@@ -29213,7 +29220,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // node()*/text()*/item()* return type, and isolates text/attribute-content depth and
             // the collected-attribute stack. Two of the five capture bugs found while unblocking
             // XSpec were this seam lacking a field the xsl:variable seam already had.
-            var typedBody = EnterTypedBody(func.As);
+            // An xsl:function with no as= has the default return type item()* (XSLT 3.0 §10.3), so
+            // the body still constructs a SEQUENCE and text it produces is a text node. Passing
+            // func.As straight through left declaredType null for that case, text-as-items stayed
+            // off, and the text fell into the output buffer to be handed back as a string — so
+            // f:text($v) returned an atomic where the spec says a text node. An explicitly declared
+            // as="item()*" already behaved correctly; only the omitted form did not, which is the
+            // whole of the difference.
+            //
+            // Surfaced by W3C xslt30-test sf-boolean-119 / sf-not-119: boolean() and not() over
+            // outermost(//PRICE) ! Q{f}text(string(.)) raise FORG0006 on a sequence of atomics
+            // where a sequence of text nodes is required.
+            var typedBody = EnterTypedBody(func.As ?? ItemStarSequenceType);
             // Namespace scopes are function-specific: the body's output is extracted as a
             // separate text fragment, so its LREs must emit self-contained declarations.
             var savedNsScopesFunc = new List<Dictionary<string, string>>(_outputNsScopes);
