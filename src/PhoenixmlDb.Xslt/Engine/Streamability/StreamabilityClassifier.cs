@@ -1383,22 +1383,43 @@ public static class StreamabilityClassifier
 
     private static PostureSweep ClassifyForEachGroup(XsltForEachGroup feg, StreamingContext ctx)
     {
-        // §19.8 / §18.5: group-by requires holding all groups simultaneously — NOT streamable.
-        if (feg.GroupBy is not null)
-            return NotStreamable(); // (Roaming, FreeRanging)
-
-        // group-adjacent / group-starting-with / group-ending-with are the streamable grouping
-        // forms: the processor buffers only the current group. The grouping key must itself be
-        // motionless (a simple key over the current item), else grouping is not streamable.
+        // group-by is BLOCKING: every group must be retained until the population is exhausted,
+        // since a key may recur at the very end. Whether that is streamable turns on WHAT is
+        // retained, and the two authorities that look contradictory are in fact describing
+        // different populations:
+        //
+        //   striding population  — group-by over live streamed nodes is (Roaming, FreeRanging),
+        //     because holding every member means holding positions in the input across the whole
+        //     pass. Not streamable.
+        //
+        //   grounded population  — group-by over copies (Group/copy-of(.), snapshot(.)) IS
+        //     streamable: the members are already materialised and detached, so retaining them
+        //     costs nothing in stream state. This is the shape the W3C streaming suite exercises
+        //     in si-group-036/039/204/205 ("Streamed grouping - group-by"), which assert result
+        //     documents and expect no XTSE3430.
+        //
+        // Classifying group-by NotStreamable outright made the planner pick BufferWholeInput and
+        // materialise the entire document even for the grounded case — correct output, but the
+        // opposite of what a streamable mode is for.
+        //
+        // The grouping key must be motionless (a simple key over the current item) for every
+        // form, else grouping is not streamable.
         var s = Classify(feg.Select, ctx);
         if (s.Sweep == Sweep.FreeRanging || !IsStreamablePosture(s.Posture))
             return NotStreamable();
 
+        // Only a GROUNDED population may be grouped by key (see above). A striding one would
+        // require retaining live stream positions for the whole pass.
+        if (feg.GroupBy is not null && s.Posture != Posture.Grounded)
+            return NotStreamable(); // (Roaming, FreeRanging)
+
         Sweep keySweep = Sweep.Motionless;
-        if (feg.GroupAdjacent is not null)
+        var keyExpr = feg.GroupAdjacent ?? feg.GroupBy;
+        if (keyExpr is not null)
         {
-            var k = Classify(feg.GroupAdjacent, ctx with { ContextPosture = s.Posture });
-            // A consuming (let alone free-ranging) adjacency key breaks streamable grouping.
+            var k = Classify(keyExpr, ctx with { ContextPosture = s.Posture });
+            // A consuming (let alone free-ranging) grouping key breaks streamable grouping: the
+            // key is evaluated per member and must not itself advance the stream.
             if (k.Sweep != Sweep.Motionless)
                 return NotStreamable();
             keySweep = k.Sweep;
