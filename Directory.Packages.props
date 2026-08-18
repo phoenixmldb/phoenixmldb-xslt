@@ -4,7 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- PhoenixmlDb -->
-    <PackageVersion Include="PhoenixmlDb.Core" Version="1.3.0" />
+    <PackageVersion Include="PhoenixmlDb.Core" Version="1.6.0" />
     <PackageVersion Include="PhoenixmlDb.XQuery" Version="1.6.2" />
     <!-- Transitive deps of the in-repo PhoenixmlDb.XQuery source (src/PhoenixmlDb.XQuery
          symlink → canonical phoenixmldb-xquery), which PhoenixmlDb.Conformance.Tests
