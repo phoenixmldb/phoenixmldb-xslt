@@ -1,0 +1,88 @@
+name: Conformance
+
+# Split out from ci.yml on cost, not importance. The W3C suites are ~470 MB and the
+# XSLT half alone runs ~7 min per target framework, the QT3 half longer again — too
+# slow to sit in front of every push. ci.yml keeps the fast suites and is what gates
+# the NuGet publish; this workflow is the deeper, slower check.
+#
+# NOTE: running on a tag records conformance for that release but does NOT gate the
+# publish, which lives in ci.yml and completes independently. That is deliberate —
+# gating a release on a ~30 min run was judged not worth it. Revisit if a release
+# ever ships a conformance regression.
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  # ICU-based globalization is required for correct collation and normalize-unicode();
+  # invariant mode silently changes conformance results rather than failing loudly.
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 0
+  SUITE_DIR: tests/PhoenixmlDb.Conformance.Tests/TestData
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      # Keyed on the fetch script, which is where the suite revisions are pinned — so
+      # bumping a pinned SHA invalidates the cache automatically and no stale suite can
+      # survive a deliberate re-baseline.
+      - name: Cache W3C suites
+        id: suite-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SUITE_DIR }}
+          key: w3c-suites-${{ hashFiles('scripts/fetch-conformance-suites.sh') }}
+
+      - name: Fetch W3C suites
+        if: steps.suite-cache.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-conformance-suites.sh
+
+      # Without this the run is worse than useless: the fixtures treat a missing suite
+      # as "unavailable" and skip, and the job reports 332/332 green in about three
+      # seconds having executed nothing. Fail loudly instead.
+      - name: Verify suites are present
+        run: |
+          for s in xslt30-test qt3tests; do
+            if [ ! -e "$SUITE_DIR/$s/catalog.xml" ]; then
+              echo "::error::$s missing or incomplete at $SUITE_DIR/$s — refusing to report a green run that tested nothing"
+              exit 1
+            fi
+            echo "$s @ $(git -C "$SUITE_DIR/$s" rev-parse --short HEAD)"
+          done
+
+      - name: Conformance
+        env:
+          XSLT30_TEST_SUITE: ${{ github.workspace }}/tests/PhoenixmlDb.Conformance.Tests/TestData/xslt30-test
+          QT3_TEST_SUITE: ${{ github.workspace }}/tests/PhoenixmlDb.Conformance.Tests/TestData/qt3tests
+        # net10.0 only. The library multi-targets, but conformance results are a property
+        # of the engine rather than the target framework, and running both doubles a
+        # already-long job.
+        run: |
+          dotnet test tests/PhoenixmlDb.Conformance.Tests -c Release -f net10.0 \
+            --logger "trx;LogFileName=conformance.trx" --results-directory ./test-results
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-results
+          path: ./test-results/*.trx
+          if-no-files-found: warn
