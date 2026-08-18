@@ -21,6 +21,6 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="coverlet.collector" Version="8.0.0" />
     <PackageVersion Include="FluentAssertions" Version="6.12.2" />
-    <PackageVersion Include="StreamJsonRpc" Version="2.22.11" />
+    <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
   </ItemGroup>
 </Project>
