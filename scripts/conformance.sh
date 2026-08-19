@@ -154,8 +154,16 @@ for g in "${CHUNKS[@]}"; do
   s=$SECONDS
   # A .trx PER CHUNK rather than one for the sweep: a chunk that times out still leaves
   # the other chunks' results intact and parseable, which a single combined trx does not.
+  #
+  # verbosity=detailed is not noise, it is THE result. A chunk reports "Passed" as long as
+  # the fixture ran — it asserts only that some cases passed — so W3C cases that fail
+  # inside a test-set are invisible at default verbosity. Detailed output carries the
+  # per-test-set tallies and the `FAILED: <case>` lines with their error codes, which is
+  # the only place the real conformance score exists. Without this the sweep can report
+  # nine green chunks while hundreds of individual cases fail.
   timeout "$TIMEOUT" dotnet test "$PROJ/PhoenixmlDb.Conformance.Tests.csproj" \
       -c "$CONFIG" -f net10.0 --no-build --filter "$filter" \
+      --logger "console;verbosity=detailed" \
       --logger "trx;LogFileName=$g.trx" --results-directory "$OUT" > "$OUT/$g.log" 2>&1
   rc=$?
   d=$((SECONDS - s))
@@ -164,8 +172,15 @@ for g in "${CHUNKS[@]}"; do
     line="TIMEOUT after ${TIMEOUT}s"
     failed=1
   else
-    line=$(grep -E "^(Passed!|Failed!)" "$OUT/$g.log" | tail -1 |
-           sed -E 's/ - PhoenixmlDb.*//; s/  +/ /g')
+    # The detailed console logger does NOT print the terse "Passed! - Failed: 0, ..."
+    # summary; it prints "Test Run Successful./Failed." followed by Total tests:/Passed:/
+    # Failed:. Parse that shape — keying on the terse line made every chunk report
+    # "NO RESULT (exit 0)" the moment detailed logging went in.
+    fx=$(grep -E "^Test Run (Successful|Failed)" "$OUT/$g.log" | tail -1 | sed 's/Test Run //; s/\.//')
+    ftot=$(grep -oE "^Total tests: [0-9]+" "$OUT/$g.log" | tail -1 | grep -oE "[0-9]+")
+    ffail=$(grep -oE "^ *Failed: +[0-9]+" "$OUT/$g.log" | tail -1 | grep -oE "[0-9]+")
+    line=""
+    [ -n "$fx" ] && line="fixture $fx (${ftot:-?} tests${ffail:+, $ffail failed})"
     if grep -q "No test matches the given testcase filter" "$OUT/$g.log"; then
       # Exit 0 with nothing run. Loudly not-green: this is the silent-pass shape.
       line="MATCHED NOTHING — filter ran no tests"
@@ -177,6 +192,26 @@ for g in "${CHUNKS[@]}"; do
       failed=1
     fi
   fi
+  # The xunit pass/fail above only says the FIXTURE ran. Tally the W3C cases the chunk
+  # actually executed — that is the number anyone means by "conformance", and it is the
+  # one a green chunk can hide.
+  nfail=$(grep -c "^ FAILED: " "$OUT/$g.log" 2>/dev/null || echo 0)
+  read -r cp ct <<<"$(grep -oE "Results: [0-9]+/[0-9]+" "$OUT/$g.log" 2>/dev/null |
+                      awk -F'[ /]' '{p+=$2; t+=$3} END {print p+0, t+0}')"
+  if [ "${ct:-0}" -gt 0 ]; then
+    line="$line | $cp/$ct cases $(awk -v p="$cp" -v t="$ct" 'BEGIN{printf "%.1f%%", 100*p/t}')"
+    # The per-test-set "Results:" lines are the XSLT runner's tallies. The XQuery runner
+    # emits far more FAILED lines than it emits Results lines, so a tally that cannot
+    # account for the failures is partial — say so rather than quietly under-reporting.
+    if [ "$nfail" -gt $((ct - cp)) ]; then
+      line="$line, $nfail failed (TALLY PARTIAL — more failures than these test-sets cover)"
+    else
+      line="$line, $nfail failed"
+    fi
+  elif [ "$nfail" -gt 0 ]; then
+    line="$line | $nfail cases failed (no per-test-set tallies in this chunk)"
+  fi
+
   printf '%-7s %4ds  %s\n' "$g" "$d" "$line" | tee -a "$OUT/summary.txt"
 done
 
