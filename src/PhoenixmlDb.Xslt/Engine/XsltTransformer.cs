@@ -10831,8 +10831,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _textContentDepth = savedTextContentDepth;
             _collectTextAsSequenceItems = savedCollectText;
             _collectedAttributesStack.Clear();
-            foreach (var sb in savedAttrStack)
-                _collectedAttributesStack.Push(sb);
+            // Restore BOTTOM-first: Stack<T> enumerates top-first, so the saved
+            // List is in pop order. Pushing it in that order would reverse the
+            // stack and make the enclosing element seal against its parent's
+            // attribute buffer (see CollectedAttributeStackRestoreTests).
+            for (var i = savedAttrStack.Count - 1; i >= 0; i--)
+                _collectedAttributesStack.Push(savedAttrStack[i]);
         }
 
         var content = scope.GetWritten();
@@ -15584,8 +15588,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         _documentNodeDepth--;
                         _sequenceAccumulator = savedAccum;
                         _collectedAttributesStack.Clear();
-                        foreach (var sb in savedAttrStack2)
-                            _collectedAttributesStack.Push(sb);
+                        // Restore BOTTOM-first — see the note at the ApplyTemplates seam.
+                        for (var i = savedAttrStack2.Count - 1; i >= 0; i--)
+                            _collectedAttributesStack.Push(savedAttrStack2[i]);
                     }
 
                     var content = _output.ToString();
@@ -15675,8 +15680,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         _documentNodeDepth--;
                         _collectedAttributesStack.Clear();
-                        foreach (var sb in savedAttrStack)
-                            _collectedAttributesStack.Push(sb);
+                        // Restore BOTTOM-first — see the note at the ApplyTemplates seam.
+                        for (var i = savedAttrStack.Count - 1; i >= 0; i--)
+                            _collectedAttributesStack.Push(savedAttrStack[i]);
                     }
                 }
                 break;
@@ -21440,8 +21446,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _textContentDepth = savedTextDepth;
                     _attributeContentDepth = savedAttrContentDepth;
                     _collectedAttributesStack.Clear();
-                    foreach (var sb in savedAttrStack)
-                        _collectedAttributesStack.Push(sb);
+                    // Restore BOTTOM-first — see the note at the ApplyTemplates seam.
+                    for (var i = savedAttrStack.Count - 1; i >= 0; i--)
+                        _collectedAttributesStack.Push(savedAttrStack[i]);
                     // Restore namespace scopes
                     _outputNsScopes.Clear();
                     foreach (var scope in savedNsScopes2.AsEnumerable().Reverse())
