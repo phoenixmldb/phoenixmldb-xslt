@@ -19219,6 +19219,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _activeResultDocumentOutput = effectiveCdata == null
             ? matchedOutput
             : (matchedOutput ?? new Ast.XsltOutput()).CloneWithCdataSectionElements(effectiveCdata);
+        // XSLT 3.0 §26.1: the content of xsl:result-document builds a RESULT DOCUMENT and
+        // contributes nothing to the containing sequence constructor. Detach the enclosing
+        // typed-body capture for the duration, so an xsl:sequence inside the result document
+        // serializes into the result document instead of being accumulated as an item of the
+        // enclosing as="…" template/function. (The Json/Adaptive branch installs its own
+        // accumulator below; it saves and restores whatever it finds here.)
+        var savedAccumForResultDoc = _sequenceAccumulator;
+        var savedAsBodyCaptureForResultDoc = _currentAsBodyCapture;
+        _sequenceAccumulator = null;
+        _currentAsBodyCapture = null;
         try
         {
             if (resultMethod == OutputMethod.Text)
@@ -19415,6 +19425,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         finally
         {
+            _sequenceAccumulator = savedAccumForResultDoc;
+            _currentAsBodyCapture = savedAsBodyCaptureForResultDoc;
             _activeResultDocumentOutput = savedActiveOutput;
             _itemSeparatorOverride = savedItemSeparator;
             _topLevelItemEmitted = savedTopLevelItemEmitted;

@@ -92,6 +92,28 @@ public sealed class ResultDocumentEmptySequenceTests
     }
 
     [Fact]
+    public async Task SequenceInsideResultDocument_DoesNotLeakIntoEnclosingTypedBody()
+    {
+        // The content of xsl:result-document must contribute nothing to the
+        // containing sequence constructor — including items produced by
+        // xsl:sequence, which travel via the sequence accumulator rather than
+        // through the serialized output buffer.
+        const string ss = """
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <xsl:output name="rep" method="xml" indent="no"/>
+              <xsl:template match="/" as="empty-sequence()">
+                <xsl:result-document format="rep">
+                  <report><xsl:sequence select="'inner'"/></report>
+                </xsl:result-document>
+              </xsl:template>
+            </xsl:stylesheet>
+            """;
+        var r = await RunAsync(ss);
+        r.Should().Contain("<report>inner</report>",
+            "the item belongs to the result document's content, not the template's return value");
+    }
+
+    [Fact]
     public async Task SecondaryResultDocument_InEmptySequenceTemplate_StillWorks()
     {
         // Regression guard: the href path was already correct and must stay so.
