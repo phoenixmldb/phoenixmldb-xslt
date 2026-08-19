@@ -2,6 +2,7 @@ using System.Xml.Linq;
 using PhoenixmlDb.XQuery;
 using PhoenixmlDb.XQuery.Execution;
 using PhoenixmlDb.Xdm;
+using PhoenixmlDb.Xdm.Nodes;
 
 namespace PhoenixmlDb.Conformance.Tests.XQuery;
 
@@ -23,11 +24,21 @@ public sealed class XqtsTestRunner
     private readonly string _testDataPath;
     private readonly XqtsConfiguration _config;
 
+    /// <summary>
+    /// Backs the context item. QT3 environments declare a source with <c>role="."</c>, which
+    /// must reach the query as a DOCUMENT NODE; without a node provider the engine has no
+    /// store to navigate and every path expression fails. Documents are cached by path
+    /// because the corpus reuses a handful of sources across thousands of cases — fsx.xml
+    /// alone backs most of prod/, and re-parsing it per test would dominate the run.
+    /// </summary>
+    private readonly XdmDocumentStore _documents = new();
+    private readonly Dictionary<string, XdmDocument> _documentCache = new(StringComparer.Ordinal);
+
     public XqtsTestRunner(string testDataPath, XqtsConfiguration? config = null)
     {
         _testDataPath = testDataPath;
         _config = config ?? new XqtsConfiguration();
-        _engine = new QueryEngine();
+        _engine = new QueryEngine(nodeProvider: _documents, documentResolver: _documents);
     }
 
     /// <summary>
@@ -349,8 +360,13 @@ public sealed class XqtsTestRunner
         // NOTE: ExecuteAsync(string, ContainerId, object? initialContextItem, CancellationToken).
         // The token must go to the cancellationToken parameter — passing it positionally as the
         // 3rd arg made it the initialContextItem and left cancellation/timeout disabled (CA2016).
+        //
+        // Fixing that CA2016 warning by naming ONLY the token silently dropped the context item:
+        // `contextItem` was still computed but never passed, so every path expression saw an
+        // absent context and failed with "The context item is absent for '/'". Name both.
         await foreach (var item in _engine.ExecuteAsync(
             query,
+            initialContextItem: contextItem,
             cancellationToken: token))
         {
             results.Add(item);
@@ -395,18 +411,29 @@ public sealed class XqtsTestRunner
         return result;
     }
 
-    private async Task<object?> LoadContextItemAsync(XqtsEnvironment? env, CancellationToken ct)
+    /// <summary>
+    /// Loads the environment's <c>role="."</c> source as the context item.
+    /// </summary>
+    /// <remarks>
+    /// This used to <c>ReadAllText</c> and return the STRING — the comment said "parse as XML
+    /// and return root node", but the parse was never written. The engine then received the
+    /// raw markup as an xs:string context item and reported, accurately,
+    /// <c>An axis step (Child::table) was used when the context item is not a node
+    /// (got xs:string "&lt;tables&gt;&lt;table&gt;…")</c>. Every QT3 case needing a context
+    /// document failed, and the engine was blamed for it.
+    /// </remarks>
+    private Task<object?> LoadContextItemAsync(XqtsEnvironment? env, CancellationToken ct)
     {
-        if (env?.Sources.TryGetValue(".", out var sourcePath) == true)
+        ct.ThrowIfCancellationRequested();
+        if (env?.Sources.TryGetValue(".", out var sourcePath) != true || !File.Exists(sourcePath))
+            return Task.FromResult<object?>(null);
+
+        if (!_documentCache.TryGetValue(sourcePath!, out var doc))
         {
-            if (File.Exists(sourcePath))
-            {
-                var content = await File.ReadAllTextAsync(sourcePath, ct);
-                // Parse as XML and return root node
-                return content;
-            }
+            doc = _documents.LoadFile(sourcePath!);
+            _documentCache[sourcePath!] = doc;
         }
-        return null;
+        return Task.FromResult<object?>(doc);
     }
 
     private bool VerifyAssertions(List<XqtsAssertion> assertions, object? result)
