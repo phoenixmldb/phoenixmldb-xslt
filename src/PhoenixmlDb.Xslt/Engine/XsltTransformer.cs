@@ -9533,9 +9533,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             var bodyAccum = new List<object?>();
                             _sequenceAccumulator = bodyAccum;
                             _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen };
+                            var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
                             await template.Body.ExecuteAsync(this).ConfigureAwait(false);
-                            var bodyOutput = _output.ToString(savedLen, _output.Length - savedLen);
-                            _output.Length = savedLen;
+                            var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
                             var bodyCapture = _currentAsBodyCapture;
                             _currentAsBodyCapture = savedCapture;
 
@@ -11293,9 +11293,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var bodyAccum = new List<object?>();
                     _sequenceAccumulator = bodyAccum;
                     _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen };
+                    var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
                     await template.Body.ExecuteAsync(this).ConfigureAwait(false);
-                    var bodyOutput = _output.ToString(savedLen, _output.Length - savedLen);
-                    _output.Length = savedLen;
+                    var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
                     var bodyCapture = _currentAsBodyCapture;
                     _currentAsBodyCapture = savedCapture;
 
@@ -27131,6 +27131,37 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (collationUri == "http://saxon.sf.net/collation")
             return; // Saxon compatibility
         throw new XsltException($"{errorCode}: Unknown collation URI '{collationUri}'");
+    }
+
+    /// <summary>
+    /// Takes the serialized output an <c>as=</c>-typed body contributed to its own return
+    /// value, removing it from <c>_output</c> so the validated items can be re-emitted.
+    /// </summary>
+    /// <param name="savedLen">Length of <c>_output</c> when the body started.</param>
+    /// <param name="rdClaimedPrimaryBefore">
+    /// Whether an <c>xsl:result-document</c> had already claimed the principal output
+    /// destination before the body ran.
+    /// </param>
+    /// <remarks>
+    /// <c>xsl:result-document</c> returns the EMPTY SEQUENCE (XSLT 3.0 §26.1). One carrying
+    /// an <c>href</c> is redirected into its own buffer, so it never lands here. One
+    /// targeting the PRINCIPAL output has nowhere else to go — <c>_output</c> IS the
+    /// principal result — so its content sits inside this body's capture window even
+    /// though it is not the body's return value.
+    ///
+    /// When the body claimed the principal output, return nothing and leave <c>_output</c>
+    /// intact: the content is the principal result document and must still be serialized,
+    /// but the body's return value is the empty sequence. XTDE1490 permits at most one such
+    /// instruction per transformation and rejects a principal output that already has
+    /// content, so the claimed region is exactly what the body wrote.
+    /// </remarks>
+    private string TakeAsBodyOutput(int savedLen, bool rdClaimedPrimaryBefore)
+    {
+        if (!rdClaimedPrimaryBefore && _primaryOutputClaimedByResultDocument)
+            return "";
+        var bodyOutput = _output.ToString(savedLen, _output.Length - savedLen);
+        _output.Length = savedLen;
+        return bodyOutput;
     }
 
     private void ValidateTemplateReturnType(XsltTemplate template, List<object?> resultItems)
