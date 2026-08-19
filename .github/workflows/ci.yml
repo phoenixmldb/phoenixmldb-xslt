@@ -52,13 +52,6 @@ jobs:
           dotnet build src/PhoenixmlDb.Xslt -c Release --no-restore -p:Version="$BUILD_VERSION"
           dotnet build src/PhoenixmlDb.Xslt.Cli -c Release --no-restore -p:Version="$BUILD_VERSION"
 
-      - name: Test
-        # Conformance (W3C XSLT 3.0 / QT3) is NOT run here — it needs a ~470 MB suite
-        # checkout and takes ~9 min per TFM. It runs in conformance.yml instead.
-        run: |
-          dotnet test tests/PhoenixmlDb.Xslt.Tests -c Release
-          dotnet test tests/PhoenixmlDb.Xslt.LanguageServer.Tests -c Release
-
       - name: Extract release notes for this version
         id: notes
         if: startsWith(github.ref, 'refs/tags/v')
@@ -103,7 +96,38 @@ jobs:
           name: nuget-packages
           path: ./artifacts/*.nupkg
 
+  # Runs alongside `build`, and NOTHING depends on it. A red test job is a loud signal
+  # on the commit, but it does not hold up a release.
+  #
+  # This is a deliberate reversal of the arrangement added in 1e62e88, which put Test
+  # between Build and Pack precisely so a failure would skip the publish. The gate was
+  # doing its job — every tagged release since has been green — but gating a release on
+  # it means a flaky or environment-specific failure blocks shipping a package that is
+  # otherwise fine, and the recovery is to retag. We would rather ship and see the red.
+  #
+  # Consequence, stated plainly so nobody discovers it during an incident: a tag can now
+  # publish to nuget.org with unit tests failing. If you want the gate back, add
+  # `needs: [build, test]` to publish — that is the whole change.
+  #
+  # Conformance (W3C XSLT 3.0 / QT3) is not run here either: it needs a ~470 MB suite
+  # checkout and takes ~9 min per TFM. It lives in conformance.yml.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: Test
+        run: |
+          dotnet test tests/PhoenixmlDb.Xslt.Tests -c Release
+          dotnet test tests/PhoenixmlDb.Xslt.LanguageServer.Tests -c Release
+
   publish:
+    # needs: build only — deliberately NOT `needs: test`. See the test job above.
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest

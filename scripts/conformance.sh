@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Runs the W3C conformance suites one CHUNK at a time, serially.
+#
+# Why chunks. A single `dotnet test --filter "Suite=XSLT"` runs every group in one
+# process and prints nothing until it finishes, so a run that is merely slow is
+# indistinguishable from one that has hung — and when it does die you lose the whole
+# sweep and learn nothing. This drives the Trait("Group") values that already exist,
+# one `dotnet test` invocation each, printing a result line as each chunk lands.
+#
+# What that buys:
+#   - progress you can watch, so slow != hung
+#   - a crash or timeout costs ONE chunk; the rest still run and still report
+#   - re-run just the chunk you broke:  ./scripts/conformance.sh expr
+#   - a per-chunk log to read afterwards, not one 40-minute scrollback
+#
+# Execution is serial by construction: xunit.runner.json pins maxParallelThreads to 1
+# and disables collection parallelism, and chunks run one after another here. Do not
+# "speed this up" by running chunks concurrently — these suites are memory-hungry and
+# concurrent runs are what caused the crashes this layout exists to avoid.
+#
+# Usage:
+#   ./scripts/conformance.sh                # every XSLT group, in order
+#   ./scripts/conformance.sh expr           # one group
+#   ./scripts/conformance.sh expr fn insn   # several
+#   ./scripts/conformance.sh xqts           # the XQuery (QT3) suite
+#   ./scripts/conformance.sh --list         # show the groups
+#
+# Env:
+#   CONFORMANCE_TIMEOUT   per-chunk seconds (default 900)
+#   CONFORMANCE_OUT       results directory (default ./conformance-results)
+#   CONFORMANCE_CONFIG    Debug|Release (default Debug)
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJ="$ROOT/tests/PhoenixmlDb.Conformance.Tests"
+SUITES="$PROJ/TestData"
+TIMEOUT="${CONFORMANCE_TIMEOUT:-900}"
+OUT="${CONFORMANCE_OUT:-$ROOT/conformance-results}"
+CONFIG="${CONFORMANCE_CONFIG:-Debug}"
+
+# Order is cheapest-first so a broken engine shows up in the first minute rather than
+# the fortieth. It is not alphabetical on purpose.
+#
+# These are "CHUNKS", not "GROUPS", even though they hold Trait("Group") values: GROUPS
+# is a bash-maintained special array of the current user's Unix group IDs. Assigning to
+# it is silently ignored — and NOT caught by `set -u`, because it is always defined and
+# never empty — so a `GROUPS=("$@")` version of this script cheerfully ran fifteen
+# chunks named 1000, 24, 25, 27 … Do not rename these back.
+ALL_CHUNKS=(attr decl type sandp fn strm expr misc insn)
+
+usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+if [ "${1:-}" = "--list" ] || [ "${1:-}" = "-l" ]; then
+  printf 'XSLT groups (in run order): %s\n' "${ALL_CHUNKS[*]}"
+  printf 'XQuery suite:               xqts\n'
+  exit 0
+fi
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then usage; exit 0; fi
+
+# A missing suite does NOT fail the fixtures — IsTestDataAvailable goes false and every
+# test returns green without executing anything. A green run that tested nothing is the
+# single most expensive failure mode here, so refuse to start.
+missing=0
+for s in xslt30-test qt3tests; do
+  if [ ! -e "$SUITES/$s/catalog.xml" ]; then
+    echo "error: $s missing or incomplete at $SUITES/$s" >&2
+    missing=1
+  fi
+done
+if [ "$missing" = 1 ]; then
+  echo "refusing to run: the fixtures would skip silently and report a green sweep that tested nothing." >&2
+  echo "fetch them with: ./scripts/fetch-conformance-suites.sh" >&2
+  exit 1
+fi
+
+export XSLT30_TEST_SUITE="$SUITES/xslt30-test"
+export QT3_TEST_SUITE="$SUITES/qt3tests"
+# ICU is mandatory: invariant globalization silently changes collation and
+# normalize-unicode() results rather than failing, which would quietly move the score.
+export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
+
+if [ $# -gt 0 ]; then CHUNKS=("$@"); else CHUNKS=("${ALL_CHUNKS[@]}"); fi
+
+# Reject unknown chunk names up front. `dotnet test --filter` exits 0 when a filter
+# matches NOTHING, so a typo (or a mangled argument) would otherwise run, report
+# nothing, and look like an infrastructure hiccup rather than the mistake it is.
+for g in "${CHUNKS[@]}"; do
+  ok=0
+  for k in "${ALL_CHUNKS[@]}" xqts; do [ "$g" = "$k" ] && ok=1 && break; done
+  if [ $ok -eq 0 ]; then
+    echo "error: unknown chunk '$g'" >&2
+    echo "valid: ${ALL_CHUNKS[*]} xqts" >&2
+    exit 2
+  fi
+done
+
+echo "chunks: ${CHUNKS[*]}"
+
+mkdir -p "$OUT"
+: > "$OUT/summary.txt"
+
+echo "building once (chunks then run with --no-build)..."
+if ! dotnet build "$PROJ/PhoenixmlDb.Conformance.Tests.csproj" -c "$CONFIG" -f net10.0 > "$OUT/build.log" 2>&1; then
+  tail -20 "$OUT/build.log" >&2
+  echo "error: build failed — see $OUT/build.log" >&2
+  exit 1
+fi
+
+for s in xslt30-test qt3tests; do
+  rev=$(git -C "$SUITES/$s" rev-parse --short HEAD 2>/dev/null || echo "unpinned")
+  echo "$s @ $rev" | tee -a "$OUT/summary.txt"
+done
+echo | tee -a "$OUT/summary.txt"
+
+failed=0
+started=$SECONDS
+for g in "${CHUNKS[@]}"; do
+  if [ "$g" = "xqts" ]; then filter="Suite=XQTS"; else filter="Suite=XSLT&Group=$g"; fi
+  s=$SECONDS
+  timeout "$TIMEOUT" dotnet test "$PROJ/PhoenixmlDb.Conformance.Tests.csproj" \
+      -c "$CONFIG" -f net10.0 --no-build --filter "$filter" > "$OUT/$g.log" 2>&1
+  rc=$?
+  d=$((SECONDS - s))
+
+  if [ $rc -eq 124 ]; then
+    line="TIMEOUT after ${TIMEOUT}s"
+    failed=1
+  else
+    line=$(grep -E "^(Passed!|Failed!)" "$OUT/$g.log" | tail -1 |
+           sed -E 's/ - PhoenixmlDb.*//; s/  +/ /g')
+    if grep -q "No test matches the given testcase filter" "$OUT/$g.log"; then
+      # Exit 0 with nothing run. Loudly not-green: this is the silent-pass shape.
+      line="MATCHED NOTHING — filter ran no tests"
+      failed=1
+    elif [ -z "$line" ]; then
+      line="NO RESULT (exit $rc) — see $OUT/$g.log"
+      failed=1
+    elif [ $rc -ne 0 ]; then
+      failed=1
+    fi
+  fi
+  printf '%-7s %4ds  %s\n' "$g" "$d" "$line" | tee -a "$OUT/summary.txt"
+done
+
+total=$((SECONDS - started))
+printf '\n%d chunk(s) in %dm%02ds — logs in %s\n' "${#CHUNKS[@]}" $((total / 60)) $((total % 60)) "$OUT" |
+  tee -a "$OUT/summary.txt"
+[ $failed -eq 0 ] || echo "one or more chunks failed" | tee -a "$OUT/summary.txt"
+exit $failed

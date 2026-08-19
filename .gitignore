@@ -13,3 +13,6 @@ nupkg-*/
 # W3C conformance suites — fetched by scripts/fetch-conformance-suites.sh, never committed
 tests/PhoenixmlDb.Conformance.Tests/TestData/xslt30-test/
 tests/PhoenixmlDb.Conformance.Tests/TestData/qt3tests/
+
+# Output of scripts/conformance.sh (per-chunk logs + summary).
+conformance-results/
