@@ -23,7 +23,8 @@
 #   ./scripts/conformance.sh expr           # one group
 #   ./scripts/conformance.sh expr fn insn   # several
 #   ./scripts/conformance.sh xqts           # the XQuery (QT3) suite
-#   ./scripts/conformance.sh --list         # show the groups
+#   ./scripts/conformance.sh --all          # XSLT chunks + xqts (what CI runs)
+#   ./scripts/conformance.sh --list         # show the chunks
 #
 # Env:
 #   CONFORMANCE_TIMEOUT   per-chunk seconds (default 900)
@@ -41,21 +42,47 @@ CONFIG="${CONFORMANCE_CONFIG:-Debug}"
 # Order is cheapest-first so a broken engine shows up in the first minute rather than
 # the fortieth. It is not alphabetical on purpose.
 #
-# These are "CHUNKS", not "GROUPS", even though they hold Trait("Group") values: GROUPS
-# is a bash-maintained special array of the current user's Unix group IDs. Assigning to
-# it is silently ignored — and NOT caught by `set -u`, because it is always defined and
-# never empty — so a `GROUPS=("$@")` version of this script cheerfully ran fifteen
-# chunks named 1000, 24, 25, 27 … Do not rename these back.
-ALL_CHUNKS=(attr decl type sandp fn strm expr misc insn)
+# These are "CHUNKS", not "GROUPS", even though they mostly hold Trait("Group") values:
+# GROUPS is a bash-maintained special array of the current user's Unix group IDs.
+# Assigning to it is silently ignored — and NOT caught by `set -u`, because it is always
+# defined and never empty — so a `GROUPS=("$@")` version of this script cheerfully ran
+# fifteen chunks named 1000, 24, 25, 27 … Do not rename these back.
+#
+# strm is split three ways because Group=strm is 90 test-sets — more than twice the next
+# largest (fn, 35) and about four times typical. As one chunk it does not finish inside
+# any sane timeout: a 900 s run got through 49 of the 90, still passing, and was killed
+# mid-sweep. It is NOT hung, it is big. The three sub-chunks follow the class split that
+# already exists in the test project, ~30 test-sets each.
+ALL_CHUNKS=(attr decl type sandp fn strm1 strm2 strm3 expr misc insn)
+
+# Chunk -> --filter. Most chunks are a Group trait; the strm sub-chunks address the test
+# CLASS instead, since all three carry Group=strm. The trailing dot matters: without it
+# `XsltStreamingTests` also substring-matches XsltStreamingTests2 and 3.
+filter_for() {
+  case "$1" in
+    xqts)  echo "Suite=XQTS" ;;
+    strm1) echo "FullyQualifiedName~XsltStreamingTests." ;;
+    strm2) echo "FullyQualifiedName~XsltStreamingTests2." ;;
+    strm3) echo "FullyQualifiedName~XsltStreamingTests3." ;;
+    *)     echo "Suite=XSLT&Group=$1" ;;
+  esac
+}
 
 usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [ "${1:-}" = "--list" ] || [ "${1:-}" = "-l" ]; then
-  printf 'XSLT groups (in run order): %s\n' "${ALL_CHUNKS[*]}"
-  printf 'XQuery suite:               xqts\n'
+  printf 'XSLT chunks (in run order): %s\n' "${ALL_CHUNKS[*]}"
+  printf 'XQuery suite:               xqts   (included by --all)\n'
   exit 0
 fi
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then usage; exit 0; fi
+
+# --all adds the QT3/XQuery suite to the XSLT chunks. It is NOT the bare default: locally
+# you almost always want the XSLT sweep, and xqts roughly doubles the wall clock. CI uses
+# --all so the nightly covers exactly what the pre-chunking `dotnet test <project>` did —
+# that command had no filter, so it ran XQTS too, and defaulting to XSLT-only here would
+# have quietly dropped XQuery coverage from the nightly.
+if [ "${1:-}" = "--all" ]; then set -- "${ALL_CHUNKS[@]}" xqts; fi
 
 # A missing suite does NOT fail the fixtures — IsTestDataAvailable goes false and every
 # test returns green without executing anything. A green run that tested nothing is the
@@ -80,6 +107,14 @@ export QT3_TEST_SUITE="$SUITES/qt3tests"
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
 
 if [ $# -gt 0 ]; then CHUNKS=("$@"); else CHUNKS=("${ALL_CHUNKS[@]}"); fi
+
+# `strm` stays usable as a name — it expands to its three sub-chunks rather than erroring,
+# so muscle memory and older notes keep working.
+expanded=()
+for g in "${CHUNKS[@]}"; do
+  if [ "$g" = "strm" ]; then expanded+=(strm1 strm2 strm3); else expanded+=("$g"); fi
+done
+CHUNKS=("${expanded[@]}")
 
 # Reject unknown chunk names up front. `dotnet test --filter` exits 0 when a filter
 # matches NOTHING, so a typo (or a mangled argument) would otherwise run, report
@@ -115,10 +150,13 @@ echo | tee -a "$OUT/summary.txt"
 failed=0
 started=$SECONDS
 for g in "${CHUNKS[@]}"; do
-  if [ "$g" = "xqts" ]; then filter="Suite=XQTS"; else filter="Suite=XSLT&Group=$g"; fi
+  filter=$(filter_for "$g")
   s=$SECONDS
+  # A .trx PER CHUNK rather than one for the sweep: a chunk that times out still leaves
+  # the other chunks' results intact and parseable, which a single combined trx does not.
   timeout "$TIMEOUT" dotnet test "$PROJ/PhoenixmlDb.Conformance.Tests.csproj" \
-      -c "$CONFIG" -f net10.0 --no-build --filter "$filter" > "$OUT/$g.log" 2>&1
+      -c "$CONFIG" -f net10.0 --no-build --filter "$filter" \
+      --logger "trx;LogFileName=$g.trx" --results-directory "$OUT" > "$OUT/$g.log" 2>&1
   rc=$?
   d=$((SECONDS - s))
 

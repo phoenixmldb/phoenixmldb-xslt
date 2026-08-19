@@ -71,21 +71,45 @@ jobs:
             echo "$s @ $(git -C "$SUITE_DIR/$s" rev-parse --short HEAD)"
           done
 
+      # One chunk at a time, serially, via the same script used locally — so a CI result
+      # and a developer's result are produced the same way and are comparable.
+      #
+      # This replaced a single unfiltered `dotnet test <project>`, which ran every group
+      # in one process and could not report a partial result: one over-long group consumed
+      # the run and every other group's result was lost with it. That is how this job
+      # burned 47 minutes and reported nothing usable. Chunked, a bad chunk costs its own
+      # timeout and the rest still run, still report, and still upload.
+      #
+      # --all is XSLT chunks PLUS xqts. The old command had no filter, so it ran the
+      # XQuery suite too; the script's bare default is XSLT-only, and using it here would
+      # have quietly dropped QT3 coverage from the nightly.
+      #
+      # net10.0 only, which the script hard-codes. The library multi-targets, but
+      # conformance is a property of the engine rather than the target framework, and
+      # running both doubles an already-long job.
+      #
+      # The script exits non-zero if ANY chunk fails or times out, so a real regression
+      # still turns the job red — but the surviving chunks are reported and uploaded
+      # rather than lost.
       - name: Conformance
         env:
-          XSLT30_TEST_SUITE: ${{ github.workspace }}/tests/PhoenixmlDb.Conformance.Tests/TestData/xslt30-test
-          QT3_TEST_SUITE: ${{ github.workspace }}/tests/PhoenixmlDb.Conformance.Tests/TestData/qt3tests
-        # net10.0 only. The library multi-targets, but conformance results are a property
-        # of the engine rather than the target framework, and running both doubles a
-        # already-long job.
-        run: |
-          dotnet test tests/PhoenixmlDb.Conformance.Tests -c Release -f net10.0 \
-            --logger "trx;LogFileName=conformance.trx" --results-directory ./test-results
+          CONFORMANCE_CONFIG: Release
+          # Measured per chunk on this HEAD: slowest XSLT chunk is strm1 at ~8m30s, the
+          # rest well under. 15 min leaves headroom on a slower runner while still cutting
+          # off a chunk that is genuinely stuck.
+          CONFORMANCE_TIMEOUT: '900'
+          CONFORMANCE_OUT: ${{ github.workspace }}/conformance-results
+        run: ./scripts/conformance.sh --all
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: conformance-results
-          path: ./test-results/*.trx
+          # Per-chunk .trx plus the per-chunk logs and the summary table. A chunk that
+          # times out leaves the others' results intact, which one combined trx did not.
+          path: |
+            conformance-results/*.trx
+            conformance-results/*.log
+            conformance-results/summary.txt
           if-no-files-found: warn
