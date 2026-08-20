@@ -677,6 +677,16 @@ public sealed class XqtsTestRunner
         {
             case "assert":
                 return await VerifyXPathAssertAsync(result, assertion.Value, ct).ConfigureAwait(false);
+            case "assert-deep-eq":
+                // QT3 semantics: EVALUATE the expected expression and compare with
+                // fn:deep-equal. The old implementation was
+                // `SerializeStringValue(result) == expected`, which is wrong twice over: it
+                // compares a serialized result against expected SOURCE TEXT, and taking the
+                // string value of a map raises FOTY0014 — "The string value of a map is not
+                // defined" was 59 errors, all of them the harness stringifying a map result
+                // for tests like parse-json("{}") deep-eq map{}.
+                return await VerifyXPathAssertAsync(
+                    result, $"deep-equal($result, ({assertion.Value}))", ct).ConfigureAwait(false);
             case "all-of":
                 foreach (var c in assertion.Children)
                     if (!await VerifyAssertionAsync(c, result, ct).ConfigureAwait(false)) return false;
@@ -790,7 +800,6 @@ public sealed class XqtsTestRunner
             "assert-string-value" => SerializeStringValue(result) == assertion.Value,
             "assert-type" => VerifyType(result, assertion.Value),
             "assert-count" => VerifyCount(result, assertion.Value),
-            "assert-deep-eq" => VerifyDeepEqual(result, assertion.Value),
             "assert-xml" => VerifyXmlEqual(result, assertion.Value),
             "assert-permutation" => VerifyPermutation(result, assertion.Value),
             "error" => false, // Expected error, but we got a result
@@ -971,12 +980,6 @@ public sealed class XqtsTestRunner
         if (result is List<object?> list) return list.Count == expected;
         if (result is ICollection<object> c) return c.Count == expected;
         return expected == 1 && result != null;
-    }
-
-    private bool VerifyDeepEqual(object? result, string? expected)
-    {
-        // Simplified deep equality — serialize both to string value
-        return SerializeStringValue(result) == expected;
     }
 
     private bool VerifyXmlEqual(object? result, string? expected)
