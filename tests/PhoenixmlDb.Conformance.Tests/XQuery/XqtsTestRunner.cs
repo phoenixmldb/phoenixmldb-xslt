@@ -1,3 +1,4 @@
+using PhoenixmlDb.Core;
 using System.Xml.Linq;
 using PhoenixmlDb.XQuery;
 using PhoenixmlDb.XQuery.Execution;
@@ -306,7 +307,7 @@ public sealed class XqtsTestRunner
             result.ActualResult = queryResult;
 
             // Verify assertions
-            result.Passed = VerifyAssertions(testCase.Assertions, queryResult);
+            result.Passed = await VerifyAssertionsAsync(testCase.Assertions, queryResult, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -436,16 +437,104 @@ public sealed class XqtsTestRunner
         return Task.FromResult<object?>(doc);
     }
 
-    private bool VerifyAssertions(List<XqtsAssertion> assertions, object? result)
+    private async Task<bool> VerifyAssertionsAsync(
+        List<XqtsAssertion> assertions, object? result, CancellationToken ct)
     {
         foreach (var assertion in assertions)
         {
-            if (!VerifyAssertion(assertion, result))
+            if (!await VerifyAssertionAsync(assertion, result, ct).ConfigureAwait(false))
             {
                 return false;
             }
         }
         return true;
+    }
+
+    /// <summary>
+    /// Dispatches the assertion kinds that need to EVALUATE an expression (and therefore the
+    /// engine, and therefore async); everything else goes to the synchronous switch.
+    /// </summary>
+    private async Task<bool> VerifyAssertionAsync(
+        XqtsAssertion assertion, object? result, CancellationToken ct)
+    {
+        switch (assertion.Type)
+        {
+            case "assert":
+                return await VerifyXPathAssertAsync(result, assertion.Value, ct).ConfigureAwait(false);
+            case "all-of":
+                foreach (var c in assertion.Children)
+                    if (!await VerifyAssertionAsync(c, result, ct).ConfigureAwait(false)) return false;
+                return true;
+            case "any-of":
+                foreach (var c in assertion.Children)
+                    if (await VerifyAssertionAsync(c, result, ct).ConfigureAwait(false)) return true;
+                return false;
+            default:
+                return VerifyAssertion(assertion, result);
+        }
+    }
+
+    /// <summary>
+    /// Evaluates a plain <c>&lt;assert&gt;</c>: an XPath expression over the query result, with
+    /// the result bound to <c>$result</c> (1383 of the corpus's ~1481 occurrences use it).
+    /// </summary>
+    /// <remarks>
+    /// Previously there was no case for this at all, so it fell through the switch to
+    /// <c>_ =&gt; false</c> and EVERY such test failed regardless of what the engine returned.
+    /// A compile failure or a thrown expression is a failed assertion, not a harness crash —
+    /// some assertions deliberately probe shapes the result may not have.
+    /// </remarks>
+    private async Task<bool> VerifyXPathAssertAsync(object? result, string? expr, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(expr)) return false;
+        try
+        {
+            // $result must be DECLARED: an undeclared variable fails STATIC ANALYSIS, so a
+            // runtime binding never gets a chance. The first version of this compiled the bare
+            // expression, every compile failed, and the catch-all returned false — leaving the
+            // method inert while looking implemented. It moved the QT3 pass rate by 2 tests.
+            var compiled = _engine.Compile("declare variable $result external; " + expr);
+            if (!compiled.Success || compiled.ExecutionPlan is null) return false;
+
+            var ctx = _engine.CreateContext(cancellationToken: ct);
+            // SetExternalVariable, not BindVariable: VariableDeclarationOperator resolves an
+            // external declaration through TryGetExternalVariable, which BindVariable does not
+            // populate ("External variable $result was not bound and has no default value").
+            ctx.SetExternalVariable("result", result);
+
+            var items = new List<object?>();
+            await foreach (var item in compiled.ExecutionPlan.ExecuteAsync(ctx).ConfigureAwait(false))
+            {
+                items.Add(item);
+                if (items.Count > MaxResultCount) return false;
+            }
+            return EffectiveBooleanValue(items);
+        }
+        catch (XQueryRuntimeException) { return false; }
+        catch (InvalidOperationException) { return false; }
+        catch (NotSupportedException) { return false; }
+    }
+
+    /// <summary>
+    /// XPath effective boolean value, limited to what an assertion can yield: an empty
+    /// sequence is false, a single boolean is itself, a single string/number is its own EBV,
+    /// and any non-empty node sequence is true.
+    /// </summary>
+    private static bool EffectiveBooleanValue(List<object?> items)
+    {
+        if (items.Count == 0) return false;
+        if (items.Count > 1) return true;
+        return items[0] switch
+        {
+            null => false,
+            bool b => b,
+            string s => s.Length > 0,
+            double d => d != 0 && !double.IsNaN(d),
+            decimal m => m != 0,
+            int i => i != 0,
+            long l => l != 0,
+            _ => true
+        };
     }
 
     private bool VerifyAssertion(XqtsAssertion assertion, object? result)
@@ -465,8 +554,6 @@ public sealed class XqtsTestRunner
             "assert-xml" => VerifyXmlEqual(result, assertion.Value),
             "assert-permutation" => VerifyPermutation(result, assertion.Value),
             "error" => false, // Expected error, but we got a result
-            "all-of" => assertion.Children.All(a => VerifyAssertion(a, result)),
-            "any-of" => assertion.Children.Any(a => VerifyAssertion(a, result)),
             _ => false // Unknown assertion type — must be explicitly implemented
         };
     }
