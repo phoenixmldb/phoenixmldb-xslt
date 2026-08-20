@@ -60,22 +60,27 @@ public sealed class AssertMechanismProbeTests
     }
 
     /// <summary>
-    /// KNOWN GAP, pinned deliberately. A sequence-valued result binds as a SINGLE item:
-    /// given a three-item list, <c>count($result)</c> returns 1. Most QT3 assertions are
-    /// sequence-shaped (<c>count($result) = 5</c>, <c>$result[2][self::title]</c>), so
-    /// plain &lt;assert&gt; stays largely ineffective until the representation the engine
-    /// treats as a sequence is identified and used here.
-    ///
-    /// The failure mode is CONSERVATIVE — a sequence assertion evaluates false and the test
-    /// fails, exactly as before the change — so this cannot manufacture false passes.
-    /// Change this test when the gap is closed; it asserts today's behaviour, not the
-    /// desired behaviour.
+    /// The engine's multi-item representation is <c>object?[]</c>; a <c>List&lt;object?&gt;</c>
+    /// is a single item. Binding the raw list made <c>count($result)</c> return 1 on a
+    /// three-item result and <c>$result[2]</c> return nothing, so every sequence-shaped
+    /// assertion — most of the corpus — evaluated false. XqtsTestRunner.AsXdmSequence
+    /// normalises before binding; these pin both halves of that.
     /// </summary>
     [Fact]
-    public async Task SequenceResult_CurrentlyBindsAsASingleItem()
+    public async Task SequenceResult_SupportsCountAndPositionalAccess()
     {
+        var seq = new object?[] { 1, 2, 3, 4, 5 };
+        Assert.True(await IsTrueAsync("count($result) = 5", seq));
+        Assert.False(await IsTrueAsync("count($result) = 4", seq));
+        Assert.True(await IsTrueAsync("$result[2] = 2", seq));
+    }
+
+    [Fact]
+    public async Task RawListBindsAsASingleItem_WhichIsWhyNormalisationExists()
+    {
+        // Pins the trap rather than the fix: if this ever starts reporting 3, the engine
+        // has learned to flatten List<object?> and AsXdmSequence can be simplified.
         var items = await EvalAsync("count($result)", new List<object?> { 1, 2, 3 });
-        Assert.Single(items);
         Assert.Equal("1", items[0]?.ToString());
     }
 }

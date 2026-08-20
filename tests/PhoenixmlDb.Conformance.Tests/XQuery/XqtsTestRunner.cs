@@ -500,7 +500,7 @@ public sealed class XqtsTestRunner
             // SetExternalVariable, not BindVariable: VariableDeclarationOperator resolves an
             // external declaration through TryGetExternalVariable, which BindVariable does not
             // populate ("External variable $result was not bound and has no default value").
-            ctx.SetExternalVariable("result", result);
+            ctx.SetExternalVariable("result", AsXdmSequence(result));
 
             var items = new List<object?>();
             await foreach (var item in compiled.ExecutionPlan.ExecuteAsync(ctx).ConfigureAwait(false))
@@ -514,6 +514,30 @@ public sealed class XqtsTestRunner
         catch (InvalidOperationException) { return false; }
         catch (NotSupportedException) { return false; }
     }
+
+    /// <summary>
+    /// Converts a runner-side result into the shape the engine treats as a SEQUENCE.
+    /// </summary>
+    /// <remarks>
+    /// The engine's multi-item representation is <c>object?[]</c> — see e.g. fn:replicate,
+    /// <c>seq is object?[] arr ? arr : new[] { seq }</c>. A <c>List&lt;object?&gt;</c> is
+    /// therefore a SINGLE item: bound as-is, <c>count($result)</c> on a three-item list
+    /// returned 1 and <c>$result[2]</c> returned nothing, which made every sequence-shaped
+    /// assertion — most of the corpus — evaluate false.
+    ///
+    /// A string is deliberately NOT treated as a sequence despite being IEnumerable, and an
+    /// XdmNode is a single item even where it exposes children.
+    /// </remarks>
+    private static object? AsXdmSequence(object? result) => result switch
+    {
+        null => Array.Empty<object?>(),
+        object?[] => result,
+        string => result,
+        XdmNode => result,
+        List<object?> list => list.ToArray(),
+        IEnumerable<object?> seq => seq.ToArray(),
+        _ => result
+    };
 
     /// <summary>
     /// XPath effective boolean value, limited to what an assertion can yield: an empty
