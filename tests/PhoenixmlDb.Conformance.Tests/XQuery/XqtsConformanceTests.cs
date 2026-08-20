@@ -299,9 +299,20 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
         var testCases = await _fixture.LoadAllTestsAsync();
         _output.WriteLine($"Running {testCases.Count} tests from XQTS");
 
+        // Print the EXCEPTION alongside the name. Without it a run reports thousands of
+        // errors and gives no way to group them, which is the difference between "2469
+        // errors" and "2469 errors, of which 1900 are one message". Every harness defect
+        // found in this suite was found by clustering these strings.
         var progress = new Progress<XqtsTestResult>(result =>
         {
-            if (!result.Passed)
+            if (result.Passed) return;
+            if (result.Error is { } ex)
+            {
+                var msg = ex.Message.ReplaceLineEndings(" ");
+                if (msg.Length > 200) msg = msg[..200];
+                _output.WriteLine($"ERROR: {result.TestCase.TestSet}/{result.TestCase.Name} :: {ex.GetType().Name}: {msg}");
+            }
+            else
             {
                 _output.WriteLine($"FAILED: {result.TestCase.TestSet}/{result.TestCase.Name}");
             }
