@@ -35,11 +35,98 @@ public sealed class XqtsTestRunner
     private readonly XdmDocumentStore _documents = new();
     private readonly Dictionary<string, XdmDocument> _documentCache = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Serves <c>import schema</c>. The runner previously passed no schema provider at all, so
+    /// any query importing a schema failed with "Cannot locate schema for namespace" no matter
+    /// what the environment declared. Shared across tests and loaded on demand; the corpus has
+    /// ~103 schema declarations over a handful of distinct .xsd files.
+    /// </summary>
+    private readonly XsdSchemaProvider _schemas = new();
+    private readonly HashSet<string> _loadedSchemas = new(StringComparer.Ordinal);
+
     public XqtsTestRunner(string testDataPath, XqtsConfiguration? config = null)
     {
         _testDataPath = testDataPath;
         _config = config ?? new XqtsConfiguration();
-        _engine = new QueryEngine(nodeProvider: _documents, documentResolver: _documents);
+        PreloadXmlNamespaceSchema(_schemas);
+        _engine = new QueryEngine(
+            nodeProvider: _documents, documentResolver: _documents, schemaProvider: _schemas);
+    }
+
+    /// <summary>
+    /// Seeds the schema set with the XML-namespace attribute declarations (xml:lang, xml:space,
+    /// xml:base, xml:id).
+    /// </summary>
+    /// <remarks>
+    /// XSD processors are expected to know these implicitly; .NET's XmlSchemaSet does not. A
+    /// corpus schema that merely REFERENCES xml:lang therefore fails to compile with
+    /// "The 'http://www.w3.org/XML/1998/namespace:lang' attribute is not declared", and the
+    /// import surfaces as the misleading "Cannot locate schema for namespace" — the schema is
+    /// found, it just will not build. Verified against the suite's own loans.xsd.
+    /// </remarks>
+    private static void PreloadXmlNamespaceSchema(XsdSchemaProvider provider)
+    {
+        const string XmlNsXsd = """
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                       xmlns:xml="http://www.w3.org/XML/1998/namespace"
+                       targetNamespace="http://www.w3.org/XML/1998/namespace">
+              <xs:attribute name="lang"  type="xs:string"/>
+              <xs:attribute name="space" type="xs:NCName"/>
+              <xs:attribute name="base"  type="xs:anyURI"/>
+              <xs:attribute name="id"    type="xs:ID"/>
+            </xs:schema>
+            """;
+        try
+        {
+            provider.Add("http://www.w3.org/XML/1998/namespace", new StringReader(XmlNsXsd));
+        }
+        catch (PhoenixmlDb.XQuery.SchemaException)
+        {
+            // A provider that already knows the XML namespace needs no help.
+        }
+    }
+
+    /// <summary>
+    /// Registers documents the environment makes addressable by URI, so <c>fn:doc</c>,
+    /// <c>fn:json-doc</c> and <c>fn:unparsed-text</c> can retrieve them. Without this the
+    /// engine sees a bare relative name and reports "No document could be retrieved" or
+    /// "Could not find a part of the path".
+    /// </summary>
+    private void RegisterUriDocuments(XqtsEnvironment? env)
+    {
+        if (env is null || env.UriDocuments.Count == 0) return;
+        foreach (var (uri, path) in env.UriDocuments)
+        {
+            if (!_registeredUris.Add(uri)) continue;
+            if (!File.Exists(path)) continue;
+            // LoadFromString, not LoadFile: only the former accepts the document URI the test
+            // will actually ask for. Non-XML resources (JSON, text) are registered by path
+            // below instead — parsing them as XML would throw.
+            try { _documents.LoadFromString(File.ReadAllText(path), uri); }
+            catch (System.Xml.XmlException) { _nonXmlResources[uri] = path; }
+        }
+    }
+
+    private readonly HashSet<string> _registeredUris = new(StringComparer.Ordinal);
+
+    /// <summary>URIs whose backing file is not XML (JSON/text resources).</summary>
+    private readonly Dictionary<string, string> _nonXmlResources = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Registers the environment's schemas so <c>import schema</c> can resolve them. Failures
+    /// are swallowed: a schema this engine cannot compile must surface as the test's own error,
+    /// not as a crash that takes the rest of the run with it.
+    /// </summary>
+    private void EnsureSchemasLoaded(XqtsEnvironment? env)
+    {
+        if (env is null || env.Schemas.Count == 0) return;
+        foreach (var (uri, path) in env.Schemas)
+        {
+            if (!_loadedSchemas.Add(uri + "|" + path)) continue;
+            if (!File.Exists(path)) continue;
+            try { _schemas.ImportSchema(uri, [path]); }
+            catch (PhoenixmlDb.XQuery.SchemaException) { }
+        }
     }
 
     /// <summary>
@@ -122,8 +209,15 @@ public sealed class XqtsTestRunner
         var ns = doc.Root?.Name.Namespace ?? XNamespace.None;
         var testSetName = doc.Root?.Attribute("name")?.Value ?? Path.GetFileNameWithoutExtension(testSetPath);
 
-        // Parse environment definitions
-        var environments = new Dictionary<string, XqtsEnvironment>();
+        // Environments resolve in two scopes. catalog.xml defines GLOBAL ones (works, staff,
+        // atomic, empty, …) that any test-set may reference by name; a test-set may also
+        // define its own, which take precedence. Only the test-set scope was loaded, so
+        // `<environment ref="works"/>` found nothing and fell through to "parse inline",
+        // producing an EMPTY environment — no context item, no variables, no namespaces.
+        // That single omission accounts for the largest error clusters in the QT3 run:
+        // "context item is absent" (815), "Variable $works is not defined" (~361),
+        // "Unbound namespace prefix: atomic" (~234).
+        var environments = new Dictionary<string, XqtsEnvironment>(LoadGlobalEnvironments());
         foreach (var envElem in doc.Descendants(ns + "environment"))
         {
             var envName = envElem.Attribute("name")?.Value;
@@ -146,6 +240,39 @@ public sealed class XqtsTestRunner
         return testCases;
     }
 
+    /// <summary>
+    /// Environments declared at the top of <c>catalog.xml</c>, available to every test-set by
+    /// name. Their source/schema paths resolve against the CATALOG's directory, not the
+    /// referencing test-set's — which is why they cannot simply be re-parsed per test-set.
+    /// Parsed once; the catalog is large and every test-set would otherwise re-read it.
+    /// </summary>
+    private Dictionary<string, XqtsEnvironment> LoadGlobalEnvironments()
+    {
+        if (_globalEnvironments is not null) return _globalEnvironments;
+
+        var result = new Dictionary<string, XqtsEnvironment>(StringComparer.Ordinal);
+        var catalogFile = Path.Combine(_testDataPath, "catalog.xml");
+        if (File.Exists(catalogFile))
+        {
+            var catalog = XDocument.Load(catalogFile);
+            var cns = catalog.Root?.Name.Namespace ?? XNamespace.None;
+            var baseDir = Path.GetDirectoryName(catalogFile)!;
+            // Only top-level <environment> children of the catalog root: a <test-set> element
+            // inside the catalog is a REFERENCE to another file, not a definition.
+            foreach (var envElem in catalog.Root?.Elements(cns + "environment") ?? [])
+            {
+                var name = envElem.Attribute("name")?.Value;
+                if (name != null)
+                    result[name] = ParseEnvironment(envElem, cns, baseDir);
+            }
+        }
+
+        _globalEnvironments = result;
+        return result;
+    }
+
+    private Dictionary<string, XqtsEnvironment>? _globalEnvironments;
+
     private XqtsEnvironment ParseEnvironment(XElement elem, XNamespace ns, string basePath)
     {
         var env = new XqtsEnvironment();
@@ -157,8 +284,37 @@ public sealed class XqtsTestRunner
             var file = source.Attribute("file")?.Value;
             if (file != null)
             {
-                env.Sources[role ?? "."] = Path.Combine(basePath, file);
+                var full = Path.Combine(basePath, file);
+                // role is "." (context item) or "$name" (bind the document to that variable).
+                // Both were stored; only "." was ever consumed, so a query using $works got
+                // "Variable $works is not defined" — 75 sources in the corpus use the $ form.
+                env.Sources[role ?? "."] = full;
+
+                // @uri makes the document addressable by fn:doc.
+                var srcUri = source.Attribute("uri")?.Value;
+                if (srcUri != null) env.UriDocuments[srcUri] = full;
             }
+        }
+
+        // <resource> declares a document addressable by URI — JSON for fn:json-doc, text for
+        // fn:unparsed-text. Never parsed, so those tests reported "Could not find a part of the
+        // path" against a relative name the engine had no way to resolve.
+        foreach (var res in elem.Elements(ns + "resource"))
+        {
+            var file = res.Attribute("file")?.Value;
+            var uri = res.Attribute("uri")?.Value;
+            if (file != null && uri != null)
+                env.UriDocuments[uri] = Path.Combine(basePath, file);
+        }
+
+        // Parse schemas. These were not parsed at all, so a query with `import schema` had
+        // nothing to resolve against: "Cannot locate schema for namespace X" (~215 errors).
+        foreach (var schema in elem.Elements(ns + "schema"))
+        {
+            var uri = schema.Attribute("uri")?.Value;
+            var file = schema.Attribute("file")?.Value;
+            if (uri != null && file != null)
+                env.Schemas[uri] = Path.Combine(basePath, file);
         }
 
         // Parse namespaces
@@ -346,9 +502,31 @@ public sealed class XqtsTestRunner
     {
         // Load source documents if needed
         var contextItem = await LoadContextItemAsync(testCase.Environment, ct);
+        EnsureSchemasLoaded(testCase.Environment);
+        RegisterUriDocuments(testCase.Environment);
 
         // Build query with environment parameter bindings
         var query = PrependEnvironmentBindings(testCase.Query, testCase.Environment);
+
+        // Sources whose role is "$name" bind the DOCUMENT to that variable. Declaring them
+        // external here (and supplying the value below) is what the "$" role means; without it
+        // the query reported "Variable $works is not defined".
+        var varSources = new List<(string Name, object? Doc)>();
+        if (testCase.Environment is { } envForVars)
+        {
+            foreach (var (role, path) in envForVars.Sources)
+            {
+                if (role.Length < 2 || role[0] != '$' || !File.Exists(path)) continue;
+                var name = role[1..];
+                if (!_documentCache.TryGetValue(path, out var d))
+                {
+                    d = _documents.LoadFile(path);
+                    _documentCache[path] = d;
+                }
+                varSources.Add((name, d));
+                query = $"declare variable ${name} external;\n" + query;
+            }
+        }
 
         // Apply a per-test timeout on top of the caller's cancellation token
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -365,10 +543,16 @@ public sealed class XqtsTestRunner
         // Fixing that CA2016 warning by naming ONLY the token silently dropped the context item:
         // `contextItem` was still computed but never passed, so every path expression saw an
         // absent context and failed with "The context item is absent for '/'". Name both.
-        await foreach (var item in _engine.ExecuteAsync(
-            query,
-            initialContextItem: contextItem,
-            cancellationToken: token))
+        var execCtx = _engine.CreateContext(initialContextItem: contextItem, cancellationToken: token);
+        foreach (var (name, doc) in varSources)
+            execCtx.SetExternalVariable(name, doc);
+
+        var compiledQuery = _engine.Compile(query);
+        if (!compiledQuery.Success || compiledQuery.ExecutionPlan is null)
+            throw new XQueryRuntimeException("XPST0003",
+                "Compilation failed: " + string.Join("; ", compiledQuery.Errors));
+
+        await foreach (var item in compiledQuery.ExecutionPlan.ExecuteAsync(execCtx))
         {
             results.Add(item);
 
@@ -389,27 +573,59 @@ public sealed class XqtsTestRunner
     /// </summary>
     private static string PrependEnvironmentBindings(string query, XqtsEnvironment? env)
     {
-        if (env?.Parameters.Count is null or 0) return query;
+        if (env is null) return query;
+        if (env.Parameters.Count == 0 && env.Namespaces.Count == 0) return query;
 
-        // If the query already declares these variables as external, replace those declarations
         var result = query;
+        var prologue = new System.Text.StringBuilder();
+
+        // Environment <namespace> declarations. These were parsed into env.Namespaces and then
+        // never used — the dictionary had exactly one write and no reads — so a test whose
+        // environment supplies the binding still failed with "Unbound namespace prefix: atomic".
+        foreach (var (prefix, uri) in env.Namespaces)
+        {
+            if (string.IsNullOrEmpty(prefix))
+                prologue.Append("declare default element namespace \"").Append(uri).Append("\";\n");
+            else
+                prologue.Append("declare namespace ").Append(prefix)
+                        .Append(" = \"").Append(uri).Append("\";\n");
+        }
+
         foreach (var (name, select) in env.Parameters)
         {
-            // Replace "declare variable $name external;" with "declare variable $name := select;"
+            // Preferred form: the query declares the variable external and we supply the value.
             var externalDecl = $"declare variable ${name} external";
             if (result.Contains(externalDecl, StringComparison.Ordinal))
             {
-                result = result.Replace(
-                    externalDecl + ";",
-                    $"declare variable ${name} := {select};");
-                // Also handle version with type annotation
-                result = result.Replace(
-                    externalDecl,
-                    $"declare variable ${name} := {select}");
+                result = result.Replace(externalDecl + ";", $"declare variable ${name} := {select};");
+                result = result.Replace(externalDecl, $"declare variable ${name} := {select}");
+                continue;
             }
+
+            // Otherwise DECLARE it. Only the replace path existed, so an environment param used
+            // by a query that never declared it — the common shape for the catalog's `works`
+            // and `staff` environments — stayed unbound: "Variable $works is not defined".
+            prologue.Append("declare variable $").Append(name).Append(" := ").Append(select).Append(";\n");
         }
 
-        return result;
+        if (prologue.Length == 0) return result;
+
+        // A version declaration must stay first in the module, so splice after it when present.
+        var insertAt = FindPrologueInsertionPoint(result);
+        return result[..insertAt] + prologue + result[insertAt..];
+    }
+
+    /// <summary>
+    /// Returns the offset at which generated prolog declarations may be inserted: after a
+    /// leading <c>xquery version "…";</c> if the module has one, otherwise the start.
+    /// </summary>
+    private static int FindPrologueInsertionPoint(string query)
+    {
+        var i = 0;
+        while (i < query.Length && char.IsWhiteSpace(query[i])) i++;
+        if (!query.AsSpan(i).StartsWith("xquery version", StringComparison.Ordinal)) return 0;
+        var semi = query.IndexOf(';', i);
+        return semi < 0 ? 0 : semi + 1;
     }
 
     /// <summary>
@@ -898,6 +1114,13 @@ public sealed class XqtsEnvironment
     public Dictionary<string, string> Sources { get; } = new();
     public Dictionary<string, string> Namespaces { get; } = new();
     public Dictionary<string, string> Parameters { get; } = new();
+
+    /// <summary>Target namespace URI -> .xsd path, from the environment's &lt;schema&gt;.</summary>
+    public Dictionary<string, string> Schemas { get; } = new();
+
+    /// <summary>Document URI -> file path, for sources and resources addressable by fn:doc /
+    /// fn:json-doc / fn:unparsed-text.</summary>
+    public Dictionary<string, string> UriDocuments { get; } = new();
 }
 
 /// <summary>
