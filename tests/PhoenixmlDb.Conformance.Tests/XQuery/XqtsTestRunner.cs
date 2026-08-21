@@ -97,20 +97,32 @@ public sealed class XqtsTestRunner
         if (env is null || env.UriDocuments.Count == 0) return;
         foreach (var (uri, path) in env.UriDocuments)
         {
+            // Record the mapping regardless of whether the file is XML: fn:json-doc and
+            // fn:unparsed-text resolve through the engine's ResourceMappings, not the XML store.
+            if (File.Exists(path)) _resourceMappings[uri] = path;
             if (!_registeredUris.Add(uri)) continue;
             if (!File.Exists(path)) continue;
             // LoadFromString, not LoadFile: only the former accepts the document URI the test
-            // will actually ask for. Non-XML resources (JSON, text) are registered by path
-            // below instead — parsing them as XML would throw.
+            // will actually ask for. Non-XML resources (JSON, text) cannot go into the XML
+            // store at all — parsing them as XML throws — so they are served through the
+            // engine's resource-URI mapping instead (see ResourceMappings below).
             try { _documents.LoadFromString(File.ReadAllText(path), uri); }
-            catch (System.Xml.XmlException) { _nonXmlResources[uri] = path; }
+            catch (System.Xml.XmlException) { }
         }
     }
 
     private readonly HashSet<string> _registeredUris = new(StringComparer.Ordinal);
 
-    /// <summary>URIs whose backing file is not XML (JSON/text resources).</summary>
-    private readonly Dictionary<string, string> _nonXmlResources = new(StringComparer.Ordinal);
+    /// <summary>
+    /// Resource URI -> local file, handed to the execution context so fn:json-doc and
+    /// fn:unparsed-text can retrieve a declared &lt;resource&gt;. The engine already had the
+    /// seam (ResourceUriResolver.Map over context.ResourceMappings); nothing was populating it.
+    ///
+    /// The predecessor of this field was written and never read — the same defect this file has
+    /// now corrected six times — which left 135 "Error reading JSON resource: Could not find a
+    /// part of the path" and 34 "Resource not found".
+    /// </summary>
+    private readonly Dictionary<string, string> _resourceMappings = new(StringComparer.Ordinal);
 
     private int _eqStringFallbackRescues;
 
@@ -554,6 +566,8 @@ public sealed class XqtsTestRunner
         // `contextItem` was still computed but never passed, so every path expression saw an
         // absent context and failed with "The context item is absent for '/'". Name both.
         var execCtx = _engine.CreateContext(initialContextItem: contextItem, cancellationToken: token);
+        if (_resourceMappings.Count > 0)
+            execCtx.SetResourceMappings(new Dictionary<string, string>(_resourceMappings));
         foreach (var (name, doc) in varSources)
             execCtx.SetExternalVariable(name, doc);
 
@@ -1016,10 +1030,14 @@ public sealed class XqtsTestRunner
         if (expected == null) return result == null;
         try
         {
-            // For multiple-item results, concatenate their string values
-            var resultStr = result is List<object?> list
-                ? string.Concat(list.Select(item => item?.ToString() ?? ""))
-                : result?.ToString() ?? "";
+            // SERIALIZE the result as XML. This used item.ToString(), which for an XdmNode is
+            // not its markup — so a correct element result was compared as the wrong text and
+            // the test failed however right the engine was. prod-OrderByClause is 157 such
+            // failures: the engine's output for orderbywithout-1 matches the expected
+            // <results>A String B String …</results> character for character.
+            var items = result is List<object?> list ? list : [result];
+            var resultStr = string.Concat(items.Select(item =>
+                XQueryResultSerializer.Serialize(item, _documents, OutputMethod.Xml)));
 
             // Wrap both in a root element for comparison if they're fragments
             var wrappedResult = $"<r>{resultStr}</r>";
