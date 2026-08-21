@@ -1,5 +1,67 @@
 # Release History
 
+## 1.6.5 — 2026-08-21
+
+Seven engine fixes, all found by running real stylesheets rather than the test suites. The
+largest of them unblocked 60 of the 162 XSpec suites, which had been failing before they could
+execute a single test.
+
+### Fixes
+
+- **`xsl:copy` carries the source element's complete IN-SCOPE namespaces, not only the `xmlns`
+  declarations written on it.** XSLT 3.0 §11.9.1 requires a namespace node on the copy for every
+  namespace node of the original. Emitting only the local declarations is usually
+  indistinguishable, because the copy lands in a tree whose ancestors re-supply the rest — but
+  not when nothing re-supplies them. Under `inherit-namespaces="no"`, or for a detached copy, the
+  copy kept only the prefix of its own name, and a later `resolve-QName` against it failed with
+  `FONS0004` for a prefix the source plainly had. XSpec's compiler is exactly this shape:
+  `x:combine` wraps the combined document in `<xsl:element inherit-namespaces="no">` and the
+  compiler then copies scenarios out of that tree and resolves `@function` / `@template` / `@as`
+  against the copies. Measured across the XSpec suites: suites stuck at Compile 99 → 42, reaching
+  Run 39 → 84, running to Completion 24 → 36, with 58 suites advancing a stage and none
+  regressing.
+
+- **`xsl:result-document` targeting the principal output returns the empty sequence.** Its content
+  is a result document and never contributes to the containing sequence constructor (§26.1). One
+  with an `href` was already redirected correctly; one targeting the principal output wrote into
+  the same buffer an `as=`-typed body slices for its return value, so its content was counted as
+  the template's result. A template declared `as="empty-sequence()"` around a bare
+  `xsl:result-document` — the shape XSpec generates for its report — raised `XTTE0505: expected
+  zero items, got 1`.
+
+- **`xsl:result-document` content contributes no accumulated items either.** The companion to the
+  above: the content ran with the enclosing sequence accumulator still installed, so an
+  `xsl:sequence` *inside* a result document could still leak an item into an enclosing typed body.
+
+- **The collected-attribute stack is restored bottom-first.** Four seams saved the stack to a
+  `List`, cleared it, and pushed the list back — but `Stack<T>` enumerates top-first, so the
+  restore reversed it. Harmless at nesting depth 1, which is why it survived; at depth ≥ 2 the
+  enclosing element sealed against its parent's buffer, losing every attribute created by the
+  `xsl:attribute` instruction while the parent silently gained them, and every element built
+  afterwards was shifted by one. Literal and AVT attributes never enter that stack, so ordinary
+  stylesheets were unaffected and only code generators — which must compute attribute names and
+  values — fell in. It accounted for `XTSE0010` in 62 XSpec suites: a generated
+  `<xsl:stylesheet>` with no `@version`, `Q{uri}` names with an empty local part, and valueless
+  `xsl:attribute` elements were one defect wearing three masks.
+
+- **`fn:transform`'s `initial-template` option is an `xs:QName`, not a local name.** It was read
+  as a string, discarding the namespace, so a namespaced entry point could not be selected. The
+  adjacent `initial-function` option already handled this correctly.
+
+- **An `xsl:function` with no `as=` returns text NODES for text its body produces.** The typed
+  form already did; the untyped form handed back a plain string, so `boolean()` over a sequence
+  of such results raised `FORG0006`.
+
+- **`for-each-group` with `group-by` over a grounded population is streamable.** The classifier
+  reported every `group-by` as not-streamable, which forced whole-input buffering even where the
+  population is already materialised. A correctness fix in the classifier; runtime behaviour is
+  unchanged.
+
+### Version alignment
+
+From 1.6.5 the engine libraries and the CLI tools built on them share a single version, so a
+matching number means a compatible set. See `PhoenixmlDb.Core` 1.6.5 for the rationale.
+
 ## 1.6.4 — 2026-08-16
 
 ### Fixes
