@@ -327,6 +327,10 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
         _output.WriteLine($"Errors:  {summary.ErrorTests}");
         _output.WriteLine($"Skipped: {summary.SkippedTests}");
         _output.WriteLine($"Pass Rate: {summary.PassRate:F2}%");
+        // See XqtsTestRunner.EqStringFallbackRescues: assert-eq tests that passed only because
+        // the legacy string comparison rescued them after the engine said unequal. Each is a
+        // possible masked engine bug, so the number belongs in the summary, not hidden.
+        _output.WriteLine($"assert-eq string-compare rescues: {_fixture.Runner.EqStringFallbackRescues}");
         _output.WriteLine($"Duration: {summary.Duration.TotalSeconds:F2}s");
 
         // Target: 95%+ pass rate for supported features

@@ -112,6 +112,16 @@ public sealed class XqtsTestRunner
     /// <summary>URIs whose backing file is not XML (JSON/text resources).</summary>
     private readonly Dictionary<string, string> _nonXmlResources = new(StringComparer.Ordinal);
 
+    private int _eqStringFallbackRescues;
+
+    /// <summary>
+    /// How many assert-eq tests passed ONLY because the legacy string comparison rescued them
+    /// after engine evaluation said unequal. Each one is a place where the harness may be
+    /// masking a genuine engine inequality; a high count means the fallback is load-bearing
+    /// and worth removing carefully rather than left in place.
+    /// </summary>
+    public int EqStringFallbackRescues => _eqStringFallbackRescues;
+
     /// <summary>
     /// Registers the environment's schemas so <c>import schema</c> can resolve them. Failures
     /// are swallowed: a schema this engine cannot compile must surface as the test's own error,
@@ -677,6 +687,26 @@ public sealed class XqtsTestRunner
         {
             case "assert":
                 return await VerifyXPathAssertAsync(result, assertion.Value, ct).ConfigureAwait(false);
+            case "assert-eq":
+                // QT3 semantics: EVALUATE the expected expression and compare with `eq`.
+                // VerifyEq compares STRINGS, with ad-hoc quote-stripping and constructor
+                // special-casing — the same disease assert-deep-eq had, over 4050 corpus
+                // occurrences.
+                //
+                // Engine first, legacy string compare as fallback. That ordering is
+                // deliberately MONOTONIC: anything the string heuristic passed today still
+                // passes, so this cannot regress. The cost is that a string-compare rescue can
+                // MASK a real engine inequality, which is why the rescues are counted and
+                // reported — a large number is a signal to investigate, not to celebrate.
+                if (await VerifyXPathAssertAsync(
+                        result, $"$result eq ({assertion.Value})", ct).ConfigureAwait(false))
+                    return true;
+                if (VerifyEq(result, assertion.Value))
+                {
+                    Interlocked.Increment(ref _eqStringFallbackRescues);
+                    return true;
+                }
+                return false;
             case "assert-deep-eq":
                 // QT3 semantics: EVALUATE the expected expression and compare with
                 // fn:deep-equal. The old implementation was
@@ -796,7 +826,6 @@ public sealed class XqtsTestRunner
             "assert-empty" => result == null
                 || (result is List<object?> emptyList && emptyList.Count == 0)
                 || (result is ICollection<object> c && c.Count == 0),
-            "assert-eq" => VerifyEq(result, assertion.Value),
             "assert-string-value" => SerializeStringValue(result) == assertion.Value,
             "assert-type" => VerifyType(result, assertion.Value),
             "assert-count" => VerifyCount(result, assertion.Value),
