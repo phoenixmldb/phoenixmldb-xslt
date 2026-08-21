@@ -15694,7 +15694,29 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var emittedPrefixes = new HashSet<string>();
                 if (instruction.CopyNamespaces ?? true)
                 {
-                    foreach (var nsDecl in elem.NamespaceDeclarations)
+                    // XSLT 3.0 §11.9.1: the copy gets a namespace node for EVERY namespace node
+                    // of the original — that is the element's complete IN-SCOPE set, not merely
+                    // the xmlns declarations physically written on it.
+                    //
+                    // Emitting only the local declarations is usually indistinguishable, because
+                    // the copy lands inside a result tree whose ancestors re-supply the rest.
+                    // It is NOT indistinguishable under inherit-namespaces="no": that ancestor
+                    // contributes nothing, so every inherited binding simply vanishes and the
+                    // copy keeps only the prefix of its own name. A later resolve-QName against
+                    // that copy then fails with FONS0004 for a prefix the source plainly had.
+                    //
+                    // XSpec hits this squarely — x:combine wraps the combined document in
+                    // <xsl:element inherit-namespaces="no"> (deliberately, with a comment saying
+                    // why) and the compiler then copies scenarios out of that tree and resolves
+                    // @function/@template/@as against the copies. It accounted for FONS0004 in
+                    // 60 of 162 suites, every one of them failing before it could run a test.
+                    // Gating this on the _inheritNamespacesNo FLAG does not work: that flag
+                    // describes the construction context in force right now, whereas the loss is
+                    // a property of the SOURCE element's tree, and the copy typically happens in
+                    // a later, unrelated construction. GatherSourceInScopeBindings is the same
+                    // helper the untyped-RTF branch below already relies on for this reason.
+                    var sourceBindings = GatherSourceInScopeBindings(elem);
+                    foreach (var nsDecl in sourceBindings)
                     {
                         var uri = _nodeStore?.GetNamespaceUri(nsDecl.Namespace) ?? "";
                         var prefix = nsDecl.Prefix ?? "";
