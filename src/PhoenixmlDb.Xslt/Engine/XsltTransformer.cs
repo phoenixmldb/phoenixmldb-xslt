@@ -7958,6 +7958,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
             }
         }
+
+        // _outputNsScopes holds the scopes live RIGHT NOW. The `as=` body capture reparses its
+        // serialized chunk only after the body has finished, by which point the scopes that were
+        // in force while the body ran have already been popped — so a prefix the chunk uses can
+        // be absent from the wrapper, the reparse throws "'x' is an undeclared prefix", and
+        // AddBodyOutputChunk falls back to appending the chunk as a raw STRING. The typed
+        // template then fails its own return-type check with XTTE0505, reporting a String where
+        // it declared an element, and nothing anywhere mentions namespaces.
+        //
+        // That is XSpec's x:like template: it copies x:-prefixed elements out of a constructed
+        // tree, and the fragment carries no xmlns:x. It accounted for XTTE0505 in 34 of its 162
+        // suites.
+        //
+        // Backstop with the stylesheet's statically-declared prefixes, which is where those
+        // names come from. Live output scopes still win — this only fills prefixes nothing else
+        // supplied. Over-declaring on the wrapper is harmless: the wrapper itself is discarded
+        // and only the prefixes a node actually uses end up on it.
+        foreach (var (prefix, uri) in _stylesheet.Namespaces)
+        {
+            if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(prefix) || !seen.Add(prefix))
+                continue;
+            sb.Append(" xmlns:");
+            sb.Append(prefix);
+            sb.Append("=\"");
+            sb.Append(EscapeAttributeValue(uri));
+            sb.Append('"');
+        }
+
         return sb.ToString();
     }
 
@@ -8055,7 +8083,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             catch (System.Xml.XmlException)
             {
-                // Fall through to add as raw string
+                // Fall through to add as raw string.
+                //
+                // NOTE: this fallback is silent by design but expensive when it fires — the
+                // caller receives a String where it expected nodes, and a typed template then
+                // reports XTTE0505 naming a type mismatch with no hint that a namespace was the
+                // cause. If that error appears with a serialized-markup value, suspect a prefix
+                // missing from the wrapper before suspecting the type check.
             }
         }
 

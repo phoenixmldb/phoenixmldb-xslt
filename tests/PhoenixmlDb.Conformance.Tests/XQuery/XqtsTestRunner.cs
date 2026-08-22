@@ -318,6 +318,19 @@ public sealed class XqtsTestRunner
             }
         }
 
+        // <module uri=… file=…> tells the harness where a library module lives, so
+        // `import module namespace X = "…"` resolves without an `at` hint. 314 of these in the
+        // corpus, and none were parsed — every module-importing test failed with
+        // "Module '…' could not be resolved from location hints: []". The ENGINE's module
+        // support is fine; it was simply never told where the files are.
+        foreach (var mod in elem.Elements(ns + "module"))
+        {
+            var uri = mod.Attribute("uri")?.Value;
+            var file = mod.Attribute("file")?.Value;
+            if (uri != null && file != null)
+                env.Modules[uri] = Path.Combine(basePath, file);
+        }
+
         // <resource> declares a document addressable by URI — JSON for fn:json-doc, text for
         // fn:unparsed-text. Never parsed, so those tests reported "Could not find a part of the
         // path" against a relative name the engine had no way to resolve.
@@ -393,6 +406,20 @@ public sealed class XqtsTestRunner
             {
                 test.Environment = ParseEnvironment(envElem, ns, basePath);
             }
+        }
+
+        // <module> may appear directly on the test-case, alongside <environment>, e.g.
+        //   <test-case name="generate-id-014">
+        //     <environment ref="works-mod"/>
+        //     <module uri="http://www.w3.org/QT3/copy" file="id/copy.xq"/>
+        // Only the environment-scoped ones were read, so these still failed with
+        // "could not be resolved from location hints: []".
+        foreach (var mod in elem.Elements(ns + "module"))
+        {
+            var mUri = mod.Attribute("uri")?.Value;
+            var mFile = mod.Attribute("file")?.Value;
+            if (mUri != null && mFile != null)
+                test.Modules[mUri] = Path.Combine(basePath, mFile);
         }
 
         // Parse dependencies
@@ -571,7 +598,29 @@ public sealed class XqtsTestRunner
         foreach (var (name, doc) in varSources)
             execCtx.SetExternalVariable(name, doc);
 
-        var compiledQuery = _engine.Compile(query);
+        // Hand the environment's <module> declarations to the compiler. ExternalModules maps a
+        // module NAMESPACE to candidate files — how a test importing a namespace with no `at`
+        // hint resolves — and ExternalModuleLocations maps a location HINT to a file, for tests
+        // that do supply one. Without these, `import module namespace …` failed with
+        // "could not be resolved from location hints: []" even though the engine's module
+        // support works: the harness simply never parsed <module> and never said where the
+        // files were.
+        CompilationOptions? compileOptions = null;
+        var modules = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var kv in testCase.Environment?.Modules ?? []) modules[kv.Key] = kv.Value;
+        // Test-case declarations win over the environment's: they are the more specific scope.
+        foreach (var kv in testCase.Modules) modules[kv.Key] = kv.Value;
+        if (modules.Count > 0)
+        {
+            compileOptions = new CompilationOptions
+            {
+                ExternalModules = modules.ToDictionary(
+                    kv => kv.Key, kv => new List<string> { kv.Value }, StringComparer.Ordinal),
+                ExternalModuleLocations = new Dictionary<string, string>(modules, StringComparer.Ordinal)
+            };
+        }
+
+        var compiledQuery = _engine.Compile(query, compileOptions);
         if (!compiledQuery.Success || compiledQuery.ExecutionPlan is null)
             throw new XQueryRuntimeException("XPST0003",
                 "Compilation failed: " + string.Join("; ", compiledQuery.Errors));
@@ -1152,6 +1201,14 @@ public sealed class XqtsTestCase
     public string Description { get; init; } = "";
     public required string Query { get; init; }
     public XqtsEnvironment? Environment { get; set; }
+
+    /// <summary>
+    /// Module namespace -> .xq file declared directly on the TEST-CASE. QT3 puts &lt;module&gt;
+    /// both inside &lt;environment&gt; and as a sibling of it under &lt;test-case&gt;; the latter
+    /// cannot be folded into the environment because environments are shared (often global), and
+    /// mutating one would leak a module into every other test that references it.
+    /// </summary>
+    public Dictionary<string, string> Modules { get; } = new();
     public List<XqtsDependency> Dependencies { get; } = new();
     public List<XqtsAssertion> Assertions { get; set; } = new();
 }
@@ -1171,6 +1228,9 @@ public sealed class XqtsEnvironment
     /// <summary>Document URI -> file path, for sources and resources addressable by fn:doc /
     /// fn:json-doc / fn:unparsed-text.</summary>
     public Dictionary<string, string> UriDocuments { get; } = new();
+
+    /// <summary>Module namespace URI -> .xq file, from the environment's &lt;module&gt;.</summary>
+    public Dictionary<string, string> Modules { get; } = new();
 }
 
 /// <summary>
