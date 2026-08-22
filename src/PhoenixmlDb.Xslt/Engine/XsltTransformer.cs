@@ -31000,7 +31000,25 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
                     return FilterToCallingPackage(keyDef);
             }
 
-
+            // XsltStylesheet.Namespaces is a single prefix -> URI map written last-wins while
+            // parsing, so a prefix bound to DIFFERENT URIs in different modules keeps only one
+            // of them and the lookup above builds the wrong expanded name. Whether it works
+            // then depends on module order alone: swapping two xsl:include lines flips a key
+            // between resolving and XTDE1260.
+            //
+            // XSpec is the motivating case — a dozen of its modules each declare their own
+            // xmlns:local with a distinct URI, and key('local:scenarios') failed in 27 of its
+            // 162 suites for that reason.
+            //
+            // Fall back to the local name when it is UNAMBIGUOUS. Strictly the argument should
+            // resolve against the in-scope namespaces of the element containing the key() call,
+            // which needs the expression's static context at runtime; this is narrower but
+            // sound where it applies, and it refuses to guess when it cannot tell.
+            var byLocalName = _context._stylesheet.Keys
+                .Where(kv => string.Equals(kv.Key.LocalName, localName, StringComparison.Ordinal))
+                .ToList();
+            if (byLocalName.Count == 1)
+                return FilterToCallingPackage(byLocalName[0].Value);
         }
 
         return null;
