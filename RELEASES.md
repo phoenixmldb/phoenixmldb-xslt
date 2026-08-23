@@ -1,5 +1,53 @@
 # Release History
 
+## 1.6.6 — 2026-08-23
+
+Two engine fixes, both found by running the XSpec suite rather than the conformance corpora,
+and both in the same family: a name or a namespace that is correct in the source but absent by
+the time the engine looks for it.
+
+Together they moved XSpec from 36 suites completing to 39, and from 160 assertions actually
+executed to 190. Twenty-one suites advanced a stage; none regressed.
+
+### A typed body's captured output keeps its namespace declarations
+
+A template or variable with an `as=` type captures its body by serializing it and reparsing the
+text. The wrapper's namespace declarations were built from the LIVE output scopes — but the
+reparse happens after the body has finished and those scopes have popped. A prefix used inside
+the captured chunk could therefore be missing from the wrapper, the reparse failed with
+`'x' is an undeclared prefix`, and the failure was swallowed: the chunk came back as a plain
+string. The typed template then reported
+
+    XTTE0505: type String does not match declared type Element
+
+which names a type mismatch and never mentions namespaces. That distance between cause and
+symptom is why seven hand-written reproductions all passed — each constructed its elements
+INSIDE the capture, where the serializer emits the declarations. It only breaks when elements
+are COPIED in, carrying a prefix but not its binding.
+
+The wrapper is now backstopped with the stylesheet's own prefix bindings, which are in scope
+for anything the stylesheet could have constructed.
+
+### `key()` resolves a prefixed name across module boundaries
+
+`key('ns:name', …)` failed with `XTDE1260` ("key has not been defined") when the calling module
+bound the prefix to a different URI than the module that declared the key — a normal situation
+in a multi-module stylesheet, and the shape XSpec generates. Resolution now falls back to an
+unambiguous match on the local name when the qualified lookup misses, which is a fallback and
+not a relaxation: it applies only when exactly one declared key has that local name.
+
+This cleared all 27 XSpec suites that were stopping on `XTDE1260`.
+
+### Notes
+
+`PhoenixmlDb.Core` is republished at 1.6.6 unchanged under the uniform-version policy. The real
+changes at this number are here and in `PhoenixmlDb.XQuery` (`fn:partition`, the `fn` lambda
+shorthand, and `fn:parse-html` reporting `FODC0006` instead of returning its input escaped).
+
+Also in this release, but affecting the test harness rather than the engine: the QT3 runner now
+reads the corpus's `<module>` declarations, so `import module` resolves. QT3 module-resolution
+errors went 188 -> 40 and the pass rate 92.57% -> 92.76%.
+
 ## 1.6.5 — 2026-08-21
 
 Seven engine fixes, all found by running real stylesheets rather than the test suites. The
