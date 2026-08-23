@@ -389,7 +389,8 @@ public sealed class XqtsTestRunner
             Name = name,
             TestSet = testSetName,
             Description = elem.Element(ns + "description")?.Value ?? "",
-            Query = elem.Element(ns + "test")?.Value ?? ""
+            Query = elem.Element(ns + "test")?.Value ?? "",
+            BaseDir = basePath
         };
 
         // Check for environment reference
@@ -593,6 +594,22 @@ public sealed class XqtsTestRunner
         // `contextItem` was still computed but never passed, so every path expression saw an
         // absent context and failed with "The context item is absent for '/'". Name both.
         var execCtx = _engine.CreateContext(initialContextItem: contextItem, cancellationToken: token);
+
+        // A relative URI in a test resolves against the query's static base URI. Unset, the
+        // engine falls back to the process working directory — the build output — where
+        // qt3tests is deliberately not copied, so every relative resource lookup failed with
+        // "Could not find a part of the path .../bin/Debug/net10.0/...". Point it at the
+        // test-set's own directory in the corpus, which is what the URIs are written against.
+        // The trailing separator matters: without it Uri treats the last segment as a FILE and
+        // resolves siblings of it rather than children.
+        if (!string.IsNullOrEmpty(testCase.BaseDir) && Directory.Exists(testCase.BaseDir))
+        {
+            var dir = testCase.BaseDir.EndsWith(Path.DirectorySeparatorChar)
+                ? testCase.BaseDir
+                : testCase.BaseDir + Path.DirectorySeparatorChar;
+            execCtx.StaticBaseUri = new Uri(dir).AbsoluteUri;
+        }
+
         if (_resourceMappings.Count > 0)
             execCtx.SetResourceMappings(new Dictionary<string, string>(_resourceMappings));
         foreach (var (name, doc) in varSources)
@@ -1209,6 +1226,21 @@ public sealed class XqtsTestCase
     /// mutating one would leak a module into every other test that references it.
     /// </summary>
     public Dictionary<string, string> Modules { get; } = new();
+
+    /// <summary>
+    /// Directory of the test-set file this case came from, inside the CORPUS. It becomes the
+    /// query's static base URI, which is what a relative URI in the test resolves against.
+    ///
+    /// Without it the engine fell back to the process working directory — the build output —
+    /// where qt3tests is deliberately NOT copied (see the csproj: the suite is located through
+    /// QT3_TEST_SUITE instead). So misc-JsonTestSuite asked for
+    /// "JSONTestSuite/test_parsing/y_array_empty-string.json" and got "Could not find a part of
+    /// the path .../bin/Debug/net10.0/...", even though the corpus holds all 318 of those files.
+    /// A stale, EMPTY JSONTestSuite directory left in the output by an older build made it look
+    /// like the data was missing rather than the base URI wrong.
+    /// </summary>
+    public string BaseDir { get; set; } = "";
+
     public List<XqtsDependency> Dependencies { get; } = new();
     public List<XqtsAssertion> Assertions { get; set; } = new();
 }
