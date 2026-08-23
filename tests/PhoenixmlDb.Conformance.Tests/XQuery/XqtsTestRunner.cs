@@ -654,7 +654,14 @@ public sealed class XqtsTestRunner
             }
         }
 
-        return results.Count == 1 ? results[0] : results;
+        // A multi-item result becomes object?[] — the engine's own SEQUENCE representation —
+        // and not List<object?>, which is the engine's ARRAY representation. Returning a
+        // List here made the two indistinguishable at the assertion layer: array:sort(...)
+        // yields ONE item that is itself a List<object?>, so AsXdmSequence flattened the
+        // array into a sequence of its members and every array-shaped assertion failed
+        // against a correct engine. array:sort([1,4,6,5,3]) returns [1,3,4,5,6] with size 5
+        // and `instance of array(*)` true when run directly; the harness could not see it.
+        return results.Count == 1 ? results[0] : results.ToArray();
     }
 
     /// <summary>
@@ -870,7 +877,10 @@ public sealed class XqtsTestRunner
         object?[] => result,
         string => result,
         XdmNode => result,
-        List<object?> list => list.ToArray(),
+        // NOT flattened: after the change above, a List<object?> reaching here can only be an
+        // ARRAY, which is a single item and must stay one. Flattening it was what broke
+        // array:size($result) / $result instance of array(*).
+        List<object?> => result,
         IEnumerable<object?> seq => seq.ToArray(),
         _ => result
     };
@@ -945,7 +955,9 @@ public sealed class XqtsTestRunner
     /// </summary>
     private static object? UnwrapSingle(object? result)
     {
-        if (result is List<object?> { Count: 1 } list) return list[0];
+        // object?[] is the sequence representation; a one-item sequence is its item.
+        if (result is object?[] { Length: 1 } arr) return arr[0];
+        // A List<object?> is an ARRAY and is already a single item — do NOT reach inside it.
         return result;
     }
 
