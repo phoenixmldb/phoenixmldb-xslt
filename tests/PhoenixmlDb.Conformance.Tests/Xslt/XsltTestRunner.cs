@@ -1370,7 +1370,25 @@ public sealed class XsltTestRunner
             var doc = store.LoadFromString(actualResult.Trim(), "urn:xslt-result");
 
             var engine = new PhoenixmlDb.XQuery.Execution.QueryEngine(nodeProvider: store, documentResolver: store);
-            var compiled = engine.Compile("declare variable $result external; " + assertion.Value);
+
+            // Parse with NormalizeLineEndings OFF, then compile the AST. QueryEngine.Compile(string)
+            // builds its own parser with XQuery's query-SOURCE defaults, which apply §A.2.1
+            // end-of-line normalization — and this expression did not come from a query file. It
+            // came from the catalog XML, where the XML parser had already decoded &#xD; into a
+            // real CR. Normalizing again rewrites that CR to LF, so
+            //
+            //     /out/a[3]/@att = "&#x9;&#xA;&#xD;"
+            //
+            // compares against TAB,LF,LF and cannot match however right the engine is. That is
+            // the SAME defect this session fixed in the XSLT engine, reproduced here in the
+            // harness — and it masked the engine fix completely.
+            var parser = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade
+            {
+                AllowNamespaceAxis = true,
+                NormalizeLineEndings = false
+            };
+            var ast = parser.Parse("declare variable $result external; " + assertion.Value);
+            var compiled = engine.Compile(ast);
             if (!compiled.Success) return false;
 
             var ctx = engine.CreateContext(initialContextItem: doc, cancellationToken: ct);
@@ -1384,7 +1402,13 @@ public sealed class XsltTestRunner
             }
             return EffectiveBooleanValue(items);
         }
-        catch (System.Xml.XmlException) { return false; }        // result is not a document
+        // The serialized result is not a single well-formed document — most often a result
+        // tree with several top-level elements, which an XDM document permits and XML does not.
+        // Such a result has no tree for an absolute path to address, so the assertion fails.
+        // 7 cases in the fn group alone; a proper fix needs fragment parsing that keeps the
+        // children at the top level, since wrapping them would shift every path by one step.
+        catch (System.Xml.XmlException) { return false; }
+        catch (PhoenixmlDb.XQuery.Parser.XQueryParseException) { return false; }
         catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException) { return false; }
         catch (InvalidOperationException) { return false; }
         catch (NotSupportedException) { return false; }
