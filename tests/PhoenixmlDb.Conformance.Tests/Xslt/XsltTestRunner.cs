@@ -707,7 +707,9 @@ public sealed class XsltTestRunner
             var assertion = new XsltAssertion
             {
                 Type = localName,
-                Value = localName is "all-of" or "any-of" ? null : child.Value
+                // "not" wraps a child assertion, like all-of/any-of, so it has no own value.
+                Value = localName is "all-of" or "any-of" or "not" ? null : child.Value,
+                Flags = child.Attribute("flags")?.Value
             };
 
             // Handle file reference for expected output
@@ -739,7 +741,7 @@ public sealed class XsltTestRunner
             }
 
             // Handle nested assertions
-            if (localName is "all-of" or "any-of" or "assert-result-document")
+            if (localName is "all-of" or "any-of" or "not" or "assert-result-document")
             {
                 assertion.Children = ParseAssertions(child, ns, basePath);
             }
@@ -1092,7 +1094,45 @@ public sealed class XsltTestRunner
             "error" => false, // Expected error, but we got a result
             "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults),
             "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults),
-            _ => true
+
+            // <assert> is an XPath predicate over the result tree, and the single most common
+            // assertion in the whole corpus — 11024 occurrences. It was unimplemented, so the
+            // catch-all below returned TRUE for every one of them.
+            "assert" => await VerifyXPathAssertAsync(assertion, actualResult, ct),
+
+            // <not> negates its single child.
+            "not" => assertion.Children.Count == 1
+                && !await VerifyAssertionAsync(assertion.Children[0], actualResult, ct, secondaryResults),
+
+            "assert-empty" => string.IsNullOrWhiteSpace(actualResult),
+
+            // A regex over the serialized result. Trivial here, because unlike the XQuery
+            // runner this one already HAS the serialized string — 791 occurrences.
+            "serialization-matches" => VerifySerializationMatches(assertion, actualResult),
+
+            // Streamability analysis: the test asserts the posture and sweep the static
+            // analyser should infer for an expression. This runner has no access to that
+            // analysis, so it cannot judge these 919 assertions either way. They FAIL rather
+            // than pass: a check we cannot perform is not a check we passed, and returning
+            // true here is exactly the blanket-pass this change exists to remove. If posture
+            // and sweep are ever exposed by the analyser, implement it here.
+            "assert-posture-and-sweep" => false,
+
+            // The test expects the transform to raise a warning. Warnings are not collected by
+            // this runner, so the same reasoning applies — 6 occurrences.
+            "assert-warning" => false,
+
+            // Serialization was expected to fail with a given code. The transform produced a
+            // result instead, so it did not — 45 occurrences. (A transform that DOES throw is
+            // routed through IsExpectedError before reaching here.)
+            "assert-serialization-error" => false,
+
+            // The catch-all now FAILS instead of passing. An assertion this runner does not
+            // understand must not be reported as a pass: `_ => true` meant every unimplemented
+            // kind silently inflated the score, and there were seven of them covering ~12800
+            // occurrences. Anything genuinely not applicable belongs in an explicit case above
+            // with a comment saying why, not in a blanket default.
+            _ => false
         };
     }
 
@@ -1273,6 +1313,99 @@ public sealed class XsltTestRunner
                 return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// &lt;serialization-matches&gt;: regex against the serialized result.
+    /// </summary>
+    private static bool VerifySerializationMatches(XsltAssertion assertion, string? actualResult)
+    {
+        if (actualResult is null || assertion.Value is not { } pattern) return false;
+
+        var opts = RegexOptions.None;
+        var flags = assertion.Flags ?? "";
+        if (flags.Contains('i', StringComparison.Ordinal)) opts |= RegexOptions.IgnoreCase;
+        if (flags.Contains('m', StringComparison.Ordinal)) opts |= RegexOptions.Multiline;
+        if (flags.Contains('s', StringComparison.Ordinal)) opts |= RegexOptions.Singleline;
+        if (flags.Contains('x', StringComparison.Ordinal)) opts |= RegexOptions.IgnorePatternWhitespace;
+        // XPath's "q" flag means match literally; .NET expresses that by escaping.
+        if (flags.Contains('q', StringComparison.Ordinal)) pattern = Regex.Escape(pattern);
+
+        try
+        {
+            return Regex.IsMatch(actualResult, pattern, opts, TimeSpan.FromSeconds(5));
+        }
+        catch (ArgumentException) { return false; }
+        catch (RegexMatchTimeoutException) { return false; }
+    }
+
+    /// <summary>
+    /// &lt;assert&gt;: an XPath predicate evaluated with the RESULT TREE as the context item.
+    /// </summary>
+    /// <remarks>
+    /// The corpus writes these as absolute paths — <c>/result/@count = '4'</c> — so the result
+    /// document is the context item rather than a $result variable; only 2 of 10863 mention
+    /// $result, and those are bound too.
+    ///
+    /// This is evaluated by our own XQuery engine, not System.Xml.XPath, because the
+    /// expressions are XPath 3.1 and .NET's XPath is 1.0. That does mean the XSLT suite now
+    /// depends on the XQuery engine to judge itself, which is worth stating plainly: a bug in
+    /// XPath evaluation could mark a correct XSLT result as failing. The alternative — leaving
+    /// 11024 assertions returning an unconditional true — is strictly worse, because it cannot
+    /// fail at all.
+    /// </remarks>
+    private async Task<bool> VerifyXPathAssertAsync(
+        XsltAssertion assertion, string? actualResult, CancellationToken ct)
+    {
+        if (actualResult is null || string.IsNullOrWhiteSpace(assertion.Value)) return false;
+
+        try
+        {
+            var store = new PhoenixmlDb.XQuery.XdmDocumentStore();
+            // Deliberately NOT WrapForParsing: a wrapper element would shift every absolute
+            // path in the assertion by one step, so /result/@count would stop matching. Output
+            // that is not a single well-formed document therefore fails to parse and the
+            // assertion fails — which is the honest outcome, since such a result has no tree
+            // for an absolute path to address.
+            var doc = store.LoadFromString(actualResult.Trim(), "urn:xslt-result");
+
+            var engine = new PhoenixmlDb.XQuery.Execution.QueryEngine(nodeProvider: store, documentResolver: store);
+            var compiled = engine.Compile("declare variable $result external; " + assertion.Value);
+            if (!compiled.Success) return false;
+
+            var ctx = engine.CreateContext(initialContextItem: doc, cancellationToken: ct);
+            ctx.SetExternalVariable("result", doc);
+
+            var items = new List<object?>();
+            await foreach (var item in compiled.ExecutionPlan!.ExecuteAsync(ctx).ConfigureAwait(false))
+            {
+                items.Add(item);
+                if (items.Count > 10_000) break;
+            }
+            return EffectiveBooleanValue(items);
+        }
+        catch (System.Xml.XmlException) { return false; }        // result is not a document
+        catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException) { return false; }
+        catch (InvalidOperationException) { return false; }
+        catch (NotSupportedException) { return false; }
+    }
+
+    /// <summary>XPath effective boolean value, for the shapes an assertion can produce.</summary>
+    private static bool EffectiveBooleanValue(List<object?> items)
+    {
+        if (items.Count == 0) return false;
+        if (items.Count > 1) return true;
+        return items[0] switch
+        {
+            null => false,
+            bool b => b,
+            string s => s.Length > 0,
+            double d => d != 0 && !double.IsNaN(d),
+            decimal m => m != 0,
+            int i => i != 0,
+            long l => l != 0,
+            _ => true
+        };
     }
 
     private async Task<bool> VerifyXmlAsync(XsltAssertion assertion, string? actualResult, CancellationToken ct)
@@ -1988,6 +2121,9 @@ public sealed class XsltAssertion
     public string Compare { get; set; } = "XML";
     public bool IgnorePrefixes { get; set; }
     public string? ExpectedEncoding { get; set; }
+
+    /// <summary>Regex flags from &lt;serialization-matches flags="..."&gt;.</summary>
+    public string? Flags { get; set; }
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1056")]
     public string? Uri { get; set; }
     public List<XsltAssertion> Children { get; set; } = [];
