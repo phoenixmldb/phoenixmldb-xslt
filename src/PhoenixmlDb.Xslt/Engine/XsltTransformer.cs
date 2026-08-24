@@ -871,7 +871,7 @@ public sealed class XsltTransformEngine
                 _ => null
             };
             if (form.HasValue)
-                output = NormalizeExceptMappedRegions(output, form.Value);
+                output = NormalizeContentRegions(output, form.Value);
         }
 
         // Characters that cannot be represented in the target encoding are emitted as numeric
@@ -2939,6 +2939,114 @@ public sealed class XsltTransformEngine
     /// untouched, then strips the guards. Characters produced by a character map are immune to
     /// normalization (character-map-025/028).
     /// </summary>
+    /// <summary>
+    /// Applies Unicode normalization to the CHARACTER DATA of a serialized result — text nodes,
+    /// attribute values and CDATA content — leaving element and attribute names, and all other
+    /// markup, untouched.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This used to normalize the entire serialized string, which rewrote NAMES too. With
+    /// <c>normalization-form="NFD"</c> an attribute written <c>üss="üß"</c> in the source came
+    /// out as
+    /// </para>
+    /// <code>
+    /// u&#x308;ss="u&amp;#776;ß"      (name decomposed as well as the value)
+    /// </code>
+    /// <para>
+    /// where W3C normalize-unicode-011/013/015/016 require the name to stay <c>üss</c>. A name is
+    /// an identity compared by code point, so normalizing it silently renames the attribute and
+    /// the document no longer says what it said.
+    /// </para>
+    /// <para>
+    /// The walk mirrors <see cref="EscapeUnrepresentableCharacters"/>, which already had to make
+    /// exactly this content-versus-markup distinction; keeping the two the same shape means a
+    /// fix to the notion of "content" lands in both.
+    /// </para>
+    /// </remarks>
+    private static string NormalizeContentRegions(string output, System.Text.NormalizationForm form)
+    {
+        var sb = new StringBuilder(output.Length);
+        var content = new StringBuilder();
+
+        void FlushContent()
+        {
+            if (content.Length == 0) return;
+            sb.Append(content.ToString().Normalize(form));
+            content.Clear();
+        }
+
+        var inTag = false;
+        var inAttrValue = false;
+        var attrQuote = '"';
+
+        for (var i = 0; i < output.Length; i++)
+        {
+            var c = output[i];
+
+            // Character-map replacement regions are immune, as before: guards bracket text the
+            // user asked for verbatim, and the guards themselves are dropped.
+            if (c == MapGuardStart)
+            {
+                FlushContent();
+                var close = output.IndexOf(MapGuardEnd, i + 1);
+                if (close < 0)
+                {
+                    sb.Append(output.AsSpan(i + 1));   // unbalanced (should not happen)
+                    return sb.ToString();
+                }
+                sb.Append(output.AsSpan(i + 1, close - i - 1));
+                i = close;
+                continue;
+            }
+
+            if (inTag)
+            {
+                if (inAttrValue)
+                {
+                    if (c == attrQuote) { FlushContent(); inAttrValue = false; sb.Append(c); continue; }
+                    content.Append(c);          // attribute value IS character data
+                    continue;
+                }
+                if (c == '>') { inTag = false; sb.Append(c); continue; }
+                if (c is '"' or '\'') { inAttrValue = true; attrQuote = c; sb.Append(c); continue; }
+                sb.Append(c);                   // element/attribute name and other markup
+                continue;
+            }
+
+            if (c == '<')
+            {
+                // CDATA content is character data and is normalized; the delimiters are not.
+                const string cdataOpen = "<![CDATA[";
+                if (string.CompareOrdinal(output, i, cdataOpen, 0, cdataOpen.Length) == 0)
+                {
+                    FlushContent();
+                    sb.Append(cdataOpen);
+                    var contentStart = i + cdataOpen.Length;
+                    var close = output.IndexOf("]]>", contentStart, StringComparison.Ordinal);
+                    if (close < 0)
+                    {
+                        sb.Append(output.AsSpan(contentStart).ToString().Normalize(form));
+                        return sb.ToString();
+                    }
+                    sb.Append(output.AsSpan(contentStart, close - contentStart).ToString().Normalize(form));
+                    sb.Append("]]>");
+                    i = close + 2;
+                    continue;
+                }
+                FlushContent();
+                inTag = true;
+                sb.Append(c);
+                continue;
+            }
+
+            content.Append(c);                  // text node
+        }
+
+        FlushContent();
+        return sb.ToString();
+    }
+
     private static string NormalizeExceptMappedRegions(string output, System.Text.NormalizationForm form)
     {
         if (output.IndexOf(MapGuardStart, StringComparison.Ordinal) < 0)

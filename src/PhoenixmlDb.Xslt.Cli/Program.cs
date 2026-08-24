@@ -60,7 +60,7 @@ try
             await Console.Error.WriteLineAsync($"Error: Stylesheet not found: {options.Stylesheet}").ConfigureAwait(true);
             return 1;
         }
-        stylesheetXml = await File.ReadAllTextAsync(stylesheetPath).ConfigureAwait(true);
+        stylesheetXml = await PhoenixmlDb.Xslt.XmlSourceReader.ReadAsync(stylesheetPath).ConfigureAwait(true);
         stylesheetUri = new Uri(stylesheetPath);
     }
     readSw.Stop();
@@ -269,7 +269,7 @@ try
         }
         else if (sourcePath != null)
         {
-            inputXml = await File.ReadAllTextAsync(sourcePath).ConfigureAwait(true);
+            inputXml = await PhoenixmlDb.Xslt.XmlSourceReader.ReadAsync(sourcePath).ConfigureAwait(true);
             sourceSw.Stop();
 
             if (options.Timing)
