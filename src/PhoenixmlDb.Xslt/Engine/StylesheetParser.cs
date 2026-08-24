@@ -7961,10 +7961,26 @@ public sealed class StylesheetParser
 
     private XsltArray ParseArray(XElement element, SourceLocation? location)
     {
+        // select was not read at all, so <xsl:array select="1 to 5"/> — which has no child
+        // nodes — parsed as an array with no content and produced []. Reported by Martin
+        // Honnen, 2026-08-24. xsl:array-member directly below has always honoured select.
+        var selectAttr = element.Attribute("select");
+        var compositeAttr = element.Attribute("composite");
+
+        if (selectAttr != null && element.Elements().Any())
+        {
+            throw new XsltException(
+                "XTSE3185: xsl:array must not have both a select attribute and a sequence constructor",
+                location);
+        }
+
         return new XsltArray
         {
             Location = location,
-            Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null
+            Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
+            // composite defaults to no: each ITEM of the value becomes its own member.
+            Composite = ParseYesNoBoolean(compositeAttr, "composite", location),
+            Content = selectAttr == null && element.Nodes().Any() ? ParseSequenceConstructor(element) : null
         };
     }
 

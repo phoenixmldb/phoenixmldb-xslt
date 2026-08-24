@@ -25197,8 +25197,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _sequenceAccumulator = array;
         try
         {
-            if (instruction.Content != null)
+            if (instruction.Select != null)
+            {
+                // XSLT 4.0 §22: the value may come from select instead of a sequence
+                // constructor. With composite="no" (the default) each ITEM becomes its own
+                // member; with composite="yes" the whole value is one member.
+                var selected = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
+                if (instruction.Composite)
+                {
+                    // The whole value is ONE member, whatever its length.
+                    array.Add(selected);
+                }
+                else if (selected is object?[] seq)
+                {
+                    // object?[] is the engine's SEQUENCE representation, so each of its items
+                    // is a separate member. (A List<object?> would be an ARRAY — a single item
+                    // — and must not be spread; that distinction has caused three bugs here.)
+                    foreach (var item in seq)
+                        array.Add(item);
+                }
+                else if (selected is not null)
+                {
+                    array.Add(selected);
+                }
+            }
+            else if (instruction.Content != null)
+            {
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -25206,9 +25232,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _arrayBuildStack.Pop();
         }
 
-        // Add the completed array to the output
+        // Add the completed array to the output AS AN ARRAY. List<object?> is the array
+        // representation and object?[] is the sequence representation, so array.ToArray()
+        // handed on a SEQUENCE of the members instead of one array item. It looked right for
+        // the common case — a 5-member array still printed [1,2,3,4,5] — and was wrong at the
+        // edges: a one-member array collapsed to its member (select="42" gave 42, not [42]),
+        // and composite="yes" was indistinguishable from composite="no".
         if (_sequenceAccumulator != null)
-            AppendToSeqAccumulator(array.ToArray());
+            AppendToSeqAccumulator(array);
         // When no sequence accumulator, array is being serialized directly —
         // only valid with adaptive/json output methods. Silently ignore for now.
     }
