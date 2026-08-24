@@ -1293,20 +1293,18 @@ internal sealed class XQueryExpressionParser : IExpressionParser
     // AllowRawAmpersand: XPath string literals have no entity references — the '&amp;' in the
     // stylesheet source was already decoded to '&' by the XML parser before the XPath expression
     // reached us — so a bare '&' is a literal ampersand (e.g. select="'Special characters$&amp;'").
-    // TODO(1.6.7 pin bump): add NormalizeLineEndings = false here.
+    // NormalizeLineEndings: an XPath expression reaching us has already been parsed as XML, so
+    // a CR inside a string literal came from a &#xD; character reference — DATA, which XML 1.0
+    // §2.11 exempts from line-ending normalization. XQueryParserFacade.Parse otherwise applies
+    // XQuery's query-SOURCE rule (§A.2.1) a second time and cannot tell the two apart:
     //
-    // An XPath expression reaching us has already been parsed as XML, so a CR inside a string
-    // literal came from a &#xD; character reference — DATA, which XML 1.0 §2.11 exempts from
-    // line-ending normalization. XQueryParserFacade.Parse then applies XQuery's query-SOURCE
-    // rule (§A.2.1) a second time and cannot tell the two apart, so
+    //     string-to-codepoints('&#x9;&#xa;&#xd;')   gave 9 10 10, must be 9 10 13
     //
-    //     string-to-codepoints('&#x9;&#xa;&#xd;')   gives 9 10 10, must be 9 10 13
-    //
-    // costing 9 normalize-unicode conformance cases. The NormalizeLineEndings flag that fixes
-    // it is already implemented in PhoenixmlDb.XQuery, but this project consumes XQuery as a
-    // PACKAGE, so the property does not exist until the pin moves to 1.6.7. Setting it now
-    // simply fails to compile. Re-apply when Directory.Packages.props is bumped.
-    private readonly XQueryParserFacade _parser = new() { AllowNamespaceAxis = true, AllowRawAmpersand = true };
+    // The flag arrived in PhoenixmlDb.XQuery 1.6.7, which this now pins.
+    private readonly XQueryParserFacade _parser = new()
+    {
+        AllowNamespaceAxis = true, AllowRawAmpersand = true, NormalizeLineEndings = false
+    };
 
     public XQueryExpression Parse(string expression)
     {

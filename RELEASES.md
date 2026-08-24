@@ -1,5 +1,71 @@
 # Release History
 
+## 1.6.7 — 2026-08-24
+
+Four engine fixes, two of them reported by Martin Honnen, plus a large correction to what
+the conformance suite actually measures.
+
+### `xsl:array` honours its `select` attribute
+
+    <xsl:array select="1 to 5"/>     gave [], must give [1,2,3,4,5]
+
+The parser read only child content, and that element has none. `xsl:array-member` fifteen
+lines below it had always honoured `select`; only `xsl:array` never did. `composite` is now
+read too — no by default, so each item becomes its own member — and XTSE3185 is raised when
+`select` and a sequence constructor are both present.
+
+A second fault in the same instruction, which the reported case would not have shown: the
+finished array was handed on as a SEQUENCE of its members. That still printed
+`[1,2,3,4,5]` — the right answer — and broke only at the edges, where a one-member array
+collapsed to its member and `composite="yes"` became indistinguishable from `"no"`.
+
+### The `xslt` tool reads files in the encoding they declare
+
+`File.ReadAllText` assumes UTF-8, so a stylesheet or source declaring another encoding —
+the W3C corpus has many in ISO-8859-1 — decoded to U+FFFD and then failed to parse with a
+message about its own mangling:
+
+    Error: Name cannot begin with the '<U+FFFD>' character, hexadecimal value 0xFFFD.
+
+The conformance harness had always decoded correctly, which is exactly why the corpus ran
+and the shipped tool did not.
+
+### Unicode normalization applies to character data, not to names
+
+With `normalization-form="NFD"` an attribute written `üss="üß"` came out as
+`u&#x308;ss="u&#776;ß"` — the NAME decomposed as well as the value. A name is an identity
+compared by code point, so normalizing it silently renames the attribute.
+
+### `&#xD;` in an XPath string literal survives
+
+    string-to-codepoints('&#x9;&#xa;&#xd;')   gave 9 10 10, must be 9 10 13
+
+An XPath expression in a stylesheet has already been through an XML parser, where `&#xD;`
+is data that XML 1.0 §2.11 exempts from line-ending normalization. The XQuery parser then
+applied its query-SOURCE rule (§A.2.1) a second time and could not tell that CR from a line
+break. Needed `PhoenixmlDb.XQuery` 1.6.7, which this release pins.
+
+### Conformance measurement
+
+Not shipped in the engine, but it changes what the numbers mean. The XSLT test runner ended
+its assertion switch with `_ => true`, so every assertion kind it did not implement was
+reported as a PASS — including `<assert>`, the single most common assertion in the suite at
+11024 occurrences. Seven kinds were missing, ~12800 occurrences in all.
+
+With them implemented the honest figure is **96.3%**, against a previously published 98.5%
+computed with assertions that could not fail. 176 real defects became visible; two are
+fixed in this release.
+
+The XQuery-side runner had the opposite defect — unimplemented assertions returned false —
+which had been deflating QT3. Fixing that and seven other harness faults took QT3 from
+76.56% to **95.11%**, clearing its 95% gate for the first time.
+
+### Notes
+
+Pins Core 1.6.7 and XQuery 1.6.7. Both were verified against the PUBLISHED packages before
+this was tagged, not against sibling source — that combination is otherwise untested until
+release day.
+
 ## 1.6.6 — 2026-08-23
 
 Two engine fixes, both found by running the XSpec suite rather than the conformance corpora,
