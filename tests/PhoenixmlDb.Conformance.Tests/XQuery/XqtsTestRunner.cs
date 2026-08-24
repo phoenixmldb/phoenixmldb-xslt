@@ -1,4 +1,5 @@
 using PhoenixmlDb.Core;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using PhoenixmlDb.XQuery;
 using PhoenixmlDb.XQuery.Execution;
@@ -389,7 +390,7 @@ public sealed class XqtsTestRunner
             Name = name,
             TestSet = testSetName,
             Description = elem.Element(ns + "description")?.Value ?? "",
-            Query = elem.Element(ns + "test")?.Value ?? "",
+            Query = ReadTestQuery(elem.Element(ns + "test"), basePath),
             BaseDir = basePath
         };
 
@@ -445,13 +446,13 @@ public sealed class XqtsTestRunner
         var result = elem.Element(ns + "result");
         if (result != null)
         {
-            test.Assertions = ParseAssertions(result, ns);
+            test.Assertions = ParseAssertions(result, ns, basePath);
         }
 
         return test;
     }
 
-    private List<XqtsAssertion> ParseAssertions(XElement resultElem, XNamespace ns)
+    private List<XqtsAssertion> ParseAssertions(XElement resultElem, XNamespace ns, string basePath)
     {
         var assertions = new List<XqtsAssertion>();
 
@@ -460,13 +461,18 @@ public sealed class XqtsTestRunner
             var assertion = new XqtsAssertion
             {
                 Type = child.Name.LocalName,
-                Value = child.Value
+                // An assertion may hold its expected value in an external file rather than
+                // inline — <assert-xml file="..."/>, 41 times in the corpus. Element.Value is
+                // "" for those, so the test compared against an empty expectation.
+                Value = ReadExternalOrInline(child, basePath),
+                Flags = child.Attribute("flags")?.Value,
+                Code = child.Attribute("code")?.Value
             };
 
             // Handle nested assertions (all-of, any-of)
             if (child.Name.LocalName == "all-of" || child.Name.LocalName == "any-of")
             {
-                assertion.Children = ParseAssertions(child, ns);
+                assertion.Children = ParseAssertions(child, ns, basePath);
             }
 
             assertions.Add(assertion);
@@ -513,7 +519,7 @@ public sealed class XqtsTestRunner
             result.ActualResult = queryResult;
 
             // Verify assertions
-            result.Passed = await VerifyAssertionsAsync(testCase.Assertions, queryResult, ct).ConfigureAwait(false);
+            result.Passed = await VerifyAssertionsAsync(testCase, testCase.Assertions, queryResult, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -751,11 +757,11 @@ public sealed class XqtsTestRunner
     }
 
     private async Task<bool> VerifyAssertionsAsync(
-        List<XqtsAssertion> assertions, object? result, CancellationToken ct)
+        XqtsTestCase testCase, List<XqtsAssertion> assertions, object? result, CancellationToken ct)
     {
         foreach (var assertion in assertions)
         {
-            if (!await VerifyAssertionAsync(assertion, result, ct).ConfigureAwait(false))
+            if (!await VerifyAssertionAsync(testCase, assertion, result, ct).ConfigureAwait(false))
             {
                 return false;
             }
@@ -768,10 +774,31 @@ public sealed class XqtsTestRunner
     /// engine, and therefore async); everything else goes to the synchronous switch.
     /// </summary>
     private async Task<bool> VerifyAssertionAsync(
-        XqtsAssertion assertion, object? result, CancellationToken ct)
+        XqtsTestCase testCase, XqtsAssertion assertion, object? result, CancellationToken ct)
     {
         switch (assertion.Type)
         {
+            // <serialization-matches> is a regex matched against the SERIALIZED result, under
+            // whatever output method the query's prolog declares. 576 corpus cases use it and
+            // nothing implemented it, so all of them fell through to the catch-all and
+            // returned false — the whole method-adaptive / method-json / method-html /
+            // method-xhtml / method-xml family, failing regardless of what the engine emitted.
+            //
+            // Note this defaults the OPPOSITE way to the XSLT runner's `_ => true`, which
+            // silently PASSES what it does not understand. Both are wrong; only one is
+            // visible in the score.
+            case "serialization-matches":
+                return VerifySerializationMatches(testCase, assertion, result);
+
+            // Expected serialized output, given verbatim rather than as a regex.
+            case "assert-serialization":
+                return VerifySerializationEquals(testCase, assertion, result);
+
+            // The test expects SERIALIZATION ITSELF to fail with a given code. The runner only
+            // ever caught errors raised during EXECUTION and never serialized at all, so the
+            // error could not occur and all 55 of these fell through to the catch-all.
+            case "assert-serialization-error":
+                return VerifySerializationError(testCase, assertion, result);
             case "assert":
                 return await VerifyXPathAssertAsync(result, assertion.Value, ct).ConfigureAwait(false);
             case "assert-eq":
@@ -806,11 +833,11 @@ public sealed class XqtsTestRunner
                     result, $"deep-equal($result, ({assertion.Value}))", ct).ConfigureAwait(false);
             case "all-of":
                 foreach (var c in assertion.Children)
-                    if (!await VerifyAssertionAsync(c, result, ct).ConfigureAwait(false)) return false;
+                    if (!await VerifyAssertionAsync(testCase, c, result, ct).ConfigureAwait(false)) return false;
                 return true;
             case "any-of":
                 foreach (var c in assertion.Children)
-                    if (await VerifyAssertionAsync(c, result, ct).ConfigureAwait(false)) return true;
+                    if (await VerifyAssertionAsync(testCase, c, result, ct).ConfigureAwait(false)) return true;
                 return false;
             default:
                 return VerifyAssertion(assertion, result);
@@ -1072,6 +1099,128 @@ public sealed class XqtsTestRunner
         return false;
     }
 
+    /// <summary>
+    /// &lt;serialization-matches&gt;: serialize the result under the output method the query's
+    /// prolog declares, then match the given regex against it.
+    /// </summary>
+    /// <remarks>
+    /// The options come from the ENGINE's own prolog reader
+    /// (<c>XQueryFacade.DetectSerializationOptions</c>) rather than a copy here. Re-implementing
+    /// engine behaviour in the harness is what produced the array/sequence and adaptive-array
+    /// defects fixed earlier today; a second implementation drifts from the first and the tests
+    /// then measure the copy.
+    ///
+    /// The corpus regexes are XPath-flavoured but in practice plain .NET-compatible; the one
+    /// real difference is the "q" flag (match literally), which .NET has no equivalent for and
+    /// which is handled by escaping instead.
+    /// </remarks>
+    /// <summary>
+    /// Reads a &lt;test&gt; element's query, which QT3 may hold INLINE or in an external .xq
+    /// file via a <c>file</c> attribute (41 times in the corpus).
+    /// </summary>
+    /// <remarks>
+    /// XElement.Value of <c>&lt;test file="..."/&gt;</c> is the empty string, so those tests
+    /// were compiling an EMPTY query. The engine duly said
+    /// "mismatched input '&lt;EOF&gt;'" — 80 parse errors that read as grammar gaps in direct
+    /// element constructors, when the grammar was never given anything to parse.
+    /// </remarks>
+    private static string ReadTestQuery(XElement? testElem, string basePath)
+    {
+        if (testElem is null) return "";
+        var file = testElem.Attribute("file")?.Value;
+        if (string.IsNullOrEmpty(file)) return testElem.Value;
+
+        var path = Path.Combine(basePath, file);
+        // A missing file leaves the query empty, which fails the test — the right outcome, and
+        // better than throwing and taking the rest of the sweep with it.
+        return File.Exists(path) ? File.ReadAllText(path) : "";
+    }
+
+    /// <summary>Inline value, or the contents of the <c>file</c> the element points at.</summary>
+    private static string ReadExternalOrInline(XElement elem, string basePath)
+    {
+        var file = elem.Attribute("file")?.Value;
+        if (string.IsNullOrEmpty(file)) return elem.Value;
+
+        var path = Path.Combine(basePath, file);
+        return File.Exists(path) ? File.ReadAllText(path) : elem.Value;
+    }
+
+    private bool VerifySerializationMatches(XqtsTestCase testCase, XqtsAssertion assertion, object? result)
+    {
+        if (assertion.Value is not { } pattern) return false;
+
+        string serialized;
+        try
+        {
+            var options = XQueryFacade.DetectSerializationOptions(testCase.Query);
+            serialized = XQueryResultSerializer.Serialize(result, _documents, options);
+        }
+        catch (XQueryRuntimeException) { return false; }
+        catch (InvalidOperationException) { return false; }
+        catch (NotSupportedException) { return false; }
+
+        var flags = assertion.Flags ?? "";
+        var opts = RegexOptions.None;
+        if (flags.Contains('i', StringComparison.Ordinal)) opts |= RegexOptions.IgnoreCase;
+        if (flags.Contains('m', StringComparison.Ordinal)) opts |= RegexOptions.Multiline;
+        if (flags.Contains('s', StringComparison.Ordinal)) opts |= RegexOptions.Singleline;
+        if (flags.Contains('x', StringComparison.Ordinal)) opts |= RegexOptions.IgnorePatternWhitespace;
+        // XPath's "q" flag means the pattern is a literal string, which .NET expresses by
+        // escaping rather than by an option.
+        if (flags.Contains('q', StringComparison.Ordinal)) pattern = Regex.Escape(pattern);
+
+        try
+        {
+            return Regex.IsMatch(serialized, pattern, opts, TimeSpan.FromSeconds(5));
+        }
+        catch (ArgumentException) { return false; }   // pattern .NET cannot compile
+        catch (RegexMatchTimeoutException) { return false; }
+    }
+
+    /// <summary>&lt;assert-serialization&gt;: serialized output must equal the given text.</summary>
+    private bool VerifySerializationEquals(XqtsTestCase testCase, XqtsAssertion assertion, object? result)
+    {
+        if (assertion.Value is not { } expected) return false;
+        string actual;
+        try
+        {
+            var options = XQueryFacade.DetectSerializationOptions(testCase.Query);
+            actual = XQueryResultSerializer.Serialize(result, _documents, options);
+        }
+        catch (XQueryRuntimeException) { return false; }
+        catch (InvalidOperationException) { return false; }
+        catch (NotSupportedException) { return false; }
+
+        // Line endings differ between the corpus files and what the serializer emits; nothing
+        // in these tests turns on CR vs LF, so normalise both rather than fail on it.
+        static string N(string t) => t.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+        return string.Equals(N(actual), N(expected), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// &lt;assert-serialization-error code="..."/&gt;: serializing the result must RAISE the
+    /// named error. A result that serializes cleanly fails the test, which is the point —
+    /// these cases exist to pin the cases serialization must refuse.
+    /// </summary>
+    private bool VerifySerializationError(XqtsTestCase testCase, XqtsAssertion assertion, object? result)
+    {
+        try
+        {
+            var options = XQueryFacade.DetectSerializationOptions(testCase.Query);
+            XQueryResultSerializer.Serialize(result, _documents, options);
+            return false; // serialized fine — the expected error never happened
+        }
+        catch (XQueryRuntimeException ex)
+        {
+            // A code on the assertion must match; without one, any serialization error will do.
+            return assertion.Code is null
+                || string.Equals(ex.ErrorCode, assertion.Code, StringComparison.Ordinal);
+        }
+        catch (InvalidOperationException) { return assertion.Code is null; }
+        catch (NotSupportedException) { return assertion.Code is null; }
+    }
+
     private bool VerifyType(object? result, string? expectedType)
     {
         result = UnwrapSingle(result);
@@ -1294,6 +1443,19 @@ public sealed class XqtsAssertion
 {
     public required string Type { get; init; }
     public string? Value { get; init; }
+
+    /// <summary>
+    /// The <c>flags</c> attribute of &lt;serialization-matches&gt;, in XPath regex flag
+    /// letters. Only "q" (literal) and "i"/"m"/"s"/"x" appear in the corpus.
+    /// </summary>
+    public string? Flags { get; init; }
+
+    /// <summary>
+    /// The <c>code</c> attribute of &lt;assert-serialization-error&gt; — the serialization
+    /// error the test expects, e.g. SENR0001, SEPM0016, SERE0022.
+    /// </summary>
+    public string? Code { get; init; }
+
     public List<XqtsAssertion> Children { get; set; } = new();
 }
 
