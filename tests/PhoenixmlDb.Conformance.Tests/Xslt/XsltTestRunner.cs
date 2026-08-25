@@ -1362,12 +1362,30 @@ public sealed class XsltTestRunner
         try
         {
             var store = new PhoenixmlDb.XQuery.XdmDocumentStore();
+
+            // A TEXT-ONLY result is a document node whose children are text — valid XDM, but
+            // not a well-formed XML document, so LoadFromString rejects it. That is the whole
+            // result of xsl:mode on-no-match="text-only-copy", and its assertions read
+            //
+            //     starts-with(normalize-space(.), "The First Book of Moses...")
+            //
+            // which only ever touches the string value. Wrapping in a synthetic root preserves
+            // that exactly: the document's string value is unchanged.
+            //
+            // ONLY when the result carries no markup at all. A result with multiple top-level
+            // ELEMENTS must NOT be wrapped — the corpus writes absolute paths like
+            // /out/a[3]/@att, and a wrapper shifts every one of them by a step. That case stays
+            // unjudgeable; see BUGS.md #8.
+            var text = actualResult.Trim();
+            var toParse = text.Contains('<', StringComparison.Ordinal)
+                ? text
+                : $"<phx-text-result>{System.Security.SecurityElement.Escape(text)}</phx-text-result>";
             // Deliberately NOT WrapForParsing: a wrapper element would shift every absolute
             // path in the assertion by one step, so /result/@count would stop matching. Output
             // that is not a single well-formed document therefore fails to parse and the
             // assertion fails — which is the honest outcome, since such a result has no tree
             // for an absolute path to address.
-            var doc = store.LoadFromString(actualResult.Trim(), "urn:xslt-result");
+            var doc = store.LoadFromString(toParse, "urn:xslt-result");
 
             var engine = new PhoenixmlDb.XQuery.Execution.QueryEngine(nodeProvider: store, documentResolver: store);
 

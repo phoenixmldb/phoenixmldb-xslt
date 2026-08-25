@@ -106,6 +106,32 @@ the attribute it was driving had no effect either way. The W3C cases that fix cl
 Not investigated further. Narrow, but silently produces a document with the wrong in-scope
 namespaces, which is only observable through the namespace axis.
 
+### 13. `declare record NAME (...)` — named record types unsupported
+XPath 4.0 named record declarations are not parsed. Inline `record(...)`, `record{...}` and
+`record(*)` all work; the DECLARATION form does not, and it also implies a generated
+constructor function — `f:generator(initialized := true(), ...)` in the corpus.
+
+Blocks Dimitre Novatchev's Generators library (Balisage 2026, `test/generators/xpath-4`)
+entirely: the module declares `f:generator` and every function signature is `as f:generator`.
+Reported by the engine as XPST0051 naming the prefix binding correctly, which is the
+diagnostic working as intended.
+
+Substantial feature, not a quick fix: prolog declaration, named-type resolution in `as` /
+`instance of`, and the constructor function.
+
+### 14. `let` bindings are evaluated eagerly
+    let $unused := 1 div 0 return "ok"      raises FOAR0001; Saxon and BaseX return "ok"
+    let $unused := name()  return "ok"      raises XPDY0002 with no context item
+
+The spec permits an implementation to raise errors from expressions whose value is never
+used, so this is not a conformance violation — but it makes working real-world code fail on
+this engine and not on the others. Found because the XPath 3.1 Generators test binds a map
+with an unquoted key (`end-reached : false()`, a path step needing context) that is never
+evaluated on Saxon or BaseX.
+
+Worth deciding deliberately rather than by accident: laziness for unused `let` bindings is
+observable, and the current behaviour is the strict end of the latitude.
+
 ---
 
 ## Open — harness
