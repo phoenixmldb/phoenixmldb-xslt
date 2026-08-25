@@ -106,20 +106,44 @@ the attribute it was driving had no effect either way. The W3C cases that fix cl
 Not investigated further. Narrow, but silently produces a document with the wrong in-scope
 namespaces, which is only observable through the namespace axis.
 
-### 13. `declare record NAME (...)` — named record types unsupported
-XPath 4.0 named record declarations are not parsed. Inline `record(...)`, `record{...}` and
-`record(*)` all work; the DECLARATION form does not, and it also implies a generated
-constructor function — `f:generator(initialized := true(), ...)` in the corpus.
+### 13. XPath 4.0 surface — largely CLOSED 2026-08-25, two items remain
+`test/generators` is Dimitre Novatchev's Generator Function Library (Balisage 2026): real
+XPath 4.0 code, verified by its author against BaseX and Saxon. It exposed TEN gaps in about
+two hours, none of which 31470 QT3 cases had reached. Eight are fixed and the library now
+runs — `gn:take(3) => gn:to-array()` gives `[2,3,4]`, and `take(10000000) => value()` gives
+`2` without materialising ten million items.
 
-Blocks Dimitre Novatchev's Generators library (Balisage 2026, `test/generators/xpath-4`)
-entirely: the module declares `f:generator` and every function signature is `as f:generator`.
-Reported by the engine as XPST0051 naming the prefix binding correctly, which is the
-diagnostic working as intended.
+Fixed: digit separators (`1_000_000`, and in fraction/exponent); `import module` binding its
+prefix; `declare record NAME(...)` with its constructor; imported record types; `fn` as a
+TYPE keyword; named parameters in function types; the `=?>` mapping arrow; `array:empty($a)`
+as a predicate distinct from the zero-arity constructor; `fn:while-do`.
 
-Substantial feature, not a quick fix: prolog declaration, named-type resolution in `as` /
-`instance of`, and the constructor function.
+**Still open, both real and both general — neither is specific to this corpus:**
 
-### 14. `let` bindings are evaluated eagerly
+**13a. Derived integer types fail as parameter types.**
+
+    declare function local:f($n as xs:nonNegativeInteger) { $n + 1 }; local:f(2)
+    -> XPTY0004; xs:integer works, xs:long / xs:positiveInteger / xs:nonNegativeInteger do not
+
+The check is correct for `instance of` — an untagged `2` has dynamic type xs:integer and is
+NOT an instance of a proper subtype, and a test pins `functx:atomic-type(2)` = "xs:integer".
+But the same predicate serves FUNCTION PARAMETER BINDING, which is governed by function
+CONVERSION rules rather than instance-of semantics. Saxon and BaseX both accept it.
+
+One helper answering two different questions, right for one of them — the same shape as
+BUGS.md #10. Fix it in the parameter-binding path only, and re-run the conformance sweep:
+instance-of semantics are load-bearing and easy to break while "fixing" this.
+
+**13b. Function coercion is not applied to a `let` with a declared function type.**
+
+    let $f as fn(item()) as xs:integer := fn($x) { 1 } return $f(2)
+    -> "let $f: value does not match declared type Function"
+
+Parameter binding coerces (CoercedFunctionItem); RequireSequenceTypeMatch in LetClauseOperator
+demands an exact match. Per XPath 3.1 §3.1.5.2 coercion applies wherever a function item meets
+a declared function type.
+
+### 14. `let` bindings are evaluated eagerly### 14. `let` bindings are evaluated eagerly
     let $unused := 1 div 0 return "ok"      raises FOAR0001; Saxon and BaseX return "ok"
     let $unused := name()  return "ok"      raises XPDY0002 with no context item
 
