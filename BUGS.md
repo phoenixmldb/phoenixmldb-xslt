@@ -91,6 +91,21 @@ where the wrong code looked right.
 SEQUENCE, so it should be `[(1,2,3,4,5)]`. Same family as #10, on the XSLT serializer side.
 Narrow — composite="yes" is rare — but it misreports the member's type.
 
+### 12. `inherit-namespaces` appears not to be honoured on `xsl:element`
+Constructing `<xsl:element name="p:outer" namespace="urn:p" inherit-namespaces="no">` with a
+nested `xsl:element` child leaves the child with the parent's namespace in scope — the child
+reports 2 namespace nodes (xml + p) for both `yes` and `no`. Per XSLT 3.0 the namespace nodes
+of the constructed element are not copied to descendants when `no`.
+
+Found while writing a regression test for the import/shadow-attribute fix: the test drove
+`_inherit-namespaces` and could not see the parameter reaching the imported module, because
+the attribute it was driving had no effect either way. The W3C cases that fix cleared
+(copy-0617..0627) all use `xsl:copy`, which does honour it — so this is specific to
+`xsl:element` and is not covered by the corpus cases that currently pass.
+
+Not investigated further. Narrow, but silently produces a document with the wrong in-scope
+namespaces, which is only observable through the namespace axis.
+
 ---
 
 ## Open — harness

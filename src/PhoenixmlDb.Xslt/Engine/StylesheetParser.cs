@@ -220,6 +220,7 @@ public sealed class StylesheetParser
         // LINQ to XML loses prefix info when multiple prefixes map to the same namespace.
         _elementPrefixMap = BuildElementPrefixMap(xml);
 
+        _externalStaticParams = externalStaticParams;
         ResolveShadowAttributes(doc.Root!, externalStaticParams, baseUri);
 
         // Pre-populate _staticVariables with externally-provided static param values
@@ -304,6 +305,7 @@ public sealed class StylesheetParser
     {
         _baseUri = baseUri;
         var doc = XDocument.Load(stream, LoadOptions.SetLineInfo);
+        _externalStaticParams = externalStaticParams;
         ResolveShadowAttributes(doc.Root!, externalStaticParams);
 
         // Pre-populate _staticVariables with externally-provided static param values
@@ -323,8 +325,22 @@ public sealed class StylesheetParser
     /// static param values. This allows ParseStylesheet to skip select evaluation and
     /// forward-reference error checking for params whose values come from the calling processor.
     /// </summary>
+    /// <summary>
+    /// The external static parameters exactly as supplied, kept so an IMPORTED or INCLUDED
+    /// module can resolve its own shadow attributes against them.
+    /// </summary>
+    /// <remarks>
+    /// LoadExternalStylesheet called ResolveShadowAttributes(stylesheetRoot) with no params, so
+    /// a shadow attribute inside an imported module saw only that module's own defaults. W3C
+    /// copy-0617..0627 drive a shared stylesheet through <c>xsl:import</c> with
+    /// <c>_inherit-namespaces="{$INHERIT}"</c> in the IMPORTED file; INHERIT=false never
+    /// reached it, so namespaces were inherited when the test said they must not be.
+    /// </remarks>
+    private Dictionary<string, string>? _externalStaticParams;
+
     private void PopulateExternalStaticParams(Dictionary<string, string>? externalStaticParams)
     {
+        _externalStaticParams = externalStaticParams;
         if (externalStaticParams == null) return;
         foreach (var (name, value) in externalStaticParams)
         {
@@ -3789,7 +3805,10 @@ public sealed class StylesheetParser
                 }
             }
 
-            ResolveShadowAttributes(stylesheetRoot);
+            // Pass the importer's external static params: a shadow attribute in an imported
+            // module is resolved against the parameters the CALLER supplied, not just this
+            // module's defaults.
+            ResolveShadowAttributes(stylesheetRoot, _externalStaticParams);
             // Check use-when on the root xsl:stylesheet/xsl:transform element
             if (!ShouldIncludeElement(stylesheetRoot))
                 return null;
