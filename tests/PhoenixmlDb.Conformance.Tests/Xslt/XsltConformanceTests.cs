@@ -432,7 +432,16 @@ public sealed class XsltTestFixture : IAsyncLifetime
 
     public ValueTask InitializeAsync()
     {
-        IsTestDataAvailable = Directory.Exists(_testDataPath);
+        // Probe for a FILE, not the directory. The csproj deliberately excludes the corpora
+        // from the output copy (13k files, ~7 min a build) but still creates the empty
+        // directory skeleton beside the assembly — so Directory.Exists returned true against a
+        // tree containing nothing. Every test set then loaded 0 cases, each fixture reported
+        // "all filtered by dependencies", and the suite finished "Test Run Successful, 257
+        // passed" having executed no conformance case at all.
+        //
+        // The XQuery fixture next door has always probed catalog.xml. This is the same pair
+        // split down the middle, which is the shape of most of this month's harness defects.
+        IsTestDataAvailable = File.Exists(Path.Combine(_testDataPath, "catalog.xml"));
 
         var config = new XsltConfiguration
         {

@@ -69,7 +69,13 @@ public class XsltInstructionTests4 : IClassFixture<XsltTestFixture>
 
         if (testCases.Count == 0)
         {
-            _output.WriteLine($"No applicable tests in {testSetPath} (all filtered by dependencies)");
+            // Say which it is. These are different problems: a missing file means the corpus
+            // is mislocated (set XSLT30_TEST_SUITE); genuine filtering means the cases exist
+            // but declare features we do not claim. The old message asserted the second
+            // without checking, and hid an empty corpus for an entire census.
+            _output.WriteLine(_fixture.Runner.MissingTestSets.Count > 0
+                ? $"TEST-SET FILE NOT FOUND: {testSetPath} — corpus missing or mislocated; set XSLT30_TEST_SUITE"
+                : $"No applicable tests in {testSetPath} (all cases filtered by dependencies)");
             return;
         }
 

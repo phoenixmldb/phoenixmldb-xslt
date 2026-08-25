@@ -4235,8 +4235,32 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// Reader settings for parsing a principal source document.
+    /// </summary>
+    /// <remarks>
+    /// XSLT needs the internal DTD subset: entity references, and the attribute declarations
+    /// that make <c>id()</c> and IDREF work. So DTDs are parsed rather than prohibited — but
+    /// on two leashes, because parsing a DTD is where XML's two classic attacks live:
+    /// <list type="bullet">
+    ///   <item><c>XmlResolver = null</c> — no external DTD or entity is ever fetched, which is
+    ///   what closes XXE. Only the internal subset is honoured.</item>
+    ///   <item><c>MaxCharactersFromEntities</c> — caps total entity expansion, which is what
+    ///   closes the billion-laughs / quadratic-blowup family.</item>
+    /// </list>
+    /// Both were already applied on the with-URI path; this exists so the without-URI path
+    /// cannot drift from it again.
+    /// </remarks>
+    private static XmlReaderSettings CreateSourceReaderSettings() => new()
+    {
+        DtdProcessing = DtdProcessing.Parse,
+        MaxCharactersFromEntities = 1_000_000,
+        XmlResolver = null,
+    };
+
+    /// <summary>
     /// Transforms an XML string using the stylesheet.
     /// </summary>
+
     public async Task<string> TransformAsync(string xmlSource, XsltTransformOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(xmlSource);
@@ -4275,20 +4299,22 @@ public sealed class XsltTransformEngine
             return await TransformStreamingAsync(xmlSource, options).ConfigureAwait(false);
         }
 
+        // (see CreateSourceReaderSettings for the DTD/entity posture)
         // Parse the XML to an XdmNode tree
         // PreserveWhitespace must be true BEFORE LoadXml to preserve whitespace-only text nodes
         var doc = new XmlDocument { PreserveWhitespace = true };
         // Use XmlReader with base URI when a source document URI is provided,
         // so XmlNode.BaseURI is populated for document() relative URI resolution.
-        if (options?.SourceDocumentUri != null)
         {
             using var sr = new System.IO.StringReader(xmlSource);
-            using var reader = XmlReader.Create(sr, new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, MaxCharactersFromEntities = 1_000_000 }, options.SourceDocumentUri.AbsoluteUri);
+            // Both branches must read the DTD. They did not: with a source URI the document
+            // parsed its internal subset, without one it went through XmlDocument.LoadXml,
+            // which prohibits DTDs outright — so the same document succeeded or failed on
+            // whether a URI happened to be supplied. 12 conformance cases, including the two
+            // DocBook ones, failed with "For security reasons DTD is prohibited".
+            using var reader = XmlReader.Create(sr, CreateSourceReaderSettings(),
+                options?.SourceDocumentUri?.AbsoluteUri ?? string.Empty);
             doc.Load(reader);
-        }
-        else
-        {
-            doc.LoadXml(xmlSource);
         }
 
         // XInclude 1.0 (opt-in): expand xi:include in the principal source before it becomes
@@ -36827,4 +36853,5 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             _ => NamespaceId.None
         };
     }
+
 }

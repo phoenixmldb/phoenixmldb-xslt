@@ -21,6 +21,13 @@ public sealed class XsltTestRunner
     private readonly string _testDataPath;
     private readonly XsltConfiguration _config;
 
+    /// <summary>
+    /// Test-set files named by a fixture that were not found on disk. Non-empty means the
+    /// corpus is missing or mislocated, NOT that its cases were filtered out — a distinction
+    /// the run previously could not make.
+    /// </summary>
+    public HashSet<string> MissingTestSets { get; } = [];
+
     public XsltTestRunner(string testDataPath, XsltConfiguration? config = null)
     {
         _testDataPath = testDataPath;
@@ -86,6 +93,11 @@ public sealed class XsltTestRunner
 
         if (!File.Exists(testSetPath))
         {
+            // Loud, because the quiet version cost a whole census: a missing test-set file
+            // returned an empty list that the caller reported as "all filtered by
+            // dependencies", so an unreadable corpus was indistinguishable from a corpus
+            // whose every case legitimately did not apply.
+            MissingTestSets.Add(testSetPath);
             return testCases;
         }
 
