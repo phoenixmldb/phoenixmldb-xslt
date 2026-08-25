@@ -39,7 +39,7 @@ implement it, and neither does Saxon. Costs ~43 guaranteed QT3 failures. Removin
 what the `<dependency>` mechanism is for, but it IS a conformance claim — needs a decision,
 not a quiet edit.
 
-### 5. ~165 XSLT defects newly visible
+### 5. XSLT defects newly visible (figure superseded — see #16)
 Exposed by removing the runner's blanket `_ => true` (see below). Clustered by feature:
 `mode` 12, `copy` 12, `namespace` 7, `try`/`error`/`current-output-uri`/`accumulator` 6
 each, `output`/`key`/`coco`/`as` 5 each. Not yet triaged — cluster before chasing; every
@@ -181,6 +181,39 @@ arrived.
 This is the sixth pile in the "error names the wrong thing" family, and the first where the
 wrong name cost an investigation into correct behaviour rather than merely slowing one down.
 A message is not cosmetic when it is the only evidence available.
+
+### 16. Streaming: the flag was stale; the real gate is schema-awareness
+`SupportsStreaming = false` was nearly a no-op. Flipping it admitted 186 cases, not the 402
+predicted — the test-set heuristic was already letting most streaming tests through, so the
+flag gated far less than its name suggested. Of the 186, **132 pass**.
+
+Streaming itself largely works: **2276/2373 = 95.91%** in the `strm` group, against a 12,286
+line implementation (`StreamingXmlProcessor`, `StreamWatcher`, `StreamabilityChecker` and
+friends). The flag was stale, not protective.
+
+The 54 newly-visible failures are real defects, clustered: accumulator 15, merge 10, mode 9,
+streamability analysis 5. `StreamabilityChecker` says of itself that it is "conservative …
+does not implement the full posture/sweep classification from the spec", which is also why
+`sweep_and_posture` is hard-coded false in `SatisfiesDependency`.
+
+**The larger locked-out population is not streaming.** Of the 2759 cases in test sets
+declaring `feature=streaming`:
+
+| gate | cases |
+|---|---|
+| `feature schema_aware` | **247** |
+| `feature streaming` (per-case) | 83 |
+| blocked by a set-level feature | 86 |
+| `feature dtd` | 8 |
+
+`sx-*` is *schema-aware* streaming. Getting those 247 needs schema validation, which is a
+different and much larger piece of work than streaming — and BUGS.md #4 already records that
+we claim `staticTyping` without implementing it, so adding a `schema_aware` claim would need
+the implementation first, not the flag.
+
+Headline moved 96.66% -> 96.21% because 186 more real tests now run. Same trade as removing
+the runner's `_ => true` this morning: a lower number that is true beats a higher one that
+is not.
 
 ### 7. XSLT fixtures assert only `passed > 0`
 A test-set can fail 76 of 1026 cases and still report green. This is the SECOND layer of

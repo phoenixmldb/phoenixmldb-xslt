@@ -447,7 +447,7 @@ public sealed class XsltTestFixture : IAsyncLifetime
         {
             XsltVersion = "3.0",
             // We don't support these advanced features yet
-            SupportsStreaming = false,
+            SupportsStreaming = true,   // EXPERIMENT — measuring the 402 currently-skipped cases
             SupportsHigherOrderFunctions = true,
             SupportsSchemaAwareness = false
         };
