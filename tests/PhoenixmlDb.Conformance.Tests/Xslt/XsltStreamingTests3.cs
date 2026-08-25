@@ -79,7 +79,8 @@ public class XsltStreamingTests3 : IClassFixture<XsltTestFixture>
                 if (result.Error != null)
                 {
                     _output.WriteLine($"  Error: {result.Error.Message}");
-                    if (result.Error is NullReferenceException && failed <= 5)
+                    if ((result.Error is NullReferenceException
+                         || Environment.GetEnvironmentVariable("XSLT_TRIAGE_STACK") == "1") && failed <= 5)
                         _output.WriteLine($"  Stack: {result.Error.StackTrace}");
                 }
                 else if (failed <= 30)

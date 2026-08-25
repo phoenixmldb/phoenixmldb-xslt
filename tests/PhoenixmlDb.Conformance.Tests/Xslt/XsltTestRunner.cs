@@ -961,7 +961,11 @@ public sealed class XsltTestRunner
             // Execute transformation with timeout protection
             var transformTask = Task.Run(async () =>
             {
-                var transformer = new XsltTransformer();
+                // The W3C corpus is trusted local data and 12 of its stylesheets carry a
+                // DOCTYPE (entity definitions, DocBook's common.xsl). The engine prohibits
+                // DTDs unless asked — the right default for arbitrary input, wrong for a
+                // conformance run, which must parse what the suite actually ships.
+                var transformer = new XsltTransformer { AllowDtdProcessing = true };
                 Uri? baseUri = testCase.Environment.StylesheetPath != null
                     ? new Uri(Path.GetFullPath(testCase.Environment.StylesheetPath))
                     : null;
