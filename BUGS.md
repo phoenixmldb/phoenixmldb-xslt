@@ -118,32 +118,33 @@ prefix; `declare record NAME(...)` with its constructor; imported record types; 
 TYPE keyword; named parameters in function types; the `=?>` mapping arrow; `array:empty($a)`
 as a predicate distinct from the zero-arity constructor; `fn:while-do`.
 
-**Still open, both real and both general — neither is specific to this corpus:**
+**Both remaining items were RETRACTED on investigation — the engine is right in both.**
+Kept here because the wrong diagnosis is the useful part.
 
-**13a. Derived integer types fail as parameter types.**
+**13a. `local:f(2)` against `$n as xs:nonNegativeInteger` correctly raises XPTY0004.**
+I recorded this as a bug on the reasoning that parameter binding is governed by function
+CONVERSION rules rather than instance-of, and asserted "Saxon and BaseX both accept it"
+without checking. The conversion rules (XPath 3.1 §3.1.5.2) promote numeric→double/float,
+anyURI→string, and cast untypedAtomic — they never NARROW a supertype to a subtype. The
+value 2 has dynamic type xs:integer; xs:nonNegativeInteger is a subtype of it, so matching
+fails and XPTY0004 is correct. The existing comment in MatchesType says exactly this and is
+right. Neither the QT3 corpus nor the Generators library declares a derived-integer
+parameter type, so the case for changing it rested entirely on the unverified claim.
 
-    declare function local:f($n as xs:nonNegativeInteger) { $n + 1 }; local:f(2)
-    -> XPTY0004; xs:integer works, xs:long / xs:positiveInteger / xs:nonNegativeInteger do not
+**13b. `let $f as fn(item()) as xs:integer := fn($x) { 1 }` correctly raises XPTY0004.**
+A `let` binding MATCHES its declared type (XQuery 3.1 §3.10.2); it does not convert. That is
+why `let $x as xs:double := 1` is an error while `local:g(1)` against `$x as xs:double`
+succeeds — and our engine already draws that line correctly. Function-type matching is
+contravariant in parameters and covariant in return: `fn($x) { 1 }` is
+`function(item()*) as item()*`, and `item()*` is not a subtype of `xs:integer`, so it does
+not match. No coercion is owed.
 
-The check is correct for `instance of` — an untagged `2` has dynamic type xs:integer and is
-NOT an instance of a proper subtype, and a test pins `functx:atomic-type(2)` = "xs:integer".
-But the same predicate serves FUNCTION PARAMETER BINDING, which is governed by function
-CONVERSION rules rather than instance-of semantics. Saxon and BaseX both accept it.
+**What was actually wrong was the error message, and it is now #15.** Both investigations
+were launched by messages that named the wrong type. Had the first said "expects
+xs:nonNegativeInteger but got xs:integer" instead of "does not match parameterized type
+Integer", there would have been nothing to investigate.
 
-One helper answering two different questions, right for one of them — the same shape as
-BUGS.md #10. Fix it in the parameter-binding path only, and re-run the conformance sweep:
-instance-of semantics are load-bearing and easy to break while "fixing" this.
-
-**13b. Function coercion is not applied to a `let` with a declared function type.**
-
-    let $f as fn(item()) as xs:integer := fn($x) { 1 } return $f(2)
-    -> "let $f: value does not match declared type Function"
-
-Parameter binding coerces (CoercedFunctionItem); RequireSequenceTypeMatch in LetClauseOperator
-demands an exact match. Per XPath 3.1 §3.1.5.2 coercion applies wherever a function item meets
-a declared function type.
-
-### 14. `let` bindings are evaluated eagerly### 14. `let` bindings are evaluated eagerly
+### 14. `let` bindings are evaluated eagerly
     let $unused := 1 div 0 return "ok"      raises FOAR0001; Saxon and BaseX return "ok"
     let $unused := name()  return "ok"      raises XPDY0002 with no context item
 
@@ -159,6 +160,27 @@ observable, and the current behaviour is the strict end of the latitude.
 ---
 
 ## Open — harness
+
+### 15. Diagnostics printed CLR type names instead of XQuery ones — FIXED 2026-08-25
+`XdmSequenceType.ToString()` rendered the CLR enum member, so every message interpolating a
+sequence type named a type the user never wrote. Declaring `$n as xs:nonNegativeInteger` and
+passing 2 reported *"does not match parameterized type Integer"* — wrong three times over:
+it is not parameterized, the declared type is not xs:integer, and "Integer" erases precisely
+the derived/base distinction that caused the mismatch. Companion sites printed
+`{value.GetType().Name}`, giving "but got Int64".
+
+The same root cause reached a shipped function: `fn:type(xs:byte(1))` returned the CLR name
+**`"XsTypedInteger"`** with kind `"item"`, because tagged subtypes matched no arm of its
+switch. That is user-visible output, not a diagnostic.
+
+Fixed by one renderer, `XdmShape.TypeOf`, which `fn:type` and the engine's diagnostics now
+share so they cannot drift. `ToString()` renders source syntax and honours
+DerivedIntegerType / LocalTypeName; mismatch messages say both what was expected and what
+arrived.
+
+This is the sixth pile in the "error names the wrong thing" family, and the first where the
+wrong name cost an investigation into correct behaviour rather than merely slowing one down.
+A message is not cosmetic when it is the only evidence available.
 
 ### 7. XSLT fixtures assert only `passed > 0`
 A test-set can fail 76 of 1026 cases and still report green. This is the SECOND layer of
