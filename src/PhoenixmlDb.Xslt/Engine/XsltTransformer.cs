@@ -14071,7 +14071,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var value = GetVariable(varName);
                 return (true, ConvertRtfForXQuery(value));
             }
-            catch (XsltException ex) when (!ex.Message.Contains("XTDE0640", StringComparison.Ordinal)
+            catch (XsltException ex) when (ex.ErrorCode != "XTDE0640"
                 && !ex.Message.Contains("private to its package", StringComparison.Ordinal))
             {
                 return (false, null);
@@ -21061,7 +21061,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             catch (XsltException ex) when (
                 ex.Message.Contains("not defined", StringComparison.Ordinal)
-                || ex.Message.Contains("XTDE0640", StringComparison.Ordinal))
+                || ex.ErrorCode == "XTDE0640")
             {
                 // Potential circular reference - defer evaluation.
                 // XTDE0640 is raised when a global variable/param being evaluated is re-accessed.
@@ -22963,7 +22963,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 return ParseResultTreeFragment(rtf);
             return value;
         }
-        catch (XsltException ex) when (ex.Message.Contains("XTDE0640", StringComparison.Ordinal))
+        catch (XsltException ex) when (ex.ErrorCode == "XTDE0640")
         {
             throw; // Non-recoverable: circular reference must propagate
         }
@@ -23196,7 +23196,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 #pragma warning disable CA1031 // Predicate evaluation failure should not crash pattern matching
         catch (Exception ex) when (
             ex is not PhoenixmlDb.XQuery.Execution.XQueryRuntimeException { ErrorCode: "XPST0017" }
-            && (ex is not XsltException xsltEx || !xsltEx.Message.Contains("XTDE0640", StringComparison.Ordinal)))
+            && (ex is not XsltException xsltEx || xsltEx.ErrorCode != "XTDE0640"))
         {
             // XTDE0640: If predicate evaluation failed because a variable is not yet bound
             // and that variable is currently being evaluated (circular reference), propagate as XTDE0640
@@ -23253,7 +23253,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return false;
         }
 #pragma warning disable CA1031
-        catch (XsltException ex) when (ex.Message.Contains("XTDE0640", StringComparison.Ordinal))
+        catch (XsltException ex) when (ex.ErrorCode == "XTDE0640")
         {
             throw; // Non-recoverable: circular key reference must propagate
         }
@@ -32662,9 +32662,8 @@ internal sealed record AccumulatorDeferredError(Exception Error)
         // XTDE3400 — a cyclic set of dependencies among accumulators — must surface
         // immediately. It is a defect in the stylesheet's accumulator graph, not a per-node
         // dynamic error, and deferring it hides the cycle behind whichever value happens to be
-        // read first. Matched on message text because XsltException carries its error code
-        // only in the message; give that class an ErrorCode and this becomes a field test.
-        if (ex.Message.Contains("XTDE3400", StringComparison.Ordinal))
+        // read first.
+        if (ex is XsltException { ErrorCode: "XTDE3400" })
             return false;
 
         return ex is XsltException

@@ -12133,7 +12133,7 @@ public sealed class StylesheetParser
         {
             return EvaluateStaticExpression(expr, context);
         }
-        catch (XsltException ex) when (ex.Message.StartsWith("XPST0008", StringComparison.Ordinal))
+        catch (XsltException ex) when (ex.ErrorCode == "XPST0008")
         {
             // Forward reference to undeclared static variable — must be a real error
             throw;
@@ -12882,6 +12882,43 @@ public class XsltException : Exception
     public SourceLocation? Location { get; }
 
     /// <summary>
+    /// The W3C error code this exception reports — <c>XTDE0640</c>, <c>XPST0008</c>,
+    /// <c>XTSE0010</c> — or <c>null</c> when the message carries none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Derived from the message, because that is where 454 of this engine's 577 throw sites
+    /// already put it: every one writes <c>"CODE: description"</c>. Without this property the
+    /// only way to ask "which error is this?" was to search the message text, and the engine
+    /// did exactly that in seven places — including a deferral guard reading
+    /// <c>ex.Message.Contains("XTDE3400")</c>, which would also have matched an error that
+    /// merely quoted the code in its prose.
+    /// </para>
+    /// <para>
+    /// Prefer <c>ErrorCode == "XTDE0640"</c> to any test against <see cref="Exception.Message"/>:
+    /// message text is for humans and changes freely; the code is the contract.
+    /// </para>
+    /// </remarks>
+    public string? ErrorCode { get; }
+
+    /// <summary>
+    /// Reads a leading W3C error code — four uppercase letters, four digits, then a delimiter.
+    /// Deliberately anchored: a code mentioned mid-sentence is prose, not this error's identity.
+    /// </summary>
+    private static string? ExtractErrorCode(string? message)
+    {
+        if (message is null || message.Length < 8)
+            return null;
+        for (var i = 0; i < 4; i++)
+            if (message[i] is < 'A' or > 'Z') return null;
+        for (var i = 4; i < 8; i++)
+            if (message[i] is < '0' or > '9') return null;
+        if (message.Length > 8 && message[8] is not (':' or ' '))
+            return null;
+        return message[..8];
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="XsltException"/> class.
     /// </summary>
     public XsltException()
@@ -12897,6 +12934,7 @@ public class XsltException : Exception
     public XsltException(string message)
         : base(message)
     {
+        ErrorCode = ExtractErrorCode(message);
     }
 
     /// <summary>
@@ -12908,6 +12946,7 @@ public class XsltException : Exception
     public XsltException(string message, Exception innerException)
         : base(message, innerException)
     {
+        ErrorCode = ExtractErrorCode(message);
     }
 
     /// <summary>
@@ -12922,6 +12961,7 @@ public class XsltException : Exception
         : base(message)
     {
         Location = location;
+        ErrorCode = ExtractErrorCode(message);
     }
 
     /// <summary>
@@ -12937,5 +12977,6 @@ public class XsltException : Exception
         : base(message, innerException)
     {
         Location = location;
+        ErrorCode = ExtractErrorCode(message);
     }
 }
