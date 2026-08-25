@@ -1005,9 +1005,7 @@ internal sealed class StreamingXmlProcessor
                     initVal = DefaultXsltExecutionContext.CoerceAccumulatorValue(initVal, _accumulators[i].As!, _accumulators[i].Name);
                 _accCurrentValues[i] = initVal;
             }
-#pragma warning disable CA1031 // Dynamic errors in accumulators are intentionally deferred per XSLT 3.0
-            catch (Exception ex)
-#pragma warning restore CA1031
+            catch (Exception ex) when (AccumulatorDeferredError.IsDeferrable(ex))
             {
                 _accCurrentValues[i] = new AccumulatorDeferredError(ex);
             }
@@ -1068,9 +1066,7 @@ internal sealed class StreamingXmlProcessor
                     _accCurrentValues[i] = await _context.EvaluateAccumulatorRuleAsync(
                         node, rule, _accCurrentValues[i], acc).ConfigureAwait(false);
                 }
-#pragma warning disable CA1031 // Dynamic errors in accumulators are intentionally deferred
-                catch (Exception ex)
-#pragma warning restore CA1031
+                catch (Exception ex) when (AccumulatorDeferredError.IsDeferrable(ex))
                 {
                     _accCurrentValues[i] = new AccumulatorDeferredError(ex);
                 }
