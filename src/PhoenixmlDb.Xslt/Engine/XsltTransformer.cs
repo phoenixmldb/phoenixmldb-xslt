@@ -9942,8 +9942,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 break;
             case OnNoMatchBehavior.Fail:
-                throw new InvalidOperationException(
-                    $"XTDE0555: No matching template found for node in mode with on-no-match='fail'");
+                // XsltException, not InvalidOperationException: this is a spec-defined dynamic
+                // error, so it needs the ErrorCode and Location every other XSLT error carries,
+                // and it must be catchable as one — AccumulatorDeferredError.IsDeferrable and
+                // the CLI's XSLT handler both key off the type.
+                throw Error(
+                    "XTDE0555: No matching template found for node in mode with on-no-match='fail'");
         }
     }
 

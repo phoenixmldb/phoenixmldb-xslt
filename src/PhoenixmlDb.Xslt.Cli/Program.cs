@@ -419,15 +419,28 @@ catch (PhoenixmlDb.XQuery.Functions.XQueryException ex)
         await Console.Error.WriteLineAsync(ex.StackTrace).ConfigureAwait(true);
     return 2;
 }
+// CA1031: a command-line tool's top-level handler is exactly where catching everything is
+// correct. The alternative the rule suggests — rethrow — is what produced "Unhandled
+// exception" plus a stack dump on top of an already-reported error. Reporting and returning a
+// non-zero exit code IS the handling.
+#pragma warning disable CA1031
 catch (Exception ex)
+#pragma warning restore CA1031
 {
+    // Report and EXIT — do not rethrow. Every other handler here returns 2; this one printed
+    // a clean "Error: …" line and then rethrew, so .NET added "Unhandled exception" plus a
+    // full stack trace on top of it. Martin Honnen's XTDE0555 report is a transcript of
+    // exactly that: the tool said the right thing and then crash-dumped over it.
+    //
+    // The XQueryRuntimeException handler above states the intent — "so users don't see a raw
+    // .NET stack trace for a spec-defined error" — and the catch-all was undoing it for every
+    // error that did not happen to be one of the three typed cases.
     await Console.Error.WriteLineAsync($"Error: {ex.Message}").ConfigureAwait(true);
     if (options.Verbose)
-    {
         await Console.Error.WriteLineAsync(ex.StackTrace).ConfigureAwait(true);
-    }
-
-    throw;
+    else
+        await Console.Error.WriteLineAsync("(run with --verbose for the stack trace)").ConfigureAwait(true);
+    return 2;
 }
 
 static string FormatBytes(long bytes)

@@ -38,9 +38,10 @@ public class PatternNestedNameTestNamespaceTests
         try { return (await t.TransformAsync(Input)).Contains("<HIT", StringComparison.Ordinal); }
         // A non-matching pattern falls through to the built-in rule, which under
         // on-no-match="fail" raises XTDE0555 — that IS the "did not match" signal here.
-        // Note it arrives as InvalidOperationException, not XsltException, so it carries no
-        // ErrorCode; worth tidying separately.
-        catch (Exception ex) when (ex.Message.Contains("XTDE0555", StringComparison.Ordinal))
+        // Tested by ErrorCode, not message text: XTDE0555 used to be an
+        // InvalidOperationException carrying neither a code nor a location, which is also why
+        // the CLI crash-dumped on it instead of reporting it.
+        catch (PhoenixmlDb.Xslt.Engine.XsltException ex) when (ex.ErrorCode == "XTDE0555")
         { return false; }
     }
 
