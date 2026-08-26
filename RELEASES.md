@@ -1,5 +1,76 @@
 # Release History
 
+## 1.6.8 — 2026-08-26
+
+Four engine fixes, two of them from Martin Honnen's XSpec testing, and a conformance harness
+that turned out to be measuring nothing at all. XSpec suites completing end to end went from
+24 to 60.
+
+### A typed template's `xsl:copy` of an attribute went to the caller's element
+
+Reported by Martin Honnen against XSpec 4.0.3, which failed with
+`XTTE0505: Template 'identity' return value does not match declared type Node: expected
+exactly one item, got 0`.
+
+The attribute was never lost — it was delivered to the wrong element. `xsl:copy` of an
+attribute joined a typed template's result sequence only when nothing else was collecting
+attributes, but XSpec's identity template is invoked while the CALLER's `xsl:copy` is still
+collecting its own. So `@status` was appended to the caller's element and the template
+returned nothing, and the error blamed the template rather than naming where the item went.
+
+Found while fixing it: `<xsl:copy/>` with no content on a document node produced nothing at
+all, because both code paths required content. A shallow copy with no content is legal.
+
+### One implementation of global content binding, not two
+
+The engine had two implementations of "bind a global variable from a content sequence
+constructor". The eager, dependency-ordered pass honoured the declared `as` type; the lazy
+on-demand pass stored the serialized content as a raw `xs:string` and ignored `as` entirely.
+So one declaration bound a document node or a string depending on which pass reached it
+first — and which pass ran depended on whether the dependency analysis spotted the reference.
+It does not recognise EQName (`$Q{uri}local`) references, which XSpec generates throughout.
+
+The eager path already carried a fix for this exact `XPTY0020`, from Martin's earlier DocBook
+report. It had been applied to one of the two paths.
+
+### A typed variable with empty content is `()`, not `""`
+
+XSLT 3.0 §9.3 gives the zero-length-string rule for a variable with "neither a select
+attribute nor an as attribute". The `as` clause was missing from the implementation, so every
+typed empty binding held a string: `<xsl:variable as="empty-sequence()"/>` reported a count of
+1, and `<xsl:variable as="element(x)*"/>` held a string rather than elements.
+
+### Accumulators: untypedAtomic is converted to the declared type
+
+`CoerceAtomicValue` had no arm for `XsUntypedAtomic` — what atomizing a node actually yields —
+so an accumulator declared `as="xs:double"` whose rule selected `@amount` silently kept its
+seed and reported it as the answer. The sibling `sum` accumulator was correct throughout,
+because arithmetic operators atomize; one stylesheet gave a right sum and a wrong min.
+
+Accumulator errors are deferred per spec, but "deferred" had been implemented as
+`catch (Exception)` at five sites with three different behaviours — swallowing cancellation
+and CLR faults, which is how the type bug stayed invisible. Now only genuine dynamic errors
+defer, and rethrow preserves the original stack.
+
+### `XsltException` carries an `ErrorCode`
+
+The engine asked "which error is this?" by searching message text in seven places, five with
+`Contains` — so an error merely mentioning `XTDE0640` in its prose matched as that error.
+
+### The conformance suite was measuring nothing
+
+Not a shipped-engine bug, but worth recording: the XSLT conformance run reported
+"257 passed" having executed zero cases. The fixture checked `Directory.Exists` against the
+empty directory skeleton the build creates, so every test set loaded no cases and each
+reported "all filtered by dependencies" — a conclusion the code never verified. Fixed, along
+with the harness refusing DTDs the corpus ships and declaring streaming unsupported when it
+is 95.9% conformant.
+
+    Xslt.Tests 1289 passed, 0 failed, 1 skipped (1204 at 1.6.7)
+    XSLT conformance 10232/10630 = 96.26% — the first figure measured against a corpus
+      that was actually loaded
+    XSpec: 60 of 284 suites complete end to end, up from 24
+
 ## 1.6.7 — 2026-08-24
 
 Four engine fixes, two of them reported by Martin Honnen, plus a large correction to what
