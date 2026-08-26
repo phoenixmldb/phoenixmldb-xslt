@@ -6441,9 +6441,30 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         public required List<object?> Accumulator { get; init; }
         public required int OutputBaseLen { get; init; }
         public List<int> Positions { get; } = [];
+
+        /// <summary>
+        /// Depth of <c>_collectedAttributesStack</c> when this typed body began.
+        /// </summary>
+        /// <remarks>
+        /// Distinguishes "an element started OUTSIDE this template is still collecting its
+        /// attributes" from "the body itself started an element". Only the first case means a
+        /// copied attribute is part of the template's RETURN VALUE rather than content of an
+        /// element the body is building. Without the distinction a typed template that copies
+        /// an attribute silently contributed it to the caller's element and returned nothing.
+        /// </remarks>
+        public required int AttrDepthAtStart { get; init; }
     }
 
     private AsBodyCapture? _currentAsBodyCapture;
+
+    /// <summary>
+    /// True when attributes are being collected for an element that was opened OUTSIDE the
+    /// typed body currently executing — so a node constructed now is part of that body's
+    /// return value, not content of an element the body is building.
+    /// </summary>
+    private bool IsAttributeScopeOutsideAsBody()
+        => _currentAsBodyCapture != null
+           && _collectedAttributesStack.Count <= _currentAsBodyCapture.AttrDepthAtStart;
 
     /// <summary>
     /// True when execution is DIRECTLY inside a typed `as="item()*"`/`node()*` (etc.) body
@@ -9700,7 +9721,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             var savedLen = _output.Length;
                             var bodyAccum = new List<object?>();
                             _sequenceAccumulator = bodyAccum;
-                            _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen };
+                            _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen, AttrDepthAtStart = _collectedAttributesStack.Count };
                             var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
                             await template.Body.ExecuteAsync(this).ConfigureAwait(false);
                             var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
@@ -11460,7 +11481,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var savedLen = _output.Length;
                     var bodyAccum = new List<object?>();
                     _sequenceAccumulator = bodyAccum;
-                    _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen };
+                    _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen, AttrDepthAtStart = _collectedAttributesStack.Count };
                     var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
                     await template.Body.ExecuteAsync(this).ConfigureAwait(false);
                     var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
@@ -15735,7 +15756,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // document URI, not the construction (stylesheet) base the sequence-materialize
                 // path would otherwise apply to an unstamped orphan doc node. (fn/base-uri 053:
                 // shallow-doc / shallow-doc-deeper.)
-                if (_sequenceAccumulator != null && _nodeStore != null && instruction.Content != null)
+                // Content may be absent: <xsl:copy/> on a document node is a legal shallow copy
+                // producing an EMPTY document node. Requiring Content here (and in the fallback
+                // below) meant an empty copy produced nothing at all, so a typed template
+                // returned zero items — the same XTTE0505 Martin Honnen hit on attributes,
+                // reached by a different route.
+                if (_sequenceAccumulator != null && _nodeStore != null)
                 {
                     // Create a proper XDM document node in sequence accumulator mode
                     var savedOutput2 = _output.ToString();
@@ -15749,7 +15775,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _documentNodeDepth++;
                     try
                     {
-                        await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+                        if (instruction.Content != null)
+                            await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
                     }
                     finally
                     {
@@ -16236,9 +16263,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
             case XdmAttribute attr:
             {
-                // When sequence accumulator is active and not in attribute-collecting mode,
-                // add as XdmAttribute to accumulator (e.g., xsl:copy of attribute in function body)
-                if (_sequenceAccumulator != null && !_attributeCollecting)
+                // When sequence accumulator is active, a copied attribute is an item of the
+                // sequence being built — unless the body itself opened the element that is
+                // collecting attributes, in which case it belongs to that element.
+                //
+                // The `!_attributeCollecting` test alone got this wrong whenever the CALLER was
+                // mid-element. Martin Honnen's XSpec repro:
+                //
+                //   <xsl:template as="node()" name="local:identity">
+                //     <xsl:copy><xsl:apply-templates mode="#current" select="attribute()|node()"/></xsl:copy>
+                //   </xsl:template>
+                //
+                // applies templates to @status while the enclosing xsl:copy of <phrase> is still
+                // collecting ITS attributes, so the attribute was silently added to <phrase> and
+                // the typed template returned nothing — XTTE0505 "expected exactly one item,
+                // got 0", pointing at the template rather than at the diverted attribute.
+                if (_sequenceAccumulator != null
+                    && (!_attributeCollecting || IsAttributeScopeOutsideAsBody()))
                 {
                     AppendToSeqAccumulator(CopyNodeForAccumulator(attr));
                     break;
@@ -21128,6 +21169,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     Accumulator = _sequenceAccumulator,
                     OutputBaseLen = savedScope.SavedLength,
+                    AttrDepthAtStart = _collectedAttributesStack.Count,
                 };
                 _currentAsBodyCapture = asBodyCapture;
                 // When the target type allows multiple items (text()*, node()*, item()*),
