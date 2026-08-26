@@ -21871,8 +21871,28 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         else
         {
-            // Per XSLT spec: variable with no select and no content defaults to empty string
-            value = "";
+            // XSLT 3.0 §9.3, the select/as/content table:
+            //
+            //   select   as        content   effect
+            //   absent   absent    empty     value is a ZERO-LENGTH STRING
+            //   absent   PRESENT   empty     value is an EMPTY SEQUENCE, provided `as` permits one
+            //
+            // The zero-length-string rule is conditional on there being no `as` attribute —
+            // "neither a select attribute nor an as attribute" — and that condition was missing
+            // here, so every typed empty binding was bound to "" instead of ().
+            //
+            //   <xsl:variable name="n" as="empty-sequence()"/>   count() reported 1, not 0
+            //   <xsl:variable name="e" as="element(x)*"/>        held a string, not elements
+            //
+            // XSpec writes <x:param as="empty-sequence()"/> for "pass nothing here", so the
+            // string leaked into a function declared as="element(...)*"; the first axis step on
+            // it raised XPTY0020 "context item is not a node (got xs:string """. 21 of its
+            // suites died that way, all naming the axis step rather than the binding.
+            //
+            // A type that does NOT permit an empty sequence still errors — that is the "provided"
+            // clause — but it is XTTE0570 from the validation below, raised against (), not a
+            // string quietly satisfying as="xs:string".
+            value = instruction.As != null ? System.Array.Empty<object?>() : (object?)"";
         }
 
         // When as="text()" and the content produced a string, wrap as XdmText node
