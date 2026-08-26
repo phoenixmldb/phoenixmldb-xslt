@@ -9540,7 +9540,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var ci = ContextItem;
             if (ci != null && ci is not XdmNode && ci is not ResultTreeFragment
                 && !ReferenceEquals(ci, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
-                throw new InvalidOperationException("XTTE0510: Context item for xsl:apply-templates must be a node");
+                throw Error("XTTE0510: Context item for xsl:apply-templates must be a node");
             nodes = GetChildren(ci);
         }
 
@@ -13977,18 +13977,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             case ContextItemExpression:
                 var ci = ContextItem;
                 if (ReferenceEquals(ci, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
-                    throw new InvalidOperationException("XPDY0002: Context item is absent");
+                    throw Error("XPDY0002: Context item is absent");
                 return ci;
             // Fast path: position() and last() — avoid full XQuery pipeline in loops
             case FunctionCallExpression { Arguments.Count: 0 } fce
                 when fce.Name.LocalName == "position" && (fce.Name.Namespace == NamespaceId.None || fce.Name.Namespace == NamespaceId.Fn):
                 if (ReferenceEquals(ContextItem, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
-                    throw new InvalidOperationException("XPDY0002: Context position is absent");
+                    throw Error("XPDY0002: Context position is absent");
                 return (long)Position;
             case FunctionCallExpression { Arguments.Count: 0 } fce2
                 when fce2.Name.LocalName == "last" && (fce2.Name.Namespace == NamespaceId.None || fce2.Name.Namespace == NamespaceId.Fn):
                 if (ReferenceEquals(ContextItem, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
-                    throw new InvalidOperationException("XPDY0002: Context size is absent");
+                    throw Error("XPDY0002: Context size is absent");
                 return (long)Last;
             // Fast path: simple comparisons with position()/last() and integer literals
             case BinaryExpression { Operator: var op } be
@@ -22267,9 +22267,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 foreach (var num in numbers)
                 {
                     if (num is double d && (double.IsNaN(d) || d < 0))
-                        throw new InvalidOperationException("XTDE0980: Value of xsl:number must be a non-negative number");
+                        throw Error("XTDE0980: Value of xsl:number must be a non-negative number");
                     if (num is BigInteger bi && bi < 0)
-                        throw new InvalidOperationException("XTDE0980: Value of xsl:number must be a non-negative number");
+                        throw Error("XTDE0980: Value of xsl:number must be a non-negative number");
                 }
             }
         }
@@ -22301,16 +22301,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             // XTTE1000: select must return exactly one node
             if (nodeCount == 0 || selectedNode == null)
-                throw new InvalidOperationException("XTTE1000: select expression in xsl:number returned an empty sequence");
+                throw Error("XTTE1000: select expression in xsl:number returned an empty sequence");
             if (nodeCount > 1)
-                throw new InvalidOperationException("XTTE1000: select expression in xsl:number returned more than one item");
+                throw Error("XTTE1000: select expression in xsl:number returned more than one item");
             numbers = CountNodes(instruction, selectedNode);
         }
         else
         {
             // XTTE0990: context item must be a node when no value/select
             if (ContextItem is not XdmNode)
-                throw new InvalidOperationException("XTTE0990: Context item for xsl:number must be a node");
+                throw Error("XTTE0990: Context item for xsl:number must be a node");
             // Count nodes based on level, count, from (uses context item)
             numbers = CountNodes(instruction, null);
         }
@@ -22383,7 +22383,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             lang = await EvaluateAvtAsync(instruction.Lang).ConfigureAwait(false);
             // XTDE0030: lang must be a valid language tag (starts with letter, BCP 47-like)
             if (!string.IsNullOrEmpty(lang) && !IsValidLanguageTag(lang))
-                throw new InvalidOperationException($"XTDE0030: Invalid language tag '{lang}' in xsl:number");
+                throw Error($"XTDE0030: Invalid language tag '{lang}' in xsl:number");
         }
 
         // Format the numbers
@@ -26927,7 +26927,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 langs[i] = await EvaluateAvtAsync(sorts[i].Lang!).ConfigureAwait(false);
                 // XTDE0030: lang must be a valid language tag
                 if (!string.IsNullOrEmpty(langs[i]) && !IsValidLanguageTag(langs[i]!))
-                    throw new InvalidOperationException($"XTDE0030: Invalid language tag '{langs[i]}' in xsl:sort");
+                    throw Error($"XTDE0030: Invalid language tag '{langs[i]}' in xsl:sort");
             }
             if (sorts[i].Collation != null)
             {
