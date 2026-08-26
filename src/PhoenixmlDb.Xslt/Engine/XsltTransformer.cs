@@ -5950,9 +5950,27 @@ internal sealed class TemplateIndex
             case PathPattern pp:
                 foreach (var step in pp.Steps)
                 {
-                    if (step.NodeTest is NameTest nt)
+                    // A NameTest can also be NESTED inside a KindTest — element(x:report) keeps
+                    // its name in KindTest.Name, and document-node(element(x:report)) keeps it in
+                    // KindTest.DocumentElementTest. This loop only ever visited the bare
+                    // NameTest case, so those nested ones kept NamespaceUri with
+                    // ResolvedNamespace still null, and NameTest.Matches ends on
+                    //
+                    //     // This shouldn't happen if namespace resolution is working correctly
+                    //     return false;
+                    //
+                    // which is why match="document-node(element(x:report))" matched NOTHING while
+                    // match="x:report" matched fine. Reported by Martin Honnen against XSpec's
+                    // report stylesheet. element(x:report) was broken the same way.
+                    switch (step.NodeTest)
                     {
-                        nt.ResolveNamespace(resolver);
+                        case NameTest nt:
+                            nt.ResolveNamespace(resolver);
+                            break;
+                        case KindTest kt:
+                            kt.Name?.ResolveNamespace(resolver);
+                            kt.DocumentElementTest?.ResolveNamespace(resolver);
+                            break;
                     }
                 }
                 break;
