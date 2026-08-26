@@ -3663,136 +3663,8 @@ public sealed class XsltTransformEngine
                 }
                 else
                 {
-                    var savedLen = outputBuilder.Length;
-                    await global.Content.ExecuteAsync(context).ConfigureAwait(false);
-                    var content = outputBuilder.ToString(savedLen, outputBuilder.Length - savedLen);
-                    outputBuilder.Length = savedLen;
-                    var globalBaseUri = XsltTransformEngine.UriString(global.BaseUri) ?? XsltTransformEngine.UriString(_stylesheet.BaseUri);
-                    // XSLT 2.0: variables with content and no 'as' always create a temporary tree
-                    if (global.As == null)
-                        context.GlobalVariables[global.Name] = new ResultTreeFragment(content, globalBaseUri);
-                    else if (context._nodeStore != null
-                        && global.As.ItemType is ItemType.Text or ItemType.Node
-                        && !content.Contains('<', StringComparison.Ordinal))
-                    {
-                        // as="text()" or as="node()": create proper XDM text node
-                        var textId = context._nodeStore.NextId();
-                        context.GlobalVariables[global.Name] = new Xdm.Nodes.XdmText
-                        {
-                            Id = textId,
-                            Document = DocumentId.None,
-                            Parent = NodeId.None,
-                            Value = content
-                        };
-                    }
-                    else if (context._nodeStore != null && global.As.ItemType == ItemType.Document)
-                    {
-                        // as="document-node()": parse content into a proper XdmDocument so
-                        // downstream `/` and `*` axis steps work. Falling through to the RTF/string
-                        // path produced an xs:string "" for empty content, which then failed
-                        // axis-step evaluation with XPTY0020 (Martin Honnen's Docbook TNG
-                        // $v:templates → fp:construct-templates path).
-                        var docId = context._nodeStore.NextId();
-                        var docChildren = new List<NodeId>();
-                        NodeId docElementId = NodeId.None;
-                        string? docElemLocalName = null;
-                        var sb = new StringBuilder();
-                        if (content.Length > 0)
-                        {
-                            try
-                            {
-                                var settings = new System.Xml.XmlReaderSettings
-                                {
-                                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
-                                    IgnoreWhitespace = false,
-                                    IgnoreComments = false,
-                                    IgnoreProcessingInstructions = false,
-                                };
-                                using var sr = new System.IO.StringReader($"<_doc_root_>{content}</_doc_root_>");
-                                using var rdr = System.Xml.XmlReader.Create(sr, settings);
-                                var children = new List<object?>();
-                                context.ReadAsBodyChunkChildren(rdr, children);
-                                foreach (var item in children)
-                                {
-                                    if (item is XdmNode cn)
-                                    {
-                                        cn.Parent = docId;
-                                        docChildren.Add(cn.Id);
-                                        if (cn is XdmElement xe)
-                                        {
-                                            if (docElementId == NodeId.None)
-                                                docElementId = cn.Id;
-                                            docElemLocalName ??= xe.LocalName;
-                                        }
-                                        sb.Append(cn.StringValue);
-                                    }
-                                }
-                            }
-                            catch (System.Xml.XmlException)
-                            {
-                                // Malformed content (e.g. raw text). Empty document; the
-                                // failure will surface elsewhere if it matters.
-                            }
-                        }
-                        var docNode = new XdmDocument
-                        {
-                            Id = docId,
-                            Document = new DocumentId(1),
-                            Parent = NodeId.None,
-                            DocumentElement = docElementId,
-                            Children = docChildren,
-                            DocumentElementLocalName = docElemLocalName,
-                            _stringValue = sb.ToString(),
-                        };
-                        // Carry the variable's base URI so base-uri()/document()/relative-URI
-                        // resolution inside the temp tree works (mirrors the as="item()*" sibling
-                        // above). Without it the document-node temp tree had a null base URI.
-                        docNode.BaseUri = globalBaseUri;
-                        context._nodeStore.Register(docNode);
-                        context.GlobalVariables[global.Name] = docNode;
-                    }
-                    else
-                    {
-                        // An executing-but-empty body (e.g. an xsl:if with a false test, or an
-                        // xsl:for-each over an empty sequence) produces no content. For a declared
-                        // type that permits the empty sequence (?, *) the value is the EMPTY
-                        // SEQUENCE — NOT an empty string. Binding "" here made a value comparison
-                        // against the variable atomize it as xs:string: XSpec's x:saxon-version
-                        // (as="xs:integer?", empty for a non-Saxon processor) raised a spurious
-                        // XPTY0004 on `$x:saxon-version lt x:pack-version((11,0))`. Mirrors the
-                        // local-variable guard (see BindVariableAsync).
-                        if (content.Length == 0
-                            && global.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
-                        {
-                            context.GlobalVariables[global.Name] = null;
-                        }
-                        // For global xsl:variable with as="atomic-type" body, coerce the body's
-                        // text content to the declared type. Without this, the variable was
-                        // bound to the raw STRING (e.g. "2147483647") and downstream comparisons
-                        // like `$depth gt 1` failed with XPTY0004 ("Cannot compare xs:string with
-                        // numeric type"). Found in Docbook xslTNG `vp:section-toc-depth`
-                        // (as="xs:integer" with xsl:choose+xsl:sequence body) — minimal repro:
-                        // `<xsl:variable as="xs:integer"><xsl:sequence select="2147483647"/></xsl:variable>`.
-                        else if (DefaultXsltExecutionContext.IsCastableAtomicTypePublic(global.As.ItemType)
-                            && !content.Contains('<', StringComparison.Ordinal))
-                        {
-                            // Cast the body's text value to the declared atomic type via the
-                            // canonical caster (covers untypedAtomic/anyURI/G*/date-time/duration
-                            // that the narrower TryCoerceStringToType/IsStrictAtomicType gate missed,
-                            // so `instance of xs:TYPE` now holds — attr/as-0105, as-0111).
-                            object? coerced;
-                            try { coerced = PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(content, global.As.ItemType); }
-                            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
-                            { _ = ex; coerced = null; }
-                            context.GlobalVariables[global.Name] = coerced ?? (object)content;
-                        }
-                        else
-                        {
-                            context.GlobalVariables[global.Name] = content.Contains('<', StringComparison.Ordinal)
-                                ? new ResultTreeFragment(content)
-                                : (object)content;
-                        }
-                    }
+                    await BindGlobalFromContentAsync(context, global, outputBuilder,
+                        XsltTransformEngine.UriString(_stylesheet.BaseUri)).ConfigureAwait(false);
                 }
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
@@ -3948,22 +3820,19 @@ public sealed class XsltTransformEngine
             }
             else if (global.Content != null)
             {
-                // For content-based globals, just evaluate the content as an RTF
+                // Same binding rules as the eager pass — see BindGlobalFromContentAsync. This
+                // used to store the serialized content as a raw xs:string, ignoring `as`, so a
+                // global reached lazily bound a string where the eager pass bound a document
+                // node. Which pass reached it depended on whether the dependency analysis had
+                // spotted the reference, making the TYPE of a variable depend on how another
+                // expression happened to name it.
                 context._globalsBeingEvaluated.Add(global.Name);
                 try
                 {
-                    var savedLen = outputBuilder.Length;
-                    await global.Content.ExecuteAsync(context).ConfigureAwait(false);
-                    var content = outputBuilder.ToString(savedLen, outputBuilder.Length - savedLen);
-                    outputBuilder.Length = savedLen;
-                    // An empty body binds the empty sequence for a type that permits it (?, *) —
-                    // not "". See the main global-binding path for the XSpec x:saxon-version case.
-                    context.GlobalVariables[global.Name] = content.Length > 0
-                        ? content
-                        : (global.As != null
-                            && global.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore
-                                ? null
-                                : (object)"");
+                    // No principal-stylesheet fallback here: the lazy pass is static and the
+                    // global's own BaseUri (used first inside) is what mattered before.
+                    await BindGlobalFromContentAsync(context, global, outputBuilder, null)
+                        .ConfigureAwait(false);
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
             }
@@ -3993,6 +3862,159 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// Adds transitive dependencies from function calls to the dependency set.
     /// </summary>
+    /// <summary>
+    /// Binds a global variable/parameter whose value comes from a CONTENT sequence constructor,
+    /// honouring its declared <c>as</c> type.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the eager dependency-ordered pass and the lazy on-demand pass. It was not:
+    /// the lazy path had its own two-line version that stored the serialized content as a raw
+    /// xs:string and ignored <c>as</c> entirely. So the SAME declaration bound a document node
+    /// or a string depending only on which pass happened to reach it first.
+    ///
+    /// The eager path already carried a fix for exactly this, from Martin Honnen's DocBook
+    /// report — "falling through to the RTF/string path produced an xs:string, which then
+    /// failed axis-step evaluation with XPTY0020". That fix was applied to one of the two
+    /// paths. XSpec then hit the other one, with the same error code, on 20 suites.
+    /// </remarks>
+    private static async ValueTask BindGlobalFromContentAsync(
+        DefaultXsltExecutionContext context, GlobalDeclaration global, StringBuilder outputBuilder,
+        string? stylesheetBaseUri)
+    {
+        if (global.Content == null)
+            return;
+                var savedLen = outputBuilder.Length;
+                await global.Content.ExecuteAsync(context).ConfigureAwait(false);
+                var content = outputBuilder.ToString(savedLen, outputBuilder.Length - savedLen);
+                outputBuilder.Length = savedLen;
+                var globalBaseUri = XsltTransformEngine.UriString(global.BaseUri) ?? stylesheetBaseUri;
+                // XSLT 2.0: variables with content and no 'as' always create a temporary tree
+                if (global.As == null)
+                    context.GlobalVariables[global.Name] = new ResultTreeFragment(content, globalBaseUri);
+                else if (context._nodeStore != null
+                    && global.As.ItemType is ItemType.Text or ItemType.Node
+                    && !content.Contains('<', StringComparison.Ordinal))
+                {
+                    // as="text()" or as="node()": create proper XDM text node
+                    var textId = context._nodeStore.NextId();
+                    context.GlobalVariables[global.Name] = new Xdm.Nodes.XdmText
+                    {
+                        Id = textId,
+                        Document = DocumentId.None,
+                        Parent = NodeId.None,
+                        Value = content
+                    };
+                }
+                else if (context._nodeStore != null && global.As.ItemType == ItemType.Document)
+                {
+                    // as="document-node()": parse content into a proper XdmDocument so
+                    // downstream `/` and `*` axis steps work. Falling through to the RTF/string
+                    // path produced an xs:string "" for empty content, which then failed
+                    // axis-step evaluation with XPTY0020 (Martin Honnen's Docbook TNG
+                    // $v:templates → fp:construct-templates path).
+                    var docId = context._nodeStore.NextId();
+                    var docChildren = new List<NodeId>();
+                    NodeId docElementId = NodeId.None;
+                    string? docElemLocalName = null;
+                    var sb = new StringBuilder();
+                    if (content.Length > 0)
+                    {
+                        try
+                        {
+                            var settings = new System.Xml.XmlReaderSettings
+                            {
+                                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                                IgnoreWhitespace = false,
+                                IgnoreComments = false,
+                                IgnoreProcessingInstructions = false,
+                            };
+                            using var sr = new System.IO.StringReader($"<_doc_root_>{content}</_doc_root_>");
+                            using var rdr = System.Xml.XmlReader.Create(sr, settings);
+                            var children = new List<object?>();
+                            context.ReadAsBodyChunkChildren(rdr, children);
+                            foreach (var item in children)
+                            {
+                                if (item is XdmNode cn)
+                                {
+                                    cn.Parent = docId;
+                                    docChildren.Add(cn.Id);
+                                    if (cn is XdmElement xe)
+                                    {
+                                        if (docElementId == NodeId.None)
+                                            docElementId = cn.Id;
+                                        docElemLocalName ??= xe.LocalName;
+                                    }
+                                    sb.Append(cn.StringValue);
+                                }
+                            }
+                        }
+                        catch (System.Xml.XmlException)
+                        {
+                            // Malformed content (e.g. raw text). Empty document; the
+                            // failure will surface elsewhere if it matters.
+                        }
+                    }
+                    var docNode = new XdmDocument
+                    {
+                        Id = docId,
+                        Document = new DocumentId(1),
+                        Parent = NodeId.None,
+                        DocumentElement = docElementId,
+                        Children = docChildren,
+                        DocumentElementLocalName = docElemLocalName,
+                        _stringValue = sb.ToString(),
+                    };
+                    // Carry the variable's base URI so base-uri()/document()/relative-URI
+                    // resolution inside the temp tree works (mirrors the as="item()*" sibling
+                    // above). Without it the document-node temp tree had a null base URI.
+                    docNode.BaseUri = globalBaseUri;
+                    context._nodeStore.Register(docNode);
+                    context.GlobalVariables[global.Name] = docNode;
+                }
+                else
+                {
+                    // An executing-but-empty body (e.g. an xsl:if with a false test, or an
+                    // xsl:for-each over an empty sequence) produces no content. For a declared
+                    // type that permits the empty sequence (?, *) the value is the EMPTY
+                    // SEQUENCE — NOT an empty string. Binding "" here made a value comparison
+                    // against the variable atomize it as xs:string: XSpec's x:saxon-version
+                    // (as="xs:integer?", empty for a non-Saxon processor) raised a spurious
+                    // XPTY0004 on `$x:saxon-version lt x:pack-version((11,0))`. Mirrors the
+                    // local-variable guard (see BindVariableAsync).
+                    if (content.Length == 0
+                        && global.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
+                    {
+                        context.GlobalVariables[global.Name] = null;
+                    }
+                    // For global xsl:variable with as="atomic-type" body, coerce the body's
+                    // text content to the declared type. Without this, the variable was
+                    // bound to the raw STRING (e.g. "2147483647") and downstream comparisons
+                    // like `$depth gt 1` failed with XPTY0004 ("Cannot compare xs:string with
+                    // numeric type"). Found in Docbook xslTNG `vp:section-toc-depth`
+                    // (as="xs:integer" with xsl:choose+xsl:sequence body) — minimal repro:
+                    // `<xsl:variable as="xs:integer"><xsl:sequence select="2147483647"/></xsl:variable>`.
+                    else if (DefaultXsltExecutionContext.IsCastableAtomicTypePublic(global.As.ItemType)
+                        && !content.Contains('<', StringComparison.Ordinal))
+                    {
+                        // Cast the body's text value to the declared atomic type via the
+                        // canonical caster (covers untypedAtomic/anyURI/G*/date-time/duration
+                        // that the narrower TryCoerceStringToType/IsStrictAtomicType gate missed,
+                        // so `instance of xs:TYPE` now holds — attr/as-0105, as-0111).
+                        object? coerced;
+                        try { coerced = PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(content, global.As.ItemType); }
+                        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+                        { _ = ex; coerced = null; }
+                        context.GlobalVariables[global.Name] = coerced ?? (object)content;
+                    }
+                    else
+                    {
+                        context.GlobalVariables[global.Name] = content.Contains('<', StringComparison.Ordinal)
+                            ? new ResultTreeFragment(content)
+                            : (object)content;
+                    }
+                }
+    }
+
     private static void AddTransitiveFunctionDependencies(
         HashSet<QName> functionRefs,
         Dictionary<QName, HashSet<QName>> functionDeps,
@@ -36982,5 +37004,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             _ => NamespaceId.None
         };
     }
+
+
 
 }
