@@ -1,5 +1,61 @@
 # Release History
 
+## 1.6.9 — 2026-08-26
+
+One engine fix from Martin Honnen's testing, and the error-reporting problems his transcript
+exposed alongside it.
+
+### `document-node(element(x:report))` matched nothing
+
+Reported by Martin Honnen: an XSpec report stylesheet fell through to the built-in rule and
+died with XTDE0555.
+
+A pattern's name test has its namespace URI resolved to an internal namespace ID by a pass
+over the pattern steps. That pass only looked at the step's node test when it *is* a name test
+— but a name test also lives one level INSIDE a kind test: `element(x:report)` keeps it in the
+kind test's name, `document-node(element(x:report))` in its document-element test. Those kept
+their URI with the resolved ID still null, and the matcher ends on
+
+    // This shouldn't happen if namespace resolution is working correctly
+    return false;
+
+which is why the template silently matched nothing rather than erroring. So the same name
+behaved differently one nesting level apart: `match="x:report"` matched and
+`match="element(x:report)"` did not. Martin's report surfaced the `element()` form too, which
+nobody had hit.
+
+Verified with negatives as well as positives — wrong namespace, wrong local name, and
+unprefixed-means-no-namespace all still correctly reject, because a fix that resolved nothing
+and matched everything would pass the positive tests alone.
+
+### The tool reported the error, then crash-dumped over it
+
+Martin's paste showed the shape of it:
+
+    Error: XTDE0555: No matching template found for node in mode with on-no-match='fail'
+    Unhandled exception. System.InvalidOperationException: XTDE0555: No matching template …
+       [11 stack frames]
+
+exiting 134. The CLI's top-level handler printed a clean error line and then rethrew, so .NET
+appended its unhandled-exception report. Every other handler there returns 2, and the XQuery
+one says why: "so users don't see a raw .NET stack trace for a spec-defined error".
+
+The rethrow was satisfying an analyzer rule that requires a catch-all to rethrow — wrong for a
+command-line tool, where reporting and returning a non-zero exit IS the handling.
+
+    now: XSLT error: XTDE0555: No matching template found …    exit 2
+
+### Every W3C error code is an XsltException
+
+Twelve sites threw spec-defined errors as bare `InvalidOperationException` — XTDE0555,
+XPDY0002, XTDE0980, XTTE1000, XTDE0030, XTTE0990, XTTE0510 — carrying no error code, no
+stylesheet location, missing the CLI's XSLT handler, and invisible to the accumulator's
+deferred-error handling, which keys off the type. All now carry both.
+
+    Xslt.Tests 1301 passed, 0 failed, 1 skipped (1289 at 1.6.8)
+    XSLT conformance 10232/10630 = 96.26%, unchanged
+    XSpec: the XTDE0555 bucket cleared (5 suites -> 0); those suites now progress further
+
 ## 1.6.8 — 2026-08-26
 
 Four engine fixes, two of them from Martin Honnen's XSpec testing, and a conformance harness
