@@ -215,6 +215,35 @@ Headline moved 96.66% -> 96.21% because 186 more real tests now run. Same trade 
 the runner's `_ => true` this morning: a lower number that is true beats a higher one that
 is not.
 
+### 17. Absent-focus handling works by accident — do not "fix" it
+Four sites read the XQuery context item as
+
+    try { node = context.ContextItem; } catch (InvalidOperationException) { /* absent focus */ }
+    node ??= _context.ContextItem;
+
+The catch is UNREACHABLE. `ExecutionContext` is an interface with two implementations and
+neither throws that type: `DefaultXsltExecutionContext.ContextItem` returns the `AbsentFocus`
+SENTINEL, and `QueryExecutionContext.ContextItem` throws `XQueryRuntimeException` (XPDY0002).
+
+Making the guard work breaks W3C `accumulator-061`, **both** ways it can be made to work:
+
+| attempted fix | effect |
+|---|---|
+| fold the `AbsentFocus` sentinel to null | `?? _context.ContextItem` fallback fires where it did not before |
+| catch `XQueryRuntimeException` instead | same, by a different route |
+
+Either way the accumulator is then read at a different node and the output duplicates. So the
+escaping XPDY0002 and the non-null sentinel are both **load bearing**: they exist to STOP the
+fallback. The dead catch was harmless precisely because it never fired.
+
+The misleading catches are removed (see `XQueryFocus.ItemOrNull`) so nobody reads them as
+working guards, but the behaviour is unchanged and deliberately so.
+
+**Before making absent focus explicit here, work out what the fallback is FOR** — it is
+reachable only when the XQuery focus is present, which is not what its `??=` shape suggests.
+Two attempts at tidying this produced a regression that the unit suite did not catch; only the
+conformance run did.
+
 ### 7. XSLT fixtures assert only `passed > 0`
 A test-set can fail 76 of 1026 cases and still report green. This is the SECOND layer of
 the same problem as `_ => true`: one meant assertions could not fail, the other means

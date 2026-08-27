@@ -30279,13 +30279,7 @@ internal sealed class XsltGenerateId0Function : PhoenixmlDb.XQuery.Ast.XQueryFun
     {
         // Use the XQuery execution context's context item (correct inside predicates)
         // rather than the XSLT context item which may be stale.
-        object? node = null;
-        try
-        { node = context.ContextItem; }
-#pragma warning disable CA1031 // ContextItem throws InvalidOperationException for absent focus
-        catch (InvalidOperationException) { /* XPDY0002 absent focus */ }
-#pragma warning restore CA1031
-        node ??= _context.ContextItem;
+        var node = XQueryFocus.ItemOrNull(context) ?? _context.ContextItem;
         if (node is null)
             return ValueTask.FromResult<object?>("");
         return ValueTask.FromResult<object?>($"d{node.GetHashCode():x}");
@@ -31026,13 +31020,9 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             // Guard: only when context is non-null (EvaluateKeyPattern passes null context)
             if (context != null)
             {
-                try
-                {
-                    var xqContextItem = context.ContextItem;
-                    if (xqContextItem is XdmNode xqNode && _context.FindDocumentForNode(xqNode) != null)
-                        contextItem = xqContextItem;
-                }
-                catch (InvalidOperationException) { /* absent focus */ }
+                if (XQueryFocus.ItemOrNull(context) is XdmNode xqNode
+                    && _context.FindDocumentForNode(xqNode) != null)
+                    contextItem = xqNode;
             }
 
             // XTDE1270: key() requires document-rooted nodes
@@ -32415,9 +32405,7 @@ internal sealed class XsltAccumulatorBeforeFunction : PhoenixmlDb.XQuery.Ast.XQu
         // Use XQuery context item (from path step) if available, fall back to XSLT context item.
         // The XQuery context is preferred because in path expressions like $v/w/accumulator-before('x'),
         // the XSLT context is the template match node, not the path step's current node.
-        object? node;
-        try { node = context.ContextItem; } catch (InvalidOperationException) { node = null; }
-        node ??= _context.ContextItem
+        var node = XQueryFocus.ItemOrNull(context) ?? _context.ContextItem
             ?? throw new XsltException("XTDE3340: accumulator-before() called with no context item");
 
         // Check if the accumulator is applicable in the current mode. When it is not, the
@@ -32465,9 +32453,7 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
         // Use XQuery context item (from path step) if available, fall back to XSLT context item.
         // The XQuery context is preferred because in path expressions like $v/w/accumulator-after('x'),
         // the XSLT context is the template match node, not the path step's current node.
-        object? node;
-        try { node = context.ContextItem; } catch (InvalidOperationException) { node = null; }
-        node ??= _context.ContextItem
+        var node = XQueryFocus.ItemOrNull(context) ?? _context.ContextItem
             ?? throw new XsltException("XTDE3340: accumulator-after() called with no context item");
 
         // Check if the accumulator is applicable in the current mode. When it is not, the
@@ -37030,3 +37016,48 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
 
 
 }
+/// <summary>
+/// The XQuery execution context's context item, or <c>null</c> when it cannot be read.
+/// </summary>
+/// <remarks>
+/// Four call sites hand-rolled this as
+/// <code>
+/// try { node = context.ContextItem; } catch (InvalidOperationException) { /* absent focus */ }
+/// node ??= _context.ContextItem;
+/// </code>
+/// which was wrong twice over. <c>ExecutionContext</c> is an INTERFACE with two
+/// implementations and NEITHER throws InvalidOperationException:
+/// <see cref="DefaultXsltExecutionContext"/> returns the
+/// <see cref="PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus"/> SENTINEL, and
+/// QueryExecutionContext throws <c>XQueryRuntimeException</c> (XPDY0002). So the catch was
+/// unreachable — and because the sentinel is NON-NULL, <c>??=</c> did not fall back either:
+/// the sentinel travelled on as if it were the context item.
+///
+/// This removes the misleading guards WITHOUT changing behaviour. Making them actually catch
+/// something — either by folding the sentinel to null or by catching the XQueryRuntimeException
+/// that is really thrown — breaks W3C accumulator-061 both ways. The absent-focus signal is
+/// load bearing as it stands; the four dead catches were harmless only because they never
+/// fired.
+/// </remarks>
+internal static class XQueryFocus
+{
+    internal static object? ItemOrNull(PhoenixmlDb.XQuery.Ast.ExecutionContext? context)
+    {
+        // No try/catch, deliberately. Two things were tried here and both changed behaviour:
+        //
+        //   folding the AbsentFocus sentinel to null   -> the callers' `?? _context.ContextItem`
+        //                                                 fallback fires where it did not before
+        //   catching XQueryRuntimeException (XPDY0002) -> same, by a different route
+        //
+        // Both broke W3C accumulator-061, which reads an accumulator at a node the fallback
+        // then changes. So the propagating XPDY0002 and the travelling sentinel are both load
+        // bearing, and the dead `catch (InvalidOperationException)` this replaces was harmless
+        // precisely BECAUSE it never fired.
+        //
+        // What is fixed here is only the lie: four sites claimed to handle absent focus and
+        // could not. Why the current behaviour is correct is worth understanding before anyone
+        // makes those guards work — see BUGS.md.
+        return context?.ContextItem;
+    }
+}
+
