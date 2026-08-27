@@ -1089,7 +1089,21 @@ public sealed class XsltTransformEngine
     /// into its own node store so XPath/xsl:evaluate inside the called function
     /// can navigate children, compute string-value, etc.
     /// </summary>
-    internal sealed record CrossStoreNodeRef(string Xml, bool IsElement);
+    /// <summary>
+    /// A node ferried out of the inner engine's store, as the serialized ROOT of its tree plus
+    /// the child-index path from that root down to the node itself.
+    /// </summary>
+    /// <remarks>
+    /// It used to carry the node's OWN serialization, which discards everything above it: a
+    /// &lt;book&gt; came back as the root of a fresh one-element document, so fn:path() reported
+    /// /Q{}book[1] for every result rather than /Q{}books[1]/Q{}book[1] and [2]. Reported by
+    /// Martin Honnen via sxq, an XQuery Schematron implementation, calling fn:transform with
+    /// delivery-format='raw'. Ancestors cannot survive a round-trip that never carried them.
+    ///
+    /// <see cref="ChildPath"/> is a chain of child indices, not an XPath: indices need no
+    /// namespace context at the far end and cannot be ambiguous.
+    /// </remarks>
+    internal sealed record CrossStoreNodeRef(string Xml, bool IsElement, int[]? ChildPath = null);
 
     /// <summary>
     /// Returns a copy of <paramref name="args"/> with any <see cref="CrossStoreNodeRef"/>
@@ -1120,6 +1134,14 @@ public sealed class XsltTransformEngine
         return translated;
     }
 
+    /// <summary>Child node ids of an element or document; empty for anything else.</summary>
+    private static IReadOnlyList<NodeId> ChildIdsOf(Xdm.Nodes.XdmNode node) => node switch
+    {
+        Xdm.Nodes.XdmElement e => e.Children,
+        Xdm.Nodes.XdmDocument d => d.Children,
+        _ => System.Array.Empty<NodeId>(),
+    };
+
     /// <summary>
     /// Wraps any <see cref="Xdm.Nodes.XdmElement"/> / <see cref="Xdm.Nodes.XdmDocument"/>
     /// items in <paramref name="value"/> as <see cref="CrossStoreNodeRef"/>s, serialized
@@ -1139,8 +1161,26 @@ public sealed class XsltTransformEngine
         if (value is Xdm.Nodes.XdmElement or Xdm.Nodes.XdmDocument)
         {
             var node = (Xdm.Nodes.XdmNode)value;
-            var xml = context.SerializeXdmNodeToXml(node);
-            return new CrossStoreNodeRef(xml, IsElement: node is Xdm.Nodes.XdmElement);
+            // Climb to the root, recording which child we came up through at each step, then
+            // serialize the ROOT. Serializing the node alone is what stripped its ancestors.
+            var path = new List<int>();
+            var current = node;
+            while (current.Parent is { } parentId
+                   && context._nodeStore?.GetNode(parentId) is Xdm.Nodes.XdmNode parent)
+            {
+                var kids = ChildIdsOf(parent);
+                var idx = -1;
+                for (var k = 0; k < kids.Count; k++)
+                {
+                    if (kids[k] == current.Id) { idx = k; break; }
+                }
+                if (idx < 0) break;   // detached mid-climb; keep what we have
+                path.Insert(0, idx);
+                current = parent;
+            }
+            var xml = context.SerializeXdmNodeToXml(current);
+            return new CrossStoreNodeRef(xml, IsElement: node is Xdm.Nodes.XdmElement,
+                ChildPath: path.Count > 0 ? path.ToArray() : null);
         }
         if (value is object?[] arr)
         {

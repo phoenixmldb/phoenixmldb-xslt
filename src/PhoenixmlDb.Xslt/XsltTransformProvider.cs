@@ -401,8 +401,12 @@ public sealed class XsltTransformProvider : ITransformProvider
     private static object? ReanchorCrossStoreResult(object? value, INodeBuilder? outerBuilder)
     {
         if (value is null || outerBuilder is null) return value;
+        // One parsed tree per DISTINCT root, shared across the whole result. Parsing per item
+        // would put two <book> siblings into two separate copies of their document, so
+        // $r[1]/.. is $r[2]/.. would be false and each would report itself as the only child.
+        var trees = new Dictionary<string, NodeId?>(StringComparer.Ordinal);
         if (value is Engine.XsltTransformEngine.CrossStoreNodeRef wrapped)
-            return ReanchorOne(wrapped, outerBuilder);
+            return ReanchorOne(wrapped, outerBuilder, trees);
         if (value is object?[] arr)
         {
             var anyWrapped = false;
@@ -415,7 +419,7 @@ public sealed class XsltTransformProvider : ITransformProvider
             for (var i = 0; i < arr.Length; i++)
             {
                 result[i] = arr[i] is Engine.XsltTransformEngine.CrossStoreNodeRef w
-                    ? ReanchorOne(w, outerBuilder)
+                    ? ReanchorOne(w, outerBuilder, trees)
                     : arr[i];
             }
             return result;
@@ -423,20 +427,51 @@ public sealed class XsltTransformProvider : ITransformProvider
         return value;
     }
 
-    private static object? ReanchorOne(Engine.XsltTransformEngine.CrossStoreNodeRef wrapped, INodeBuilder builder)
+    private static object? ReanchorOne(
+        Engine.XsltTransformEngine.CrossStoreNodeRef wrapped, INodeBuilder builder,
+        Dictionary<string, NodeId?> trees)
     {
         if (string.IsNullOrEmpty(wrapped.Xml)) return null;
+        var store = builder as INodeStore;
         try
         {
-            var doc = new System.Xml.XmlDocument { PreserveWhitespace = true };
-            doc.LoadXml(wrapped.Xml);
-            var localDoc = PhoenixmlDb.XQuery.Functions.ParseXmlFunction.ConvertToXdm(doc, builder);
-            if (wrapped.IsElement && localDoc.DocumentElement is { } rootId
-                && builder is INodeStore store && store.GetNode(rootId) is XdmElement rootElem)
+            // Wrapped.Xml is the serialized ROOT of the node's tree, not the node — so the
+            // ancestors survive the crossing. Parse it once per distinct root.
+            if (!trees.TryGetValue(wrapped.Xml, out var docId))
             {
-                return rootElem;
+                var doc = new System.Xml.XmlDocument { PreserveWhitespace = true };
+                doc.LoadXml(wrapped.Xml);
+                var parsed = PhoenixmlDb.XQuery.Functions.ParseXmlFunction.ConvertToXdm(doc, builder);
+                docId = parsed.Id;
+                trees[wrapped.Xml] = docId;
             }
-            return localDoc;
+            if (docId is not { } rootDocId || store?.GetNode(rootDocId) is not XdmDocument localDoc)
+                return null;
+
+            // No path means the node WAS the root — the pre-existing case.
+            if (wrapped.ChildPath is not { Length: > 0 } path)
+            {
+                if (wrapped.IsElement && localDoc.DocumentElement is { } rid
+                    && store.GetNode(rid) is XdmElement rootElem)
+                    return rootElem;
+                return localDoc;
+            }
+
+            // Walk the recorded child indices down from the document node.
+            object? current = localDoc;
+            foreach (var idx in path)
+            {
+                var kids = current switch
+                {
+                    XdmDocument d => d.Children,
+                    XdmElement e => e.Children,
+                    _ => null,
+                };
+                if (kids is null || idx < 0 || idx >= kids.Count) return null;
+                current = store.GetNode(kids[idx]);
+                if (current is null) return null;
+            }
+            return current;
         }
         catch (System.Xml.XmlException)
         {
