@@ -1,5 +1,52 @@
 # Release History
 
+## 1.6.10 — 2026-08-27
+
+Consumes PhoenixmlDb.XQuery 1.6.9, which carries the `format-dateTime(@untypedAttr, ...)` fix.
+
+### Nodes from `fn:transform` kept the node but lost its tree
+
+Reported by Martin Honnen via sxq, an XQuery implementation of Schematron. Nodes handed back
+with `delivery-format='raw'` arrived stripped of their ancestors:
+
+    fn:path()   was: /Q{}book[1]              /Q{}book[1]
+                now: /Q{}books[1]/Q{}book[1]  /Q{}books[1]/Q{}book[2]
+
+Both results claimed to be the root of their own tree — and, as he noticed, reported the SAME
+path, because each was. The cross-store transport carried only the node's own serialization,
+and re-anchoring reparsed that into a fresh document, so a `<book>` became a one-element tree
+by construction. It now carries the serialized ROOT plus a child-index chain down to the node.
+
+A second fault, independent and not in the report: re-anchoring ran per item, so two siblings
+were parsed into two separate copies of their document and would not have shared a parent.
+Each distinct root is now parsed once for the whole result, so `$r[1]/.. is $r[2]/..` holds.
+
+His diagnosis pointed at `xsl:evaluate`; that was innocent — `fn:transform` raw with a
+stylesheet function that merely selects nodes reproduces it identically.
+
+### `document-node(element(x:report))` matched nothing
+
+Also from Martin Honnen. A name test nested inside a kind test never had its namespace
+resolved, so the matcher's "this shouldn't happen" branch returned false and the template
+silently matched nothing. `element(x:report)` was broken the same way and unreported.
+
+### Errors report instead of crashing
+
+The CLI printed a clean error line and then rethrew, so .NET appended "Unhandled exception"
+and a stack trace on top, exiting 134. It now reports and exits 2. All twelve W3C error codes
+that were thrown as bare `InvalidOperationException` now carry an error code and a stylesheet
+location.
+
+### Absent-focus guards removed
+
+Four guards claimed to handle an absent focus and could not — they caught an exception type
+neither context implementation throws. Making them work breaks W3C `accumulator-061` both ways
+it can be attempted, so the escaping error and the sentinel are load bearing. The misleading
+code is gone and the behaviour is unchanged; see BUGS.md #17 before making them live.
+
+    Xslt.Tests 1310 passed, 0 failed, 1 skipped (1289 at 1.6.9)
+    XSLT conformance 10237/10630 = 96.30%
+
 ## 1.6.9 — 2026-08-26
 
 One engine fix from Martin Honnen's testing, and the error-reporting problems his transcript
