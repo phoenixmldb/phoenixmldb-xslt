@@ -170,7 +170,7 @@ public sealed class XsltTransformProvider : ITransformProvider
 
         // Create transformer and load stylesheet
         var transformer = new XsltTransformer();
-        var packageCatalog = SaxonVendorOptions.BuildPackageCatalog(options,
+        var packageCatalog = VendorOptionPackages.BuildCatalog(options,
             node => SerializeNode(node, nodeStore), baseUri);
         await transformer.LoadStylesheetAsync(stylesheetXml, baseUri, staticParams, packageCatalog).ConfigureAwait(false);
 

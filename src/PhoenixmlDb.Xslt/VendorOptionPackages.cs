@@ -3,8 +3,8 @@ using PhoenixmlDb.Core;
 namespace PhoenixmlDb.Xslt;
 
 /// <summary>
-/// Reads the one vendor option this engine understands: a Saxon configuration document
-/// declaring where XSLT packages live.
+/// Extracts XSLT package declarations from the <c>vendor-options</c> map of
+/// <c>fn:transform</c>.
 /// </summary>
 /// <remarks>
 /// XSpec declares package locations the only way Saxon offers — a configuration listing
@@ -19,16 +19,27 @@ namespace PhoenixmlDb.Xslt;
 /// in this engine. The first attempt at this fix patched the XQuery-side provider only, and the
 /// failing suites go through the XSLT side.
 ///
-/// Reading the format is not Saxon emulation: the engine already accepts a package catalog, and
-/// this is the only notation anyone writes one in. Unrecognised vendor options stay ignored.
+/// <para>
+/// <c>vendor-options</c> is the spec's own extension point (XPath and XQuery F&amp;O,
+/// <c>fn:transform</c>): a map of implementation-defined options keyed by QName. Nothing in it
+/// is standardised, so a reader has to recognise some concrete vocabulary. The one in use is
+/// Saxon's configuration element, because that is what stylesheets in the wild — XSpec among
+/// them — actually write. Recognising a vocabulary is not implementing that processor: the
+/// engine's own package catalog does the work, and options in any other vocabulary are ignored
+/// rather than rejected.
+/// </para>
 /// </remarks>
-internal static class SaxonVendorOptions
+internal static class VendorOptionPackages
 {
-    private const string ConfigNs = "http://saxon.sf.net/ns/configuration";
+    /// <summary>
+    /// The one package-declaration vocabulary recognised today. Add others beside it — the
+    /// method's contract is "find package declarations", not "read this namespace".
+    /// </summary>
+    private const string SaxonConfigurationNs = "http://saxon.sf.net/ns/configuration";
 
     /// <summary>
-    /// Builds a package catalog from a Saxon configuration in <paramref name="options"/>, or
-    /// <c>null</c> when there is none to read.
+    /// Builds a package catalog from any recognised package declarations in
+    /// <paramref name="options"/>, or <c>null</c> when there are none.
     /// </summary>
     /// <param name="options">The fn:transform options map.</param>
     /// <param name="serialize">Serializes a node to XML; the two callers differ in how.</param>
@@ -36,7 +47,7 @@ internal static class SaxonVendorOptions
     /// Used to resolve <c>@sourceLocation</c> when the configuration node carries no base URI.
     /// Locations are written relative to the CONFIG file, not to the stylesheet using the package.
     /// </param>
-    internal static Dictionary<string, List<(string? Version, string FilePath)>>? BuildPackageCatalog(
+    internal static Dictionary<string, List<(string? Version, string FilePath)>>? BuildCatalog(
         IDictionary<object, object?> options,
         Func<Xdm.Nodes.XdmNode, string> serialize,
         Uri? fallbackBaseUri)
@@ -71,7 +82,7 @@ internal static class SaxonVendorOptions
             ? cb
             : fallbackBaseUri;
 
-        System.Xml.Linq.XNamespace ns = ConfigNs;
+        System.Xml.Linq.XNamespace ns = SaxonConfigurationNs;
         Dictionary<string, List<(string? Version, string FilePath)>>? catalog = null;
         foreach (var pkg in doc.Descendants(ns + "package"))
         {

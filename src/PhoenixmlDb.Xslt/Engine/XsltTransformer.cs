@@ -36740,9 +36740,9 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var exprParser = new PhoenixmlDb.Xslt.XQueryExpressionParser();
         // A Saxon configuration in vendor-options declares where packages live; without it the
         // only catalog is the CALLING stylesheet's, which has none, so xsl:use-package in the
-        // transformed stylesheet raised XTDE3052. See SaxonVendorOptions — the XQuery-side
+        // transformed stylesheet raised XTDE3052. See VendorOptionPackages — the XQuery-side
         // provider reads the same option through the same helper.
-        var catalog2 = PhoenixmlDb.Xslt.SaxonVendorOptions.BuildPackageCatalog(
+        var catalog2 = PhoenixmlDb.Xslt.VendorOptionPackages.BuildCatalog(
                            options, n => _context.SerializeXdmNodeToXml(n), baseUri)
                        ?? _context._stylesheet.PackageCatalog;
         var parser = catalog2 != null
