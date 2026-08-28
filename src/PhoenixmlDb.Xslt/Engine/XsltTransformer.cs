@@ -6523,6 +6523,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         public List<int> Positions { get; } = [];
 
         /// <summary>
+        /// For each accumulator item, the output offset it consumed UP TO. Normally equal to
+        /// its <see cref="Positions"/> entry — the item contributed no serialized output.
+        /// </summary>
+        /// <remarks>
+        /// WriteTextItem deliberately writes text to BOTH the accumulator and _output inside a
+        /// function body, so text and literal result elements keep their source order when the
+        /// two are woven back together. The weave assumed they were disjoint: it inserted the
+        /// item at its recorded offset and then emitted the rest of the output, which re-emitted
+        /// the very same text. A template declared as="text()" returned TWO items — one
+        /// TextNodeItem and one String, identical content — and failed XTTE0505.
+        ///
+        /// Recording the end offset lets the weave skip the region an item already covers.
+        /// </remarks>
+        public List<int> ConsumedTo { get; } = [];
+
+        /// <summary>
         /// Depth of <c>_collectedAttributesStack</c> when this typed body began.
         /// </summary>
         /// <remarks>
@@ -8237,7 +8253,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // `as=` body's accumulator — not into some inner accumulator (e.g. an
         // xsl:variable's typed-sequence buffer) that just happens to be active.
         if (_currentAsBodyCapture is { } capture && ReferenceEquals(_sequenceAccumulator, capture.Accumulator))
-            capture.Positions.Add(_output.Length - capture.OutputBaseLen);
+        {
+            var offset = _output.Length - capture.OutputBaseLen;
+            capture.Positions.Add(offset);
+            capture.ConsumedTo.Add(offset);   // no output consumed unless the caller says so
+        }
         _sequenceAccumulator!.Add(item);
     }
 
@@ -8256,7 +8276,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// before non-attribute children, avoiding spurious XTDE0410. Reported by Martin Honnen
     /// against Schxslt2 1.10.3 transpile.xsl.
     /// </remarks>
-    private List<object?> AssembleAsBodyResultItems(string bodyOutput, List<object?> accumulatorItems, List<int> accumulatorPositions)
+    private List<object?> AssembleAsBodyResultItems(string bodyOutput, List<object?> accumulatorItems,
+        List<int> accumulatorPositions, List<int>? consumedTo = null)
     {
         var result = new List<object?>();
         var cursor = 0;
@@ -8275,6 +8296,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 cursor = position;
             }
             result.Add(item);
+            // An item that serialized its own text owns that region; skip past it so the
+            // trailing chunk below does not repeat it.
+            if (consumedTo is not null && i < consumedTo.Count && consumedTo[i] > cursor)
+                cursor = Math.Min(consumedTo[i], bodyOutput.Length);
         }
 
         if (cursor < bodyOutput.Length)
@@ -9811,7 +9836,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             // Reassemble in document order using recorded offsets — without
                             // this, a template body that writes an LRE before an xsl:sequence
                             // emits items in the wrong order at the parent constructor.
-                            var resultItems = AssembleAsBodyResultItems(bodyOutput, bodyCapture.Accumulator, bodyCapture.Positions);
+                            var resultItems = AssembleAsBodyResultItems(bodyOutput, bodyCapture.Accumulator, bodyCapture.Positions, bodyCapture.ConsumedTo);
 
                             // Track whether results are only from body serialization
                             // (no sequence accumulator items). When true, emit bodyOutput
@@ -11574,7 +11599,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
                     // Reassemble in document order: parse `bodyOutput` into top-level XDM nodes,
                     // then weave accumulator items in at the offsets recorded when each was added.
-                    var resultItems = AssembleAsBodyResultItems(bodyOutput, bodyCapture.Accumulator, bodyCapture.Positions);
+                    var resultItems = AssembleAsBodyResultItems(bodyOutput, bodyCapture.Accumulator, bodyCapture.Positions, bodyCapture.ConsumedTo);
                     // Track whether results are only from body serialization
                     // (no sequence accumulator items). When true, emit bodyOutput
                     // directly to preserve exact namespace declarations (e.g. xmlns=""
@@ -15562,6 +15587,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 _sink.Text(value);
                 emittedToOutput = true;
+                // This item now OWNS the text just written. Without this the weave emits the
+                // item and then the same text again as a trailing output chunk.
+                if (_currentAsBodyCapture is { } cap
+                    && ReferenceEquals(_sequenceAccumulator, cap.Accumulator)
+                    && cap.ConsumedTo.Count > 0)
+                {
+                    cap.ConsumedTo[^1] = _output.Length - cap.OutputBaseLen;
+                }
             }
         }
         else
