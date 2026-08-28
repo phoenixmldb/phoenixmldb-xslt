@@ -38,6 +38,23 @@ internal static class VendorOptionPackages
     private const string SaxonConfigurationNs = "http://saxon.sf.net/ns/configuration";
 
     /// <summary>
+    /// This engine's own vendor-option namespace. Package declarations here need no other
+    /// implementation's file format:
+    /// <code>
+    /// 'vendor-options': map {
+    ///     QName('http://phoenixml.dev/ns/vendor-options', 'packages'): map {
+    ///         'http://example.org/lib.xsl' : 'lib/library.xsl',
+    ///         'http://example.org/other'   : map { 'location': 'o.xsl', 'version': '2.0' }
+    ///     }
+    /// }
+    /// </code>
+    /// A map is the authoring form because vendor-options values are XDM items and a map can be
+    /// written inline in XPath; requiring a configuration DOCUMENT would force every author
+    /// through somebody else's schema to declare their own packages.
+    /// </summary>
+    internal const string PhoenixmlVendorNs = "http://phoenixml.dev/ns/vendor-options";
+
+    /// <summary>
     /// Builds a package catalog from any recognised package declarations in
     /// <paramref name="options"/>, or <c>null</c> when there are none.
     /// </summary>
@@ -56,16 +73,33 @@ internal static class VendorOptionPackages
             || raw is not IDictionary<object, object?> vendorOptions)
             return null;
 
+        Dictionary<string, List<(string? Version, string FilePath)>>? catalog = null;
+
+        // Native vocabulary first, so an author who is not using Saxon has a supported route.
+        foreach (var (key, value) in vendorOptions)
+        {
+            if (key is not QName nk
+                || !string.Equals(NamespaceOf(nk), PhoenixmlVendorNs, StringComparison.Ordinal)
+                || !string.Equals(nk.LocalName, "packages", StringComparison.Ordinal))
+                continue;
+            AddNativePackages(value, fallbackBaseUri, ref catalog);
+        }
+
+        // Then Saxon's configuration element, matched on its FULL name. Matching bare
+        // local-name "configuration" would have claimed any other vendor's option that
+        // happened to share it, which is the opposite of leaving other vocabularies alone.
         object? configValue = null;
         foreach (var (key, value) in vendorOptions)
         {
-            if (key is QName qn && qn.LocalName == "configuration")
+            if (key is QName qn
+                && string.Equals(NamespaceOf(qn), SaxonConfigurationNs, StringComparison.Ordinal)
+                && string.Equals(qn.LocalName, "configuration", StringComparison.Ordinal))
             { configValue = value; break; }
         }
         if (configValue is object?[] arr && arr.Length == 1)
             configValue = arr[0];
         if (configValue is not Xdm.Nodes.XdmNode configNode)
-            return null;
+            return catalog;
 
         System.Xml.Linq.XDocument doc;
         try
@@ -74,7 +108,7 @@ internal static class VendorOptionPackages
         }
         catch (System.Xml.XmlException)
         {
-            return null;   // unreadable; leave the catalog unset rather than guess
+            return catalog;   // unreadable; keep anything the native vocabulary supplied
         }
 
         var configBase = configNode.BaseUri is { Length: > 0 } b
@@ -83,7 +117,6 @@ internal static class VendorOptionPackages
             : fallbackBaseUri;
 
         System.Xml.Linq.XNamespace ns = SaxonConfigurationNs;
-        Dictionary<string, List<(string? Version, string FilePath)>>? catalog = null;
         foreach (var pkg in doc.Descendants(ns + "package"))
         {
             var name = pkg.Attribute("name")?.Value;
@@ -100,4 +133,60 @@ internal static class VendorOptionPackages
         }
         return catalog;
     }
+
+    /// <summary>
+    /// The namespace URI a QName key actually carries.
+    /// </summary>
+    /// <remarks>
+    /// <c>fn:QName(uri, local)</c> populates <c>RuntimeNamespace</c>, so <c>ResolvedNamespace</c>
+    /// is the property that holds the URI; <c>ExpandedNamespace</c> comes back EMPTY. Comparing
+    /// the wrong one silently matched nothing, so a correctly written vendor option looked
+    /// absent and the package stayed unresolved. XsltTransformProvider carries a note about the
+    /// same trap costing an initial-template lookup — worth reading before adding a third
+    /// QName comparison anywhere.
+    /// </remarks>
+    private static string NamespaceOf(QName q)
+        => !string.IsNullOrEmpty(q.ResolvedNamespace) ? q.ResolvedNamespace
+         : q.ExpandedNamespace ?? string.Empty;
+
+    /// <summary>
+    /// Reads the native <c>packages</c> map: package name -> location string, or -> a map with
+    /// <c>location</c> and optional <c>version</c>.
+    /// </summary>
+    private static void AddNativePackages(object? value, Uri? baseUri,
+        ref Dictionary<string, List<(string? Version, string FilePath)>>? catalog)
+    {
+        if (value is object?[] one && one.Length == 1) value = one[0];
+        if (value is not IDictionary<object, object?> map) return;
+
+        foreach (var (nameKey, spec) in map)
+        {
+            var name = nameKey as string ?? nameKey?.ToString();
+            if (string.IsNullOrEmpty(name)) continue;
+
+            string? location = null, version = null;
+            switch (spec)
+            {
+                case string sLoc:
+                    location = sLoc;
+                    break;
+                case IDictionary<object, object?> detail:
+                    detail.TryGetValue("location", out var l);
+                    detail.TryGetValue("version", out var v);
+                    location = l as string ?? l?.ToString();
+                    version = v as string ?? v?.ToString();
+                    break;
+            }
+            if (string.IsNullOrEmpty(location)) continue;
+
+            var resolved = baseUri != null && Uri.TryCreate(baseUri, location, out var abs)
+                ? abs.LocalPath
+                : location;
+            catalog ??= new Dictionary<string, List<(string? Version, string FilePath)>>(StringComparer.Ordinal);
+            if (!catalog.TryGetValue(name, out var list))
+                catalog[name] = list = [];
+            list.Add((version, resolved));
+        }
+    }
+
 }
