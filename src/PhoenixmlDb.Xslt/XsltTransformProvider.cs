@@ -170,7 +170,9 @@ public sealed class XsltTransformProvider : ITransformProvider
 
         // Create transformer and load stylesheet
         var transformer = new XsltTransformer();
-        await transformer.LoadStylesheetAsync(stylesheetXml, baseUri, staticParams).ConfigureAwait(false);
+        var packageCatalog = SaxonVendorOptions.BuildPackageCatalog(options,
+            node => SerializeNode(node, nodeStore), baseUri);
+        await transformer.LoadStylesheetAsync(stylesheetXml, baseUri, staticParams, packageCatalog).ConfigureAwait(false);
 
         // Set initial template / mode / function
         if (initialTemplateQName is { } tmplQName)
@@ -383,6 +385,7 @@ public sealed class XsltTransformProvider : ITransformProvider
             return StringValueOf(val);
         return null;
     }
+
 
     private static object? GetOption(IDictionary<object, object?> options, string key)
     {

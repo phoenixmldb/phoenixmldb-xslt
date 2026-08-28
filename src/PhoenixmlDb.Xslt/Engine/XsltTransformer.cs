@@ -36738,7 +36738,13 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // PreloadedResources so xsl:imports inside the dynamically-loaded
         // stylesheet also benefit from the host's pre-fetched cache (WASM).
         var exprParser = new PhoenixmlDb.Xslt.XQueryExpressionParser();
-        var catalog2 = _context._stylesheet.PackageCatalog;
+        // A Saxon configuration in vendor-options declares where packages live; without it the
+        // only catalog is the CALLING stylesheet's, which has none, so xsl:use-package in the
+        // transformed stylesheet raised XTDE3052. See SaxonVendorOptions — the XQuery-side
+        // provider reads the same option through the same helper.
+        var catalog2 = PhoenixmlDb.Xslt.SaxonVendorOptions.BuildPackageCatalog(
+                           options, n => _context.SerializeXdmNodeToXml(n), baseUri)
+                       ?? _context._stylesheet.PackageCatalog;
         var parser = catalog2 != null
             ? new StylesheetParser(exprParser, catalog2) { PreloadedResources = _context._options.PreloadedResources }
             : new StylesheetParser(exprParser) { PreloadedResources = _context._options.PreloadedResources };
