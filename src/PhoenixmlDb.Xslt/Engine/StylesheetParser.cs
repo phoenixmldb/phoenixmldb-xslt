@@ -12902,6 +12902,14 @@ public class XsltException : Exception
     public string? ErrorCode { get; }
 
     /// <summary>
+    /// True when this error was raised while eagerly initializing a global variable and was
+    /// deferred to the point of reference, as XSLT 3.0 §2.3.2 (Priming a Stylesheet) permits.
+    /// A deferred error must not be converted into "variable not bound" by the XQuery
+    /// variable fallback: the variable *is* bound, its initializer failed.
+    /// </summary>
+    public bool IsDeferredGlobalError { get; set; }
+
+    /// <summary>
     /// Reads a leading W3C error code — four uppercase letters, four digits, then a delimiter.
     /// Deliberately anchored: a code mentioned mid-sentence is prose, not this error's identity.
     /// </summary>

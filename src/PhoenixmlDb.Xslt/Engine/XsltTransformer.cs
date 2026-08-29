@@ -3317,6 +3317,44 @@ public sealed class XsltTransformEngine
     /// This ensures that if param $x references $y, then $y is initialized first.
     /// Also handles transitive dependencies through function calls.
     /// </summary>
+    /// <summary>
+    /// Decides whether an error raised while eagerly initializing a global variable may be
+    /// deferred to the point of reference.
+    /// </summary>
+    /// <remarks>
+    /// XSLT 3.0 §2.3.2 (Priming a Stylesheet) addresses this case directly: "If the
+    /// initialization of any global variables or parameter depends on the context item, a
+    /// dynamic error can occur if the context item is absent. It is implementation-defined
+    /// whether this error occurs during priming of the stylesheet or subsequently when the
+    /// variable is referenced; and it is implementation-defined whether the error occurs at
+    /// all if the variable or parameter is never referenced." Deferring is therefore a choice,
+    /// not a correction — but it is the choice Saxon makes, and real stylesheets rely on it.
+    /// Priming eagerly would otherwise turn an unevaluatable declaration in an
+    /// *imported* module into a fatal error for stylesheets that never reference it — the
+    /// common case being <c>&lt;xsl:variable select="/"/&gt;</c> in a module imported by a
+    /// stylesheet invoked with an initial template and no source document (XSpec's generated
+    /// test stylesheets import the stylesheet under test and run it via a named template).
+    /// Static errors are excluded: they are signalled whether or not the variable is used.
+    /// </remarks>
+    private static bool IsDeferrableGlobalError(Exception ex)
+    {
+        var code = ex switch
+        {
+            XsltException xe => xe.ErrorCode,
+            PhoenixmlDb.XQuery.Execution.XQueryRuntimeException qe => qe.ErrorCode,
+            _ => null,
+        };
+        if (string.IsNullOrEmpty(code))
+            return false;
+        // Circularity is detected by the dependency analysis rather than by evaluation, so
+        // deferring it would lose the diagnostic rather than postpone it.
+        if (code == "XTDE0640")
+            return false;
+        return !(code.StartsWith("XTSE", StringComparison.Ordinal)
+            || code.StartsWith("XPST", StringComparison.Ordinal)
+            || code.StartsWith("XQST", StringComparison.Ordinal));
+    }
+
     private async Task InitializeGlobalsInDependencyOrderAsync(
         DefaultXsltExecutionContext context,
         StringBuilder outputBuilder)
@@ -3739,6 +3777,21 @@ public sealed class XsltTransformEngine
                 else
                     context.GlobalVariables[global.Name] = "";
             }
+            }
+            catch (Exception ex) when (IsDeferrableGlobalError(ex))
+            {
+                // Bind the global to a value that re-raises this error if — and only if —
+                // something actually reads it. See IsDeferrableGlobalError. Without this the
+                // failure is fatal at load time; with the earlier "skip and continue" shape a
+                // later reference reported XPST0008 "not defined", naming the wrong problem.
+                if (ex is XsltException deferred)
+                    deferred.IsDeferredGlobalError = true;
+                var captured = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
+                context.GlobalVariables[global.Name] = new LazyValue(() =>
+                {
+                    captured.Throw();
+                    return ValueTask.FromResult<object?>(null);
+                });
             }
             finally
             {
@@ -14202,6 +14255,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 return (true, ConvertRtfForXQuery(value));
             }
             catch (XsltException ex) when (ex.ErrorCode != "XTDE0640"
+                && !ex.IsDeferredGlobalError
                 && !ex.Message.Contains("private to its package", StringComparison.Ordinal))
             {
                 return (false, null);
@@ -14222,6 +14276,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (privateGlobals.Count > 0
                 && privateGlobals.TryGetValue(name, out var owner)
                 && !ReferenceEquals(currentPkgForGlobals, owner))
+                continue;
+            // A global bound to a LazyValue is deferred: either an abstract-variable proxy
+            // (XTDE3052) or one whose eager initializer failed and must re-raise at the point of
+            // reference. ConvertRtfForXQuery passes LazyValue through untouched, so binding it
+            // here hands XQuery the wrapper as an *item* ("context item is not a node: got item
+            // of type LazyValue"). Leaving it unbound routes the reference through
+            // VariableFallback → GetVariable, which forces it and reports the real error.
+            if (value is LazyValue)
                 continue;
             execContext.BindVariable(name, ConvertRtfForXQuery(value));
         }
