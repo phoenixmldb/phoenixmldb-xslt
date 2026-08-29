@@ -303,9 +303,27 @@ try
         }
         // else: HTTP source already loaded into inputXml above
     }
-    else if (Console.IsInputRedirected)
+    // CA1508 claims `options.InitialTemplate == null` is always true here. It is not: the
+    // property is read at the top of this method to call SetInitialTemplate, and no branch
+    // between there and here returns on it. Verified empirically — with the condition in
+    // place both repros in /repos/phoenixml/hang-repro complete in under a second; without
+    // it they hang indefinitely. Suppressed rather than removed, because removing it
+    // reintroduces BUGS.md #18.
+#pragma warning disable CA1508
+    else if (Console.IsInputRedirected && options.InitialTemplate == null)
+#pragma warning restore CA1508
     {
-        // Read XML from stdin
+        // Read XML from stdin — but only when a source document is actually wanted.
+        //
+        // `Console.IsInputRedirected` is true for ANY non-terminal stdin, including a pipe
+        // inherited from a parent that never writes and never closes: a CI job, a script, an
+        // agent harness. Reading it there blocks forever with no output and no error. Two
+        // invocations were found alive at 0% CPU for 21 hours and 3 days 19 hours respectively
+        // (BUGS.md #18); a managed stack showed both parked in ConsoleStream.Read.
+        //
+        // When -it names a template the transform starts from that template and needs no
+        // source, so there is nothing to wait for. Piping input to an -it invocation is not
+        // meaningful, which is why this is a guard rather than a race.
         using var reader = new StreamReader(Console.OpenStandardInput());
         inputXml = await reader.ReadToEndAsync().ConfigureAwait(true);
         if (string.IsNullOrWhiteSpace(inputXml))
