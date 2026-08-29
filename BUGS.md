@@ -159,6 +159,53 @@ observable, and the current behaviour is the strict end of the latitude.
 
 ---
 
+### 18. The engine can hang instead of erroring — reproducible, cause not yet proven
+
+Found 2026-08-29 while auditing stray processes, not by any test. Two `xslt` CLI invocations
+were alive at 0% CPU having produced **zero bytes** of output — one for 21 hours, one for
+**3 days 19 hours**. Both blocked on `futex_wait_queue` with 8 threads.
+
+**It reproduces on the current build.** Inputs preserved at `/repos/phoenixml/hang-repro/`:
+
+```bash
+timeout 120 dotnet src/PhoenixmlDb.Xslt.Cli/bin/Debug/net10.0/xslt.dll \
+  /repos/phoenixml/hang-repro/efr.xsl -it '{http://www.jenitennison.com/xslt/xspec}main'
+# exit 124, 0 bytes out
+```
+
+`efr.xsl` is an XSpec-generated test stylesheet (~40 KB) invoked through its named `x:main`
+template with no source document. `frag.xsl` is a small unrelated case run with `-it go`, so
+this is not one exotic input — two different stylesheets reach the same state.
+
+**Why this matters more than a normal defect.** No suite can catch it. A hung test is
+indistinguishable from a slow one until something times out, and our conformance harness caps
+per-suite time and reports a timeout as its own bucket rather than as a hang. Both processes
+would have run indefinitely; one had been running for the better part of four days on a
+developer machine and nothing anywhere reported it.
+
+**Leading hypothesis, NOT established:** sync-over-async in the lazy variable path. There are
+seven sites blocking on `LazyValue.GetValueAsync()` from synchronous methods:
+
+```
+XsltTransformer.cs: 9107, 9144, 9220, 9236, 9353, 9364, 28016
+    lazy.GetValueAsync().AsTask().GetAwaiter().GetResult()
+```
+
+`GetVariable` and `TryGetVariable` are synchronous but force an async evaluation, and a
+`LazyValue` whose evaluator re-enters variable resolution would block a thread waiting on work
+that cannot proceed. The `futex_wait_queue` state is consistent with that. The XSpec repro runs
+through exactly this path — deferred globals, `VariableFallback`, forced `LazyValue`.
+
+**What would confirm or kill it:** a managed stack from the hung process. `dotnet-stack` 9.0.x
+could not attach to the .NET 10 runtime here (`ServerNotAvailableException`), so this is
+unproven. A matching-version `dotnet-stack` or `dotnet-dump` would settle it in one capture.
+Do not fix on the hypothesis alone — the seven call sites are load-bearing, and three separate
+attempts this session to "fix" plausible-looking guards in this file regressed W3C cases.
+
+**Also worth adding regardless of cause:** the CLI has no watchdog. A transform that cannot
+finish should fail loudly rather than wait forever.
+
+
 ## Open — harness
 
 ### 15. Diagnostics printed CLR type names instead of XQuery ones — FIXED 2026-08-25
