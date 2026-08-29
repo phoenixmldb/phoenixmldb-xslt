@@ -15404,12 +15404,31 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // (not the outer variable's sequence accumulator)
                 var savedCollectText2 = _collectTextAsSequenceItems;
                 _collectTextAsSequenceItems = false;
+                // ...and detach the accumulator itself, for the same reason. Only the text path
+                // was covered: xsl:sequence checks `_sequenceAccumulator != null` FIRST and
+                // appends there regardless of attribute-content depth, so
+                //
+                //     <xsl:attribute name="class">
+                //       <xsl:choose>…<xsl:sequence select="'failed'"/>…</xsl:choose>
+                //     </xsl:attribute>
+                //
+                // inside a typed template put "failed" into the caller's sequence and built the
+                // attribute EMPTY — two items where the template declared attribute(class), so
+                // XTTE0505 "expected exactly one item, got 2". Reported by Martin Honnen against
+                // XSpec's format-xspec-report.xsl, whose scenario-html-class-attribute is exactly
+                // this shape.
+                //
+                // The separator branch above already does this; this branch is the common case
+                // and did not. Same instruction, two branches, one of them right.
+                var savedAccumulator2 = _sequenceAccumulator;
+                _sequenceAccumulator = null;
                 try
                 {
                     await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
                 }
                 finally
                 {
+                    _sequenceAccumulator = savedAccumulator2;
                     _collectTextAsSequenceItems = savedCollectText2;
                     _attributeContentDepth--;
                     _textContentDepth--;

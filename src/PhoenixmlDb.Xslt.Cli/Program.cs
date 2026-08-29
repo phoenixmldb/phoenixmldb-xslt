@@ -8,6 +8,28 @@ if (options.ShowVersion)
 {
     var version = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
     Console.WriteLine($"xslt {version} (PhoenixmlDb XSLT 3.0/4.0)");
+
+    // Report the BUNDLED engines. The xquery tool had the mirror-image of this problem: it read
+    // 1.6.9 while embedding PhoenixmlDb.Xslt 1.6.6, so four releases of fixes were unreachable
+    // and nothing on screen said so — Martin Honnen had to infer it from a repro that kept
+    // failing against a version that supposedly contained the fix. A version identifies the
+    // package, not what it carries. This tool embeds PhoenixmlDb.XQuery and can drift the same
+    // way, so it prints both.
+    foreach (var (label, asm) in new[]
+             {
+                 ("PhoenixmlDb.Xslt", typeof(PhoenixmlDb.Xslt.XsltTransformer).Assembly),
+                 ("PhoenixmlDb.XQuery", typeof(PhoenixmlDb.XQuery.XQueryFacade).Assembly),
+                 ("PhoenixmlDb.Core", typeof(PhoenixmlDb.Core.QName).Assembly),
+             })
+    {
+        var v = asm.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                   .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+                   .FirstOrDefault()?.InformationalVersion
+                ?? asm.GetName().Version?.ToString(3)
+                ?? "unknown";
+        var plus = v.IndexOf('+', StringComparison.Ordinal);
+        Console.WriteLine($"  {label} {(plus >= 0 ? v[..plus] : v)}");
+    }
     return 0;
 }
 
