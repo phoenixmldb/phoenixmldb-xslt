@@ -159,51 +159,61 @@ observable, and the current behaviour is the strict end of the latitude.
 
 ---
 
-### 18. The engine can hang instead of erroring — reproducible, cause not yet proven
+### 18. `xslt` CLI blocks forever on stdin when given `-it` and no source document
 
 Found 2026-08-29 while auditing stray processes, not by any test. Two `xslt` CLI invocations
 were alive at 0% CPU having produced **zero bytes** of output — one for 21 hours, one for
-**3 days 19 hours**. Both blocked on `futex_wait_queue` with 8 threads.
+**3 days 19 hours**.
 
-**It reproduces on the current build.** Inputs preserved at `/repos/phoenixml/hang-repro/`:
+**Cause, from a managed stack** (`dotnet-stack report -p <pid>`):
+
+```
+Thread (0x225235):
+  System.Console!Interop+Sys.Read(...)
+  System.Console!System.ConsolePal.Read(...)
+  System.Console!System.IO.ConsoleStream.Read(...)
+  System.Private.CoreLib!System.IO.Stream+<>c.<BeginReadInternal>b__41_0(...)
+
+Thread (0x225228):
+  ...TaskAwaiter`1[System.Int32].GetResult()
+  xslt!Program.<Main>(class System.String[])
+```
+
+The CLI is reading standard input; `Main` is simply awaiting it. When a named template is
+invoked with `-it` and no source document is supplied, the CLI still tries to read a source
+from stdin. Under an interactive terminal that surfaces as an apparent freeze; under a script,
+CI job, or agent harness where stdin is an inherited pipe that never reaches EOF, it blocks
+forever.
+
+**Proof:** the identical commands with stdin closed complete immediately and correctly.
 
 ```bash
-timeout 120 dotnet src/PhoenixmlDb.Xslt.Cli/bin/Debug/net10.0/xslt.dll \
-  /repos/phoenixml/hang-repro/efr.xsl -it '{http://www.jenitennison.com/xslt/xspec}main'
-# exit 124, 0 bytes out
+X=src/PhoenixmlDb.Xslt.Cli/bin/Debug/net10.0/xslt.dll
+dotnet $X /repos/phoenixml/hang-repro/efr.xsl -it '{http://www.jenitennison.com/xslt/xspec}main'
+#   hangs indefinitely, 0 bytes
+dotnet $X /repos/phoenixml/hang-repro/efr.xsl -it '{http://www.jenitennison.com/xslt/xspec}main' < /dev/null
+#   exit 0, 6545 bytes of correct output
 ```
 
-`efr.xsl` is an XSpec-generated test stylesheet (~40 KB) invoked through its named `x:main`
-template with no source document. `frag.xsl` is a small unrelated case run with `-it go`, so
-this is not one exotic input — two different stylesheets reach the same state.
+Both preserved inputs behave identically (`efr.xsl`, an XSpec-generated stylesheet; `frag.xsl`,
+a small unrelated case). Inputs kept at `/repos/phoenixml/hang-repro/`.
 
-**Why this matters more than a normal defect.** No suite can catch it. A hung test is
-indistinguishable from a slow one until something times out, and our conformance harness caps
-per-suite time and reports a timeout as its own bucket rather than as a hang. Both processes
-would have run indefinitely; one had been running for the better part of four days on a
-developer machine and nothing anywhere reported it.
+**Fix:** when `-it` / `--initial-template` names a template and no input file is given, do not
+read stdin at all. More generally, only consume stdin when a source document is actually
+required and the user has not supplied one by path. A `--no-input` escape hatch would be
+belt-and-braces but should not be necessary.
 
-**Leading hypothesis, NOT established:** sync-over-async in the lazy variable path. There are
-seven sites blocking on `LazyValue.GetValueAsync()` from synchronous methods:
+**Secondary, worth doing anyway:** the CLI has no watchdog. A transform that cannot make
+progress should fail loudly rather than wait forever.
 
-```
-XsltTransformer.cs: 9107, 9144, 9220, 9236, 9353, 9364, 28016
-    lazy.GetValueAsync().AsTask().GetAwaiter().GetResult()
-```
-
-`GetVariable` and `TryGetVariable` are synchronous but force an async evaluation, and a
-`LazyValue` whose evaluator re-enters variable resolution would block a thread waiting on work
-that cannot proceed. The `futex_wait_queue` state is consistent with that. The XSpec repro runs
-through exactly this path — deferred globals, `VariableFallback`, forced `LazyValue`.
-
-**What would confirm or kill it:** a managed stack from the hung process. `dotnet-stack` 9.0.x
-could not attach to the .NET 10 runtime here (`ServerNotAvailableException`), so this is
-unproven. A matching-version `dotnet-stack` or `dotnet-dump` would settle it in one capture.
-Do not fix on the hypothesis alone — the seven call sites are load-bearing, and three separate
-attempts this session to "fix" plausible-looking guards in this file regressed W3C cases.
-
-**Also worth adding regardless of cause:** the CLI has no watchdog. A transform that cannot
-finish should fail loudly rather than wait forever.
+**Note on how this was diagnosed.** The first hypothesis recorded here was sync-over-async
+deadlock in the lazy variable path — there are seven sites calling
+`LazyValue.GetValueAsync().AsTask().GetAwaiter().GetResult()`, and `futex_wait_queue` was
+consistent with it. That was wrong. It was also wrong that `dotnet-stack` could not attach to a
+.NET 10 runtime: the diagnostics tools version independently of the runtime and 9.0.x attaches
+fine. The real failure was selecting a pid with `pgrep -f <script-name> | head -1`, which
+returns the **bash wrapper**, not the `dotnet` process. Target the process whose `comm` is
+`dotnet`. One correct stack replaced two confident wrong answers.
 
 
 ## Open — harness
