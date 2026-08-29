@@ -1,5 +1,72 @@
 # Release History
 
+## 1.6.11 — 2026-08-29
+
+### `xsl:attribute` content leaked into the caller's sequence
+
+Reported by Martin Honnen against XSpec's `format-xspec-report.xsl`:
+
+    XTTE0505: Template 'scenario-html-class-attribute' return value does not match
+              declared type Attribute: expected exactly one item, got 2
+
+His objection was the right one — a template whose body is a single `xsl:attribute` cannot
+express two items, so the second had to come from the engine. It did: the attribute's VALUE was
+landing in the caller's result sequence while the attribute node itself was built empty.
+
+`xsl:attribute` has two branches. The one taken when `separator` is present isolates the
+enclosing sequence; the common no-separator branch did not — and `xsl:sequence` checks for an
+active sequence accumulator *before* any attribute-content check. So
+
+    <xsl:attribute name="class">
+      <xsl:choose>…<xsl:sequence select="'failed'"/>…</xsl:choose>
+    </xsl:attribute>
+
+inside a typed template appended `"failed"` to the caller. Verified against his actual
+stylesheet: it now emits complete HTML with the correct `class` values.
+
+### Both CLIs report the engines they bundle
+
+`xquery --version` read 1.6.9 while embedding `PhoenixmlDb.Xslt` **1.6.6**, so four releases of
+XSLT fixes were unreachable from the command line and nothing on screen said so. Martin had to
+infer it from a repro that kept failing against a version that supposedly contained the fix.
+
+    xslt 1.6.11 (PhoenixmlDb XSLT 3.0/4.0)
+      PhoenixmlDb.Xslt 1.6.11
+      PhoenixmlDb.XQuery 1.6.10
+      PhoenixmlDb.Core 1.6.7
+
+A version identifies the package, not what it carries. Printing it surfaced live drift on the
+first run, which this release also clears (the XQuery pin moves 1.6.9 → 1.6.10).
+
+### Package locations without another vendor's file format
+
+`fn:transform` could only learn package locations from a Saxon configuration document, which
+made another implementation's format a de facto dependency for `xsl:use-package`. There is now
+a native vocabulary:
+
+    'vendor-options': map {
+        QName('http://phoenixml.dev/ns/vendor-options', 'packages'): map {
+            'http://example.org/lib.xsl' : 'lib/library.xsl',
+            'http://example.org/other'   : map { 'location': 'o.xsl', 'version': '2.0' }
+        }
+    }
+
+Saxon's vocabulary is still read so existing stylesheets keep working, but it is now one
+recognised vocabulary rather than the only door. Options in other vocabularies are ignored
+rather than claimed — the first cut matched a bare local name `configuration` in any namespace,
+which would have seized a foreign vendor's option and could mask a real one.
+
+### Typed template bodies no longer double-count their own text
+
+Text written inside a stylesheet function went to both the sequence accumulator and the output
+buffer, and the pass that recombines them assumed they were disjoint — so a template declared
+`as="text()"` returned two items with identical content. Two XSpec suites went from erroring at
+the Run stage to completing.
+
+    Xslt.Tests 1315 passed, 0 failed, 1 skipped (1310 at 1.6.10)
+    XSLT conformance 10237/10630 = 96.30%
+    XSpec: 62 of 284 suites complete end to end
+
 ## 1.6.10 — 2026-08-27
 
 Consumes PhoenixmlDb.XQuery 1.6.9, which carries the `format-dateTime(@untypedAttr, ...)` fix.
