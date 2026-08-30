@@ -38,6 +38,25 @@ internal static class VendorOptionPackages
     private const string SaxonConfigurationNs = "http://saxon.sf.net/ns/configuration";
 
     /// <summary>
+    /// The namespace of the vendor-options map KEY, which is NOT the namespace of the
+    /// configuration document element.
+    /// </summary>
+    /// <remarks>
+    /// Saxon has two namespaces in play and they are easy to conflate. The configuration
+    /// document is in <c>http://saxon.sf.net/ns/configuration</c>; the extension namespace used
+    /// for QNames in stylesheets - <c>saxon:threads</c>, and the vendor-options key - is the
+    /// bare <c>http://saxon.sf.net/</c>. XSpec writes
+    /// <c>QName('http://saxon.sf.net/', 'configuration')</c> as the key and puts the config
+    /// document in the value.
+    ///
+    /// Matching the key against the CONFIGURATION namespace found nothing, so the whole option
+    /// was skipped and five XSpec package suites still raised XTDE3052 after the rest of this
+    /// class was written. The document-side parsing below was right all along; only the lookup
+    /// that reaches it was wrong.
+    /// </remarks>
+    private const string SaxonExtensionNs = "http://saxon.sf.net/";
+
+    /// <summary>
     /// This engine's own vendor-option namespace. Package declarations here need no other
     /// implementation's file format:
     /// <code>
@@ -91,9 +110,15 @@ internal static class VendorOptionPackages
         object? configValue = null;
         foreach (var (key, value) in vendorOptions)
         {
+            // Both Saxon-owned namespaces are accepted: the extension namespace is what
+            // Saxon and XSpec actually write, the configuration namespace is taken too because
+            // a producer that reached for the document's own namespace is unambiguously still
+            // naming Saxon's option. Neither can collide with another vendor.
             if (key is QName qn
-                && string.Equals(NamespaceOf(qn), SaxonConfigurationNs, StringComparison.Ordinal)
-                && string.Equals(qn.LocalName, "configuration", StringComparison.Ordinal))
+                && string.Equals(qn.LocalName, "configuration", StringComparison.Ordinal)
+                && NamespaceOf(qn) is var kns
+                && (string.Equals(kns, SaxonExtensionNs, StringComparison.Ordinal)
+                    || string.Equals(kns, SaxonConfigurationNs, StringComparison.Ordinal)))
             { configValue = value; break; }
         }
         if (configValue is object?[] arr && arr.Length == 1)
