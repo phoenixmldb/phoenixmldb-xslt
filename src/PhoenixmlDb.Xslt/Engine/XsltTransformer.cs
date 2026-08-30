@@ -3762,8 +3762,14 @@ public sealed class XsltTransformEngine
                 // construction (Docbook TNG `$v:user-title-groups` → `$v:title-groups`
                 // got an extra empty-string item, then iterate failed XPTY0020 trying
                 // to navigate `@xpath` on the string).
+                  // Occurrence.Zero is empty-sequence(): binding ANY item to it is a type error by
+                  // definition, so the empty sequence is the only correct value. It fell through to
+                  // the empty-string default below, which made <xsl:variable as="empty-sequence()"/>
+                  // hold one item. XSpec declares $x:saxon-config exactly that way and guards on
+                  // `=> exists()`, so 47 of its suites terminated on a bogus Saxon-config error.
                 if (global.As != null
-                    && (global.As.Occurrence == Occurrence.ZeroOrOne
+                    && (global.As.Occurrence == Occurrence.Zero
+                        || global.As.Occurrence == Occurrence.ZeroOrOne
                         || global.As.Occurrence == Occurrence.ZeroOrMore))
                     context.GlobalVariables[global.Name] = null;
                 else if (global.IsParam && global.As != null
@@ -3931,9 +3937,14 @@ public sealed class XsltTransformEngine
             }
             else
             {
-                // Default: empty string for params, empty string for variables
-                if (global.IsParam && global.As != null
-                    && (global.As.Occurrence == Occurrence.ZeroOrOne
+                // A declared type that permits or requires emptiness takes the empty sequence,
+                // not the empty string. Two faults here: Occurrence.Zero (empty-sequence()) was
+                // not covered at all, and the whole branch was restricted to params - a VARIABLE
+                // declared as="empty-sequence()" or as="item()?" needs it just as much, since the
+                // empty string is one item and satisfies neither type.
+                if (global.As != null
+                    && (global.As.Occurrence == Occurrence.Zero
+                        || global.As.Occurrence == Occurrence.ZeroOrOne
                         || global.As.Occurrence == Occurrence.ZeroOrMore))
                     context.GlobalVariables[global.Name] = null;
                 else
