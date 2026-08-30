@@ -112,4 +112,52 @@ public class CopyNamespaceUndeclarationTests
             """, Doc);
         result.Should().Contain("<out>[http://example.org/outer]</out>");
     }
+
+    /// <summary>
+    /// The node model must RECORD the undeclaration, not just avoid inheriting it at copy time.
+    /// ConvertXmlNode captures namespaces via GetNamespacesInScope, which reports bindings — and
+    /// an undeclared default namespace is the absence of one, so xmlns="" was simply omitted and
+    /// left no trace. Every consumer that walks ancestors for the nearest default then found the
+    /// one this element had explicitly undeclared.
+    ///
+    /// namespace-uri() was right throughout (it reads the element's own NamespaceURI), so the
+    /// model disagreed with itself and only the namespace-SET consumers were wrong.
+    /// </summary>
+    [Fact]
+    public async Task InScopePrefixes_OmitsADefaultNamespaceThatWasUndeclared()
+    {
+        var result = await Run("""
+            <xsl:template match="/">
+              <out>[<xsl:value-of select="//*[local-name()='undeclared'] => in-scope-prefixes() => sort()" separator="|"/>]</out>
+            </xsl:template>
+            """, Doc);
+        result.Should().Contain("<out>[xml]</out>", "the default namespace was undeclared on this element");
+    }
+
+    [Fact]
+    public async Task NamespaceAxis_OmitsADefaultNamespaceThatWasUndeclared()
+    {
+        var result = await Run("""
+            <xsl:template match="/">
+              <out><xsl:for-each select="//*[local-name()='undeclared']/namespace::*">[<xsl:value-of select="name()"/>]</xsl:for-each></out>
+            </xsl:template>
+            """, Doc);
+        result.Should().Contain("<out>[xml]</out>");
+    }
+
+    /// <summary>
+    /// The sibling that must keep inheriting: `param` is genuinely in the enclosing namespace,
+    /// so its default binding stays in scope. A fix that dropped "" everywhere would pass the
+    /// two tests above and break this one.
+    /// </summary>
+    [Fact]
+    public async Task InScopePrefixes_StillReportsAnInheritedDefaultNamespace()
+    {
+        var result = await Run("""
+            <xsl:template match="/">
+              <out>[<xsl:value-of select="//*[local-name()='param'] => in-scope-prefixes() => sort()" separator="|"/>]</out>
+            </xsl:template>
+            """, Doc);
+        result.Should().Contain("<out>[|xml]</out>", "param inherits the default namespace, so the empty prefix IS in scope");
+    }
 }

@@ -5149,6 +5149,30 @@ public sealed class XsltTransformEngine
                         nsDecls.Add(new NamespaceBinding(kvp.Key, store.InternNamespace(kvp.Value)));
                         seenPrefixes.Add(kvp.Key);
                     }
+
+                    // GetNamespacesInScope reports BINDINGS, and an undeclared default namespace
+                    // is the absence of one — so xmlns="" is simply omitted and left no trace in
+                    // the node model. Every consumer that walks ancestors looking for the
+                    // nearest default then found the one this element had explicitly undeclared:
+                    //
+                    //   <outer xmlns="urn:o"><undeclared xmlns=""/></outer>
+                    //   in-scope-prefixes($undeclared)  ->  ("xml", "")   should be ("xml")
+                    //   $undeclared/namespace::*        ->  [=urn:o]      should be xml only
+                    //
+                    // namespace-uri() was right the whole time (it reads the element's own
+                    // NamespaceURI), so the model disagreed with itself and only the
+                    // namespace-set consumers were wrong.
+                    //
+                    // Recording it explicitly gives GatherInScopeNamespaces the ("", None) entry
+                    // it already knows how to honour — it marks "" undeclared and stops
+                    // inheriting. Keyed off the literal attribute, so documents that never
+                    // undeclare anything are untouched.
+                    if (!seenPrefixes.Contains("") && xmlElem.HasAttribute("xmlns")
+                        && xmlElem.GetAttribute("xmlns").Length == 0)
+                    {
+                        nsDecls.Add(new NamespaceBinding("", NamespaceId.None));
+                        seenPrefixes.Add("");
+                    }
                 }
                 else if (xmlNode.Attributes != null)
                 {
