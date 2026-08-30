@@ -1,5 +1,63 @@
 # Release History
 
+## 1.6.12 - 2026-08-29
+
+### A global variable nobody reads could fail the whole transform
+
+Found while working through the XSpec suites, following the thread Martin Honnen started.
+
+The engine primed a stylesheet by initializing every global variable eagerly, before running
+anything. If a global's initializer needed a context item and there wasn't one, that error was
+fatal. It stayed fatal even when nothing in the stylesheet ever read the variable.
+
+The shape that bites in practice is a stylesheet invoked through a named template with no source
+document, importing a module that happens to declare something like:
+
+    <xsl:variable name="initial-document" as="document-node()" select="/"/>
+
+The importing stylesheet never touches that variable. Priming does, and the transform dies
+before doing any work. That is exactly what XSpec generates, since its test stylesheet imports
+the stylesheet under test and runs it through `x:main`.
+
+XSLT 3.0 §2.3.2 addresses this case directly:
+
+> It is implementation-defined whether this error occurs during priming of the stylesheet or
+> subsequently when the variable is referenced; and it is implementation-defined whether the
+> error occurs at all if the variable or parameter is never referenced.
+
+So the old behaviour was a legal reading of the specification. It was not the reading Saxon
+takes, and real stylesheets are written against that one. We now defer: a failing initializer is
+captured rather than propagated, and the error is re-raised only if something actually reads the
+variable.
+
+Deferral covers dynamic errors only. Static errors and circularity still surface at priming,
+where they belong.
+
+Two smaller things fell out of the same work. The variable fallback used to rewrite a deferred
+error into "variable not bound", which named the wrong problem entirely and sent you looking in
+the wrong place. And a deferred global could reach the XQuery layer as an internal wrapper
+rather than a value, surfacing as "context item is not a node". That leak was already latent in
+the abstract-variable path.
+
+Across the 284 XSpec suites, the number reaching completion went from 62 to 66, and the
+`XPDY0002` bucket dropped from 6 suites to 1.
+
+### The `xslt` tool could hang forever instead of doing anything
+
+Two `xslt` processes were found alive at 0% CPU having produced no output at all. One had been
+running for 21 hours, the other for three days and nineteen hours.
+
+A managed stack showed both parked in a console read. When a named template is invoked with
+`-it` and no source document is supplied, the tool still tried to read a source from standard
+input. Under a terminal that looks like a freeze. Under a script, a CI job, or an agent harness
+where standard input is an inherited pipe that never reaches end-of-file, it waits forever.
+
+When `-it` names a template the transform starts from that template and needs no source, so
+there was never anything to wait for. The tool no longer reads standard input in that case.
+Piping a document to an invocation without `-it` works exactly as before.
+
+If you have ever had the tool appear to hang in automation, this was why.
+
 ## 1.6.11 — 2026-08-29
 
 ### `xsl:attribute` content leaked into the caller's sequence
