@@ -1041,7 +1041,10 @@ public sealed class XsltTransformEngine
                 && rawTmpl.VisibilityAttr is not ("public" or "final"))
                 throw new XsltException($"XTDE0040: Initial template '{initialTemplate.LocalName}' is not public");
             if (!options.HasSourceDocument)
-                context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+                context.PushContextItem(
+                    options.InitialContextItem ?? PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus,
+                    options.InitialContextItem != null ? 1 : 0,
+                    options.InitialContextItem != null ? 1 : 0);
             await context.CallTemplateAsync(initialTemplate, []).ConfigureAwait(false);
             if (!options.HasSourceDocument)
                 context.PopContextItem();
@@ -5790,6 +5793,19 @@ public sealed class XsltTransformOptions
     /// and templates are applied to each item in the resulting sequence instead of the document root.
     /// </summary>
     public string? InitialModeSelect { get; init; }
+
+    /// <summary>
+    /// The context item to establish when an initial template is invoked with no source document.
+    /// </summary>
+    /// <remarks>
+    /// fn:transform may be given both an initial-template and an initial-match-selection. The
+    /// selection is not a source document - it can be an atomic value - so it cannot go through
+    /// HasSourceDocument, but the named template still has to see it as the context item. Without
+    /// this the engine pushed AbsentFocus and any template evaluating "." raised XPDY0002.
+    /// XSpec relies on exactly that shape: its mirror templates are named entry points whose body
+    /// is &lt;xsl:sequence select="."/&gt;.
+    /// </remarks>
+    public object? InitialContextItem { get; init; }
 
     /// <summary>
     /// Named collections of document file paths for fn:collection().
@@ -36898,6 +36914,24 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         if (initialMatchSelection != null && !hasSource && !initialTemplate.HasValue)
             initialModeSelect = ConvertToSelectExpression(initialMatchSelection);
 
+        // An initial-match-selection given ALONGSIDE an initial-template used to be dropped on the
+        // floor: the branch above requires !initialTemplate.HasValue, and nothing else looked at
+        // it. The named template then ran with no focus and anything evaluating "." raised
+        // XPDY0002. Supplying both is exactly how XSpec invokes a stylesheet under test - the
+        // selection carries x:context, which may be an atomic value and so cannot travel as
+        // source-node.
+        object? initialContextItem = null;
+        if (initialMatchSelection != null && initialTemplate.HasValue)
+        {
+            var sel = initialMatchSelection is object?[] selArr && selArr.Length == 1
+                ? selArr[0]
+                : initialMatchSelection;
+            // Only a single item can be a context item; a longer selection is a match selection
+            // for apply-templates, which this invocation is not doing.
+            if (sel is not object?[])
+                initialContextItem = sel;
+        }
+
         // Build initial parameters from static-params (they serve as both compile-time
         // and runtime values) plus any regular stylesheet-params
         var initialParams = new Dictionary<QName, object?>();
@@ -36966,6 +37000,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             HasSourceDocument = hasSource,
             InitialModeSelect = initialModeSelect,
             InitialParameters = initialParams,
+            InitialContextItem = initialContextItem,
         };
 
         // Create engine and run transformation
