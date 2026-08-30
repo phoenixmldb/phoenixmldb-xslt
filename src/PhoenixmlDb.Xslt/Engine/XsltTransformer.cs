@@ -36774,6 +36774,13 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var functionParamsRaw = GetOption(options, "function-params");
         var sourceNode = GetOption(options, "source-node");
         var initialMatchSelection = GetOption(options, "initial-match-selection");
+        // fn:transform's global-context-item option (XSLT 3.0 / the fn:transform spec): the item
+        // to serve as the global context item. It was not read at all, so a caller supplying it
+        // got no focus and any template evaluating "." raised XPDY0002. XSpec passes x:context
+        // this way whenever the context is not a node - it cannot use source-node for an atomic.
+        var globalContextItem = GetOption(options, "global-context-item");
+        if (globalContextItem is object?[] gciArr && gciArr.Length == 1)
+            globalContextItem = gciArr[0];
         var staticParamsMap = GetOption(options, "static-params") as IDictionary<object, object?>;
 
         // Load the stylesheet
@@ -36920,8 +36927,8 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // XPDY0002. Supplying both is exactly how XSpec invokes a stylesheet under test - the
         // selection carries x:context, which may be an atomic value and so cannot travel as
         // source-node.
-        object? initialContextItem = null;
-        if (initialMatchSelection != null && initialTemplate.HasValue)
+        object? initialContextItem = globalContextItem;
+        if (initialContextItem == null && initialMatchSelection != null && initialTemplate.HasValue)
         {
             var sel = initialMatchSelection is object?[] selArr && selArr.Length == 1
                 ? selArr[0]

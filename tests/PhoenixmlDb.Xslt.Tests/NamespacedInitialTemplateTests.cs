@@ -74,4 +74,53 @@ public class NamespacedInitialTemplateTests
     [Fact]
     public async Task UnnamespacedInitialTemplateStillWorks()
         => (await Run("QName('','plain')")).Should().Contain("plain-ok");
+
+    /// <summary>
+    /// fn:transform's global-context-item option was not read at all, so a named template
+    /// evaluating "." had no focus and raised XPDY0002.
+    /// </summary>
+    /// <remarks>
+    /// It is how a caller supplies a context that is NOT a node - source-node cannot carry an
+    /// atomic value. XSpec passes x:context this way, and its mirror entry points are named
+    /// templates whose body is &lt;xsl:sequence select="."/&gt;, so every external_* suite with a
+    /// non-node context died here.
+    /// </remarks>
+    [Fact]
+    public async Task GlobalContextItemIsUsedAsTheContextForANamedTemplate()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "phx-gci-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(dir, "mod.xsl"), """
+                <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:m="x-urn:test:m" version="3.0">
+                  <xsl:template as="item()" match="." mode="m:ctx" name="m:ctx">
+                    <xsl:sequence select="."/>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+            var callerPath = Path.Combine(dir, "caller.xsl");
+            await File.WriteAllTextAsync(callerPath, """
+                <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                                xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                                xmlns:m="x-urn:test:m" version="3.0">
+                  <xsl:output method="text"/>
+                  <xsl:template name="go">
+                    <xsl:value-of select="transform(map{
+                      'stylesheet-location': 'mod.xsl',
+                      'global-context-item': xs:double(42),
+                      'initial-template': QName('x-urn:test:m','ctx'),
+                      'delivery-format': 'raw'})?output"/>
+                  </xsl:template>
+                </xsl:stylesheet>
+                """);
+
+            var t = new XsltTransformer();
+            await t.LoadStylesheetAsync(await File.ReadAllTextAsync(callerPath), new Uri(callerPath));
+            t.SetInitialTemplate("go");
+            (await t.TransformAsync((string?)null)).Should().Contain("42");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
 }
