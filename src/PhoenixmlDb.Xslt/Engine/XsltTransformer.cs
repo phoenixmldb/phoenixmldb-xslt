@@ -6108,6 +6108,34 @@ internal sealed class TemplateIndex
                 ResolveNamespacesInPattern(ip.Left, resolver);
                 ResolveNamespacesInPattern(ip.Right, resolver);
                 break;
+
+            // Every remaining subclass that WRAPS another pattern. Omitting them left the
+            // wrapped pattern's prefixes unresolved, so the name test compared an unresolved
+            // NamespaceId and matched nothing - silently, because a pattern that matches
+            // nothing is indistinguishable from a pattern with no matching nodes.
+            //
+            // match="(x:a | x:b)[true()]" therefore selected NOTHING while the identical
+            // unparenthesized match="x:a[true()] | x:b[true()]" worked, and un-namespaced
+            // "(a | b)[true()]" also worked - which is why this survived: the obvious test
+            // uses no prefix. XSpec's stacked-vardecls accumulator is
+            // "(x:scenario/x:param | x:scenario/x:variable | x:context)[...]".
+            //
+            // DotPattern is deliberately absent - it wraps no pattern and has no name test.
+            case ParenthesizedPositionalPattern ppp:
+                ResolveNamespacesInPattern(ppp.Inner, resolver);
+                break;
+            case KeyPattern kp:
+                ResolveNamespacesInPattern(kp.Continuation, resolver);
+                break;
+            case IdPattern idp:
+                ResolveNamespacesInPattern(idp.Continuation, resolver);
+                break;
+            case VariableReferencePattern vrp:
+                ResolveNamespacesInPattern(vrp.Continuation, resolver);
+                break;
+            case DocFunctionPattern dfp:
+                ResolveNamespacesInPattern(dfp.Continuation, resolver);
+                break;
         }
     }
 
@@ -20353,7 +20381,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var coerced = new List<object?>(list.Count);
                 foreach (var item in list)
                     coerced.Add(CoerceAtomicValue(item, declaredType.ItemType, accName));
-                return coerced;
+                // Return object[], NOT List<object?>. The engine distinguishes an XDM array
+                // from a sequence purely by CLR type - PhysicalOperators has
+                // `ItemType.Array => item is List<object?>` - so returning the List here
+                // reclassified every sequence-valued accumulator as a one-item array.
+                return coerced.ToArray();
             }
             // Single item is fine for * or +
             return CoerceAtomicValue(value, declaredType.ItemType, accName);
@@ -20378,10 +20410,35 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return CoerceAtomicValue(value, declaredType.ItemType, accName);
     }
 
+    /// <summary>
+    /// True when an accumulator's declared item type does NOT call for atomization - a node
+    /// kind, <c>item()</c>, or a function/map/array type.
+    /// </summary>
+    /// <remarks>
+    /// XSLT 3.0 §18.2 applies the function conversion rules to an accumulator value, and those
+    /// atomize only when the required type is atomic. An accumulator declared
+    /// <c>as="element()*"</c> keeps its nodes. Atomizing unconditionally turned every node-valued
+    /// accumulator into a sequence of xs:untypedAtomic, which is invisible until something asks
+    /// the value for an axis step - XSpec's stacked-vardecls accumulator holds the x:variable
+    /// elements themselves and reads @name off them.
+    /// </remarks>
+    private static bool PreservesItems(ItemType t) => t is ItemType.Item
+        or ItemType.Node or ItemType.Element or ItemType.Attribute or ItemType.Text
+        or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Document
+        // ItemType.Namespace belongs here too, but it is a local-source addition to
+        // PhoenixmlDb.XQuery that this project does not see yet - it consumes XQuery as a
+        // published package. Add it when the pin is bumped.
+        or ItemType.SchemaElement or ItemType.SchemaAttribute
+        or ItemType.Map or ItemType.Array or ItemType.Function or ItemType.Record;
+
     private static object? CoerceAtomicValue(object? value, ItemType targetType, QName accName)
     {
         if (value is null)
             return null;
+
+        // Node-typed, item() and function/map/array accumulators are not atomized.
+        if (PreservesItems(targetType))
+            return value;
 
         // Atomize XDM nodes (attribute nodes → string value, element nodes → text content)
         value = PhoenixmlDb.XQuery.Execution.QueryExecutionContext.Atomize(value);
@@ -32601,7 +32658,10 @@ internal sealed class XsltAccumulatorBeforeFunction : PhoenixmlDb.XQuery.Ast.XQu
     private readonly DefaultXsltExecutionContext _context;
     public XsltAccumulatorBeforeFunction(DefaultXsltExecutionContext context) => _context = context;
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "accumulator-before");
-    public override XdmSequenceType ReturnType => XdmSequenceType.OptionalItem;
+    // An accumulator is declared with a sequence type (as="element()*", as="xs:string*"),
+    // so its value is a SEQUENCE. Declaring OptionalItem here collapsed it into one boxed
+    // item, and every consumer saw a single opaque array instead of N nodes.
+    public override XdmSequenceType ReturnType => XdmSequenceType.ZeroOrMoreItems;
     public override IReadOnlyList<FunctionParameterDef> Parameters =>
         [new() { Name = new QName(NamespaceId.None, "name"), Type = XdmSequenceType.String }];
 
@@ -32649,7 +32709,10 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
     private readonly DefaultXsltExecutionContext _context;
     public XsltAccumulatorAfterFunction(DefaultXsltExecutionContext context) => _context = context;
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "accumulator-after");
-    public override XdmSequenceType ReturnType => XdmSequenceType.OptionalItem;
+    // An accumulator is declared with a sequence type (as="element()*", as="xs:string*"),
+    // so its value is a SEQUENCE. Declaring OptionalItem here collapsed it into one boxed
+    // item, and every consumer saw a single opaque array instead of N nodes.
+    public override XdmSequenceType ReturnType => XdmSequenceType.ZeroOrMoreItems;
     public override IReadOnlyList<FunctionParameterDef> Parameters =>
         [new() { Name = new QName(NamespaceId.None, "name"), Type = XdmSequenceType.String }];
 
