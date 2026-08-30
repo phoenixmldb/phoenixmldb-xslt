@@ -21679,8 +21679,25 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var sequenceItems = new List<object?>();
                 var accBaseUri = XsltTransformEngine.UriString(instruction.BaseUri) ?? EffectiveBaseUri;
                 var seqBaseUri = accBaseUri;
+                // text()* and node()* DEMAND nodes, so a string item contributed by
+                // xsl:sequence has to be wrapped into a text node to satisfy the declared type.
+                // item()* does NOT: item() is the union of nodes AND atomic values, so wrapping
+                // there silently retyped every atomic the body produced.
+                //
+                //   <xsl:template name="two" as="item()*"><xsl:sequence select="('a','b')"/></...>
+                //   <xsl:variable name="v" as="item()*"><xsl:call-template name="two"/></...>
+                //   $v[1] instance of xs:string   ->  false, it was a text node
+                //
+                // deep-equal($v, ('a','b')) is then correctly false, which is how this surfaced:
+                // XSpec compares a @test expression's value against @select, and every expect
+                // whose test yields atomic values failed on the type rather than the value.
+                // as="xs:string*" masked it — that type coerces the text nodes back to strings.
+                //
+                // Literal character content in the body is unaffected: it reaches the result
+                // through textContent, not as a string item in the accumulator, so
+                // <xsl:variable as="item()*">hello</xsl:variable> still yields a text node.
                 var wrapAsTextNode = _nodeStore != null && instruction.As != null
-                    && instruction.As.ItemType is ItemType.Text or ItemType.Node or ItemType.Item;
+                    && instruction.As.ItemType is ItemType.Text or ItemType.Node;
 
                 // Appends one accumulated item (from xsl:sequence select="..." / xsl:attribute /
                 // xsl:document) to sequenceItems, applying base-URI fixup and text-node wrapping.
