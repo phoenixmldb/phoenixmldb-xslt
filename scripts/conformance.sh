@@ -195,7 +195,11 @@ for g in "${CHUNKS[@]}"; do
   # The xunit pass/fail above only says the FIXTURE ran. Tally the W3C cases the chunk
   # actually executed — that is the number anyone means by "conformance", and it is the
   # one a green chunk can hide.
-  nfail=$(grep -c "^ FAILED: " "$OUT/$g.log" 2>/dev/null || echo 0)
+  # grep -c prints its count AND exits 1 when the count is zero, so `|| echo 0` fires as well
+  # and nfail becomes "0\n0". Every chunk with no failures then blew up the integer comparison
+  # below with "integer expression expected", which is what the sandp chunk was hitting.
+  nfail=$(grep -c "^ FAILED: " "$OUT/$g.log" 2>/dev/null || true)
+  nfail=${nfail:-0}
   read -r cp ct <<<"$(grep -oE "Results: [0-9]+/[0-9]+" "$OUT/$g.log" 2>/dev/null |
                       awk -F'[ /]' '{p+=$2; t+=$3} END {print p+0, t+0}')"
   if [ "${ct:-0}" -gt 0 ]; then

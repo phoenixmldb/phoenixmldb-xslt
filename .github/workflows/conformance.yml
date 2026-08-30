@@ -97,7 +97,10 @@ jobs:
           # Measured per chunk on this HEAD: slowest XSLT chunk is strm1 at ~8m30s, the
           # rest well under. 15 min leaves headroom on a slower runner while still cutting
           # off a chunk that is genuinely stuck.
-          CONFORMANCE_TIMEOUT: '900'
+          # xqts needs well over 900s; it was being killed at 99.4% complete every run,
+          # which is what turned this whole workflow red. Everything else finishes in under a
+          # minute, so a longer cap costs nothing for the other eleven chunks.
+          CONFORMANCE_TIMEOUT: '2400'
           CONFORMANCE_OUT: ${{ github.workspace }}/conformance-results
         run: ./scripts/conformance.sh --all
 
