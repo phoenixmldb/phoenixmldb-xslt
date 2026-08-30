@@ -11513,7 +11513,38 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         else if (!_stylesheet.NamedTemplates.TryGetValue(name, out template))
         {
-            throw Error($"Named template '{name.LocalName}' not found");
+            // The id-keyed lookup above is the fast path and is correct for a name the parser
+            // interned. It misses for a QName built at runtime by fn:QName(), which carries a
+            // hash-based NamespaceId that never equals the parser's id for the same URI - so
+            // fn:transform with a namespaced initial-template could not find its entry point,
+            // and reported the local name of a template it had just failed to qualify.
+            // Resolving an interned id back to a URI needs the table that interned it. The node
+            // store does not have it - these ids come from the stylesheet parser - but the
+            // stylesheet keeps its own prefix-to-URI map, and the parsed QName kept its prefix.
+            string? ResolveViaStylesheet(QName q)
+                => _nodeStore?.GetNamespaceUri(q.Namespace)
+                ?? (!string.IsNullOrEmpty(q.Prefix)
+                    && _stylesheet.Namespaces.TryGetValue(q.Prefix, out var declared)
+                        ? declared : null);
+
+            foreach (var (candidate, decl) in _stylesheet.NamedTemplates)
+            {
+                if (QNameNamespaces.SameExpandedName(candidate, name, ResolveViaStylesheet))
+                {
+                    template = decl;
+                    break;
+                }
+            }
+
+            if (template == null)
+            {
+                // Name the namespace too. The old message quoted only the local part, which is
+                // exactly the information that does not help when the namespace is the problem.
+                var uri = QNameNamespaces.UriOf(name, ResolveViaStylesheet);
+                throw Error(uri.Length > 0
+                    ? $"Named template 'Q{{{uri}}}{name.LocalName}' not found"
+                    : $"Named template '{name.LocalName}' not found");
+            }
         }
 
         // Pre-evaluate ALL with-param values in the CALLING context before pushing scope.
