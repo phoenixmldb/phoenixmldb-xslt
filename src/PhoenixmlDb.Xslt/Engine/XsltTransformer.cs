@@ -37106,6 +37106,8 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             }
         }
 
+        var isRaw = string.Equals(deliveryFormat, "raw", StringComparison.Ordinal);
+
         var transformOptions = new XsltTransformOptions
         {
             InitialTemplate = initialTemplate,
@@ -37116,11 +37118,17 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             InitialModeSelect = initialModeSelect,
             InitialParameters = initialParams,
             InitialContextItem = initialContextItem,
+            // Under delivery-format='raw' the caller takes the typed XDM value and DISCARDS the
+            // serialized buffer. Without this flag TransformRawAsync still built that buffer,
+            // and building it means taking the string value of the result - which for a map is
+            // FOTY0013. So a function returning a map failed on serialization the caller never
+            // wanted. XsltTransformProvider, the XQuery-side twin of this function, has always
+            // set the equivalent flag; this one did not.
+            ReturnRawXdm = isRaw,
         };
 
         // Create engine and run transformation
         var engine = new XsltTransformEngine(stylesheet);
-        var isRaw = string.Equals(deliveryFormat, "raw", StringComparison.Ordinal);
 
         // Determine the base URI to stamp on result document nodes (delivery-format='document').
         // Per XSLT 3.0 a result tree's document node carries a non-null static base URI; without
