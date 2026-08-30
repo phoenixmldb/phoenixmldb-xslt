@@ -1010,6 +1010,14 @@ public sealed class XsltTransformEngine
             var funcKey = (funcName, arity);
             if (!_stylesheet.Functions.TryGetValue(funcKey, out var func))
                 throw new XsltException($"XTDE0041: No public stylesheet function '{funcName.LocalName}' with arity {arity}");
+            // XTDE0041 has TWO halves - the function must exist AND be public - and this path
+            // only had the first. TransformAsync (~line 318) carries both. Missing the
+            // visibility half meant fn:transform happily invoked a PRIVATE package function
+            // and returned its value, so a caller testing that private functions are
+            // unreachable got a result instead of an error.
+            if (func.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
+                throw new XsltException(
+                    $"XTDE0041: Stylesheet function '{funcName.LocalName}' is not public");
             // Translate XdmNode arguments into this engine's node store so XPath/xsl:evaluate
             // inside the function can navigate them (string-value, child axes, etc.).
             // Without this, a node passed across fn:transform's engine boundary reaches
@@ -10295,11 +10303,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 _sink.StartElementOpen(qname);
 
                 // Copy namespace declarations
+                var wroteDefaultNsDecl = false;
                 foreach (var nsDecl in elem.NamespaceDeclarations)
                 {
                     var nsDeclUri = _nodeStore?.GetNamespaceUri(nsDecl.Namespace) ?? "";
                     var nsDeclPrefix = nsDecl.Prefix ?? "";
+                    if (string.IsNullOrEmpty(nsDeclPrefix))
+                        wroteDefaultNsDecl = true;
                     _sink.Namespace(nsDeclPrefix, nsDeclUri);
+                }
+
+                // Same defect as the xsl:copy path, in the built-in shallow-copy twin: an
+                // unprefixed element in NO namespace needs an explicit xmlns="" or the start tag
+                // we write re-parses into whatever default namespace is in scope, silently
+                // changing the element's name. The loop above only replays declarations the node
+                // model recorded, and an xmlns="" undeclaration is not among them.
+                // The condition is on the SOURCE parent, not the output scope: this path writes
+                // start tags straight to _output without pushing an output namespace scope, so
+                // GetInScopeDefaultNamespace() is null here and gating on it emitted nothing.
+                // A no-namespace element whose parent IS in a namespace is exactly the shape
+                // that needed xmlns="" in the source and needs it again in the copy.
+                if (!wroteDefaultNsDecl
+                    && string.IsNullOrEmpty(prefix)
+                    && string.IsNullOrEmpty(nsUri)
+                    && elem.Parent is { } parentId
+                    && _nodeStore?.GetNode(parentId) is XdmElement parentElem
+                    && !string.IsNullOrEmpty(_nodeStore.GetNamespaceUri(parentElem.Namespace)))
+                {
+                    _sink.Namespace("", "");
                 }
 
                 // EMIT (temp-tree base-URI preservation): built-in shallow-copy writes the
@@ -16217,6 +16248,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var elemNsUri = _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "";
                     if (!string.IsNullOrEmpty(elemNsUri) && !emittedPrefixes.Contains(prefix))
                         copyNsBindings[prefix] = elemNsUri;
+
+                    // The symmetric case, and it needs an OVERRIDE rather than a fill-in.
+                    //
+                    // An unprefixed element in no namespace can only exist where the default
+                    // namespace is undeclared, so its in-scope default IS none. But
+                    // GatherSourceInScopeBindings walks up and returns the nearest ancestor
+                    // xmlns="…" regardless, ignoring the xmlns="" that undeclared it — so
+                    // copyNsBindings already holds ""→ancestor-uri here, and copying wrote that
+                    // declaration onto the element, CHANGING its name:
+                    //
+                    //   <outer xmlns="urn:o"><undeclared xmlns=""/></outer>
+                    //   xsl:copy of `undeclared`  ->  namespace-uri() became "urn:o"
+                    //
+                    // xsl:copy-of was unaffected (it copies the subtree wholesale), so only the
+                    // identity-transform shape showed it — which is any stylesheet that runs a
+                    // document containing xmlns="" through xsl:copy.
+                    if (string.IsNullOrEmpty(prefix) && string.IsNullOrEmpty(elemNsUri))
+                    {
+                        // Only when a default namespace would otherwise apply to the copy —
+                        // either inherited into copyNsBindings by the gather above, or already
+                        // in scope in the output. Setting it unconditionally wrote a redundant
+                        // xmlns="" onto every no-namespace element in namespace-free documents,
+                        // turning <doc> into <doc xmlns=""> (caught by the streaming
+                        // iterate/copy wrapper tests).
+                        var inheritedDefault = copyNsBindings.TryGetValue("", out var d) ? d : null;
+                        if (!string.IsNullOrEmpty(inheritedDefault) || GetInScopeDefaultNamespace() != null)
+                            copyNsBindings[""] = "";
+                    }
                 }
 
                 // Use attribute collection mode like CreateElementAsync (push for nesting)

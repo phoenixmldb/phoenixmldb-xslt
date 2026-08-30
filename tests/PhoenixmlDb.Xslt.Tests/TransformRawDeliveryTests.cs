@@ -25,7 +25,7 @@ public class TransformRawDeliveryTests
     /// XsltTransformFunction rather than XsltTransformProvider. stylesheet-text keeps the
     /// target stylesheet inline so the test needs nothing on disk.
     /// </summary>
-    private static async Task<string> RunTransform(string targetFunctionBody, string lookup)
+    private static async Task<string> RunTransform(string targetFunctionBody, string lookup, string visibility = "public")
     {
         // The target stylesheet is passed as stylesheet-text, so it is XML-escaped inside the
         // driver's XPath string literal. Built by concatenation rather than an interpolated raw
@@ -33,7 +33,7 @@ public class TransformRawDeliveryTests
         var target =
             "<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" version=\"3.0\" "
             + "xmlns:f=\"urn:test:f\" exclude-result-prefixes=\"#all\">"
-            + "<xsl:function name=\"f:go\" as=\"item()*\" visibility=\"public\">"
+            + "<xsl:function name=\"f:go\" as=\"item()*\" visibility=\"" + visibility + "\">"
             + targetFunctionBody
             + "</xsl:function></xsl:stylesheet>";
 
@@ -93,5 +93,29 @@ public class TransformRawDeliveryTests
             "<xsl:sequence select=\"42\"/>",
             "$t?output");
         result.Should().Contain("<out>42</out>");
+    }
+
+    /// <summary>
+    /// XTDE0041 has two halves — the function must EXIST and be PUBLIC — and TransformRawAsync,
+    /// the path fn:transform uses, only checked the first. A private package function was
+    /// therefore invoked happily and returned its value, so a caller testing that private
+    /// functions are unreachable got a result instead of an error. TransformAsync always
+    /// carried both checks.
+    /// </summary>
+    [Fact]
+    public async Task RawDelivery_OfAPrivateFunction_RaisesXTDE0041()
+    {
+        var act = async () => await RunTransform(
+            "<xsl:sequence select=\"1\"/>", "$t?output", visibility: "private");
+        (await act.Should().ThrowAsync<Exception>())
+            .Which.ToString().Should().Contain("XTDE0041");
+    }
+
+    [Fact]
+    public async Task RawDelivery_OfAPublicFunction_IsStillInvokable()
+    {
+        var result = await RunTransform(
+            "<xsl:sequence select=\"7\"/>", "$t?output", visibility: "public");
+        result.Should().Contain("<out>7</out>");
     }
 }
