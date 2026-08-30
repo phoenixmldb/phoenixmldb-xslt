@@ -33191,6 +33191,12 @@ internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     private static List<object?> ToList(object? arg) => arg switch
     {
         null => [],
+        // An XDM array and an XDM map are single ITEMS, not sequences. The engine represents
+        // an array as List<object?>, which IS IEnumerable<object?>, so the sequence arm below
+        // silently flattened [1] into its members - and deep-equal([1], 1) answered TRUE.
+        // That is worse than the map case: a wrong answer rather than an error.
+        List<object?> => [arg],
+        IDictionary<object, object?> => [arg],
         IEnumerable<object?> seq => seq.ToList(),
         _ => [arg]
     };
@@ -33205,6 +33211,45 @@ internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // Both are nodes — structural comparison
         if (a is XdmNode nodeA && b is XdmNode nodeB)
             return DeepEqualNodes(nodeA, nodeB, comparison);
+        if (a is XdmNode || b is XdmNode)
+            return false;
+
+        // XDM arrays: equal size and members deep-equal. Recursing through THIS method rather
+        // than handing the whole array to TypeCastHelper keeps the XSLT-aware node comparison
+        // above in play for nodes stored inside an array.
+        if (a is List<object?> arrA && b is List<object?> arrB)
+        {
+            if (arrA.Count != arrB.Count)
+                return false;
+            for (var i = 0; i < arrA.Count; i++)
+                if (!DeepEqualItems(arrA[i], arrB[i], comparison))
+                    return false;
+            return true;
+        }
+        if (a is List<object?> || b is List<object?>)
+            return false;
+
+        // XDM maps: same keys, and the value for each key deep-equal. fn:deep-equal is defined
+        // for maps (XPath 3.1 F&O 14.2.2) and does NOT atomize them, so falling through to the
+        // atomizing comparison below raised FOTY0013 "Atomization is not defined for maps" on
+        // every map comparison — including XSpec's x:deep-equal, which is how this was found.
+        // The XQuery twin of this function has handled maps since 2026-04-01; this one, which
+        // shadows it whenever a stylesheet is running, never did.
+        if (a is IDictionary<object, object?> mapA && b is IDictionary<object, object?> mapB)
+        {
+            if (mapA.Count != mapB.Count)
+                return false;
+            foreach (var kv in mapA)
+            {
+                if (!mapB.TryGetValue(kv.Key, out var bVal))
+                    return false;
+                if (!DeepEqualItems(kv.Value, bVal, comparison))
+                    return false;
+            }
+            return true;
+        }
+        if (a is IDictionary<object, object?> || b is IDictionary<object, object?>)
+            return false;
 
         // Both are atomic — value comparison
         return PhoenixmlDb.XQuery.Execution.TypeCastHelper.DeepEquals(
