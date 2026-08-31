@@ -30192,6 +30192,36 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // `<xsl:apply-templates select="$node" mode="mp:label-number"/>` and the
             // matching templates use `<xsl:number/>`) returns the formatted string and the
             // tightened validator now rejects it as XTTE0780.
+            // A declared NODE return type has to materialise a temporary tree, the same way
+            // assigning it to a variable already does. Only atomic types were coerced below, so
+            // an RTF was handed back raw and a path step straight off the call failed:
+            //
+            //   <xsl:function name="f:wrap" as="document-node()">
+            //     <xsl:variable name="w"><xsl:sequence select="$nodes"/></xsl:variable>
+            //     <xsl:sequence select="$w"/>
+            //   </xsl:function>
+            //   f:wrap($e)/node()   ->  XPTY0020 "context item is not a node (got ResultTreeFragment)"
+            //
+            // Assigning to a variable first converted it, so this only bit a direct path step or
+            // an RTF flowing into an as="item()*" variable. That untyped-variable body IS the
+            // spec's implicit-document-node idiom, and XSpec's wrap:wrap-nodes is exactly it —
+            // its wrapper document came back with no children, so every x:expect whose @test
+            // navigates from the context item saw an empty sequence.
+            if (func.As != null
+                && func.As.ItemType is ItemType.Document or ItemType.Node or ItemType.Item)
+            {
+                if (funcResult is ResultTreeFragment rtfResult)
+                {
+                    funcResult = ParseResultTreeFragment(rtfResult) ?? funcResult;
+                }
+                else if (funcResult is object?[] rtfArr)
+                {
+                    for (var i = 0; i < rtfArr.Length; i++)
+                        if (rtfArr[i] is ResultTreeFragment itemRtf)
+                            rtfArr[i] = ParseResultTreeFragment(itemRtf) ?? rtfArr[i];
+                }
+            }
+
             if (func.As != null && IsCastableAtomicType(func.As.ItemType))
             {
                 // Atomize + cast the return value to the declared atomic type. Covers a
