@@ -401,7 +401,19 @@ public sealed class XsltTransformProvider : ITransformProvider
     /// reach XQuery anchored to the (now-dying) inner XSLT engine's store; outer-side
     /// child navigation, <c>path()</c>, and serialization all return wrong/empty values.
     /// </summary>
-    private static object? ReanchorCrossStoreResult(object? value, INodeBuilder? outerBuilder)
+    /// <summary>
+    /// Re-parses any <c>CrossStoreNodeRef</c> in a raw fn:transform result back into a node in
+    /// the CALLER's store. Internal, not private, because BOTH fn:transform implementations need
+    /// it — this provider for XQuery callers and XsltTransformFunction for XSLT ones. It was
+    /// private and only the XQuery side called it, so a stylesheet calling fn:transform with
+    /// delivery-format='raw' got the raw wrapper back as an atomic value:
+    ///
+    ///   $x:result  ->  CrossStoreNodeRef { Xml = &lt;context-child/&gt;, IsElement = True }
+    ///
+    /// which is not a node, so `instance of element(context-child)` was false and every test
+    /// that navigated the result saw nothing.
+    /// </summary>
+    internal static object? ReanchorCrossStoreResult(object? value, INodeBuilder? outerBuilder)
     {
         if (value is null || outerBuilder is null) return value;
         // One parsed tree per DISTINCT root, shared across the whole result. Parsing per item

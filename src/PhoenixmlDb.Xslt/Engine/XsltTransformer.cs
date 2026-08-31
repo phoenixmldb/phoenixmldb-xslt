@@ -37289,7 +37289,11 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             {
                 rawResult = await engine.TransformRawAsync("<empty/>", transformOptions).ConfigureAwait(false);
             }
-            resultMap["output"] = rawResult;
+            // Re-anchor into the CALLER's store, exactly as XsltTransformProvider does for
+            // XQuery callers. Without this the CrossStoreNodeRef wrapper leaked out as an
+            // atomic value and the result was not a node at all.
+            resultMap["output"] = XsltTransformProvider.ReanchorCrossStoreResult(
+                rawResult, _context._nodeStore as PhoenixmlDb.XQuery.INodeBuilder);
 
             foreach (var (href, content) in engine.SecondaryResultDocuments)
                 resultMap[href] = ParseResultAsXdm(content);
