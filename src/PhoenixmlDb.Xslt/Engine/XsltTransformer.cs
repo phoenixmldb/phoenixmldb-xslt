@@ -3532,8 +3532,23 @@ public sealed class XsltTransformEngine
                 // `l:group` children of the document — which there are none of, so the lookup
                 // returned the empty sequence. Found in Docbook chunk-cleanup name-style
                 // localization (`as="element(l:l10n)"` global).
+                // Comment and ProcessingInstruction belong here for the same reason Element and
+                // Attribute do: without them isSequenceType is false, the sequence-collection
+                // path below is skipped entirely, and the body falls through to the legacy route
+                // that yields a DOCUMENT wrapping the node instead of the node itself:
+                //
+                //   <xsl:variable as="comment()" name="c"><xsl:comment>ct</xsl:comment></...>
+                //   $c instance of comment()        ->  false
+                //   $c instance of document-node()  ->  true, and string($c) is "" — content lost
+                //
+                // The LOCAL variable path already gets this right; its equivalent list
+                // (isNodeItemType, ~line 21520) covers nine item types where this one covered
+                // three. Only the two kinds proven broken are added — text() and document-node()
+                // already behave correctly through the legacy route, so widening the list to
+                // match local exactly would change working behaviour on no evidence.
                 var needsNodeOrphan = global.As != null &&
-                    global.As.ItemType is ItemType.Element or ItemType.Attribute or ItemType.Node;
+                    global.As.ItemType is ItemType.Element or ItemType.Attribute or ItemType.Node
+                                        or ItemType.Comment or ItemType.ProcessingInstruction;
                 // Map / array / function / record items must come through the accumulator so
                 // xsl:map / xsl:array constructions land as the live Dictionary or List object,
                 // not as their JSON-serialized text form (the default top-level fallback path).
