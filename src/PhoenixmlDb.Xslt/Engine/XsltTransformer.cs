@@ -8819,6 +8819,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// Counts instructions that ALWAYS produce a text node, even a zero-length one — today just
+    /// xsl:value-of (XSLT 3.0 11.4.3: it "creates a new text node" unconditionally).
+    /// </summary>
+    /// <remarks>
+    /// The typed-variable body below manufactures a zero-length text node when the body produced
+    /// no items and no characters, so that
+    /// <c>&lt;xsl:variable as="text()"&gt;&lt;xsl:value-of select="()"/&gt;&lt;/xsl:variable&gt;</c>
+    /// still yields one. That condition could not distinguish "an xsl:value-of ran and produced
+    /// empty text" from "the body produced nothing at all", so
+    /// <c>&lt;xsl:variable as="item()*"&gt;&lt;xsl:sequence select="()"/&gt;&lt;/xsl:variable&gt;</c>
+    /// came back holding one empty text node instead of the empty sequence. This counter is the
+    /// missing distinction.
+    /// </remarks>
+    private int _alwaysTextInstructionCount;
+
     // Snapshot-based content tracking for xsl:on-empty/xsl:on-non-empty.
     // Unlike where-populated tracking (which only counts significant child content),
     // on-empty tracking counts ALL output including attributes and whitespace text.
@@ -15856,6 +15872,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask ValueOfAsync(XsltValueOf instruction)
     {
+        // xsl:value-of always creates a text node, even a zero-length one. Recorded so a typed
+        // body can tell that apart from having produced nothing at all.
+        _alwaysTextInstructionCount++;
+
         // Evaluate separator AVT once (it may contain dynamic expressions).
         // Resolved before the streaming handoff so a watched sequence feeding
         // value-of atomizes and joins with the correct separator (B3).
@@ -21626,10 +21646,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     _activeTreeConstructor = bodyTc;
                     _tcFragmentIncomplete = false;
                 }
+                // Delta, not absolute: the body may be nested inside another typed body that
+                // already ran an xsl:value-of, and only THIS body's instructions count.
+                var alwaysTextBefore = _alwaysTextInstructionCount;
+                var bodyAlwaysTextCount = 0;
                 try
                 { await instruction.Content.ExecuteAsync(this).ConfigureAwait(false); }
                 finally
                 {
+                    bodyAlwaysTextCount = _alwaysTextInstructionCount - alwaysTextBefore;
                     _activeTreeConstructor = savedActiveTc;
                     bodyTcIncomplete = _tcFragmentIncomplete;
                     _tcFragmentIncomplete = savedTcIncomplete;
@@ -21917,6 +21942,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // XSLT 3.0: an empty xsl:value-of body still creates a zero-length text
                     // node — only when nothing else was produced.
                     if (sequenceItems.Count == 0 && textContent != null && textContent.Length == 0
+                        && bodyAlwaysTextCount > 0
                         && instruction.As != null
                         && instruction.As.ItemType is ItemType.Item or ItemType.Text or ItemType.Node)
                     {
