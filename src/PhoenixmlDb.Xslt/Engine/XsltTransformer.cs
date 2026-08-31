@@ -27746,9 +27746,25 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     var nsUri = _nodeStore!.GetNamespaceUri(nsDecl.Namespace) ?? "";
                     if (string.IsNullOrEmpty(nsDecl.Prefix))
+                    {
+                        // xmlns="" is the ONE undeclaration XML allows.
                         sb.Append(" xmlns=\"").Append(nsUri).Append('"');
-                    else
+                    }
+                    else if (!string.IsNullOrEmpty(nsUri))
+                    {
                         sb.Append(" xmlns:").Append(nsDecl.Prefix).Append("=\"").Append(nsUri).Append('"');
+                    }
+                    // A PREFIXED declaration with an empty URI is written out as xmlns:p="",
+                    // which XML 1.0 does not permit — only the default namespace can be
+                    // undeclared, there is no syntax for retracting a prefix. Emitting it made
+                    // this serialization unparseable, and it is the payload fn:transform uses to
+                    // carry nodes across the engine boundary:
+                    //
+                    //   <context-child xmlns:mirror="" xmlns:x=""/>
+                    //
+                    // so the receiving side could not rebuild the element and produced an
+                    // unnamed node instead. A prefix that is not bound is simply not declared;
+                    // omitting it is the correct rendering, not an approximation of one.
                 }
                 foreach (var attr in _nodeStore!.GetAttributes(elem))
                 {
