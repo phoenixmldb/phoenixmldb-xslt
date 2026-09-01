@@ -11186,6 +11186,24 @@ public sealed class StylesheetParser
         // Routed through SplitPrefixedName so EQName syntax (Q{ns}local) parses correctly:
         // the previous local-only split-on-':' handler swallowed the namespace URI's colon
         // (turning Q{urn:expected}root into ElementName="expected}root" with no namespace).
+        // processing-instruction(target). The switch below matches the UNNAMED spelling
+        // exactly, so the named form fell to its `_ => ItemType.Item` default. That is not a
+        // harmless approximation for a global: needsNodeOrphan tests for
+        // ItemType.ProcessingInstruction, an Item does not match it, and the binding drops to
+        // the legacy route that wraps the node in a DOCUMENT — so
+        // `<xsl:variable as="processing-instruction(p)">` held a document, not a PI.
+        // element(name) and attribute(name) already have their own branches below for exactly
+        // this reason; this is the same gap for the third named kind test.
+        if (type.StartsWith("processing-instruction(", StringComparison.Ordinal)
+            && type.EndsWith(')') && type != "processing-instruction()")
+        {
+            return new XdmSequenceType
+            {
+                ItemType = ItemType.ProcessingInstruction,
+                Occurrence = occurrence
+            };
+        }
+
         if (type.StartsWith("element(", StringComparison.Ordinal) && type.EndsWith(')')  &&
             type != "element()" && type != "element(*)")
         {
