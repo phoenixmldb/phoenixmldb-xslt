@@ -57,6 +57,53 @@ internal static class QNameNamespaces
     }
 
     /// <summary>
+    /// The interned <see cref="NamespaceId"/> the stylesheet parser uses for a namespace URI.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Engine.StylesheetParser.ResolveNamespaceUri"/> is a process-wide intern table,
+    /// and it is the one the parser itself goes through when it builds the QName of a
+    /// declaration. Resolving a runtime URI through the SAME table therefore yields the SAME id,
+    /// which is what makes ordinary QName equality work again — this repairs the identity rather
+    /// than routing around it the way <see cref="SameExpandedName"/> does.
+    /// </remarks>
+    public static NamespaceId InternedIdFor(string uri)
+        => string.IsNullOrEmpty(uri) ? NamespaceId.None : Engine.StylesheetParser.ResolveNamespaceUri(uri);
+
+    /// <summary>
+    /// Rewrites a QName built at RUNTIME — by <c>fn:QName()</c>, or parsed from an EQName — onto
+    /// the interned id the parser would have given it, leaving a QName that compares equal to
+    /// the parser's own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every name in an <c>fn:transform</c> option map arrives this way: the initial template,
+    /// the initial mode, and every key of <c>stylesheet-params</c>, <c>template-params</c> and
+    /// <c>tunnel-params</c>. Left uncanonicalized, a namespaced one carries a hash-based id, or
+    /// worse <see cref="NamespaceId.None"/>, and then matches either NOTHING or the WRONG
+    /// declaration — a namespaced initial mode collapsed to no namespace will happily select a
+    /// same-local-name mode in no namespace and run it.
+    /// </para>
+    /// <para>
+    /// The URI strings are carried through unchanged: they are not part of QName identity, but
+    /// <c>namespace-uri-from-QName()</c> and error messages still read them.
+    /// </para>
+    /// </remarks>
+    public static QName Canonicalize(QName q)
+    {
+        var uri = q.ResolvedNamespace;
+        if (string.IsNullOrEmpty(uri))
+            return q;
+        var id = InternedIdFor(uri);
+        return id == q.Namespace
+            ? q
+            : new QName(id, q.LocalName, q.Prefix)
+            {
+                ExpandedNamespace = q.ExpandedNamespace,
+                RuntimeNamespace = q.RuntimeNamespace
+            };
+    }
+
+    /// <summary>
     /// True when two QNames denote the same expanded name, comparing namespace URIs rather than
     /// interned ids. Use this to rescue a lookup that failed on id equality, not to replace it:
     /// the id comparison is the fast path and is right for names from a single parse.

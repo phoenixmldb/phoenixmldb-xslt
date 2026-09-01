@@ -247,6 +247,25 @@ public sealed class XsltTransformProvider : ITransformProvider
             }
         }
 
+        // The three parameter-bearing options of fn:transform, read through the SAME helper the
+        // XSLT-side implementation uses. Note these keep their XDM values: only static-params
+        // above are string-valued, because those are consumed at compile time.
+        if (TransformParameterOptions.Read(options, "stylesheet-params") is { } styleParams)
+        {
+            foreach (var (name, value) in styleParams)
+                transformer.SetParameter(name, value);
+        }
+        if (TransformParameterOptions.Read(options, "template-params") is { } tmplParams)
+        {
+            foreach (var (name, value) in tmplParams)
+                transformer.SetInitialTemplateParameter(name, value);
+        }
+        if (TransformParameterOptions.Read(options, "tunnel-params") is { } tunnelParams)
+        {
+            foreach (var (name, value) in tunnelParams)
+                transformer.SetInitialTunnelParameter(name, value);
+        }
+
         // Resolve the principal input.
         // Precedence: source-node beats source-location when both are supplied (Saxon
         // behaviour — the spec is silent on this). source-location fetches the URI

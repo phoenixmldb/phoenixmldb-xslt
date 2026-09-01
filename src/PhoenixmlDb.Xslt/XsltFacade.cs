@@ -87,6 +87,14 @@ public sealed class XsltTransformer
 {
     private XsltStylesheet? _stylesheet;
     private readonly Dictionary<string, object?> _typedParameters = new();
+    /// <summary>
+    /// Global parameters supplied by QNAME rather than by local name. Separate from
+    /// <c>_typedParameters</c> because that one is keyed by the string a caller passed and is
+    /// wrapped as a no-namespace QName; there is no string spelling of a namespaced name that
+    /// survives that wrapping.
+    /// </summary>
+    private readonly Dictionary<QName, object?> _typedParametersByQName = new();
+
     private readonly Dictionary<QName, object?> _initialTemplateParams = new();
     private readonly Dictionary<QName, object?> _initialTunnelParams = new();
     private string? _initialTemplate;
@@ -446,6 +454,19 @@ public sealed class XsltTransformer
     public void SetParameter(string name, object? value)
     {
         _typedParameters[name] = value;
+    }
+
+    /// <summary>
+    /// Sets a global stylesheet parameter whose name is NAMESPACED, preserving its typed value.
+    /// </summary>
+    /// <param name="name">
+    /// The qualified name of a top-level <c>xsl:param</c>. Pass a QName rather than a string:
+    /// the string overloads take a LOCAL name and have no spelling for a namespace.
+    /// </param>
+    /// <param name="value">The typed value to bind, or <c>null</c> for the empty sequence.</param>
+    public void SetParameter(QName name, object? value)
+    {
+        _typedParametersByQName[name] = value;
     }
 
     /// <summary>
@@ -1078,6 +1099,9 @@ public sealed class XsltTransformer
         var paramDict = new Dictionary<QName, object?>();
         foreach (var (name, value) in _typedParameters)
             paramDict[new QName(NamespaceId.None, name)] = value;
+        // Applied second so an explicitly-qualified name wins over a same-local-name string one.
+        foreach (var (name, value) in _typedParametersByQName)
+            paramDict[name] = value;
 
         return new XsltTransformOptions
         {
@@ -1266,6 +1290,25 @@ public sealed class XsltTransformer
 
     private static QName ResolveQName(string name, string? namespaceUri)
     {
+        // EQName syntax: Q{uri}local. Check it BEFORE looking for a prefix separator — the URI
+        // almost always contains a colon, so the prefix split tore "Q{http://example/x}main"
+        // into prefix "Q{http" and local name "//example/x}main", and the lookup then failed
+        // reporting a name the caller never wrote. EQName is the only way to name a component
+        // in a namespace through this string API, since there is no prefix to bind.
+        if (name.StartsWith("Q{", StringComparison.Ordinal))
+        {
+            var close = name.IndexOf('}', 2);
+            if (close > 0)
+            {
+                var uri = name[2..close];
+                var local = name[(close + 1)..];
+                return new QName(
+                    string.IsNullOrEmpty(uri) ? NamespaceId.None : StylesheetParser.ResolveNamespaceUri(uri),
+                    local)
+                { ExpandedNamespace = string.IsNullOrEmpty(uri) ? null : uri };
+            }
+        }
+
         var colonIdx = name.IndexOf(':', StringComparison.Ordinal);
         if (colonIdx > 0)
         {

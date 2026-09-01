@@ -215,3 +215,50 @@ internal static class VendorOptionPackages
     }
 
 }
+
+/// <summary>
+/// Reads the parameter-bearing options of <c>fn:transform</c> — <c>stylesheet-params</c>,
+/// <c>template-params</c> and <c>tunnel-params</c>.
+/// </summary>
+/// <remarks>
+/// Lives in one place and is called from BOTH fn:transform implementations —
+/// <c>XsltTransformProvider</c> for XQuery callers and <c>XsltTransformFunction</c> for XSLT
+/// ones. Nine defects in a single week were "one of that pair had a fix its twin lacked", so a
+/// second copy of this would be a tenth waiting to happen.
+///
+/// <para>
+/// The values are NOT string-valued. <c>static-params</c> are strings because they are consumed
+/// at compile time, and both call sites do that correctly — but these three carry real XDM
+/// values, and flattening a node or a map into its string value here would lose it silently.
+/// </para>
+/// </remarks>
+internal static class TransformParameterOptions
+{
+    /// <summary>
+    /// Extracts one parameter option as QName-keyed values, or null when the option is absent.
+    /// QName keys are canonicalized onto the ids the stylesheet parser uses; anything else is
+    /// taken as a no-namespace local name, matching how the neighbouring options treat theirs.
+    /// </summary>
+    internal static Dictionary<QName, object?>? Read(
+        IDictionary<object, object?> options, string optionName)
+    {
+        if (!options.TryGetValue(optionName, out var raw)
+            || raw is not IDictionary<object, object?> map
+            || map.Count == 0)
+            return null;
+
+        var result = new Dictionary<QName, object?>();
+        foreach (var (key, value) in map)
+        {
+            // Canonicalize: these keys are fn:QName() values built at runtime, whose NamespaceId
+            // never equals the one the parser interned for the same URI. Uncanonicalized, a
+            // namespaced parameter name matches no declaration and the parameter is dropped
+            // without a word — the declaration's default is used and the values look right.
+            var name = key is QName qn
+                ? QNameNamespaces.Canonicalize(qn)
+                : new QName(NamespaceId.None, key.ToString() ?? "");
+            result[name] = value;
+        }
+        return result;
+    }
+}

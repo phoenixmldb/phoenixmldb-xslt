@@ -163,16 +163,50 @@ public sealed class XsltTransformEngine
         return true;
     }
 
-    private static XQueryExpression ToLiteralExpression(object? value) => value switch
+    /// <summary>
+    /// Builds the xsl:with-param list for an initial template from
+    /// <see cref="XsltTransformOptions.InitialTemplateParameters"/> and
+    /// <see cref="XsltTransformOptions.InitialTunnelParameters"/>.
+    /// </summary>
+    /// <remarks>
+    /// Shared because SIX call sites start a transform — TransformAsync and TransformRawAsync
+    /// each reach an initial template via CallTemplateAsync and an initial mode via
+    /// ApplyTemplatesAsync — and only TransformAsync passed any parameters. Every site in
+    /// TransformRawAsync passed an empty list, so fn:transform's template-params and
+    /// tunnel-params were silently dropped on every raw-delivery transform. The template ran and
+    /// returned its default, which is why it looked like the options were unimplemented rather
+    /// than undelivered.
+    ///
+    /// The initial-MODE half is the one that matters in practice: XSpec compiles a scenario-level
+    /// x:param under an x:context/@mode into template-params, so an entire suite ran with its
+    /// parameters missing and terminated on the first assertion that read one.
+    /// </remarks>
+    private static List<Ast.XsltWithParam> BuildInitialTemplateWithParams(XsltTransformOptions options)
     {
-        string s => new StringLiteral { Value = s },
-        int i => new IntegerLiteral { Value = (long)i },
-        long l => new IntegerLiteral { Value = l },
-        double d => new DoubleLiteral { Value = d },
-        bool b => b ? BooleanLiteral.True : BooleanLiteral.False,
-        null => EmptySequence.Instance,
-        _ => new StringLiteral { Value = value.ToString()! }
-    };
+        var withParams = new List<Ast.XsltWithParam>();
+        foreach (var (name, value) in options.InitialTemplateParameters)
+        {
+            withParams.Add(new Ast.XsltWithParam
+            {
+                Name = name,
+                RuntimeValue = value,
+                HasRuntimeValue = true,
+                FromRuntimeOptions = true
+            });
+        }
+        foreach (var (name, value) in options.InitialTunnelParameters)
+        {
+            withParams.Add(new Ast.XsltWithParam
+            {
+                Name = name,
+                RuntimeValue = value,
+                HasRuntimeValue = true,
+                Tunnel = true,
+                FromRuntimeOptions = true
+            });
+        }
+        return withParams;
+    }
 
     /// <summary>
     /// Transforms an XML document using the stylesheet.
@@ -209,10 +243,7 @@ public sealed class XsltTransformEngine
             context.PopContextItem();
 
         // Bind initial parameters as global variables (overriding stylesheet defaults)
-        foreach (var (name, value) in options.InitialParameters)
-        {
-            context.GlobalVariables[name] = value;
-        }
+        BindExternalParameters(context, options);
 
         // XTDE0050: Check that all required global parameters have been supplied
         foreach (var param in _stylesheet.Parameters)
@@ -368,24 +399,7 @@ public sealed class XsltTransformEngine
             // Convert initial template parameters to xsl:with-param entries.
             // Only pass explicitly-set template params; global InitialParameters are set as
             // stylesheet-level variables separately and should NOT be passed as with-params.
-            var withParams = new List<Ast.XsltWithParam>();
-            foreach (var (name, value) in options.InitialTemplateParameters)
-            {
-                withParams.Add(new Ast.XsltWithParam
-                {
-                    Name = name,
-                    Select = ToLiteralExpression(value)
-                });
-            }
-            foreach (var (name, value) in options.InitialTunnelParameters)
-            {
-                withParams.Add(new Ast.XsltWithParam
-                {
-                    Name = name,
-                    Select = ToLiteralExpression(value),
-                    Tunnel = true
-                });
-            }
+            var withParams = BuildInitialTemplateWithParams(options);
             // When calling an initial template with no source document, the context item
             // should be absent per XSLT 3.0 §2.3
             if (!options.HasSourceDocument)
@@ -402,12 +416,14 @@ public sealed class XsltTransformEngine
             // eligible entry point. An empty package invoked this way must be rejected
             // rather than silently producing empty output. See W3C decl/package
             // package-914a (any-of XTDE0040 / XTDE0044).
-            if (!options.HasSourceDocument && !options.InitialMode.HasValue && options.InitialModeSelect == null)
+            if (!options.HasSourceDocument && !options.InitialMode.HasValue
+                && options.InitialModeSelect == null && options.InitialModeSelectValue == null)
                 throw new XsltException("XTDE0040: The invocation supplies no source document, initial template, initial function, or initial mode");
 
             // XTDE0044: It is a dynamic error if the invocation of the stylesheet specifies
             // an initial mode and no initial match selection is supplied.
-            if (options.InitialMode.HasValue && !options.HasSourceDocument && options.InitialModeSelect == null)
+            if (options.InitialMode.HasValue && !options.HasSourceDocument
+                && options.InitialModeSelect == null && options.InitialModeSelectValue == null)
                 throw new XsltException("XTDE0044: The invocation of the stylesheet specifies an initial mode but no initial match selection is supplied");
 
             // Apply templates to the document node itself (XSLT semantics: initial match is against "/")
@@ -455,29 +471,12 @@ public sealed class XsltTransformEngine
             }
 
             // Build with-params from initial template/mode parameters
-            var applyWithParams = new List<Ast.XsltWithParam>();
-            foreach (var (name, value) in options.InitialTemplateParameters)
-            {
-                applyWithParams.Add(new Ast.XsltWithParam
-                {
-                    Name = name,
-                    Select = ToLiteralExpression(value)
-                });
-            }
-            foreach (var (name, value) in options.InitialTunnelParameters)
-            {
-                applyWithParams.Add(new Ast.XsltWithParam
-                {
-                    Name = name,
-                    Select = ToLiteralExpression(value),
-                    Tunnel = true
-                });
-            }
+            var applyWithParams = BuildInitialTemplateWithParams(options);
 
             // If InitialModeSelect is specified, evaluate it and apply templates to the result
-            if (options.InitialModeSelect != null)
+            if (options.InitialModeSelect != null || options.InitialModeSelectValue != null)
             {
-                var selectExpr = new XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(options.InitialModeSelect);
+                var selectExpr = BuildInitialModeSelectExpression(context, options);
                 await context.ApplyTemplatesAsync(
                     selectExpr,
                     effectiveInitialMode,
@@ -997,8 +996,7 @@ public sealed class XsltTransformEngine
         if (!options.HasSourceDocument)
             context.PopContextItem();
 
-        foreach (var (name, value) in options.InitialParameters)
-            context.GlobalVariables[name] = value;
+        BindExternalParameters(context, options);
 
         // Enable sequence collection to capture raw XDM values (function items, maps, etc.)
         context.BeginSequenceCollection();
@@ -1053,22 +1051,23 @@ public sealed class XsltTransformEngine
                     options.InitialContextItem ?? PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus,
                     options.InitialContextItem != null ? 1 : 0,
                     options.InitialContextItem != null ? 1 : 0);
-            await context.CallTemplateAsync(initialTemplate, []).ConfigureAwait(false);
+            await context.CallTemplateAsync(initialTemplate, BuildInitialTemplateWithParams(options)).ConfigureAwait(false);
             if (!options.HasSourceDocument)
                 context.PopContextItem();
         }
-        else if (options.InitialModeSelect != null)
+        else if (options.InitialModeSelect != null || options.InitialModeSelectValue != null)
         {
-            var selectExpr = new XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(options.InitialModeSelect);
+            var selectExpr = BuildInitialModeSelectExpression(context, options);
             var effectiveInitialMode = options.InitialMode ?? new QName(NamespaceId.None, "");
-            await context.ApplyTemplatesAsync(selectExpr, effectiveInitialMode, [], []).ConfigureAwait(false);
+            await context.ApplyTemplatesAsync(
+                selectExpr, effectiveInitialMode, [], BuildInitialTemplateWithParams(options)).ConfigureAwait(false);
         }
         else
         {
             var effectiveInitialMode = options.InitialMode ?? new QName(NamespaceId.None, "");
             await context.ApplyTemplatesAsync(
                 ContextItemExpression.Instance,
-                effectiveInitialMode, [], []).ConfigureAwait(false);
+                effectiveInitialMode, [], BuildInitialTemplateWithParams(options)).ConfigureAwait(false);
         }
 
         var rawItems = context.EndSequenceCollection();
@@ -1273,8 +1272,7 @@ public sealed class XsltTransformEngine
         await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
         context.PopContextItem();
 
-        foreach (var (name, value) in options.InitialParameters)
-            context.GlobalVariables[name] = value;
+        BindExternalParameters(context, options);
 
         // Replace the constructor's synthetic-doc focus with the caller's actual item.
         // PopContextItem first drops the synthetic doc that the constructor seeded.
@@ -1293,7 +1291,7 @@ public sealed class XsltTransformEngine
                     && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
                     && rawTmpl.VisibilityAttr is not ("public" or "final"))
                     throw new XsltException($"XTDE0040: Initial template '{initialTemplate.LocalName}' is not public");
-                await context.CallTemplateAsync(initialTemplate, []).ConfigureAwait(false);
+                await context.CallTemplateAsync(initialTemplate, BuildInitialTemplateWithParams(options)).ConfigureAwait(false);
             }
             else
             {
@@ -1301,7 +1299,7 @@ public sealed class XsltTransformEngine
                 // ContextItemExpression.Instance evaluates to '.' — the supplied item.
                 await context.ApplyTemplatesAsync(
                     ContextItemExpression.Instance,
-                    effectiveInitialMode, [], []).ConfigureAwait(false);
+                    effectiveInitialMode, [], BuildInitialTemplateWithParams(options)).ConfigureAwait(false);
             }
         }
         finally
@@ -3366,6 +3364,81 @@ public sealed class XsltTransformEngine
             || code.StartsWith("XQST", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Binds externally-supplied parameter values over the stylesheet's globals.
+    /// </summary>
+    /// <remarks>
+    /// Only an <c>xsl:param</c> may be overridden this way. A name the stylesheet declares as a
+    /// global <c>xsl:variable</c> is not a parameter at all, so a supplied value for it must have
+    /// no effect (XSLT 3.0 §9.5) — the variable keeps its computed value.
+    ///
+    /// <para>
+    /// These four call sites previously wrote EVERY supplied name straight into the global scope,
+    /// so a caller could silently replace a variable's value with one of a different type, or
+    /// with nothing. It stayed invisible for as long as fn:transform's stylesheet-params were not
+    /// delivered at all. The moment they were, XSpec's global-override suite — whose entire
+    /// purpose is asserting that an x:param never overrides an xsl:variable — stopped completing:
+    /// the empty value it deliberately supplies replaced a variable declared as="xs:string",
+    /// and the template returning it raised XTTE0505.
+    /// </para>
+    ///
+    /// <para>
+    /// Declared parameters are applied here rather than skipped, because
+    /// InitializeGlobalsInDependencyOrderAsync only binds the ones it evaluates; this pass is
+    /// what guarantees a supplied value wins over a default regardless of evaluation order.
+    /// </para>
+    /// </remarks>
+    /// <summary>
+    /// The reserved name the initial match selection is bound to when it is supplied as a value.
+    /// Namespaced so it cannot collide with a stylesheet's own global.
+    /// </summary>
+    private static readonly QName InitialMatchSelectionVariable =
+        new(QNameNamespaces.InternedIdFor("urn:x-phoenixml:internal"), "initial-match-selection");
+
+    /// <summary>
+    /// Produces the select expression for an initial-mode apply-templates, binding the supplied
+    /// sequence first when the selection arrived as a value rather than as an expression.
+    /// </summary>
+    private static XQueryExpression BuildInitialModeSelectExpression(
+        DefaultXsltExecutionContext context, XsltTransformOptions options)
+    {
+        if (options.InitialModeSelectValue != null)
+        {
+            // Bind, then reference. Applying templates to the sequence through an ordinary
+            // variable reference keeps the real apply-templates semantics — position(), last()
+            // and sorting all see the whole selection — which iterating item by item here
+            // would quietly lose.
+            context.GlobalVariables[InitialMatchSelectionVariable] = options.InitialModeSelectValue;
+            return new VariableReference { Name = InitialMatchSelectionVariable };
+        }
+        return new XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }
+            .Parse(options.InitialModeSelect!);
+    }
+
+    private void BindExternalParameters(DefaultXsltExecutionContext context, XsltTransformOptions options)
+    {
+        if (options.InitialParameters.Count == 0)
+            return;
+
+        var paramNames = new HashSet<QName>();
+        foreach (var p in _stylesheet.Parameters)
+            paramNames.Add(p.Name);
+
+        // A name declared BOTH ways keeps the parameter's meaning: CollectGlobalDeclarations
+        // adds parameters first and lets the first declaration of a name win.
+        var variableOnly = new HashSet<QName>();
+        foreach (var v in _stylesheet.Variables)
+            if (!paramNames.Contains(v.Name))
+                variableOnly.Add(v.Name);
+
+        foreach (var (name, value) in options.InitialParameters)
+        {
+            if (variableOnly.Contains(name))
+                continue;
+            context.GlobalVariables[name] = value;
+        }
+    }
+
     private async Task InitializeGlobalsInDependencyOrderAsync(
         DefaultXsltExecutionContext context,
         StringBuilder outputBuilder)
@@ -3402,8 +3475,15 @@ public sealed class XsltTransformEngine
                 // Add direct variable dependencies (only those that are globals)
                 foreach (var varRef in collector.VariableRefs)
                 {
-                    if (globalNames.Contains(varRef))
-                        deps.Add(varRef);
+                    // ResolveGlobalRef, not a bare Contains: the reference comes from the XPath
+                    // parser and the declaration from the stylesheet parser, so their QNames can
+                    // carry different interned NamespaceIds for the same URI. A miss here is
+                    // silent and does real damage — the dependency is simply not recorded, the
+                    // topological sort never orders the two, and a forward-declared global is
+                    // evaluated before the one it selects from.
+                    var resolvedRef = ResolveGlobalRef(varRef, globalNames);
+                    if (resolvedRef is { } gname)
+                        deps.Add(gname);
                     else if (abstractVarNames.Contains(varRef) && !deferredAbstractGlobals.ContainsKey(global.Name))
                         deferredAbstractGlobals[global.Name] = varRef;
                 }
@@ -3424,7 +3504,11 @@ public sealed class XsltTransformEngine
                 // Add direct variable dependencies
                 foreach (var varRef in collector.VariableRefs)
                 {
-                    if (globalNames.Contains(varRef))
+                    if (ResolveGlobalRef(varRef, globalNames) is { } resolvedContentRef)
+                    {
+                        deps.Add(resolvedContentRef);
+                    }
+                    else if (globalNames.Contains(varRef))
                         deps.Add(varRef);
                     else if (abstractVarNames.Contains(varRef) && !deferredAbstractGlobals.ContainsKey(global.Name))
                         deferredAbstractGlobals[global.Name] = varRef;
@@ -4025,15 +4109,22 @@ public sealed class XsltTransformEngine
                     && global.As.ItemType is ItemType.Text or ItemType.Node
                     && !content.Contains('<', StringComparison.Ordinal))
                 {
-                    // as="text()" or as="node()": create proper XDM text node
+                    // as="text()" or as="node()": create proper XDM text node.
+                    // REGISTER it. Taking an id from the store without registering leaves a node
+                    // the store cannot resolve, and node identity is resolved through the store —
+                    // so `except`, `union` and `intersect` reported "An operand of the except
+                    // operator is not a node" for a variable that is one. The document-node()
+                    // branch directly below has always registered; this one did not.
                     var textId = context._nodeStore.NextId();
-                    context.GlobalVariables[global.Name] = new Xdm.Nodes.XdmText
+                    var globalText = new Xdm.Nodes.XdmText
                     {
                         Id = textId,
                         Document = DocumentId.None,
                         Parent = NodeId.None,
                         Value = content
                     };
+                    context._nodeStore.Register(globalText);
+                    context.GlobalVariables[global.Name] = globalText;
                 }
                 else if (context._nodeStore != null && global.As.ItemType == ItemType.Document)
                 {
@@ -4339,6 +4430,39 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// Topologically sorts global declarations based on their dependencies.
     /// </summary>
+    /// <summary>
+    /// Matches a variable REFERENCE against the set of declared global names, rescuing the case
+    /// where the two carry different interned <c>NamespaceId</c>s for the same namespace URI.
+    /// </summary>
+    /// <remarks>
+    /// The reference is produced by the XPath parser and the declaration by the stylesheet
+    /// parser. For an unprefixed name both sides use <c>NamespaceId.None</c> and the fast path
+    /// matches; for a NAMESPACED name the ids can differ, the set lookup misses, and the
+    /// dependency is never recorded. Nothing errors — the topological sort simply does not order
+    /// the pair, so a global declared BEFORE the one it selects from is evaluated first and
+    /// reads an unbound value. Observed as node kinds collapsing: comment() and element() came
+    /// back as documents, attribute() as an empty string, namespace-node() as text.
+    ///
+    /// See QNameNamespaces, which exists because this identity trap had already cost several
+    /// separate bugs.
+    /// </remarks>
+    private QName? ResolveGlobalRef(QName varRef, HashSet<QName> globalNames)
+    {
+        if (globalNames.Contains(varRef))
+            return varRef;
+
+        string? ResolveViaStylesheet(QName q)
+            => !string.IsNullOrEmpty(q.Prefix)
+               && _stylesheet.Namespaces.TryGetValue(q.Prefix, out var declared) ? declared : null;
+
+        foreach (var candidate in globalNames)
+        {
+            if (QNameNamespaces.SameExpandedName(candidate, varRef, ResolveViaStylesheet))
+                return candidate;
+        }
+        return null;
+    }
+
     private static List<GlobalDeclaration> TopologicalSort(
         List<GlobalDeclaration> globals,
         Dictionary<QName, HashSet<QName>> dependencies)
@@ -4724,8 +4848,7 @@ public sealed class XsltTransformEngine
         context.PopContextItem();
 
         // Bind initial parameters as global variables
-        foreach (var (name, value) in options.InitialParameters)
-            context.GlobalVariables[name] = value;
+        BindExternalParameters(context, options);
 
         // XTDE0050: Check that all required global parameters have been supplied
         foreach (var param in _stylesheet.Parameters)
@@ -5842,6 +5965,21 @@ public sealed class XsltTransformOptions
     public string? InitialModeSelect { get; init; }
 
     /// <summary>
+    /// The initial match selection supplied as a VALUE rather than as an expression to evaluate.
+    /// Takes precedence over <see cref="InitialModeSelect"/>.
+    /// </summary>
+    /// <remarks>
+    /// fn:transform's <c>initial-match-selection</c> option already holds real XDM items, and
+    /// XSpec routes a context there whenever it is not a single node — so in practice this is a
+    /// SEQUENCE, often of nodes. Turning such a value back into an XPath string cannot work:
+    /// there is no expression that denotes an arbitrary existing node, and the previous
+    /// conversion fell back to <c>value.ToString()</c>, which for a sequence is the CLR text
+    /// "System.Object[]". That was then parsed as XPath and failed with
+    /// "mismatched input ']'" — the empty predicate of <c>Object[]</c>.
+    /// </remarks>
+    public object? InitialModeSelectValue { get; init; }
+
+    /// <summary>
     /// The context item to establish when an initial template is invoked with no source document.
     /// </summary>
     /// <remarks>
@@ -6009,7 +6147,17 @@ internal sealed class TemplateIndex
         // For next-match: only skip when there is an explicit priority (all
         // alternatives share it and represent one rule). Without explicit
         // priority each alternative is a separate rule (XSLT 3.0 §6.6).
-        var groupId = new object();
+        // Identify the group by the UNION PATTERN instance — the one thing every copy of a rule
+        // shares. `new object()` minted a fresh group per split, and the template instance is no
+        // better: CloneTemplateWithVisibility makes a NEW XsltTemplate that shares `Match` but
+        // whose UnionGroupId is still null, so the original and the clone each expanded into a
+        // different group. Two alternatives of ONE xsl:template then stopped recognising each
+        // other as siblings, and matching both raised XTDE0540 for a conflict that spec bug
+        // 30402 says is not one.
+        //
+        // Keying on the pattern is stable across cloning and makes re-expansion idempotent,
+        // while two genuinely distinct rules still hold distinct pattern objects.
+        var groupId = template.UnionGroupId ?? (object)union;
         var result = new List<XsltTemplate>(union.Patterns.Count);
         foreach (var pattern in union.Patterns)
         {
@@ -9799,6 +9947,33 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (docNode != null)
                     expandedNodes.Add(docNode);
             }
+            else if (item is Xdm.TextNodeItem tni && _nodeStore != null)
+            {
+                // TextNodeItem is an internal MARKER — a bare string that lets the sequence
+                // accumulator tell a text node apart from an atomic string (XSLT 3.0 §5.7.2).
+                // It carries no identity, parent or store, so it is not a node as far as pattern
+                // matching is concerned: match="text()" and even match="node()" both miss it, and
+                // a mode with on-no-match="fail" then raises XTDE0555 for a node the stylesheet
+                // plainly handles.
+                //
+                // Materialize it into a real text node here, at the same boundary where a
+                // ResultTreeFragment is already expanded for exactly the same reason. The marker
+                // is an optimization internal to sequence construction; it must not survive into
+                // template matching, where the rest of the engine reasonably assumes a node.
+                //
+                // XSpec hits this whenever a scenario's result contains text nodes: its
+                // local:report-node mode declares on-no-match="fail", so the whole suite dies.
+                var textId = _nodeStore.NextId();
+                var text = new XdmText
+                {
+                    Id = textId,
+                    Document = DocumentId.None,
+                    Parent = NodeId.None,
+                    Value = tni.Value,
+                };
+                _nodeStore.Register(text);
+                expandedNodes.Add(text);
+            }
             else
             {
                 expandedNodes.Add(item);
@@ -9865,7 +10040,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             next = _templateIndex.FindMatchingTemplate(node, mode, mc2.Value, next);
                         }
                         if (next != null && TemplateIndex.SameConflictRank(next, template))
-                            throw Error($"XTDE0540: Multiple template rules match the node in a mode with on-multiple-match='fail'");
+                        {
+                            // Name the node, the mode, and BOTH rules. "Multiple template rules
+                            // match the node" states only that a conflict exists — which the
+                            // author can already tell from the error code. Which node, and which
+                            // two rules, is the entire diagnosis.
+                            static string Describe(XsltTemplate t) =>
+                                (t.Name != null ? $"name='{t.Name.Value.LocalName}'"
+                                                : $"match=\"{DescribePattern(t.Match)}\"")
+                                + $" (priority {TemplateIndex.EffectivePriority(t).ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+                                + $", precedence {TemplateIndex.EffectivePrecedence(t)})";
+                            throw Error(
+                                $"XTDE0540: Multiple template rules match {DescribeNodeForDiagnostics(node)}"
+                                + $" in mode {(modeKey.LocalName.Length > 0 ? "'" + modeKey.PrefixedName + "'" : "#unnamed")}"
+                                + $" with on-multiple-match='fail' — {Describe(template)} and {Describe(next)}"
+                                + " have the same priority");
+                        }
                     }
                 }
 
@@ -10123,6 +10313,94 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return OnNoMatchBehavior.TextOnlyCopy; // XSLT default
     }
 
+    /// <summary>
+    /// Renders a match pattern for an error message.
+    /// </summary>
+    /// <remarks>
+    /// Patterns keep no copy of their source text, so a message that interpolated one printed
+    /// whatever ToString() gave — for most pattern classes the CLR type name. An author reading
+    /// <c>Template match="PhoenixmlDb.Xslt.Ast.DotPattern"</c> cannot map that back to anything
+    /// they wrote. Render the shapes that have an obvious spelling, and for the rest fall back
+    /// to a trimmed kind name rather than a fully-qualified type.
+    /// </remarks>
+    private static string DescribePattern(Ast.XsltPattern? pattern)
+    {
+        if (pattern == null) return "(none)";
+        var text = pattern.ToString();
+        // A pattern that overrides ToString() returns its own spelling; the default
+        // implementation returns the type's full name, which always contains a dot-separated
+        // namespace and never looks like a pattern.
+        if (text != null && !text.StartsWith("PhoenixmlDb.", StringComparison.Ordinal))
+            return text;
+        return pattern switch
+        {
+            Ast.DotPattern => ".",
+            Ast.UnionPattern => "a union pattern",
+            Ast.ExceptPattern => "an except pattern",
+            Ast.IntersectPattern => "an intersect pattern",
+            Ast.KeyPattern => "a key() pattern",
+            Ast.IdPattern => "an id() pattern",
+            _ => pattern.GetType().Name.Replace("Pattern", "", StringComparison.Ordinal)
+        };
+    }
+
+    /// <summary>
+    /// Turns the lightweight <see cref="Xdm.TextNodeItem"/> marker into a real text node.
+    /// </summary>
+    /// <remarks>
+    /// The marker exists so the sequence accumulator can tell a text NODE from an atomic string
+    /// (XSLT 3.0 §5.7.2), and it is cheap precisely because it has no identity, parent or store.
+    /// Every consumer that reasonably assumes a node has those breaks on it, so it must be
+    /// materialized wherever a value stops being "sequence under construction" and becomes a
+    /// node the stylesheet can navigate, compare or subtract.
+    /// </remarks>
+    private XdmText? MaterializeTextNodeItem(Xdm.TextNodeItem item)
+    {
+        if (_nodeStore == null) return null;
+        var text = new XdmText
+        {
+            Id = _nodeStore.NextId(),
+            Document = DocumentId.None,
+            Parent = NodeId.None,
+            Value = item.Value,
+        };
+        _nodeStore.Register(text);
+        return text;
+    }
+
+    /// <summary>
+    /// Describes a sequence for a cardinality error: how many items, and what the first few are.
+    /// </summary>
+    private static string DescribeSequenceForDiagnostics(System.Collections.Generic.IEnumerable<object?> source)
+    {
+        var items = new System.Collections.Generic.List<object?>(source);
+        if (items.Count == 0)
+            return "no items";
+        var shown = new System.Collections.Generic.List<string>();
+        for (var i = 0; i < items.Count && i < 3; i++)
+            shown.Add(DescribeNodeForDiagnostics(items[i]));
+        var more = items.Count > 3 ? $", and {items.Count - 3} more" : "";
+        return $"{items.Count} items ({string.Join(", ", shown)}{more})";
+    }
+
+    /// <summary>
+    /// A short human-readable description of a node for error messages: its kind, and its name
+    /// when it has one.
+    /// </summary>
+    private static string DescribeNodeForDiagnostics(object? node) => node switch
+    {
+        XdmElement e => $"element '{(string.IsNullOrEmpty(e.Prefix) ? e.LocalName : e.Prefix + ":" + e.LocalName)}'",
+        XdmAttribute a => $"attribute '{(string.IsNullOrEmpty(a.Prefix) ? a.LocalName : a.Prefix + ":" + a.LocalName)}'",
+        XdmDocument => "document node",
+        XdmText => "text node",
+        XdmComment => "comment node",
+        XdmProcessingInstruction pi => $"processing instruction '{pi.Target}'",
+        null => "an absent item",
+        string str => $"the string '{(str.Length > 30 ? str[..30] + "..." : str)}'",
+        Xdm.TextNodeItem t => $"a text item '{(t.Value.Length > 30 ? t.Value[..30] + "..." : t.Value)}'",
+        _ => $"a {node.GetType().Name}"
+    };
+
     private async ValueTask ApplyBuiltInTemplateAsync(
         object node,
         QName? mode,
@@ -10182,8 +10460,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // error, so it needs the ErrorCode and Location every other XSLT error carries,
                 // and it must be catchable as one — AccumulatorDeferredError.IsDeferrable and
                 // the CLI's XSLT handler both key off the type.
+                // Name the node and the mode. The bare message said only that SOMETHING did not
+                // match SOMEWHERE, which is the one fact that does not help: a stylesheet has
+                // many modes and a document many nodes, and on-no-match="fail" exists precisely
+                // to be diagnosed.
                 throw Error(
-                    "XTDE0555: No matching template found for node in mode with on-no-match='fail'");
+                    "XTDE0555: No matching template found for "
+                    + DescribeNodeForDiagnostics(node)
+                    + " in mode "
+                    + (mode is { } m && !string.IsNullOrEmpty(m.LocalName)
+                        ? "'" + m.PrefixedName + "'"
+                        : "#unnamed")
+                    + " with on-no-match='fail'");
         }
     }
 
@@ -11789,7 +12077,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // Note: tunnel with-params matching non-tunnel params are NOT errors — they pass through.
             if (!IsBackwardsCompatible)
             {
-                foreach (var wp in withParams.Where(p => !p.Tunnel))
+                foreach (var wp in withParams.Where(p => !p.Tunnel && !p.FromRuntimeOptions))
                 {
                     var matchingParam = template.Parameters.FirstOrDefault(p => p.Name.Equals(wp.Name));
                     if (matchingParam == null)
@@ -14267,7 +14555,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             case ContextItemExpression:
                 var ci = ContextItem;
                 if (ReferenceEquals(ci, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
-                    throw Error("XPDY0002: Context item is absent");
+                    // Say what was being evaluated and where. "Context item is absent" restates
+                    // the error code: an author already knows what XPDY0002 means, and needs to
+                    // know WHICH expression asked for a focus that is not there. The context
+                    // item is absent by DESIGN in several places — a global variable, a named
+                    // template called without one, xsl:context-item use="absent" — so the
+                    // instruction is the part that locates the mistake.
+                    throw Error("XPDY0002: Context item is absent"
+                        + " — evaluating '.' (the context item)"
+                        + (_currentInstructionLocation != null
+                            ? $" at {_currentInstructionLocation}"
+                            // Say the location is unknown, not that there is no enclosing
+                            // instruction. Those are different claims and only the first is
+                            // supported by _currentInstructionLocation being null.
+                            : " (source location not recorded for this expression)"));
                 return ci;
             // Fast path: position() and last() — avoid full XQuery pipeline in loops
             case FunctionCallExpression { Arguments.Count: 0 } fce
@@ -15728,6 +16029,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// Writes text to the result tree, XML-escaping it — EXCEPT while it is being collected as
+    /// an attribute VALUE, where it must be written verbatim.
+    /// </summary>
+    /// <remarks>
+    /// <c>xsl:attribute</c> with a sequence-constructor body runs that body into the ordinary
+    /// output buffer and then takes the written span as the attribute's string value. Text
+    /// escaped on the way in is therefore escaped a SECOND time when the finished value is
+    /// serialized, so <c>&amp;</c> came out as <c>&amp;amp;amp;</c> and a <c>&gt;</c> written by
+    /// <c>xsl:text</c> came out as <c>&amp;amp;gt;</c>.
+    ///
+    /// This corrupts data silently: the attribute is well-formed, just wrong. XSpec's own
+    /// compiler builds a select attribute this way — <c>&lt;xsl:attribute name="select"&gt;</c>
+    /// around an XPath containing <c>=&gt;</c> — and the generated stylesheet then failed to
+    /// parse with "token recognition error at: '&amp;'", because the XPath lexer was handed a
+    /// literal <c>&amp;gt;</c>.
+    ///
+    /// The select and AVT forms of xsl:attribute were unaffected: they produce the value as a
+    /// string directly and never route it through the escaping output path.
+    /// </remarks>
+    private void EmitText(string value)
+    {
+        if (_attributeContentDepth > 0)
+            _sink.RawText(value);
+        else
+            _sink.Text(value);
+    }
+
     public override void WriteText(string value, bool disableOutputEscaping)
     {
         // SP-B slice 4: the node model stores raw (unescaped) text; capture the value before any
@@ -15778,7 +16107,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         else
         {
-            _sink.Text(value);
+            EmitText(value);
         }
 
         // SP-B slice 4: route element-content text into the active constructor as a child text
@@ -15838,7 +16167,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // result is assembled from both _sequenceAccumulator and _output.
             if (_functionBodyDepth > 0 && _textContentDepth == 0)
             {
-                _sink.Text(value);
+                EmitText(value);
                 emittedToOutput = true;
                 // This item now OWNS the text just written. Without this the weave emits the
                 // item and then the same text again as a trailing output chunk.
@@ -15852,7 +16181,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         else
         {
-            _sink.Text(value);
+            EmitText(value);
             emittedToOutput = true;
         }
 
@@ -22041,15 +22370,37 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     }
                 }
 
+                // A variable declared with a NODE type must hold real nodes. The body may have
+                // produced TextNodeItem markers, which are not nodes: `<xsl:variable as="text()">
+                // <xsl:text>t</xsl:text></xsl:variable>` then failed any operation requiring one,
+                // e.g. "An operand of the except operator is not a node". Binding a variable is
+                // where a sequence stops being under construction and becomes a value, so it is
+                // where the marker has to be made real.
+                if (instruction.As!.ItemType is ItemType.Node or ItemType.Text or ItemType.Item)
+                {
+                    for (var i = 0; i < sequenceItems.Count; i++)
+                    {
+                        if (sequenceItems[i] is Xdm.TextNodeItem tniVar
+                            && MaterializeTextNodeItem(tniVar) is { } realText)
+                            sequenceItems[i] = realText;
+                    }
+                }
+
                 // For ExactlyOne/ZeroOrOne: check cardinality, then unwrap to single item
                 // so downstream code sees a single value (not an array).
                 var occurrence = instruction.As!.Occurrence;
                 if (occurrence == Occurrence.ExactlyOne || occurrence == Occurrence.ZeroOrOne)
                 {
+                    // Report the COUNT and what the items actually are. A cardinality failure
+                    // says the body produced the wrong number of items, and the number — and
+                    // what they were — is the whole diagnosis. Without it the message names
+                    // only the declared type, which the author already knows.
                     if (occurrence == Occurrence.ExactlyOne && sequenceItems.Count != 1)
-                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}"
+                            + $" — the body produced {DescribeSequenceForDiagnostics(sequenceItems)}");
                     if (occurrence == Occurrence.ZeroOrOne && sequenceItems.Count > 1)
-                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}"
+                            + $" — the body produced {DescribeSequenceForDiagnostics(sequenceItems)}");
                     // Unwrap single item so variable value is not an array
                     value = sequenceItems.Count == 1 ? sequenceItems[0] : null;
                 }
@@ -22390,9 +22741,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
                 // Cardinality check
                 if (occurrence == Occurrence.ExactlyOne && flatItems.Length != 1)
-                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}"
+                        + $" — the body produced {DescribeSequenceForDiagnostics(flatItems)}");
                 if (occurrence == Occurrence.ZeroOrOne && flatItems.Length > 1)
-                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}"
+                        + $" — the body produced {DescribeSequenceForDiagnostics(flatItems)}");
 
                 // Item type check (if not generic node()/item())
                 if (targetType is not ItemType.Node and not ItemType.Item)
@@ -22510,7 +22863,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     item != null && !CanCoerceToItemType(item, targetType));
                 if (hasTypeMismatch)
                 {
-                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}");
+                    throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}"
+                        + $" — the body produced {DescribeSequenceForDiagnostics(items)}");
                 }
 
                 // Coerce values to target type: atomize XDM nodes, apply numeric promotion, etc.
@@ -27605,6 +27959,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     private async ValueTask<object?> EvaluateWithParamAsync(XsltWithParam param)
     {
+        // A value handed in directly needs no evaluation, and must not be converted on the way
+        // through — see XsltWithParam.RuntimeValue.
+        if (param.HasRuntimeValue)
+            return param.RuntimeValue;
         if (param.Select != null)
         {
             return await EvaluateAsync(param.Select).ConfigureAwait(false);
@@ -27949,7 +28307,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var occurrence = template.As.Occurrence;
         // Include template identity in error messages for diagnostics
         var templateId = template.Name != null ? $" '{template.Name.Value.LocalName}'" :
-            template.Match != null ? $" match=\"{template.Match}\"" : "";
+            template.Match != null ? $" match=\"{DescribePattern(template.Match)}\"" : "";
         var locInfo = templateId;
 
         // Apply function conversion rules: atomize nodes for atomic target types
@@ -28250,6 +28608,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             string str => str,
             XdmNode node => node.StringValue,
             Xdm.XsAnyUri uri => uri.Value,
+            // A TextNodeItem is a text node — the accumulator's lightweight stand-in for one —
+            // so it atomizes to its string value like any other node. Without this it reached
+            // the `_ => null` arm and the whole coercion answered false, so a typed variable
+            // whose body produced text raised XTTE0570 against a value of exactly the right
+            // type: `<xsl:variable as="xs:string"><xsl:choose>…<xsl:when>dateTime</xsl:when>`
+            // failed with "the body produced 1 items (a text item 'dateTime')".
+            Xdm.TextNodeItem textItem => textItem.Value,
             _ => null
         };
 
@@ -29000,7 +29365,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var text = StringValueOf(value);
         if (!string.IsNullOrEmpty(text))
         {
-            _sink.Text(text);
+            EmitText(text);
         }
     }
 
@@ -29036,7 +29401,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         var text = StringValueOf(arr[i]);
                         if (!string.IsNullOrEmpty(text))
-                            _sink.Text(text);
+                            EmitText(text);
                     }
                 }
                 return;
@@ -37212,9 +37577,9 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
 
         // Build transform options
         var hasSource = sourceNode is Xdm.Nodes.XdmNode;
-        string? initialModeSelect = null;
+        object? initialModeSelectValue = null;
         if (initialMatchSelection != null && !hasSource && !initialTemplate.HasValue)
-            initialModeSelect = ConvertToSelectExpression(initialMatchSelection);
+            initialModeSelectValue = initialMatchSelection;
 
         // An initial-match-selection given ALONGSIDE an initial-template used to be dropped on the
         // floor: the branch above requires !initialTemplate.HasValue, and nothing else looked at
@@ -37245,6 +37610,20 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                 initialParams[qn] = DefaultXsltExecutionContext.StringValueOf(value);
             }
         }
+
+        // stylesheet-params overlays the static-params above: both end up as global parameter
+        // values, but these carry real XDM items and must NOT be string-valued the way
+        // static-params are (those are compile-time strings). Applied second so an explicit
+        // stylesheet-params entry wins over a same-named static one.
+        if (TransformParameterOptions.Read(options, "stylesheet-params") is { } styleParams)
+        {
+            foreach (var (name, value) in styleParams)
+                initialParams[name] = value;
+        }
+        var templateParams = TransformParameterOptions.Read(options, "template-params")
+                             ?? new Dictionary<QName, object?>();
+        var tunnelParams = TransformParameterOptions.Read(options, "tunnel-params")
+                           ?? new Dictionary<QName, object?>();
 
         // initial-function: extract function-params (XDM array → IList) and pass to engine.
         // Mirrors XsltTransformProvider's path used when fn:transform is invoked from
@@ -37302,8 +37681,10 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             InitialFunction = resolvedInitialFunction,
             InitialFunctionArguments = initialFunctionArgs,
             HasSourceDocument = hasSource,
-            InitialModeSelect = initialModeSelect,
+            InitialModeSelectValue = initialModeSelectValue,
             InitialParameters = initialParams,
+            InitialTemplateParameters = templateParams,
+            InitialTunnelParameters = tunnelParams,
             InitialContextItem = initialContextItem,
             // Under delivery-format='raw' the caller takes the typed XDM value and DISCARDS the
             // serialized buffer. Without this flag TransformRawAsync still built that buffer,
@@ -37417,22 +37798,6 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         }
 
         return resultMap;
-    }
-
-    private static string ConvertToSelectExpression(object? value)
-    {
-        // Convert a runtime value to an XPath expression string
-        if (value is null) return "''";
-        return value switch
-        {
-            int i => i.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            long l => l.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            double d => DefaultXsltExecutionContext.FormatDouble(d),
-            decimal m => m.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            string s => $"'{s.Replace("'", "''", StringComparison.Ordinal)}'",
-            bool b => b ? "true()" : "false()",
-            _ => value.ToString() ?? "''"
-        };
     }
 
     private static object? ParseResultAsDocument(string xml, XdmInMemoryStore? store = null, string? resultBaseUri = null)
@@ -37560,7 +37925,12 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             "http://www.w3.org/2005/xpath-functions/map" => NamespaceId.Map,
             "http://www.w3.org/2005/xpath-functions/array" => NamespaceId.Array,
             "http://www.w3.org/2005/xpath-functions/math" => NamespaceId.Math,
-            _ => NamespaceId.None
+            // Anything else is a namespace the STYLESHEET declared, and the fallback used to be
+            // NamespaceId.None. That is not a harmless miss: a namespaced initial-mode arriving
+            // as "no namespace" does not fail to resolve, it resolves to a DIFFERENT mode that
+            // happens to share the local name, and runs it. Interning through the parser's own
+            // table gives back the id the parser assigned the declaration.
+            _ => QNameNamespaces.InternedIdFor(uri)
         };
     }
 
