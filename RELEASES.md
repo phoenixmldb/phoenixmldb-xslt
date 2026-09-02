@@ -1,5 +1,74 @@
 # Release History
 
+## 1.6.13 - 2026-09-01
+
+Eleven fixes found by running XSpec's 284-suite corpus against the engine. On that corpus:
+102 suites ran to completion before, 129 now; 505 assertions passed before, 1077 now. No suite
+lost ground at any measured step.
+
+### fn:transform dropped parameters, and mis-identified namespaced names
+
+`template-params` and `tunnel-params` never reached an initial MODE: `TransformAsync` passed its
+with-param list and `TransformRawAsync` passed an empty one at all three of its call sites.
+XSpec compiles a scenario-level `x:param` under `x:context/@mode` into `template-params`, so
+whole suites ran with their parameters missing and terminated on the first assertion that read
+one.
+
+Separately, every name in an `fn:transform` option map arrives from `fn:QName()` at runtime,
+carrying an interned id the parser never assigned. Namespaced names missed every lookup - and a
+namespaced `initial-mode` collapsed to no namespace and ran a DIFFERENT mode that happened to
+share a local name.
+
+`initial-match-selection` was also round-tripped through an XPath string, so a sequence became
+the CLR text `System.Object[]`. No expression can denote an arbitrary existing node, so that
+conversion could never work; the value is carried now.
+
+### xsl:attribute with a body escaped its content twice
+
+The body form runs its content into the ordinary output buffer, which escapes for element
+content, and the finished value was escaped again. `&` came back as `&amp;amp;`. The select and
+AVT forms were always correct, so the divergence was between forms.
+
+Nothing errors - the attribute is well-formed, just wrong - so it only surfaces when something
+reads the value back. XSpec's compiler builds a `select` attribute this way around an XPath
+containing `=>`, and the generated stylesheet then failed to parse. Worth 148 assertions.
+
+### A forward-declared global with a NAMESPACED name was evaluated too early
+
+Dependencies were collected by testing a variable reference for membership in the set of
+declared names. The reference comes from the XPath parser and the declaration from the
+stylesheet parser, and their interned ids can differ - so for a namespaced name the lookup
+missed and the dependency was never recorded.
+
+Nothing errored. The topological sort simply did not order the pair, and a global declared
+before the ones it selects from read unbound values. It surfaced far from the cause as node
+kinds collapsing: `comment()` and `element()` came back as documents, `attribute()` as an empty
+string, `namespace-node()` as text.
+
+### Other correctness fixes
+
+- Supplied parameters overwrote global `xsl:variable`s. XSLT 3.0 §9.5: a value supplied for a
+  name declared as a variable is not a parameter and must have no effect.
+- The internal text marker leaked into template matching, type coercion and node-typed
+  variables - three places that reasonably assume a real node.
+- A global `as="text()"` variable took an id from the node store without registering it.
+- Union-pattern siblings forked their group identity, so two branches of ONE rule stopped
+  recognising each other and matching both raised XTDE0540 (spec bug 30402).
+- `as="processing-instruction(name)"` bound a document; the named spelling had no branch and
+  fell to a silent `item()` default.
+- `SetInitialTemplate` mis-parsed an EQName, splitting `Q{http://x}main` at the URI's colon.
+
+### Errors that named the code and not the problem
+
+XTDE0555, XTTE0570, XTDE0540 and XPDY0002 reported the error code and the expected type - the
+two things the author already knows - and not the actual node, mode, value or conflicting rules.
+XTTE0570 was emitted from nine sites with identical text. A CLR type name was also reaching
+users as `match="PhoenixmlDb.Xslt.Ast.DotPattern"`.
+
+Three clusters were then solved in a single run each by reading the improved message.
+
+    Xslt.Tests 1416 passed, 0 failed
+
 ## 1.6.12 - 2026-08-29
 
 ### A global variable nobody reads could fail the whole transform
