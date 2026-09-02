@@ -1913,6 +1913,15 @@ public sealed class XsltFunction
     public string? Streamability { get; init; }
 
     /// <summary>
+    /// Effective base URI of the module this function is declared in, honouring xml:base.
+    /// Used for static-base-uri() within the function body, exactly as
+    /// <see cref="XsltTemplate.BaseUri"/> is for a template. Without it a function declared in
+    /// an imported module reported the PRINCIPAL stylesheet's URI, because the runtime falls
+    /// back to that whenever nothing has been pushed.
+    /// </summary>
+    public Uri? BaseUri { get; init; }
+
+    /// <summary>
     /// When this function overrides a package component, stores the original function
     /// for xsl:original resolution at runtime.
     /// </summary>
