@@ -308,6 +308,50 @@ So this is NOT "copy drops namespace declarations". Probe that seam on the REAL 
 synthetic reconstruction so far has failed to reproduce.
 
 
+### 23. `$v/root()` returns empty as a path step; `root($v)` and `$v/root(.)` do not
+
+Found 2026-09-02. A zero-argument `fn:root()` used as a step does not receive the per-item
+context, and yields nothing rather than the root or an error:
+
+```
+root($v)         -> 1 item   correct
+$v/root(.)       -> 1 item   correct
+$v/root()        -> 0 items  WRONG   (0-arg defaults to the context item, so this is root(.))
+```
+
+It returns EMPTY rather than raising XPDY0002, so `Root0Function` — which reads
+`ctx.ContextItem` and throws when absent — is evidently not being invoked with the step's focus
+at all. Path-step evaluation lives in the **XQuery** package, so this needs the same
+release-and-repin chain as #19.
+
+Blocks XSpec `select-node`, whose assertion is
+`$x:result is $myv:source/root()/conbody[1]/p[1]/text()[1]` — the right operand is empty, `is`
+on an empty operand yields the empty sequence, and XSpec terminates on "Non-boolean @test".
+
+**Second, separate question in the same suite:** a variable declared `as="element(conbody)"` from
+a constructor body is PARENTLESS here — `root($v)` returns the element, not a document node — so
+`root()/conbody[1]` would still find nothing even once the above is fixed. XSLT 3.0 §9.3 says a
+typed body constructs a sequence rather than a temporary tree, which argues our behaviour is
+right; that the XSpec suite expects otherwise argues Saxon wraps it. **Settle this against the
+spec before changing it** — do not infer the rule from the test.
+
+### 24. Not every non-completing XSpec suite is an engine defect
+
+Recorded 2026-09-02 so the published figures are not misread. Of the suites that do not run to
+completion, at least these fail for reasons that are **not** engine deficiencies:
+
+| suite(s) | why | tracked |
+|---|---|---|
+| `uri-utils`, `schut-to-xslt`, `generate-xproc-imports` | need an OASIS XML Catalog; the engine has no catalog support at all | #21 |
+| `helper_xslt-package` | needs Saxon's `-config:` package library. **The engine already supports this** (`XsltFacade` takes a `packageCatalog`); phxspec simply does not read `<?xspec-test saxon-custom-options?>` | harness |
+| `version-utils` | inherently Saxon-specific — the scenario is labelled "Assume we test this on Saxon versions from 11.7 to 13.x" and tests `$x:saxon-version`, which is empty on any non-Saxon processor. **Cannot pass here, ever.** | inapplicable |
+
+Twelve top-level suites carry `saxon-custom-options`; phxspec ignores all of them. When
+reporting XSpec conformance, say how many of the shortfall are engine defects and how many are
+harness or inapplicable — a bare "N suites do not complete" reads as N engine bugs and overstates
+the case against the engine.
+
+
 ## Open — harness
 
 ### 15. Diagnostics printed CLR type names instead of XQuery ones — FIXED 2026-08-25
