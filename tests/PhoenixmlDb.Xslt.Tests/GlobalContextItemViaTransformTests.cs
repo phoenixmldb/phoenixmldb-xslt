@@ -93,14 +93,21 @@ public class GlobalContextItemViaTransformTests : IDisposable
     }
 
     /// <summary>
-    /// Omitting it must still fail — supplying the focus mechanism must not quietly satisfy a
-    /// stylesheet that requires a global context item.
+    /// Omitting it raises XTDE3086 — the spec-defined error for "a global context item is
+    /// required but none was supplied".
     /// </summary>
+    /// <remarks>
+    /// The fn:transform paths had no xsl:global-context-item enforcement at all, so execution
+    /// continued until a global variable evaluated "." and failed as XPDY0002 — the downstream
+    /// symptom rather than the condition. The two paths that DID enforce it tested only for a
+    /// source document, so they could neither be satisfied by a supplied global-context-item nor
+    /// complain when one was handed to a use="absent" stylesheet. All four now share one check.
+    /// </remarks>
     [Fact]
-    public async Task OmittingIt_StillFails()
+    public async Task OmittingIt_RaisesXTDE3086()
     {
         var ex = await Record.ExceptionAsync(async () => await RunAsync("()"));
         ex.Should().NotBeNull();
-        ex!.Message.Should().MatchRegex("XTDE3086|XPDY0002");
+        ex!.Message.Should().Contain("XTDE3086");
     }
 }

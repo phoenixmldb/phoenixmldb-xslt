@@ -253,10 +253,7 @@ public sealed class XsltTransformEngine
         }
 
         // xsl:global-context-item enforcement
-        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Required && !options.HasSourceDocument)
-            throw new XsltException("XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
-        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && options.HasSourceDocument)
-            throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a source document was provided");
+        EnforceGlobalContextItem(options);
 
         // xsl:global-context-item type checking
         if (_stylesheet.GlobalContextItemAs != null && options.HasSourceDocument)
@@ -992,6 +989,8 @@ public sealed class XsltTransformEngine
         // item when there is one, and absent otherwise. Pushing AbsentFocus unconditionally made
         // a stylesheet with xsl:global-context-item use="required" fail on any global reading "."
         // even though fn:transform had been given the item.
+        EnforceGlobalContextItem(options);
+
         var globalFocus = ResolveGlobalContextItem(options, nodeStore);
         if (!options.HasSourceDocument)
             context.PushContextItem(
@@ -1211,6 +1210,29 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// Enforces xsl:global-context-item (XSLT 3.0 §3.7.2): a stylesheet declaring
+    /// <c>use="required"</c> must be given a global context item, and one declaring
+    /// <c>use="absent"</c> must not be.
+    /// </summary>
+    /// <remarks>
+    /// Shared by every entry point. Two of them — the fn:transform paths — had no check at all,
+    /// so a stylesheet that required a global context item and was given none ran on to fail as
+    /// XPDY0002 when a global variable evaluated ".", reporting the downstream symptom instead
+    /// of the spec-defined error for exactly this condition. The other two were also incomplete:
+    /// they tested only for a source document, so an item supplied through fn:transform's
+    /// global-context-item option did not count as satisfying "required" and, conversely, could
+    /// be handed to a stylesheet declaring "absent" without complaint.
+    /// </remarks>
+    private void EnforceGlobalContextItem(XsltTransformOptions options)
+    {
+        var supplied = options.HasSourceDocument || options.GlobalContextItem != null;
+        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Required && !supplied)
+            throw new XsltException("XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
+        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && supplied)
+            throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a global context item was provided");
+    }
+
+    /// <summary>
     /// The global context item to use as the focus while global variables are evaluated,
     /// re-anchoring a cross-store node into <paramref name="store"/> first.
     /// </summary>
@@ -1289,6 +1311,8 @@ public sealed class XsltTransformEngine
         // Globals see the global context item when one was supplied, absent otherwise — the
         // same rule as the no-source path above. A global variable declared select="." is
         // evaluated here, long before the initial focus below is established.
+        EnforceGlobalContextItem(options);
+
         var globalFocus = ResolveGlobalContextItem(options, nodeStore);
         context.PushContextItem(
             globalFocus ?? PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus,
@@ -4883,10 +4907,7 @@ public sealed class XsltTransformEngine
         }
 
         // xsl:global-context-item enforcement (same as non-streaming path)
-        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Required && !options.HasSourceDocument)
-            throw new XsltException("XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
-        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && options.HasSourceDocument)
-            throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a source document was provided");
+        EnforceGlobalContextItem(options);
 
         // Resolve applicable accumulators for the streaming pass
         var streamingAccumulators = _stylesheet.Accumulators.Count > 0
