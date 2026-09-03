@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (97.9% W3C Conformance — 2604/2661 tests)
+### XSLT 3.0 (96.2% W3C conformance — 10,224/10,630 cases, measured 2026-09-02)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -20,11 +20,55 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - Higher-order functions, maps, arrays
 - Accumulators, merge, JSON/adaptive output
 
-### W3C Conformance
-- **969/1026 declaration tests** (94.4%) including package test sets
-- **648/648 expression tests** (100%)
-- **987/987 regex tests** (100%)
-- Clone [W3C XSLT 3.0 test suite](https://github.com/nicolo-ribaudo/xslt30-test) to run conformance tests
+## Conformance
+
+Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
+
+### W3C XSLT 3.0 — 10,224/10,630 cases (96.2%), 406 failing
+
+Measured 2026-09-02 against `w3c/xslt30-test` @ `fddf1cf`.
+
+| Group | Passing | | Failing |
+|---|---|---|---|
+| `attr` — attributes | 1082/1117 | 96.9% | 35 |
+| `decl` — declarations | 987/1080 | 91.4% | 93 |
+| `type` — types | 755/766 | 98.6% | 11 |
+| `fn` — functions | 1080/1131 | 95.5% | 51 |
+| `strm` — streaming | 2274/2373 | 95.8% | 99 |
+| `expr` — expressions | 636/648 | 98.1% | 12 |
+| `misc` | 1880/1921 | 97.9% | 41 |
+| `insn` — instructions | 1530/1594 | 96.0% | 64 |
+| **Total** | **10,224/10,630** | **96.2%** | **406** |
+
+The `sandp` group runs but reports no per-case counts, so it is excluded from the total rather
+than counted as passing.
+
+### XSpec — 139/284 suites (49%), 1152/1364 assertions (84.5%)
+
+Measured 2026-09-02 against the [XSpec](https://github.com/xspec/xspec) test corpus. This is the
+weakest of our conformance numbers and is published for the same reason as the strongest one.
+
+| | |
+|---|---|
+| Suites running to completion | 139 of 284 |
+| — of the 162 the runner can drive | 139 (122 are XQuery or Schematron suites it does not) |
+| Assertions passing | 1152 of 1364 |
+| Assertions failing | 209 |
+
+Roughly half the corpus completes, and about one assertion in seven still fails. Open causes are
+tracked in [BUGS.md](BUGS.md).
+
+### Reproducing these numbers
+
+```bash
+./scripts/fetch-conformance-suites.sh   # clones xslt30-test + qt3tests into TestData/
+./scripts/conformance.sh                # W3C XSLT groups; writes conformance-results/summary.txt
+./scripts/conformance.sh --all          # adds the XQuery (QT3) suite, as CI runs it
+phxspec --census $(find test -maxdepth 1 -name '*.xspec' | sort)   # from an xspec checkout
+```
+
+A conformance run with `TestData/` absent reports success without executing anything, so confirm
+the corpora are present before believing a green result.
 
 ## Installation
 
