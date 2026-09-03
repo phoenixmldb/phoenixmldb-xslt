@@ -216,6 +216,98 @@ returns the **bash wrapper**, not the `dotnet` process. Target the process whose
 `dotnet`. One correct stack replaced two confident wrong answers.
 
 
+### 19. `$err:code` has no namespace URI, and fixing it breaks QName rendering
+
+Found 2026-09-02. `xsl:catch` builds `$err:code` with the interned NamespaceId but **no
+`ExpandedNamespace`**. The components are otherwise right:
+
+```
+local-name-from-QName($err:code)     -> XTDE3086     correct
+prefix-from-QName($err:code)         -> err          correct
+namespace-uri-from-QName($err:code)  -> ""           WRONG
+```
+
+So `$err:code` cannot equal `QName('http://www.w3.org/2005/xqt-errors','XTDE3086')`. This blocks
+**9 assertions** in XSpec's `external_global-context_stylesheet` (the err:code/description/module
+trio across three scenarios), and is why fixing the *error code itself* — the engine raised
+XPDY0002 where XTDE3086 is required — moved the corpus by zero.
+
+**Attaching the URI is measurably worse on its own.** Measured on the 284-suite corpus:
+
+| | Complete | passing | failing |
+|---|---|---|---|
+| as-is | 137 | 1150 | 209 |
+| URI attached | 136 | 1154 | 202 |
+
+Attaching it flips the **XQuery** engine's QName stringifier to the EQName form `Q{uri}local`,
+where casting `xs:QName` to `xs:string` must give the lexical `prefix:local` (XPath 3.1 §19.2).
+XSpec compares the serialized lexical form, so three suites regress (`yes-no-utils` 14/0 -> 12/2,
+`xsl-result-document` 2/4 -> 0/6, `external_xslt-package_arith_private` 2/1 -> 1/2). Patching
+`StringValueOf` in the XSLT engine covers `xsl:value-of` but not `fn:string`, which lives in the
+XQuery package — so the halves diverge, and that divergence is itself the defect generator.
+
+**Order of operations: fix the QName stringifier in XQuery/Core first, release, bump the pin,
+THEN attach `ExpandedNamespace` here.** Doing it in the other order is negative. This is the
+highest-leverage open item — it unblocks the 9 assertions plus anything else comparing an error
+code against a URI-built QName.
+
+### 20. A node `global-context-item` cannot cross into fn:transform's inner engine
+
+Found 2026-09-02, after making `global-context-item` the focus for global-variable evaluation.
+A NODE passed as that option is handed through as-is. Wrapping it as a `CrossStoreNodeRef` — the
+way `function-params` are — makes the inner engine re-parse it, which mints a **new node**, and
+these suites assert node IDENTITY (`$x:result is $x:context`).
+
+Measured both ways (censuses 45/46): pass-through gives 137 Complete / 1150 passing; wrapping
+gives 136 / 1154. Wrapping gains assertions in four `external_*` suites and regresses
+`external_multiple-context-items_function` from Complete 1/2 to an XPDY0002 abort. **Neither
+dominates**, so do not pick by census total.
+
+The real fix is to wrap only when the stores genuinely differ — the inner engine often shares the
+caller's store, where the node resolves natively and identity holds. Establish which paths share
+a store before choosing.
+
+### 21. No XML Catalog support — 3 XSpec suites, and it is a feature not a bug
+
+`uri-utils`, `schut-to-xslt` and `generate-xproc-imports` fail with
+`FODC0002: No document could be retrieved for URI 'catalog-01:/...'`. They resolve a private URI
+scheme through an OASIS XML Catalog, which XSpec supplies to Saxon via processing instructions the
+.NET runner does not read (`<?xspec-test saxon-custom-options=-catalog:"..."?>`).
+
+Verified 2026-09-02: the engine has **no** catalog support and **no** URI-resolver hook. (The
+`packageCatalog` in `XsltFacade` is the XSLT *package* catalog, unrelated.) Clearing this means
+deciding whether the engine should support XML Catalogs and through what API, plus catalog
+parsing, `rewriteURI`/`public` entries, and plumbing into `fn:doc`/`fn:document`/module
+resolution. **Do not spend triage time treating it as a defect.**
+
+### 22. `x:like` loses a namespace inherited from an IMPORTED x:description
+
+Found 2026-09-02. FONS0004, 2 suites (`threads_description_stylesheet`,
+`threads_scenario_stylesheet`), stage Compile. A namespace declared on an imported
+`x:description` and used only inside an ATTRIBUTE VALUE is lost when `x:like` expands a
+`shared="yes"` scenario, so `x:call/@function="sleeper:sleep"` fails to resolve.
+
+Stage located by probing the real compiler:
+
+| point | in-scope prefixes on `x:call` |
+|---|---|
+| entering `x:gather-specs` | `xml,x,sleeper` |
+| `$specs-doc` (after gather) | `xml,x,sleeper` |
+| after `mode="x:unshare-scenarios"` | `xml,x` — **lost** |
+
+**Minimal repro** (needs the real XSpec compiler): an imported `shared.xspec` declaring
+`xmlns:sleeper` with a `shared="yes"` scenario whose `x:call/@function` uses the prefix, plus a
+`user.xspec` that imports it and references it with `x:like`. Putting both scenarios in ONE file
+**passes** — the cross-document import is required, and that is the cheapest lever.
+
+**Ruled out — seven isolations, all pass, do not re-run:** shallow-copy of an element with its
+own namespace; with an inherited one; `xsl:copy`; `xsl:copy-of`; `fn:document()` loading;
+`xsl:element inherit-namespaces="no"` wrapping copied children; a typed `as="element()+"`
+template whose body shallow-copies; and a second copy through an intermediate `xsl:document`.
+So this is NOT "copy drops namespace declarations". Probe that seam on the REAL repro — every
+synthetic reconstruction so far has failed to reproduce.
+
+
 ## Open — harness
 
 ### 15. Diagnostics printed CLR type names instead of XQuery ones — FIXED 2026-08-25
