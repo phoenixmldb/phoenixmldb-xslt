@@ -3645,12 +3645,24 @@ public sealed class StylesheetParser
 
         // Determine effective base URI for resolution.
         // DTD entity expansion may give elements a different BaseUri than _baseUri.
-        var effectiveBase = _baseUri;
-        if (!string.IsNullOrEmpty(element.BaseUri) &&
-            Uri.TryCreate(element.BaseUri, UriKind.Absolute, out var elementBaseUri) &&
-            (_baseUri == null || elementBaseUri.AbsoluteUri != _baseUri.AbsoluteUri))
+        // xsl:import/@href and xsl:include/@href resolve against the EFFECTIVE base URI of the
+        // element carrying them, which xml:base overrides (XML Base; XSLT 3.0 §3.2). XElement's
+        // BaseUri property reports the base of the DOCUMENT the element was read from and knows
+        // nothing about xml:base attributes, so
+        //     <xsl:include href="demo.xsl" xml:base="../../tutorial/coverage/"/>
+        // resolved against the including module's own directory and failed as XTSE0165 even
+        // though the target existed exactly where xml:base pointed (xspec issue 1135).
+        var effectiveBase = ResolveEffectiveBaseUri(element);
+        if (effectiveBase == null || ReferenceEquals(effectiveBase, _baseUri))
         {
-            effectiveBase = elementBaseUri;
+            // No xml:base in scope — fall back to the document the element was read from, which
+            // differs from _baseUri when this module was itself pulled in from elsewhere.
+            if (!string.IsNullOrEmpty(element.BaseUri) &&
+                Uri.TryCreate(element.BaseUri, UriKind.Absolute, out var elementBaseUri) &&
+                (_baseUri == null || elementBaseUri.AbsoluteUri != _baseUri.AbsoluteUri))
+            {
+                effectiveBase = elementBaseUri;
+            }
         }
 
         // Resolve href against base URI. Two paths from here on:
