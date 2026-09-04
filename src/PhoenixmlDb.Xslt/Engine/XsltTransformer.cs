@@ -14471,12 +14471,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var errDescription = ExtractErrorDescription(ex);
                     SetVariable(new QName(errNs, "description", "err"), errDescription);
                     SetVariable(new QName(NamespaceId.None, "description", "") { ExpandedNamespace = errUri }, errDescription);
-                    // NOTE: $err:code deliberately does NOT carry ExpandedNamespace, even though
-                    // that leaves fn:namespace-uri-from-QName($err:code) empty. Attaching it is
-                    // blocked on the companion PhoenixmlDb.XQuery release; see the follow-up
-                    // commit on this branch.
+                    // A standard error code is a QName in the XQT errors namespace, so it carries
+                    // the URI as well as the interned id — without it
+                    // fn:namespace-uri-from-QName($err:code) is empty and the code can never equal
+                    // QName('http://www.w3.org/2005/xqt-errors', 'XTTE0570'), which is how a
+                    // stylesheet (and XSpec) asserts on an error code.
+                    //
+                    // Attaching the URI used to change how the value PRINTED — the XQuery
+                    // stringifier fell through to QName.ToString() and rendered "Q{uri}local"
+                    // instead of the lexical "err:XTTE0570". That is fixed at its source in
+                    // PhoenixmlDb.XQuery (fn:string on an xs:QName now yields the lexical form per
+                    // XPath 3.1 §19.2), so both properties hold at once. Requires the companion
+                    // XQuery release; with an older pin the rendering regresses.
                     var errCodeValue = isStandardError
-                        ? (object)new QName(errNs, errorCode, "err")
+                        ? (object)new QName(errNs, errorCode, "err") { ExpandedNamespace = errUri }
                         : (object)new QName(NamespaceId.None, errorCode);
                     SetVariable(new QName(errNs, "code", "err"), errCodeValue);
                     SetVariable(new QName(NamespaceId.None, "code", "") { ExpandedNamespace = errUri }, errCodeValue);
