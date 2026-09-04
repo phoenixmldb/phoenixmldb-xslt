@@ -352,6 +352,40 @@ harness or inapplicable — a bare "N suites do not complete" reads as N engine 
 the case against the engine.
 
 
+### 25. An `xmlns=` default leaks into `xs:QName()` casts
+
+Found 2026-09-03, exposed by fixing fn:deep-equal for QNames (#19 chain). In a stylesheet
+declaring a default element namespace and NO `xpath-default-namespace`:
+
+```xml
+<xsl:stylesheet xmlns="urn:default-elem" ...>
+  namespace-uri-from-QName(xs:QName('foo'))   ->  "urn:default-elem"   WRONG, want ""
+  namespace-uri-from-QName(QName('','foo'))   ->  ""                   correct
+```
+
+An `xmlns=` declaration sets the default namespace for **literal result elements**. Unprefixed
+name resolution in XPath is governed by `xpath-default-namespace`, which is a different thing;
+the two are being conflated.
+
+**This was hiding behind a false pass.** XSpec's `catch_stylesheet` asserts
+`?err?code` against `xs:QName('error-code-of-my-template')`. The .xspec source has no default
+namespace, but the COMPILED stylesheet carries `xmlns="http://www.jenitennison.com/xslt/xspec"`,
+so the expected value came out in the XSpec namespace while the actual error code has none:
+
+```
+RESULT -> QName('', 'error-code-of-my-template')
+EXPECT -> QName('http://www.jenitennison.com/xslt/xspec', 'error-code-of-my-template')
+```
+
+Those three assertions "passed" only because `fn:deep-equal` compared QNames by their **debug
+ToString()**, where both render as the bare local name and the namespace difference is invisible.
+Once deep-equal compared by value, the pre-existing defect surfaced. `catch_stylesheet` going
+18/3 -> 15/6 is therefore **not a regression in capability** — it is three false passes becoming
+honest failures, and it should not be "fixed" by reverting the deep-equal change.
+
+Namespace resolution is high-blast-radius; measure the corpus before and after any change here.
+
+
 ## Open — harness
 
 ### 15. Diagnostics printed CLR type names instead of XQuery ones — FIXED 2026-08-25

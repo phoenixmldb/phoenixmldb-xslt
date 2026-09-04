@@ -1134,20 +1134,19 @@ public sealed class XsltTransformEngine
     {
         if (store == null || args.Count == 0)
             return args is List<object?> list ? list : new List<object?>(args);
-        bool anyWrapped = false;
-        for (var i = 0; i < args.Count; i++)
-        {
-            if (args[i] is CrossStoreNodeRef) { anyWrapped = true; break; }
-        }
-        if (!anyWrapped) return args is List<object?> list ? list : new List<object?>(args);
+        // Recurse via UnwrapCrossStoreValue rather than testing only the top level: an argument
+        // may be a SEQUENCE of nodes, which arrives as an array of wrappers. Unwrapping only a
+        // bare CrossStoreNodeRef left those arrays untouched, so a single-node argument worked
+        // while a two-node one came through empty.
         var translated = new List<object?>(args.Count);
+        var anyChanged = false;
         foreach (var arg in args)
         {
-            if (arg is CrossStoreNodeRef wrapped)
-                translated.Add(ReparseCrossStoreNode(wrapped, store));
-            else
-                translated.Add(arg);
+            var one = UnwrapCrossStoreValue(arg, store);
+            if (!ReferenceEquals(one, arg)) anyChanged = true;
+            translated.Add(one);
         }
+        if (!anyChanged) return args is List<object?> list ? list : new List<object?>(args);
         return translated;
     }
 
@@ -1242,6 +1241,34 @@ public sealed class XsltTransformEngine
             CrossStoreNodeRef wrapped when store != null => ReparseCrossStoreNode(wrapped, store),
             var other => other,
         };
+
+    /// <summary>
+    /// Re-anchors any <see cref="CrossStoreNodeRef"/> in a parameter value into
+    /// <paramref name="store"/>, recursing through sequences. Values carrying no wrapper pass
+    /// through untouched.
+    /// </summary>
+    internal static object? UnwrapCrossStoreValue(object? value, XdmInMemoryStore? store)
+    {
+        if (store == null) return value;
+        switch (value)
+        {
+            case CrossStoreNodeRef wrapped:
+                return ReparseCrossStoreNode(wrapped, store);
+            case object?[] items:
+            {
+                object?[]? rebuilt = null;
+                for (var i = 0; i < items.Length; i++)
+                {
+                    var one = UnwrapCrossStoreValue(items[i], store);
+                    if (!ReferenceEquals(one, items[i]))
+                        (rebuilt ??= (object?[])items.Clone())[i] = one;
+                }
+                return rebuilt ?? items;
+            }
+            default:
+                return value;
+        }
+    }
 
     private static object? ReparseCrossStoreNode(CrossStoreNodeRef wrapped, XdmInMemoryStore store)
     {
@@ -3484,7 +3511,11 @@ public sealed class XsltTransformEngine
         {
             if (variableOnly.Contains(name))
                 continue;
-            context.GlobalVariables[name] = value;
+            // A node handed in from another engine arrives wrapped for cross-store transport;
+            // re-parse it into THIS store so its children resolve. Unwrapped, its Children
+            // NodeIds refer to the caller's store and the subtree reads as empty — a parameter
+            // <kid>text</kid> arrived as <kid/>.
+            context.GlobalVariables[name] = UnwrapCrossStoreValue(value, context._nodeStore);
         }
     }
 
@@ -14441,14 +14472,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     SetVariable(new QName(errNs, "description", "err"), errDescription);
                     SetVariable(new QName(NamespaceId.None, "description", "") { ExpandedNamespace = errUri }, errDescription);
                     // NOTE: $err:code deliberately does NOT carry ExpandedNamespace, even though
-                    // that leaves fn:namespace-uri-from-QName($err:code) empty. Attaching it
-                    // makes the QName compare equal to one built by fn:QName, but flips how the
-                    // XQuery engine's stringifier renders it — "Q{uri}local" instead of the
-                    // lexical "err:XTTE0570" — and that renderer lives in the XQuery package, so
-                    // the two halves cannot be corrected together from here. Measured: attaching
-                    // it regressed three XSpec suites (yes-no-utils, xsl-result-document,
-                    // external_xslt-package_arith_private) and fixed none, because XSpec compares
-                    // the serialized lexical form. Fix the stringifier first, then attach this.
+                    // that leaves fn:namespace-uri-from-QName($err:code) empty. Attaching it is
+                    // blocked on the companion PhoenixmlDb.XQuery release; see the follow-up
+                    // commit on this branch.
                     var errCodeValue = isStandardError
                         ? (object)new QName(errNs, errorCode, "err")
                         : (object)new QName(NamespaceId.None, errorCode);
@@ -28210,9 +28236,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private async ValueTask<object?> EvaluateWithParamAsync(XsltWithParam param)
     {
         // A value handed in directly needs no evaluation, and must not be converted on the way
-        // through — see XsltWithParam.RuntimeValue.
+        // through — see XsltWithParam.RuntimeValue. It may however have arrived from another
+        // engine wrapped for cross-store transport, in which case it is re-parsed into THIS
+        // store first: template-params and tunnel-params reach their declared-type check here,
+        // and an unwrapped CrossStoreNodeRef fails it as
+        // "requires type Element but got CrossStoreNodeRef".
         if (param.HasRuntimeValue)
-            return param.RuntimeValue;
+            return XsltTransformEngine.UnwrapCrossStoreValue(param.RuntimeValue, _nodeStore);
         if (param.Select != null)
         {
             return await EvaluateAsync(param.Select).ConfigureAwait(false);
@@ -28905,6 +28935,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             ResultTreeFragment rtf => StripXmlMarkup(rtf.XmlContent),
             Xdm.TextNodeItem tni => tni.Value,
             Xdm.XsAnyUri uri => uri.Value,
+            // Casting xs:QName to xs:string yields the LEXICAL form — "prefix:local", or the bare
+            // local name when there is no prefix (XPath 3.1 §19.2). QName.ToString() renders the
+            // EQName form "Q{uri}local" once an expanded namespace is attached: a good debugging
+            // rendering, and the wrong value. PhoenixmlDb.XQuery's XQueryStringValue carries the
+            // identical rule for fn:string; both are needed, because xsl:value-of routes through
+            // THIS method and fn:string through that one. Fixing only one makes the two paths
+            // disagree about the same value.
+            QName qname => string.IsNullOrEmpty(qname.Prefix)
+                ? qname.LocalName
+                : qname.Prefix + ":" + qname.LocalName,
             string s => s,
             bool b => b ? "true" : "false",
             double d => FormatDouble(d),
@@ -37911,11 +37951,23 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // values, but these carry real XDM items and must NOT be string-valued the way
         // static-params are (those are compile-time strings). Applied second so an explicit
         // stylesheet-params entry wins over a same-named static one.
+        // Node-valued parameters must cross into the inner engine the same way function-params
+        // do: serialized, then re-parsed into the inner store. Passing the node itself hands
+        // over Children NodeIds that mean nothing there, so the subtree arrives EMPTY — a
+        // parameter <kid>text</kid> became <kid/>. function-params has always wrapped; these
+        // three did not.
         if (TransformParameterOptions.Read(options, "stylesheet-params") is { } styleParams)
         {
             foreach (var (name, value) in styleParams)
-                initialParams[name] = value;
+                initialParams[name] = XsltTransformEngine.WrapNodesForCrossStoreTransport(value, _context);
         }
+        // template-params and tunnel-params are deliberately NOT wrapped. Measured 2026-09-03:
+        // wrapping them regressed external_nested-template-call and external_nested-function-call
+        // from 6/0 to 3/3 and broke external_coverage-contents-table outright, because these
+        // paths often already share the caller's node store — re-parsing there mints new nodes
+        // and costs identity for no gain. stylesheet-params genuinely needed it (a global
+        // parameter arrived with an empty subtree); these did not. See BUGS.md #20: the real fix
+        // is to wrap only when the stores actually differ.
         var templateParams = TransformParameterOptions.Read(options, "template-params")
                              ?? new Dictionary<QName, object?>();
         var tunnelParams = TransformParameterOptions.Read(options, "tunnel-params")
@@ -37954,10 +38006,14 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         {
             foreach (var item in paramList)
             {
+                // Only a bare element/document is wrapped, deliberately. Extending this to
+                // sequences (via WrapNodesForCrossStoreTransport, which recurses) does fix a
+                // multi-node argument arriving empty — but measured 2026-09-03 it regressed
+                // external_nested-function-call from 6/0 to 3/3, because these arguments usually
+                // already share the caller's store and re-parsing costs node identity. See
+                // BUGS.md #20: wrap only when the stores actually differ.
                 if (item is Xdm.Nodes.XdmElement or Xdm.Nodes.XdmDocument)
                 {
-                    // Wrap with the outer engine's XML serialization. The inner engine
-                    // unwraps and re-parses into its own node store.
                     var xml = _context.SerializeXdmNodeToXml((Xdm.Nodes.XdmNode)item);
                     initialFunctionArgs.Add(new XsltTransformEngine.CrossStoreNodeRef(xml, IsElement: item is Xdm.Nodes.XdmElement));
                 }
