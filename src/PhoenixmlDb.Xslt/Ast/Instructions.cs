@@ -1270,6 +1270,16 @@ public sealed class AvtExpression : AvtPart
             null => "",
             XdmNode node => node.StringValue,
             TextNodeItem tni => tni.Value,
+            // Casting xs:QName to xs:string yields the LEXICAL form (XPath 3.1 §19.2), not
+            // QName.ToString()'s EQName debugging rendering. This is the AVT/TVT path — the
+            // THIRD place in this engine that converts a value to a string, alongside
+            // DefaultXsltExecutionContext.StringValueOf and, in PhoenixmlDb.XQuery,
+            // ConcatFunction.XQueryStringValue. XSpec's x:QName-expression interpolates a QName
+            // with a text value template, so this is the one it goes through; fixing the other
+            // two left it still printing Q{uri}local.
+            QName qname => string.IsNullOrEmpty(qname.Prefix)
+                ? qname.LocalName
+                : qname.Prefix + ":" + qname.LocalName,
             bool b => b ? "true" : "false",
             decimal m => FormatDecimal(m),
             double d => FormatDouble(d),
