@@ -14890,7 +14890,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // When inside xsl:evaluate with namespace-context, use those bindings instead
         execContext.PrefixNamespaceBindings = _evaluateNamespaceBindings != null
             ? (IReadOnlyDictionary<string, string>)_evaluateNamespaceBindings
-            : _stylesheet.Namespaces;
+            : XPathNamespaceBindings;
         execContext.BackwardsCompatible = IsBackwardsCompatible;
         execContext.InsideXslEvaluate = _insideXslEvaluateDepth > 0;
         execContext.DefaultCollation = DefaultCollation;
@@ -15058,6 +15058,44 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return string.Concat("file:///", href.AsSpan(fileScheme.Length));
         }
         return href;
+    }
+
+    private IReadOnlyDictionary<string, string>? _xpathNamespaceBindings;
+
+    /// <summary>
+    /// The stylesheet's prefix bindings as XPath sees them, which differs from the element
+    /// namespace context in exactly one entry: the empty prefix.
+    /// </summary>
+    /// <remarks>
+    /// <c>xmlns="..."</c> declares the default namespace for LITERAL RESULT ELEMENTS. The
+    /// default namespace for unprefixed names in XPath comes from
+    /// <c>[xsl:]xpath-default-namespace</c> (XSLT 3.0 §5.4.2), and the two are unrelated.
+    /// The parser records both in one dictionary keyed by prefix, so handing it to the XQuery
+    /// engine unchanged made the empty key mean "xmlns=" — and the xs:QName cast, which reads
+    /// that key as the default element/type namespace, resolved <c>xs:QName('foo')</c> into
+    /// whatever namespace the stylesheet happened to declare for its result elements.
+    /// XSpec's catch_stylesheet is where this showed: its .xspec has no default namespace, but
+    /// the COMPILED stylesheet does, so an expected error code came out in the XSpec namespace
+    /// while the actual one had none. Built once; both inputs are fixed per stylesheet.
+    /// </remarks>
+    private IReadOnlyDictionary<string, string> XPathNamespaceBindings
+    {
+        get
+        {
+            if (_xpathNamespaceBindings != null) return _xpathNamespaceBindings;
+            var xpathDefault = _stylesheet.XpathDefaultNamespace;
+            if (!_stylesheet.Namespaces.ContainsKey("")
+                && string.IsNullOrEmpty(xpathDefault))
+            {
+                return _xpathNamespaceBindings = _stylesheet.Namespaces;
+            }
+            var derived = new Dictionary<string, string>(_stylesheet.Namespaces, StringComparer.Ordinal);
+            if (string.IsNullOrEmpty(xpathDefault))
+                derived.Remove("");
+            else
+                derived[""] = xpathDefault;
+            return _xpathNamespaceBindings = derived;
+        }
     }
 
     /// <summary>

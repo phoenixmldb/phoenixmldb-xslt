@@ -352,7 +352,7 @@ harness or inapplicable — a bare "N suites do not complete" reads as N engine 
 the case against the engine.
 
 
-### 25. An `xmlns=` default leaks into `xs:QName()` casts
+### 25. An `xmlns=` default leaks into `xs:QName()` casts — FIXED 2026-09-03
 
 Found 2026-09-03, exposed by fixing fn:deep-equal for QNames (#19 chain). In a stylesheet
 declaring a default element namespace and NO `xpath-default-namespace`:
@@ -383,7 +383,16 @@ Once deep-equal compared by value, the pre-existing defect surfaced. `catch_styl
 18/3 -> 15/6 is therefore **not a regression in capability** — it is three false passes becoming
 honest failures, and it should not be "fixed" by reverting the deep-equal change.
 
-Namespace resolution is high-blast-radius; measure the corpus before and after any change here.
+**Fixed** by giving XPath its own view of the prefix bindings. The parser records `xmlns=` and
+every prefix in one dictionary keyed by prefix; handing that to the XQuery engine unchanged made
+the empty key mean "xmlns=", and the xs:QName cast reads that key as the default element/type
+namespace. The engine now substitutes `xpath-default-namespace` for the empty key (removing it
+when unset), built once per stylesheet.
+
+Verified both directions: `xmlns=` alone no longer reaches a cast, and an explicit
+`xpath-default-namespace` now does. Corpus effect: `catch_stylesheet` 15/6 -> **18/3**, no suite
+worse — the three assertions it recovers are the false passes described above, now passing for
+the right reason.
 
 
 ## Open — harness
