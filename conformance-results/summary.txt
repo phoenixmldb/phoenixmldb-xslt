@@ -1,16 +1,6 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
 
-attr      66s  fixture Successful (18 tests) | 1082/1117 cases 96.9%, 35 failed
-decl     194s  fixture Successful (18 tests) | 987/1080 cases 91.4%, 93 failed
-type      34s  fixture Successful (9 tests) | 755/766 cases 98.6%, 11 failed
-sandp     16s  fixture Successful (25 tests)
-fn        48s  fixture Successful (35 tests) | 1080/1131 cases 95.5%, 51 failed
-strm1    513s  fixture Successful (37 tests) | 709/729 cases 97.3%, 20 failed
-strm2    437s  fixture Successful (26 tests) | 690/749 cases 92.1%, 59 failed
-strm3    474s  fixture Successful (27 tests) | 875/895 cases 97.8%, 20 failed
-expr      31s  fixture Successful (14 tests) | 636/648 cases 98.1%, 12 failed
-misc     360s  fixture Successful (22 tests) | 1880/1921 cases 97.9%, 41 failed
-insn      82s  fixture Successful (27 tests) | 1530/1594 cases 96.0%, 64 failed
+decl     191s  fixture Successful (18 tests) | 994/1080 cases 92.0%, 86 failed
 
-11 chunk(s) in 37m36s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results
+1 chunk(s) in 3m11s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results

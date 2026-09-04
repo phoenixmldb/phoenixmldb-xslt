@@ -395,7 +395,7 @@ worse — the three assertions it recovers are the false passes described above,
 the right reason.
 
 
-### 26. `as="xs:integer"` accumulator + `xs:integer()` in the rule = always the initial value
+### 26. `as="xs:integer"` accumulator + `xs:integer()` in the rule = always the initial value — FIXED 2026-09-04
 
 Found 2026-09-04 while clustering the W3C `decl` group. **Two factors, each harmless alone:**
 
@@ -431,9 +431,24 @@ Check `CoerceToType` against `XsTypedInteger` before looking anywhere else.
 which is exactly this shape. W3C `accumulator-036` ("sequence constructor in accumulator rule") is
 a good end-to-end check: it expects `items=5, cost=91` and currently gives `cost=0`.
 
-Unrelated oddity seen while isolating, not yet explained: a rule on an `as="xs:string"`
-accumulator appended SEVEN entries for three matched elements, and `$value` read empty each time.
-That may be a second defect in the same area — do not assume one fix covers both.
+**Fixed.** The suspect was right but for a different reason than guessed: the value is a
+**BigInteger**, not an `XsTypedInteger`. `xs:integer` is unbounded in XSD, so `xs:integer()` and
+the overflow-safe arithmetic can both produce one, and `MatchesAtomicType` accepted only
+`int or long`. The XQuery engine's `MatchesItemType` had accepted BigInteger all along — this
+separate matcher had not.
+
+Found by surfacing the deferred error rather than by more reasoning; three successive inferences
+about the CLR type were wrong, and the engine's own message settled it in one run:
+
+    XPTY0004: Accumulator 'i_xsint' declared as Integer but value is BigInteger
+
+**Measured effect is smaller than hoped: 7 of the 26, not all of them.** W3C `decl` went
+987/1080 (91.4%) to **994/1080 (92.0%)**, accumulator failures 26 to 19. The prediction that one
+cause covered the cluster was wrong; the remaining 19 are something else.
+
+Still unexplained, seen while isolating: a rule on an `as="xs:string"` accumulator appended SEVEN
+entries for three matched elements, and `$value` read empty each time. Not addressed by this fix
+— likely part of the remaining 19.
 
 ### 27. W3C `decl` failures, clustered (2026-09-04)
 
@@ -442,8 +457,8 @@ rather than re-derive this:
 
 | cluster | failures |
 |---|---|
-| `accumulator` | 26 (see #26) |
-| `output` | 20 |
+| `output` | 20 — now the largest |
+| `accumulator` | 19 (was 26; #26 fixed 7) |
 | `function` | 10 |
 | `use-package` | 9 |
 | `package` | 7 |

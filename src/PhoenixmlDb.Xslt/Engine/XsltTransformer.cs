@@ -21233,6 +21233,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     : throw new XsltException($"XPTY0004: Cannot cast '{s}' to xs:integer for accumulator '{accName.LocalName}'"),
             ItemType.Integer when value is double d => (long)d,
             ItemType.Integer when value is decimal m => (long)m,
+            // A BigInteger already IS an xs:integer and is matched above; these two arms carry it
+            // into the other numeric types rather than falling through to the throw.
+            ItemType.Double when value is System.Numerics.BigInteger bi => (double)bi,
+            ItemType.Decimal when value is System.Numerics.BigInteger bi => (decimal)bi,
             ItemType.Decimal when value is string s =>
                 decimal.TryParse(s, System.Globalization.NumberStyles.Any,
                     System.Globalization.CultureInfo.InvariantCulture, out var m)
@@ -21251,7 +21255,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         ItemType.String => value is string,
         ItemType.Boolean => value is bool,
-        ItemType.Integer => value is int or long,
+        // xs:integer is UNBOUNDED in XSD, so a value too wide for long is carried as BigInteger —
+        // xs:integer() and the overflow-safe arithmetic both produce one. The XQuery engine's
+        // MatchesItemType already accepts it for ItemType.Integer; this separate matcher did not,
+        // so an accumulator declared as="xs:integer" whose rule used xs:integer() failed its type
+        // check on EVERY node. The throw becomes a deferred error, which freezes the accumulator,
+        // so it silently reported its initial value forever rather than erroring.
+        ItemType.Integer => value is int or long or System.Numerics.BigInteger,
         ItemType.Double => value is double,
         ItemType.Decimal => value is decimal,
         ItemType.Float => value is float,
