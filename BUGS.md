@@ -576,6 +576,125 @@ so it cannot judge these either way. They FAIL, because a check you cannot perfo
 check you passed — but the right answer is a real "not applicable" state, which the runner
 has no concept of.
 
+
+### 28. Expected-error tests passed on ANY exception — BOTH runners — FIXED 2026-09-04
+The third and worst layer of the `_ => true` problem in #7 and #9, and the one that was
+actually inflating the published conformance number.
+
+`<error code="XPST0003"/>` and `<assert-serialization-error code="SESU0007"/>` carry the
+expected code in an ATTRIBUTE. Both runners read `Element.Value` — the element TEXT, which is
+`""` for an empty element — and then treated empty as "any error will do":
+
+```csharp
+var expectedCode = assertion.Value;                       // always "" for <error code="..."/>
+if (ex.Message.Contains(expectedCode ?? "") || string.IsNullOrEmpty(expectedCode))
+    return true;                                          // → ANY exception passes
+```
+
+So a test that expected `XTSE0010` passed by throwing `Unknown XSLT instruction: expose`
+(`package-903`), and any test whose stylesheet failed for an unrelated reason scored a pass on
+the strength of having failed.
+
+The clearest case is `fn:load-xquery-module`, which the engine does not implement: **0/4 after
+the fix, 4/4 before it.** A wholly missing function scored 100% because each call threw.
+
+`accept-*` shows the subtler shape — **23 of 23 failures raise the wrong code**, but not because
+`xsl:accept` is unimplemented (it is parsed; see `StylesheetParser.cs:1372`). Every one of them
+dies earlier on `XTDE3052: Package 'http://localhost/pkg' not found`, so the group was scoring
+27/50 while actually testing nothing about visibility at all. Package resolution for the corpus,
+not `xsl:accept`, is what that cluster is really blocked on.
+
+The XSLT runner never parsed the `code` attribute at all. The XQuery runner DID parse it into
+`XqtsAssertion.Code` and then never consulted it — the parse and the check disagreed silently.
+
+`<any-of>` carried the same blanket-pass one level down in both runners, and this one is pure
+logic rather than a field mix-up:
+
+```csharp
+if (assertion.Children.Any(a => a.Type == "error")) return true;   // code never examined
+```
+
+Fixed with a single recursive `MatchesExpectedError` per runner: match on `Code`, fall back to
+element text, and treat a genuinely code-less `<error/>` as "some error must be raised" — which
+is what it means. `<any-of>` now recurses instead of pattern-matching on child type.
+
+**This is an asymmetric pair defect (#—see the pattern note) in the harness rather than the
+engine, which is why no amount of engine work would have surfaced it.** The two runners had
+different halves of the bug: XSLT never parsed the code, XQuery parsed it and ignored it.
+
+Measured effect across the whole W3C XSLT corpus. The engine did not change at any point in
+this sequence — only the scoring did:
+
+| | published 2026-09-02 | code checked | + code read from `ErrorCode` |
+|---|---|---|---|
+| cases passing | 10,224/10,630 (96.2%) | 9,740/10,634 (91.6%) | **10,025/10,634 (94.3%)** |
+| failures | 406 | 890 | **605** |
+| of which "wrong code" | (scored as passes) | 511 | **225** |
+
+Checking the code properly cost 4.6 points; reading it from the right place gave 2.6 back. The
+net correction to the published figure is **1.9 points and 199 previously invisible failures**.
+`decl`, the group this started from, went 994/1080 → 944/1080 (136 failures, 66 wrong-code).
+The final column also includes two engine fixes this exposed (XTMM9000, XTDE0700 — below).
+
+11 of the change's own fixes went the other way: `output-0182`..`0192` expect
+`assert-serialization-error`, the engine raises exactly those codes, and the XSLT runner had no
+case for that assertion at all — it hardcoded `false` while the XQuery runner had handled it
+all along. Those were the engine being right and the harness scoring it wrong.
+
+**Half of the resulting "wrong code" failures were not wrong at all.** `XQueryException` and
+several relatives carry the code in a structured `ErrorCode` property and deliberately keep it
+out of `Message`; the XSLT layer then re-wraps those with file and line information. So the
+engine reported `FORX0002` correctly and the runner, comparing against `Message`, could not see
+it:
+
+```
+Error: [file:///…/re.xsl:33] [line 1, col 52] Invalid regular expression '^(+a)$': …
+                                              ^ correct diagnosis, code held in ErrorCode
+```
+
+Both runners now also consult `ErrorCode` down the whole inner-exception chain. That alone
+recovered **96 cases in the `misc` group** (1718 → 1814) and cut its wrong-code count from 162
+to 67 — no engine change, just reading the code from where the engine put it.
+
+The two clusters that looked next-largest — `Function g#1 not found` (expects `XPST0017`) and
+`The context item for '/' is not in a tree rooted at a document node` (expects `XPDY0050`) —
+turned out to be the SAME cause, not a separate one: both are already raised as
+`XQueryRuntimeException("XPST0017", …)` / `("XPDY0050", …)` at `PhysicalOperators.cs:8784` and
+`:173`, structurally correct and invisible to a message comparison. They should be cleared by the
+same fix. **Re-cluster what is left before treating any of it as a missing-code defect** — the
+first pass at reading this list mistook structural codes for absent ones.
+
+Results lines now report the split, because "raised the wrong code" and "raised nothing" are
+different defects and only the second is a missing check:
+
+```
+Results: 27/50 passed (54.0%) — 23 of 23 failures raised an error with the wrong code
+```
+
+**Consequence: every conformance figure published before 2026-09-04 is overstated**, including
+the 96.2% in the README, which was itself a correction of a stale 97.9%. The XQTS 95% CI gate
+is measured by the same code and is overstated for the same reason.
+
+
+### 29. Two error sites omitted the code their siblings carried — FIXED 2026-09-04
+Found by the wrong-code split that #28 made visible. Both are the asymmetric-pair shape, and in
+both cases the twin sitting a few lines away had the code all along:
+
+| site | was | now | sibling that was already right |
+|---|---|---|---|
+| `XsltTransformer.cs:22137` | `Transformation terminated: {message}` | `XTMM9000: …` | `XTDE0030` at `:22122`, same method |
+| `XsltTransformer.cs:10221` | `Required parameter $x not supplied` | `XTDE0700: …` | `XTDE0700` at `:10257`, `:11057`, `:12172` |
+
+`:10221` is the explicitly `required="yes"` parameter; `:10257` is the case where an `as=` type
+makes a parameter effectively required. Same error, same spec code, and only the derived one
+named it.
+
+Measured: `decl` 943 → 944, `insn` 1494 → 1497. Unit gate 1480, unchanged.
+
+The diagnosis was never wrong in either case — the prose said exactly what happened. Only the
+code was missing, which is invisible to a human reading the message and decisive for anything
+matching on it. Cheap to fix, and worth doing for users independently of the score.
+
 ---
 
 ## Fixed 2026-08-22/24 — kept for the pattern

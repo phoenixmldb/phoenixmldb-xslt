@@ -10218,7 +10218,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             }
                             else if (param.Required)
                             {
-                                throw Error($"Required parameter ${param.Name.LocalName} not supplied");
+                                throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied");
                             }
                             else if (param.Select != null)
                             {
@@ -22131,7 +22131,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (shouldTerminate)
         {
-            throw Error($"Transformation terminated: {message}");
+            // XTMM9000 is the code the spec assigns to a terminated transformation. It was the
+            // only throw in this method without one — XTDE0030 immediately above has carried its
+            // code all along.
+            throw Error($"XTMM9000: Transformation terminated: {message}");
         }
     }
 

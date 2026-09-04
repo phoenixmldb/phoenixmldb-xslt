@@ -1,3 +1,4 @@
+using System.Reflection;
 using PhoenixmlDb.Core;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -953,29 +954,63 @@ public sealed class XqtsTestRunner
         };
     }
 
-    private bool IsExpectedError(List<XqtsAssertion> assertions, Exception ex)
+    /// <summary>
+    /// The error codes the engine actually reported, walking the whole inner-exception chain.
+    /// <para>
+    /// <c>XQueryException</c> and its relatives carry the code in a structured <c>ErrorCode</c>
+    /// property and deliberately keep it OUT of <c>Message</c>; the XSLT layer then re-wraps
+    /// those with file/line information. So <c>Message.Contains("FORX0002")</c> is false even
+    /// when the engine identified the error exactly right — 69 regex cases alone were being
+    /// scored "wrong code" while reporting the correct one. Reflection rather than a type list
+    /// because several unrelated exception types expose this property.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<string> ReportedErrorCodes(Exception ex)
     {
-        foreach (var assertion in assertions)
+        for (Exception? e = ex; e is not null; e = e.InnerException)
         {
-            if (assertion.Type == "error")
+            var prop = e.GetType().GetProperty(
+                "ErrorCode", BindingFlags.Public | BindingFlags.Instance);
+            if (prop is not null
+                && prop.PropertyType == typeof(string)
+                && prop.GetValue(e) is string { Length: > 0 } code)
             {
-                // Check if error code matches
-                var expectedCode = assertion.Value;
-                if (ex.Message.Contains(expectedCode ?? "") || string.IsNullOrEmpty(expectedCode))
-                {
-                    return true;
-                }
-            }
-            if (assertion.Type == "any-of")
-            {
-                if (assertion.Children.Any(a => a.Type == "error"))
-                {
-                    return true;
-                }
+                yield return code;
             }
         }
-        return false;
     }
+
+    /// <summary>
+    /// True if <paramref name="assertion"/> — or, for &lt;any-of&gt;, one of its alternatives —
+    /// is satisfied by <paramref name="ex"/>.
+    /// </summary>
+    private static bool MatchesExpectedError(XqtsAssertion assertion, Exception ex)
+    {
+        if (assertion.Type == "error")
+        {
+            // XQTS writes the code as an ATTRIBUTE — <error code="XPST0003"/> — so Element.Value,
+            // and therefore `assertion.Value`, is "". Reading Value here meant `expectedCode` was
+            // always empty and the IsNullOrEmpty branch passed the test for ANY exception: a query
+            // that failed for entirely the wrong reason still scored as a pass. `Code` was parsed
+            // all along (see ParseAssertions) and simply never consulted. An <error/> that really
+            // carries no code still asks only that SOME error be raised, so that stays a pass.
+            var expectedCode = !string.IsNullOrEmpty(assertion.Code)
+                ? assertion.Code
+                : assertion.Value;
+            return string.IsNullOrEmpty(expectedCode)
+                || ex.Message.Contains(expectedCode, StringComparison.Ordinal)
+                || ReportedErrorCodes(ex).Contains(expectedCode, StringComparer.Ordinal);
+        }
+
+        // <any-of> is satisfied when any one alternative is — and its <error> alternatives must
+        // match by code like any other. The old code returned true for any exception whenever an
+        // <error> child merely existed, which is the same blanket-pass one level down.
+        return assertion.Type == "any-of"
+            && assertion.Children.Any(child => MatchesExpectedError(child, ex));
+    }
+
+    private static bool IsExpectedError(List<XqtsAssertion> assertions, Exception ex)
+        => assertions.Any(assertion => MatchesExpectedError(assertion, ex));
 
     /// <summary>
     /// Unwraps a single-item list to its contained value.
