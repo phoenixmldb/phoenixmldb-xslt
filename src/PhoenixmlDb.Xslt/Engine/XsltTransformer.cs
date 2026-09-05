@@ -253,10 +253,7 @@ public sealed class XsltTransformEngine
         }
 
         // xsl:global-context-item enforcement
-        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Required && !options.HasSourceDocument)
-            throw new XsltException("XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
-        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && options.HasSourceDocument)
-            throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a source document was provided");
+        EnforceGlobalContextItem(options);
 
         // xsl:global-context-item type checking
         if (_stylesheet.GlobalContextItemAs != null && options.HasSourceDocument)
@@ -988,8 +985,18 @@ public sealed class XsltTransformEngine
             _schemaProvider);
         context.Owner = this;
 
+        // With no source document the focus for global variables is the supplied global context
+        // item when there is one, and absent otherwise. Pushing AbsentFocus unconditionally made
+        // a stylesheet with xsl:global-context-item use="required" fail on any global reading "."
+        // even though fn:transform had been given the item.
+        EnforceGlobalContextItem(options);
+
+        var globalFocus = ResolveGlobalContextItem(options, nodeStore);
         if (!options.HasSourceDocument)
-            context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+            context.PushContextItem(
+                globalFocus ?? PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus,
+                globalFocus != null ? 1 : 0,
+                globalFocus != null ? 1 : 0);
 
         await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
 
@@ -1127,20 +1134,19 @@ public sealed class XsltTransformEngine
     {
         if (store == null || args.Count == 0)
             return args is List<object?> list ? list : new List<object?>(args);
-        bool anyWrapped = false;
-        for (var i = 0; i < args.Count; i++)
-        {
-            if (args[i] is CrossStoreNodeRef) { anyWrapped = true; break; }
-        }
-        if (!anyWrapped) return args is List<object?> list ? list : new List<object?>(args);
+        // Recurse via UnwrapCrossStoreValue rather than testing only the top level: an argument
+        // may be a SEQUENCE of nodes, which arrives as an array of wrappers. Unwrapping only a
+        // bare CrossStoreNodeRef left those arrays untouched, so a single-node argument worked
+        // while a two-node one came through empty.
         var translated = new List<object?>(args.Count);
+        var anyChanged = false;
         foreach (var arg in args)
         {
-            if (arg is CrossStoreNodeRef wrapped)
-                translated.Add(ReparseCrossStoreNode(wrapped, store));
-            else
-                translated.Add(arg);
+            var one = UnwrapCrossStoreValue(arg, store);
+            if (!ReferenceEquals(one, arg)) anyChanged = true;
+            translated.Add(one);
         }
+        if (!anyChanged) return args is List<object?> list ? list : new List<object?>(args);
         return translated;
     }
 
@@ -1200,6 +1206,68 @@ public sealed class XsltTransformEngine
             return wrapped;
         }
         return value;
+    }
+
+    /// <summary>
+    /// Enforces xsl:global-context-item (XSLT 3.0 §3.7.2): a stylesheet declaring
+    /// <c>use="required"</c> must be given a global context item, and one declaring
+    /// <c>use="absent"</c> must not be.
+    /// </summary>
+    /// <remarks>
+    /// Shared by every entry point. Two of them — the fn:transform paths — had no check at all,
+    /// so a stylesheet that required a global context item and was given none ran on to fail as
+    /// XPDY0002 when a global variable evaluated ".", reporting the downstream symptom instead
+    /// of the spec-defined error for exactly this condition. The other two were also incomplete:
+    /// they tested only for a source document, so an item supplied through fn:transform's
+    /// global-context-item option did not count as satisfying "required" and, conversely, could
+    /// be handed to a stylesheet declaring "absent" without complaint.
+    /// </remarks>
+    private void EnforceGlobalContextItem(XsltTransformOptions options)
+    {
+        var supplied = options.HasSourceDocument || options.GlobalContextItem != null;
+        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Required && !supplied)
+            throw new XsltException("XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
+        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && supplied)
+            throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a global context item was provided");
+    }
+
+    /// <summary>
+    /// The global context item to use as the focus while global variables are evaluated,
+    /// re-anchoring a cross-store node into <paramref name="store"/> first.
+    /// </summary>
+    private static object? ResolveGlobalContextItem(XsltTransformOptions options, XdmInMemoryStore? store)
+        => options.GlobalContextItem switch
+        {
+            CrossStoreNodeRef wrapped when store != null => ReparseCrossStoreNode(wrapped, store),
+            var other => other,
+        };
+
+    /// <summary>
+    /// Re-anchors any <see cref="CrossStoreNodeRef"/> in a parameter value into
+    /// <paramref name="store"/>, recursing through sequences. Values carrying no wrapper pass
+    /// through untouched.
+    /// </summary>
+    internal static object? UnwrapCrossStoreValue(object? value, XdmInMemoryStore? store)
+    {
+        if (store == null) return value;
+        switch (value)
+        {
+            case CrossStoreNodeRef wrapped:
+                return ReparseCrossStoreNode(wrapped, store);
+            case object?[] items:
+            {
+                object?[]? rebuilt = null;
+                for (var i = 0; i < items.Length; i++)
+                {
+                    var one = UnwrapCrossStoreValue(items[i], store);
+                    if (!ReferenceEquals(one, items[i]))
+                        (rebuilt ??= (object?[])items.Clone())[i] = one;
+                }
+                return rebuilt ?? items;
+            }
+            default:
+                return value;
+        }
     }
 
     private static object? ReparseCrossStoreNode(CrossStoreNodeRef wrapped, XdmInMemoryStore store)
@@ -1267,8 +1335,16 @@ public sealed class XsltTransformEngine
             _schemaProvider);
         context.Owner = this;
 
-        // Globals init with absent focus — same as the no-source path.
-        context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+        // Globals see the global context item when one was supplied, absent otherwise — the
+        // same rule as the no-source path above. A global variable declared select="." is
+        // evaluated here, long before the initial focus below is established.
+        EnforceGlobalContextItem(options);
+
+        var globalFocus = ResolveGlobalContextItem(options, nodeStore);
+        context.PushContextItem(
+            globalFocus ?? PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus,
+            globalFocus != null ? 1 : 0,
+            globalFocus != null ? 1 : 0);
         await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
         context.PopContextItem();
 
@@ -3435,7 +3511,11 @@ public sealed class XsltTransformEngine
         {
             if (variableOnly.Contains(name))
                 continue;
-            context.GlobalVariables[name] = value;
+            // A node handed in from another engine arrives wrapped for cross-store transport;
+            // re-parse it into THIS store so its children resolve. Unwrapped, its Children
+            // NodeIds refer to the caller's store and the subtree reads as empty — a parameter
+            // <kid>text</kid> arrived as <kid/>.
+            context.GlobalVariables[name] = UnwrapCrossStoreValue(value, context._nodeStore);
         }
     }
 
@@ -4858,10 +4938,7 @@ public sealed class XsltTransformEngine
         }
 
         // xsl:global-context-item enforcement (same as non-streaming path)
-        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Required && !options.HasSourceDocument)
-            throw new XsltException("XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
-        if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && options.HasSourceDocument)
-            throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a source document was provided");
+        EnforceGlobalContextItem(options);
 
         // Resolve applicable accumulators for the streaming pass
         var streamingAccumulators = _stylesheet.Accumulators.Count > 0
@@ -5993,6 +6070,20 @@ public sealed class XsltTransformOptions
     public object? InitialContextItem { get; init; }
 
     /// <summary>
+    /// fn:transform's <c>global-context-item</c> option: the item that serves as the GLOBAL
+    /// context item, i.e. the focus while global variables and parameters are evaluated
+    /// (XSLT 3.0 §5.4.1).
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="InitialContextItem"/>, which is only the focus for the initial
+    /// template or match selection and is established after globals have already been built.
+    /// A stylesheet declaring <c>xsl:global-context-item</c> and reading "." in a global
+    /// variable needs the focus DURING that initialization, which is why the two cannot share
+    /// one field. It is also frequently an atomic value, so it cannot travel as source-node.
+    /// </remarks>
+    public object? GlobalContextItem { get; init; }
+
+    /// <summary>
     /// Named collections of document file paths for fn:collection().
     /// Key is the collection URI, value is the list of document file paths.
     /// </summary>
@@ -6620,6 +6711,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private int _attributeContentDepth; // >0 when collecting attribute value content (no space joining)
     private int _documentNodeDepth; // >0 when inside xsl:document (cannot add attributes/namespaces)
     private SourceLocation? _currentInstructionLocation; // Most-recent attribute-emitting instruction location, for XTDE0410/0420 messages
+
+    /// <summary>
+    /// Location of the XPath expression whose evaluation raised the exception currently in
+    /// flight, for binding <c>$err:module</c> and <c>$err:line-number</c> in xsl:catch.
+    /// </summary>
+    /// <remarks>
+    /// fn:error() raises an XQueryException, which carries no source location — only
+    /// XsltException does, so xsl:catch previously left both variables empty for every error a
+    /// stylesheet raised itself. The evaluator already resolves the location to build its
+    /// "[module:line] " diagnostic prefix; this records the same value structurally instead of
+    /// only rendering it into a string. It is cleared on entry to every xsl:try so a handler can
+    /// never read a location left behind by an earlier, unrelated failure.
+    /// </remarks>
+    private SourceLocation? _lastExpressionErrorLocation;
 
 #pragma warning disable
     // Opt-in diagnostic, off unless PHXDIAG_XTDE0420=1 is set in the environment.
@@ -10113,7 +10218,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                             }
                             else if (param.Required)
                             {
-                                throw Error($"Required parameter ${param.Name.LocalName} not supplied");
+                                throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied");
                             }
                             else if (param.Select != null)
                             {
@@ -12700,14 +12805,28 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask SwitchAsync(Ast.XsltSwitch instruction)
     {
-        // Evaluate select expression — the result becomes the context item for each when/test
-        var selectResult = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
-        PushContextItem(selectResult, 1, 1);
+        // xsl:switch is NOT xsl:choose with a subject. Each xsl:when/@test supplies a sequence of
+        // CANDIDATE VALUES, and the branch is taken when the switch operand equals any of them —
+        // the "=" general comparison, which is why a when can list alternatives:
+        //     <xsl:when test="('jpg','JPG','jpeg','JPEG')" select="'bitmap'"/>
+        //
+        // Taking the effective boolean value of that instead raised FORG0006 ("not defined for a
+        // sequence of two or more items starting with a non-node value") on any multi-value when.
+        // Worse, a SINGLE-value when never errored and silently always matched: the EBV of a
+        // non-empty string is true, so the first branch won whatever the operand was.
+        var selectItems = AtomizeForComparison(
+            await EvaluateToListAsync(instruction.Select).ConfigureAwait(false));
+
+        // The operand stays the context item for the test expressions, as before.
+        PushContextItem(selectItems.Count == 1 ? selectItems[0] : selectItems.ToArray(),
+            1, 1);
         try
         {
             foreach (var when in instruction.When)
             {
-                if (await EvaluateBooleanAsync(when.Test).ConfigureAwait(false))
+                var testItems = AtomizeForComparison(
+                    await EvaluateToListAsync(when.Test).ConfigureAwait(false));
+                if (RunGeneralComparison(BinaryOperator.GeneralEqual, selectItems, testItems))
                 {
                     await when.Body.ExecuteAsync(this).ConfigureAwait(false);
                     return;
@@ -12720,6 +12839,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             PopContextItem();
         }
+    }
+
+    /// <summary>
+    /// Atomizes a sequence for general comparison: nodes and temporary trees become their string
+    /// value (untypedAtomic, which CompareAtomic promotes to numeric when the other side is
+    /// numeric), atomic values pass through untouched.
+    /// </summary>
+    private static List<object?> AtomizeForComparison(List<object?> items)
+    {
+        var atomized = new List<object?>(items.Count);
+        foreach (var item in items)
+        {
+            atomized.Add(item is Xdm.Nodes.XdmNode or Xdm.TextNodeItem or ResultTreeFragment
+                ? StringValueOf(item)
+                : item);
+        }
+        return atomized;
     }
 
     public override async ValueTask ForEachMemberAsync(Ast.XsltForEachMember instruction)
@@ -14218,6 +14354,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // buffer). See sf-boolean-107 / sf-not-107.
         var savedOutputLen = _output.Length;
         var savedAttrStackDepth = _collectedAttributesStack.Count;
+        // A handler must not read a location left behind by an earlier, already-handled failure.
+        var savedExpressionErrorLocation = _lastExpressionErrorLocation;
+        _lastExpressionErrorLocation = null;
         try
         {
             if (instruction.SelectExpression != null)
@@ -14323,17 +14462,51 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     // under both forms for correct lookup.
                     const string errUri = "http://www.w3.org/2005/xqt-errors";
                     var errNs = StylesheetParser.ResolveNamespaceUri(errUri);
-                    SetVariable(new QName(errNs, "description", "err"), ex.Message);
-                    SetVariable(new QName(NamespaceId.None, "description", "") { ExpandedNamespace = errUri }, ex.Message);
+                    // $err:description is fn:error()'s second argument verbatim (XSLT 3.0 §13.3),
+                    // NOT our diagnostic rendering of it. ex.Message is the decorated form —
+                    // EvaluateAsync prefixes "[module:line] " and appends the expression snippet
+                    // so a failing XPath can be located. That decoration is for humans reading a
+                    // stack trace; a stylesheet comparing $err:description against the string it
+                    // passed to fn:error() must see the string it passed.
+                    var errDescription = ExtractErrorDescription(ex);
+                    SetVariable(new QName(errNs, "description", "err"), errDescription);
+                    SetVariable(new QName(NamespaceId.None, "description", "") { ExpandedNamespace = errUri }, errDescription);
+                    // A standard error code is a QName in the XQT errors namespace, so it carries
+                    // the URI as well as the interned id — without it
+                    // fn:namespace-uri-from-QName($err:code) is empty and the code can never equal
+                    // QName('http://www.w3.org/2005/xqt-errors', 'XTTE0570'), which is how a
+                    // stylesheet (and XSpec) asserts on an error code.
+                    //
+                    // Attaching the URI used to change how the value PRINTED — the XQuery
+                    // stringifier fell through to QName.ToString() and rendered "Q{uri}local"
+                    // instead of the lexical "err:XTTE0570". That is fixed at its source in
+                    // PhoenixmlDb.XQuery (fn:string on an xs:QName now yields the lexical form per
+                    // XPath 3.1 §19.2), so both properties hold at once. Requires the companion
+                    // XQuery release; with an older pin the rendering regresses.
                     var errCodeValue = isStandardError
-                        ? (object)new QName(errNs, errorCode, "err")
+                        ? (object)new QName(errNs, errorCode, "err") { ExpandedNamespace = errUri }
                         : (object)new QName(NamespaceId.None, errorCode);
                     SetVariable(new QName(errNs, "code", "err"), errCodeValue);
                     SetVariable(new QName(NamespaceId.None, "code", "") { ExpandedNamespace = errUri }, errCodeValue);
-                    SetVariable(new QName(errNs, "value", "err"), null);
-                    SetVariable(new QName(NamespaceId.None, "value", "") { ExpandedNamespace = errUri }, null);
-                    var errLocation = (ex as XsltException)?.Location;
-                    var errModule = errLocation != null ? XsltTransformEngine.UriString(_stylesheet.BaseUri) ?? "" : "";
+                    // $err:value is fn:error()'s third argument (the error object). It rides on
+                    // the exception as ErrorValue. Walk InnerException: the diagnostic decorator
+                    // in EvaluateAsync re-throws a fresh XQueryException to attach the source
+                    // module and expression snippet, and a wrapper that forgets to copy
+                    // ErrorValue would otherwise silently turn the error object into (). The
+                    // walk makes the binding independent of how many times we have re-wrapped.
+                    var errValue = ExtractErrorValue(ex);
+                    SetVariable(new QName(errNs, "value", "err"), errValue);
+                    SetVariable(new QName(NamespaceId.None, "value", "") { ExpandedNamespace = errUri }, errValue);
+                    // XsltException carries its own location; an error raised by fn:error()
+                    // arrives as an XQueryException and has none, so fall back to the location
+                    // the evaluator recorded for the expression that raised it.
+                    var errLocation = (ex as XsltException)?.Location ?? _lastExpressionErrorLocation;
+                    // Prefer the module the expression was written in — for an error raised
+                    // inside an imported stylesheet that is the imported module, not the
+                    // principal one (XSLT 3.0 §13.3).
+                    var errModule = errLocation is { Module.Length: > 0 } locatedModule
+                        ? locatedModule.Module!
+                        : errLocation != null ? XsltTransformEngine.UriString(_stylesheet.BaseUri) ?? "" : "";
                     var errLine = errLocation?.Line ?? 0;
                     var errColumn = errLocation?.Column ?? 0;
                     SetVariable(new QName(errNs, "module", "err"), errModule.Length > 0 ? errModule : null);
@@ -14385,6 +14558,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
 
             throw; // Re-throw if no catch matches
+        }
+        finally
+        {
+            // Restore the enclosing try's value, so a nested handler cannot leave its own
+            // error's location visible to an outer handler whose failure carried none.
+            _lastExpressionErrorLocation = savedExpressionErrorLocation;
         }
     }
 
@@ -14711,7 +14890,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // When inside xsl:evaluate with namespace-context, use those bindings instead
         execContext.PrefixNamespaceBindings = _evaluateNamespaceBindings != null
             ? (IReadOnlyDictionary<string, string>)_evaluateNamespaceBindings
-            : _stylesheet.Namespaces;
+            : XPathNamespaceBindings;
         execContext.BackwardsCompatible = IsBackwardsCompatible;
         execContext.InsideXslEvaluate = _insideXslEvaluateDepth > 0;
         execContext.DefaultCollation = DefaultCollation;
@@ -14821,6 +15000,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var sourcePrefix = expr.Location is { Module: { Length: > 0 } mod } loc
                 ? $"[{mod}:{loc.Line}] "
                 : "";
+            // Same location, kept structurally for $err:module / $err:line-number. Recorded
+            // whenever a location exists at all, not only when it carries a module URI: a
+            // stylesheet compiled from a string has no module to report, but its line numbers
+            // are still meaningful and $err:line-number must not go empty because of it.
+            if (expr.Location is not null)
+                _lastExpressionErrorLocation = expr.Location;
             throw new PhoenixmlDb.XQuery.Functions.XQueryException(
                 xqe.ErrorCode,
                 $"{sourcePrefix}{xqe.Message}\n  ↳ in expression ({expr.GetType().Name}): {snippet}",
@@ -14833,6 +15018,108 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             1 => results[0],
             _ => results.ToArray()
         };
+    }
+
+    /// <summary>
+    /// Recovers the undecorated error description for binding to <c>$err:description</c>.
+    /// The innermost XQuery exception in the chain is the original raise site, so its message
+    /// is fn:error()'s description argument as written. Outer frames add source-location and
+    /// expression-snippet decoration for diagnostics, which must not reach the stylesheet.
+    /// Falls back to the outermost message when no XQuery frame is present.
+    /// </summary>
+    private static string ExtractErrorDescription(Exception ex)
+    {
+        string? innermost = null;
+        for (var current = (Exception?)ex; current != null; current = current.InnerException)
+        {
+            if (current is XQuery.Functions.XQueryException or XQuery.Execution.XQueryRuntimeException)
+                innermost = current.Message;
+        }
+        return innermost ?? ex.Message;
+    }
+
+    /// <summary>
+    /// Rewrites the RFC 8089 §2 minimal form <c>file:/path</c> — a file URI with NO authority
+    /// component — to the equivalent <c>file:///path</c> that .NET's Uri parser accepts.
+    /// </summary>
+    /// <remarks>
+    /// Both spell the same URI and Saxon accepts either, but .NET rejects the single-slash form
+    /// as an absolute URI, after which combining it against a base URI throws "The Authority/Host
+    /// could not be parsed". XSpec's xsl-result-document suite writes to
+    /// <c>file:/dev/null</c> precisely because it is the portable way to discard output.
+    /// Anything already carrying an authority (<c>file://host/path</c>) is left alone.
+    /// </remarks>
+    private static string NormalizeNoAuthorityUri(string href)
+    {
+        const string fileScheme = "file:/";
+        if (href.StartsWith(fileScheme, StringComparison.OrdinalIgnoreCase)
+            && !href.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Concat("file:///", href.AsSpan(fileScheme.Length));
+        }
+        return href;
+    }
+
+    private IReadOnlyDictionary<string, string>? _xpathNamespaceBindings;
+
+    /// <summary>
+    /// The stylesheet's prefix bindings as XPath sees them, which differs from the element
+    /// namespace context in exactly one entry: the empty prefix.
+    /// </summary>
+    /// <remarks>
+    /// <c>xmlns="..."</c> declares the default namespace for LITERAL RESULT ELEMENTS. The
+    /// default namespace for unprefixed names in XPath comes from
+    /// <c>[xsl:]xpath-default-namespace</c> (XSLT 3.0 §5.4.2), and the two are unrelated.
+    /// The parser records both in one dictionary keyed by prefix, so handing it to the XQuery
+    /// engine unchanged made the empty key mean "xmlns=" — and the xs:QName cast, which reads
+    /// that key as the default element/type namespace, resolved <c>xs:QName('foo')</c> into
+    /// whatever namespace the stylesheet happened to declare for its result elements.
+    /// XSpec's catch_stylesheet is where this showed: its .xspec has no default namespace, but
+    /// the COMPILED stylesheet does, so an expected error code came out in the XSpec namespace
+    /// while the actual one had none. Built once; both inputs are fixed per stylesheet.
+    /// </remarks>
+    private IReadOnlyDictionary<string, string> XPathNamespaceBindings
+    {
+        get
+        {
+            if (_xpathNamespaceBindings != null) return _xpathNamespaceBindings;
+            var xpathDefault = _stylesheet.XpathDefaultNamespace;
+            if (!_stylesheet.Namespaces.ContainsKey("")
+                && string.IsNullOrEmpty(xpathDefault))
+            {
+                return _xpathNamespaceBindings = _stylesheet.Namespaces;
+            }
+            var derived = new Dictionary<string, string>(_stylesheet.Namespaces, StringComparer.Ordinal);
+            if (string.IsNullOrEmpty(xpathDefault))
+                derived.Remove("");
+            else
+                derived[""] = xpathDefault;
+            return _xpathNamespaceBindings = derived;
+        }
+    }
+
+    /// <summary>
+    /// Recovers fn:error()'s error object from an exception chain for binding to
+    /// <c>$err:value</c> in xsl:catch. Both XQueryException and XQueryRuntimeException carry
+    /// it; either may be wrapped by a diagnostic re-throw, so the whole chain is searched.
+    /// Returns null when no frame carries one — the correct value for fn:error()'s 1- and
+    /// 2-argument forms, which have no error object.
+    /// </summary>
+    private static object? ExtractErrorValue(Exception? ex)
+    {
+        for (var current = ex; current != null; current = current.InnerException)
+        {
+            switch (current)
+            {
+                case XQuery.Functions.XQueryException { ErrorValue: { } fnValue }:
+                    return fnValue;
+                case XQuery.Execution.XQueryRuntimeException { ErrorValue: { } rtValue }:
+                    return rtValue;
+                default:
+                    break;
+            }
+        }
+        return null;
     }
 
     /// <summary>
@@ -19256,6 +19543,29 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             throw Error("XTDE0420: Cannot add a namespace node to a document node");
         }
 
+        // A namespace node produced into the sequence accumulator is FREE-STANDING — it is a
+        // value being returned (e.g. from a function declared as="namespace-node()*"), not a
+        // declaration being attached to an element under construction. XTDE0440 and XTDE0430
+        // below both describe "the element being constructed", and the stacks they consult
+        // still hold the ENCLOSING element's entries here, so applying them to a free node
+        // reports a conflict between namespaces that never share an element. XSpec's
+        // x:copy-of-namespaces is exactly this shape: called once per source element, it
+        // returned two default-namespace nodes with different URIs and was rejected as a
+        // duplicate declaration even though each belonged to a different element.
+        if (_sequenceAccumulator != null)
+        {
+            var nsNode = new XdmNamespace
+            {
+                Id = NodeId.None,
+                Document = DocumentId.None,
+                Parent = NodeId.None,
+                Prefix = prefix ?? "",
+                Uri = uri
+            };
+            AppendToSeqAccumulator(nsNode);
+            return;
+        }
+
         // XTDE0440: Cannot define a default namespace when the element is in no namespace
         if (string.IsNullOrEmpty(prefix) && !string.IsNullOrEmpty(uri)
             && _outputElementHasNsStack.Count > 0 && !_outputElementHasNsStack.Peek())
@@ -19274,21 +19584,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // Conflicts between xsl:namespace and the element's own namespace bindings
         // are detected at element construction time, where we can check whether
         // exclude-result-prefixes was set (→ namespace fixup) or not (→ XTDE0430).
-
-        // If sequence accumulator is active, create an XdmNamespace node for the sequence
-        if (_sequenceAccumulator != null)
-        {
-            var nsNode = new XdmNamespace
-            {
-                Id = NodeId.None,
-                Document = DocumentId.None,
-                Parent = NodeId.None,
-                Prefix = prefix ?? "",
-                Uri = uri
-            };
-            AppendToSeqAccumulator(nsNode);
-            return;
-        }
 
         // Namespace declarations should appear in the element's start tag,
         // so write to _collectedAttributes when in attribute collection mode
@@ -19948,16 +20243,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // XTDE1500: Check if we're writing to a URI that was read during this transformation
         if (!string.IsNullOrEmpty(effectiveHref))
         {
-            try
-            {
-                Uri resolvedWriteUri;
-                if (Uri.TryCreate(effectiveHref, UriKind.Absolute, out var absUri))
-                    resolvedWriteUri = absUri;
-                else if (_stylesheet.BaseUri != null)
-                    resolvedWriteUri = new Uri(_stylesheet.BaseUri, effectiveHref);
-                else
-                    resolvedWriteUri = new Uri(effectiveHref, UriKind.RelativeOrAbsolute);
+            // Parse with TryCreate throughout. The old code combined against the base URI with
+            // the throwing Uri constructor and turned ANY parse failure into XTDE1400 — including
+            // failures on hrefs that are perfectly valid, which aborted the transform outright.
+            var hrefForParsing = NormalizeNoAuthorityUri(effectiveHref);
+            Uri? resolvedWriteUri;
+            if (Uri.TryCreate(hrefForParsing, UriKind.Absolute, out var absUri))
+                resolvedWriteUri = absUri;
+            else if (_stylesheet.BaseUri != null
+                     && Uri.TryCreate(_stylesheet.BaseUri, hrefForParsing, out var combinedUri))
+                resolvedWriteUri = combinedUri;
+            else if (Uri.TryCreate(hrefForParsing, UriKind.RelativeOrAbsolute, out var anyUri))
+                resolvedWriteUri = anyUri;
+            else
+                throw Error($"XTDE1400: Invalid URI in xsl:result-document href: '{effectiveHref}'");
 
+            // Only an absolute URI can be compared against the documents read so far;
+            // AbsoluteUri throws on a relative one, and a relative href that never resolved
+            // cannot collide with a read URI anyway.
+            if (resolvedWriteUri.IsAbsoluteUri)
+            {
                 var writeUriStr = resolvedWriteUri.AbsoluteUri;
                 foreach (var readUri in _documentResolver.ReadDocumentUris)
                 {
@@ -19965,7 +20270,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         throw new XsltException($"XTDE1500: Cannot write to URI '{effectiveHref}' — it was read during this transformation", instruction.Location);
                 }
             }
-            catch (UriFormatException ex) { throw Error($"XTDE1400: Invalid URI in xsl:result-document href: {ex.Message}"); }
         }
 
         // Evaluate omit-xml-declaration from xsl:result-document (AVT)
@@ -20929,6 +21233,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     : throw new XsltException($"XPTY0004: Cannot cast '{s}' to xs:integer for accumulator '{accName.LocalName}'"),
             ItemType.Integer when value is double d => (long)d,
             ItemType.Integer when value is decimal m => (long)m,
+            // A BigInteger already IS an xs:integer and is matched above; these two arms carry it
+            // into the other numeric types rather than falling through to the throw.
+            ItemType.Double when value is System.Numerics.BigInteger bi => (double)bi,
+            ItemType.Decimal when value is System.Numerics.BigInteger bi => (decimal)bi,
             ItemType.Decimal when value is string s =>
                 decimal.TryParse(s, System.Globalization.NumberStyles.Any,
                     System.Globalization.CultureInfo.InvariantCulture, out var m)
@@ -20947,7 +21255,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         ItemType.String => value is string,
         ItemType.Boolean => value is bool,
-        ItemType.Integer => value is int or long,
+        // xs:integer is UNBOUNDED in XSD, so a value too wide for long is carried as BigInteger —
+        // xs:integer() and the overflow-safe arithmetic both produce one. The XQuery engine's
+        // MatchesItemType already accepts it for ItemType.Integer; this separate matcher did not,
+        // so an accumulator declared as="xs:integer" whose rule used xs:integer() failed its type
+        // check on EVERY node. The throw becomes a deferred error, which freezes the accumulator,
+        // so it silently reported its initial value forever rather than erroring.
+        ItemType.Integer => value is int or long or System.Numerics.BigInteger,
         ItemType.Double => value is double,
         ItemType.Decimal => value is decimal,
         ItemType.Float => value is float,
@@ -21817,7 +22131,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (shouldTerminate)
         {
-            throw Error($"Transformation terminated: {message}");
+            // XTMM9000 is the code the spec assigns to a terminated transformation. It was the
+            // only throw in this method without one — XTDE0030 immediately above has carried its
+            // code all along.
+            throw Error($"XTMM9000: Transformation terminated: {message}");
         }
     }
 
@@ -22727,6 +23044,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 if (!isEmpty)
                     throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type empty-sequence()");
                 goto doneValidation; // skip remaining type checks
+            }
+
+            // XTTE0570 cardinality: a declared type requiring at least one item is not satisfied
+            // by the empty sequence. This check is deliberately type-independent — "how many
+            // items" is decided before "of what type", and the per-type branches below all start
+            // by assuming there is something to inspect, so an empty value slipped past every one
+            // of them. as="xs:string+" bound to a filter that matched nothing simply succeeded.
+            //
+            // A zero-length string is NOT the empty sequence and must not be caught here: it is a
+            // perfectly good single xs:string item. Only a null, or an array holding nothing but
+            // nulls, is empty. (The empty-sequence() branch above does count "" as empty; that is
+            // its own pre-existing behaviour and is left alone.)
+            if (occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore
+                && IsEmptySequenceValue(value))
+            {
+                throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} requires "
+                    + $"{DescribeRequiredCardinality(occurrence)} of type {targetType}, "
+                    + "but the supplied value is an empty sequence");
             }
 
             var isNodeType = targetType is ItemType.Node or ItemType.Element or ItemType.Text
@@ -27960,9 +28295,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private async ValueTask<object?> EvaluateWithParamAsync(XsltWithParam param)
     {
         // A value handed in directly needs no evaluation, and must not be converted on the way
-        // through — see XsltWithParam.RuntimeValue.
+        // through — see XsltWithParam.RuntimeValue. It may however have arrived from another
+        // engine wrapped for cross-store transport, in which case it is re-parsed into THIS
+        // store first: template-params and tunnel-params reach their declared-type check here,
+        // and an unwrapped CrossStoreNodeRef fails it as
+        // "requires type Element but got CrossStoreNodeRef".
         if (param.HasRuntimeValue)
-            return param.RuntimeValue;
+            return XsltTransformEngine.UnwrapCrossStoreValue(param.RuntimeValue, _nodeStore);
         if (param.Select != null)
         {
             return await EvaluateAsync(param.Select).ConfigureAwait(false);
@@ -28655,6 +28994,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             ResultTreeFragment rtf => StripXmlMarkup(rtf.XmlContent),
             Xdm.TextNodeItem tni => tni.Value,
             Xdm.XsAnyUri uri => uri.Value,
+            // Casting xs:QName to xs:string yields the LEXICAL form — "prefix:local", or the bare
+            // local name when there is no prefix (XPath 3.1 §19.2). QName.ToString() renders the
+            // EQName form "Q{uri}local" once an expanded namespace is attached: a good debugging
+            // rendering, and the wrong value. PhoenixmlDb.XQuery's XQueryStringValue carries the
+            // identical rule for fn:string; both are needed, because xsl:value-of routes through
+            // THIS method and fn:string through that one. Fixing only one makes the two paths
+            // disagree about the same value.
+            QName qname => string.IsNullOrEmpty(qname.Prefix)
+                ? qname.LocalName
+                : qname.Prefix + ":" + qname.LocalName,
             string s => s,
             bool b => b ? "true" : "false",
             double d => FormatDouble(d),
@@ -28683,6 +29032,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         if (value == null)
             return null;
+        // The empty sequence has two representations here — null and a zero-length array —
+        // and coercing it is a no-op for either. Without this, a zero-length array missed the
+        // per-item branch below (guarded on Length > 1) and fell through to the scalar arms,
+        // where ItemType.String => StringValueOf(array) manufactured a single zero-length
+        // string: "no items" silently became "one empty item". The two representations are not
+        // interchangeable at the source level, so this is reachable only from callers that
+        // produce the array form — a typed with-param whose sequence-constructor body yields
+        // nothing returns Array.Empty, while the same param written select="()" returns null.
+        if (value is object?[] { Length: 0 })
+            return value;
         // For sequence types (*, +), coerce each item individually rather than
         // joining the whole array into a single value (e.g., xs:string* should
         // produce an array of strings, not one space-joined string).
@@ -29032,6 +29391,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Only validates strict atomic types to avoid false positives with
     /// string/node/anyURI/untypedAtomic coercion paths.
     /// </summary>
+    /// <summary>
+    /// True when a bound value carries no items — either a null or an array holding only nulls.
+    /// A zero-length string is a single item, not an empty sequence, and is excluded.
+    /// </summary>
+    private static bool IsEmptySequenceValue(object? value)
+        => value switch
+        {
+            null => true,
+            object?[] items => Array.TrueForAll(items, static i => i == null),
+            _ => false,
+        };
+
+    /// <summary>Renders an occurrence indicator as the phrase used in an XTTE0570 message.</summary>
+    private static string DescribeRequiredCardinality(Occurrence occurrence)
+        => occurrence == Occurrence.OneOrMore ? "one or more items" : "exactly one item";
+
     internal void ValidateValueMatchesType(object? value, XdmSequenceType targetType, string errorCode, string contextName)
     {
         // Validate node types: when the target is a node type, non-node values must fail.
@@ -30341,6 +30716,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _functionLibrary.Register(new XsltBoundOriginalFunctionAdapter(this, overriddenFunc));
             swappedXslOriginalAdapter = true;
         }
+        // static-base-uri() inside the body resolves against the module the function is
+        // WRITTEN in, not the principal stylesheet (XPath 3.1 §16.2.4 — it comes from the
+        // expression's static context). Templates already push this; functions did not, so a
+        // function in an imported module reported the importing stylesheet's URI.
+        var pushedFunctionBaseUri = false;
+        if (func.BaseUri != null)
+        {
+            _staticBaseUriStack.Push(XsltTransformEngine.UriString(func.BaseUri)!);
+            pushedFunctionBaseUri = true;
+        }
         PushScope();
         // Mark this scope as a tunnel barrier — per XSLT spec, tunnel parameters
         // are not propagated through stylesheet function calls
@@ -30682,6 +31067,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             PopCurrentItem();
             PopContextItem();
             PopScope();
+            if (pushedFunctionBaseUri)
+                _staticBaseUriStack.Pop();
             if (swappedXslOriginalAdapter && savedXslOriginalAdapter != null)
                 _functionLibrary.Register(savedXslOriginalAdapter);
             _currentXsltFunctionStack.Pop();
@@ -37441,6 +37828,14 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var globalContextItem = GetOption(options, "global-context-item");
         if (globalContextItem is object?[] gciArr && gciArr.Length == 1)
             globalContextItem = gciArr[0];
+        // NOTE: a NODE global context item is passed through AS-IS, deliberately. Wrapping it
+        // as a CrossStoreNodeRef (the way function-params are) makes the inner engine re-parse
+        // it, which mints a NEW node — and these suites assert node IDENTITY
+        // ("$x:result is $x:context"). Measured 2026-09-02: wrapping regressed
+        // external_multiple-context-items_function from 1/2 back to an XPDY0002 abort. The
+        // caller and inner engine usually share a node store, so no transport is needed; the
+        // genuinely-cross-store case remains unhandled. See memory: global-context-item node
+        // identity.
         var staticParamsMap = GetOption(options, "static-params") as IDictionary<object, object?>;
 
         // Load the stylesheet
@@ -37615,11 +38010,23 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // values, but these carry real XDM items and must NOT be string-valued the way
         // static-params are (those are compile-time strings). Applied second so an explicit
         // stylesheet-params entry wins over a same-named static one.
+        // Node-valued parameters must cross into the inner engine the same way function-params
+        // do: serialized, then re-parsed into the inner store. Passing the node itself hands
+        // over Children NodeIds that mean nothing there, so the subtree arrives EMPTY — a
+        // parameter <kid>text</kid> became <kid/>. function-params has always wrapped; these
+        // three did not.
         if (TransformParameterOptions.Read(options, "stylesheet-params") is { } styleParams)
         {
             foreach (var (name, value) in styleParams)
-                initialParams[name] = value;
+                initialParams[name] = XsltTransformEngine.WrapNodesForCrossStoreTransport(value, _context);
         }
+        // template-params and tunnel-params are deliberately NOT wrapped. Measured 2026-09-03:
+        // wrapping them regressed external_nested-template-call and external_nested-function-call
+        // from 6/0 to 3/3 and broke external_coverage-contents-table outright, because these
+        // paths often already share the caller's node store — re-parsing there mints new nodes
+        // and costs identity for no gain. stylesheet-params genuinely needed it (a global
+        // parameter arrived with an empty subtree); these did not. See BUGS.md #20: the real fix
+        // is to wrap only when the stores actually differ.
         var templateParams = TransformParameterOptions.Read(options, "template-params")
                              ?? new Dictionary<QName, object?>();
         var tunnelParams = TransformParameterOptions.Read(options, "tunnel-params")
@@ -37658,10 +38065,14 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         {
             foreach (var item in paramList)
             {
+                // Only a bare element/document is wrapped, deliberately. Extending this to
+                // sequences (via WrapNodesForCrossStoreTransport, which recurses) does fix a
+                // multi-node argument arriving empty — but measured 2026-09-03 it regressed
+                // external_nested-function-call from 6/0 to 3/3, because these arguments usually
+                // already share the caller's store and re-parsing costs node identity. See
+                // BUGS.md #20: wrap only when the stores actually differ.
                 if (item is Xdm.Nodes.XdmElement or Xdm.Nodes.XdmDocument)
                 {
-                    // Wrap with the outer engine's XML serialization. The inner engine
-                    // unwraps and re-parses into its own node store.
                     var xml = _context.SerializeXdmNodeToXml((Xdm.Nodes.XdmNode)item);
                     initialFunctionArgs.Add(new XsltTransformEngine.CrossStoreNodeRef(xml, IsElement: item is Xdm.Nodes.XdmElement));
                 }
@@ -37686,6 +38097,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             InitialTemplateParameters = templateParams,
             InitialTunnelParameters = tunnelParams,
             InitialContextItem = initialContextItem,
+            GlobalContextItem = globalContextItem,
             // Under delivery-format='raw' the caller takes the typed XDM value and DISCARDS the
             // serialized buffer. Without this flag TransformRawAsync still built that buffer,
             // and building it means taking the string value of the result - which for a map is

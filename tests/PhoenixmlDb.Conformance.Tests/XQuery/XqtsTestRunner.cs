@@ -1,3 +1,4 @@
+using System.Reflection;
 using PhoenixmlDb.Core;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -953,29 +954,63 @@ public sealed class XqtsTestRunner
         };
     }
 
-    private bool IsExpectedError(List<XqtsAssertion> assertions, Exception ex)
+    /// <summary>
+    /// The error codes the engine actually reported, walking the whole inner-exception chain.
+    /// <para>
+    /// <c>XQueryException</c> and its relatives carry the code in a structured <c>ErrorCode</c>
+    /// property and deliberately keep it OUT of <c>Message</c>; the XSLT layer then re-wraps
+    /// those with file/line information. So <c>Message.Contains("FORX0002")</c> is false even
+    /// when the engine identified the error exactly right — 69 regex cases alone were being
+    /// scored "wrong code" while reporting the correct one. Reflection rather than a type list
+    /// because several unrelated exception types expose this property.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<string> ReportedErrorCodes(Exception ex)
     {
-        foreach (var assertion in assertions)
+        for (Exception? e = ex; e is not null; e = e.InnerException)
         {
-            if (assertion.Type == "error")
+            var prop = e.GetType().GetProperty(
+                "ErrorCode", BindingFlags.Public | BindingFlags.Instance);
+            if (prop is not null
+                && prop.PropertyType == typeof(string)
+                && prop.GetValue(e) is string { Length: > 0 } code)
             {
-                // Check if error code matches
-                var expectedCode = assertion.Value;
-                if (ex.Message.Contains(expectedCode ?? "") || string.IsNullOrEmpty(expectedCode))
-                {
-                    return true;
-                }
-            }
-            if (assertion.Type == "any-of")
-            {
-                if (assertion.Children.Any(a => a.Type == "error"))
-                {
-                    return true;
-                }
+                yield return code;
             }
         }
-        return false;
     }
+
+    /// <summary>
+    /// True if <paramref name="assertion"/> — or, for &lt;any-of&gt;, one of its alternatives —
+    /// is satisfied by <paramref name="ex"/>.
+    /// </summary>
+    private static bool MatchesExpectedError(XqtsAssertion assertion, Exception ex)
+    {
+        if (assertion.Type == "error")
+        {
+            // XQTS writes the code as an ATTRIBUTE — <error code="XPST0003"/> — so Element.Value,
+            // and therefore `assertion.Value`, is "". Reading Value here meant `expectedCode` was
+            // always empty and the IsNullOrEmpty branch passed the test for ANY exception: a query
+            // that failed for entirely the wrong reason still scored as a pass. `Code` was parsed
+            // all along (see ParseAssertions) and simply never consulted. An <error/> that really
+            // carries no code still asks only that SOME error be raised, so that stays a pass.
+            var expectedCode = !string.IsNullOrEmpty(assertion.Code)
+                ? assertion.Code
+                : assertion.Value;
+            return string.IsNullOrEmpty(expectedCode)
+                || ex.Message.Contains(expectedCode, StringComparison.Ordinal)
+                || ReportedErrorCodes(ex).Contains(expectedCode, StringComparer.Ordinal);
+        }
+
+        // <any-of> is satisfied when any one alternative is — and its <error> alternatives must
+        // match by code like any other. The old code returned true for any exception whenever an
+        // <error> child merely existed, which is the same blanket-pass one level down.
+        return assertion.Type == "any-of"
+            && assertion.Children.Any(child => MatchesExpectedError(child, ex));
+    }
+
+    private static bool IsExpectedError(List<XqtsAssertion> assertions, Exception ex)
+        => assertions.Any(assertion => MatchesExpectedError(assertion, ex));
 
     /// <summary>
     /// Unwraps a single-item list to its contained value.
@@ -1355,11 +1390,44 @@ public sealed class XqtsConfiguration
         "namespace-axis"
     };
 
+    /// <summary>
+    /// True if this engine implements one of the spec versions a <c>&lt;dependency type="spec"&gt;</c>
+    /// lists. The value is a space-separated list like <c>"XQ10"</c>, <c>"XQ30+"</c> or
+    /// <c>"XP31+ XQ31+"</c>; a trailing <c>+</c> means "that version and later".
+    /// <para>
+    /// The old check was <c>dep.Value?.Contains("XQ") == true</c>, which accepted EVERY XQuery
+    /// version including <c>XQ10</c> — so tests written to pin XQuery 1.0 behaviour ran against a
+    /// 4.0 engine and their failures were counted against us. They are not failures: `Axes127`
+    /// says in its own description "the namespace-node() kind test is new in XQuery 3.0" and
+    /// asserts XPST0017, i.e. it requires the engine NOT to support something we do support.
+    /// `K-SeqExprCast-71a` pins the 1.0 rule for casting xs:untypedAtomic to xs:QName, citing bug
+    /// 16059 — the same bug our own CastOperator comment cites as the thing XQuery 3.0 relaxed.
+    /// </para>
+    /// <para>
+    /// Deliberately conservative, because this change RAISES the score and so deserves more
+    /// scepticism than one that lowers it: an exact <c>XQ31</c> counts as applicable, since 4.0 is
+    /// a superset of 3.1 and skipping those would be self-serving. Only exact <c>XQ10</c>/
+    /// <c>XQ30</c> — versions whose behaviour later specs deliberately CHANGED — are excluded. A
+    /// dependency naming no XQuery version at all (XPath-only) is left applicable, as before.
+    /// </para>
+    /// </summary>
+    internal static bool SpecApplies(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        var xq = value.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                      .Where(t => t.StartsWith("XQ", StringComparison.Ordinal))
+                      .ToList();
+        if (xq.Count == 0) return true;
+        return xq.Any(t => t.EndsWith('+')
+            || string.Equals(t, "XQ40", StringComparison.Ordinal)
+            || string.Equals(t, "XQ31", StringComparison.Ordinal));
+    }
+
     public bool SatisfiesDependency(XqtsDependency dep)
     {
         return dep.Type switch
         {
-            "spec" => dep.Value?.Contains("XQ") == true && dep.Satisfied,
+            "spec" => SpecApplies(dep.Value) == dep.Satisfied,
             "feature" => SupportedFeatures.Contains(dep.Value ?? "") == dep.Satisfied,
             "xsd-version" => dep.Satisfied,
             "xml-version" => dep.Satisfied,

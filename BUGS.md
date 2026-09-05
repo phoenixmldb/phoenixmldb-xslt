@@ -216,6 +216,262 @@ returns the **bash wrapper**, not the `dotnet` process. Target the process whose
 `dotnet`. One correct stack replaced two confident wrong answers.
 
 
+### 19. `$err:code` has no namespace URI, and fixing it breaks QName rendering
+
+Found 2026-09-02. `xsl:catch` builds `$err:code` with the interned NamespaceId but **no
+`ExpandedNamespace`**. The components are otherwise right:
+
+```
+local-name-from-QName($err:code)     -> XTDE3086     correct
+prefix-from-QName($err:code)         -> err          correct
+namespace-uri-from-QName($err:code)  -> ""           WRONG
+```
+
+So `$err:code` cannot equal `QName('http://www.w3.org/2005/xqt-errors','XTDE3086')`. This blocks
+**9 assertions** in XSpec's `external_global-context_stylesheet` (the err:code/description/module
+trio across three scenarios), and is why fixing the *error code itself* — the engine raised
+XPDY0002 where XTDE3086 is required — moved the corpus by zero.
+
+**Attaching the URI is measurably worse on its own.** Measured on the 284-suite corpus:
+
+| | Complete | passing | failing |
+|---|---|---|---|
+| as-is | 137 | 1150 | 209 |
+| URI attached | 136 | 1154 | 202 |
+
+Attaching it flips the **XQuery** engine's QName stringifier to the EQName form `Q{uri}local`,
+where casting `xs:QName` to `xs:string` must give the lexical `prefix:local` (XPath 3.1 §19.2).
+XSpec compares the serialized lexical form, so three suites regress (`yes-no-utils` 14/0 -> 12/2,
+`xsl-result-document` 2/4 -> 0/6, `external_xslt-package_arith_private` 2/1 -> 1/2). Patching
+`StringValueOf` in the XSLT engine covers `xsl:value-of` but not `fn:string`, which lives in the
+XQuery package — so the halves diverge, and that divergence is itself the defect generator.
+
+**Order of operations: fix the QName stringifier in XQuery/Core first, release, bump the pin,
+THEN attach `ExpandedNamespace` here.** Doing it in the other order is negative. This is the
+highest-leverage open item — it unblocks the 9 assertions plus anything else comparing an error
+code against a URI-built QName.
+
+### 20. A node `global-context-item` cannot cross into fn:transform's inner engine
+
+Found 2026-09-02, after making `global-context-item` the focus for global-variable evaluation.
+A NODE passed as that option is handed through as-is. Wrapping it as a `CrossStoreNodeRef` — the
+way `function-params` are — makes the inner engine re-parse it, which mints a **new node**, and
+these suites assert node IDENTITY (`$x:result is $x:context`).
+
+Measured both ways (censuses 45/46): pass-through gives 137 Complete / 1150 passing; wrapping
+gives 136 / 1154. Wrapping gains assertions in four `external_*` suites and regresses
+`external_multiple-context-items_function` from Complete 1/2 to an XPDY0002 abort. **Neither
+dominates**, so do not pick by census total.
+
+The real fix is to wrap only when the stores genuinely differ — the inner engine often shares the
+caller's store, where the node resolves natively and identity holds. Establish which paths share
+a store before choosing.
+
+### 21. No XML Catalog support — 3 XSpec suites, and it is a feature not a bug
+
+`uri-utils`, `schut-to-xslt` and `generate-xproc-imports` fail with
+`FODC0002: No document could be retrieved for URI 'catalog-01:/...'`. They resolve a private URI
+scheme through an OASIS XML Catalog, which XSpec supplies to Saxon via processing instructions the
+.NET runner does not read (`<?xspec-test saxon-custom-options=-catalog:"..."?>`).
+
+Verified 2026-09-02: the engine has **no** catalog support and **no** URI-resolver hook. (The
+`packageCatalog` in `XsltFacade` is the XSLT *package* catalog, unrelated.) Clearing this means
+deciding whether the engine should support XML Catalogs and through what API, plus catalog
+parsing, `rewriteURI`/`public` entries, and plumbing into `fn:doc`/`fn:document`/module
+resolution. **Do not spend triage time treating it as a defect.**
+
+### 22. `x:like` loses a namespace inherited from an IMPORTED x:description
+
+Found 2026-09-02. FONS0004, 2 suites (`threads_description_stylesheet`,
+`threads_scenario_stylesheet`), stage Compile. A namespace declared on an imported
+`x:description` and used only inside an ATTRIBUTE VALUE is lost when `x:like` expands a
+`shared="yes"` scenario, so `x:call/@function="sleeper:sleep"` fails to resolve.
+
+Stage located by probing the real compiler:
+
+| point | in-scope prefixes on `x:call` |
+|---|---|
+| entering `x:gather-specs` | `xml,x,sleeper` |
+| `$specs-doc` (after gather) | `xml,x,sleeper` |
+| after `mode="x:unshare-scenarios"` | `xml,x` — **lost** |
+
+**Minimal repro** (needs the real XSpec compiler): an imported `shared.xspec` declaring
+`xmlns:sleeper` with a `shared="yes"` scenario whose `x:call/@function` uses the prefix, plus a
+`user.xspec` that imports it and references it with `x:like`. Putting both scenarios in ONE file
+**passes** — the cross-document import is required, and that is the cheapest lever.
+
+**Ruled out — seven isolations, all pass, do not re-run:** shallow-copy of an element with its
+own namespace; with an inherited one; `xsl:copy`; `xsl:copy-of`; `fn:document()` loading;
+`xsl:element inherit-namespaces="no"` wrapping copied children; a typed `as="element()+"`
+template whose body shallow-copies; and a second copy through an intermediate `xsl:document`.
+So this is NOT "copy drops namespace declarations". Probe that seam on the REAL repro — every
+synthetic reconstruction so far has failed to reproduce.
+
+
+### 23. `$v/root()` returns empty as a path step; `root($v)` and `$v/root(.)` do not
+
+Found 2026-09-02. A zero-argument `fn:root()` used as a step does not receive the per-item
+context, and yields nothing rather than the root or an error:
+
+```
+root($v)         -> 1 item   correct
+$v/root(.)       -> 1 item   correct
+$v/root()        -> 0 items  WRONG   (0-arg defaults to the context item, so this is root(.))
+```
+
+It returns EMPTY rather than raising XPDY0002, so `Root0Function` — which reads
+`ctx.ContextItem` and throws when absent — is evidently not being invoked with the step's focus
+at all. Path-step evaluation lives in the **XQuery** package, so this needs the same
+release-and-repin chain as #19.
+
+Blocks XSpec `select-node`, whose assertion is
+`$x:result is $myv:source/root()/conbody[1]/p[1]/text()[1]` — the right operand is empty, `is`
+on an empty operand yields the empty sequence, and XSpec terminates on "Non-boolean @test".
+
+**Second, separate question in the same suite:** a variable declared `as="element(conbody)"` from
+a constructor body is PARENTLESS here — `root($v)` returns the element, not a document node — so
+`root()/conbody[1]` would still find nothing even once the above is fixed. XSLT 3.0 §9.3 says a
+typed body constructs a sequence rather than a temporary tree, which argues our behaviour is
+right; that the XSpec suite expects otherwise argues Saxon wraps it. **Settle this against the
+spec before changing it** — do not infer the rule from the test.
+
+### 24. Not every non-completing XSpec suite is an engine defect
+
+Recorded 2026-09-02 so the published figures are not misread. Of the suites that do not run to
+completion, at least these fail for reasons that are **not** engine deficiencies:
+
+| suite(s) | why | tracked |
+|---|---|---|
+| `uri-utils`, `schut-to-xslt`, `generate-xproc-imports` | need an OASIS XML Catalog; the engine has no catalog support at all | #21 |
+| `helper_xslt-package` | needs Saxon's `-config:` package library. **The engine already supports this** (`XsltFacade` takes a `packageCatalog`); phxspec simply does not read `<?xspec-test saxon-custom-options?>` | harness |
+| `version-utils` | inherently Saxon-specific — the scenario is labelled "Assume we test this on Saxon versions from 11.7 to 13.x" and tests `$x:saxon-version`, which is empty on any non-Saxon processor. **Cannot pass here, ever.** | inapplicable |
+
+Twelve top-level suites carry `saxon-custom-options`; phxspec ignores all of them. When
+reporting XSpec conformance, say how many of the shortfall are engine defects and how many are
+harness or inapplicable — a bare "N suites do not complete" reads as N engine bugs and overstates
+the case against the engine.
+
+
+### 25. An `xmlns=` default leaks into `xs:QName()` casts — FIXED 2026-09-03
+
+Found 2026-09-03, exposed by fixing fn:deep-equal for QNames (#19 chain). In a stylesheet
+declaring a default element namespace and NO `xpath-default-namespace`:
+
+```xml
+<xsl:stylesheet xmlns="urn:default-elem" ...>
+  namespace-uri-from-QName(xs:QName('foo'))   ->  "urn:default-elem"   WRONG, want ""
+  namespace-uri-from-QName(QName('','foo'))   ->  ""                   correct
+```
+
+An `xmlns=` declaration sets the default namespace for **literal result elements**. Unprefixed
+name resolution in XPath is governed by `xpath-default-namespace`, which is a different thing;
+the two are being conflated.
+
+**This was hiding behind a false pass.** XSpec's `catch_stylesheet` asserts
+`?err?code` against `xs:QName('error-code-of-my-template')`. The .xspec source has no default
+namespace, but the COMPILED stylesheet carries `xmlns="http://www.jenitennison.com/xslt/xspec"`,
+so the expected value came out in the XSpec namespace while the actual error code has none:
+
+```
+RESULT -> QName('', 'error-code-of-my-template')
+EXPECT -> QName('http://www.jenitennison.com/xslt/xspec', 'error-code-of-my-template')
+```
+
+Those three assertions "passed" only because `fn:deep-equal` compared QNames by their **debug
+ToString()**, where both render as the bare local name and the namespace difference is invisible.
+Once deep-equal compared by value, the pre-existing defect surfaced. `catch_stylesheet` going
+18/3 -> 15/6 is therefore **not a regression in capability** — it is three false passes becoming
+honest failures, and it should not be "fixed" by reverting the deep-equal change.
+
+**Fixed** by giving XPath its own view of the prefix bindings. The parser records `xmlns=` and
+every prefix in one dictionary keyed by prefix; handing that to the XQuery engine unchanged made
+the empty key mean "xmlns=", and the xs:QName cast reads that key as the default element/type
+namespace. The engine now substitutes `xpath-default-namespace` for the empty key (removing it
+when unset), built once per stylesheet.
+
+Verified both directions: `xmlns=` alone no longer reaches a cast, and an explicit
+`xpath-default-namespace` now does. Corpus effect: `catch_stylesheet` 15/6 -> **18/3**, no suite
+worse — the three assertions it recovers are the false passes described above, now passing for
+the right reason.
+
+
+### 26. `as="xs:integer"` accumulator + `xs:integer()` in the rule = always the initial value — FIXED 2026-09-04
+
+Found 2026-09-04 while clustering the W3C `decl` group. **Two factors, each harmless alone:**
+
+| `as=` | rule expression | result (input 10,20,61) |
+|---|---|---|
+| `xs:integer` | `$value + xs:integer(.)` | **0** WRONG |
+| `xs:integer` | `$value + number(.)` | 91 correct |
+| *(none)* | `$value + xs:integer(.)` | 91 correct |
+| `xs:integer` | `$value + 1` (counter) | 3 correct |
+
+So the accumulator machinery, the rule matching, and the context item are all fine — verified
+directly: inside a rule `name(.)` gives `c`, `string(.)` gives the text, `xs:integer(.)` alone
+gives 10/20/61. Only the COMBINATION of a declared `as="xs:integer"` and a rule whose value comes
+from the `xs:integer()` constructor collapses to the initial value.
+
+**Prime suspect (unconfirmed):** `xs:integer()` returns an `Xdm.XsTypedInteger` wrapper rather
+than a bare `long` — the XQuery engine unwraps exactly that in several places
+(`if (a is Xdm.XsTypedInteger tiA) a = tiA.Value;`). The accumulator's `as=` coercion probably
+does not, so each rule result fails to become the new value and the accumulator never advances.
+Check `CoerceToType` against `XsTypedInteger` before looking anywhere else.
+
+**Reproduce** (`<r><c>10</c><c>20</c><c>61</c></r>`, expect 91):
+
+```xml
+<xsl:mode use-accumulators="#all"/>
+<xsl:accumulator name="a" as="xs:integer" initial-value="0">
+  <xsl:accumulator-rule match="c" select="$value + xs:integer(.)"/>
+</xsl:accumulator>
+```
+
+**Worth doing:** `accumulator` is the largest single cluster in the W3C `decl` group — **26 of its
+93 failures** — and real accumulators commonly declare `as="xs:integer"` and read `xs:integer(.)`,
+which is exactly this shape. W3C `accumulator-036` ("sequence constructor in accumulator rule") is
+a good end-to-end check: it expects `items=5, cost=91` and currently gives `cost=0`.
+
+**Fixed.** The suspect was right but for a different reason than guessed: the value is a
+**BigInteger**, not an `XsTypedInteger`. `xs:integer` is unbounded in XSD, so `xs:integer()` and
+the overflow-safe arithmetic can both produce one, and `MatchesAtomicType` accepted only
+`int or long`. The XQuery engine's `MatchesItemType` had accepted BigInteger all along — this
+separate matcher had not.
+
+Found by surfacing the deferred error rather than by more reasoning; three successive inferences
+about the CLR type were wrong, and the engine's own message settled it in one run:
+
+    XPTY0004: Accumulator 'i_xsint' declared as Integer but value is BigInteger
+
+**Measured effect is smaller than hoped: 7 of the 26, not all of them.** W3C `decl` went
+987/1080 (91.4%) to **994/1080 (92.0%)**, accumulator failures 26 to 19. The prediction that one
+cause covered the cluster was wrong; the remaining 19 are something else.
+
+Still unexplained, seen while isolating: a rule on an `as="xs:string"` accumulator appended SEVEN
+entries for three matched elements, and `$value` read empty each time. Not addressed by this fix
+— likely part of the remaining 19.
+
+### 27. W3C `decl` failures, clustered (2026-09-04)
+
+The 93 failures in the `decl` group, by test-set prefix, so the next session can pick by size
+rather than re-derive this:
+
+| cluster | failures |
+|---|---|
+| `output` | 20 — now the largest |
+| `accumulator` | 19 (was 26; #26 fixed 7) |
+| `function` | 10 |
+| `use-package` | 9 |
+| `package` | 7 |
+| `override-*` | 10 combined |
+| everything else | 11 |
+
+`decl` is the weakest W3C group at **91.4%**; `strm2` is next at 92.1% (59 failures). Everything
+else sits near 98%. Two groups carry 152 of the 406 total failing cases.
+
+`conformance-results/decl.log` records actual-vs-expected per failure and is regenerated by
+`./scripts/conformance.sh decl` (~3 min, versus 38 for the full sweep).
+
+
 ## Open — harness
 
 ### 15. Diagnostics printed CLR type names instead of XQuery ones — FIXED 2026-08-25
@@ -319,6 +575,437 @@ children at the top level of a document node.
 so it cannot judge these either way. They FAIL, because a check you cannot perform is not a
 check you passed — but the right answer is a real "not applicable" state, which the runner
 has no concept of.
+
+
+### 28. Expected-error tests passed on ANY exception — BOTH runners — FIXED 2026-09-04
+The third and worst layer of the `_ => true` problem in #7 and #9, and the one that was
+actually inflating the published conformance number.
+
+`<error code="XPST0003"/>` and `<assert-serialization-error code="SESU0007"/>` carry the
+expected code in an ATTRIBUTE. Both runners read `Element.Value` — the element TEXT, which is
+`""` for an empty element — and then treated empty as "any error will do":
+
+```csharp
+var expectedCode = assertion.Value;                       // always "" for <error code="..."/>
+if (ex.Message.Contains(expectedCode ?? "") || string.IsNullOrEmpty(expectedCode))
+    return true;                                          // → ANY exception passes
+```
+
+So a test that expected `XTSE0010` passed by throwing `Unknown XSLT instruction: expose`
+(`package-903`), and any test whose stylesheet failed for an unrelated reason scored a pass on
+the strength of having failed.
+
+The clearest case is `fn:load-xquery-module`, which the engine does not implement: **0/4 after
+the fix, 4/4 before it.** A wholly missing function scored 100% because each call threw.
+
+`accept-*` shows the subtler shape — **23 of 23 failures raise the wrong code**, but not because
+`xsl:accept` is unimplemented (it is parsed; see `StylesheetParser.cs:1372`). Every one of them
+dies earlier on `XTDE3052: Package 'http://localhost/pkg' not found`, so the group was scoring
+27/50 while actually testing nothing about visibility at all. Package resolution for the corpus,
+not `xsl:accept`, is what that cluster is really blocked on.
+
+The XSLT runner never parsed the `code` attribute at all. The XQuery runner DID parse it into
+`XqtsAssertion.Code` and then never consulted it — the parse and the check disagreed silently.
+
+`<any-of>` carried the same blanket-pass one level down in both runners, and this one is pure
+logic rather than a field mix-up:
+
+```csharp
+if (assertion.Children.Any(a => a.Type == "error")) return true;   // code never examined
+```
+
+Fixed with a single recursive `MatchesExpectedError` per runner: match on `Code`, fall back to
+element text, and treat a genuinely code-less `<error/>` as "some error must be raised" — which
+is what it means. `<any-of>` now recurses instead of pattern-matching on child type.
+
+**This is an asymmetric pair defect (#—see the pattern note) in the harness rather than the
+engine, which is why no amount of engine work would have surfaced it.** The two runners had
+different halves of the bug: XSLT never parsed the code, XQuery parsed it and ignored it.
+
+Measured effect across the whole W3C XSLT corpus. The engine did not change at any point in
+this sequence — only the scoring did:
+
+| | published 2026-09-02 | code checked | + code read from `ErrorCode` |
+|---|---|---|---|
+| cases passing | 10,224/10,630 (96.2%) | 9,740/10,630 (91.6%) | **10,020/10,630 (94.3%)** |
+| failures | 406 | 890 | **610** |
+| of which "wrong code" | (scored as passes) | 511 | **222** |
+
+Checking the code properly cost 4.6 points; reading it from the right place gave 2.6 back. The
+net correction to the published figure is **1.9 points and 204 previously invisible failures**.
+`decl`, the group this started from, went 994/1080 → 944/1080 (136 failures, 66 wrong-code).
+The final column also includes two engine fixes this exposed (XTMM9000, XTDE0700 — below).
+
+11 of the change's own fixes went the other way: `output-0182`..`0192` expect
+`assert-serialization-error`, the engine raises exactly those codes, and the XSLT runner had no
+case for that assertion at all — it hardcoded `false` while the XQuery runner had handled it
+all along. Those were the engine being right and the harness scoring it wrong.
+
+**Half of the resulting "wrong code" failures were not wrong at all.** `XQueryException` and
+several relatives carry the code in a structured `ErrorCode` property and deliberately keep it
+out of `Message`; the XSLT layer then re-wraps those with file and line information. So the
+engine reported `FORX0002` correctly and the runner, comparing against `Message`, could not see
+it:
+
+```
+Error: [file:///…/re.xsl:33] [line 1, col 52] Invalid regular expression '^(+a)$': …
+                                              ^ correct diagnosis, code held in ErrorCode
+```
+
+Both runners now also consult `ErrorCode` down the whole inner-exception chain. That alone
+recovered **96 cases in the `misc` group** (1718 → 1814) and cut its wrong-code count from 162
+to 67 — no engine change, just reading the code from where the engine put it.
+
+The two clusters that looked next-largest — `Function g#1 not found` (expects `XPST0017`) and
+`The context item for '/' is not in a tree rooted at a document node` (expects `XPDY0050`) —
+turned out to be the SAME cause, not a separate one: both are already raised as
+`XQueryRuntimeException("XPST0017", …)` / `("XPDY0050", …)` at `PhysicalOperators.cs:8784` and
+`:173`, structurally correct and invisible to a message comparison. They should be cleared by the
+same fix. **Re-cluster what is left before treating any of it as a missing-code defect** — the
+first pass at reading this list mistook structural codes for absent ones.
+
+Results lines now report the split, because "raised the wrong code" and "raised nothing" are
+different defects and only the second is a missing check:
+
+```
+Results: 27/50 passed (54.0%) — 23 of 23 failures raised an error with the wrong code
+```
+
+**Consequence: every conformance figure published before 2026-09-04 is overstated**, including
+the 96.2% in the README, which was itself a correction of a stale 97.9%. The XQTS 95% CI gate
+is measured by the same code and is overstated for the same reason.
+
+
+### 29. Two error sites omitted the code their siblings carried — FIXED 2026-09-04
+Found by the wrong-code split that #28 made visible. Both are the asymmetric-pair shape, and in
+both cases the twin sitting a few lines away had the code all along:
+
+| site | was | now | sibling that was already right |
+|---|---|---|---|
+| `XsltTransformer.cs:22137` | `Transformation terminated: {message}` | `XTMM9000: …` | `XTDE0030` at `:22122`, same method |
+| `XsltTransformer.cs:10221` | `Required parameter $x not supplied` | `XTDE0700: …` | `XTDE0700` at `:10257`, `:11057`, `:12172` |
+
+`:10221` is the explicitly `required="yes"` parameter; `:10257` is the case where an `as=` type
+makes a parameter effectively required. Same error, same spec code, and only the derived one
+named it.
+
+Measured: `decl` 943 → 944, `insn` 1494 → 1497. Unit gate 1480, unchanged.
+
+The diagnosis was never wrong in either case — the prose said exactly what happened. Only the
+code was missing, which is invisible to a human reading the message and decisive for anything
+matching on it. Cheap to fix, and worth doing for users independently of the score.
+
+
+### 30. `fn:load-xquery-module` flattened every failure to FOQM0002 — FIXED 2026-09-04
+The `fn` fixture went red once #28 made expected-error checks real: the
+`load-xquery-module` test-set scored 0/4 and tripped the `passed > 0` gate (#7).
+
+All four cases were failing for one reason. The implementation synthesizes
+`import module namespace __lxqm = "…"` and compiles it with the real engine — so the analyzer
+had already classified the failure precisely, `XQST0059` for an unresolvable module namespace —
+and then the wrapper threw away that code and reported `FOQM0002` for everything:
+
+```csharp
+var msg = string.Join("; ", compResult.Errors.Select(e => e.Message));
+throw new XQueryRuntimeException("FOQM0002", $"Module '{moduleUri}' cannot be loaded: {msg}");
+```
+
+"No such module", "the module has a syntax error" and "the module imports something missing"
+were all reported identically. Now the underlying `AnalysisError.Code` is preserved.
+`load-xquery-module-001` expects `XQST0059` and passes; the fixture is green on one real pass
+rather than on a suppressed check.
+
+**The other three still fail and are still counted.** They need `<resource uri= file=
+media-type="application/xquery">` from the test environment to be registered as a module
+mapping, and nothing carries it: `XsltTestRunner.ParseEnvironment` handles `stylesheet`,
+`source` and `collection` but not `resource`, and there is no path from XSLT transform options
+to the XQuery `CompilationOptions.ExternalModules` the analyzer reads. `fn:load-xquery-module`
+also builds its sub-engine with only `BaseUri`, so it would drop a host-supplied module map even
+if one were available — a real defect independent of the harness. **Left OPEN deliberately:**
+8 `<resource>` elements exist corpus-wide, 1 of them XQuery, which does not justify new public
+API on the XSLT engine.
+
+### 31. `conformance.sh` double-counted every failing test-set — FIXED 2026-09-04
+When a fixture assertion fails, xunit echoes that test's output a second time behind an
+`[xUnit.net …]` prefix. `nfail` anchored on `^ FAILED: ` and was right; the case tally used an
+unanchored `grep -oE "Results: …"` and counted the test-set twice. `fn` reported 1135 cases
+instead of 1131 the moment `load-xquery-module` went red — the inflation was exactly the size of
+each failing test-set, and it appeared only when something was already wrong. The two numbers
+disagreed silently because only one of them was anchored.
+
+Every corpus total measured while a fixture was red is affected, including the intermediate
+figures in entry 28: the 10,634 case totals there should read 10,630.
+
+
+### 32. Required attributes dereferenced with `!` — NullReferenceException — FIXED 2026-09-04
+`key-091` omits `name` on `xsl:key` and expects `XTSE0010`. The parser did:
+
+```csharp
+ValidateQNameValue(element.Attribute("name")!.Value, "name", GetSourceLocation(element));
+```
+
+so the author got `Object reference not set to an instance of an object.` instead of a
+diagnosis. The `!` asserts a required attribute is present, which is exactly the thing the
+stylesheet is being checked FOR — the assertion is only true when there is nothing to report.
+
+This is a class, not one bug. `Attribute("x")!.Value` appeared **25 times** in
+`StylesheetParser.cs`. Searching the conformance logs for the NRE message found 8 reachable
+instances, 5 of them this cause:
+
+| test | element | missing attribute |
+|---|---|---|
+| `key-091` | `xsl:key` | `name` |
+| `error-0010u` | `xsl:key` | `match` |
+| `error-0010q` | `xsl:attribute-set` | `name` |
+| `error-0010ad` | `xsl:call-template` | `name` |
+| `error-0010an` | `xsl:variable` | `name` |
+
+All five now raise `XTSE0010` via the existing `?? throw` idiom. Measured: `fn` 1068 → 1069,
+`misc` 1815 → 1819. Unit gate 1480, unchanged.
+
+**18 `!.Value` dereferences remain** and are deliberately untouched: no test reaches them, and
+several are attributes that are genuinely optional in some contexts (`xsl:output/@name`) or
+already guarded by a ternary. Fixing them blind risks rejecting valid stylesheets — the
+`!` is only wrong where the attribute is required AND its absence is a diagnosable error. The
+enclosing methods are `ParseParam`, `ParseCharacterMap`, `ParseDecimalFormat`, `ParseAccumulator`,
+`ParseForEach`, `ParseForEachGroup`, `ParseIterate`, `ParsePI`, `ParseNamespaceInstr`,
+`ParseAssert`, `ParseParamInstr`, `ParseAnalyzeString`, `ParseMapEntry`, `ParseWithParam`.
+
+Three NREs remain with OTHER causes and are still open: `accumulator-025`, `output-0501`,
+`select-7501`.
+
+
+### 33. XQTS audit: the suite never hung, and 95.11% was measured with the #28 fail-open
+**The timeout was never a hang.** `xqts` is 31,470 cases — an order of magnitude past any XSLT
+chunk — and completes in **2,241 s (37 min)**. The script's 900 s per-chunk default killed it
+every time and printed `TIMEOUT`, which read as a wedge and went uninvestigated for weeks. This
+is the same "not hung, just big" shape the script already documents for `strm`, which was split
+into three chunks for exactly this reason. Fixed by giving `xqts` its own budget
+(`CONFORMANCE_XQTS_TIMEOUT`, default 3600) rather than raising the global default, which would
+let a genuinely wedged XSLT chunk sit for an hour.
+
+**Measured 2026-09-05, honest error-code checking:**
+
+| | |
+|---|---|
+| Total | 31,470 |
+| Passed | **28,887 (91.79%)** |
+| Failed | 941 |
+| Errors | 1,642 |
+| `assert-eq` string-compare rescues | 8 |
+
+**The 95% CI gate fails by 3.21 points.** The last recorded XQTS result was 95.11% GREEN on
+2026-08-23 — measured by the runner described in #28, whose `IsExpectedError` read the expected
+code from element text when QT3 writes it as an attribute, so the comparison was always against
+`""` and passed for ANY exception.
+
+The population that check was auto-passing: **7,403 QT3 cases carry an `<error code=…>`
+assertion**, just under a quarter of the suite. The ~1,040-case drop from 95.11% to 91.79% sits
+entirely inside that population, which is consistent with the fail-open being the cause — though
+engine changes also landed between the two dates, so this is attribution by magnitude, not a
+controlled comparison. A controlled one would need the old runner re-run against today's engine.
+
+**The gate needs a decision, not a code change.** At 95% it is now permanently red and therefore
+useless as a regression detector; ratcheting it to the measured value (say 91.5%) restores that
+function and keeps the real target documented. Lowering a quality gate is a call for a human to
+make, so it is deliberately NOT changed here.
+
+Audit of the rest of the XQuery runner found no other fail-open: the assertion dispatch's
+catch-all is `_ => false`, `all-of`/`any-of` recurse properly, missing test data raises
+`Assert.Skip` rather than returning green, and the `assert-eq` string-compare rescues are counted
+and reported (8) rather than hidden.
+
+
+### 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
+Follow-on to #33, answering "which bugs take it from 95 to 91.79". Nothing *takes* it there —
+these were always failing; #28's blanket-pass scored them green because the query threw
+*something*.
+
+Of 2,583 unique failing cases (941 failed + 1,642 errors):
+
+| | count |
+|---|---|
+| expected an error, threw the WRONG one | **1,001** ← previously auto-passed |
+| expected an error, returned a result instead | 163 (always failed — nothing to rescue) |
+| no expected error: wrong result or crash | 1,419 (always failed) |
+
+1,001/31,470 = **3.18 points**, against an observed drop of 3.32. That closes the attribution
+gap left open in #33: it is the fail-open, not engine drift.
+
+**536 of the 1,001 are raw CLR exceptions escaping the engine** — not an XQuery error at all:
+
+| exception | n | should have been |
+|---|---|---|
+| `OverflowException` | 184 | FOCA0002×83, FORG0001×73, FOAR0002×12 |
+| `InvalidCastException` | 148 | XPTY0004×126, FORG0006×16 |
+| `FormatException` | 114 | FORG0001×105 |
+| `XmlSchemaValidationException` | 71 | XQDY0027×35, XQDY0084×13 |
+| `HttpRequestException` | 11 | XQST0059×6, XQST0009×5 (network-dependent, environmental) |
+
+By test-set, three code paths cover ~418 of the 536:
+
+- **casting — 228** (`prod-CastExpr` 178, `prod-CastExpr.derived` 50). `xs:T('bad lexical')` lets
+  .NET `FormatException` / `InvalidCastException` / `OverflowException` escape instead of raising
+  FORG0001 / FOCA0002 / XPTY0004.
+- **duration arithmetic — ~130** (`op-*-dayTimeDurations`, `op-*-yearMonthDuration`, `fn-avg`,
+  `fn-abs`). Huge durations overflow `Int32`/`TimeSpan`; the overflow escapes as-is.
+- **schema validation — 60** (`prod-ValidateExpr` 35, `prod-SchemaImport` 25).
+  `XmlSchemaValidationException` escapes where XQDY0027/XQDY0084 is required.
+
+**Why this was never wrapped, probably:** `CastExpressionOperator.ExecuteAsync` is an
+`async IAsyncEnumerable<object?>` iterator, and C# forbids `yield return` inside a `try` with a
+`catch`. So the obvious "wrap the cast body" fix does not compile, and the conversion calls sit
+directly in the iterator. The fix is to move conversion into a non-iterator helper that CAN
+try/catch and translate, then yield its result — not to sprinkle catches at call sites.
+
+The remaining 465 of the 1,001 do raise a proper `XQueryRuntimeException`/`XQueryException` with
+the wrong code; those need case-by-case work and are not a single cluster.
+
+
+### 35. Cast/numeric CLR leaks — PARTIALLY FIXED 2026-09-05
+Four fixes against the #34 clusters. **XQTS 28,887 → 28,976 (91.79% → 92.07%), +89.**
+XSLT corpus 10,020 → 10,024, no regression. Unit gates 1532 (XQuery) / 1480 (XSLT), unchanged.
+
+| fix | site | gain |
+|---|---|---|
+| 14 range checks threw raw `OverflowException` | `TypeConstructorFunctions.cs` | ~56 |
+| `CastValue` let CLR conversion exceptions escape | `PhysicalOperators.cs` | ~14 |
+| `ValidateNumericArg` catch-all passed non-numeric XDM types to `Convert.ToDouble` | `NumericFunctions.cs` | ~4 |
+| `fn:avg` on a `BigInteger` crashed | `NumericFunctions.cs` | ~26 |
+
+**The `TypeConstructorFunctions` one is the asymmetric pair again.** Its 14 integer-subtype range
+checks threw `OverflowException`; the parallel implementation in
+`TypeCastHelper.ValidateIntegerSubtype` has always thrown `FORG0001` for the identical check.
+`XQueryRuntimeException` was already used 93 times in that same file — the 14 were the outliers.
+
+**`fn:avg` was a real user-facing bug, not just a code mismatch.** `BigInteger` (how an
+`xs:integer` outside `long` range is held) does not implement `IConvertible`, and `avg`'s
+accumulation ended in an unconditional `Convert.ToDouble(item)` outside its `else if` chain — so
+averaging any large integer crashed with a CLR exception. `fn:sum` is unaffected: its chain is
+closed and nothing falls through.
+
+**Where `CastValue`'s wrapper had to go.** `CastOperator.ExecuteAsync` is an
+`async IAsyncEnumerable` iterator and C# forbids `yield return` inside a `try`/`catch`, so the
+wrapper lives in `CastValue` itself — which also covers its other eight callers. Mapping:
+`FormatException` → FORG0001 (bad lexical form), `InvalidCastException` → XPTY0004 (source type
+has no conversion), `OverflowException` → FOCA0002 (numeric range). Verified safe: every caller
+that relied on a cast failing uses a bare `catch`, so none of them stopped catching.
+
+**I predicted ~300 and delivered 89.** The error was clustering on the wrong axis: I read
+"`fn-abs` 48" off a table of ALL CLR leaks and assumed those were the `InvalidCastException`
+cases, when they were mostly the `OverflowException` range checks. `InvalidCastException` was
+always dominated by duration operators, which none of these fixes touch — it moved 144 → 140.
+
+**Still open, now measured rather than estimated:**
+
+| cluster | count | note |
+|---|---|---|
+| duration arithmetic operators | ~77 | `op-subtract-dayTimeDurations` 29, `op-add-dayTimeDurations` 18, `op-divide-dayTimeDuration` 18 — `InvalidCastException` in the operator path, untouched by any fix here |
+| `XmlSchemaValidationException` | 68 | unchanged; schema-awareness, expects XQDY0027/XQDY0084 |
+| proper XQuery error, wrong code | ~350 | case-by-case, not a cluster |
+
+
+### 36. Wrong-code clusters — PARTIALLY FIXED 2026-09-05
+Continuation of #35 into the "raises a proper XQuery error, wrong code" tail.
+**XQTS 28,976 → 29,035 (92.07% → 92.26%), +59.** XSLT corpus 10,024 → 10,034. Unit gates
+1532 / 1480, unchanged.
+
+| fix | expected | we raised | gain |
+|---|---|---|---|
+| casting to a gregorian type from a non-permitted source | XPTY0004 | FORG0001 | **50** |
+| `fn:avg` operand type | FORG0006 | XPTY0004 | **8** |
+| static error code from `XQueryFacade` / CLI | analyzer's code | hardcoded XPST0003 | 0 on XQTS |
+
+**Gregorian casts (50).** XQuery §19.1 permits casting to `xs:gYear` and friends only from
+`xs:string`, `xs:untypedAtomic`, `xs:date`, `xs:dateTime` or the SAME gregorian type. The `_ =>`
+arm of each of the five dispatches instead stringified whatever it got and handed the text to the
+lexical parser, so `xs:time("13:20:00-05:00") cast as xs:gYear` reported
+`Invalid xs:gYear: '13:20:00-05:00'` — diagnosing a malformed lexical form for a cast that was
+never legal. The `_ =>` catch-all accepting what it cannot handle is the same fail-open shape as
+`_ => true` in the harness (#28) and `_ => atomized` in `ValidateNumericArg` (#35).
+
+**`fn:avg` (8).** `fn:sum` raises FORG0006 for all four of boolean/string/anyURI/duration;
+`fn:avg` agreed only on string and used XPTY0004 for boolean and anyURI — inconsistent with its
+own twin three lines away. Asymmetric pair, again.
+
+**The facade fix gained nothing on XQTS, and that is worth recording.** `QueryEngine.Compile`
+already propagated the analyzer's code; `XQueryFacade` and the CLI hardcoded `XPST0003` — a third
+instance of the same asymmetric pair. But the XQTS runner goes through `QueryEngine`, so the 37
+`Compilation failed` cases are NOT a plumbing problem: the analyzer is producing the wrong static
+code (XQST0059 where the test requires XQST0036). That is a real analysis defect and remains
+**OPEN**. The facade fix still stands on its own — it fixes the CLI and XSLT-side paths.
+
+**Not fixed, deliberately: SEPM0017 (20 cases).** These looked like a code swap —
+we raise XPTY0004 where SEPM0017 is expected — but the tests are about the `use-character-map`
+serialization parameter, and we reject the whole parameters element before ever reaching that
+check. The message ("serialization parameters element must be
+&lt;output:serialization-parameters&gt;") describes a condition the test does not have, so
+namespace resolution on the params element is the real defect. Swapping the code would make 20
+tests pass for the wrong reason — the exact failure mode #28 exists to remove. **OPEN.**
+
+**Prediction record, since #35 noted the last one:** gregorian was estimated at 50 and delivered
+50, but only after a wrong first attempt. The first guard rejected numeric sources, because the
+one sample I opened (`CastAs187`) was `xs:float(…) cast as xs:gYearMonth`. It measured **zero**.
+The actual population is `xs:time(…)` and cross-gregorian sources; one unrepresentative sample
+produced a fix that compiled, passed the unit gate, and moved nothing.
+
+
+### 37. XQTS ran XQuery 1.0-only tests against a 4.0 engine — FIXED 2026-09-05
+`SatisfiesDependency` checked `dep.Value?.Contains("XQ") == true`, which accepts EVERY XQuery
+version — `XQ10` included. QT3 marks version-pinned tests with
+`<dependency type="spec" value="XQ10"/>`, and those encode behaviour that later specs
+deliberately CHANGED, so a 4.0 engine is required to fail them:
+
+- `Axes127` says in its own description "the namespace-node() kind test is new in XQuery 3.0"
+  and asserts XPST0017 — it requires the engine NOT to support something we do support.
+- `K-SeqExprCast-71a` pins the 1.0 rule that casting `xs:untypedAtomic` to `xs:QName` is an
+  error, citing bug 16059 — the same bug our own `CastOperator` comment cites as the thing
+  XQuery 3.0 relaxed.
+- The `function-call-reserved-function-names-*` family declares `local:function()` then calls
+  `function()`. Legal in 1.0; `function` became a reserved function name in 3.0.
+
+Measured: **31,470 → 31,414 tests** (56 excluded), failures 943 → 910, errors 1,492 → 1,471,
+**92.26% → 92.42%**. Two of the 56 had been passing.
+
+**This change RAISES the score, so it was held to a higher bar than one that lowers it.** The
+filter is deliberately conservative: a trailing `+` means "and later" and applies; an exact
+`XQ31` counts as applicable because 4.0 is a superset of 3.1 and excluding it would be
+self-serving; only exact `XQ10`/`XQ30` are dropped. A dependency naming no XQuery version at all
+is left applicable, exactly as before. Three tests were read in full before the rule was written.
+
+Estimated 123 excluded failures, measured 54 — most version-pinned tests were already not being
+run for other reasons.
+
+### 38. OPEN — where the remaining XQTS failures actually are
+Prioritisation of the 2,435 failures, so effort goes at causes rather than error labels.
+
+| | count | kind |
+|---|---|---|
+| schema-aware (`prod-SchemaImport`, `ValidateExpr`, `CastExpr.schema`, `CastableExpr`) | **392** | missing FEATURE |
+| module resolution (`fn:load-xquery-module`, `import module`) | **200** | one plumbing gap, #30 |
+| everything else | 1,843 | bugs |
+
+Within "everything else", by theme rather than by error code:
+
+| theme | count |
+|---|---|
+| casting (`prod-CastExpr` 182, `CastableExpr` 81, `CastExpr.derived` 35) | **~298** |
+| serialization (`fn-serialize` 62, `method-xml` 36) | ~98 |
+| formatting (`fn-format-date` 46, `fn-format-number` 34) | ~80 |
+| numeric/duration (`fn-abs` 42, `op-subtract-dayTimeDurations` 30) | ~72 |
+| direct-constructor namespaces | 44 |
+
+**Schema awareness and module resolution together are 592 cases — 24% of all failures — and both
+are decisions, not bug hunts.** Neither is reachable by the error-code work that has occupied the
+last two days.
+
+**Casting remains the largest genuine bug cluster at ~298** even after #35 and #36 took ~120 out
+of it.
+
+On the XSLT side the 596 failures cluster in `error` (68), packaging — `accept`/`package`/
+`use-package`/`override` (~70) — streaming `si-*` (~36), `accumulator` (22) and `merge` (19).
+Those are advanced features; a typical transformation pipeline touches almost none of them, so
+the conformance percentage is a poor predictor of what a real stylesheet will hit.
 
 ---
 

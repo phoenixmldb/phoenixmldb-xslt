@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (97.9% W3C Conformance — 2604/2661 tests)
+### XSLT 3.0 (94.4% W3C conformance — 10,034/10,630 cases, measured 2026-09-05)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -20,11 +20,82 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - Higher-order functions, maps, arrays
 - Accumulators, merge, JSON/adaptive output
 
-### W3C Conformance
-- **969/1026 declaration tests** (94.4%) including package test sets
-- **648/648 expression tests** (100%)
-- **987/987 regex tests** (100%)
-- Clone [W3C XSLT 3.0 test suite](https://github.com/nicolo-ribaudo/xslt30-test) to run conformance tests
+## Conformance
+
+Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
+
+### W3C XSLT 3.0 — 10,034/10,630 cases (94.4%), 596 failing
+
+Measured 2026-09-05 against `w3c/xslt30-test` @ `fddf1cf`.
+
+| Group | Passing | | Failing |
+|---|---|---|---|
+| `attr` — attributes | 1064/1117 | 95.3% | 53 |
+| `decl` — declarations | 944/1080 | 87.4% | 136 |
+| `type` — types | 750/766 | 97.9% | 16 |
+| `fn` — functions | 1069/1131 | 94.5% | 62 |
+| `strm` — streaming | 2255/2373 | 95.0% | 118 |
+| `expr` — expressions | 635/648 | 98.0% | 13 |
+| `misc` | 1820/1921 | 94.7% | 101 |
+| `insn` — instructions | 1497/1594 | 93.9% | 97 |
+| **Total** | **10,034/10,630** | **94.4%** | **596** |
+
+The `sandp` group runs but reports no per-case counts, so it is excluded from the total rather
+than counted as passing. The streaming groups are not perfectly repeatable — `strm2` returned
+684, 684 and 678 across three runs of this same build — so treat the last digit of the total as
+noise, not signal.
+
+**This number went DOWN from the 96.2% published on 2026-09-02, and the engine did not get
+worse — the measurement got honest.** Tests that expect a specific error code were scored as
+passes whenever the transform threw *anything at all*: the corpus writes the expected code as an
+attribute (`<error code="XTSE0010"/>`) and both conformance runners read it from the element's
+text content, so the comparison was always against an empty string, which matches everything.
+`fn:load-xquery-module` scored 4/4 on the strength of throwing four times. Full write-up in
+[BUGS.md](BUGS.md) entry 28.
+
+Checking the code properly cost 4.6 points; reading it from the right place gave most of that
+back. Many errors carry their code in a structured `ErrorCode` property rather than in the
+message text, so a message-only comparison under-credited correct behaviour just as badly as it
+over-credited wrong behaviour. Both runners now check message text and property, down the whole
+inner-exception chain.
+
+**222 of the 610 remaining failures are "the engine raised an error, but not the expected
+code."** Those are real failures — the codes are normative — but they are a different and
+generally shallower defect than a wrong result or a missed error, so runs report the split:
+
+```
+Results: 27/50 passed (54.0%) — 23 of 23 failures raised an error with the wrong code
+```
+
+Every XSLT conformance figure this project published before 2026-09-04 was overstated. The net
+correction is 1.9 points, and 204 failures that were previously invisible.
+
+### XSpec — 139/284 suites (49%), 1152/1364 assertions (84.5%)
+
+Measured 2026-09-02 against the [XSpec](https://github.com/xspec/xspec) test corpus. This is the
+weakest of our conformance numbers and is published for the same reason as the strongest one.
+
+| | |
+|---|---|
+| Suites running to completion | 139 of 284 |
+| — of the 162 the runner can drive | 139 (122 are XQuery or Schematron suites it does not) |
+| Assertions passing | 1152 of 1364 |
+| Assertions failing | 209 |
+
+Roughly half the corpus completes, and about one assertion in seven still fails. Open causes are
+tracked in [BUGS.md](BUGS.md).
+
+### Reproducing these numbers
+
+```bash
+./scripts/fetch-conformance-suites.sh   # clones xslt30-test + qt3tests into TestData/
+./scripts/conformance.sh                # W3C XSLT groups; writes conformance-results/summary.txt
+./scripts/conformance.sh --all          # adds the XQuery (QT3) suite, as CI runs it
+phxspec --census $(find test -maxdepth 1 -name '*.xspec' | sort)   # from an xspec checkout
+```
+
+A conformance run with `TestData/` absent reports success without executing anything, so confirm
+the corpora are present before believing a green result.
 
 ## Installation
 

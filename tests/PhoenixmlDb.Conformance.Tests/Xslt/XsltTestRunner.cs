@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -721,6 +722,9 @@ public sealed class XsltTestRunner
                 Type = localName,
                 // "not" wraps a child assertion, like all-of/any-of, so it has no own value.
                 Value = localName is "all-of" or "any-of" or "not" ? null : child.Value,
+                // <error code="..."/> and <assert-serialization-error code="..."/> carry the
+                // expected code as an ATTRIBUTE, not as element text, so Value is "" for both.
+                Code = child.Attribute("code")?.Value,
                 Flags = child.Attribute("flags")?.Value
             };
 
@@ -1063,11 +1067,13 @@ public sealed class XsltTestRunner
         {
             result.Error = new TimeoutException($"Test '{testCase.Name}' timed out after {timeout.TotalSeconds}s");
             result.Passed = IsExpectedError(testCase.Assertions, result.Error);
+            result.WrongErrorCode = !result.Passed && ExpectsAnyError(testCase.Assertions);
         }
         catch (Exception ex)
         {
             result.Error = ex;
             result.Passed = IsExpectedError(testCase.Assertions, ex);
+            result.WrongErrorCode = !result.Passed && ExpectsAnyError(testCase.Assertions);
         }
 
         result.EndTime = DateTimeOffset.UtcNow;
@@ -1944,28 +1950,80 @@ public sealed class XsltTestRunner
         return s;
     }
 
-    private bool IsExpectedError(List<XsltAssertion> assertions, Exception ex)
+    /// <summary>
+    /// The error codes the engine actually reported, walking the whole inner-exception chain.
+    /// <para>
+    /// <c>XQueryException</c> and its relatives carry the code in a structured <c>ErrorCode</c>
+    /// property and deliberately keep it OUT of <c>Message</c>; the XSLT layer then re-wraps
+    /// those with file/line information. So <c>Message.Contains("FORX0002")</c> is false even
+    /// when the engine identified the error exactly right — 69 regex cases alone were being
+    /// scored "wrong code" while reporting the correct one. Reflection rather than a type list
+    /// because several unrelated exception types expose this property.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<string> ReportedErrorCodes(Exception ex)
     {
-        foreach (var assertion in assertions)
+        for (Exception? e = ex; e is not null; e = e.InnerException)
         {
-            if (assertion.Type == "error")
+            var prop = e.GetType().GetProperty(
+                "ErrorCode", BindingFlags.Public | BindingFlags.Instance);
+            if (prop is not null
+                && prop.PropertyType == typeof(string)
+                && prop.GetValue(e) is string { Length: > 0 } code)
             {
-                var expectedCode = assertion.Value;
-                if (ex.Message.Contains(expectedCode ?? "") || string.IsNullOrEmpty(expectedCode))
-                {
-                    return true;
-                }
-            }
-            if (assertion.Type == "any-of")
-            {
-                if (assertion.Children.Any(a => a.Type == "error"))
-                {
-                    return true;
-                }
+                yield return code;
             }
         }
-        return false;
     }
+
+    /// <summary>
+    /// True if <paramref name="assertion"/> — or, for &lt;any-of&gt;, one of its alternatives —
+    /// is satisfied by <paramref name="ex"/>.
+    /// </summary>
+    private static bool MatchesExpectedError(XsltAssertion assertion, Exception ex)
+    {
+        // <assert-serialization-error code="SESU0007"/> expects the SERIALIZER to raise that
+        // code. The engine does raise it, but this method only recognised <error>, so a
+        // correctly-reported serialization error was judged a failure — 20 of the W3C decl
+        // group's failures were the engine getting it right. The XQuery runner has handled this
+        // assertion all along; only this one did not.
+        if (assertion.Type is "error" or "assert-serialization-error")
+        {
+            // The code lives in the `code` attribute; fall back to element text for the rare form
+            // that carries it there. It was previously never parsed at all, so `expectedCode` was
+            // always empty and the IsNullOrEmpty branch passed the test for ANY exception — the
+            // same blanket-pass that VerifyAssertionAsync's `_ => true` default was removed for.
+            // An <error/> that genuinely carries no code still asks only that SOME error be
+            // raised, so that case remains a pass.
+            var expectedCode = !string.IsNullOrEmpty(assertion.Code)
+                ? assertion.Code
+                : assertion.Value;
+            return string.IsNullOrEmpty(expectedCode)
+                || ex.Message.Contains(expectedCode, StringComparison.Ordinal)
+                || ReportedErrorCodes(ex).Contains(expectedCode, StringComparer.Ordinal);
+        }
+
+        // <any-of> is satisfied when any one alternative is — and its <error> alternatives must
+        // match by code like any other. The old code returned true for any exception whenever an
+        // <error> child merely existed, which is the identical blanket-pass one level down.
+        return assertion.Type == "any-of"
+            && assertion.Children.Any(child => MatchesExpectedError(child, ex));
+    }
+
+    private static bool IsExpectedError(List<XsltAssertion> assertions, Exception ex)
+        => assertions.Any(assertion => MatchesExpectedError(assertion, ex));
+
+    /// <summary>
+    /// True if the test expects an error at all, whatever its code. Lets the report separate
+    /// "raised the wrong code" from "raised nothing" — a diagnostic-quality problem versus a
+    /// missing check, which are worth counting apart.
+    /// </summary>
+    private static bool ExpectsAnyError(List<XsltAssertion> assertions)
+        => assertions.Any(ExpectsAnyError);
+
+    private static bool ExpectsAnyError(XsltAssertion assertion)
+        => assertion.Type is "error" or "assert-serialization-error"
+            || assertion.Children.Any(ExpectsAnyError);
 
     /// <summary>
     /// Runs all test cases and returns a summary.
@@ -2175,6 +2233,9 @@ public sealed class XsltAssertion
 {
     public required string Type { get; init; }
     public string? Value { get; init; }
+
+    /// <summary>The <c>code</c> attribute of &lt;error&gt; / &lt;assert-serialization-error&gt;.</summary>
+    public string? Code { get; init; }
     public string? ExpectedFile { get; set; }
     public string Compare { get; set; } = "XML";
     public bool IgnorePrefixes { get; set; }
@@ -2196,6 +2257,12 @@ public sealed class XsltTestResult
     public bool Passed { get; set; }
     public string? ActualResult { get; set; }
     public Exception? Error { get; set; }
+
+    /// <summary>
+    /// The test expected an error and the engine raised one, but not with the expected code.
+    /// Counted separately so a diagnostic-quality gap is not confused with a missing check.
+    /// </summary>
+    public bool WrongErrorCode { get; set; }
     public DateTimeOffset StartTime { get; set; }
     public DateTimeOffset EndTime { get; set; }
     public TimeSpan Duration => EndTime - StartTime;

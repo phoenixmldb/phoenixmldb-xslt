@@ -3645,12 +3645,24 @@ public sealed class StylesheetParser
 
         // Determine effective base URI for resolution.
         // DTD entity expansion may give elements a different BaseUri than _baseUri.
-        var effectiveBase = _baseUri;
-        if (!string.IsNullOrEmpty(element.BaseUri) &&
-            Uri.TryCreate(element.BaseUri, UriKind.Absolute, out var elementBaseUri) &&
-            (_baseUri == null || elementBaseUri.AbsoluteUri != _baseUri.AbsoluteUri))
+        // xsl:import/@href and xsl:include/@href resolve against the EFFECTIVE base URI of the
+        // element carrying them, which xml:base overrides (XML Base; XSLT 3.0 §3.2). XElement's
+        // BaseUri property reports the base of the DOCUMENT the element was read from and knows
+        // nothing about xml:base attributes, so
+        //     <xsl:include href="demo.xsl" xml:base="../../tutorial/coverage/"/>
+        // resolved against the including module's own directory and failed as XTSE0165 even
+        // though the target existed exactly where xml:base pointed (xspec issue 1135).
+        var effectiveBase = ResolveEffectiveBaseUri(element);
+        if (effectiveBase == null || ReferenceEquals(effectiveBase, _baseUri))
         {
-            effectiveBase = elementBaseUri;
+            // No xml:base in scope — fall back to the document the element was read from, which
+            // differs from _baseUri when this module was itself pulled in from elsewhere.
+            if (!string.IsNullOrEmpty(element.BaseUri) &&
+                Uri.TryCreate(element.BaseUri, UriKind.Absolute, out var elementBaseUri) &&
+                (_baseUri == null || elementBaseUri.AbsoluteUri != _baseUri.AbsoluteUri))
+            {
+                effectiveBase = elementBaseUri;
+            }
         }
 
         // Resolve href against base URI. Two paths from here on:
@@ -4667,7 +4679,8 @@ public sealed class StylesheetParser
             VisibilityAttr = element.Attribute("visibility")?.Value,
             Cache = ParseYesNo(cacheAttr) ?? false,
             NewEachTime = newEachTimeAttr?.Value?.Trim(),
-            Streamability = streamabilityValue
+            Streamability = streamabilityValue,
+            BaseUri = ResolveEffectiveBaseUri(element)
         };
     }
 
@@ -4676,11 +4689,21 @@ public sealed class StylesheetParser
         // XTSE0090: Validate no unknown attributes
         ValidateAllowedAttributes(element, GetSourceLocation(element), "name", "match", "use", "composite", "collation", "default-collation");
 
-        // XTSE0020: Validate name is a valid QName
-        ValidateQNameValue(element.Attribute("name")!.Value, "name", GetSourceLocation(element));
+        // XTSE0010: name and match are both REQUIRED on xsl:key. These were dereferenced with
+        // `!`, so omitting either produced a NullReferenceException instead of a diagnosis —
+        // the stylesheet author got "Object reference not set to an instance of an object."
+        var nameValue = element.Attribute("name")?.Value
+            ?? throw new XsltException("XTSE0010: xsl:key requires a 'name' attribute",
+                GetSourceLocation(element));
+        var matchValue = element.Attribute("match")?.Value
+            ?? throw new XsltException("XTSE0010: xsl:key requires a 'match' attribute",
+                GetSourceLocation(element));
 
-        var name = ParseQName(element.Attribute("name")!.Value, element);
-        var match = ParsePattern(element.Attribute("match")!.Value, element);
+        // XTSE0020: Validate name is a valid QName
+        ValidateQNameValue(nameValue, "name", GetSourceLocation(element));
+
+        var name = ParseQName(nameValue, element);
+        var match = ParsePattern(matchValue, element);
         var useAttr = element.Attribute("use");
         var collationAttr = element.Attribute("collation");
         var compositeAttr = element.Attribute("composite");
@@ -5030,10 +5053,16 @@ public sealed class StylesheetParser
         // XTSE0090: Validate no unknown attributes
         ValidateAllowedAttributes(element, GetSourceLocation(element), "name", "use-attribute-sets", "visibility", "streamable");
 
-        // XTSE0020: Validate name is a valid QName
-        ValidateQNameValue(element.Attribute("name")!.Value, "name", GetSourceLocation(element));
+        // XTSE0010: name is REQUIRED on xsl:attribute-set. Dereferenced with `!`, so omitting
+        // it produced a NullReferenceException rather than a diagnosis (error-0010q).
+        var nameValue = element.Attribute("name")?.Value
+            ?? throw new XsltException("XTSE0010: xsl:attribute-set requires a 'name' attribute",
+                GetSourceLocation(element));
 
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        // XTSE0020: Validate name is a valid QName
+        ValidateQNameValue(nameValue, "name", GetSourceLocation(element));
+
+        var name = ParseQName(nameValue, element);
         var useAttr = element.Attribute("use-attribute-sets");
 
         var useAttributeSets = new List<QName>();
@@ -5876,7 +5905,13 @@ public sealed class StylesheetParser
         // XTSE0090: Validate no unknown attributes
         ValidateAllowedAttributes(element, location, "name");
 
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        // XTSE0010: name is REQUIRED on xsl:call-template — there is nothing to call without it.
+        // Was dereferenced with `!`, giving a NullReferenceException (error-0010ad).
+        var name = ParseQName(
+            element.Attribute("name")?.Value
+                ?? throw new XsltException("XTSE0010: xsl:call-template requires a 'name' attribute",
+                    location),
+            element);
 
         var withParams = new List<XsltWithParam>();
         foreach (var child in element.Elements())
@@ -6352,14 +6387,14 @@ public sealed class StylesheetParser
                 whens.Add(new Ast.XsltWhen
                 {
                     Test = ParseExpr(testAttr.Value, testAttr),
-                    Body = ParseSequenceConstructor(child)
+                    Body = ParseBranchBody(child)
                 });
             }
             else if (child.Name == XsltNs + "otherwise")
             {
                 if (otherwise != null)
                     throw new XsltException("XTSE0010: xsl:switch must not contain more than one xsl:otherwise", location);
-                otherwise = ParseSequenceConstructor(child);
+                otherwise = ParseBranchBody(child);
             }
             else
                 throw new XsltException($"XTSE0010: Only xsl:when and xsl:otherwise are allowed as children of xsl:switch",
@@ -6379,6 +6414,35 @@ public sealed class StylesheetParser
     }
 
     /// <summary>
+    /// Body of an xsl:when / xsl:otherwise inside xsl:switch, honouring the <c>select</c>
+    /// shorthand: <c>&lt;xsl:when test="..." select="'bitmap'"/&gt;</c> is equivalent to a body
+    /// of <c>&lt;xsl:sequence select="'bitmap'"/&gt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// Previously only child nodes were read, so a branch written with @select matched and then
+    /// produced nothing — the attribute was silently ignored rather than rejected, which reads
+    /// as "the branch did not match" at every point downstream.
+    /// </remarks>
+    private Ast.XsltSequenceConstructor ParseBranchBody(XElement branch)
+    {
+        var selectAttr = branch.Attribute("select");
+        if (selectAttr == null)
+            return ParseSequenceConstructor(branch);
+
+        if (branch.Nodes().Any(n => n is not XText t || !string.IsNullOrWhiteSpace(t.Value)))
+            throw new XsltException(
+                $"XTSE0010: {branch.Name.LocalName} has both a 'select' attribute and non-empty content; use one or the other",
+                GetSourceLocation(branch));
+
+        return new Ast.XsltSequenceConstructor
+        {
+            Instructions = [new Ast.XsltSequence { Select = ParseExpr(selectAttr.Value, selectAttr) }],
+        };
+    }
+
+    /// <summary>
+    /// Parses xsl:for-each-member (XSLT 4.0) — iterates over array members.
+    /// </summary>    /// <summary>
     /// Parses xsl:for-each-member (XSLT 4.0) — iterates over array members.
     /// </summary>
     private Ast.XsltForEachMember ParseForEachMember(XElement element, SourceLocation? location)
@@ -7395,7 +7459,13 @@ public sealed class StylesheetParser
 
     private XsltVariableInstruction ParseVariableInstr(XElement element, SourceLocation? location)
     {
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        // XTSE0010: name is REQUIRED on xsl:variable. Was dereferenced with `!`, giving a
+        // NullReferenceException rather than a diagnosis (error-0010an).
+        var name = ParseQName(
+            element.Attribute("name")?.Value
+                ?? throw new XsltException("XTSE0010: xsl:variable requires a 'name' attribute",
+                    location),
+            element);
         var asAttr = element.Attribute("as");
         var selectAttr = element.Attribute("select");
 
@@ -10491,9 +10561,82 @@ public sealed class StylesheetParser
     /// Parses an XPath/XQuery expression and resolves namespace prefixes in QNames
     /// using the XSLT element's namespace context.
     /// </summary>
+    /// <summary>
+    /// Parses an XPath expression, turning a bare parse failure into one that says which
+    /// expression failed and where it lives in the stylesheet.
+    /// </summary>
+    /// <remarks>
+    /// The raw parser message is written for someone reading an XPath in isolation: ANTLR
+    /// reports "mismatched input '&lt;EOF&gt;' expecting {...}" followed by every token the
+    /// grammar would have accepted. In a stylesheet that expands to hundreds of lines of
+    /// generated XSLT, that names neither the attribute nor the module, and the expected-token
+    /// list is long enough to bury the part that matters. Appending the expression text and its
+    /// origin is what makes such a failure locatable without bisecting the stylesheet.
+    /// The structured <see cref="PhoenixmlDb.XQuery.Parser.ParseError"/> list is preserved so
+    /// callers reading line/column (the language server) are unaffected.
+    /// </remarks>
+    private XQueryExpression ParseXPathWithContext(string expression, System.Xml.Linq.XObject? origin)
+    {
+        try
+        {
+            return _expressionParser.Parse(expression);
+        }
+        catch (PhoenixmlDb.XQuery.Parser.XQueryParseException ex)
+        {
+            var suffix = DescribeParseOrigin(expression, origin);
+            if (ex.Errors.Count == 0)
+                throw new PhoenixmlDb.XQuery.Parser.XQueryParseException(ex.Message + suffix);
+            var enriched = new List<PhoenixmlDb.XQuery.Parser.ParseError>(ex.Errors.Count)
+            {
+                new(ex.Errors[0].Message + suffix, ex.Errors[0].Line, ex.Errors[0].Column),
+            };
+            for (var i = 1; i < ex.Errors.Count; i++)
+                enriched.Add(ex.Errors[i]);
+            throw new PhoenixmlDb.XQuery.Parser.XQueryParseException(enriched);
+        }
+    }
+
+    /// <summary>
+    /// Renders the "which expression, and where" tail appended to a parse failure.
+    /// </summary>
+    private static string DescribeParseOrigin(string expression, System.Xml.Linq.XObject? origin)
+    {
+        var snippet = expression.Length > 200 ? expression[..200] + "\u2026" : expression;
+        string? where = null;
+        System.Xml.Linq.XElement? owner = null;
+        switch (origin)
+        {
+            case System.Xml.Linq.XAttribute attribute:
+                owner = attribute.Parent;
+                where = owner != null
+                    ? $"{owner.Name.LocalName}/@{attribute.Name.LocalName}"
+                    : $"@{attribute.Name.LocalName}";
+                break;
+            case System.Xml.Linq.XElement element:
+                owner = element;
+                where = element.Name.LocalName;
+                break;
+            default:
+                break;
+        }
+
+        var position = "";
+        if (origin is System.Xml.IXmlLineInfo lineInfo && lineInfo.HasLineInfo())
+            position = $" at line {lineInfo.LineNumber}, column {lineInfo.LinePosition}";
+        else if (owner is System.Xml.IXmlLineInfo ownerInfo && ownerInfo.HasLineInfo())
+            position = $" at line {ownerInfo.LineNumber}, column {ownerInfo.LinePosition}";
+
+        var module = owner?.Document?.BaseUri;
+        if (!string.IsNullOrEmpty(module))
+            position = $" in {module}{position}";
+
+        var located = where != null ? $" in {where}" : "";
+        return $"\n  \u21b3 parsing{located}{position}: {snippet}";
+    }
+
     private XQueryExpression ParseExpression(string expression, XElement context)
     {
-        var expr = _expressionParser.Parse(expression);
+        var expr = ParseXPathWithContext(expression, context);
         ResolveExpressionNamespaces(expr, context);
         AttachXsltSourceLocation(expr, context);
         return expr;
@@ -10514,7 +10657,7 @@ public sealed class StylesheetParser
     /// </remarks>
     private XQueryExpression ParseExpr(string expression, System.Xml.Linq.XAttribute? sourceAttribute = null)
     {
-        var expr = _expressionParser.Parse(expression);
+        var expr = ParseXPathWithContext(expression, (System.Xml.Linq.XObject?)sourceAttribute ?? _nsContext);
         if (_nsContext != null)
         {
             ResolveExpressionNamespaces(expr, _nsContext);
@@ -10539,7 +10682,7 @@ public sealed class StylesheetParser
     /// </summary>
     private XQueryExpression ParseExprAt(string expression, int absoluteLine, int absoluteColumn, string? moduleUri)
     {
-        var expr = _expressionParser.Parse(expression);
+        var expr = ParseXPathWithContext(expression, _nsContext);
         if (_nsContext != null)
             ResolveExpressionNamespaces(expr, _nsContext);
         ShiftExpressionLocationsAt(expr, absoluteLine, absoluteColumn, moduleUri);
@@ -12194,7 +12337,11 @@ public sealed class StylesheetParser
 
         try
         {
-            var expr = _expressionParser.Parse(useWhenExpr);
+            System.Xml.Linq.XObject useWhenOrigin =
+                element.Attribute("use-when")
+                ?? (System.Xml.Linq.XObject?)element.Attribute(XsltNs + "use-when")
+                ?? element;
+            var expr = ParseXPathWithContext(useWhenExpr, useWhenOrigin);
             ResolveExpressionNamespaces(expr, element);
             var result = EvaluateStaticExpression(expr, element);
             var include = CoerceToBoolean(result);

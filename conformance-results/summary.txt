@@ -1,0 +1,7 @@
+xslt30-test @ fddf1cf
+qt3tests @ 201a6e4
+
+xqts    2089s  fixture Failed (20 tests, 1 failed) | 1226/1286 cases 95.3%, 970 failed (TALLY PARTIAL — more failures than these test-sets cover)
+
+1 chunk(s) in 34m49s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results
+one or more chunks failed

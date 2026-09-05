@@ -1,5 +1,120 @@
 # Release History
 
+> **Correction (2026-09-04).** Every W3C XSLT conformance figure recorded in this file before
+> this date is overstated. Tests expecting a specific error code were scored as passes whenever
+> the transform threw anything at all, because both conformance runners read the expected code
+> from element text when the corpus writes it as an attribute. Re-measured against the same
+> corpus, the current figure is **10,020/10,630 (94.3%)**. The historical entries below are left
+> as written — they record what was believed at the time. See BUGS.md entry 28.
+
+## Unreleased
+
+Thirteen more defects found by running XSpec's corpus. Stated in full, because a bare "129 to
+139" reads better than the position warrants:
+
+| | before | after |
+|---|---|---|
+| Suites run to completion | 129 | **139** of 284 (162 the runner can drive; 122 are XQuery or Schematron suites it does not) |
+| Assertions passing | 1077 | **1152** of 1364 |
+| Assertions failing | 212 | **209** |
+| Suites not reaching completion | 33 | **23** |
+
+So roughly **half** the corpus completes and **one assertion in seven still fails**. No suite lost
+ground at any measured step. Measured with `phxspec --census` over the 284 top-level
+`test/*.xspec` suites; a directory sweep picks up 783 and is not comparable.
+
+### xsl:catch exposed almost none of fn:error()'s detail
+
+`$err:value` was bound to a literal null, so the error object supplied as fn:error()'s third
+argument simply vanished. Nothing ever failed loudly, because an empty sequence is a legal value
+for the 1- and 2-argument forms — the wrong answer was indistinguishable from a right one. The
+XQuery engine's own try/catch had bound it from the exception all along.
+
+`$err:description` carried the engine's diagnostic rendering rather than the author's string: a
+`[module:line] ` prefix and a trailing expression snippet, useful in a log and wrong in a
+variable a stylesheet compares against the text it just passed to fn:error().
+
+`$err:module` and `$err:line-number` were empty for every error a stylesheet raised itself,
+because the location was read only from `XsltException` while fn:error() raises an
+`XQueryException`. The evaluator already resolved that location to build its diagnostic prefix;
+it now records it structurally as well.
+
+### A failed XPath parse named neither the expression nor where it was
+
+The message was ANTLR's raw output — "mismatched input '<EOF>' expecting {...}" followed by every
+token the grammar would accept, well over a hundred of them. Against generated XSLT that is one
+line hundreds of kilobytes wide, that identifies nothing. All four parse sites now append the
+expression text and its origin. The first failure it was pointed at resolved in a single run,
+after several that had not.
+
+### The empty sequence has two representations, and coercion knew one
+
+A typed `xsl:with-param` whose sequence-constructor body produced nothing bound **one empty
+string**. `CoerceToType`'s per-item branch was guarded on `Length > 1`, so a zero-length array
+fell through to the scalar arms where `StringValueOf(array)` manufactured an item. Which
+representation a caller sees depends on how the parameter is spelled, not what it means:
+`select="()"` yields null and always worked; a constructor body yields an empty array and did not.
+
+### Nothing checked that a typed variable had ENOUGH items
+
+Cardinality was enforced only in the "too many" direction. `as="xs:string+"` bound to a filter
+that matched nothing simply succeeded, where XSLT 3.0 requires XTTE0570. The check is
+type-independent — how many items there are is settled before what type they are — and a
+zero-length string is explicitly one item, not an empty sequence.
+
+### static-base-uri() inside xsl:function reported the wrong module
+
+It returned the principal stylesheet's URI rather than the module the function is written in.
+`xsl:template` pushed its module's base URI onto the static-base-uri stack; `xsl:function`
+carried none and pushed nothing. Surfaced as XTSE0150 from an `fn:transform` that used
+`static-base-uri()` to load itself and got a different document.
+
+### Namespace nodes were judged against an element they would never join
+
+XTDE0440 and XTDE0430 both describe "the element being constructed", but ran before the branch
+that emits a free-standing namespace node — so a node merely being RETURNED, from a function
+declared `as="namespace-node()*"`, was validated against whatever element happened to enclose the
+call. Two such calls covering elements with different default namespaces were rejected as a
+duplicate declaration.
+
+### xsl:switch is not xsl:choose with a subject
+
+Each `xsl:when/@test` supplies a sequence of candidate VALUES, and the branch is taken when the
+switch operand equals one of them. The engine took the effective boolean value instead. That
+raised FORG0006 on any `when` listing alternatives — and, far worse because it did not error, made
+the FIRST branch match whatever the operand was, since the EBV of a non-empty string is true. The
+existing coverage passed for exactly that reason and would have returned "Active" for an inactive
+status. The `@select` shorthand on a branch was also parsed and ignored, so a branch matched and
+then produced nothing.
+
+### fn:transform's global-context-item arrived too late to be the focus
+
+It was applied only as the focus for the initial template, which is established after global
+variables have already been built. A stylesheet declaring `xsl:global-context-item` and reading
+"." in a global raised XPDY0002 despite fn:transform having been handed the item. The two are
+different things — one belongs to the template invocation, the other to the whole transformation —
+and cannot share a field.
+
+Relatedly, that condition raised XPDY0002 rather than the XTDE3086 the spec names. The check
+existed in two of four entry points, and both of those tested only for a source document, so a
+supplied global-context-item neither satisfied `use="required"` nor tripped `use="absent"`. All
+four now share one implementation.
+
+### xsl:result-document rejected a valid URI
+
+`href="file:/dev/null"` — RFC 8089's minimal no-authority form, which Saxon accepts — aborted the
+transform. The XTDE1500 read/write-overlap check combined the href against the base URI with the
+throwing `Uri` constructor and turned any parse failure into XTDE1400. That check is overlap
+detection, not a validity gate; it now parses with TryCreate throughout and reports XTDE1400 only
+when the href is not a URI reference at all.
+
+### xsl:include/@href ignored xml:base on the element carrying it
+
+An href resolves against the effective base URI of its element, which `xml:base` overrides. The
+parser used `XElement.BaseUri`, which reports the base of the DOCUMENT the element was read from
+and knows nothing about `xml:base`. `ResolveEffectiveBaseUri` — already used for templates and
+functions — simply was not called on this path.
+
 ## 1.6.13 - 2026-09-01
 
 Eleven fixes found by running XSpec's 284-suite corpus against the engine. On that corpus:
