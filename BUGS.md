@@ -774,6 +774,47 @@ enclosing methods are `ParseParam`, `ParseCharacterMap`, `ParseDecimalFormat`, `
 Three NREs remain with OTHER causes and are still open: `accumulator-025`, `output-0501`,
 `select-7501`.
 
+
+### 33. XQTS audit: the suite never hung, and 95.11% was measured with the #28 fail-open
+**The timeout was never a hang.** `xqts` is 31,470 cases — an order of magnitude past any XSLT
+chunk — and completes in **2,241 s (37 min)**. The script's 900 s per-chunk default killed it
+every time and printed `TIMEOUT`, which read as a wedge and went uninvestigated for weeks. This
+is the same "not hung, just big" shape the script already documents for `strm`, which was split
+into three chunks for exactly this reason. Fixed by giving `xqts` its own budget
+(`CONFORMANCE_XQTS_TIMEOUT`, default 3600) rather than raising the global default, which would
+let a genuinely wedged XSLT chunk sit for an hour.
+
+**Measured 2026-09-05, honest error-code checking:**
+
+| | |
+|---|---|
+| Total | 31,470 |
+| Passed | **28,887 (91.79%)** |
+| Failed | 941 |
+| Errors | 1,642 |
+| `assert-eq` string-compare rescues | 8 |
+
+**The 95% CI gate fails by 3.21 points.** The last recorded XQTS result was 95.11% GREEN on
+2026-08-23 — measured by the runner described in #28, whose `IsExpectedError` read the expected
+code from element text when QT3 writes it as an attribute, so the comparison was always against
+`""` and passed for ANY exception.
+
+The population that check was auto-passing: **7,403 QT3 cases carry an `<error code=…>`
+assertion**, just under a quarter of the suite. The ~1,040-case drop from 95.11% to 91.79% sits
+entirely inside that population, which is consistent with the fail-open being the cause — though
+engine changes also landed between the two dates, so this is attribution by magnitude, not a
+controlled comparison. A controlled one would need the old runner re-run against today's engine.
+
+**The gate needs a decision, not a code change.** At 95% it is now permanently red and therefore
+useless as a regression detector; ratcheting it to the measured value (say 91.5%) restores that
+function and keeps the real target documented. Lowering a quality gate is a call for a human to
+make, so it is deliberately NOT changed here.
+
+Audit of the rest of the XQuery runner found no other fail-open: the assertion dispatch's
+catch-all is `_ => false`, `all-of`/`any-of` recurse properly, missing test data raises
+`Assert.Skip` rather than returning green, and the `assert-eq` string-compare rescues are counted
+and reported (8) rather than hidden.
+
 ---
 
 ## Fixed 2026-08-22/24 — kept for the pattern
