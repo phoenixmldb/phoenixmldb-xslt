@@ -4689,11 +4689,21 @@ public sealed class StylesheetParser
         // XTSE0090: Validate no unknown attributes
         ValidateAllowedAttributes(element, GetSourceLocation(element), "name", "match", "use", "composite", "collation", "default-collation");
 
-        // XTSE0020: Validate name is a valid QName
-        ValidateQNameValue(element.Attribute("name")!.Value, "name", GetSourceLocation(element));
+        // XTSE0010: name and match are both REQUIRED on xsl:key. These were dereferenced with
+        // `!`, so omitting either produced a NullReferenceException instead of a diagnosis —
+        // the stylesheet author got "Object reference not set to an instance of an object."
+        var nameValue = element.Attribute("name")?.Value
+            ?? throw new XsltException("XTSE0010: xsl:key requires a 'name' attribute",
+                GetSourceLocation(element));
+        var matchValue = element.Attribute("match")?.Value
+            ?? throw new XsltException("XTSE0010: xsl:key requires a 'match' attribute",
+                GetSourceLocation(element));
 
-        var name = ParseQName(element.Attribute("name")!.Value, element);
-        var match = ParsePattern(element.Attribute("match")!.Value, element);
+        // XTSE0020: Validate name is a valid QName
+        ValidateQNameValue(nameValue, "name", GetSourceLocation(element));
+
+        var name = ParseQName(nameValue, element);
+        var match = ParsePattern(matchValue, element);
         var useAttr = element.Attribute("use");
         var collationAttr = element.Attribute("collation");
         var compositeAttr = element.Attribute("composite");
@@ -5043,10 +5053,16 @@ public sealed class StylesheetParser
         // XTSE0090: Validate no unknown attributes
         ValidateAllowedAttributes(element, GetSourceLocation(element), "name", "use-attribute-sets", "visibility", "streamable");
 
-        // XTSE0020: Validate name is a valid QName
-        ValidateQNameValue(element.Attribute("name")!.Value, "name", GetSourceLocation(element));
+        // XTSE0010: name is REQUIRED on xsl:attribute-set. Dereferenced with `!`, so omitting
+        // it produced a NullReferenceException rather than a diagnosis (error-0010q).
+        var nameValue = element.Attribute("name")?.Value
+            ?? throw new XsltException("XTSE0010: xsl:attribute-set requires a 'name' attribute",
+                GetSourceLocation(element));
 
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        // XTSE0020: Validate name is a valid QName
+        ValidateQNameValue(nameValue, "name", GetSourceLocation(element));
+
+        var name = ParseQName(nameValue, element);
         var useAttr = element.Attribute("use-attribute-sets");
 
         var useAttributeSets = new List<QName>();
@@ -5889,7 +5905,13 @@ public sealed class StylesheetParser
         // XTSE0090: Validate no unknown attributes
         ValidateAllowedAttributes(element, location, "name");
 
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        // XTSE0010: name is REQUIRED on xsl:call-template — there is nothing to call without it.
+        // Was dereferenced with `!`, giving a NullReferenceException (error-0010ad).
+        var name = ParseQName(
+            element.Attribute("name")?.Value
+                ?? throw new XsltException("XTSE0010: xsl:call-template requires a 'name' attribute",
+                    location),
+            element);
 
         var withParams = new List<XsltWithParam>();
         foreach (var child in element.Elements())
@@ -7437,7 +7459,13 @@ public sealed class StylesheetParser
 
     private XsltVariableInstruction ParseVariableInstr(XElement element, SourceLocation? location)
     {
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        // XTSE0010: name is REQUIRED on xsl:variable. Was dereferenced with `!`, giving a
+        // NullReferenceException rather than a diagnosis (error-0010an).
+        var name = ParseQName(
+            element.Attribute("name")?.Value
+                ?? throw new XsltException("XTSE0010: xsl:variable requires a 'name' attribute",
+                    location),
+            element);
         var asAttr = element.Attribute("as");
         var selectAttr = element.Attribute("select");
 

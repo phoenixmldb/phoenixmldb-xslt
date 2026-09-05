@@ -736,6 +736,44 @@ disagreed silently because only one of them was anchored.
 Every corpus total measured while a fixture was red is affected, including the intermediate
 figures in entry 28: the 10,634 case totals there should read 10,630.
 
+
+### 32. Required attributes dereferenced with `!` — NullReferenceException — FIXED 2026-09-04
+`key-091` omits `name` on `xsl:key` and expects `XTSE0010`. The parser did:
+
+```csharp
+ValidateQNameValue(element.Attribute("name")!.Value, "name", GetSourceLocation(element));
+```
+
+so the author got `Object reference not set to an instance of an object.` instead of a
+diagnosis. The `!` asserts a required attribute is present, which is exactly the thing the
+stylesheet is being checked FOR — the assertion is only true when there is nothing to report.
+
+This is a class, not one bug. `Attribute("x")!.Value` appeared **25 times** in
+`StylesheetParser.cs`. Searching the conformance logs for the NRE message found 8 reachable
+instances, 5 of them this cause:
+
+| test | element | missing attribute |
+|---|---|---|
+| `key-091` | `xsl:key` | `name` |
+| `error-0010u` | `xsl:key` | `match` |
+| `error-0010q` | `xsl:attribute-set` | `name` |
+| `error-0010ad` | `xsl:call-template` | `name` |
+| `error-0010an` | `xsl:variable` | `name` |
+
+All five now raise `XTSE0010` via the existing `?? throw` idiom. Measured: `fn` 1068 → 1069,
+`misc` 1815 → 1819. Unit gate 1480, unchanged.
+
+**18 `!.Value` dereferences remain** and are deliberately untouched: no test reaches them, and
+several are attributes that are genuinely optional in some contexts (`xsl:output/@name`) or
+already guarded by a ternary. Fixing them blind risks rejecting valid stylesheets — the
+`!` is only wrong where the attribute is required AND its absence is a diagnosable error. The
+enclosing methods are `ParseParam`, `ParseCharacterMap`, `ParseDecimalFormat`, `ParseAccumulator`,
+`ParseForEach`, `ParseForEachGroup`, `ParseIterate`, `ParsePI`, `ParseNamespaceInstr`,
+`ParseAssert`, `ParseParamInstr`, `ParseAnalyzeString`, `ParseMapEntry`, `ParseWithParam`.
+
+Three NREs remain with OTHER causes and are still open: `accumulator-025`, `output-0501`,
+`select-7501`.
+
 ---
 
 ## Fixed 2026-08-22/24 — kept for the pattern
