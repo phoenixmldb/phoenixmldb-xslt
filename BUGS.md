@@ -904,6 +904,51 @@ always dominated by duration operators, which none of these fixes touch — it m
 | `XmlSchemaValidationException` | 68 | unchanged; schema-awareness, expects XQDY0027/XQDY0084 |
 | proper XQuery error, wrong code | ~350 | case-by-case, not a cluster |
 
+
+### 36. Wrong-code clusters — PARTIALLY FIXED 2026-09-05
+Continuation of #35 into the "raises a proper XQuery error, wrong code" tail.
+**XQTS 28,976 → 29,035 (92.07% → 92.26%), +59.** XSLT corpus 10,024 → 10,034. Unit gates
+1532 / 1480, unchanged.
+
+| fix | expected | we raised | gain |
+|---|---|---|---|
+| casting to a gregorian type from a non-permitted source | XPTY0004 | FORG0001 | **50** |
+| `fn:avg` operand type | FORG0006 | XPTY0004 | **8** |
+| static error code from `XQueryFacade` / CLI | analyzer's code | hardcoded XPST0003 | 0 on XQTS |
+
+**Gregorian casts (50).** XQuery §19.1 permits casting to `xs:gYear` and friends only from
+`xs:string`, `xs:untypedAtomic`, `xs:date`, `xs:dateTime` or the SAME gregorian type. The `_ =>`
+arm of each of the five dispatches instead stringified whatever it got and handed the text to the
+lexical parser, so `xs:time("13:20:00-05:00") cast as xs:gYear` reported
+`Invalid xs:gYear: '13:20:00-05:00'` — diagnosing a malformed lexical form for a cast that was
+never legal. The `_ =>` catch-all accepting what it cannot handle is the same fail-open shape as
+`_ => true` in the harness (#28) and `_ => atomized` in `ValidateNumericArg` (#35).
+
+**`fn:avg` (8).** `fn:sum` raises FORG0006 for all four of boolean/string/anyURI/duration;
+`fn:avg` agreed only on string and used XPTY0004 for boolean and anyURI — inconsistent with its
+own twin three lines away. Asymmetric pair, again.
+
+**The facade fix gained nothing on XQTS, and that is worth recording.** `QueryEngine.Compile`
+already propagated the analyzer's code; `XQueryFacade` and the CLI hardcoded `XPST0003` — a third
+instance of the same asymmetric pair. But the XQTS runner goes through `QueryEngine`, so the 37
+`Compilation failed` cases are NOT a plumbing problem: the analyzer is producing the wrong static
+code (XQST0059 where the test requires XQST0036). That is a real analysis defect and remains
+**OPEN**. The facade fix still stands on its own — it fixes the CLI and XSLT-side paths.
+
+**Not fixed, deliberately: SEPM0017 (20 cases).** These looked like a code swap —
+we raise XPTY0004 where SEPM0017 is expected — but the tests are about the `use-character-map`
+serialization parameter, and we reject the whole parameters element before ever reaching that
+check. The message ("serialization parameters element must be
+&lt;output:serialization-parameters&gt;") describes a condition the test does not have, so
+namespace resolution on the params element is the real defect. Swapping the code would make 20
+tests pass for the wrong reason — the exact failure mode #28 exists to remove. **OPEN.**
+
+**Prediction record, since #35 noted the last one:** gregorian was estimated at 50 and delivered
+50, but only after a wrong first attempt. The first guard rejected numeric sources, because the
+one sample I opened (`CastAs187`) was `xs:float(…) cast as xs:gYearMonth`. It measured **zero**.
+The actual population is `xs:time(…)` and cross-gregorian sources; one unrepresentative sample
+produced a fix that compiled, passed the unit gate, and moved nothing.
+
 ---
 
 ## Fixed 2026-08-22/24 — kept for the pattern
