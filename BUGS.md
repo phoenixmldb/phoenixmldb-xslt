@@ -861,6 +861,49 @@ try/catch and translate, then yield its result — not to sprinkle catches at ca
 The remaining 465 of the 1,001 do raise a proper `XQueryRuntimeException`/`XQueryException` with
 the wrong code; those need case-by-case work and are not a single cluster.
 
+
+### 35. Cast/numeric CLR leaks — PARTIALLY FIXED 2026-09-05
+Four fixes against the #34 clusters. **XQTS 28,887 → 28,976 (91.79% → 92.07%), +89.**
+XSLT corpus 10,020 → 10,024, no regression. Unit gates 1532 (XQuery) / 1480 (XSLT), unchanged.
+
+| fix | site | gain |
+|---|---|---|
+| 14 range checks threw raw `OverflowException` | `TypeConstructorFunctions.cs` | ~56 |
+| `CastValue` let CLR conversion exceptions escape | `PhysicalOperators.cs` | ~14 |
+| `ValidateNumericArg` catch-all passed non-numeric XDM types to `Convert.ToDouble` | `NumericFunctions.cs` | ~4 |
+| `fn:avg` on a `BigInteger` crashed | `NumericFunctions.cs` | ~26 |
+
+**The `TypeConstructorFunctions` one is the asymmetric pair again.** Its 14 integer-subtype range
+checks threw `OverflowException`; the parallel implementation in
+`TypeCastHelper.ValidateIntegerSubtype` has always thrown `FORG0001` for the identical check.
+`XQueryRuntimeException` was already used 93 times in that same file — the 14 were the outliers.
+
+**`fn:avg` was a real user-facing bug, not just a code mismatch.** `BigInteger` (how an
+`xs:integer` outside `long` range is held) does not implement `IConvertible`, and `avg`'s
+accumulation ended in an unconditional `Convert.ToDouble(item)` outside its `else if` chain — so
+averaging any large integer crashed with a CLR exception. `fn:sum` is unaffected: its chain is
+closed and nothing falls through.
+
+**Where `CastValue`'s wrapper had to go.** `CastOperator.ExecuteAsync` is an
+`async IAsyncEnumerable` iterator and C# forbids `yield return` inside a `try`/`catch`, so the
+wrapper lives in `CastValue` itself — which also covers its other eight callers. Mapping:
+`FormatException` → FORG0001 (bad lexical form), `InvalidCastException` → XPTY0004 (source type
+has no conversion), `OverflowException` → FOCA0002 (numeric range). Verified safe: every caller
+that relied on a cast failing uses a bare `catch`, so none of them stopped catching.
+
+**I predicted ~300 and delivered 89.** The error was clustering on the wrong axis: I read
+"`fn-abs` 48" off a table of ALL CLR leaks and assumed those were the `InvalidCastException`
+cases, when they were mostly the `OverflowException` range checks. `InvalidCastException` was
+always dominated by duration operators, which none of these fixes touch — it moved 144 → 140.
+
+**Still open, now measured rather than estimated:**
+
+| cluster | count | note |
+|---|---|---|
+| duration arithmetic operators | ~77 | `op-subtract-dayTimeDurations` 29, `op-add-dayTimeDurations` 18, `op-divide-dayTimeDuration` 18 — `InvalidCastException` in the operator path, untouched by any fix here |
+| `XmlSchemaValidationException` | 68 | unchanged; schema-awareness, expects XQDY0027/XQDY0084 |
+| proper XQuery error, wrong code | ~350 | case-by-case, not a cluster |
+
 ---
 
 ## Fixed 2026-08-22/24 — kept for the pattern
