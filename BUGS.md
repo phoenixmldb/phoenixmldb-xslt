@@ -815,6 +815,52 @@ catch-all is `_ => false`, `all-of`/`any-of` recurse properly, missing test data
 `Assert.Skip` rather than returning green, and the `assert-eq` string-compare rescues are counted
 and reported (8) rather than hidden.
 
+
+### 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
+Follow-on to #33, answering "which bugs take it from 95 to 91.79". Nothing *takes* it there —
+these were always failing; #28's blanket-pass scored them green because the query threw
+*something*.
+
+Of 2,583 unique failing cases (941 failed + 1,642 errors):
+
+| | count |
+|---|---|
+| expected an error, threw the WRONG one | **1,001** ← previously auto-passed |
+| expected an error, returned a result instead | 163 (always failed — nothing to rescue) |
+| no expected error: wrong result or crash | 1,419 (always failed) |
+
+1,001/31,470 = **3.18 points**, against an observed drop of 3.32. That closes the attribution
+gap left open in #33: it is the fail-open, not engine drift.
+
+**536 of the 1,001 are raw CLR exceptions escaping the engine** — not an XQuery error at all:
+
+| exception | n | should have been |
+|---|---|---|
+| `OverflowException` | 184 | FOCA0002×83, FORG0001×73, FOAR0002×12 |
+| `InvalidCastException` | 148 | XPTY0004×126, FORG0006×16 |
+| `FormatException` | 114 | FORG0001×105 |
+| `XmlSchemaValidationException` | 71 | XQDY0027×35, XQDY0084×13 |
+| `HttpRequestException` | 11 | XQST0059×6, XQST0009×5 (network-dependent, environmental) |
+
+By test-set, three code paths cover ~418 of the 536:
+
+- **casting — 228** (`prod-CastExpr` 178, `prod-CastExpr.derived` 50). `xs:T('bad lexical')` lets
+  .NET `FormatException` / `InvalidCastException` / `OverflowException` escape instead of raising
+  FORG0001 / FOCA0002 / XPTY0004.
+- **duration arithmetic — ~130** (`op-*-dayTimeDurations`, `op-*-yearMonthDuration`, `fn-avg`,
+  `fn-abs`). Huge durations overflow `Int32`/`TimeSpan`; the overflow escapes as-is.
+- **schema validation — 60** (`prod-ValidateExpr` 35, `prod-SchemaImport` 25).
+  `XmlSchemaValidationException` escapes where XQDY0027/XQDY0084 is required.
+
+**Why this was never wrapped, probably:** `CastExpressionOperator.ExecuteAsync` is an
+`async IAsyncEnumerable<object?>` iterator, and C# forbids `yield return` inside a `try` with a
+`catch`. So the obvious "wrap the cast body" fix does not compile, and the conversion calls sit
+directly in the iterator. The fix is to move conversion into a non-iterator helper that CAN
+try/catch and translate, then yield its result — not to sprinkle catches at call sites.
+
+The remaining 465 of the 1,001 do raise a proper `XQueryRuntimeException`/`XQueryException` with
+the wrong code; those need case-by-case work and are not a single cluster.
+
 ---
 
 ## Fixed 2026-08-22/24 — kept for the pattern
