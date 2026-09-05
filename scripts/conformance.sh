@@ -200,8 +200,15 @@ for g in "${CHUNKS[@]}"; do
   # below with "integer expression expected", which is what the sandp chunk was hitting.
   nfail=$(grep -c "^ FAILED: " "$OUT/$g.log" 2>/dev/null || true)
   nfail=${nfail:-0}
-  read -r cp ct <<<"$(grep -oE "Results: [0-9]+/[0-9]+" "$OUT/$g.log" 2>/dev/null |
-                      awk -F'[ /]' '{p+=$2; t+=$3} END {print p+0, t+0}')"
+  # Anchor on "^ Results: " for the same reason nfail anchors on "^ FAILED: ": when a fixture
+  # assertion fails, xunit echoes that test's output a SECOND time behind an "[xUnit.net ...]"
+  # prefix, and an unanchored grep counted the test-set twice. That inflated the case total by
+  # exactly the size of every failing test-set — `fn` reported 1135 cases instead of 1131 the
+  # moment load-xquery-module went red. The failure count was already right; only this tally
+  # was wrong, so the two disagreed silently.
+  read -r cp ct <<<"$(grep -E "^ Results: " "$OUT/$g.log" 2>/dev/null |
+                      grep -oE "[0-9]+/[0-9]+" |
+                      awk -F/ '{p+=$1; t+=$2} END {print p+0, t+0}')"
   if [ "${ct:-0}" -gt 0 ]; then
     line="$line | $cp/$ct cases $(awk -v p="$cp" -v t="$ct" 'BEGIN{printf "%.1f%%", 100*p/t}')"
     # The per-test-set "Results:" lines are the XSLT runner's tallies. The XQuery runner

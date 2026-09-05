@@ -627,12 +627,12 @@ this sequence — only the scoring did:
 
 | | published 2026-09-02 | code checked | + code read from `ErrorCode` |
 |---|---|---|---|
-| cases passing | 10,224/10,630 (96.2%) | 9,740/10,634 (91.6%) | **10,025/10,634 (94.3%)** |
-| failures | 406 | 890 | **605** |
-| of which "wrong code" | (scored as passes) | 511 | **225** |
+| cases passing | 10,224/10,630 (96.2%) | 9,740/10,630 (91.6%) | **10,020/10,630 (94.3%)** |
+| failures | 406 | 890 | **610** |
+| of which "wrong code" | (scored as passes) | 511 | **222** |
 
 Checking the code properly cost 4.6 points; reading it from the right place gave 2.6 back. The
-net correction to the published figure is **1.9 points and 199 previously invisible failures**.
+net correction to the published figure is **1.9 points and 204 previously invisible failures**.
 `decl`, the group this started from, went 994/1080 → 944/1080 (136 failures, 66 wrong-code).
 The final column also includes two engine fixes this exposed (XTMM9000, XTDE0700 — below).
 
@@ -694,6 +694,47 @@ Measured: `decl` 943 → 944, `insn` 1494 → 1497. Unit gate 1480, unchanged.
 The diagnosis was never wrong in either case — the prose said exactly what happened. Only the
 code was missing, which is invisible to a human reading the message and decisive for anything
 matching on it. Cheap to fix, and worth doing for users independently of the score.
+
+
+### 30. `fn:load-xquery-module` flattened every failure to FOQM0002 — FIXED 2026-09-04
+The `fn` fixture went red once #28 made expected-error checks real: the
+`load-xquery-module` test-set scored 0/4 and tripped the `passed > 0` gate (#7).
+
+All four cases were failing for one reason. The implementation synthesizes
+`import module namespace __lxqm = "…"` and compiles it with the real engine — so the analyzer
+had already classified the failure precisely, `XQST0059` for an unresolvable module namespace —
+and then the wrapper threw away that code and reported `FOQM0002` for everything:
+
+```csharp
+var msg = string.Join("; ", compResult.Errors.Select(e => e.Message));
+throw new XQueryRuntimeException("FOQM0002", $"Module '{moduleUri}' cannot be loaded: {msg}");
+```
+
+"No such module", "the module has a syntax error" and "the module imports something missing"
+were all reported identically. Now the underlying `AnalysisError.Code` is preserved.
+`load-xquery-module-001` expects `XQST0059` and passes; the fixture is green on one real pass
+rather than on a suppressed check.
+
+**The other three still fail and are still counted.** They need `<resource uri= file=
+media-type="application/xquery">` from the test environment to be registered as a module
+mapping, and nothing carries it: `XsltTestRunner.ParseEnvironment` handles `stylesheet`,
+`source` and `collection` but not `resource`, and there is no path from XSLT transform options
+to the XQuery `CompilationOptions.ExternalModules` the analyzer reads. `fn:load-xquery-module`
+also builds its sub-engine with only `BaseUri`, so it would drop a host-supplied module map even
+if one were available — a real defect independent of the harness. **Left OPEN deliberately:**
+8 `<resource>` elements exist corpus-wide, 1 of them XQuery, which does not justify new public
+API on the XSLT engine.
+
+### 31. `conformance.sh` double-counted every failing test-set — FIXED 2026-09-04
+When a fixture assertion fails, xunit echoes that test's output a second time behind an
+`[xUnit.net …]` prefix. `nfail` anchored on `^ FAILED: ` and was right; the case tally used an
+unanchored `grep -oE "Results: …"` and counted the test-set twice. `fn` reported 1135 cases
+instead of 1131 the moment `load-xquery-module` went red — the inflation was exactly the size of
+each failing test-set, and it appeared only when something was already wrong. The two numbers
+disagreed silently because only one of them was anchored.
+
+Every corpus total measured while a fixture was red is affected, including the intermediate
+figures in entry 28: the 10,634 case totals there should read 10,630.
 
 ---
 

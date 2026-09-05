@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (94.3% W3C conformance — 10,025/10,634 cases, measured 2026-09-04)
+### XSLT 3.0 (94.3% W3C conformance — 10,020/10,630 cases, measured 2026-09-04)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,7 +24,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,025/10,634 cases (94.3%), 605 failing
+### W3C XSLT 3.0 — 10,020/10,630 cases (94.3%), 610 failing
 
 Measured 2026-09-04 against `w3c/xslt30-test` @ `fddf1cf`.
 
@@ -33,23 +33,25 @@ Measured 2026-09-04 against `w3c/xslt30-test` @ `fddf1cf`.
 | `attr` — attributes | 1064/1117 | 95.3% | 53 |
 | `decl` — declarations | 944/1080 | 87.4% | 136 |
 | `type` — types | 750/766 | 97.9% | 16 |
-| `fn` — functions | 1067/1135 | 94.0% | 64 |
-| `strm` — streaming | 2254/2373 | 95.0% | 119 |
+| `fn` — functions | 1068/1131 | 94.4% | 63 |
+| `strm` — streaming | 2248/2373 | 94.7% | 125 |
 | `expr` — expressions | 634/648 | 97.8% | 14 |
 | `misc` | 1815/1921 | 94.5% | 106 |
 | `insn` — instructions | 1497/1594 | 93.9% | 97 |
-| **Total** | **10,025/10,634** | **94.3%** | **605** |
+| **Total** | **10,020/10,630** | **94.3%** | **610** |
 
 The `sandp` group runs but reports no per-case counts, so it is excluded from the total rather
-than counted as passing.
+than counted as passing. The streaming groups are not perfectly repeatable — `strm2` returned
+684, 684 and 678 across three runs of this same build — so treat the last digit of the total as
+noise, not signal.
 
 **This number went DOWN from the 96.2% published on 2026-09-02, and the engine did not get
 worse — the measurement got honest.** Tests that expect a specific error code were scored as
 passes whenever the transform threw *anything at all*: the corpus writes the expected code as an
 attribute (`<error code="XTSE0010"/>`) and both conformance runners read it from the element's
 text content, so the comparison was always against an empty string, which matches everything.
-`fn:load-xquery-module`, which this engine does not implement, scored 4/4 on the strength of
-throwing four times; it now scores 0/4. Full write-up in [BUGS.md](BUGS.md) entry 28.
+`fn:load-xquery-module` scored 4/4 on the strength of throwing four times. Full write-up in
+[BUGS.md](BUGS.md) entry 28.
 
 Checking the code properly cost 4.6 points; reading it from the right place gave most of that
 back. Many errors carry their code in a structured `ErrorCode` property rather than in the
@@ -57,7 +59,7 @@ message text, so a message-only comparison under-credited correct behaviour just
 over-credited wrong behaviour. Both runners now check message text and property, down the whole
 inner-exception chain.
 
-**225 of the 605 remaining failures are "the engine raised an error, but not the expected
+**222 of the 610 remaining failures are "the engine raised an error, but not the expected
 code."** Those are real failures — the codes are normative — but they are a different and
 generally shallower defect than a wrong result or a missed error, so runs report the split:
 
@@ -66,7 +68,7 @@ Results: 27/50 passed (54.0%) — 23 of 23 failures raised an error with the wro
 ```
 
 Every XSLT conformance figure this project published before 2026-09-04 was overstated. The net
-correction is 1.9 points, and 199 failures that were previously invisible.
+correction is 1.9 points, and 204 failures that were previously invisible.
 
 ### XSpec — 139/284 suites (49%), 1152/1364 assertions (84.5%)
 
