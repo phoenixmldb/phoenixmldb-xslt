@@ -949,6 +949,64 @@ one sample I opened (`CastAs187`) was `xs:float(…) cast as xs:gYearMonth`. It 
 The actual population is `xs:time(…)` and cross-gregorian sources; one unrepresentative sample
 produced a fix that compiled, passed the unit gate, and moved nothing.
 
+
+### 37. XQTS ran XQuery 1.0-only tests against a 4.0 engine — FIXED 2026-09-05
+`SatisfiesDependency` checked `dep.Value?.Contains("XQ") == true`, which accepts EVERY XQuery
+version — `XQ10` included. QT3 marks version-pinned tests with
+`<dependency type="spec" value="XQ10"/>`, and those encode behaviour that later specs
+deliberately CHANGED, so a 4.0 engine is required to fail them:
+
+- `Axes127` says in its own description "the namespace-node() kind test is new in XQuery 3.0"
+  and asserts XPST0017 — it requires the engine NOT to support something we do support.
+- `K-SeqExprCast-71a` pins the 1.0 rule that casting `xs:untypedAtomic` to `xs:QName` is an
+  error, citing bug 16059 — the same bug our own `CastOperator` comment cites as the thing
+  XQuery 3.0 relaxed.
+- The `function-call-reserved-function-names-*` family declares `local:function()` then calls
+  `function()`. Legal in 1.0; `function` became a reserved function name in 3.0.
+
+Measured: **31,470 → 31,414 tests** (56 excluded), failures 943 → 910, errors 1,492 → 1,471,
+**92.26% → 92.42%**. Two of the 56 had been passing.
+
+**This change RAISES the score, so it was held to a higher bar than one that lowers it.** The
+filter is deliberately conservative: a trailing `+` means "and later" and applies; an exact
+`XQ31` counts as applicable because 4.0 is a superset of 3.1 and excluding it would be
+self-serving; only exact `XQ10`/`XQ30` are dropped. A dependency naming no XQuery version at all
+is left applicable, exactly as before. Three tests were read in full before the rule was written.
+
+Estimated 123 excluded failures, measured 54 — most version-pinned tests were already not being
+run for other reasons.
+
+### 38. OPEN — where the remaining XQTS failures actually are
+Prioritisation of the 2,435 failures, so effort goes at causes rather than error labels.
+
+| | count | kind |
+|---|---|---|
+| schema-aware (`prod-SchemaImport`, `ValidateExpr`, `CastExpr.schema`, `CastableExpr`) | **392** | missing FEATURE |
+| module resolution (`fn:load-xquery-module`, `import module`) | **200** | one plumbing gap, #30 |
+| everything else | 1,843 | bugs |
+
+Within "everything else", by theme rather than by error code:
+
+| theme | count |
+|---|---|
+| casting (`prod-CastExpr` 182, `CastableExpr` 81, `CastExpr.derived` 35) | **~298** |
+| serialization (`fn-serialize` 62, `method-xml` 36) | ~98 |
+| formatting (`fn-format-date` 46, `fn-format-number` 34) | ~80 |
+| numeric/duration (`fn-abs` 42, `op-subtract-dayTimeDurations` 30) | ~72 |
+| direct-constructor namespaces | 44 |
+
+**Schema awareness and module resolution together are 592 cases — 24% of all failures — and both
+are decisions, not bug hunts.** Neither is reachable by the error-code work that has occupied the
+last two days.
+
+**Casting remains the largest genuine bug cluster at ~298** even after #35 and #36 took ~120 out
+of it.
+
+On the XSLT side the 596 failures cluster in `error` (68), packaging — `accept`/`package`/
+`use-package`/`override` (~70) — streaming `si-*` (~36), `accumulator` (22) and `merge` (19).
+Those are advanced features; a typical transformation pipeline touches almost none of them, so
+the conformance percentage is a poor predictor of what a real stylesheet will hit.
+
 ---
 
 ## Fixed 2026-08-22/24 — kept for the pattern

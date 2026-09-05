@@ -1390,11 +1390,44 @@ public sealed class XqtsConfiguration
         "namespace-axis"
     };
 
+    /// <summary>
+    /// True if this engine implements one of the spec versions a <c>&lt;dependency type="spec"&gt;</c>
+    /// lists. The value is a space-separated list like <c>"XQ10"</c>, <c>"XQ30+"</c> or
+    /// <c>"XP31+ XQ31+"</c>; a trailing <c>+</c> means "that version and later".
+    /// <para>
+    /// The old check was <c>dep.Value?.Contains("XQ") == true</c>, which accepted EVERY XQuery
+    /// version including <c>XQ10</c> — so tests written to pin XQuery 1.0 behaviour ran against a
+    /// 4.0 engine and their failures were counted against us. They are not failures: `Axes127`
+    /// says in its own description "the namespace-node() kind test is new in XQuery 3.0" and
+    /// asserts XPST0017, i.e. it requires the engine NOT to support something we do support.
+    /// `K-SeqExprCast-71a` pins the 1.0 rule for casting xs:untypedAtomic to xs:QName, citing bug
+    /// 16059 — the same bug our own CastOperator comment cites as the thing XQuery 3.0 relaxed.
+    /// </para>
+    /// <para>
+    /// Deliberately conservative, because this change RAISES the score and so deserves more
+    /// scepticism than one that lowers it: an exact <c>XQ31</c> counts as applicable, since 4.0 is
+    /// a superset of 3.1 and skipping those would be self-serving. Only exact <c>XQ10</c>/
+    /// <c>XQ30</c> — versions whose behaviour later specs deliberately CHANGED — are excluded. A
+    /// dependency naming no XQuery version at all (XPath-only) is left applicable, as before.
+    /// </para>
+    /// </summary>
+    internal static bool SpecApplies(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        var xq = value.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                      .Where(t => t.StartsWith("XQ", StringComparison.Ordinal))
+                      .ToList();
+        if (xq.Count == 0) return true;
+        return xq.Any(t => t.EndsWith('+')
+            || string.Equals(t, "XQ40", StringComparison.Ordinal)
+            || string.Equals(t, "XQ31", StringComparison.Ordinal));
+    }
+
     public bool SatisfiesDependency(XqtsDependency dep)
     {
         return dep.Type switch
         {
-            "spec" => dep.Value?.Contains("XQ") == true && dep.Satisfied,
+            "spec" => SpecApplies(dep.Value) == dep.Satisfied,
             "feature" => SupportedFeatures.Contains(dep.Value ?? "") == dep.Satisfied,
             "xsd-version" => dep.Satisfied,
             "xml-version" => dep.Satisfied,
