@@ -105,6 +105,7 @@ public sealed class XsltTransformer
     private string? _initialFunctionNamespace;
     private readonly List<object?> _initialFunctionArgs = [];
     private Uri? _sourceDocumentUri;
+    private Uri? _baseOutputUri;
     private bool _expandXInclude;
     private bool _allowRemoteXInclude;
     private PhoenixmlDb.Core.Xml.IXmlResourceResolver? _xIncludeResolver;
@@ -620,6 +621,21 @@ public sealed class XsltTransformer
     }
 
     /// <summary>
+    /// Sets the base output URI — where the principal result will be written (XSLT 3.0 §2.3).
+    /// </summary>
+    /// <param name="uri">Absolute URI of the principal output destination.</param>
+    /// <remarks>
+    /// This is what <c>fn:current-output-uri()</c> reports while the principal result is being
+    /// produced, and what a relative <c>xsl:result-document/@href</c> resolves against. Leave it
+    /// unset when the result has no URI — writing to stdout or to a string — in which case
+    /// <c>current-output-uri()</c> correctly returns the empty sequence.
+    /// </remarks>
+    public void SetBaseOutputUri(Uri uri)
+    {
+        _baseOutputUri = uri;
+    }
+
+    /// <summary>
     /// Enables XInclude 1.0 expansion of the principal source document. When on, any
     /// <c>xi:include</c> (<c>parse="xml"</c>) elements in the input passed to
     /// <see cref="TransformAsync(string?, CancellationToken)"/> are expanded before the
@@ -1131,6 +1147,7 @@ public sealed class XsltTransformer
             InitialTunnelParameters = _initialTunnelParams,
             CancellationToken = ct,
             SourceDocumentUri = _sourceDocumentUri,
+            BaseOutputUri = _baseOutputUri,
             ExpandXInclude = _expandXInclude,
             AllowRemoteXInclude = _allowRemoteXInclude,
             XIncludeResolver = _xIncludeResolver,

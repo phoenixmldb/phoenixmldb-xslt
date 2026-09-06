@@ -91,6 +91,19 @@ public sealed class XsltTransformOptions
     public Uri? SourceDocumentUri { get; init; }
 
     /// <summary>
+    /// URI of the PRINCIPAL output destination — where the transformation's main result will be
+    /// written. Supplied by the host (the <c>xslt</c> CLI passes the <c>-o</c> target).
+    /// <para>
+    /// This is the "base output URI" of XSLT 3.0 §2.3. It is what <c>fn:current-output-uri()</c>
+    /// reports while the principal result is being written, and what a relative
+    /// <c>xsl:result-document/@href</c> resolves against. Leave it null when the result goes
+    /// somewhere with no URI, such as stdout or an in-memory string — <c>current-output-uri()</c>
+    /// then correctly returns the empty sequence, which is the spec's "absent" case.
+    /// </para>
+    /// </summary>
+    public Uri? BaseOutputUri { get; init; }
+
+    /// <summary>
     /// When <c>true</c>, <c>xi:include</c> elements in the principal source document are
     /// expanded (XInclude 1.0, <c>parse="xml"</c>) before the document is converted to XDM
     /// and transformed. Off by default. Expansion requires a source base URI — supply it via
