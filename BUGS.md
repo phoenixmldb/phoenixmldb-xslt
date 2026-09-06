@@ -1007,6 +1007,55 @@ On the XSLT side the 596 failures cluster in `error` (68), packaging — `accept
 Those are advanced features; a typical transformation pipeline touches almost none of them, so
 the conformance percentage is a poor predictor of what a real stylesheet will hit.
 
+
+### 39. Constructor functions leaked CLR exceptions the cast path already translated — FIXED 2026-09-05
+The casting cluster from #38, attacked with a full-cluster diagnosis first rather than one fix at
+a time. **XQTS 29,033 → 29,205 (92.42% → 92.97%), +172** — the largest single change in this
+sequence. XSLT corpus unchanged at 10,034/10,630. Unit 1532.
+
+The 399 casting failures split three ways, and only one third was actionable:
+
+| | count | |
+|---|---|---|
+| crashed where a value was required | 140 | ~105 of them schema types — blocked on the same feature as #38 |
+| wrong output | 23 | |
+| **wrong error code** | **236** | ← this one |
+
+The 236 were still raw CLR messages *after* #35 wrapped `TypeCastHelper.CastValue`, which looked
+impossible until the failing tests were read: they are **constructor function calls**, not cast
+expressions. `xs:nonNegativeInteger("--0")` goes through `TypeConstructorFunctions`, which calls
+`long.Parse` / `Convert.ToInt32` directly. The spec defines a constructor function as equivalent
+to a cast, so the two must report the same codes — and only one half had been wrapped. Asymmetric
+pair, now between two halves of a single spec rule.
+
+Fixed once in the base class: `TypeConstructorFunction.InvokeAsync` is now `sealed` and wraps a
+new `protected abstract InvokeCoreAsync`, which the 49 subclasses override instead. A wrapper at
+the call sites was not possible — every one is an `async IAsyncEnumerable` iterator, where C#
+forbids `yield return` inside a `try`/`catch`. That constraint is why #35's wrapper went into
+`CastValue` too.
+
+Mapping was measured against the corpus, restricted to cast/constructor context, not assumed:
+`FormatException` → FORG0001 (**57 of 57**, unanimous), `OverflowException` → FOCA0002 (78
+against FORG0001's 29 — a majority, not a certainty), `InvalidCastException` → XPTY0004. The 29
+remain wrong, now with a proper code, until that split is understood.
+
+Measured effect on the raw-CLR messages in cast context:
+
+| message | before | after |
+|---|---|---|
+| `The input string '…' was not in a correct format.` | 57 | **0** |
+| `Arithmetic operation resulted in an overflow.` | 30 | **2** |
+| `Value was either too large or too small for …` | 74 | 39 |
+
+`prod-CastExpr` failures fell 182 → 39. What remains in the casting area is
+`prod-CastableExpr` (77) and `prod-CastExpr.schema` (72) — both schema-typed, i.e. #38's feature
+decision, not this defect.
+
+**The loop change is what produced this.** Diagnosing all 399 before touching anything found the
+constructor/cast asymmetry immediately; the previous fix-then-measure rhythm had walked past it
+twice, because each individual message looked like something `CastValue` should already have
+handled.
+
 ---
 
 ## Fixed 2026-08-22/24 — kept for the pattern
