@@ -9,6 +9,109 @@
 
 ## Unreleased
 
+### fn:current-output-uri() never had an implementation
+
+Reported by Martin Honnen. The function returned the empty sequence unconditionally — no output,
+no error — and the source said why:
+
+```csharp
+// Since we don't track output URIs for result-document (inline output),
+return ValueTask.FromResult<object?>(Array.Empty<object>());
+```
+
+The tell was in the registration: every other context-dependent XSLT function is constructed with
+the execution context, and this one was not, so it structurally could not know the answer.
+
+Worth being precise about what was and was not broken. Writing to stdout, the empty sequence is
+CORRECT — XSLT 3.0 §20.3.7 says the property is absent when no destination URI is known. It was
+wrong the moment a destination existed: `xslt … -o result.xml` names one, and an
+`xsl:result-document/@href` names another.
+
+The host now supplies the base output URI (`XsltTransformer.SetBaseOutputUri`, set by the `xslt`
+tool from `-o`), `xsl:result-document` reports its own destination for the duration of its body
+with a relative `@href` resolved against that base, and the previous value is restored afterwards
+so a following instruction still sees the principal destination. Absent a host-supplied URI the
+behaviour is unchanged, because there the empty sequence is the right answer.
+
+### A missing required attribute crashed instead of being diagnosed
+
+`<xsl:key match="p" use=".//term"/>` — no `name` — produced
+`Object reference not set to an instance of an object.` The parser reached for the attribute with
+the null-forgiving `!`, which asserts a required attribute is present: an assertion that only
+holds when there is nothing to report.
+
+The same shape appeared 25 times in the parser. Searching the conformance logs for the runtime
+message found eight reachable, five of them this cause — `xsl:key/@name`, `xsl:key/@match`,
+`xsl:attribute-set/@name`, `xsl:call-template/@name` and `xsl:variable/@name`. All five now raise
+XTSE0010 and name the attribute. The remaining dereferences are deliberately untouched: no test
+reaches them, and several of those attributes are optional in context, so a blind sweep would risk
+rejecting valid stylesheets.
+
+### The conformance figures this project published were overstated
+
+Not an engine change. A defect in our own test harness, described here because the numbers went
+out under our name.
+
+Tests that expect a specific error code were scored as passes whenever the transform threw
+**anything at all**. The W3C corpora write the expected code as an attribute —
+`<error code="XTSE0010"/>` — and both conformance runners read it from the element's text content,
+which is empty for an empty element. The comparison was therefore always against `""`, and empty
+matched everything. `fn:load-xquery-module`, which this engine does not implement, scored 4/4 on
+the strength of throwing four times.
+
+Fixing it cost 4.6 points. Reading the code from the right place gave most of that back — many
+errors carry their code in a structured property rather than in the message text, so a
+message-only comparison had been under-crediting correct behaviour just as hard as it
+over-credited wrong behaviour.
+
+| | published 2026-09-02 | corrected |
+|---|---|---|
+| W3C XSLT 3.0 | 10,224/10,630 (96.2%) | **10,034/10,630 (94.4%)** |
+| W3C XQTS (XQuery) | 95.11% | **29,205/31,414 (92.97%)** |
+
+Every XSLT conformance figure published before 2026-09-04 is overstated by roughly two points.
+Historical entries in this file are left as written, with a correction banner at the top — they
+record what was believed at the time. Runs now also report how many failures are "raised an error
+with the wrong code", because that is a different and generally shallower defect than a wrong
+result, and conflating them is what hid this in the first place.
+
+### Casting and constructor functions leaked .NET exceptions
+
+`xs:int('abc')` reported *"The input string 'abc' was not in a correct format."* — a raw
+`FormatException`, not an XQuery error, and unmatchable against any expected code. The same
+applied to numeric overflow and to casting from a type with no conversion at all.
+
+A constructor function is defined by the spec as equivalent to a cast, so the two must report the
+same codes; only the cast half had been wrapped. Both now translate: an invalid lexical form is
+FORG0001, a value out of range is FOCA0002, an operand type with no conversion is XPTY0004.
+
+Also fixed: casting to a gregorian type from an operand the spec does not permit — `xs:time` or a
+different gregorian type — diagnosed a malformed lexical form for a cast that was never legal;
+`fn:avg` reported XPTY0004 for boolean and anyURI operands where `fn:sum`, three lines away in the
+same file, had always correctly reported FORG0006; and `fn:load-xquery-module` flattened every
+failure to FOQM0002, discarding the analyzer's own classification.
+
+Arrives via PhoenixmlDb.XQuery, so it reaches XSLT through the engine dependency.
+
+### Source layout: one type per file
+
+No behaviour change, and worth stating plainly because the diff is large. 37 files carrying five
+or more top-level types are now one type per file, and the two files that resisted that —
+`DefaultXsltExecutionContext` at 24,638 lines and `StylesheetParser` at 13,009 — are split into
+partial classes grouped by concern rather than chopped by size. Largest file in either is now
+about 5,000 lines.
+
+The split was done with Roslyn rather than text matching, deliberately: this is an XSLT engine, so
+string literals are full of AVT braces and brace-counting mis-locates member boundaries. It was
+verified by comparing the member inventory before and after — 587 members, none missing, none
+added, each matched on whitespace-normalised text — and by confirming that every field kept its
+original relative order, which is the one way a partial split can change semantics.
+
+One deliberate exception: a `file`-scoped helper became `internal`, because a file-scoped type
+cannot survive being split away from its callers. It remains assembly-internal; no public surface
+changed.
+
+
 Thirteen more defects found by running XSpec's corpus. Stated in full, because a bare "129 to
 139" reads better than the position warrants:
 
