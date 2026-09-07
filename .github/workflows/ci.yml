@@ -40,6 +40,9 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION (ref ${GITHUB_REF_NAME}, type ${GITHUB_REF_TYPE})"
 
+      - name: Engine pins are not stale
+        run: ./scripts/check-pins.sh
+
       - name: Restore
         run: |
           dotnet restore src/PhoenixmlDb.Xslt
@@ -75,6 +78,10 @@ jobs:
           NOTES=${NOTES//,/%2C}
           NOTES=${NOTES//\"/%22}
           { echo "notes<<__RELNOTES_EOF__"; printf '%s\n' "$NOTES"; echo "__RELNOTES_EOF__"; } >> "$GITHUB_OUTPUT"
+
+      - name: Engine pins match this release train
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./scripts/check-release-train.sh "${{ steps.version.outputs.version }}"
 
       - name: Pack
         if: startsWith(github.ref, 'refs/tags/v')

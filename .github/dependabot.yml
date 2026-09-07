@@ -1,0 +1,24 @@
+# Keeps the PhoenixmlDb engine pins current.
+#
+# scripts/check-pins.sh FAILS a build whose pins are behind, but it only notices after the
+# engine has published and someone runs CI. This opens the bump as a PR the moment the package
+# appears, which is the half the gate cannot cover: when Xslt 1.6.13 was packed its XQuery pin
+# was correct, and only became stale when XQuery 1.6.13 published an hour later.
+#
+# Scoped to PhoenixmlDb.* deliberately. A general NuGet watch here would bury the one update
+# that matters under routine third-party churn, and this repo's whole failure mode was an
+# important update going unnoticed.
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: "/"
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: "PhoenixmlDb.*"
+    groups:
+      phoenixmldb-engines:
+        patterns: ["PhoenixmlDb.*"]
+    commit-message:
+      prefix: "build"
+    open-pull-requests-limit: 5

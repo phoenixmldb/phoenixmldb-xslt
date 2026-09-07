@@ -36,6 +36,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJ="$ROOT/tests/PhoenixmlDb.Conformance.Tests"
 SUITES="$PROJ/TestData"
 TIMEOUT="${CONFORMANCE_TIMEOUT:-900}"
+
+# xqts is 31,470 cases — an order of magnitude past any XSLT chunk — and takes ~37 min on this
+# machine. Under the 900 s default it was killed every time and reported "TIMEOUT", which read
+# as a hang and sat unexplained for weeks; it is NOT hung, it is big, exactly as the strm note
+# below says of streaming. Give it its own budget rather than pushing the global default up and
+# letting a genuinely wedged XSLT chunk sit for an hour. CONFORMANCE_TIMEOUT still overrides.
+XQTS_TIMEOUT="${CONFORMANCE_XQTS_TIMEOUT:-3600}"
 OUT="${CONFORMANCE_OUT:-$ROOT/conformance-results}"
 CONFIG="${CONFORMANCE_CONFIG:-Debug}"
 
@@ -161,7 +168,11 @@ for g in "${CHUNKS[@]}"; do
   # per-test-set tallies and the `FAILED: <case>` lines with their error codes, which is
   # the only place the real conformance score exists. Without this the sweep can report
   # nine green chunks while hundreds of individual cases fail.
-  timeout "$TIMEOUT" dotnet test "$PROJ/PhoenixmlDb.Conformance.Tests.csproj" \
+  # Per-chunk timeout: xqts needs far longer than the XSLT groups (see XQTS_TIMEOUT above).
+  chunk_timeout="$TIMEOUT"
+  [ "$g" = "xqts" ] && [ -z "${CONFORMANCE_TIMEOUT:-}" ] && chunk_timeout="$XQTS_TIMEOUT"
+
+  timeout "$chunk_timeout" dotnet test "$PROJ/PhoenixmlDb.Conformance.Tests.csproj" \
       -c "$CONFIG" -f net10.0 --no-build --filter "$filter" \
       --logger "console;verbosity=detailed" \
       --logger "trx;LogFileName=$g.trx" --results-directory "$OUT" > "$OUT/$g.log" 2>&1
@@ -169,7 +180,7 @@ for g in "${CHUNKS[@]}"; do
   d=$((SECONDS - s))
 
   if [ $rc -eq 124 ]; then
-    line="TIMEOUT after ${TIMEOUT}s"
+    line="TIMEOUT after ${chunk_timeout}s"
     failed=1
   else
     # The detailed console logger does NOT print the terse "Passed! - Failed: 0, ..."
@@ -200,8 +211,15 @@ for g in "${CHUNKS[@]}"; do
   # below with "integer expression expected", which is what the sandp chunk was hitting.
   nfail=$(grep -c "^ FAILED: " "$OUT/$g.log" 2>/dev/null || true)
   nfail=${nfail:-0}
-  read -r cp ct <<<"$(grep -oE "Results: [0-9]+/[0-9]+" "$OUT/$g.log" 2>/dev/null |
-                      awk -F'[ /]' '{p+=$2; t+=$3} END {print p+0, t+0}')"
+  # Anchor on "^ Results: " for the same reason nfail anchors on "^ FAILED: ": when a fixture
+  # assertion fails, xunit echoes that test's output a SECOND time behind an "[xUnit.net ...]"
+  # prefix, and an unanchored grep counted the test-set twice. That inflated the case total by
+  # exactly the size of every failing test-set — `fn` reported 1135 cases instead of 1131 the
+  # moment load-xquery-module went red. The failure count was already right; only this tally
+  # was wrong, so the two disagreed silently.
+  read -r cp ct <<<"$(grep -E "^ Results: " "$OUT/$g.log" 2>/dev/null |
+                      grep -oE "[0-9]+/[0-9]+" |
+                      awk -F/ '{p+=$1; t+=$2} END {print p+0, t+0}')"
   if [ "${ct:-0}" -gt 0 ]; then
     line="$line | $cp/$ct cases $(awk -v p="$cp" -v t="$ct" 'BEGIN{printf "%.1f%%", 100*p/t}')"
     # The per-test-set "Results:" lines are the XSLT runner's tallies. The XQuery runner

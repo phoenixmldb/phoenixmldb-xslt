@@ -14,5 +14,11 @@ nupkg-*/
 tests/PhoenixmlDb.Conformance.Tests/TestData/xslt30-test/
 tests/PhoenixmlDb.Conformance.Tests/TestData/qt3tests/
 
-# Output of scripts/conformance.sh (per-chunk logs + summary).
-conformance-results/
+# Output of scripts/conformance.sh — the per-chunk logs are large (~2.6 MB) and stay local.
+# summary.txt is the EXCEPTION and is tracked deliberately: README.md publishes conformance
+# figures, and a published number whose evidence is not versioned cannot be audited later.
+# That is not hypothetical — the previous headline claimed "2604/2661 tests" and no artifact
+# in the repo could confirm or refute it. Note the trailing /* : git will not re-include a
+# file inside an excluded DIRECTORY, so the contents must be excluded rather than the dir.
+conformance-results/*
+!conformance-results/summary.txt

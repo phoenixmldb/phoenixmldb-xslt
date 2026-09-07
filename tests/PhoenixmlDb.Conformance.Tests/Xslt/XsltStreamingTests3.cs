@@ -64,6 +64,10 @@ public class XsltStreamingTests3 : IClassFixture<XsltTestFixture>
 
         var passed = 0;
         var failed = 0;
+        // Expected an error, raised one, but under a different code. Tracked apart from `failed`
+        // because it is a diagnostic-quality gap, not a missed check — and because it used to be
+        // scored as a PASS, which is what made these groups look healthier than they were.
+        var wrongCode = 0;
 
         foreach (var testCase in testCases)
         {
@@ -75,7 +79,8 @@ public class XsltStreamingTests3 : IClassFixture<XsltTestFixture>
             else
             {
                 failed++;
-                _output.WriteLine($"FAILED: {testCase.Name}");
+                if (result.WrongErrorCode) wrongCode++;
+                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}");
                 if (result.Error != null)
                 {
                     _output.WriteLine($"  Error: {result.Error.Message}");
@@ -105,6 +110,7 @@ public class XsltStreamingTests3 : IClassFixture<XsltTestFixture>
             return;
         }
 
-        _output.WriteLine($"Results: {passed}/{testCases.Count} passed ({(double)passed / testCases.Count * 100:F1}%)");
+        _output.WriteLine($"Results: {passed}/{testCases.Count} passed ({(double)passed / testCases.Count * 100:F1}%)"
+            + (wrongCode > 0 ? $" — {wrongCode} of {failed} failures raised an error with the wrong code" : ""));
     }
 }

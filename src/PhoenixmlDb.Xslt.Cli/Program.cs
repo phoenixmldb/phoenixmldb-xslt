@@ -99,6 +99,13 @@ try
         foreach (var (name, value) in options.Parameters)
             staticParams[name] = value;
     }
+    // Tell the engine where the principal result is going, so fn:current-output-uri() has an
+    // answer and relative xsl:result-document/@href resolves against it (XSLT 3.0 §2.3). Without
+    // -o the result goes to stdout, which has no URI — current-output-uri() then correctly
+    // reports the empty sequence. Reported by Martin Honnen 2026-09-06.
+    if (options.OutputFile != null)
+        transformer.SetBaseOutputUri(new Uri(Path.GetFullPath(options.OutputFile)));
+
     await transformer.LoadStylesheetAsync(stylesheetXml, stylesheetUri, staticParams).ConfigureAwait(true);
     compileSw.Stop();
 
