@@ -7,7 +7,7 @@
 > corpus, the current figure is **10,020/10,630 (94.3%)**. The historical entries below are left
 > as written — they record what was believed at the time. See BUGS.md entry 28.
 
-## Unreleased
+## 1.6.14 - 2026-09-07
 
 ### fn:current-output-uri() never had an implementation
 
