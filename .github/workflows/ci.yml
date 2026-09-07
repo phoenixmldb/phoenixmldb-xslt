@@ -79,6 +79,10 @@ jobs:
           NOTES=${NOTES//\"/%22}
           { echo "notes<<__RELNOTES_EOF__"; printf '%s\n' "$NOTES"; echo "__RELNOTES_EOF__"; } >> "$GITHUB_OUTPUT"
 
+      - name: Engine pins match this release train
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./scripts/check-release-train.sh "${{ steps.version.outputs.version }}"
+
       - name: Pack
         if: startsWith(github.ref, 'refs/tags/v')
         env:

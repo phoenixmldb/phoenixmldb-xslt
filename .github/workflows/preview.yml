@@ -1,0 +1,82 @@
+# Ship a testable build the day a fix lands.
+#
+# Martin Honnen is the front line for these engines: he finds the defects, and until now he has
+# had to wait for a release train to confirm his own report was fixed. That wait is where the
+# damage happens — he re-tests against a version that supposedly contains the fix, it does not,
+# and the next report starts from a false premise. The `xquery` tool once reported 1.6.9 while
+# embedding a 1.6.6 engine and he had to infer it from a repro that kept failing.
+#
+# Manual on purpose. Publishing a preview on every merge would bury the one build that matters
+# under noise, and NuGet packages cannot be unpublished. One click when there is something to
+# verify.
+name: Preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "What is being verified, and by whom (e.g. 'current-output-uri for Martin')"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      # A preview must not carry a stale engine either — that is the whole point of shipping it.
+      - name: Engine pins are not stale
+        run: ./scripts/check-pins.sh
+
+      - name: Compute preview version
+        id: version
+        run: |
+          BASE=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props | head -1 | tr -d '[:space:]')
+          VERSION="${BASE}-preview.$(git rev-list --count HEAD).$(git rev-parse --short HEAD)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Preview $VERSION — ${{ inputs.reason }}"
+
+      - name: Build and test
+        run: |
+          dotnet build src/PhoenixmlDb.Xslt -c Release
+          dotnet test tests/PhoenixmlDb.Xslt.Tests -c Release -f net10.0
+
+      - name: Pack
+        run: |
+          for proj in src/PhoenixmlDb.Xslt src/PhoenixmlDb.Xslt.Cli; do
+            dotnet pack "$proj" -c Release \
+              -p:PackageVersion="${{ steps.version.outputs.version }}" \
+              -o ./artifacts
+          done
+
+      - name: Login to NuGet via trusted publisher
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: endpointsystems
+
+      - name: Push preview
+        env:
+          NUGET_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          for pkg in ./artifacts/*.nupkg; do
+            dotnet nuget push "$pkg" --api-key "$NUGET_KEY" \
+              --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+          echo "::notice::Install with: dotnet tool update -g xslt --prerelease --version ${{ steps.version.outputs.version }}"
