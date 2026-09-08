@@ -1,17 +1,22 @@
 # Keeps the PhoenixmlDb engine pins current.
 #
-# scripts/check-pins.sh FAILS a build whose pins are behind, but it only notices after the
-# engine has published and someone runs CI. This opens the bump as a PR the moment the package
-# appears, which is the half the gate cannot cover: when Xslt 1.6.13 was packed its XQuery pin
-# was correct, and only became stale when XQuery 1.6.13 published an hour later.
+# `directories` (plural) and an explicit list, NOT `directory: "/"`. The root has no solution
+# file, so NuGet discovery from "/" found nothing: the job ran daily, reported
+# "No project files found", and finished GREEN. A scheduled check that succeeds while doing
+# nothing is worse than no check — it is the same fail-open shape this estate has been clearing
+# out of its conformance harness all week, and it went unnoticed for exactly one day because the
+# run was green.
 #
-# Scoped to PhoenixmlDb.* deliberately. A general NuGet watch here would bury the one update
-# that matters under routine third-party churn, and this repo's whole failure mode was an
-# important update going unnoticed.
+# Verify a change here by reading the run log for a non-empty "Projects" list, not by seeing the
+# job succeed.
+#
+# Scoped to PhoenixmlDb.* so the one update that matters is not buried in third-party churn.
 version: 2
 updates:
   - package-ecosystem: nuget
-    directory: "/"
+    directories:
+      - "/src/PhoenixmlDb.Xslt"
+      - "/src/PhoenixmlDb.Xslt.Cli"
     schedule:
       interval: daily
     allow:
