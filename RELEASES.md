@@ -7,6 +7,26 @@
 > corpus, the current figure is **10,020/10,630 (94.3%)**. The historical entries below are left
 > as written — they record what was believed at the time. See BUGS.md entry 28.
 
+## 1.6.15 - 2026-09-09
+
+Takes PhoenixmlDb.XQuery 1.6.15, so the `xslt` tool and anything embedding this engine pick up
+two XQuery-side fixes:
+
+- **`fn:current-output-uri()`'s sibling problem, in reverse** — adaptive `xs:double` serialization
+  had two implementations that disagreed. `xquery -o adaptive 'xs:double(41) + 1'` printed `42`
+  where the library returned `4.2e1`. W3C Serialization 3.1 §10 settles it — an `xs:double` is
+  serialized with `format-number(?, '0.0##########################e0')` — so the library was
+  right, and the CLI now delegates to it rather than carrying a second implementation.
+- **Arithmetic on a date, time or duration** raised a raw `InvalidCastException` where XPTY0004 is
+  required. The cause was `xs:duration`, the abstract base type: F&O defines the duration
+  operators only on `xs:yearMonthDuration` and `xs:dayTimeDuration`, so mixing the base type in is
+  a type error. W3C XQTS 29,205 → 29,316 of 31,414 (93.32%), `InvalidCastException` 125 → 14.
+
+No XSLT engine change. Conformance is unmoved at **10,031/10,630 (94.3%)**: seven of ten groups
+byte-identical, and the three that moved (`attr` −1, `strm1` −3, `strm2` −4) returned to their
+previous values on re-run, which is the flakiness band those groups have shown all week
+(`strm1` 694–700, `strm2` 678–684). Unit suite 1483.
+
 ## 1.6.14 - 2026-09-07
 
 ### fn:current-output-uri() never had an implementation
