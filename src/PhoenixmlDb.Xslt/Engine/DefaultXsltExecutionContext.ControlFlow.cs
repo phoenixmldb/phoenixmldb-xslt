@@ -1667,6 +1667,11 @@ internal sealed partial class DefaultXsltExecutionContext
         // buffer). See sf-boolean-107 / sf-not-107.
         var savedOutputLen = _output.Length;
         var savedAttrStackDepth = _collectedAttributesStack.Count;
+        // Safety net for scopes an INTERRUPTED nested construct pushed and never popped
+        // (a for-each inside the try that threw mid-iteration). The try body's own scope is
+        // handled by the push/pop around ExecuteAsync below; this catches the rest, the same
+        // shape as savedAttrStackDepth above.
+        var savedScopeDepth = _scopes.Count;
         // A handler must not read a location left behind by an earlier, already-handled failure.
         var savedExpressionErrorLocation = _lastExpressionErrorLocation;
         _lastExpressionErrorLocation = null;
@@ -1702,7 +1707,21 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             else if (instruction.Body != null)
             {
-                await instruction.Body.ExecuteAsync(this).ConfigureAwait(false);
+                // The body gets its own scope. Without one its xsl:variable declarations
+                // land in the CALLER's scope, so an inner $pi overwrites an outer $pi that
+                // xsl:catch (and anything after </xsl:try>) must still see. Scopes are
+                // parent-linked, so the body still reads outer bindings; it just cannot
+                // clobber them. Popped in finally so the handler below — which runs while
+                // the exception is still unwinding — evaluates in the outer scope.
+                PushScope();
+                try
+                {
+                    await instruction.Body.ExecuteAsync(this).ConfigureAwait(false);
+                }
+                finally
+                {
+                    PopScope();
+                }
             }
         }
         catch (Exception ex) when (ex is XsltException or XQuery.Execution.XQueryRuntimeException or XQuery.Functions.XQueryException or InvalidOperationException or FormatException or OverflowException or ArgumentException or NullReferenceException or ArithmeticException)
@@ -1719,6 +1738,10 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Pop any _collectedAttributesStack entries pushed by interrupted element constructors
                 while (_collectedAttributesStack.Count > savedAttrStackDepth)
                     _collectedAttributesStack.Pop();
+                // Drop scopes the interrupted body opened, so xsl:catch evaluates against the
+                // scope that was current before xsl:try — not against the body's declarations.
+                while (_scopes.Count > savedScopeDepth)
+                    PopScope();
             }
             else if (_output.Length > savedOutputLen)
             {
