@@ -1,7 +1,17 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
 
-fn        45s  fixture Successful (35 tests) | 1072/1131 cases 94.8%, 59 failed
-misc     210s  fixture Successful (22 tests) | 1821/1921 cases 94.8%, 100 failed
+xqts    3600s  TIMEOUT after 3600s | 1271/1286 cases 98.8%, 15 failed
+per-set NEW sets:
+  fn/fn-abs (182/188)
+  fn/fn-concat (95/96)
+  fn/fn-contains (68/68)
+  fn/fn-count (316/316)
+  fn/fn-string-length (34/36)
+  fn/fn-sum (222/222)
+  prod/prod-ForClause (185/189)
+  prod/prod-LetClause (87/89)
+  prod/prod-WhereClause (82/82)
 
-2 chunk(s) in 4m15s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results
+1 chunk(s) in 60m00s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results
+one or more chunks failed
