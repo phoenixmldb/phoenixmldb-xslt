@@ -1,6 +1,7 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
 
-insn     102s  fixture Successful (27 tests) | 1500/1594 cases 94.1%, 94 failed
+fn        49s  fixture Successful (35 tests) | 1071/1131 cases 94.7%, 60 failed
+per-set baseline updated: /repos/phoenixml/phoenixmldb-xslt/scripts/conformance-baseline.tsv
 
-1 chunk(s) in 1m42s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results
+1 chunk(s) in 0m50s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results
