@@ -823,6 +823,20 @@ internal sealed partial class DefaultXsltExecutionContext
                 results.Add(item);
             }
         }
+        // XQueryRuntimeException is a SIBLING of XQueryException, not a subclass — both derive
+        // straight from Exception. The catch below therefore never sees it, so an error raised
+        // through that type (FODC0002 from doc(), most of the runtime codes) recorded no
+        // location and left $err:module and $err:line-number empty in xsl:catch. try-018 asserts
+        // both and fails on exactly that. Record the location and rethrow unchanged: the
+        // diagnostic rewrapping below is deliberately NOT applied here, because these messages
+        // already carry their own position and rewrapping them would change text that other
+        // tests match on.
+        catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException)
+        {
+            if (expr.Location is not null)
+                _lastExpressionErrorLocation = expr.Location;
+            throw;
+        }
         catch (PhoenixmlDb.XQuery.Functions.XQueryException xqe) when (string.IsNullOrEmpty(xqe.Module))
         {
             var snippet = expr.ToString() ?? "(unknown)";
