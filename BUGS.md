@@ -1162,12 +1162,38 @@ Everything else the corpus declares IS read: `role`, `file`, `uri`, `select`, `x
 `ref`, `name`, `value`, `static`, `as`, `encoding`, `media-type`'s siblings, `stylesheet/@file`,
 `stylesheet/@role`, `collection/@uri`, `schema/@file`, `schema/@role`, `schema/@uri`.
 
-**On `source/@streaming` specifically — a candidate, not a finding.** The runner decides whether a
-test needs streaming from a `STREAMABLE` *parameter*, not from this attribute, and the engine
-auto-selects streaming for file inputs when the stylesheet declares a streamable mode. So there is
-a plausible mechanism by which ignoring it costs nothing. It has NOT been measured either way, and
-the streaming chunks are large enough (strm1/2/3 = 700/678/871) that a systematic mis-scoring
-there would matter. Do not treat the current streaming numbers as settled until this is checked.
+**`source/@streaming` — MEASURED 2026-09-10, and it costs nothing. Now wired anyway.**
+
+Honouring it is more than reading it: `TransformAsync(string)` is the materialising path and NEVER
+streams, so the attribute only means anything if the runner opens the file and hands over a
+`TextReader` — the overload that actually selects the streaming engine, the same choice the CLI
+makes via `HasStreamableMode`. A runner that read the attribute and kept calling the string
+overload would look wired and change nothing.
+
+Wired, then swept the full corpus:
+
+| | before | after |
+|---|---|---|
+| every one of the 11 chunks | — | **identical** |
+| every one of the 221 test-sets | — | **identical** |
+
+Zero movement. The declaration is redundant against this engine, almost certainly because
+streaming is auto-selected from the stylesheet's streamable mode — the corpus is telling the
+harness something the engine already worked out.
+
+**The instrumentation is what makes that trustworthy, not the numbers.** An inert wiring and a
+correct wiring over an insensitive difference produce identical output. The streaming branch was
+therefore made to log every case that took it — 29 in `attr` alone (doe-0801/2/3, mode-1406/8/10,
+attr/streamable's 24) — proving those cases genuinely executed on the streaming engine before
+"no change" was believed.
+
+Kept despite changing nothing: the harness now does what the corpus declares rather than
+coincidentally agreeing by another route, and if auto-selection ever changes, these 176 cases
+start exercising the path they name instead of silently not.
+
+This also cleared a question raised by the phoenixml engine repo, whose non-streaming floors
+contain 68 streaming-declaring cases (`decl/accumulator` 31, `attr/streamable` 24, and seven
+smaller sets). Those floors were sound; no re-baselining needed.
 
 The failure mode of every row above is silence — a declared capability the runner ignores scores a
 working engine as failing (or, worse for a conformance claim, an unexercised path as passing). That
