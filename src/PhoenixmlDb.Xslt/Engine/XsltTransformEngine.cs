@@ -3936,6 +3936,12 @@ public sealed class XsltTransformEngine
                 // later reference reported XPST0008 "not defined", naming the wrong problem.
                 if (ex is XsltException deferred)
                     deferred.IsDeferredGlobalError = true;
+                // The rethrow fires wherever the global is first READ, which may be inside an
+                // xsl:try. XSLT 3.0 evaluates globals outside any try's dynamic scope, so the
+                // error must not become catchable just because the read happened there
+                // (try-028). Marked type-agnostically: FOAR0001 arrives as an XQuery exception,
+                // which carries no IsDeferredGlobalError flag to set.
+                DeferredGlobalError.Mark(ex);
                 var captured = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
                 context.GlobalVariables[global.Name] = new LazyValue(() =>
                 {

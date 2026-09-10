@@ -1724,7 +1724,10 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
             }
         }
-        catch (Exception ex) when (ex is XsltException or XQuery.Execution.XQueryRuntimeException or XQuery.Functions.XQueryException or InvalidOperationException or FormatException or OverflowException or ArgumentException or NullReferenceException or ArithmeticException)
+        // A deferred GLOBAL variable error is declined here: it notionally occurred before the
+        // transformation began, so xsl:try must not catch it however late the lazy rethrow lands.
+        catch (Exception ex) when (!DeferredGlobalError.IsMarked(ex)
+            && ex is XsltException or XQuery.Execution.XQueryRuntimeException or XQuery.Functions.XQueryException or InvalidOperationException or FormatException or OverflowException or ArgumentException or NullReferenceException or ArithmeticException)
         {
             // Discard output produced during failed try block (rollback-output behavior).
             // Restore from snapshot because _output may have been replaced by nested
