@@ -1202,6 +1202,61 @@ feature the corpus exercises once is a feature nobody notices is unwired.
 
 ---
 
+### 42. Core's StringValue could not say "I don't know" — and the work it defers (2026-09-10)
+
+`XdmElement.StringValue` / `XdmDocument.StringValue` were `_stringValue ?? string.Empty`, so a
+node whose value had never been computed reported exactly what a genuinely empty node reports.
+Found from the database side: paths that WALK children (`fn:string`, explicit casts) saw the text
+while paths that READ the cached value (implicit atomization) saw `""`, so the same predicate
+returned the right document on its own and `0` inside `count()`, with no error raised. This is
+the root cause under #35's `fn:sum/avg/max/min` fix — that treated the symptom without knowing it.
+
+Fixed in `phoenixmldb-core` on `fix/string-value-resolver`:
+
+| commit | what |
+|---|---|
+| `f4d4b82` | `XdmNode.StringValueResolver` — a delegate invoked on first read and cached. `NodeReader` takes one too, and that is the part that makes it usable: the storage layer never constructs `XdmElement`/`XdmDocument` itself, so an init-only property alone would have been a hook nobody outside the assembly could reach. |
+| `898fc14` | `XdmNode.StrictStringValue` — opt-in; raises rather than returning `""` when a node has neither a computed value nor a resolver. Off by default so no consumer changes on upgrade. Core's own suites run with it ON. |
+
+**Measured before enabling strict, not assumed:** with it on globally the only failures across all
+516 Xdm tests were the four asserting the empty-string fallback; no production path broke. Those
+four now pin the flag off explicitly. A strict mode nobody enables catches nothing, so the
+suites that run it are the point.
+
+#### Deferred to the Core pin bump — do not lose these
+
+Both need the released Core and are therefore NOT on any branch today:
+
+1. **`phoenixmldb-xquery` `ElementConstructorOperator` copies the string value by FIELD** at four
+   sites (`735`, `958`, `997`, `1072`: `newElem._stringValue = elem._stringValue`). A field read
+   bypasses the resolver, so a copy taken before anything read the property inherits `null` AND
+   no resolver of its own, and reports `""` for ever. The fix is a
+   `CarriedStringValue(source)` helper reading the PROPERTY when the source has a resolver and
+   the field otherwise. Written, then reverted — it does not compile against the published Core
+   1.6.7. Site `1247` already has a working fallback and was left alone.
+   **The resolver must NOT be copied onto the new node**: it resolves by identity in the store it
+   closed over, and a copy has a different identity, so it must be resolved through the SOURCE.
+2. **Turn `StrictStringValue` on in the XQuery and XSLT test suites** at the same bump, for the
+   same reason Core's are on.
+
+#### Open, and not reproduced here
+
+The engine repo reports a direct element constructor whose content comes from a node store
+returning an `xs:string` of its own markup, so a path step on it fails with "axis step used when
+the context item is not a node". They see it on an LMDB container AND on XQuery's own
+`XdmDocumentStore`, at 1.6.9 and on the aggregate branch. **Four tests driving `XdmDocumentStore`
+directly — including the parenthesised form — all PASS**
+(`phoenixmldb-xquery` `2907c1a`, kept as coverage). Recorded as a measured negative, not as
+absence: per #40, a reduction that does not reproduce is evidence the reduction dropped a
+variable. Awaiting the distinguishing detail.
+
+Also from the engine side and worth a check nobody has done: whether Core or XQuery anywhere
+computes an index key from a stored node's `StringValue`. Their index-removal defect was exactly
+that — `RemoveText("")` removed nothing, so full-text search kept finding words a document no
+longer contained.
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
