@@ -21,7 +21,7 @@ tests/decl/accumulator/_accumulator-test-set.xml	81	103
 tests/decl/attribute-set/_attribute-set-test-set.xml	48	49
 tests/decl/character-map/_character-map-test-set.xml	27	29
 tests/decl/context-item/_context-item-test-set.xml	22	31
-tests/decl/function/_function-test-set.xml	93	104
+tests/decl/function/_function-test-set.xml	94	104
 tests/decl/global-context-item/_global-context-item-test-set.xml	12	14
 tests/decl/import/_import-test-set.xml	40	40
 tests/decl/include/_include-test-set.xml	13	15
@@ -51,8 +51,8 @@ tests/fn/base-uri/_base-uri-test-set.xml	51	51
 tests/fn/collection/_collection-test-set.xml	3	6
 tests/fn/copy-of/_copy-of-test-set.xml	10	10
 tests/fn/core-function/_core-function-test-set.xml	90	90
-tests/fn/current/_current-test-set.xml	1	1
 tests/fn/current-output-uri/_current-output-uri-test-set.xml	11	17
+tests/fn/current/_current-test-set.xml	1	1
 tests/fn/deep-equal/_deep-equal-test-set.xml	2	2
 tests/fn/document/_document-test-set.xml	60	63
 tests/fn/extension-functions/_extension-functions-test-set.xml	6	7
@@ -68,7 +68,7 @@ tests/fn/key/_key-test-set.xml	87	93
 tests/fn/load-xquery-module/_load-xquery-module-test-set.xml	1	4
 tests/fn/normalize-unicode/_normalize-unicode-test-set.xml	16	17
 tests/fn/outermost/_outermost-test-set.xml	26	26
-tests/fn/position/_position-test-set.xml	207	208
+tests/fn/position/_position-test-set.xml	208	208
 tests/fn/resolve-uri/_resolve-uri-test-set.xml	21	24
 tests/fn/root/_root-test-set.xml	10	10
 tests/fn/snapshot/_snapshot-test-set.xml	15	19
@@ -107,7 +107,7 @@ tests/insn/try/_try-test-set.xml	35	35
 tests/insn/where-populated/_where-populated-test-set.xml	22	27
 tests/insn/xsl-document/_xsl-document-test-set.xml	23	25
 tests/misc/backwards/_backwards-test-set.xml	43	47
-tests/misc/bug/_bug-test-set.xml	72	78
+tests/misc/bug/_bug-test-set.xml	73	78
 tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	2	4
 tests/misc/collations/_collations-test-set.xml	42	43
@@ -117,8 +117,8 @@ tests/misc/forwards/_forwards-test-set.xml	23	23
 tests/misc/initial-function/_initial-function-test-set.xml	33	35
 tests/misc/initial-mode/_initial-mode-test-set.xml	5	5
 tests/misc/initial-template/_initial-template-test-set.xml	3	6
-tests/misc/regex/_regex-test-set.xml	62	65
 tests/misc/regex-syntax/_regex-syntax-test-set.xml	984	987
+tests/misc/regex/_regex-test-set.xml	62	65
 tests/misc/seqtor/_seqtor-test-set.xml	71	72
 tests/misc/whitespace/_whitespace-test-set.xml	24	27
 tests/misc/xslt-compat/_xslt-compat-test-set.xml	11	13
@@ -143,7 +143,7 @@ tests/strm/sf-innermost/_sf-innermost-test-set.xml	2	2
 tests/strm/sf-insert-before/_sf-insert-before-test-set.xml	50	52
 tests/strm/sf-map-new/_sf-map-new-test-set.xml	0	5
 tests/strm/sf-max/_sf-max-test-set.xml	37	38
-tests/strm/sf-min/_sf-min-test-set.xml	37	38
+tests/strm/sf-min/_sf-min-test-set.xml	37	38	1
 tests/strm/sf-not/_sf-not-test-set.xml	34	34
 tests/strm/sf-one-or-more/_sf-one-or-more-test-set.xml	30	30
 tests/strm/sf-outermost/_sf-outermost-test-set.xml	26	26
@@ -158,6 +158,7 @@ tests/strm/sf-trace/_sf-trace-test-set.xml	22	22
 tests/strm/sf-unordered/_sf-unordered-test-set.xml	22	22
 tests/strm/sf-xml-to-json/_sf-xml-to-json-test-set.xml	7	7
 tests/strm/sf-zero-or-one/_sf-zero-or-one-test-set.xml	7	7
+tests/strm/si-LRE/_si-lre-test-set.xml	67	69
 tests/strm/si-apply-imports/_si-apply-imports-test-set.xml	0	3
 tests/strm/si-apply-templates/_si-apply-templates-test-set.xml	4	11
 tests/strm/si-assert/_si-assert-test-set.xml	11	13
@@ -172,7 +173,6 @@ tests/strm/si-for-each-group/_si-for-each-group-test-set.xml	109	114
 tests/strm/si-for-each/_si-for-each-test-set.xml	19	20
 tests/strm/si-fork/_si-fork-test-set.xml	33	55
 tests/strm/si-iterate/_si-iterate-test-set.xml	33	35
-tests/strm/si-LRE/_si-lre-test-set.xml	67	69
 tests/strm/si-map/_si-map-test-set.xml	3	5
 tests/strm/si-merge/_si-merge-test-set.xml	7	7
 tests/strm/si-message/_si-message-test-set.xml	11	11

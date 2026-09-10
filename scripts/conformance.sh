@@ -280,14 +280,24 @@ if [ "${CONFORMANCE_UPDATE_BASELINE:-0}" = "1" ]; then
   echo "per-set baseline updated: $BASELINE" | tee -a "$OUT/summary.txt"
 elif [ -f "$BASELINE" ]; then
   # Optional 4th baseline column: cases this set may lose without failing the run.
-  # MEASURED, not assumed: two back-to-back serial sweeps of strm1/strm2/strm3 produced
-  # byte-identical per-set counts across all 89 streaming sets (700/678/871 both times), so
-  # every set is baselined at tolerance 0 and the column is currently unused. The run-to-run
-  # variation these suites are known for (strm1 seen at 694-700) comes from CONCURRENT runs
-  # — a bare `dotnet test` running net8.0 and net10.0 at once starves timing-sensitive
-  # streaming tests. This script is serial by construction, so it does not see it.
-  # Keep the column for the day a set proves genuinely variable; do not pre-emptively widen
-  # tolerances, because a gate that cries wolf gets ignored and costs more than it is worth.
+  #
+  # Measured, and the first measurement was WRONG. Two back-to-back serial sweeps gave
+  # identical per-set counts across all 89 streaming sets, and that was recorded here as
+  # "no variance, tolerance 0 everywhere". A third clean run then produced strm1 699 where
+  # both earlier ones gave 700. Two agreeing samples do not establish zero variance — the
+  # same over-claim from too small an observation that BUGS.md #40 catalogues, made while
+  # writing the control meant to catch such things.
+  #
+  # So: exactly ONE set carries a tolerance, and only because its count moved between two
+  # runs with no source change and no competing load — strm/sf-min (37/36/37). Everything
+  # else stays at 0. Do not widen tolerances to silence a failure you have not first
+  # reproduced under a quiet machine: a gate that cries wolf gets ignored, but a gate with
+  # slack in it is worse, because it never fires at all.
+  #
+  # Baselines are the MAXIMUM observed across clean runs, never the latest. A re-baseline
+  # taken from a perturbed run silently lowers the bar, which is how three streaming sets
+  # briefly lost a case each here — CLI probes were running alongside the sweep. Run a
+  # re-baseline with nothing else on the machine.
   regressed="$(awk -F'\t' '
     NR==FNR { base[$1]=$2; tol[$1]=($4==""?0:$4); next }
     ($1 in base) && $2 < base[$1] - tol[$1] {
