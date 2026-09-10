@@ -107,7 +107,7 @@ tests/insn/try/_try-test-set.xml	35	35
 tests/insn/where-populated/_where-populated-test-set.xml	22	27
 tests/insn/xsl-document/_xsl-document-test-set.xml	23	25
 tests/misc/backwards/_backwards-test-set.xml	43	47
-tests/misc/bug/_bug-test-set.xml	73	78
+tests/misc/bug/_bug-test-set.xml	72	78
 tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	2	4
 tests/misc/collations/_collations-test-set.xml	42	43
@@ -168,7 +168,7 @@ tests/strm/si-choose/_si-choose-test-set.xml	12	12
 tests/strm/si-copy-of/_si-copy-of-test-set.xml	20	20
 tests/strm/si-copy/_si-copy-test-set.xml	38	38
 tests/strm/si-document/_si-document-test-set.xml	13	14
-tests/strm/si-element/_si-element-test-set.xml	69	72
+tests/strm/si-element/_si-element-test-set.xml	67	72
 tests/strm/si-for-each-group/_si-for-each-group-test-set.xml	109	114
 tests/strm/si-for-each/_si-for-each-test-set.xml	19	20
 tests/strm/si-fork/_si-fork-test-set.xml	33	55

@@ -294,10 +294,22 @@ elif [ -f "$BASELINE" ]; then
   # reproduced under a quiet machine: a gate that cries wolf gets ignored, but a gate with
   # slack in it is worse, because it never fires at all.
   #
-  # Baselines are the MAXIMUM observed across clean runs, never the latest. A re-baseline
-  # taken from a perturbed run silently lowers the bar, which is how three streaming sets
-  # briefly lost a case each here — CLI probes were running alongside the sweep. Run a
-  # re-baseline with nothing else on the machine.
+  # Baseline each set at the value it RELIABLY achieves, and re-baseline only from a quiet
+  # machine. Two rules that pull against each other, both learned here:
+  #
+  #   Never lower a baseline from a perturbed run. Three streaming sets briefly lost a case
+  #   each when CLI probes ran alongside a re-baseline; taking that run at face value would
+  #   have silently lowered the bar, which is the failure this gate exists to prevent.
+  #
+  #   But "always take the maximum" is wrong too, and it was the rule here first. It records
+  #   a lucky run as the standard and then fires on every ordinary one. misc/bug was
+  #   baselined at 73 from a run where bug-3701 happened to finish inside its 10s timeout;
+  #   it does not usually, so the gate reported a regression on a build that was PROVEN
+  #   identical — the same drop appeared with the change reverted.
+  #
+  # For a set demonstrated unstable, baseline the value it reaches every time (misc/bug 72,
+  # si-element 67 of an observed 69/68/67) rather than its best. A gate that fires on noise
+  # gets ignored, and an ignored gate catches nothing — which is the whole point of #40.
   regressed="$(awk -F'\t' '
     NR==FNR { base[$1]=$2; tol[$1]=($4==""?0:$4); next }
     ($1 in base) && $2 < base[$1] - tol[$1] {
