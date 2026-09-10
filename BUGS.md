@@ -1332,6 +1332,25 @@ Cheap countermeasure: enumerate what the input format can express, then check th
 handles each. One command compared every `<assert*>` element against the runner's switch
 and found three gaps at once.
 
+*Assert that it ran at the expected SCALE, not just that it did not fail.* The sharpest form of
+the entry below, and the one to reach for first. One skipped test and 428 skipped tests are both
+green. A guard that never engaged and a guard that engaged and found nothing both print nothing.
+A build that never picked up your change and a change with no effect both leave the numbers
+unmoved. In every case the pass/fail is identical and only the COUNT distinguishes them.
+
+So the cheap control is almost always a count or a positive control, not a stronger assertion:
+
+| the question | the useless check | the check that works |
+|---|---|---|
+| did the suite run? | did it fail? | how many cases ran? |
+| did strict mode engage? | did anything throw? | does a known-bad input throw? |
+| did the rebuild take? | did it build? | does the DLL hash differ? |
+| did the branch execute? | is the output right? | log the branch and count hits |
+
+Each of these was needed on the same day, in tooling built by two people who were not
+coordinating, and in several cases by whoever had just finished explaining the pattern to the
+other. Naming a failure mode does not immunise you against it; only a control does.
+
 *A step that did not run looks exactly like a step that ran and found nothing* — four instances
 in one day, in unrelated tooling built by two people who were not coordinating:
 
