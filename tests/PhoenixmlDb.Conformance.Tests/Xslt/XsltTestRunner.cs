@@ -199,6 +199,10 @@ public sealed class XsltTestRunner
             var uri = source.Attribute("uri")?.Value;
             var role = source.Attribute("role")?.Value;
             var sourceSelect = source.Attribute("select")?.Value;
+            // The engine has supported XInclude since SP1 (XsltTransformer.EnableXInclude);
+            // the runner simply never read the attribute that asks for it.
+            var sourceXInclude = string.Equals(source.Attribute("xinclude")?.Value, "true",
+                StringComparison.OrdinalIgnoreCase);
 
             // Sources with uri but no role are secondary documents (for doc() function),
             // not the principal source. Only use "." as default when no uri is specified.
@@ -214,6 +218,7 @@ public sealed class XsltTestRunner
                 {
                     env.PrincipalSource = sourcePath;
                     if (sourceSelect != null) env.PrincipalSourceSelect = sourceSelect;
+                    if (sourceXInclude) env.PrincipalSourceXInclude = true;
                 }
                 else
                 {
@@ -777,6 +782,7 @@ public sealed class XsltTestRunner
             PrincipalSourceContent = env.PrincipalSourceContent,
             PrincipalSourceBaseUri = env.PrincipalSourceBaseUri,
             PrincipalSourceSelect = env.PrincipalSourceSelect,
+            PrincipalSourceXInclude = env.PrincipalSourceXInclude,
             InitialTemplate = env.InitialTemplate,
             InitialFunction = env.InitialFunction,
             InitialFunctionNamespace = env.InitialFunctionNamespace,
@@ -813,6 +819,8 @@ public sealed class XsltTestRunner
             target.PrincipalSourceContent = source.PrincipalSourceContent;
         if (source.PrincipalSourceSelect != null)
             target.PrincipalSourceSelect = source.PrincipalSourceSelect;
+        if (source.PrincipalSourceXInclude)
+            target.PrincipalSourceXInclude = true;
         if (source.InitialTemplate != null)
             target.InitialTemplate = source.InitialTemplate;
         if (source.InitialFunction != null)
@@ -1040,6 +1048,12 @@ public sealed class XsltTestRunner
                 {
                     transformer.SetSourceDocumentUri(testCase.Environment.PrincipalSourceBaseUri);
                 }
+
+                // XInclude expansion must be requested AFTER SetSourceDocumentUri: relative
+                // hrefs resolve against the source base URI, and EnableXInclude's contract
+                // requires one to be set.
+                if (testCase.Environment.PrincipalSourceXInclude)
+                    transformer.EnableXInclude();
 
                 // Set source select expression if specified (e.g., select="/doc" to use doc element as initial context)
                 if (testCase.Environment.PrincipalSourceSelect != null)
@@ -2193,6 +2207,12 @@ public sealed class XsltEnvironment
     public string? PrincipalSourceContent { get; set; }
     public Uri? PrincipalSourceBaseUri { get; set; }
     public string? PrincipalSourceSelect { get; set; }
+    /// <summary>
+    /// The corpus's <c>&lt;source xinclude="true"/&gt;</c>: the principal source must be read
+    /// with XInclude expansion. Declared by exactly one case (base-uri-052) and never read
+    /// until now, so its xi:include elements reached the stylesheet unexpanded.
+    /// </summary>
+    public bool PrincipalSourceXInclude { get; set; }
     public Dictionary<string, string> AdditionalSources { get; } = [];
     public Dictionary<string, string> AdditionalSourceContents { get; } = [];
     public Dictionary<string, string> Parameters { get; } = [];

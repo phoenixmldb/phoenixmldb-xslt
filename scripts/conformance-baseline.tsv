@@ -47,7 +47,7 @@ tests/expr/predicate/_predicate-test-set.xml	57	57
 tests/expr/xpath-compat/_xpath-compat-test-set.xml	15	17
 tests/fn/accessor/_accessor-test-set.xml	37	37
 tests/fn/available-system-properties/_available-system-properties-test-set.xml	29	29
-tests/fn/base-uri/_base-uri-test-set.xml	50	51
+tests/fn/base-uri/_base-uri-test-set.xml	51	51
 tests/fn/collection/_collection-test-set.xml	3	6
 tests/fn/copy-of/_copy-of-test-set.xml	10	10
 tests/fn/core-function/_core-function-test-set.xml	90	90
