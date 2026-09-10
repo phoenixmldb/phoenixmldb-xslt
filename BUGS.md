@@ -1089,6 +1089,44 @@ make it required; where a public signature forbids that (b — the XSLT engine c
 `AtomizeTyped` cross-repo as a package), document the trap **at the definition of the unsafe
 overload**, not only at the fixed call sites.
 
+**A fourth instance, and the one that cost most: `fn:sum` returned 0.** `xs:integer` is
+unbounded, so casting TEXT to it yields `BigInteger` even for the value 10. `SumHelper` matched
+`int or long`, `double`, `float`, `decimal`, untypedAtomic and the durations — not `BigInteger`.
+Unmatched items fell through the whole chain, still counted, and contributed nothing, so
+`sum((xs:integer("10"), xs:integer("30")))` returned **0** with no error. `fn:avg` and
+`fn:min`/`fn:max` already carried the case. Any query summing integer-typed element text was
+affected — no store, no `collection()`, no LINQ needed.
+
+**Two opposite reasoning errors found it, both worth naming.** They are the same mistake in
+mirror image, and each cost real time:
+
+> *A reduction that does not reproduce did not clear the code — it dropped a variable.*
+> The first minimal repro used a `decimal` selector because that is the natural type for a
+> price. It passed on both versions, and absence was reported. The failing test used `int`,
+> which is the only thing that mattered.
+
+> *A code path that cannot produce the value does not clear the hypothesis — another path can.*
+> BigInteger was the first hypothesis. Two paths that produce `xs:integer` from text were read,
+> both correctly returning `long` for in-range input, and the hypothesis was abandoned. A third
+> path produces it. An hour went into a single-enumeration theory that measurement then killed.
+
+Both resolve the same way: **instrument and look, rather than reason about what must be true.**
+One temporary `else { throw ... item.GetType().FullName }` settled in two minutes what reading
+could only have settled by exhaustive enumeration:
+
+```
+Runtime error [PROBE]: UNMATCHED item type: System.Numerics.BigInteger value=10
+```
+
+A negative conclusion drawn from reading requires exhaustiveness that reading almost never
+provides. Treat "I have read the paths that produce this" as "I have read *some* of them".
+
+**Watch the ternary when narrowing a widened numeric type.** The fix narrows the exact total
+back to `long` when it fits. `cond ? (long)total : total` silently converts it straight back —
+the conditional operator unifies both arms to one type and `BigInteger` defines an implicit
+conversion from `long`. Cast BOTH arms to `object`. The CLI printed `40` either way; only the
+unit suite, which asserts runtime type rather than numeric value, caught it.
+
 **Corollary about repro cost.** (b) was reported as needing an LMDB store, and that was believed
 for a whole exchange. It was wrong: a fake `INodeProvider` harness from #160 already existed in
 the XQuery test project and constructs the failing condition with no store at all. Before
