@@ -1135,6 +1135,47 @@ fake of whatever the consumer supplies.
 
 ---
 
+### 41. OPEN — eight catalog environment attributes the XSLT runner never reads (2026-09-10)
+
+`xinclude` was found by a single failing case (base-uri-052) and fixed; the engine had supported
+XInclude since SP1, so a working capability was being scored as a failure for want of three lines
+in the runner. Prompted by the phoenixml engine repo, whose runner DOES read it and scores 052 as
+passing, the whole attribute surface was then enumerated rather than waiting for the next case to
+surface itself.
+
+Method: every attribute appearing on a catalog **schema** element inside `<environment>` across
+all test-sets plus `catalog.xml`, with inline `<content>` bodies stripped (those are document data,
+not catalog schema), diffed against what `XsltTestRunner` reads.
+
+| element | attribute | uses | read? | assessment |
+|---|---|---|---|---|
+| `source` | `streaming` | 176 | **no** | worth a real check — see below |
+| `source` | `context` | 165 | **no** | 166 of 166 are the single value `static-expression-context`; a marker, likely benign |
+| `schema` | `xsd-version` | 121 | **no** | schema-aware; #38's feature decision, not a defect |
+| `source` | `validation` | 115 | **no** | schema-aware; same |
+| `source` | `defines-stylesheet` | 15 | **no** | unassessed |
+| `resource` | `media-type` | 13 | **no** | unassessed |
+| `source` | `xml-version` | 1 | **no** | unassessed |
+| `namespace` | `prefix` | 1 | **no** | unassessed |
+
+Everything else the corpus declares IS read: `role`, `file`, `uri`, `select`, `xinclude`,
+`ref`, `name`, `value`, `static`, `as`, `encoding`, `media-type`'s siblings, `stylesheet/@file`,
+`stylesheet/@role`, `collection/@uri`, `schema/@file`, `schema/@role`, `schema/@uri`.
+
+**On `source/@streaming` specifically — a candidate, not a finding.** The runner decides whether a
+test needs streaming from a `STREAMABLE` *parameter*, not from this attribute, and the engine
+auto-selects streaming for file inputs when the stylesheet declares a streamable mode. So there is
+a plausible mechanism by which ignoring it costs nothing. It has NOT been measured either way, and
+the streaming chunks are large enough (strm1/2/3 = 700/678/871) that a systematic mis-scoring
+there would matter. Do not treat the current streaming numbers as settled until this is checked.
+
+The failure mode of every row above is silence — a declared capability the runner ignores scores a
+working engine as failing (or, worse for a conformance claim, an unexercised path as passing). That
+is why enumerating beats waiting: `xinclude` is declared by exactly ONE case in 10,630, and a
+feature the corpus exercises once is a feature nobody notices is unwired.
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
