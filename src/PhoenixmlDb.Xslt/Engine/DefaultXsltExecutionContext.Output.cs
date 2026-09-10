@@ -446,8 +446,24 @@ internal sealed partial class DefaultXsltExecutionContext
                         hasChildren = true;
                         _sink.StartElementClose(false);
                         PushOutputNsScope(nsBindings);
-                        foreach (var child in children)
-                            SerializeNode(child, copyNamespaces, faithfulNamespaces);
+                        // Descendant text belongs INSIDE this element. Without the depth bump,
+                        // a text child reaches OutputText at _serializingElementDepth == 0, and
+                        // when a body is collecting text as separate sequence items (an untyped
+                        // xsl:function, whose default return type item()* enables that) the text
+                        // is diverted into the accumulator instead — so the element came back
+                        // correctly named but empty. position-2201 / function-1022: an untyped
+                        // function doing xsl:copy-of of an element that is itself part of a copy
+                        // yielded <ir:base/> where <ir:base>4</ir:base> was required.
+                        _serializingElementDepth++;
+                        try
+                        {
+                            foreach (var child in children)
+                                SerializeNode(child, copyNamespaces, faithfulNamespaces);
+                        }
+                        finally
+                        {
+                            _serializingElementDepth--;
+                        }
                         PopOutputNsScope();
                         _sink.EndElement(eName);
                     }
