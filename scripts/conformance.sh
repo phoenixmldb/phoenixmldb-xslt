@@ -30,6 +30,18 @@
 #   CONFORMANCE_TIMEOUT   per-chunk seconds (default 900)
 #   CONFORMANCE_OUT       results directory (default ./conformance-results)
 #   CONFORMANCE_CONFIG    Debug|Release (default Debug)
+#   CONFORMANCE_BASELINE  per-set baseline file (default scripts/conformance-baseline.tsv)
+#   CONFORMANCE_UPDATE_BASELINE=1   rewrite the baseline from this run instead of checking it
+#
+# Per-set gating. Chunk totals CANNOT express a regression: `insn` once went 1497 -> 1508
+# while insn/call-template quietly lost 2 cases, because try gained 7 and analyze-string
+# gained 4. An aggregate hides a loss exactly when something else in the aggregate improves
+# — which is when you are most likely to be reading it and least likely to be suspicious.
+# The same shape as the fail-open harness bug (BUGS.md #28): a check that cannot express the
+# thing it exists to catch. So every test-set's passing count is recorded and compared
+# individually, and ANY set going down fails the run regardless of what the totals did.
+# A consumer found the call-template drop before this script could; that is the gap this
+# closes. "Remember to also diff the per-case list" is not a control.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -236,6 +248,70 @@ for g in "${CHUNKS[@]}"; do
 
   printf '%-7s %4ds  %s\n' "$g" "$d" "$line" | tee -a "$OUT/summary.txt"
 done
+
+# ---- per-set regression gate -------------------------------------------------
+# Pair each "Running N tests from <set>" with the "Results: X/Y passed" that follows it.
+BASELINE="${CONFORMANCE_BASELINE:-$ROOT/scripts/conformance-baseline.tsv}"
+CURRENT="$OUT/per-set-current.tsv"
+: > "$CURRENT"
+for g in "${CHUNKS[@]}"; do
+  [ -f "$OUT/$g.log" ] || continue
+  awk '/^ Running [0-9]+ tests from /{set=$NF}
+       /^ Results: /{split($2,a,"/"); if(set!=""){print set"\t"a[1]"\t"a[2]; set=""}}' \
+    "$OUT/$g.log" >> "$CURRENT"
+done
+sort -o "$CURRENT" "$CURRENT"
+
+if [ "${CONFORMANCE_UPDATE_BASELINE:-0}" = "1" ]; then
+  # Only the sets this run actually covered are refreshed; sets from other chunks are kept,
+  # so updating after a single-chunk run cannot silently erase the rest of the baseline.
+  if [ -f "$BASELINE" ]; then
+    # Carry each set's existing tolerance across the refresh — re-baselining must not
+    # silently reset a tolerance someone set deliberately.
+    awk -F'\t' 'NR==FNR{tol[$1]=$4; next}
+                 {t=($1 in tol && tol[$1]!="")?tol[$1]:""; print $1"\t"$2"\t"$3 (t==""?"":"\t" t)}' \
+      "$BASELINE" "$CURRENT" > "$CURRENT.tol"
+    awk -F'\t' 'NR==FNR{seen[$1]=1; next} !($1 in seen)' "$CURRENT" "$BASELINE" > "$BASELINE.keep"
+    cat "$CURRENT.tol" "$BASELINE.keep" | sort -o "$BASELINE"
+    rm -f "$BASELINE.keep" "$CURRENT.tol"
+  else
+    cp "$CURRENT" "$BASELINE"
+  fi
+  echo "per-set baseline updated: $BASELINE" | tee -a "$OUT/summary.txt"
+elif [ -f "$BASELINE" ]; then
+  # Optional 4th baseline column: cases this set may lose without failing the run.
+  # MEASURED, not assumed: two back-to-back serial sweeps of strm1/strm2/strm3 produced
+  # byte-identical per-set counts across all 89 streaming sets (700/678/871 both times), so
+  # every set is baselined at tolerance 0 and the column is currently unused. The run-to-run
+  # variation these suites are known for (strm1 seen at 694-700) comes from CONCURRENT runs
+  # — a bare `dotnet test` running net8.0 and net10.0 at once starves timing-sensitive
+  # streaming tests. This script is serial by construction, so it does not see it.
+  # Keep the column for the day a set proves genuinely variable; do not pre-emptively widen
+  # tolerances, because a gate that cries wolf gets ignored and costs more than it is worth.
+  regressed="$(awk -F'\t' '
+    NR==FNR { base[$1]=$2; tol[$1]=($4==""?0:$4); next }
+    ($1 in base) && $2 < base[$1] - tol[$1] {
+      printf "  %s: %d -> %d  (-%d, tolerance %d)\n", $1, base[$1], $2, base[$1]-$2, tol[$1] }
+  ' "$BASELINE" "$CURRENT")"
+  gained="$(awk -F'\t' '
+    NR==FNR { base[$1]=$2; next }
+    ($1 in base) && $2 > base[$1] { printf "  %s: %d -> %d  (+%d)\n", $1, base[$1], $2, $2-base[$1] }
+  ' "$BASELINE" "$CURRENT")"
+  newsets="$(awk -F'\t' 'NR==FNR{base[$1]=1; next} !($1 in base){printf "  %s (%d/%d)\n", $1, $2, $3}' \
+              "$BASELINE" "$CURRENT")"
+  [ -n "$gained" ]  && { echo "per-set GAINS:"    | tee -a "$OUT/summary.txt"; echo "$gained"  | tee -a "$OUT/summary.txt"; }
+  [ -n "$newsets" ] && { echo "per-set NEW sets:" | tee -a "$OUT/summary.txt"; echo "$newsets" | tee -a "$OUT/summary.txt"; }
+  if [ -n "$regressed" ]; then
+    echo "PER-SET REGRESSION — these test-sets lost cases:" | tee -a "$OUT/summary.txt"
+    echo "$regressed" | tee -a "$OUT/summary.txt"
+    echo "If the drop is intended, re-run with CONFORMANCE_UPDATE_BASELINE=1 to re-baseline." |
+      tee -a "$OUT/summary.txt"
+    failed=1
+  fi
+else
+  echo "no per-set baseline at $BASELINE — create it with CONFORMANCE_UPDATE_BASELINE=1" |
+    tee -a "$OUT/summary.txt"
+fi
 
 total=$((SECONDS - started))
 printf '\n%d chunk(s) in %dm%02ds — logs in %s\n' "${#CHUNKS[@]}" $((total / 60)) $((total % 60)) "$OUT" |
