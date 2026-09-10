@@ -1235,6 +1235,29 @@ Cheap countermeasure: enumerate what the input format can express, then check th
 handles each. One command compared every `<assert*>` element against the runner's switch
 and found three gaps at once.
 
+*A step that did not run looks exactly like a step that ran and found nothing* — four instances
+in one day, in unrelated tooling built by two people who were not coordinating:
+
+| the step | what it produced | what it looked like |
+|---|---|---|
+| expected-error harness had no code to compare | matched on any exception | a pass |
+| chunk-total gate, set-level loss inside a rising chunk | a bigger number | a gain |
+| `-c Release` that never reached the projects | Debug results | "configuration makes no difference" |
+| a probe that failed to compile (CA1849) | no log file | "the branch never ran" |
+
+The countermeasures were the same move every time — **hash the artifact, log the branch, refuse to
+emit a number** — and none of them check the answer. They check that there *was* an answer.
+
+That is why they are cheap and why they generalise. Checking the answer needs an oracle: you must
+already know the right result, which for a conformance run is the thing you are trying to find
+out. Checking that the step executed needs nothing but the pipeline's own artifacts — a hash, a
+log line, a case count.
+
+The related distinction, worth keeping separate: `Build FAILED` printing above a bad probe and the
+per-set gate both surface the same fact, but only one FAILS the run. Correctness that depends on a
+reader noticing is not a control, because the reader who most needs to notice is the one who
+already believes the run succeeded.
+
 *One of a pair had a fix its twin lacked* — the dominant shape in this codebase, and #39
 records three more in a single branch. It appears wherever the same job is done in two places:
 the two `fn:transform` implementations, the local and global variable paths, the XSLT and
