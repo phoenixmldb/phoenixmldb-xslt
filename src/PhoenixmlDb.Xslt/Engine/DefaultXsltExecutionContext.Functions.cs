@@ -1470,7 +1470,13 @@ internal sealed partial class DefaultXsltExecutionContext
         pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.ConvertXsdEscapesToNet(pattern);
         if (!flags.Contains('m', StringComparison.Ordinal))
             pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDollarAnchor(pattern);
-        pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDotForSurrogatePairs(pattern);
+        // Pass the 's' flag through: this helper rewrites '.' into an explicit character
+        // class, and its non-single-line form is [^\r\n]. Rewriting unconditionally bakes
+        // "dot does not match a newline" into the PATTERN, where RegexOptions.Singleline —
+        // set above — can no longer affect it. The five XQuery callers pass the flag; these
+        // two XSLT ones did not (analyze-string-008/034/065).
+        pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDotForSurrogatePairs(pattern,
+            flags.Contains('s', StringComparison.Ordinal));
 
         var regex = new System.Text.RegularExpressions.Regex(pattern, regexOptions);
 
