@@ -1058,6 +1058,45 @@ handled.
 
 ---
 
+### 40. One helper, one unswept twin — three instances in one branch — FIXED 2026-09-09/10
+
+Three defects fixed on `fix/err-location-runtime-exception` (XSLT) and
+`fix/aggregate-provider-atomization` (XQuery) turned out to be the same structural shape:
+**a helper grew a parameter, some call sites were updated to pass it, and the ones that were
+not kept the old behaviour silently** — because the parameter had a default.
+
+| # | helper | passed it | did not | symptom |
+|---|---|---|---|---|
+| a | `FixDotForSurrogatePairs(pattern, singleLineMode)` | 5 XQuery call sites | both XSLT ones | `flags="s"` ignored by `xsl:analyze-string` |
+| b | `AtomizeTyped(value)` / `Atomize(value)` | `fn:data`, `fn:number`, type ctors, string fns | `fn:sum` `fn:avg` `fn:max` `fn:min` | store-backed elements atomize to `''` |
+| c | scope push around a body | every other construct | `xsl:try` | try-body variables clobbered outer ones |
+
+(b) is the third sweep of one defect: #160 fixed `fn:number`/`fn:data`/type constructors, #163
+the string functions, and the aggregates were missed **both** times.
+
+**Why the default is the mechanism, not an incidental detail.** In each case the wrong behaviour
+is what you get by *not* thinking about the parameter. Adding it was source-compatible, so the
+compiler never enumerated the call sites, and every missed one silently kept the pre-fix
+semantics. A required parameter would have turned all three into build errors.
+
+In (a) the flag was even parsed and mapped correctly — `RegexOptions.Singleline` was set — and
+then discarded by a *pattern rewrite* applied afterwards that baked `[^\r\n]` into the regex.
+Checking that the flag was honoured at the parse site proved nothing.
+
+**Cheap countermeasure.** When a helper gains a parameter that changes semantics, grep every
+call site in the same commit and list them in the message. If the parameter can be required,
+make it required; where a public signature forbids that (b — the XSLT engine consumes
+`AtomizeTyped` cross-repo as a package), document the trap **at the definition of the unsafe
+overload**, not only at the fixed call sites.
+
+**Corollary about repro cost.** (b) was reported as needing an LMDB store, and that was believed
+for a whole exchange. It was wrong: a fake `INodeProvider` harness from #160 already existed in
+the XQuery test project and constructs the failing condition with no store at all. Before
+accepting "this can only be reproduced in the consumer", grep the test project for an existing
+fake of whatever the consumer supplies.
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
@@ -1076,7 +1115,7 @@ arrays flattened into sequences · `<serialization-matches>` unimplemented (576)
 `<assert-xml file=>` never read (41 each) · XSLT `_ => true` passing ~12800 assertions ·
 assertions parsed with query-source line-ending normalization.
 
-**Two patterns worth remembering.**
+**Three patterns worth remembering.**
 
 *The error message named the wrong thing* — five separate piles hid this way:
 `FORX0002: POSIX character class` for a pattern containing no POSIX syntax;
@@ -1090,3 +1129,10 @@ Cheap countermeasure: confirm the input actually uses the feature the error name
 Cheap countermeasure: enumerate what the input format can express, then check the parser
 handles each. One command compared every `<assert*>` element against the runner's switch
 and found three gaps at once.
+
+*One of a pair had a fix its twin lacked* — the dominant shape in this codebase, and #39
+records three more in a single branch. It appears wherever the same job is done in two places:
+the two `fn:transform` implementations, the local and global variable paths, the XSLT and
+XQuery copies of a regex or atomization helper. Cheap countermeasure: when you fix one, grep for
+the other **in the same commit**. A helper that took a new parameter is the highest-yield thing
+to grep for, because the default hides every site you missed.
