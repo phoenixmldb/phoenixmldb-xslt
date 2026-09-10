@@ -1257,6 +1257,48 @@ longer contained.
 
 ---
 
+### 43. The conformance harness measured Debug, and understated the engine (2026-09-10)
+
+`conformance.sh` defaulted to `CONFORMANCE_CONFIG=Debug`. Debug is not what ships, so every
+conformance figure taken from it was a claim about an artifact nobody receives — and it was
+**too low**, entirely because of the harness's 10s per-case timeout.
+
+Measured, same commit, same machine, full 11-chunk sweep both ways:
+
+| | cases | rate | timeouts | wall clock |
+|---|---|---|---|---|
+| Debug | 10044/10630 | 94.49% | **43** | ~38 min |
+| Release | **10082/10630** | **94.84%** | **5** | ~25 min |
+
+**21 sets better under Release, ZERO sets worse.** 38 cases, 0.35 points.
+
+`misc/bug-3701` is the clean illustration, timed directly at load ~1.3:
+
+    Debug    10.3s / 10.8s / 10.9s      against a 10s cap
+    Release   5.7s /  5.5s /  6.1s      (and that at load ~10)
+
+Not flaky — over the line in one configuration and comfortably under in the other. It also
+explains why the phoenixml engine repo's floors, which are measured against published *packages*
+(Release), have always shown `bug-3701` passing while it flickered here.
+
+**Default is now Release.** The baseline was rebuilt from the Release sweep.
+
+**Why this belongs in the same register as the fail-open entries.** #28 was a check that passed
+when it could not verify anything; this is its mirror — a harness that FAILS cases the product
+passes. Both report something other than the truth, and the direction is not the point. A number
+that flatters is a lie you get called on; a number that undersells is one nobody checks, which is
+worse, because it survives.
+
+It also retires a mystery: the `call-template-1002/1003` stack-depth episode earlier the same day
+cost two sessions a long detour, and Debug frames were a live hypothesis throughout
+(Debug reached recursion depth 898 vs Release 976 on the same commit). Anything timing-,
+stack- or performance-sensitive measured in Debug is measuring the wrong build.
+
+**Cheap countermeasure, general:** before publishing a number from a harness, confirm the harness
+runs the configuration that ships. Ours did not, and nobody asked for two months.
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising

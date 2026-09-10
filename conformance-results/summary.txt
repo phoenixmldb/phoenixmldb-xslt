@@ -1,10 +1,7 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
 
-misc     375s  fixture Successful (22 tests) | 1820/1921 cases 94.7%, 101 failed
-PER-SET REGRESSION — these test-sets lost cases:
-  tests/misc/bug/_bug-test-set.xml: 73 -> 72  (-1, tolerance 0)
-If the drop is intended, re-run with CONFORMANCE_UPDATE_BASELINE=1 to re-baseline.
+fn        45s  fixture Successful (35 tests) | 1072/1131 cases 94.8%, 59 failed
+misc     210s  fixture Successful (22 tests) | 1821/1921 cases 94.8%, 100 failed
 
-1 chunk(s) in 6m15s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results
-one or more chunks failed
+2 chunk(s) in 4m15s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results

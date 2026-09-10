@@ -29,7 +29,23 @@
 # Env:
 #   CONFORMANCE_TIMEOUT   per-chunk seconds (default 900)
 #   CONFORMANCE_OUT       results directory (default ./conformance-results)
-#   CONFORMANCE_CONFIG    Debug|Release (default Debug)
+#   CONFORMANCE_CONFIG    Debug|Release (default RELEASE — see below)
+#
+# Why Release is the default. Debug was, and it cost 38 cases across 21 sets — 0.35 points of
+# conformance — entirely to timeouts. Measured, same commit, same machine:
+#
+#       Debug    10044/10630  94.49%   43 timeouts
+#       Release  10082/10630  94.84%    5 timeouts
+#       21 sets better under Release, ZERO sets worse.
+#
+# misc/bug-3701 is the clearest case: ~10.5s in Debug against the harness's 10s cap, ~5.7s in
+# Release. It is not flaky, it is over the line in one configuration and comfortably under in the
+# other, which is why the database repo's package-based floors have always shown it passing.
+#
+# The point is not that Release is faster. It is that RELEASE IS WHAT SHIPS. A Debug measurement
+# does not measure the artifact anyone receives, so a conformance figure taken from one is not a
+# claim about the product — and this one understated it. That is the fail-open shape inverted:
+# a harness that undercounts is still a harness reporting something other than the truth.
 #   CONFORMANCE_BASELINE  per-set baseline file (default scripts/conformance-baseline.tsv)
 #   CONFORMANCE_UPDATE_BASELINE=1   rewrite the baseline from this run instead of checking it
 #
@@ -56,7 +72,7 @@ TIMEOUT="${CONFORMANCE_TIMEOUT:-900}"
 # letting a genuinely wedged XSLT chunk sit for an hour. CONFORMANCE_TIMEOUT still overrides.
 XQTS_TIMEOUT="${CONFORMANCE_XQTS_TIMEOUT:-3600}"
 OUT="${CONFORMANCE_OUT:-$ROOT/conformance-results}"
-CONFIG="${CONFORMANCE_CONFIG:-Debug}"
+CONFIG="${CONFORMANCE_CONFIG:-Release}"
 
 # Order is cheapest-first so a broken engine shows up in the first minute rather than
 # the fortieth. It is not alphabetical on purpose.
