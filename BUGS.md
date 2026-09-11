@@ -1549,6 +1549,63 @@ found and fixed by parsers2.)
 
 ---
 
+### 50. Three tables disagree about what the prefix `dbxml` means (2026-09-11)
+
+Found by db-engine, reported via parsers2, confirmed here from source. Not a crash and
+not release-blocking — it is a naming decision that needs settling once, by a human,
+before more docs and more user queries are written against the disagreement.
+
+Three independent tables assign the prefix `dbxml`, and no two agree:
+
+| table | `dbxml` means | evidence |
+|---|---|---|
+| Core registry | `https://schemas.phoenixml.dev/2026/meta` (id 11) | `phoenixmldb-core/.../NamespaceRegistry.cs:26` |
+| XQuery engine | `https://schemas.phoenixml.dev/2026/db` (id 9) | `FunctionLibrary.cs:647`, `MetadataFunctions.cs:15,85` |
+| published docs | `http://phoenixml.endpointsystems.com/dbxml` — retired, resolves to NOTHING | 9 occurrences, 2 pages on phoenixml.dev |
+
+Core gives `/2026/db` the prefix `phx` and hands `dbxml` to `/2026/meta`. The XQuery engine
+and every published example use `dbxml` for `/2026/db`. So the same token names two different
+namespaces depending on which table you read, and a third value — the pre-migration URI — in
+the docs a user actually copies from.
+
+**The docs facet is fixed** (`phoenixml-docs` branch `fix/dbxml-namespace-uri`): that URI
+appears in no engine source except the comment in `FunctionLibrary.ResolveNamespace` recording
+its migration, and there is no reverse-alias, so `dbxml:metadata()` could not resolve for
+anyone following the site. The prefix in a prolog is user-chosen, so correcting the URI is
+safe whichever way the naming lands.
+
+**`FunctionNamespaces.Dbxml` is additionally a misleading identifier** — it names id 9, which
+Core calls `PhoenixmlDb`/`phx`. Reading the two files side by side suggests a `Dbxml` id and a
+`PhoenixmlDb` id exist separately. They are the same id.
+
+#### The rationale that should drive the decision
+
+`dbxml` is not arbitrary. `database-extensions.md` states it "follows the Berkeley DB XML
+convention for database extension functions" and carries a comparison table against
+Sleepycat's `http://www.sleepycat.com/2002/dbxml`; there is a `migration-guide.md` aimed at
+that audience. The name is a deliberate compatibility gesture toward Berkeley DB XML users.
+
+That makes **Core the odd one out**, not XQuery. `dbxml` belongs on the database *extension
+function* namespace — which is what Berkeley DB XML users expect and what the engine and docs
+already do. Core assigning it to `/2026/meta` is the entry that contradicts the intent.
+
+**Recommendation for Lucas:** give `/2026/meta` a different conventional prefix in Core
+(`meta`, or `phxmeta`) and let `dbxml` mean `/2026/db` everywhere. That aligns three tables by
+changing the one with no users pointed at it, and preserves the Berkeley DB XML affordance.
+The alternative — renaming `dbxml`→`phx` engine-side — discards that affordance and breaks
+every published example and every user query already written against it.
+
+Nothing renamed. db-engine has worked around it by binding only `phx` → `/2026/db`.
+
+#### Found alongside: a real id collision, still latent
+
+`FunctionLibrary.cs:648-650` documents in-code that `FunctionNamespaces.Ft = new(10)` collides
+with Core's `NamespaceId.Xslt`, also 10. Harmless only because nothing round-trips an id
+through both tables today. Resolving it needs a **Core** change (a FullText id), so it wants a
+Core release — and Core is unchanged at 1.7.0, i.e. this does not ride along on an
+XQuery/XSLT-only 1.8.0. Worth deciding at the same time as the prefix, since both are Core
+registry edits.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
