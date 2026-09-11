@@ -1031,8 +1031,29 @@ public sealed partial class StylesheetParser
                 acceptElements.Add(child);
             }
         }
+        // xsl:accept rewrites each component's visibility, so record what the used package
+        // DECLARED abstract first. A component accepted as hidden is still abstract — it has no
+        // implementation — and calling it is XTDE3052, not "not found" (accept-901/905, 041b/c).
+        foreach (var (templateName, packageTemplate) in packageStylesheet.NamedTemplates)
+        {
+            if (packageTemplate.Visibility is Visibility.Abstract)
+                packageStylesheet.AbstractTemplateNames.Add(templateName);
+        }
+        foreach (var (functionKey, packageFunction) in packageStylesheet.Functions)
+        {
+            if (packageFunction.Visibility is Visibility.Abstract)
+                packageStylesheet.AbstractFunctionKeys.Add(functionKey);
+        }
         if (acceptElements.Count > 0)
             ApplyAcceptVisibilities(acceptElements, packageStylesheet);
+        // Accepting a component AS abstract makes the using package abstract in turn, so it
+        // cannot be executed: XTSE3080 (accept-904/908/912/914). Accepting the same component as
+        // hidden does not — it stays executable, and calling the component is XTDE3052
+        // (accept-901/905). What the used package happens to declare abstract is not the test:
+        // a package is free to use one whose internals are abstract, as long as it does not
+        // accept them as abstract itself.
+        if (acceptElements.Any(a => a.Attribute("visibility")?.Value.Trim() == "abstract"))
+            stylesheet.HasAcceptedAbstractComponent = true;
 
         // XTSE3050 (cross-package): each xsl:use-package is a distinct instance of the used
         // package, so a component it contributes as a visible (accepted, not hidden) component

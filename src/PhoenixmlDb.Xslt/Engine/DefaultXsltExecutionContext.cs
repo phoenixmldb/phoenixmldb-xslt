@@ -840,6 +840,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 lib.RegisterPrefix(xsltFunc.Name.Prefix, xsltFunc.Name.Namespace);
         }
 
+        // An abstract function exists as a component but has no body. Registering nothing left
+        // the call site reporting "function not found" — a name nothing declares — where the
+        // answer is the dynamic XTDE3052 (accept-041b/c, accept-901..904).
+        foreach (var key in stylesheet.AbstractFunctionKeys)
+        {
+            if (!stylesheet.Functions.ContainsKey(key))
+                lib.Register(new XsltAbstractFunctionAdapter(key.Name, key.Arity));
+        }
+
         // Register xsl:original function for package overrides — resolved dynamically
         // at runtime via _currentXsltFunctionStack
         lib.Register(new XsltOriginalFunctionAdapter(this));

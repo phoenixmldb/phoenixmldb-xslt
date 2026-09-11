@@ -95,6 +95,26 @@ public sealed class XsltStylesheet
     public HashSet<QName> AbstractVariableNames { get; init; } = new();
 
     /// <summary>
+    /// Named templates from used packages that remain abstract (or were hidden by xsl:accept),
+    /// so they exist as components but have no body to run. Calling one is XTDE3052; they are
+    /// not merged into <see cref="NamedTemplates"/>, where they would be callable.
+    /// </summary>
+    public HashSet<QName> AbstractTemplateNames { get; init; } = new();
+
+    /// <summary>
+    /// Functions from used packages that remain abstract, keyed as <see cref="Functions"/> is.
+    /// Calling one is XTDE3052. A stub is registered for each at function-library construction,
+    /// but only where no concrete function of that name and arity exists.
+    /// </summary>
+    public HashSet<(QName Name, int Arity)> AbstractFunctionKeys { get; init; } = new();
+
+    /// <summary>
+    /// True when an xsl:accept in this package accepts a component with visibility="abstract".
+    /// That makes this package abstract in turn, so it cannot be executed: XTSE3080.
+    /// </summary>
+    public bool HasAcceptedAbstractComponent { get; set; }
+
+    /// <summary>
     /// Package-local global variables that could not take the principal QName-keyed slot
     /// because a same-named global from another package already claimed it. Each is stamped
     /// with its owning package (<see cref="XsltVariable.PackageStylesheet"/>) and resolved
