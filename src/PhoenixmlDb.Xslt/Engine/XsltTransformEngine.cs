@@ -3606,6 +3606,19 @@ public sealed class XsltTransformEngine
         {
             if (deferredAbstractGlobals.ContainsKey(global.Name))
                 continue; // bound above as a deferred XTDE3052 value
+            // A global leaves the pending map when its evaluation STARTS, not when it ends.
+            // Two defects came from treating membership as "not yet bound":
+            //   - a global already initialized on demand (GetVariable → InitializePendingGlobalAsync,
+            //     for a dependency the static analysis missed) was evaluated AGAIN here and
+            //     rebound — a second node identity, side effects twice: $a is $b was false for
+            //     <xsl:variable name="a" select="f:get()"/> where f:get returns $b;
+            //   - while evaluated here it still read as pending, so a reference to it re-entered
+            //     initialization instead of reaching the XTDE0640 circularity check.
+            // One whose on-demand evaluation failed (not bound) is evaluated again, so its own
+            // error surfaces rather than "not defined".
+            var wasPending = context._pendingGlobals.Remove(global.Name);
+            if (!wasPending && context.GlobalVariables.ContainsKey(global.Name))
+                continue;
             // Push per-element version for backwards-compatible mode propagation
             if (global.Version != null)
                 context.PushVersion(global.Version);
@@ -3987,8 +4000,6 @@ public sealed class XsltTransformEngine
                 if (global.Version != null)
                     context.PopVersion();
             }
-            // Remove from pending now that it's been initialized
-            context._pendingGlobals?.Remove(global.Name);
         }
         // Clear pending map — all globals should be initialized now
         context._pendingGlobals = null;
