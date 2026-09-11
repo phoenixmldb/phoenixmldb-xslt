@@ -790,6 +790,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 NodeId? docElemId = root is XdmElement ? rootId : (NodeId?)null;
                 doc = new XdmDocument
                 {
+                    StringValueResolver = _nodeStore.StringValueResolver,
                     Id = tempDocId,
                     Document = new DocumentId(1),
                     Parent = NodeId.None,

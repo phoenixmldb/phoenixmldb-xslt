@@ -143,6 +143,7 @@ internal static class SnapshotHelper
                 nodeMapping?.TryAdd(ancestorDoc.Id, newDocId);
                 var newDoc = new XdmDocument
                 {
+                    StringValueResolver = store.StringValueResolver,
                     Id = newDocId,
                     Document = docId,
                     Parent = NodeId.None,
@@ -183,6 +184,7 @@ internal static class SnapshotHelper
 
                 var newElem = new XdmElement
                 {
+                    StringValueResolver = store.StringValueResolver,
                     Id = newElemId,
                     Document = docId,
                     Parent = previousCopyId,
@@ -223,6 +225,7 @@ internal static class SnapshotHelper
         {
             var newDoc = new XdmDocument
             {
+                StringValueResolver = store.StringValueResolver,
                 Id = doc.Id,
                 Document = doc.Document,
                 Parent = doc.Parent,
@@ -237,6 +240,7 @@ internal static class SnapshotHelper
         {
             var newElem = new XdmElement
             {
+                StringValueResolver = store.StringValueResolver,
                 Id = elem.Id,
                 Document = elem.Document,
                 Parent = elem.Parent,
@@ -300,6 +304,7 @@ internal static class SnapshotHelper
 
                 var newDoc = new XdmDocument
                 {
+                    StringValueResolver = store.StringValueResolver,
                     Id = newId,
                     Document = docId,
                     Parent = NodeId.None,
@@ -355,6 +360,7 @@ internal static class SnapshotHelper
 
                 var newElem = new XdmElement
                 {
+                    StringValueResolver = store.StringValueResolver,
                     Id = newId,
                     Document = docId,
                     Parent = parentId,

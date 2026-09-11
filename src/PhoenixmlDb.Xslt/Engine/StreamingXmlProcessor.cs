@@ -1438,6 +1438,7 @@ internal sealed class StreamingXmlProcessor
         var docNodeId = _nodeStore.NextId();
         _nodeStore.Register(new XdmDocument
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = docNodeId,
             Document = documentId,
             Children = XdmDocument.EmptyChildren,
@@ -1878,6 +1879,7 @@ internal sealed class StreamingXmlProcessor
         }
         var elem = new XdmElement
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = elemId,
             Document = documentId,
             Namespace = _nodeStore.InternNamespace(string.Empty),
@@ -2371,6 +2373,7 @@ internal sealed class StreamingXmlProcessor
 
         var elem = new XdmElement
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = elemId,
             Document = documentId,
             Namespace = _nodeStore.InternNamespace(namespaceUri ?? string.Empty),
@@ -2523,6 +2526,7 @@ internal sealed class StreamingXmlProcessor
 
         var elem = new XdmElement
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = elemId,
             Document = documentId,
             Namespace = _nodeStore.InternNamespace(frame.NamespaceUri ?? string.Empty),
@@ -2808,6 +2812,7 @@ internal sealed class StreamingXmlProcessor
         var docId = _nodeStore.NextId();
         _nodeStore.Register(new XdmDocument
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = docId,
             Document = StreamingDocumentId,
             Children = XdmDocument.EmptyChildren,

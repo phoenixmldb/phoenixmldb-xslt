@@ -207,6 +207,7 @@ internal static class StreamingSubtreeMaterializer
     {
         var elem = new XdmElement
         {
+            StringValueResolver = store.StringValueResolver,
             Id = frame.Id,
             Document = frame.DocumentId,
             Namespace = frame.Namespace,

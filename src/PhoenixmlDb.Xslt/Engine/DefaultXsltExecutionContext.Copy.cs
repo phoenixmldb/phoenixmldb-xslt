@@ -158,6 +158,7 @@ internal sealed partial class DefaultXsltExecutionContext
                                 ? (_nodeStore.GetNode(docElemId2) as XdmElement)?.LocalName : null;
                             var docNode2 = new XdmDocument
                             {
+                                StringValueResolver = _nodeStore.StringValueResolver,
                                 Id = docId2,
                                 Document = new DocumentId(1),
                                 Parent = NodeId.None,
@@ -180,6 +181,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         var docId2 = _nodeStore.NextId();
                         var docNode2 = new XdmDocument
                         {
+                            StringValueResolver = _nodeStore.StringValueResolver,
                             Id = docId2,
                             Document = new DocumentId(1),
                             Parent = NodeId.None,
@@ -1112,6 +1114,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     childIds.Add(CloneSubtreeDeep(c, id, copyNamespaces, forceDocument));
                 var clone = new XdmElement
                 {
+                    StringValueResolver = _nodeStore.StringValueResolver,
                     Id = id, Document = cloneDoc, Namespace = e.Namespace,
                     LocalName = e.LocalName, Prefix = e.Prefix,
                     Attributes = attrIds.Count == 0 ? XdmElement.EmptyAttributes : System.Collections.Immutable.ImmutableArray.CreateRange(attrIds),
@@ -1209,6 +1212,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var newDoc = new XdmDocument
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = newDocId,
             Document = new DocumentId((uint)newDocId.Value),
             Parent = NodeId.None,
@@ -1269,6 +1273,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 var newElem = new XdmElement
                 {
+                    StringValueResolver = _nodeStore.StringValueResolver,
                     Id = newId,
                     Document = elem.Document,
                     Parent = parentId,

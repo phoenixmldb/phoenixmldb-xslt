@@ -1614,6 +1614,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             ? (_nodeStore.GetNode(docElemId) as XdmElement)?.LocalName : null;
         var docNode = new XdmDocument
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = docId,
             Document = new DocumentId(1),
             Parent = NodeId.None,
@@ -2095,6 +2096,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         var flipDoc = new XdmDocument
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = docId,
             Document = new DocumentId(1),
             Parent = NodeId.None,

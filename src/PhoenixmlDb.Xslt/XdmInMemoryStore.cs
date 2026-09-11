@@ -53,6 +53,45 @@ public sealed class XdmInMemoryStore : INodeBuilder
     public void Register(XdmNode node) => _nodes[node.Id] = node;
     public XdmNode? GetNode(NodeId id) => _nodes.GetValueOrDefault(id);
 
+    /// <summary>
+    /// Computes an element's or document node's string value from its children in this store,
+    /// for nodes built without one. Give it to every element and document node the engine
+    /// constructs: <c>StringValueResolver = store.StringValueResolver</c>.
+    /// </summary>
+    /// <remarks>
+    /// A node's string value is its cached value, else its resolver's answer, else, silently,
+    /// the empty string. So a node built with children but no computed value read as empty,
+    /// indistinguishable from a genuinely empty one: <c>xsl:value-of</c> of an
+    /// <c>as="document-node()"</c> variable printed nothing, and so did json-to-xml's result.
+    /// Nodes that do compute their value keep it; the cached value always wins over this.
+    /// </remarks>
+    public XdmNode.XdmStringValueResolver StringValueResolver => _stringValueResolver ??= ComputeStringValue;
+
+    private XdmNode.XdmStringValueResolver? _stringValueResolver;
+
+    private string ComputeStringValue(XdmNode node)
+    {
+        var children = node switch
+        {
+            XdmElement e => e.Children,
+            XdmDocument d => d.Children,
+            _ => null,
+        };
+        if (children is not { Count: > 0 })
+            return string.Empty;
+        var sb = new System.Text.StringBuilder();
+        foreach (var id in children)
+        {
+            switch (GetNode(id))
+            {
+                case XdmText text: sb.Append(text.Value); break;
+                // An element child answers from its own cache or resolver.
+                case XdmElement child: sb.Append(child.StringValue); break;
+            }
+        }
+        return sb.ToString();
+    }
+
     // INodeBuilder explicit interface implementations (delegate to existing methods)
     NodeId INodeBuilder.AllocateId() => NextId();
     void INodeBuilder.RegisterNode(XdmNode node) => Register(node);

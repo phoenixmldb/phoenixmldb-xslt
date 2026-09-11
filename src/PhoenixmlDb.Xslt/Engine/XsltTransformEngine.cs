@@ -1284,6 +1284,7 @@ public sealed class XsltTransformEngine
         var syntheticDocId = nodeStore.NextId();
         var syntheticDoc = new XdmDocument
         {
+            StringValueResolver = nodeStore.StringValueResolver,
             Id = syntheticDocId,
             Document = new DocumentId(0),
             Children = [],
@@ -3827,6 +3828,7 @@ public sealed class XsltTransformEngine
                                     ? (context._nodeStore.GetNode(docElementId) as XdmElement)?.LocalName : null;
                                 var docNode = new XdmDocument
                                 {
+                                    StringValueResolver = context._nodeStore.StringValueResolver,
                                     Id = docId,
                                     Document = new DocumentId(1),
                                     Parent = NodeId.None,
@@ -4243,6 +4245,7 @@ public sealed class XsltTransformEngine
                     }
                     var docNode = new XdmDocument
                     {
+                        StringValueResolver = context._nodeStore.StringValueResolver,
                         Id = docId,
                         Document = new DocumentId(1),
                         Parent = NodeId.None,
@@ -4846,6 +4849,7 @@ public sealed class XsltTransformEngine
         var syntheticDocId = nodeStore.NextId();
         var syntheticDoc = new XdmDocument
         {
+            StringValueResolver = nodeStore.StringValueResolver,
             Id = syntheticDocId,
             Document = new DocumentId(0),
             Children = [],
@@ -5115,6 +5119,7 @@ public sealed class XsltTransformEngine
         var probeStore = new XdmInMemoryStore();
         var probeDoc = new XdmDocument
         {
+            StringValueResolver = probeStore.StringValueResolver,
             Id = probeStore.NextId(),
             Document = new DocumentId(0),
             Children = []
@@ -5305,6 +5310,7 @@ public sealed class XsltTransformEngine
 
         var docNode = new XdmDocument
         {
+            StringValueResolver = store.StringValueResolver,
             Id = docId,
             Document = new DocumentId(1),
             Parent = NodeId.None,
@@ -5453,6 +5459,7 @@ public sealed class XsltTransformEngine
 
                 var elem = new XdmElement
                 {
+                    StringValueResolver = store.StringValueResolver,
                     Id = elemId,
                     Document = docId,
                     Parent = parentId,
