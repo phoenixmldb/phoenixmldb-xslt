@@ -293,7 +293,15 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
             Assert.Skip("W3C QT3 suite not found. Set QT3_TEST_SUITE, or run scripts/fetch-conformance-suites.sh.");
         }
 
-        var testCases = await _fixture.LoadTestSetAsync(category, testSetName);
+        // A FRESH runner per set. The runner accumulates state as it runs — loaded schemas,
+        // registered document URIs, resource mappings, a document store, one engine — and a
+        // shared one carried every set's leftovers into the next. The monolith ran in catalog
+        // order, so that contamination was at least stable; as a theory the sets run in
+        // xunit's order, which follows the assembly PATH, so the same commits scored
+        // differently from two checkouts: method-html 40/64 from one, 36/64 from another,
+        // and 49/64 alone. A set's result must be a property of the set. (BUGS.md #44, incident 12)
+        var runner = _fixture.CreateRunner();
+        var testCases = await runner.LoadTestSetByNameAsync(testSetName, TestContext.Current.CancellationToken);
         _output.WriteLine($"Running {testCases.Count} tests from {category}/{testSetName}");
 
         var passed = 0;
@@ -301,7 +309,7 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
 
         foreach (var testCase in testCases)
         {
-            var result = await _fixture.Runner.RunTestAsync(testCase, TestContext.Current.CancellationToken);
+            var result = await runner.RunTestAsync(testCase, TestContext.Current.CancellationToken);
             if (result.Passed)
             {
                 passed++;
@@ -410,9 +418,19 @@ public sealed class XqtsTestFixture : IAsyncLifetime
         config.SkipTests.Add("fn-transform"); // Requires XSLT support in fn:transform
         config.SkipTests.Add("fn-parse-xml-fragment"); // DTD handling
 
+        _config = config;
         Runner = new XqtsTestRunner(_testDataPath, config);
         return ValueTask.CompletedTask;
     }
+
+    private XqtsConfiguration _config = null!;
+
+    /// <summary>
+    /// A runner with no history. <see cref="Runner"/> is shared and accumulates state across
+    /// everything it runs, so anything whose result must not depend on what ran before it —
+    /// the per-set theory — takes one of these instead.
+    /// </summary>
+    public XqtsTestRunner CreateRunner() => new(_testDataPath, _config);
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
