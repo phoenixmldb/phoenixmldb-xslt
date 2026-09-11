@@ -103,6 +103,22 @@ phase 4  xslt, xquery4, XSpec.Cli, [XQuery.Cli, Xslt.Cli if revived]
 phase 5  xquery-mcp, xslt-mcp    — pin XQuery / Xslt at the train version
 ```
 
+Concretely, for a 1.8.0 train:
+
+| # | action | publishes |
+|---|---|---|
+| 1 | tag `v1.8.0` in `phoenixmldb-core`, if Core changed | `PhoenixmlDb.Core` |
+| 2 | tag `v1.8.0` in `phoenixmldb-xquery` | `PhoenixmlDb.XQuery` |
+| 3 | tag `v1.8.0` in `phoenixmldb-xslt` | `PhoenixmlDb.Xslt` + `xslt` |
+| 4 | bump Xslt pin in `phoenixmldb-xquery`, tag `cli-v1.8.0` | `xquery4` |
+| 5 | bump pins, tag `v1.8.0` in `xquery-mcp` / `xslt-mcp` | `xquery-mcp`, `xslt-mcp` |
+| 6 | bump pin, tag `phxspec-v1.8.0` in the `xspec` fork | `PhoenixmlDb.XSpec.Cli` |
+
+Every step whose pin must match is gated by `check-release-train.sh`, which fails closed. The
+steps that are *not* machine-checked are the tags themselves — forgetting step 4 or 6 publishes
+nothing and fails silently. That is the remaining manual risk in this design, and it is the
+thing a release checklist exists to cover.
+
 Phases 4 and 5 can run together — nothing in either depends on the other — but keeping them
 distinct makes the failure obvious if an MCP server cannot build against the engine it is
 supposed to ship with, which is a thing we would rather learn at release than from a user.
@@ -111,10 +127,26 @@ Phase 4 is where the cycle dissolves: by then Xslt at the train version exists, 
 pin it directly instead of trailing. `check-release-train.sh` already enforces train-locked pins
 at pack time and fails closed, so the ordering is machine-checked once the phases are split.
 
-**The work this needs:** split the CLI pack/push out of the library job in `phoenixmldb-xquery`
-and `phoenixmldb-xslt`, triggered by a separate tag (`cli-v*`) or a second job gated on the
-library being live. Then delete the trails-by-1 policy, which exists only to paper over the
-cycle. XSpec.Cli additionally hardcodes `<Version>` in its csproj rather than taking it from the
+**This is now implemented for `phoenixmldb-xquery` — PR #28.** The tag scheme:
+
+```
+v<version>      packs PhoenixmlDb.XQuery      — needs Core only
+cli-v<version>  packs PhoenixmlDb.XQuery.Cli  — needs Xslt of this train
+```
+
+The two artifacts have different dependency sets, so separate tags let each be checked against
+what it actually needs. `check-release-train.sh` is ported and runs on the CLI tag only —
+demanding equality on a library tag would fail for a pin the library never uses.
+
+`trails-by-1` **stays**, and is not redundant with `train-locked`: `check-pins.sh` tolerates the
+window between Xslt publishing and this repo bumping to it, while `check-release-train.sh`
+demands equality at the only moment it matters, packing the CLI. Tolerance between trains,
+equality at the tag. What changes is that trailing by one is no longer *permanent* — which is
+how that pin sat at 1.6.11 through both the 1.6.12 and 1.6.13 trains.
+
+**`phoenixmldb-xslt` deliberately unchanged.** Its CLI pins XQuery, already published by the
+time that repo is tagged, so there is no cycle to dissolve. A second tag there would be symmetry
+for its own sake, and a tag someone can forget. XSpec.Cli additionally hardcodes `<Version>` in its csproj rather than taking it from the
 tag; that should move to tag-driven like the others.
 
 ## 4. Cadence
