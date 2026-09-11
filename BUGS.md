@@ -2022,7 +2022,42 @@ it backwards: no release on this line has ever passed it. It is not a gate; it i
 nobody can act on, which is worse than no signal because it occupies the place where a gate
 would go.
 
-#### Why it fails, concretely
+#### ROOT CAUSE — found by parsers2, and it is not the timeout
+
+**Correcting my own diagnosis below: raising the timeout would not have fixed CI.** I read the
+`CONFORMANCE_TIMEOUT` override and stopped at the first sufficient-looking explanation. It is
+real, and it is not why the workflow is red.
+
+The nightly's xqts chunk finishes 172 sets in **103 seconds**, then **hangs**. Reproduced
+locally against xquery `v1.7.0`: wedged after 36 sets. `dotnet-stack` on the xunit child, at
+127% CPU, names the case — QT3 `op/same-key/same-key-023`. It builds a **421,875-key map**, then
+runs `map:remove` plus `map:put` on it for every key inside an `every`. On 1.7.0 those copy the
+whole map on every call (xquery#6), which is on the order of **10^11 entry copies**. And
+`QuantifiedOperator` in 1.7.0 never polls cancellation, so the harness's 10 s per-case timeout
+**cannot stop it**.
+
+Two defects composing: one makes a case astronomically slow, the other makes it uninterruptible.
+Either alone is survivable.
+
+**Both are fixed on xquery main** — the HAMT map, and cancellation polling in hot loops. So:
+
+> **#56 is caused by #57.** CI measures the *pinned* engine because the conformance symlink
+> dangles there, and the pinned 1.7.0 cannot finish this case or be cancelled out of it. The
+> nightly clears when the train pin moves to 1.8.0. Until then a longer timeout just burns more
+> runner hours reaching the same hang.
+
+That is worth sitting with: two separately-registered findings turned out to be one story, and
+the one I diagnosed confidently was the downstream half.
+
+#### One harness change still worth making
+
+parsers2 is adding a hard per-case wall-clock in `XqtsTestRunner` — `WhenAny` against a delay,
+abandoning a query that ignores cancellation. A non-cooperative case then costs **one case, not
+the chunk**, and this would have been diagnosable from the CI artifact alone instead of needing
+a local repro and a stack dump. Cooperative cancellation is only cooperative if the callee
+agrees; the harness needs a remedy that does not depend on the engine's goodwill.
+
+#### The timeout misconfiguration — real, but a contributing factor, not the cause
 
 `scripts/conformance.sh` gives the QT3 chunk a longer limit than the XSLT groups, and the
 exemption is conditional:
@@ -2043,17 +2078,15 @@ The script's own comment records that this chunk was "killed every time and repo
 which read [as a hang]" under the old 900 s default — the exemption was the fix for that, and
 the CI env var silently re-broke it.
 
-#### But the timeout is not the whole story
+Still worth fixing on its own merits — a chunk-specific exemption that a global env var silently
+cancels is a trap regardless of what else is wrong — but it is not the reason the workflow is
+red, and fixing it alone would have changed nothing.
 
-parsers2 measured the runner reaching ~13,500 of 31,414 cases in 2400 s, against ~76 s locally.
-At that rate a full pass needs roughly **5,600 s**, so simply switching to
-`CONFORMANCE_XQTS_TIMEOUT` at its 3600 s default **still fails**. Two changes are needed, not
-one: use the xqts-specific variable *and* set it to something the runner can actually finish in.
-The job's own `timeout-minutes: 150` leaves room.
-
-The ~30-70x gap between runner and local is itself unexplained and worth its own look (#46 is
-the nearest relative — tests that measure the machine). Recording the ratio rather than
-theorising about it.
+The earlier "~13,500 of 31,414 cases in 2400 s" reading is superseded: the chunk is not grinding
+slowly through the corpus, it is **stuck on one case**. That also dissolves the supposed 30-70x
+runner-vs-local gap, which was an artifact of dividing a hang by a case count. Worth recording
+as its own small lesson: a throughput number computed from a run that never finished describes
+nothing.
 
 #### Why this matters beyond the red X
 
