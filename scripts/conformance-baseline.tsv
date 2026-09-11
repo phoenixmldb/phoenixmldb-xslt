@@ -25,7 +25,7 @@ array/array-fold-left	9	9
 array/array-fold-right	10	10
 array/array-for-each	8	9
 array/array-for-each-pair	9	9
-array/array-get	6	10
+array/array-get	9	10
 array/array-head	7	9
 array/array-insert-before	10	11
 array/array-join	11	11
@@ -36,7 +36,7 @@ array/array-size	7	7
 array/array-sort	35	37
 array/array-subarray	15	18
 array/array-tail	5	6
-fn/fn-QName	33	34
+fn/fn-QName	34	34
 fn/fn-abs	187	188
 fn/fn-adjust-date-to-timezone	41	41
 fn/fn-adjust-dateTime-to-timezone	48	48
@@ -102,8 +102,8 @@ fn/fn-head	8	8
 fn/fn-hours-from-dateTime	27	27
 fn/fn-hours-from-duration	31	31
 fn/fn-hours-from-time	27	27
-fn/fn-id	41	61
-fn/fn-idref	29	54
+fn/fn-id	42	61
+fn/fn-idref	30	54
 fn/fn-implicit-timezone	27	27
 fn/fn-in-scope-prefixes	45	62
 fn/fn-index-of	53	53
@@ -176,15 +176,15 @@ fn/fn-tail	6	6
 fn/fn-timezone-from-date	34	34
 fn/fn-timezone-from-dateTime	27	27
 fn/fn-timezone-from-time	27	27
-fn/fn-tokenize	64	66
+fn/fn-tokenize	65	66
 fn/fn-trace	29	29
 fn/fn-transform	0	2
 fn/fn-translate	44	44
 fn/fn-true	25	25
 fn/fn-unordered	20	43
-fn/fn-unparsed-text	40	55
+fn/fn-unparsed-text	41	55
 fn/fn-unparsed-text-available	44	54
-fn/fn-unparsed-text-lines	40	55
+fn/fn-unparsed-text-lines	41	55
 fn/fn-upper-case	28	29
 fn/fn-uri-collection	7	7
 fn/fn-xml-to-json	130	144
@@ -219,7 +219,7 @@ math/math-sqrt	9	9
 math/math-tan	11	11
 misc/misc-AnnexE	8	8
 misc/misc-AppendixA4	9	9
-misc/misc-CombinedErrorCodes	194	244
+misc/misc-CombinedErrorCodes	195	244
 misc/misc-ErrorsAndOptimization	7	7
 misc/misc-HigherOrderFunctions	124	127
 misc/misc-JsonTestSuite	306	318
@@ -435,7 +435,7 @@ tests/attr/validation/_validation-test-set.xml	6	6
 tests/attr/version/_version-test-set.xml	31	33
 tests/attr/xpath-default-namespace/_xpath-default-namespace-test-set.xml	22	22
 tests/decl/accept/_accept-test-set.xml	27	50
-tests/decl/accumulator/_accumulator-test-set.xml	82	103
+tests/decl/accumulator/_accumulator-test-set.xml	83	103
 tests/decl/attribute-set/_attribute-set-test-set.xml	48	49
 tests/decl/character-map/_character-map-test-set.xml	28	29
 tests/decl/context-item/_context-item-test-set.xml	24	31
@@ -530,7 +530,7 @@ tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	2	4
 tests/misc/collations/_collations-test-set.xml	42	43
 tests/misc/docbook/_docbook-test-set.xml	2	4
-tests/misc/error/_error-test-set.xml	472	507
+tests/misc/error/_error-test-set.xml	473	507
 tests/misc/forwards/_forwards-test-set.xml	23	23
 tests/misc/initial-function/_initial-function-test-set.xml	33	35
 tests/misc/initial-mode/_initial-mode-test-set.xml	5	5
@@ -636,7 +636,7 @@ tests/type/maps/_maps-test-set.xml	48	50
 tests/type/namespace/_namespace-test-set.xml	183	187
 tests/type/node/_node-test-set.xml	31	31
 tests/type/string/_string-test-set.xml	135	136
-tests/type/type/_type-test-set.xml	57	58
+tests/type/type/_type-test-set.xml	58	58
 xs/xs-anyURI	13	17
 xs/xs-base64Binary	39	39
 xs/xs-dateTimeStamp	6	6
