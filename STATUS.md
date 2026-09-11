@@ -1,15 +1,15 @@
 # Status
 
-Generated 2026-09-11 12:11 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-11 21:01 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 1.7.0 | 1.7.0 | current |
-| `PhoenixmlDb.XQuery` | 1.7.0 | 1.7.0 | current |
+| `PhoenixmlDb.Core` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
+| `PhoenixmlDb.XQuery` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
 | `PhoenixmlDb.Xslt` | 1.7.0 | 1.7.0 | current |
-| `xquery4` | 1.7.0 | 1.7.0 | current |
+| `xquery4` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
 | `xslt` | 1.7.0 | 1.7.0 | current |
 
 ## Open work
@@ -17,7 +17,7 @@ Generated 2026-09-11 12:11 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 3 | 0 |
+| phoenixmldb-xquery | 3 | 1 |
 | phoenixmldb-xslt | 7 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
@@ -47,13 +47,17 @@ Generated 2026-09-11 12:11 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
+**phoenixmldb-xquery**
+
+- [28] release: publish the library and the CLI on separate tags
+
 **phoenixmldb-cli**
 
 - [3] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **53** entries, **7** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **64** entries, **11** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -63,6 +67,10 @@ the engines are split but the defects are not.
 - 46. OPEN — tests that measure the machine, not the engine (2026-09-11)
 - 47. OPEN — static shadow-attribute evaluation silently DROPS what it cannot compute (2026-09-11)
 - 52. OPEN — accumulators read a later-declared accumulator's value one node late (2026-09-11)
+- 54. OPEN — the per-set gate cannot see a set that did not run (2026-09-11)
+- 57. OPEN — our published conformance figures describe a build that does not ship (2026-09-11)
+- 61. OPEN — an indirect global cycle reports XPST0008 where XTDE0640 is due (2026-09-11)
+- 64. OPEN (XQuery-side) — the UCA collation ignores `alternate=shifted` (2026-09-11)
 
 ## Conformance
 
@@ -73,11 +81,8 @@ Figures are only as good as their provenance, so each carries how and when it wa
   records what each set reaches every time.
 - **W3C QT3 baseline — 29534/31414 (94.02%)** across 428 test-sets,
   same file, same ratchet.
-- **W3C QT3 / XQuery** — 93.98% — 29,524 / 31,414 across all 428 catalog test-sets, measured 2026-09-11, Release build.
-  Verified reproducible from two checkout paths with different execution
-  orders. Source: `phoenixmldb-xquery/docs/CONFORMANCE.md`.
-  Do NOT cite the whole-suite test's number — it runs in catalog order with shared state,
-  scores differently, and its 95% assertion is permanently red (BUGS.md #44).
+- **W3C QT3 / XQuery — figure not readable** from
+  `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
 
 ## Blocked
 
