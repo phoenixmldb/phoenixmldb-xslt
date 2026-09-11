@@ -358,12 +358,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // Fallback: prefix-based matching for unresolved namespaces
         if (name.Prefix != null)
         {
-            var fallback = FindVariableByPrefixFallback(name);
-            if (fallback != null)
-            {
-                value = fallback;
+            if (TryFindVariableByPrefixFallback(name, out value))
                 return true;
-            }
         }
 
         value = null;

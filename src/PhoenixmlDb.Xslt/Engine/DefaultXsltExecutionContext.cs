@@ -1034,8 +1034,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // because it doesn't have XSLT namespace context. Try matching by prefix+localname or EQName.
         if (name.Prefix != null || name.ExpandedNamespace != null)
         {
-            var result = FindVariableByPrefixFallback(name);
-            if (result != null)
+            if (TryFindVariableByPrefixFallback(name, out var result))
                 return result;
         }
 
@@ -1048,7 +1047,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// and prefix, handling the case where XPath-parsed QNames have unresolved namespaces.
     /// Also handles the case where different prefixes map to the same namespace.
     /// </summary>
-    private object? FindVariableByPrefixFallback(QName name)
+    /// <remarks>
+    /// Reports FOUND separately from the value. It returned the value, null when nothing
+    /// matched, and null is also the empty sequence, so a variable whose value is () read as
+    /// missing: <c>map{'k': $p:x}</c> with <c>$p:x := ()</c> failed with "XPST0008: Variable
+    /// $p:x not bound", while a non-empty $p:x worked.
+    /// </remarks>
+    private bool TryFindVariableByPrefixFallback(QName name, out object? found)
     {
         // Search scoped variables
         foreach (var scope in _scopes)
@@ -1061,9 +1066,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     {
                         var evaluated = lazy.GetValueAsync().AsTask().GetAwaiter().GetResult();
                         scope.Variables[varName] = evaluated;
-                        return evaluated;
+                        found = evaluated;
+                        return true;
                     }
-                    return value;
+                    found = value;
+                    return true;
                 }
             }
         }
@@ -1077,13 +1084,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     var evaluated = lazyGlobal.GetValueAsync().AsTask().GetAwaiter().GetResult();
                     GlobalVariables[varName] = evaluated;
-                    return evaluated;
+                    found = evaluated;
+                    return true;
                 }
-                return value;
+                found = value;
+                return true;
             }
         }
 
-        return null;
+        found = null;
+        return false;
     }
 
 
