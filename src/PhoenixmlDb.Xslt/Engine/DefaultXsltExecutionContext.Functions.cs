@@ -1599,7 +1599,9 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         catch (Exception ex)
         {
-            throw new XsltException($"XTDE3150: Dynamic XPath expression is not valid: {ex.Message}", instruction.Location);
+            // A static error while analysing the xpath string is XTDE3160 (XSLT 3.0 §19.4);
+            // XTDE3150 is a different rule (error-3160a).
+            throw new XsltException($"XTDE3160: Dynamic XPath expression is not valid: {ex.Message}", instruction.Location);
         }
 
         // Determine namespace bindings for the dynamic expression.
@@ -1640,6 +1642,15 @@ internal sealed partial class DefaultXsltExecutionContext
         if (instruction.ContextItem != null)
         {
             contextItem = await EvaluateAsync(instruction.ContextItem).ConfigureAwait(false);
+            // The context item is one item or none. A longer sequence was pushed whole, and the
+            // dynamic expression's first axis step then failed on "an item of type Object[]"
+            // instead of reporting the type error (error-3210a).
+            if (contextItem is object?[] contextItems)
+            {
+                if (contextItems.Length > 1)
+                    throw new XsltException("XTTE3210: The context-item attribute of xsl:evaluate must evaluate to a single item", instruction.Location);
+                contextItem = contextItems.Length == 1 ? contextItems[0] : null;
+            }
         }
 
         // Evaluate base-uri AVT if specified

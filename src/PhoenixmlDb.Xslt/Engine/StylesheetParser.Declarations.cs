@@ -2170,6 +2170,13 @@ public sealed partial class StylesheetParser
         if (streamabilityAttr != null)
         {
             var streamability = streamabilityAttr.Value.Trim();
+            // XTSE3155: a streamability other than "unclassified" classifies how the function
+            // consumes its FIRST argument, so a function with no xsl:param cannot carry one.
+            // It was not checked at all (error-3155a, su-shallow-descent-901).
+            if (streamability is not ("unclassified" or "") && parameters.Count == 0)
+                throw new XsltException(
+                    $"XTSE3155: xsl:function '{name.LocalName}' has no xsl:param, so its streamability must be 'unclassified', not '{streamability}'",
+                    location);
             if (streamability is "absorbing" or "filter" or "inspection" or "shallow-descent"
                 or "deep-descent" or "ascent")
             {
