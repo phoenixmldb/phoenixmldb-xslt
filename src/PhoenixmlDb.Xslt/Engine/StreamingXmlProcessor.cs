@@ -1054,13 +1054,8 @@ internal sealed class StreamingXmlProcessor
             }
 
             var acc = _accumulators[i];
-            foreach (var rule in acc.Rules)
+            if (DefaultXsltExecutionContext.SelectAccumulatorRule(acc, phase, node, matchContext) is { } rule)
             {
-                if (rule.Phase != phase)
-                    continue;
-                if (!rule.Match.Matches(node, matchContext))
-                    continue;
-
                 try
                 {
                     _accCurrentValues[i] = await _context.EvaluateAccumulatorRuleAsync(
@@ -1070,7 +1065,6 @@ internal sealed class StreamingXmlProcessor
                 {
                     _accCurrentValues[i] = new AccumulatorDeferredError(ex);
                 }
-                break; // Only first matching rule fires
             }
 
             // Store values: start phase sets before-value, end phase updates after-value

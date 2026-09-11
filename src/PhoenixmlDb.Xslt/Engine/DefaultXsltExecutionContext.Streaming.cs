@@ -595,6 +595,30 @@ internal sealed partial class DefaultXsltExecutionContext
     private AccumulatorWalkFrame? _accumulatorWalkFrame;
 
 
+    /// <summary>
+    /// The rule an accumulator applies at a traversal event: of its rules for this phase whose
+    /// pattern matches the node, the one LAST in document order (XSLT 3.0 §18.2.4, "Let Q be the
+    /// xsl:accumulator-rule in R that is last in document order"). Priority plays no part.
+    /// </summary>
+    /// <remarks>
+    /// Every site took the FIRST match, so of two rules matching one node the earlier won —
+    /// W3C accumulator-081 gave 1 where the spec gives 2. One helper, so the in-memory walk and the
+    /// streaming processor cannot pick differently.
+    /// </remarks>
+    internal static XsltAccumulatorRule? SelectAccumulatorRule(
+        XsltAccumulator accumulator, AccumulatorPhase phase, object node, XsltContext matchContext)
+    {
+        var rules = accumulator.Rules;
+        for (var r = rules.Count - 1; r >= 0; r--)
+        {
+            var rule = rules[r];
+            if (rule.Phase == phase && rule.Match.Matches(node, matchContext))
+                return rule;
+        }
+        return null;
+    }
+
+
     private async ValueTask RunAccumulatorStartPhaseAsync(AccumulatorWalkFrame frame, int i)
     {
         if (frame.StartState[i] != 0)
@@ -610,13 +634,8 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         var acc = frame.Accumulators[i];
-        foreach (var rule in acc.Rules)
+        if (SelectAccumulatorRule(acc, AccumulatorPhase.Start, frame.Node, frame.MatchContext) is { } rule)
         {
-            if (rule.Phase != AccumulatorPhase.Start)
-                continue;
-            if (!rule.Match.Matches(frame.Node, frame.MatchContext))
-                continue;
-
             try
             {
                 currentValues[i] = await EvaluateAccumulatorRuleAsync(
@@ -626,7 +645,6 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 currentValues[i] = new AccumulatorDeferredError(ex);
             }
-            break; // Only first matching rule fires
         }
 
         // Store before-value immediately so other accumulators can reference it
@@ -650,13 +668,8 @@ internal sealed partial class DefaultXsltExecutionContext
 
         _evaluatingAccEndPhase ??= new();
         var acc = frame.Accumulators[i];
-        foreach (var rule in acc.Rules)
+        if (SelectAccumulatorRule(acc, AccumulatorPhase.End, frame.Node, frame.MatchContext) is { } rule)
         {
-            if (rule.Phase != AccumulatorPhase.End)
-                continue;
-            if (!rule.Match.Matches(frame.Node, frame.MatchContext))
-                continue;
-
             var cycleKey = (acc.Name, frame.NodeId);
             _evaluatingAccEndPhase.Add(cycleKey);
             try
@@ -672,7 +685,6 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 _evaluatingAccEndPhase.Remove(cycleKey);
             }
-            break; // Only first matching rule fires
         }
         // Update this accumulator's after-value immediately so subsequent accumulators can see it
         frame.NodeValueMaps[i][frame.NodeId] = (frame.NodeValueMaps[i][frame.NodeId].before, after: currentValues[i]);
