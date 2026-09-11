@@ -11,13 +11,10 @@ on:
   schedule:
     - cron: '23 6,18 * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'BUGS.md'
-      - 'scripts/conformance-baseline.tsv'
-      - 'Directory.Build.props'
-      - 'scripts/status.sh'
+  # Deliberately NOT on push. STATUS.md is generated output, and regenerating it on every
+  # push to main means the bot commits into the same branch a person is pushing to — which
+  # raced and conflicted three times in the hour after this was added. Twice a day plus
+  # dispatch keeps it current without fighting anyone for the ref.
 
 permissions:
   contents: write
