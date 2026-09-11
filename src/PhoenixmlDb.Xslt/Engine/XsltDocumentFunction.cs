@@ -77,6 +77,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
                 uri = uri[..hashIdx];
             }
 
+            RequireBaseUriForNodeArgument(item, nodeBaseUri, uri);
             if (context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qc &&
                 qc.DocumentResolver is not null)
             {
@@ -127,6 +128,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             uri = uri[..hashIdx];
         }
 
+        RequireBaseUriForNodeArgument(arg, nodeBaseUri, uri);
         if (context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext queryContext &&
             queryContext.DocumentResolver is not null)
         {
@@ -203,6 +205,23 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
     /// <summary>
     /// Resolves a relative URI against a given base URI string.
     /// </summary>
+    /// <summary>
+    /// When the argument is a NODE, a relative reference resolves against that node's base URI
+    /// (XSLT 3.0 §20.1). A node with no base URI — a parentless text node built by a variable —
+    /// leaves nothing to resolve against, which is XTDE1162. It fell back to the static base
+    /// instead and then failed to retrieve, reporting FODC0005 (error-1162a).
+    /// </summary>
+    private static void RequireBaseUriForNodeArgument(object? item, string? nodeBaseUri, string uri)
+    {
+        if (item is not Xdm.Nodes.XdmNode || nodeBaseUri != null || uri.Length == 0)
+            return;
+        if (Uri.TryCreate(uri, UriKind.Absolute, out _))
+            return;
+        throw new XsltException(
+            $"XTDE1162: The relative URI '{uri}' cannot be resolved: the node supplied to document() has no base URI");
+    }
+
+
     private static string ResolveUriAgainstBase(string uri, string baseUriStr)
     {
         if (string.IsNullOrEmpty(baseUriStr))
