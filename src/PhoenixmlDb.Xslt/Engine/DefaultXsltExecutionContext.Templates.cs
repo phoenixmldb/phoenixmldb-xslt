@@ -1044,6 +1044,40 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// The named template <paramref name="name"/> denotes, or null. One lookup for both
+    /// xsl:call-template and the initial-template checks in the transform engine, so that
+    /// "does this template exist" cannot disagree with "can this template be called".
+    /// </summary>
+    internal XsltTemplate? FindNamedTemplate(QName name)
+    {
+        if (_stylesheet.NamedTemplates.TryGetValue(name, out var template))
+            return template;
+
+        // The id-keyed lookup above is the fast path and is correct for a name the parser
+        // interned. It misses for a QName built at runtime by fn:QName(), which carries a
+        // hash-based NamespaceId that never equals the parser's id for the same URI - so
+        // fn:transform with a namespaced initial-template could not find its entry point,
+        // and reported the local name of a template it had just failed to qualify.
+        foreach (var (candidate, decl) in _stylesheet.NamedTemplates)
+        {
+            if (QNameNamespaces.SameExpandedName(candidate, name, ResolveViaStylesheet))
+                return decl;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves an interned namespace id back to a URI. That needs the table that interned it.
+    /// The node store does not have it - these ids come from the stylesheet parser - but the
+    /// stylesheet keeps its own prefix-to-URI map, and the parsed QName kept its prefix.
+    /// </summary>
+    private string? ResolveViaStylesheet(QName q)
+        => _nodeStore?.GetNamespaceUri(q.Namespace)
+        ?? (!string.IsNullOrEmpty(q.Prefix)
+            && _stylesheet.Namespaces.TryGetValue(q.Prefix, out var declared)
+                ? declared : null);
+
     public override async ValueTask CallTemplateAsync(QName name, List<XsltWithParam> withParams)
     {
         // Trace: call-template
@@ -1069,39 +1103,21 @@ internal sealed partial class DefaultXsltExecutionContext
             if (template == null)
                 throw Error("XTDE3058: xsl:original invoked but no overridden template is available");
         }
-        else if (!_stylesheet.NamedTemplates.TryGetValue(name, out template))
+        else
         {
-            // The id-keyed lookup above is the fast path and is correct for a name the parser
-            // interned. It misses for a QName built at runtime by fn:QName(), which carries a
-            // hash-based NamespaceId that never equals the parser's id for the same URI - so
-            // fn:transform with a namespaced initial-template could not find its entry point,
-            // and reported the local name of a template it had just failed to qualify.
-            // Resolving an interned id back to a URI needs the table that interned it. The node
-            // store does not have it - these ids come from the stylesheet parser - but the
-            // stylesheet keeps its own prefix-to-URI map, and the parsed QName kept its prefix.
-            string? ResolveViaStylesheet(QName q)
-                => _nodeStore?.GetNamespaceUri(q.Namespace)
-                ?? (!string.IsNullOrEmpty(q.Prefix)
-                    && _stylesheet.Namespaces.TryGetValue(q.Prefix, out var declared)
-                        ? declared : null);
-
-            foreach (var (candidate, decl) in _stylesheet.NamedTemplates)
-            {
-                if (QNameNamespaces.SameExpandedName(candidate, name, ResolveViaStylesheet))
-                {
-                    template = decl;
-                    break;
-                }
-            }
-
+            template = FindNamedTemplate(name);
             if (template == null)
             {
+                // XTSE0650 is a static error — a call-template naming no visible template — that
+                // this engine detects when the call executes. The message used to carry no code
+                // at all. (An INITIAL template that does not exist is XTDE0040 instead; the
+                // transform engine checks that before it gets here.)
                 // Name the namespace too. The old message quoted only the local part, which is
                 // exactly the information that does not help when the namespace is the problem.
                 var uri = QNameNamespaces.UriOf(name, ResolveViaStylesheet);
                 throw Error(uri.Length > 0
-                    ? $"Named template 'Q{{{uri}}}{name.LocalName}' not found"
-                    : $"Named template '{name.LocalName}' not found");
+                    ? $"XTSE0650: Named template 'Q{{{uri}}}{name.LocalName}' not found"
+                    : $"XTSE0650: Named template '{name.LocalName}' not found");
             }
         }
 
@@ -1174,7 +1190,11 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 else if (param.Required)
                 {
-                    throw Error($"Required parameter ${param.Name.LocalName} not supplied");
+                    // Under xsl:call-template a missing required non-tunnel parameter is the
+                    // STATIC error XTSE0690 (the call site is visible); a tunnel parameter can
+                    // only be known missing at run time, XTDE0700. This message had no code.
+                    var code = param.Tunnel ? "XTDE0700" : "XTSE0690";
+                    throw Error($"{code}: Required parameter ${param.Name.LocalName} not supplied");
                 }
                 else if (param.Select != null)
                 {

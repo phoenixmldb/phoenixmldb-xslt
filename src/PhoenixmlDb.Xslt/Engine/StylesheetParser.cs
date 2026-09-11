@@ -1169,7 +1169,19 @@ public sealed partial class StylesheetParser
                 : new XsltSequenceConstructor { Instructions = instructions };
         }
 
-        throw new XsltException($"Unknown XSLT instruction: {element.Name.LocalName}", location);
+        // Not "unknown": most of what lands here is a real XSLT element in the wrong place —
+        // a declaration (xsl:key, xsl:template, xsl:include) or a child-only element (xsl:sort,
+        // xsl:with-param) used as an instruction. The message used to say "Unknown XSLT
+        // instruction: include" with no code, naming the wrong thing and matching nothing.
+        // xsl:include and xsl:import have their own codes for "must be top-level".
+        var name = element.Name.LocalName;
+        var code = name switch
+        {
+            "include" => "XTSE0170",
+            "import" => "XTSE0190",
+            _ => "XTSE0010",
+        };
+        throw new XsltException($"{code}: xsl:{name} is not allowed in a sequence constructor", location);
     }
 
 

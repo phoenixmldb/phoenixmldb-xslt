@@ -1373,7 +1373,10 @@ internal sealed partial class DefaultXsltExecutionContext
 
         if (instruction.Required)
         {
-            throw Error($"Required parameter ${instruction.Name.LocalName} not supplied");
+            // Reached when a template is entered by apply-templates / next-match /
+            // apply-imports without the parameter: XTDE0700. Its siblings in
+            // DefaultXsltExecutionContext.Templates carried the code; this one did not.
+            throw Error($"XTDE0700: Required parameter ${instruction.Name.LocalName} not supplied");
         }
 
         object? value;

@@ -408,7 +408,7 @@ public sealed partial class StylesheetParser
             var closeBrace = FindMatchingBrace(value, openBrace);
             if (closeBrace < 0)
             {
-                throw new XsltException("Unmatched '{' in attribute value template", GetSourceLocation(context));
+                throw new XsltException("XTSE0350: Unmatched '{' in attribute value template", GetSourceLocation(context));
             }
 
             var expr = value[(openBrace + 1)..closeBrace];
