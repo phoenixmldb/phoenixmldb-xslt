@@ -326,6 +326,31 @@ elif [ -f "$BASELINE" ]; then
   # For a set demonstrated unstable, baseline the value it reaches every time (misc/bug 72,
   # si-element 67 of an observed 69/68/67) rather than its best. A gate that fires on noise
   # gets ignored, and an ignored gate catches nothing — which is the whole point of #40.
+  #
+  # PAIRING RULE — a baseline raise commits its evidence in the same PR.
+  #
+  # `conformance-results/summary.txt` is tracked (see .gitignore) so a published figure has
+  # versioned evidence. It only serves that purpose while it describes the run behind the
+  # committed baseline. It drifted once: the baseline said 10,163/29,534 while the tracked
+  # summary was a timed-out XQTS run reporting 1,271/1,286 at 98.8% (BUGS.md #55). A stale
+  # artifact is worse than a missing one — a missing one makes a figure unverifiable, a stale
+  # one makes it look refuted.
+  #
+  # So: raise the baseline and update summary.txt in the SAME PR, or neither.
+  #
+  # The evidence must be a CLEAN CONFIRMING RUN on the raised baseline, not one of the runs the
+  # raise was computed from. Raises take the minimum across runs, so no single contributing run
+  # equals the result — one of the two that produced this baseline had call-template at 38
+  # (10,164) and the other lost a chunk to a SIGSEGV. Neither summary is the baseline. A fresh
+  # --all afterwards is, and it re-tests the gate on the numbers actually committed.
+  #
+  # This is process, not machinery: raises are hand-edited min-of-runs rather than
+  # CONFORMANCE_UPDATE_BASELINE=1, so the script cannot enforce it. Reviewers can: a raise
+  # whose PR has no accompanying summary is incomplete.
+  #
+  # Note the default OUT is the tracked directory, so ANY run overwrites the artifact —
+  # including a single-chunk one. Do not commit a summary from `conformance.sh <chunk>`; it
+  # replaces whole-suite evidence with one chunk's and still looks like a valid file.
   regressed="$(awk -F'\t' '
     NR==FNR { base[$1]=$2; tol[$1]=($4==""?0:$4); next }
     ($1 in base) && $2 < base[$1] - tol[$1] {

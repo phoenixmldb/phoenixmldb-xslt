@@ -1924,7 +1924,7 @@ First test-host crash in 46 run directories. `strm3` then ran clean three times 
 sets). Does not reproduce; no cause. If a SIGSEGV appears in `strm3` again, `sx-GeneralComp` is
 where it stopped. Logged so a second occurrence is a pattern rather than another first.
 
-### 55. OPEN — the evidence artifact for our published figures describes a different run (2026-09-11)
+### 55. FIXED 2026-09-11 — the evidence artifact described a different run
 
 Surfaced by a side question from parsers2 — whether `conformance-results/summary.txt` being
 tracked was intentional. It is, deliberately and for a good reason. The reason is currently not
@@ -1987,6 +1987,30 @@ Options, none taken yet, register owner's call:
    explicitly. Removes the accidental-overwrite hazard, adds a step.
 3. Stop tracking it. Cheapest, and throws away the audit property for the sake of a dirty tree
    — which is how the "2604/2661" situation happened in the first place.
+
+#### Resolved — option 1, and parsers2 improved on the proposal
+
+Fixed in xslt #27 (`c8d8d54`). Tracking stays; the pairing rule is written into
+`scripts/conformance.sh` beside the rest of the baseline discipline, where someone raising a
+baseline will actually meet it.
+
+**parsers2 made the evidence better than I asked for.** I suggested committing the summary from
+the run that produced the baseline. They committed a **fresh confirming `--all` on current
+main** instead, and the reason is sharper than my proposal: raises take the *minimum across
+runs*, so no single contributing run equals the baseline. Of the two behind this one, `bl2-2`
+had `call-template` at 38 (total 10,164) and `bl2-1` lost a chunk to the SIGSEGV. **Neither
+summary is the baseline.** A confirming run afterwards is — and it re-exercises the new #54 gate
+on exactly the committed numbers.
+
+That run came out XSLT 10,163 and QT3 29,534, matching the committed baseline exactly: no
+gains, no regressions, no NO RESULT sets, exit 0. Verified here independently — the summary's
+per-group counts sum to 10,163 and agree with the baseline group by group.
+
+The rule as recorded: **raise the baseline and update `summary.txt` in the same PR, or neither;
+and the evidence must be a clean confirming run on the raised baseline, never one of the runs
+the raise was computed from.** It is process rather than machinery — raises are hand-edited
+min-of-runs rather than `CONFORMANCE_UPDATE_BASELINE=1`, so the script cannot enforce it, but a
+reviewer can: a raise whose PR carries no summary is incomplete.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
