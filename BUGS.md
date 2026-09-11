@@ -1378,6 +1378,54 @@ Items 1 and 2 are not done. This entry is item 3.
 
 ---
 
+### 45. Group wrong-error-code failures by the ACTUAL message, not the (expected, actual) pair (2026-09-11)
+
+The triage in phoenixmldb-xslt#13 found 217 of 548 failing W3C cases marked `[wrong-error-code]`
+— the engine detects the condition and raises, but reports a different code. I recommended
+grouping by (expected, actual) pair and fixing pairs rather than cases, on the strength of #36
+where that worked.
+
+**It does not work here.** The 217 failures are **133 distinct pairs** — a long tail, roughly 1.6
+cases per group, so grouping by pair barely beats fixing them one at a time.
+
+Grouping by the **ACTUAL** message alone does work, because that is what identifies a *throw
+site*. One wrong constant serves many expected codes, so the pairs scatter while the sites
+cluster. Batch 1 was **seven throw sites for 43 cases** — and two of the seven were the
+asymmetric-pair shape from #40, one twin carrying a fix the other lacked.
+
+The general lesson, which is not about error codes: **group by the thing you will EDIT, not by
+the thing the test reports.** A test failure names a symptom pair; the fix has one location. When
+those are not in correspondence, grouping by the symptom produces a long tail and grouping by the
+site produces clusters. I had the right instinct from #36 and applied it to the wrong axis.
+
+Measured: 10,083 → 10,126 of 10,630 (+43), same-checkout A/B sweep, 43 newly passing, 0 newly
+failing, no set lower. `misc/error` 438 → 466. (phoenixmldb-xslt#15.)
+
+---
+
+### 46. OPEN — tests that measure the machine, not the engine (2026-09-11)
+
+A third instance of the same shape, after the parser scaling test (#43 and its three corrections)
+and the `bug-3701` timeout that set a baseline from a lucky run.
+
+`tests/PhoenixmlDb.Xslt.Tests` `StreamingCancellationTests` cancels at 3 s and then asserts the
+transform is still running. On a fast machine it finishes in ~2 s, so 2 of the 4 tests fail
+**deterministically** — the assertion encodes an assumption about how slow the host is.
+
+That is the same defect as asserting a wall-clock bound for linearity: the property under test is
+"cancellation is observed", and elapsed time is a proxy that stops holding when the hardware
+changes. Now that `publish` is gated on tests, such an assertion is a release blocker on any box
+faster than the one it was written on.
+
+**The shape to watch for:** a test that passes on the author's machine and encodes its speed. It
+is not flakiness — flaky tests fail intermittently. These fail *reliably*, on the wrong hardware,
+which reads as a real defect and costs a diagnosis every time.
+
+Owned by the parsers2 session, to be fixed alongside the QT3 per-set baseline and the
+`insn/call-template` re-baseline.
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
