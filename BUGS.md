@@ -1299,6 +1299,85 @@ runs the configuration that ships. Ours did not, and nobody asked for two months
 
 ---
 
+### 44. OPEN — the harness ledger, and why these keep happening (2026-09-10)
+
+Asked whether anyone tracks *why* the test harnesses fail on a near-daily basis, the honest
+answer was **no**. This file records WHAT — 43 entries, at least 11 of them harness defects —
+but nothing recorded the rate, the causes, or that it was a pattern at all. This entry starts
+that ledger.
+
+#### The structural fact
+
+| | lines | tests covering it |
+|---|---|---|
+| conformance runners (`tests/PhoenixmlDb.Conformance.Tests`) | 8,115 | **0** |
+| release/gate scripts (`scripts/*.sh`) | 528 | **0** |
+| PhoenixmlDb.XQuery engine | — | 1,554 |
+| PhoenixmlDb.Xslt engine | — | 1,483 |
+| PhoenixmlDb.Core | — | 1,018 |
+
+~8,600 lines decide whether the engines are correct, and have no tests, no review path and no
+owner. They are written mid-investigation by whoever is chasing an engine defect, and they fail
+the way untested code fails.
+
+**And their failure mode is silence.** An engine bug shows up as a red test. A harness bug shows
+up as nothing — a wrong score reads as green. That asymmetry is why these survive for months
+while engine defects are caught in hours.
+
+#### Incidents on 2026-09-10 alone
+
+| # | incident | origin |
+|---|---|---|
+| 1 | expected-error match read element text, not the attribute | pre-existing, fixed |
+| 2 | `conformance.sh` defaulted to Debug — understated by 38 cases | pre-existing, fixed |
+| 3 | QT3 ran as one opaque 31,414-case test | pre-existing, fixed |
+| 4 | 419 of 428 QT3 sets unreachable (hard-coded list) | pre-existing, fixed |
+| 5 | 8 catalog environment attributes never read | pre-existing, open (#41) |
+| 6 | chunk-total gate could not express a per-set loss | **mine** — found by a consumer |
+| 7 | baseline rule "maximum observed" fires on every ordinary run | **mine** |
+| 8 | re-baseline taken while probing silently lowered 3 sets | **mine** |
+| 9 | `MemberData` placeholder: 1 skipped test instead of 428 | **mine** |
+| 10 | publish gate referenced a job that does not exist, in 3 repos | **mine** — broke CI |
+| 11 | scaling test wrong three separate ways in one day | mixed |
+| 12 | **QT3 per-set results depend on execution order** | **mine** — see below |
+
+Five of twelve were introduced while fixing the others. That is the honest shape of it.
+
+#### Incident 12, in full, because it is the newest and least obvious
+
+Making the QT3 theory per-set (#43's companion fix) traded one defect for another. All 428 sets
+share a single `IClassFixture`, and `XqtsTestRunner` accumulates real state across them:
+
+    _engine, _documents, _documentCache, _schemas, _loadedSchemas,
+    _registeredUris, _resourceMappings, _globalEnvironments
+
+The monolith ran in catalog order, so the contamination was *stable* — wrong, but repeatable, and
+therefore invisible. Per-set runs in xunit's order, which follows the assembly path, so two
+checkouts of the same commit disagree. Measured by the parsers2 session: six sets differed between
+two worktrees, and **every one was identical when re-run in isolation** (`method-html` 49/64 on
+both). `qischema001` fails or passes depending on which schemas loaded before it.
+
+Consequences: a figure from one machine is not comparable to another's, and a per-set gate can
+fire or stay silent from order alone.
+
+Fix in progress: a fresh runner per set. A `TestCaseOrderer` pinned to catalog order would restore
+reproducibility while leaving each result dependent on its predecessors — reproducibly wrong.
+
+**The XSLT runner does NOT have this.** `XsltTestRunner` holds only `_testDataPath` and `_config`,
+both immutable, and constructs a transformer per test. Same repository, same idea, two runners,
+only one stateful — which is exactly what an unreviewed, untested component looks like.
+
+#### What would actually change the rate
+
+1. **Tests for the runners**, starting with scoring. Feed a known-passing and a known-failing case
+   and assert the verdict. Incidents 1 and the `passed > 0` gates both die instantly to that.
+2. **An owner** for the conformance harness, treated as product code rather than scaffolding.
+3. **This ledger**, kept current, so the rate is visible instead of anecdotal.
+
+Items 1 and 2 are not done. This entry is item 3.
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
