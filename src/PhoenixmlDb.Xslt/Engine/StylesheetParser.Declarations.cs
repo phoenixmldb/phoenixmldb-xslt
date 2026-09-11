@@ -100,6 +100,14 @@ public sealed partial class StylesheetParser
             throw new XsltException("XTSE0090: The 'package-version' attribute is not allowed on xsl:stylesheet/xsl:transform (only on xsl:package)",
                 GetSourceLocation(element));
 
+        if (isPackage && element.Attribute("package-version") is { } packageVersionAttr
+            && packageVersionAttr.Annotation<UnevaluatedShadowValue>() is null
+            && !PackageVersionSyntax.IsValidVersion(packageVersionAttr.Value.Trim()))
+            throw new XsltException(
+                $"XTSE0020: package-version '{packageVersionAttr.Value}' is not a valid package version " +
+                "(integers separated by dots, optionally followed by '-' and an NCName)",
+                GetSourceLocation(element));
+
         var declaredModesAttr = element.Attribute("declared-modes");
         // For xsl:package, declared-modes defaults to true; for xsl:stylesheet, defaults to false
         var declaredModes = isPackage;
@@ -871,6 +879,10 @@ public sealed partial class StylesheetParser
             ?? throw new XsltException("XTSE0010: xsl:use-package requires a 'name' attribute",
                 GetSourceLocation(element));
         var packageVersion = element.Attribute("package-version")?.Value;
+        if (packageVersion != null && !PackageVersionSyntax.IsValidRange(packageVersion))
+            throw new XsltException(
+                $"XTSE0020: package-version '{packageVersion}' on xsl:use-package is not a valid version range",
+                GetSourceLocation(element));
 
         // Resolve the package file from the catalog
         if (_packageCatalog == null || !_packageCatalog.TryGetValue(packageName, out var packageEntries))
