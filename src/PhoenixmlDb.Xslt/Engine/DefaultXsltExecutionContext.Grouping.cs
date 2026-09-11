@@ -719,6 +719,15 @@ internal sealed partial class DefaultXsltExecutionContext
             return dtoa.CompareTo(dtob);
         if (a is decimal da && b is decimal db)
             return da.CompareTo(db);
+        // Durations: two of the same kind compare by length. They fell through to the string
+        // comparison below, which orders "P10D" before "P2D" and reported the source as
+        // unsorted (XTDE2220) before the cross-source type error could be raised (error-2230a).
+        if (a is DayTimeDuration dta && b is DayTimeDuration dtb)
+            return dta.CompareTo(dtb);
+        if (a is YearMonthDuration yma && b is YearMonthDuration ymb)
+            return yma.CompareTo(ymb);
+        if (a is TimeSpan tsa && b is TimeSpan tsb)
+            return tsa.CompareTo(tsb);
 
         // XTTE2230: Check for incomparable types before falling back to string
         if (IsMergeKeyNumeric(a) != IsMergeKeyNumeric(b) && a is not string && b is not string)
