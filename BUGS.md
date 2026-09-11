@@ -1606,6 +1606,71 @@ Core release — and Core is unchanged at 1.7.0, i.e. this does not ride along o
 XQuery/XSLT-only 1.8.0. Worth deciding at the same time as the prefix, since both are Core
 registry edits.
 
+### 51. `cache="yes"` has returned other calls' results in every version ever shipped (2026-09-11)
+
+Found by parsers2 while implementing `new-each-time="no"`. Fix in flight as xslt#21 (CI
+pending at time of writing). Recorded separately from the fix because the **shipped-version
+consequence** is the part that needs a decision, and it is unusually clean-cut.
+
+`xsl:function cache="yes"` memoizes on a key built by `AppendCacheKey`
+(`DefaultXsltExecutionContext.cs:490`). The key is a **string concatenation**, and its
+`default:` arm is `sb.Append(arg.ToString())`. That is not an identity:
+
+| call | key | consequence |
+|---|---|---|
+| `f((1,2))` vs `f((3,4))` | both `System.Object[]` | **second call returns the first call's result** |
+| `f('1')` vs `f(1)` | both `1` | string and integer share an entry |
+| `f((1,2), 3)` vs `f(1, (2,3))` | commas collide across argument boundaries | unrelated calls share an entry |
+| any node argument | `RuntimeHelpers.GetHashCode(node)` | a hash code is not an identity; two nodes can collide |
+
+No error is raised. The function returns a well-formed answer computed for different arguments.
+This is the worst shape a defect takes: silent, plausible, and in a feature a user turns on
+specifically to make things faster — so it is most likely to bite exactly the workloads that
+call the function many times with many different arguments.
+
+#### Which releases carry it
+
+`AppendCacheKey` and its `ToString()` arm both date to `030bfe1`, the **initial release
+commit**. `git tag --contains 030bfe1` returns **47 of 47 tags — every version this engine has
+ever published, 1.1.0 through 1.7.0 inclusive.**
+
+There is no good version to roll back to. That matters for two things already in flight:
+
+- **`docs/RELEASE-HYGIENE.md`.** The unlisting plan assumes a user pushed off a bad version
+  lands on a good one. For `cache="yes"` that is not true of any published version, so the
+  remedy here is "upgrade forward once #21 ships", never "pin back".
+- **The 1.8.0 decision.** This is a stronger argument for cutting it than the conformance
+  gains are. Conformance moves a number; this stops an engine returning wrong answers.
+
+#### Scope, stated so it is not overstated
+
+`cache="yes"` is **opt-in**. A stylesheet that never sets it is unaffected, and the attribute
+is not a default. So this is not "every user got wrong answers" — it is "every user who used
+this feature could have, in every version, with no signal that it happened." The honest
+summary is a narrow blast radius and a total failure inside it.
+
+#### Checked: we have been recommending it
+
+`phoenixml-docs/docs/language-reference/xslt/instructions/functions.md` does three things:
+
+- **:467** describes the correct semantics — "the result of each unique combination of
+  arguments" — which is precisely what the implementation did not do.
+- **:470** gives a worked `cache="yes"` example.
+- **:511** is a **Tip actively advising users to turn it on**: "If your function depends only
+  on its parameters ... consider `cache=\"yes\"`."
+
+So the public site has been recommending a feature that returns other calls' results, and
+describing the behaviour a reader would reasonably expect instead. That is worse than shipping
+the defect quietly, and it is the part that should not wait for a release: the docs can carry a
+caveat today, whereas the fix reaches users only in 1.8.0.
+
+The W3C corpus does exercise it — four `decl/function` cases (`function-1031`, `-1034`,
+`-1035`, and one more) set `cache="yes"`. They did not catch this because a memo key is only
+wrong when two *different* argument shapes collide, and a conformance case that calls a
+function one way never produces the collision. **A cache defect is invisible to any test that
+does not call the same function twice with different arguments** — worth remembering when
+reviewing #21's tests.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
