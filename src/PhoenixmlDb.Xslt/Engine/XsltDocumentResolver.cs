@@ -108,12 +108,8 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
 
     public IEnumerable<XdmNode> ResolveCollection(string? uri)
     {
-        if (_collections == null)
-            return [];
-
-        var key = uri ?? "";
-        if (!_collections.TryGetValue(key, out var paths))
-            return [];
+        if (_collections == null || !_collections.TryGetValue(uri ?? "", out var paths))
+            return uri == null ? [] : ResolveDirectoryCollection(uri);
 
         var nodes = new List<XdmNode>();
         foreach (var path in paths)
@@ -141,6 +137,67 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
             {
                 nodes.Add(doc);
             }
+        }
+        return nodes;
+    }
+
+    /// <summary>
+    /// A collection URI naming a directory is the XML files in it, in path order. The query
+    /// takes <c>select=</c> (a file-name glob using <c>*</c> and <c>?</c>) and <c>recurse=yes</c>,
+    /// separated by <c>;</c> or <c>&amp;</c> — the Saxon form (<c>dir?select=*.xml</c>) the W3C
+    /// suite uses (merge-097). Files that do not parse as XML are left out. Each document is
+    /// resolved as doc() would, so it is the same node doc() returns for its URI.
+    /// </summary>
+    private List<XdmNode> ResolveDirectoryCollection(string uri)
+    {
+        var queryIdx = uri.IndexOf('?', StringComparison.Ordinal);
+        var location = queryIdx >= 0 ? uri[..queryIdx] : uri;
+        string? select = null;
+        var recurse = false;
+        if (queryIdx >= 0)
+        {
+            foreach (var part in uri[(queryIdx + 1)..].Split([';', '&'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                var eq = part.IndexOf('=', StringComparison.Ordinal);
+                if (eq < 0)
+                    continue;
+                var value = Uri.UnescapeDataString(part[(eq + 1)..]);
+                switch (part[..eq])
+                {
+                    case "select": select = value; break;
+                    case "recurse": recurse = value is "yes" or "true" or "1"; break;
+                }
+            }
+        }
+
+        string directory;
+        try
+        {
+            var resolved = ResolveUri(location.Length == 0 ? "." : location);
+            if (!resolved.IsAbsoluteUri || !resolved.IsFile || !System.IO.Directory.Exists(resolved.LocalPath))
+                return [];
+            directory = resolved.LocalPath;
+        }
+        catch (UriFormatException)
+        {
+            return [];
+        }
+
+        var pattern = select == null
+            ? null
+            : new System.Text.RegularExpressions.Regex(
+                "^" + System.Text.RegularExpressions.Regex.Escape(select).Replace("\\*", ".*", StringComparison.Ordinal).Replace("\\?", ".", StringComparison.Ordinal) + "$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        var files = System.IO.Directory.EnumerateFiles(directory, "*",
+                recurse ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly)
+            .Where(f => pattern == null || pattern.IsMatch(System.IO.Path.GetFileName(f)))
+            .Order(StringComparer.Ordinal);
+
+        var nodes = new List<XdmNode>();
+        foreach (var file in files)
+        {
+            if (ResolveDocument(new Uri(file).AbsoluteUri) is { } doc)
+                nodes.Add(doc);
         }
         return nodes;
     }
