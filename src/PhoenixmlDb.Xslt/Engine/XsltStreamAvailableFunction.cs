@@ -27,7 +27,7 @@ internal sealed class XsltStreamAvailableFunction : PhoenixmlDb.XQuery.Ast.XQuer
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "stream-available");
     public override XdmSequenceType ReturnType => XdmSequenceType.Boolean;
     public override IReadOnlyList<FunctionParameterDef> Parameters =>
-        [new() { Name = new QName(NamespaceId.None, "uri"), Type = XdmSequenceType.String }];
+        [new() { Name = new QName(NamespaceId.None, "uri"), Type = XdmSequenceType.OptionalString }];
 
     public override async ValueTask<object?> InvokeAsync(
         IReadOnlyList<object?> arguments,

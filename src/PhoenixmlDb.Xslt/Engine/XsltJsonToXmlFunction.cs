@@ -30,7 +30,7 @@ internal sealed class XsltJsonToXmlFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     public override PhoenixmlDb.XQuery.Ast.XdmSequenceType ReturnType => new() { ItemType = PhoenixmlDb.XQuery.Ast.ItemType.Node, Occurrence = PhoenixmlDb.XQuery.Ast.Occurrence.ZeroOrOne };
     public override IReadOnlyList<PhoenixmlDb.XQuery.Ast.FunctionParameterDef> Parameters =>
     [
-        new() { Name = new QName(NamespaceId.None, "json-text"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.String }
+        new() { Name = new QName(NamespaceId.None, "json-text"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.OptionalString }
     ];
 
     public override ValueTask<object?> InvokeAsync(
