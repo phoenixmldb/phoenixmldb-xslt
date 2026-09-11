@@ -114,6 +114,12 @@ Concretely, for a 1.8.0 train:
 | 5 | bump pins, tag `v1.8.0` in `xquery-mcp` / `xslt-mcp` | `xquery-mcp`, `xslt-mcp` |
 | 6 | bump pin, tag `phxspec-v1.8.0` in the `xspec` fork | `PhoenixmlDb.XSpec.Cli` |
 
+**Step 4 needs step 2's package to be *published*, not merely tagged.** `PhoenixmlDb.XQuery.Cli`
+carries a `ProjectReference` to the library, which packs as a dependency on
+`PhoenixmlDb.XQuery` at the release version — so `cli-v1.8.0` produces a package that cannot
+restore until `PhoenixmlDb.XQuery 1.8.0` is live on nuget.org. Wait for the package to appear,
+not for the tag to go green. The same applies to steps 5 and 6 against step 3.
+
 Every step whose pin must match is gated by `check-release-train.sh`, which fails closed. The
 steps that are *not* machine-checked are the tags themselves — forgetting step 4 or 6 publishes
 nothing and fails silently. That is the remaining manual risk in this design, and it is the
