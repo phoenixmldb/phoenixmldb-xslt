@@ -7,6 +7,59 @@
 > corpus, the current figure is **10,020/10,630 (94.3%)**. The historical entries below are left
 > as written — they record what was believed at the time. See BUGS.md entry 28.
 
+
+## 1.7.0 — 2026-09-10
+
+Takes PhoenixmlDb.XQuery 1.7.0 and PhoenixmlDb.Core 1.7.0.
+
+### Fixed — xsl:try
+
+Three independent causes that happened to land in one test set:
+
+- **`$err:module` and `$err:line-number` were empty for runtime-raised errors.** A catch block
+  interrogating the error variables saw blanks.
+- **`xsl:try` ran its body in the CALLER's scope.** A variable declared inside the body wrote
+  into the same scope as an identically-named outer binding and clobbered it, so `xsl:catch`
+  read the body's value rather than the outer one.
+- **A global variable's error was catchable.** Globals are evaluated outside any `xsl:try`, so
+  the error must stay uncatchable however late the deferred rethrow lands.
+
+### Fixed — other
+
+- **`xsl:analyze-string` discarded `flags="s"`.** The flag was parsed and mapped correctly, then
+  thrown away by a pattern rewrite that baked `[^\r\n]` into the regex, leaving
+  `RegexOptions.Singleline` nothing to act on.
+- **A copied element's text was pulled out of it during serialization**, so it came back
+  correctly named, correctly counted, and empty. Reached further than expected: five sets gained.
+- **A parentless constructed comment reported the stylesheet's base URI** where XDM requires the
+  empty sequence.
+
+### Conformance — 10,082/10,630 (94.8%)
+
+Measured 2026-09-10 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build.
+
+**This is higher than the 94.4% published on 2026-09-05 and the engine did not improve that
+much.** The previous figure came from a Debug build, which lost 38 cases across 21 sets purely to
+the harness's 10s per-case timeout — 43 timeouts against Release's 5. Release is what ships, so a
+figure from a Debug build was not a claim about the product. `scripts/conformance.sh` now defaults
+to Release. See `BUGS.md` #43.
+
+### Release discipline
+
+`publish` is now gated on the test job. Until today this repository could push a tagged release
+to nuget.org with a red suite.
+
+16 versions shipped in the 1.6.x line, several carrying defects found only later. See
+`docs/RELEASE-HYGIENE.md` for the unlisting plan and the controls that should stop a repeat.
+
+### Known, not fixed
+
+- `map:put`/`map:remove` are O(n) copies, making incremental map building quadratic —
+  phoenixmldb-xquery#6. Present in 1.6.x too.
+- No current XQuery/QT3 conformance figure is published. The harness now runs per-set, but its
+  results depend on execution order (shared fixture state), so no honest number exists yet —
+  `BUGS.md` #44.
+
 ## 1.6.15 - 2026-09-09
 
 Takes PhoenixmlDb.XQuery 1.6.15, so the `xslt` tool and anything embedding this engine pick up
