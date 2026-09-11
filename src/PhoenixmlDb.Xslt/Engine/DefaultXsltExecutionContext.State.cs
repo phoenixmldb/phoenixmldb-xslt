@@ -477,9 +477,8 @@ internal sealed partial class DefaultXsltExecutionContext
     internal readonly Stack<XsltTemplate> _currentTemplateStack = new();
 
 
-    // Per XSLT 3.0 §10.3: cache="yes" memoization for stylesheet functions
-    // Key: (function QName key string, serialized argument list)
-    private readonly Dictionary<string, object?> _functionCache = new(StringComparer.Ordinal);
+    // Memoized stylesheet function results — cache="yes" and new-each-time="no" (XSLT 3.0 §10.3).
+    private readonly Dictionary<FunctionMemoKey, object?> _functionCache = new();
 
 
     // Cooperative cancellation and output size guard

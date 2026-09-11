@@ -2042,19 +2042,14 @@ internal sealed partial class DefaultXsltExecutionContext
         if (_options?.TraceListener != null)
             _options.TraceListener(_templateDepth, "call-function", $"{func.Name.LocalName}#{arguments.Count}");
 
-        // cache="yes" memoization: check cache before executing function body
-        string? cacheKey = null;
-        if (func.Cache)
+        // Memoization: cache="yes" asks for it, and new-each-time="no" declares the function
+        // deterministic — two calls with identical arguments must return IDENTICAL results, so
+        // a node it constructs is the same node each time (XSLT 3.0 §10.3.2). Without this,
+        // `f(1) | f(1)` held two nodes where the spec requires one (W3C function-1025/1026).
+        FunctionMemoKey? cacheKey = null;
+        if (func.Cache || func.NewEachTime == "no")
         {
-            var keyBuilder = new System.Text.StringBuilder();
-            keyBuilder.Append(func.Name.Namespace.Value).Append(':').Append(func.Name.LocalName).Append('(');
-            for (var ai = 0; ai < arguments.Count; ai++)
-            {
-                if (ai > 0) keyBuilder.Append(',');
-                AppendCacheKey(keyBuilder, arguments[ai]);
-            }
-            keyBuilder.Append(')');
-            cacheKey = keyBuilder.ToString();
+            cacheKey = new FunctionMemoKey(func, arguments);
             if (_functionCache.TryGetValue(cacheKey, out var cachedResult))
                 return cachedResult;
         }
