@@ -54,6 +54,22 @@ That is the only version I can name as *known* wrong on its face rather than mer
 Everything else in 1.6.x carries defects we have since fixed, but so does every version of most
 software; that alone is not grounds.
 
+### Unlisting is not a remedy for a defect, and #51 is the worked example
+
+`cache="yes"` has returned other calls' results since `030bfe1`, the initial release commit —
+**all 47 published tags, 1.1.0 through 1.7.0** (BUGS.md #51). Unlisting does nothing for it:
+there is no good version to push a user onto, because the newest version has it too.
+
+That is the general case, not a special one. Unlisting narrows *choice*; it does not fix
+anything, and reaching for it as a response to a defect gets the tool wrong. The three remedies
+that do work, in the order they apply:
+
+1. **Say so where the user is** — the docs page recommending the feature is the one that
+   reaches someone about to use it today (`phoenixml-docs` PR #7 does this for #51).
+2. **Ship the fix forward.** For #51 that is 1.8.0; no earlier pin helps.
+3. **Unlist** only to stop someone *newly* picking a version we know is wrong on its face —
+   which is what Tier 1 is, and why it has exactly one entry.
+
 ## Tier 2 — unlist once 1.7.0 is published and the database has bumped
 
 All 1.6.x **except** the latest and the pinned ones. Concretely:
