@@ -15,7 +15,8 @@ public sealed class FunctionMemoizationTests
     {
         var ss = $$"""
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
-              xmlns:f="urn:f" xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="#all">
+              xmlns:f="urn:f" xmlns:xs="http://www.w3.org/2001/XMLSchema"
+              xmlns:map="http://www.w3.org/2005/xpath-functions/map" exclude-result-prefixes="#all">
               <xsl:output method="text"/>
               {{function}}
               <xsl:template match="/">{{body}}</xsl:template>
@@ -84,6 +85,33 @@ public sealed class FunctionMemoizationTests
             """;
         (await RunAsync(functions, $"""<xsl:value-of select="{first}, '#', {second}" separator=""/>"""))
             .Should().Be($"{firstResult}#{secondResult}");
+    }
+
+    [Fact]
+    public async Task CacheYes_TellsMapKeysOfDifferentTypesApart()
+    {
+        // The old key rendered map keys by ToString, so map{1: 'x'} and map{'1': 'x'} — distinct
+        // maps, one keyed by an integer and one by a string — shared an entry.
+        var result = await RunAsync(
+            """<xsl:function name="f:key-type" cache="yes"><xsl:param name="m"/><xsl:sequence select="if (map:keys($m) instance of xs:integer) then 'integer' else 'string'"/></xsl:function>""",
+            """<xsl:value-of select="f:key-type(map{1: 'x'}), f:key-type(map{'1': 'x'})"/>""");
+        result.Should().Be("integer string");
+    }
+
+    [Fact]
+    public async Task CacheYes_TellsDistinctNodesWithEqualContentApart()
+    {
+        // A guard rather than a positive control: the old key compared nodes by hash code, and a
+        // collision between two live nodes cannot be forced, so this passed there too. Nodes are
+        // compared by identity now, which makes it hold by construction rather than by luck.
+        var result = await RunAsync(
+            """<xsl:function name="f:ident" cache="yes"><xsl:param name="n"/><xsl:sequence select="generate-id($n)"/></xsl:function>""",
+            """
+            <xsl:variable name="a"><x/></xsl:variable>
+            <xsl:variable name="b"><x/></xsl:variable>
+            <xsl:value-of select="f:ident($a/x) ne f:ident($b/x), f:ident($a/x) eq f:ident($a/x)"/>
+            """);
+        result.Should().Be("true true");
     }
 
     [Fact]
