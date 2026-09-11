@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-11 05:42 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-11 06:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -51,7 +51,7 @@ Generated 2026-09-11 05:42 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Defect register
 
-`BUGS.md`: **46** entries, **5** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **47** entries, **6** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -59,14 +59,17 @@ the engines are split but the defects are not.
 - 41. OPEN — eight catalog environment attributes the XSLT runner never reads (2026-09-10)
 - 44. OPEN — the harness ledger, and why these keep happening (2026-09-10)
 - 46. OPEN — tests that measure the machine, not the engine (2026-09-11)
+- 47. OPEN — static shadow-attribute evaluation silently DROPS what it cannot compute (2026-09-11)
 
 ## Conformance
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10082/10630 (94.84%)** across 221 test-sets, from the committed per-set
-  baseline (`scripts/conformance-baseline.tsv`), Release build. This is a ratchet, not a
-  live run: it records what each set reaches every time.
+- **W3C XSLT 3.0 — 10137/10630 (95.36%)** across 221 test-sets,
+  from the committed per-set baseline, Release build. A ratchet, not a live run: it
+  records what each set reaches every time.
+- **W3C QT3 baseline — 29509/31414 (93.94%)** across 428 test-sets,
+  same file, same ratchet.
 - **W3C QT3 / XQuery** — 93.94% — 29,509 / 31,414 across all 428 catalog test-sets, measured 2026-09-11, Release build.
   Verified reproducible from two checkout paths with different execution
   orders. Source: `phoenixmldb-xquery/docs/CONFORMANCE.md`.

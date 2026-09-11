@@ -87,15 +87,26 @@ say "## Conformance"
 say ""
 say "Figures are only as good as their provenance, so each carries how and when it was measured."
 say ""
+# The baseline file holds BOTH suites. Summing it whole yields a blended figure that
+# describes neither — so split on the key: xslt30-test rows are paths under tests/, QT3 rows
+# are category/set names. Reporting one number for two corpora would be a new way to be
+# confidently wrong about conformance, which is the thing this file exists to stop.
 if [ -f scripts/conformance-baseline.tsv ]; then
-  read -r p t <<<"$(awk -F'\t' '{p+=$2;t+=$3} END{print p, t}' scripts/conformance-baseline.tsv)"
-  pct="$(awk -v p="$p" -v t="$t" 'BEGIN{printf "%.2f", 100*p/t}')"
-  sets="$(wc -l < scripts/conformance-baseline.tsv)"
-  say "- **W3C XSLT 3.0 — $p/$t ($pct%)** across $sets test-sets, from the committed per-set"
-  say "  baseline (\`scripts/conformance-baseline.tsv\`), Release build. This is a ratchet, not a"
-  say "  live run: it records what each set reaches every time."
+  read -r xp xt xn <<<"$(awk -F'\t' '$1 ~ /^tests\// {p+=$2;t+=$3;n++} END{print p+0, t+0, n+0}' scripts/conformance-baseline.tsv)"
+  read -r qp qt qn <<<"$(awk -F'\t' '$1 !~ /^tests\// {p+=$2;t+=$3;n++} END{print p+0, t+0, n+0}' scripts/conformance-baseline.tsv)"
+  if [ "${xt:-0}" -gt 0 ]; then
+    say "- **W3C XSLT 3.0 — $xp/$xt ($(awk -v p=$xp -v t=$xt 'BEGIN{printf "%.2f", 100*p/t}')%)** across $xn test-sets,"
+    say "  from the committed per-set baseline, Release build. A ratchet, not a live run: it"
+    say "  records what each set reaches every time."
+  else
+    say "- **W3C XSLT 3.0 — no rows in the baseline.** Not a claim of 0%."
+  fi
+  if [ "${qt:-0}" -gt 0 ]; then
+    say "- **W3C QT3 baseline — $qp/$qt ($(awk -v p=$qp -v t=$qt 'BEGIN{printf "%.2f", 100*p/t}')%)** across $qn test-sets,"
+    say "  same file, same ratchet."
+  fi
 else
-  say "- **W3C XSLT 3.0 — no baseline file.** Not a claim of 0%; the file is missing."
+  say "- **No baseline file.** Not a claim of 0%; the file is missing."
 fi
 # Read the QT3 figure from the XQuery repo rather than restating it, so this cannot drift
 # from the report it claims to summarise. If the line is not found, say so — an absent figure

@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (94.8% W3C conformance — 10,082/10,630 cases, measured 2026-09-10)
+### XSLT 3.0 (95.4% W3C conformance — 10,137/10,630 cases, measured 2026-09-11)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,40 +24,44 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,082/10,630 cases (94.8%), 548 failing
+### W3C XSLT 3.0 — 10,137/10,630 cases (95.4%), 493 failing
 
-Measured 2026-09-10 against `w3c/xslt30-test` @ `fddf1cf`, **in a Release build**.
+Measured 2026-09-11 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, from the
+committed per-set baseline (`scripts/conformance-baseline.tsv`). Four sweeps of identical code
+produced identical per-set counts.
 
 | Group | Passing | | Failing |
 |---|---|---|---|
-| `attr` — attributes | 1066/1117 | 95.4% | 51 |
-| `decl` — declarations | 945/1080 | 87.5% | 135 |
+| `attr` — attributes | 1075/1117 | 96.2% | 42 |
+| `decl` — declarations | 956/1080 | 88.5% | 124 |
 | `type` — types | 750/766 | 97.9% | 16 |
 | `fn` — functions | 1072/1131 | 94.8% | 59 |
-| `strm` — streaming | 2283/2373 | 96.2% | 90 |
+| `strm` — streaming | 2284/2373 | 96.2% | 89 |
 | `expr` — expressions | 636/648 | 98.1% | 12 |
-| `misc` | 1821/1921 | 94.8% | 100 |
-| `insn` — instructions | 1509/1594 | 94.7% | 85 |
-| **Total** | **10,082/10,630** | **94.8%** | **548** |
+| `misc` | 1851/1921 | 96.4% | 70 |
+| `insn` — instructions | 1513/1594 | 94.9% | 81 |
+| **Total** | **10,137/10,630** | **95.4%** | **493** |
 
 The `sandp` group runs but reports no per-case counts, so it is excluded from the total rather
-than counted as passing. The streaming groups are not perfectly repeatable — `strm/si-element`
-returned 69, 68 and 67 across three runs of one build — so treat the last digit as noise.
+than counted as passing.
 
-**Why this is higher than the 94.4% published on 2026-09-05, and it is not an engine change.**
-That figure came from a **Debug** build. Debug is not what ships, and it lost 38 cases across 21
-sets purely to the harness's 10s per-case timeout — 43 timeouts against Release's 5. Measured
-both ways on the same commit, same machine:
+**A note on how these figures are measured, because one of them was wrong for months.**
+
+Conformance is measured in a **Release** build. It used to be measured in Debug, which lost 38
+cases across 21 sets purely to the harness's 10s per-case timeout — 43 timeouts against Release's
+5. Release is what ships, so a figure taken from a Debug build was not a claim about the product.
+Measured both ways on the same commit, same machine:
 
 | | cases | rate | timeouts |
 |---|---|---|---|
 | Debug | 10,044/10,630 | 94.49% | 43 |
-| Release | **10,082/10,630** | **94.84%** | 5 |
+| Release | 10,082/10,630 | 94.84% | 5 |
 
-21 sets better under Release, **zero worse**. `misc/bug-3701` is the clean illustration: ~10.5s
-in Debug against a 10s cap, ~5.7s in Release. `scripts/conformance.sh` now defaults to Release,
-because a conformance figure taken from a build nobody receives is not a claim about the product.
-See `BUGS.md` #43.
+21 sets better under Release, **zero worse**. `misc/bug-3701` is the clean illustration: ~10.5s in
+Debug against a 10s cap, ~5.7s in Release. `scripts/conformance.sh` now defaults to Release.
+
+That correction is why the published figure rose from 94.4% to 94.8% on 2026-09-10 without the
+engine changing. The rise since then — to 95.4% — *is* engine work. See `BUGS.md` #43.
 
 **This number went DOWN from the 96.2% published on 2026-09-02, and the engine did not get
 worse — the measurement got honest.** Tests that expect a specific error code were scored as
