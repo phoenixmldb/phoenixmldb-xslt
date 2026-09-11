@@ -2264,6 +2264,59 @@ cover `dotnet/`, `census/` and our workflows would make it mean something again.
 Owner: register side (release hygiene), not engineering. Not urgent; scheduled after the
 lockstep trains.
 
+### 60. Crucible is a real-world engine test bed we are not using as one (2026-09-11)
+
+Answering Lucas's question of whether crucible needs development work. **Its code does not** —
+the finding is that its *value to the engine* is being left on the table.
+
+#### State of the repo, measured not assumed
+
+Built and tested at `f697ffe` against its `PhoenixmlDb.Xslt 1.6.13` pin:
+
+- `dotnet build Crucible.slnx -c Release` — **succeeded, 0 warnings, 0 errors**, under
+  `TreatWarningsAsErrors` with `AnalysisLevel=latest-all`.
+- `dotnet test` — **134/134 passing** (126 Core, 8 Extensions).
+- **No** `TODO`/`FIXME`/`HACK` anywhere in `src/`.
+- **No** engine workarounds, and no comment anywhere saying a feature was avoided.
+- Seven stylesheets across two themes plus `_base`, all clean `version="3.0"`.
+
+So: healthy, and idle. Last commit 2026-09-01, ten days before this entry, during which the
+engines went 1.6.13 → 1.7.0 → well past it on main.
+
+#### What it actually needs
+
+1. **The pin bump**, which is train work (1.6.13 is the Tier 1 known-bad version; see
+   crucible#9).
+2. **Dev mode**, as parsers2 is adding to the other lockstep members, so it can build against
+   engine *main* rather than only against a published package.
+
+#### The opportunity, which is bigger than either
+
+Crucible's own `RELEASES.md` says it plainly:
+
+> Crucible transforms every page of phoenixml.dev through this engine, so it is one of the two
+> real-world consumers that exercise it outside its own test suite.
+
+Measured, that workload is **115 markdown sources → 264 HTML pages, 149 of them API pages.**
+A document pipeline of that size is a different kind of test from the W3C corpus: the corpus
+asks *is this construct conformant*, crucible asks *does a real stylesheet still produce a real
+site*. The two fail in different ways, and we only run one of them.
+
+Today that exercise happens **after** a release, against a pin three trains old. So the
+real-world signal arrives too late to act on and describes an engine nobody is running.
+
+**Proposal: run crucible against engine main as an XSLT regression gate.** With dev mode in
+place this is a build of the docs site and the existing scale assertions — `deploy.yml:73-74`
+already demands ≥250 pages and ≥140 API pages, which is exactly the right shape (assert it ran
+at the expected SCALE, not merely that it did not fail). Wire that to engine main and an XSLT
+change that breaks a real pipeline is caught the day it lands.
+
+This fits the current XSLT-first directive particularly well: it is a ready-made regression
+harness for the engine we are about to push hard on, and it needs wiring rather than building.
+
+**Not needed:** moving the themes to XSLT 4.0. They are clean 3.0, nothing is straining against
+it, and 3.0 is the more portable target for a tool other people may run.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
