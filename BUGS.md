@@ -1671,14 +1671,18 @@ wrong when two *different* argument shapes collide, and a conformance case that 
 function one way never produces the collision. **A cache defect is invisible to any test that
 does not call the same function twice with different arguments** — worth remembering when
 reviewing #21's tests.
-### 52. OPEN — a lenient signature hid a streaming accumulator returning `()` (2026-09-11)
+### 52. OPEN — a lenient signature hid an accumulator returning `()` (2026-09-11)
 
 Found by parsers2 while auditing built-in parameter cardinality. Recorded here because the
 defect it uncovered is a **real engine bug that nothing was reporting**, and because of how it
 surfaced.
 
-XSLT conformance case `accumulator-077`: a streaming `accumulator-after('header-id')` returns
-the empty sequence where an integer is expected. The value is then passed to `map:put` as its
+XSLT conformance case `accumulator-077`: `accumulator-after('header-id')` returns the empty
+sequence where an integer is expected. **This is the non-streamed variant (`STREAMABLE=false`),
+so it is not the streaming path** — corrected here, having first been recorded as streaming on
+my part. parsers2's instrumentation adds that the `header-map` end rule on `header-item` gets
+`()` at least once, yet the final output is still correct, which points at an extra or early
+evaluation of the rule rather than a wrong value. The value is then passed to `map:put` as its
 `$key`. `map:put` declares `$key` as `xs:anyAtomicType` — exactly-one — so a correct engine
 raises `XPTY0004` there. Ours did not enforce declared cardinality on built-ins at all, so
 `map:put` accepted `()` and the case went on to fail somewhere downstream, or not visibly at all.
