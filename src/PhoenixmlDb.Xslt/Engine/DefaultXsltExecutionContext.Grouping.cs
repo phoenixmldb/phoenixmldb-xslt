@@ -380,9 +380,23 @@ internal sealed partial class DefaultXsltExecutionContext
 
                 foreach (var item in forEachItems)
                 {
-                    // for-each-source evaluates to URI strings; load each via doc()
+                    // for-each-source is xs:string*, so each item is a URI to load via doc(). The
+                    // function conversion rules admit xs:anyURI (promoted) and xs:untypedAtomic
+                    // (cast) as well as xs:string: uri-collection() returns xs:anyURI, and an
+                    // xs:anyURI item used to become the context item itself, so
+                    // select="events/event" failed "axis step ... context item is not a node"
+                    // (W3C merge-039/098). Any other atomic type is XPTY0004 (merge-043:
+                    // for-each-source="1 to 5"). Nodes keep their existing handling.
                     object contextItem = item;
-                    if (item is string uri)
+                    var uri = item switch
+                    {
+                        string str => str,
+                        Xdm.XsAnyUri anyUri => anyUri.Value,
+                        Xdm.XsUntypedAtomic ua => ua.Value,
+                        null or XdmNode => null,
+                        _ => throw Error($"XPTY0004: for-each-source must yield URIs (xs:string*); got {item.GetType().Name}"),
+                    };
+                    if (uri != null)
                     {
                         var doc = _policyResolver?.ResolveDocument(uri) ?? _documentResolver.ResolveDocument(uri);
                         if (doc == null)
