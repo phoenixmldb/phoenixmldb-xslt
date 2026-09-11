@@ -451,6 +451,12 @@ internal sealed partial class DefaultXsltExecutionContext
                     try
                     {
                         var selected = await EvaluateAsync(source.Select).ConfigureAwait(false);
+                        // A streamed source delivers snapshots (each node with copies of its
+                        // ancestors, not the document), so a streamable source read here in
+                        // memory does too: root(current-merge-group()[1]) holds that one item, not
+                        // its siblings (W3C merge-097s, Saxon bug 3883).
+                        if (source.Streamable)
+                            selected = await SnapshotHelper.ProcessSnapshotAsync(selected, this).ConfigureAwait(false);
                         subSequence = new List<object>();
                         AddToList(subSequence, selected);
                     }
