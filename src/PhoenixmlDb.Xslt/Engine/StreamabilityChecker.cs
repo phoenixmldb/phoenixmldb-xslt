@@ -71,6 +71,33 @@ internal static class StreamabilityChecker
     }
 
     /// <summary>
+    /// Checks an xsl:merge-source streamable="yes" (XSLT 3.0 §15.6). Its select is evaluated
+    /// against the streamed document, so it must stride — a descendant step is crawling — and it
+    /// cannot sort before merging, which needs the whole input. Throws XTSE3430 otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Merge sources were not checked at all: the checker walked only the merge action, so
+    /// select="log//record" (W3C merge-094) and sort-before-merge="yes" (merge-095) ran as if
+    /// streamable.
+    /// </remarks>
+    public static void CheckStreamableMergeSource(XsltMergeSource source)
+    {
+        if (!source.Streamable)
+            return;
+        if (source.SortBeforeMerge)
+            throw new XsltException(
+                "XTSE3430: xsl:merge-source with streamable=\"yes\" is not guaranteed streamable: sort-before-merge=\"yes\" needs the whole input",
+                source.Location);
+        var crawling = new DescendantAxisDetector();
+        crawling.Walk(source.Select);
+        if (crawling.Found)
+            throw new XsltException(
+                "XTSE3430: xsl:merge-source with streamable=\"yes\" is not guaranteed streamable: its select uses a crawling (descendant) step",
+                source.Location);
+    }
+
+
+    /// <summary>
     /// Checks a template body used in a streamable mode.
     /// Throws XsltException with XTSE3430 if the body contains non-streamable expressions.
     /// </summary>

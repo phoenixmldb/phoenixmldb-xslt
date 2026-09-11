@@ -1125,7 +1125,7 @@ public sealed partial class StylesheetParser
             }
         }
 
-        return new XsltMergeSource
+        var mergeSource = new XsltMergeSource
         {
             Name = nameAttr?.Value,
             Location = location,
@@ -1141,6 +1141,8 @@ public sealed partial class StylesheetParser
             MergeKeys = mergeKeys,
             UseAccumulators = useAccumulators
         };
+        StreamabilityChecker.CheckStreamableMergeSource(mergeSource);
+        return mergeSource;
     }
 
 
