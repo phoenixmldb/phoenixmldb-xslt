@@ -1884,6 +1884,21 @@ different *mechanism*. In every instance above the answer is **ambiguous**: one 
 two meanings. Here the answer was **destroyed**: a property existed, and a step that did not
 care about it overwrote it before the step that did.
 
+**#43 is the clearest destruction instance, and it shows where this shape meets the fail-open
+family.** `xsl:merge` resolved a relative `for-each-source` URI against the wrong base, then
+**skipped the unretrievable source silently** — so `merge-041` produced output from *one* of its
+two sources, with no error. A merge of two files that quietly merges one.
+
+Read as destruction: the failure evidence existed for exactly as long as the failed retrieval,
+and was discarded at that moment, so nothing downstream could ask *"did every source load?"*
+Read as fail-open: a source that could not be retrieved was indistinguishable from a source that
+loaded and contributed nothing. **They are the same sentence from two directions** — which is
+this register's oldest refrain, *a thing that did not happen looks exactly like a thing that
+happened and found nothing*, arriving at the destruction shape from the other side.
+
+That convergence is the useful part. A silent skip is not merely a missing error; it is the
+**act of destroying the evidence** that any later check would need. Now `FODC0002`.
+
 Worth keeping the two apart, because the remedies differ. Ambiguity is fixed by widening the
 representation so it can say which meaning it holds. Destruction is fixed by **ordering** — ask
 the question before the step that erases its answer, or preserve what that step consumes. A

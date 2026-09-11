@@ -42,6 +42,15 @@ streamable mode, and `--no-stream` gave the same wrong answers. The W3C streamin
 catch it because every one of them aggregates inside `xsl:source-document`, whose path drains the
 stream first — full coverage of the feature, none of the way users reach it.
 
+### `xsl:merge` silently merged one of two sources (xslt #43)
+
+A relative `for-each-source` URI was resolved against the wrong base, and a source that could
+not then be retrieved was **skipped without an error**. A merge of two documents produced output
+from one of them, with nothing to say the other was missing.
+
+Now resolved against the static base URI in scope (`xml:base` included), and an unretrievable
+source raises `FODC0002`.
+
 ### `xsl:text` moved to the end of any untyped variable (BUGS.md, xslt #34)
 
 ```xml
