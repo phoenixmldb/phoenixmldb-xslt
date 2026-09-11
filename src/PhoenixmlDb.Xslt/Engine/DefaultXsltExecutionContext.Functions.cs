@@ -1478,7 +1478,17 @@ internal sealed partial class DefaultXsltExecutionContext
         pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDotForSurrogatePairs(pattern,
             flags.Contains('s', StringComparison.Ordinal));
 
-        var regex = new System.Text.RegularExpressions.Regex(pattern, regexOptions);
+        System.Text.RegularExpressions.Regex regex;
+        try
+        {
+            regex = new System.Text.RegularExpressions.Regex(pattern, regexOptions);
+        }
+        catch (ArgumentException ex)
+        {
+            // The .NET parser's rejection (e.g. regex="[A-Z", an unterminated class) escaped
+            // with no error code (error-1140a).
+            throw Error($"XTDE1140: The regex attribute of xsl:analyze-string is not a valid regular expression: {ex.Message}");
+        }
 
         // First pass: collect all matches to compute total substring count for position()/last()
         var matches = new List<System.Text.RegularExpressions.Match>();
