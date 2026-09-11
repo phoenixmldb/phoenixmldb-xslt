@@ -1749,6 +1749,23 @@ time** — a sort over the declaration graph cannot see an edge that only exists
 evaluated. Worth recording as the reason, since the static approach is the obvious one and this
 is why it is wrong here.
 
+#### A second silent defect in the same loop: the cycle check only caught self-reference
+
+Implementing the fix exposed it. A **two-accumulator cycle** — `a` reads `after(b)`, `b` reads
+`after(a)` — raised nothing on the old code: `a` read `b`'s provisional entry and finished, so
+the cycle resolved to stale data instead of an error. The old `_evaluatingAccEndPhase` guard
+only detected an accumulator referring to *itself*. Under on-demand evaluation it is now
+correctly `XTDE3400`, which is what the W3C case `error-3400a` expects.
+
+So the same loop carried two silent failures for the same reason: **reading a provisional entry
+is indistinguishable from reading a settled one.** The off-by-one and the missed cycle are the
+same defect seen from two angles — nothing ever asked whether the value it read had actually
+been computed yet.
+
+`#24` measures 10,160 → 10,162 with zero set losses, gaining `accumulator-079` and `error-3400a`.
+Three of its five tests fail on the old code; the reader-second variants are guards, and are
+labelled as such rather than counted as controls.
+
 #### Why this is in the register rather than just in the fix
 
 This is the same shape as #28, #44 and #47: *a check that fails open does not merely miss a
