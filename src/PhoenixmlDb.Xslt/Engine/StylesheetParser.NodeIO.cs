@@ -65,6 +65,7 @@ public sealed partial class StylesheetParser
         // same-precedence conflicts that are overridden by higher-precedence declarations.
         ValidateDecimalFormats(stylesheet);
         ValidateAttributeSetReferences(stylesheet);
+        ValidateStreamableAttributeSets(stylesheet);
         if (!isLibraryPackage)
             ValidateNoAbstractComponents(stylesheet);
         ValidateOutputCharacterMapReferences(stylesheet);

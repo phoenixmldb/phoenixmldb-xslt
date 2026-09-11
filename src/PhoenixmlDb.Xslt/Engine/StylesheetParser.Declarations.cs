@@ -2256,6 +2256,17 @@ public sealed partial class StylesheetParser
         if (collationAttr != null)
             ValidateCollationList(collationAttr.Value, GetSourceLocation(element), "XTSE1210");
 
+        // XTSE0010: the content of xsl:key is a sequence constructor, so a DECLARATION there is
+        // not allowed content at all. It was reported as XTSE1205 "both a use attribute and
+        // content", which describes a different mistake (key-092).
+        foreach (var keyChild in element.Elements())
+        {
+            if (keyChild.Name.Namespace == XsltNs && IsDeclarationOnlyElement(keyChild.Name.LocalName))
+                throw new XsltException(
+                    $"XTSE0010: xsl:{keyChild.Name.LocalName} is not allowed as content of xsl:key",
+                    GetSourceLocation(keyChild));
+        }
+
         // XTSE1205: xsl:key must have either use attribute or non-empty content, not both
         var hasContent = element.Nodes().Any(n => n is XElement || (n is XText t && !string.IsNullOrWhiteSpace(t.Value)));
         if (useAttr != null && hasContent)

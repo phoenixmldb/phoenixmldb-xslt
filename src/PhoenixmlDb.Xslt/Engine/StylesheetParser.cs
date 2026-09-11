@@ -426,6 +426,39 @@ public sealed partial class StylesheetParser
     }
 
 
+    /// <summary>
+    /// True for XSLT elements that may only appear as a declaration (a child of xsl:stylesheet,
+    /// xsl:package or xsl:override), never inside a sequence constructor.
+    /// </summary>
+    private static bool IsDeclarationOnlyElement(string localName) => localName is
+        "stylesheet" or "transform" or "package" or "template" or "function" or "key" or
+        "import" or "include" or "import-schema" or "decimal-format" or "character-map" or
+        "output" or "attribute-set" or "accumulator" or "mode" or "namespace-alias" or
+        "strip-space" or "preserve-space" or "use-package" or "expose" or "accept" or
+        "override" or "global-context-item";
+
+
+    /// <summary>
+    /// XTSE0730: an xsl:attribute-set with streamable="yes" may only use attribute sets that are
+    /// themselves streamable — using a non-streamable one would consume the input twice. The
+    /// use-attribute-sets list on a streamable set was not checked at all (error-0730a).
+    /// </summary>
+    private static void ValidateStreamableAttributeSets(XsltStylesheet stylesheet)
+    {
+        foreach (var (name, attrSet) in stylesheet.AttributeSets)
+        {
+            if (!attrSet.Streamable)
+                continue;
+            foreach (var usedName in attrSet.UseAttributeSets)
+            {
+                if (stylesheet.AttributeSets.TryGetValue(usedName, out var used) && !used.Streamable)
+                    throw new XsltException(
+                        $"XTSE0730: Attribute set '{name.LocalName}' is streamable, so the set '{usedName.LocalName}' it uses must be streamable too");
+            }
+        }
+    }
+
+
     private static void ValidateUseAttributeSetRefsInInstructions(XsltSequenceConstructor body, XsltStylesheet stylesheet)
     {
         foreach (var instruction in body.Instructions)
