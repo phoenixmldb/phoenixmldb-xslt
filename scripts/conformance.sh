@@ -29,7 +29,35 @@
 # Env:
 #   CONFORMANCE_TIMEOUT   per-chunk seconds (default 900)
 #   CONFORMANCE_OUT       results directory (default ./conformance-results)
-#   CONFORMANCE_CONFIG    Debug|Release (default Debug)
+#   CONFORMANCE_CONFIG    Debug|Release (default RELEASE — see below)
+#
+# Why Release is the default. Debug was, and it cost 38 cases across 21 sets — 0.35 points of
+# conformance — entirely to timeouts. Measured, same commit, same machine:
+#
+#       Debug    10044/10630  94.49%   43 timeouts
+#       Release  10082/10630  94.84%    5 timeouts
+#       21 sets better under Release, ZERO sets worse.
+#
+# misc/bug-3701 is the clearest case: ~10.5s in Debug against the harness's 10s cap, ~5.7s in
+# Release. It is not flaky, it is over the line in one configuration and comfortably under in the
+# other, which is why the database repo's package-based floors have always shown it passing.
+#
+# The point is not that Release is faster. It is that RELEASE IS WHAT SHIPS. A Debug measurement
+# does not measure the artifact anyone receives, so a conformance figure taken from one is not a
+# claim about the product — and this one understated it. That is the fail-open shape inverted:
+# a harness that undercounts is still a harness reporting something other than the truth.
+#   CONFORMANCE_BASELINE  per-set baseline file (default scripts/conformance-baseline.tsv)
+#   CONFORMANCE_UPDATE_BASELINE=1   rewrite the baseline from this run instead of checking it
+#
+# Per-set gating. Chunk totals CANNOT express a regression: `insn` once went 1497 -> 1508
+# while insn/call-template quietly lost 2 cases, because try gained 7 and analyze-string
+# gained 4. An aggregate hides a loss exactly when something else in the aggregate improves
+# — which is when you are most likely to be reading it and least likely to be suspicious.
+# The same shape as the fail-open harness bug (BUGS.md #28): a check that cannot express the
+# thing it exists to catch. So every test-set's passing count is recorded and compared
+# individually, and ANY set going down fails the run regardless of what the totals did.
+# A consumer found the call-template drop before this script could; that is the gap this
+# closes. "Remember to also diff the per-case list" is not a control.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,7 +72,7 @@ TIMEOUT="${CONFORMANCE_TIMEOUT:-900}"
 # letting a genuinely wedged XSLT chunk sit for an hour. CONFORMANCE_TIMEOUT still overrides.
 XQTS_TIMEOUT="${CONFORMANCE_XQTS_TIMEOUT:-3600}"
 OUT="${CONFORMANCE_OUT:-$ROOT/conformance-results}"
-CONFIG="${CONFORMANCE_CONFIG:-Debug}"
+CONFIG="${CONFORMANCE_CONFIG:-Release}"
 
 # Order is cheapest-first so a broken engine shows up in the first minute rather than
 # the fortieth. It is not alphabetical on purpose.
@@ -236,6 +264,92 @@ for g in "${CHUNKS[@]}"; do
 
   printf '%-7s %4ds  %s\n' "$g" "$d" "$line" | tee -a "$OUT/summary.txt"
 done
+
+# ---- per-set regression gate -------------------------------------------------
+# Pair each "Running N tests from <set>" with the "Results: X/Y passed" that follows it.
+BASELINE="${CONFORMANCE_BASELINE:-$ROOT/scripts/conformance-baseline.tsv}"
+CURRENT="$OUT/per-set-current.tsv"
+: > "$CURRENT"
+for g in "${CHUNKS[@]}"; do
+  [ -f "$OUT/$g.log" ] || continue
+  awk '/^ Running [0-9]+ tests from /{set=$NF}
+       /^ Results: /{split($2,a,"/"); if(set!=""){print set"\t"a[1]"\t"a[2]; set=""}}' \
+    "$OUT/$g.log" >> "$CURRENT"
+done
+sort -o "$CURRENT" "$CURRENT"
+
+if [ "${CONFORMANCE_UPDATE_BASELINE:-0}" = "1" ]; then
+  # Only the sets this run actually covered are refreshed; sets from other chunks are kept,
+  # so updating after a single-chunk run cannot silently erase the rest of the baseline.
+  if [ -f "$BASELINE" ]; then
+    # Carry each set's existing tolerance across the refresh — re-baselining must not
+    # silently reset a tolerance someone set deliberately.
+    awk -F'\t' 'NR==FNR{tol[$1]=$4; next}
+                 {t=($1 in tol && tol[$1]!="")?tol[$1]:""; print $1"\t"$2"\t"$3 (t==""?"":"\t" t)}' \
+      "$BASELINE" "$CURRENT" > "$CURRENT.tol"
+    awk -F'\t' 'NR==FNR{seen[$1]=1; next} !($1 in seen)' "$CURRENT" "$BASELINE" > "$BASELINE.keep"
+    cat "$CURRENT.tol" "$BASELINE.keep" | sort -o "$BASELINE"
+    rm -f "$BASELINE.keep" "$CURRENT.tol"
+  else
+    cp "$CURRENT" "$BASELINE"
+  fi
+  echo "per-set baseline updated: $BASELINE" | tee -a "$OUT/summary.txt"
+elif [ -f "$BASELINE" ]; then
+  # Optional 4th baseline column: cases this set may lose without failing the run.
+  #
+  # Measured, and the first measurement was WRONG. Two back-to-back serial sweeps gave
+  # identical per-set counts across all 89 streaming sets, and that was recorded here as
+  # "no variance, tolerance 0 everywhere". A third clean run then produced strm1 699 where
+  # both earlier ones gave 700. Two agreeing samples do not establish zero variance — the
+  # same over-claim from too small an observation that BUGS.md #40 catalogues, made while
+  # writing the control meant to catch such things.
+  #
+  # So: exactly ONE set carries a tolerance, and only because its count moved between two
+  # runs with no source change and no competing load — strm/sf-min (37/36/37). Everything
+  # else stays at 0. Do not widen tolerances to silence a failure you have not first
+  # reproduced under a quiet machine: a gate that cries wolf gets ignored, but a gate with
+  # slack in it is worse, because it never fires at all.
+  #
+  # Baseline each set at the value it RELIABLY achieves, and re-baseline only from a quiet
+  # machine. Two rules that pull against each other, both learned here:
+  #
+  #   Never lower a baseline from a perturbed run. Three streaming sets briefly lost a case
+  #   each when CLI probes ran alongside a re-baseline; taking that run at face value would
+  #   have silently lowered the bar, which is the failure this gate exists to prevent.
+  #
+  #   But "always take the maximum" is wrong too, and it was the rule here first. It records
+  #   a lucky run as the standard and then fires on every ordinary one. misc/bug was
+  #   baselined at 73 from a run where bug-3701 happened to finish inside its 10s timeout;
+  #   it does not usually, so the gate reported a regression on a build that was PROVEN
+  #   identical — the same drop appeared with the change reverted.
+  #
+  # For a set demonstrated unstable, baseline the value it reaches every time (misc/bug 72,
+  # si-element 67 of an observed 69/68/67) rather than its best. A gate that fires on noise
+  # gets ignored, and an ignored gate catches nothing — which is the whole point of #40.
+  regressed="$(awk -F'\t' '
+    NR==FNR { base[$1]=$2; tol[$1]=($4==""?0:$4); next }
+    ($1 in base) && $2 < base[$1] - tol[$1] {
+      printf "  %s: %d -> %d  (-%d, tolerance %d)\n", $1, base[$1], $2, base[$1]-$2, tol[$1] }
+  ' "$BASELINE" "$CURRENT")"
+  gained="$(awk -F'\t' '
+    NR==FNR { base[$1]=$2; next }
+    ($1 in base) && $2 > base[$1] { printf "  %s: %d -> %d  (+%d)\n", $1, base[$1], $2, $2-base[$1] }
+  ' "$BASELINE" "$CURRENT")"
+  newsets="$(awk -F'\t' 'NR==FNR{base[$1]=1; next} !($1 in base){printf "  %s (%d/%d)\n", $1, $2, $3}' \
+              "$BASELINE" "$CURRENT")"
+  [ -n "$gained" ]  && { echo "per-set GAINS:"    | tee -a "$OUT/summary.txt"; echo "$gained"  | tee -a "$OUT/summary.txt"; }
+  [ -n "$newsets" ] && { echo "per-set NEW sets:" | tee -a "$OUT/summary.txt"; echo "$newsets" | tee -a "$OUT/summary.txt"; }
+  if [ -n "$regressed" ]; then
+    echo "PER-SET REGRESSION — these test-sets lost cases:" | tee -a "$OUT/summary.txt"
+    echo "$regressed" | tee -a "$OUT/summary.txt"
+    echo "If the drop is intended, re-run with CONFORMANCE_UPDATE_BASELINE=1 to re-baseline." |
+      tee -a "$OUT/summary.txt"
+    failed=1
+  fi
+else
+  echo "no per-set baseline at $BASELINE — create it with CONFORMANCE_UPDATE_BASELINE=1" |
+    tee -a "$OUT/summary.txt"
+fi
 
 total=$((SECONDS - started))
 printf '\n%d chunk(s) in %dm%02ds — logs in %s\n' "${#CHUNKS[@]}" $((total / 60)) $((total % 60)) "$OUT" |

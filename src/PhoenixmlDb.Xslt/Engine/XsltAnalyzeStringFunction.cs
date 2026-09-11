@@ -72,7 +72,13 @@ internal sealed class XsltAnalyzeStringFunction : PhoenixmlDb.XQuery.Ast.XQueryF
         netPattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.ConvertXsdEscapesToNet(netPattern);
         if (!flags.Contains('m', StringComparison.Ordinal))
             netPattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDollarAnchor(netPattern);
-        netPattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDotForSurrogatePairs(netPattern);
+        // Pass the 's' flag through: this helper rewrites '.' into an explicit character
+        // class, and its non-single-line form is [^\r\n]. Rewriting unconditionally bakes
+        // "dot does not match a newline" into the PATTERN, where RegexOptions.Singleline —
+        // set above — can no longer affect it. The five XQuery callers pass the flag; these
+        // two XSLT ones did not (analyze-string-008/034/065).
+        netPattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDotForSurrogatePairs(netPattern,
+            flags.Contains('s', StringComparison.Ordinal));
 
         System.Text.RegularExpressions.Regex regex;
         try

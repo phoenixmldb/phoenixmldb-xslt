@@ -3833,8 +3833,19 @@ public sealed class XsltTransformEngine
                                     {
                                         childNode.Parent = null;
                                         // Set construction context base URI so parentless
-                                        // nodes can resolve relative xml:base attributes
-                                        if (globalSeqBaseUri != null)
+                                        // ELEMENTS can resolve relative xml:base attributes.
+                                        // Elements only: for a comment, text or PI node
+                                        // ComputeBaseUri returns BaseUri directly as the answer
+                                        // rather than as a base to resolve an xml:base against,
+                                        // so stamping it made a parentless constructed comment
+                                        // report the stylesheet's base URI where XDM requires
+                                        // the empty sequence (base-uri-015). The sibling
+                                        // accumulator-path block above is already scoped to
+                                        // XdmElement for the same reason; this one was not.
+                                        // Text nodes escaped the bug only because ItemType.Text
+                                        // is absent from needsNodeOrphan and so never reaches
+                                        // this path.
+                                        if (globalSeqBaseUri != null && childNode is XdmElement)
                                             childNode.BaseUri = globalSeqBaseUri;
                                     }
                                     seqItems.Add(item);
@@ -3936,6 +3947,12 @@ public sealed class XsltTransformEngine
                 // later reference reported XPST0008 "not defined", naming the wrong problem.
                 if (ex is XsltException deferred)
                     deferred.IsDeferredGlobalError = true;
+                // The rethrow fires wherever the global is first READ, which may be inside an
+                // xsl:try. XSLT 3.0 evaluates globals outside any try's dynamic scope, so the
+                // error must not become catchable just because the read happened there
+                // (try-028). Marked type-agnostically: FOAR0001 arrives as an XQuery exception,
+                // which carries no IsDeferredGlobalError flag to set.
+                DeferredGlobalError.Mark(ex);
                 var captured = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
                 context.GlobalVariables[global.Name] = new LazyValue(() =>
                 {

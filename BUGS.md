@@ -1058,6 +1058,247 @@ handled.
 
 ---
 
+### 40. One helper, one unswept twin — three instances in one branch — FIXED 2026-09-09/10
+
+Three defects fixed on `fix/err-location-runtime-exception` (XSLT) and
+`fix/aggregate-provider-atomization` (XQuery) turned out to be the same structural shape:
+**a helper grew a parameter, some call sites were updated to pass it, and the ones that were
+not kept the old behaviour silently** — because the parameter had a default.
+
+| # | helper | passed it | did not | symptom |
+|---|---|---|---|---|
+| a | `FixDotForSurrogatePairs(pattern, singleLineMode)` | 5 XQuery call sites | both XSLT ones | `flags="s"` ignored by `xsl:analyze-string` |
+| b | `AtomizeTyped(value)` / `Atomize(value)` | `fn:data`, `fn:number`, type ctors, string fns | `fn:sum` `fn:avg` `fn:max` `fn:min` | store-backed elements atomize to `''` |
+| c | scope push around a body | every other construct | `xsl:try` | try-body variables clobbered outer ones |
+
+(b) is the third sweep of one defect: #160 fixed `fn:number`/`fn:data`/type constructors, #163
+the string functions, and the aggregates were missed **both** times.
+
+**Why the default is the mechanism, not an incidental detail.** In each case the wrong behaviour
+is what you get by *not* thinking about the parameter. Adding it was source-compatible, so the
+compiler never enumerated the call sites, and every missed one silently kept the pre-fix
+semantics. A required parameter would have turned all three into build errors.
+
+In (a) the flag was even parsed and mapped correctly — `RegexOptions.Singleline` was set — and
+then discarded by a *pattern rewrite* applied afterwards that baked `[^\r\n]` into the regex.
+Checking that the flag was honoured at the parse site proved nothing.
+
+**Cheap countermeasure.** When a helper gains a parameter that changes semantics, grep every
+call site in the same commit and list them in the message. If the parameter can be required,
+make it required; where a public signature forbids that (b — the XSLT engine consumes
+`AtomizeTyped` cross-repo as a package), document the trap **at the definition of the unsafe
+overload**, not only at the fixed call sites.
+
+**A fourth instance, and the one that cost most: `fn:sum` returned 0.** `xs:integer` is
+unbounded, so casting TEXT to it yields `BigInteger` even for the value 10. `SumHelper` matched
+`int or long`, `double`, `float`, `decimal`, untypedAtomic and the durations — not `BigInteger`.
+Unmatched items fell through the whole chain, still counted, and contributed nothing, so
+`sum((xs:integer("10"), xs:integer("30")))` returned **0** with no error. `fn:avg` and
+`fn:min`/`fn:max` already carried the case. Any query summing integer-typed element text was
+affected — no store, no `collection()`, no LINQ needed.
+
+**Two opposite reasoning errors found it, both worth naming.** They are the same mistake in
+mirror image, and each cost real time:
+
+> *A reduction that does not reproduce did not clear the code — it dropped a variable.*
+> The first minimal repro used a `decimal` selector because that is the natural type for a
+> price. It passed on both versions, and absence was reported. The failing test used `int`,
+> which is the only thing that mattered.
+
+> *A code path that cannot produce the value does not clear the hypothesis — another path can.*
+> BigInteger was the first hypothesis. Two paths that produce `xs:integer` from text were read,
+> both correctly returning `long` for in-range input, and the hypothesis was abandoned. A third
+> path produces it. An hour went into a single-enumeration theory that measurement then killed.
+
+Both resolve the same way: **instrument and look, rather than reason about what must be true.**
+One temporary `else { throw ... item.GetType().FullName }` settled in two minutes what reading
+could only have settled by exhaustive enumeration:
+
+```
+Runtime error [PROBE]: UNMATCHED item type: System.Numerics.BigInteger value=10
+```
+
+A negative conclusion drawn from reading requires exhaustiveness that reading almost never
+provides. Treat "I have read the paths that produce this" as "I have read *some* of them".
+
+**Watch the ternary when narrowing a widened numeric type.** The fix narrows the exact total
+back to `long` when it fits. `cond ? (long)total : total` silently converts it straight back —
+the conditional operator unifies both arms to one type and `BigInteger` defines an implicit
+conversion from `long`. Cast BOTH arms to `object`. The CLI printed `40` either way; only the
+unit suite, which asserts runtime type rather than numeric value, caught it.
+
+**Corollary about repro cost.** (b) was reported as needing an LMDB store, and that was believed
+for a whole exchange. It was wrong: a fake `INodeProvider` harness from #160 already existed in
+the XQuery test project and constructs the failing condition with no store at all. Before
+accepting "this can only be reproduced in the consumer", grep the test project for an existing
+fake of whatever the consumer supplies.
+
+---
+
+### 41. OPEN — eight catalog environment attributes the XSLT runner never reads (2026-09-10)
+
+`xinclude` was found by a single failing case (base-uri-052) and fixed; the engine had supported
+XInclude since SP1, so a working capability was being scored as a failure for want of three lines
+in the runner. Prompted by the phoenixml engine repo, whose runner DOES read it and scores 052 as
+passing, the whole attribute surface was then enumerated rather than waiting for the next case to
+surface itself.
+
+Method: every attribute appearing on a catalog **schema** element inside `<environment>` across
+all test-sets plus `catalog.xml`, with inline `<content>` bodies stripped (those are document data,
+not catalog schema), diffed against what `XsltTestRunner` reads.
+
+| element | attribute | uses | read? | assessment |
+|---|---|---|---|---|
+| `source` | `streaming` | 176 | **no** | worth a real check — see below |
+| `source` | `context` | 165 | **no** | 166 of 166 are the single value `static-expression-context`; a marker, likely benign |
+| `schema` | `xsd-version` | 121 | **no** | schema-aware; #38's feature decision, not a defect |
+| `source` | `validation` | 115 | **no** | schema-aware; same |
+| `source` | `defines-stylesheet` | 15 | **no** | unassessed |
+| `resource` | `media-type` | 13 | **no** | unassessed |
+| `source` | `xml-version` | 1 | **no** | unassessed |
+| `namespace` | `prefix` | 1 | **no** | unassessed |
+
+Everything else the corpus declares IS read: `role`, `file`, `uri`, `select`, `xinclude`,
+`ref`, `name`, `value`, `static`, `as`, `encoding`, `media-type`'s siblings, `stylesheet/@file`,
+`stylesheet/@role`, `collection/@uri`, `schema/@file`, `schema/@role`, `schema/@uri`.
+
+**`source/@streaming` — MEASURED 2026-09-10, and it costs nothing. Now wired anyway.**
+
+Honouring it is more than reading it: `TransformAsync(string)` is the materialising path and NEVER
+streams, so the attribute only means anything if the runner opens the file and hands over a
+`TextReader` — the overload that actually selects the streaming engine, the same choice the CLI
+makes via `HasStreamableMode`. A runner that read the attribute and kept calling the string
+overload would look wired and change nothing.
+
+Wired, then swept the full corpus:
+
+| | before | after |
+|---|---|---|
+| every one of the 11 chunks | — | **identical** |
+| every one of the 221 test-sets | — | **identical** |
+
+Zero movement. The declaration is redundant against this engine, almost certainly because
+streaming is auto-selected from the stylesheet's streamable mode — the corpus is telling the
+harness something the engine already worked out.
+
+**The instrumentation is what makes that trustworthy, not the numbers.** An inert wiring and a
+correct wiring over an insensitive difference produce identical output. The streaming branch was
+therefore made to log every case that took it — 29 in `attr` alone (doe-0801/2/3, mode-1406/8/10,
+attr/streamable's 24) — proving those cases genuinely executed on the streaming engine before
+"no change" was believed.
+
+Kept despite changing nothing: the harness now does what the corpus declares rather than
+coincidentally agreeing by another route, and if auto-selection ever changes, these 176 cases
+start exercising the path they name instead of silently not.
+
+This also cleared a question raised by the phoenixml engine repo, whose non-streaming floors
+contain 68 streaming-declaring cases (`decl/accumulator` 31, `attr/streamable` 24, and seven
+smaller sets). Those floors were sound; no re-baselining needed.
+
+The failure mode of every row above is silence — a declared capability the runner ignores scores a
+working engine as failing (or, worse for a conformance claim, an unexercised path as passing). That
+is why enumerating beats waiting: `xinclude` is declared by exactly ONE case in 10,630, and a
+feature the corpus exercises once is a feature nobody notices is unwired.
+
+---
+
+### 42. Core's StringValue could not say "I don't know" — and the work it defers (2026-09-10)
+
+`XdmElement.StringValue` / `XdmDocument.StringValue` were `_stringValue ?? string.Empty`, so a
+node whose value had never been computed reported exactly what a genuinely empty node reports.
+Found from the database side: paths that WALK children (`fn:string`, explicit casts) saw the text
+while paths that READ the cached value (implicit atomization) saw `""`, so the same predicate
+returned the right document on its own and `0` inside `count()`, with no error raised. This is
+the root cause under #35's `fn:sum/avg/max/min` fix — that treated the symptom without knowing it.
+
+Fixed in `phoenixmldb-core` on `fix/string-value-resolver`:
+
+| commit | what |
+|---|---|
+| `f4d4b82` | `XdmNode.StringValueResolver` — a delegate invoked on first read and cached. `NodeReader` takes one too, and that is the part that makes it usable: the storage layer never constructs `XdmElement`/`XdmDocument` itself, so an init-only property alone would have been a hook nobody outside the assembly could reach. |
+| `898fc14` | `XdmNode.StrictStringValue` — opt-in; raises rather than returning `""` when a node has neither a computed value nor a resolver. Off by default so no consumer changes on upgrade. Core's own suites run with it ON. |
+
+**Measured before enabling strict, not assumed:** with it on globally the only failures across all
+516 Xdm tests were the four asserting the empty-string fallback; no production path broke. Those
+four now pin the flag off explicitly. A strict mode nobody enables catches nothing, so the
+suites that run it are the point.
+
+#### Deferred to the Core pin bump — do not lose these
+
+Both need the released Core and are therefore NOT on any branch today:
+
+1. **`phoenixmldb-xquery` `ElementConstructorOperator` copies the string value by FIELD** at four
+   sites (`735`, `958`, `997`, `1072`: `newElem._stringValue = elem._stringValue`). A field read
+   bypasses the resolver, so a copy taken before anything read the property inherits `null` AND
+   no resolver of its own, and reports `""` for ever. The fix is a
+   `CarriedStringValue(source)` helper reading the PROPERTY when the source has a resolver and
+   the field otherwise. Written, then reverted — it does not compile against the published Core
+   1.6.7. Site `1247` already has a working fallback and was left alone.
+   **The resolver must NOT be copied onto the new node**: it resolves by identity in the store it
+   closed over, and a copy has a different identity, so it must be resolved through the SOURCE.
+2. **Turn `StrictStringValue` on in the XQuery and XSLT test suites** at the same bump, for the
+   same reason Core's are on.
+
+#### Open, and not reproduced here
+
+The engine repo reports a direct element constructor whose content comes from a node store
+returning an `xs:string` of its own markup, so a path step on it fails with "axis step used when
+the context item is not a node". They see it on an LMDB container AND on XQuery's own
+`XdmDocumentStore`, at 1.6.9 and on the aggregate branch. **Four tests driving `XdmDocumentStore`
+directly — including the parenthesised form — all PASS**
+(`phoenixmldb-xquery` `2907c1a`, kept as coverage). Recorded as a measured negative, not as
+absence: per #40, a reduction that does not reproduce is evidence the reduction dropped a
+variable. Awaiting the distinguishing detail.
+
+Also from the engine side and worth a check nobody has done: whether Core or XQuery anywhere
+computes an index key from a stored node's `StringValue`. Their index-removal defect was exactly
+that — `RemoveText("")` removed nothing, so full-text search kept finding words a document no
+longer contained.
+
+---
+
+### 43. The conformance harness measured Debug, and understated the engine (2026-09-10)
+
+`conformance.sh` defaulted to `CONFORMANCE_CONFIG=Debug`. Debug is not what ships, so every
+conformance figure taken from it was a claim about an artifact nobody receives — and it was
+**too low**, entirely because of the harness's 10s per-case timeout.
+
+Measured, same commit, same machine, full 11-chunk sweep both ways:
+
+| | cases | rate | timeouts | wall clock |
+|---|---|---|---|---|
+| Debug | 10044/10630 | 94.49% | **43** | ~38 min |
+| Release | **10082/10630** | **94.84%** | **5** | ~25 min |
+
+**21 sets better under Release, ZERO sets worse.** 38 cases, 0.35 points.
+
+`misc/bug-3701` is the clean illustration, timed directly at load ~1.3:
+
+    Debug    10.3s / 10.8s / 10.9s      against a 10s cap
+    Release   5.7s /  5.5s /  6.1s      (and that at load ~10)
+
+Not flaky — over the line in one configuration and comfortably under in the other. It also
+explains why the phoenixml engine repo's floors, which are measured against published *packages*
+(Release), have always shown `bug-3701` passing while it flickered here.
+
+**Default is now Release.** The baseline was rebuilt from the Release sweep.
+
+**Why this belongs in the same register as the fail-open entries.** #28 was a check that passed
+when it could not verify anything; this is its mirror — a harness that FAILS cases the product
+passes. Both report something other than the truth, and the direction is not the point. A number
+that flatters is a lie you get called on; a number that undersells is one nobody checks, which is
+worse, because it survives.
+
+It also retires a mystery: the `call-template-1002/1003` stack-depth episode earlier the same day
+cost two sessions a long detour, and Debug frames were a live hypothesis throughout
+(Debug reached recursion depth 898 vs Release 976 on the same commit). Anything timing-,
+stack- or performance-sensitive measured in Debug is measuring the wrong build.
+
+**Cheap countermeasure, general:** before publishing a number from a harness, confirm the harness
+runs the configuration that ships. Ours did not, and nobody asked for two months.
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
@@ -1076,7 +1317,7 @@ arrays flattened into sequences · `<serialization-matches>` unimplemented (576)
 `<assert-xml file=>` never read (41 each) · XSLT `_ => true` passing ~12800 assertions ·
 assertions parsed with query-source line-ending normalization.
 
-**Two patterns worth remembering.**
+**Three patterns worth remembering.**
 
 *The error message named the wrong thing* — five separate piles hid this way:
 `FORX0002: POSIX character class` for a pattern containing no POSIX syntax;
@@ -1090,3 +1331,52 @@ Cheap countermeasure: confirm the input actually uses the feature the error name
 Cheap countermeasure: enumerate what the input format can express, then check the parser
 handles each. One command compared every `<assert*>` element against the runner's switch
 and found three gaps at once.
+
+*Assert that it ran at the expected SCALE, not just that it did not fail.* The sharpest form of
+the entry below, and the one to reach for first. One skipped test and 428 skipped tests are both
+green. A guard that never engaged and a guard that engaged and found nothing both print nothing.
+A build that never picked up your change and a change with no effect both leave the numbers
+unmoved. In every case the pass/fail is identical and only the COUNT distinguishes them.
+
+So the cheap control is almost always a count or a positive control, not a stronger assertion:
+
+| the question | the useless check | the check that works |
+|---|---|---|
+| did the suite run? | did it fail? | how many cases ran? |
+| did strict mode engage? | did anything throw? | does a known-bad input throw? |
+| did the rebuild take? | did it build? | does the DLL hash differ? |
+| did the branch execute? | is the output right? | log the branch and count hits |
+
+Each of these was needed on the same day, in tooling built by two people who were not
+coordinating, and in several cases by whoever had just finished explaining the pattern to the
+other. Naming a failure mode does not immunise you against it; only a control does.
+
+*A step that did not run looks exactly like a step that ran and found nothing* — four instances
+in one day, in unrelated tooling built by two people who were not coordinating:
+
+| the step | what it produced | what it looked like |
+|---|---|---|
+| expected-error harness had no code to compare | matched on any exception | a pass |
+| chunk-total gate, set-level loss inside a rising chunk | a bigger number | a gain |
+| `-c Release` that never reached the projects | Debug results | "configuration makes no difference" |
+| a probe that failed to compile (CA1849) | no log file | "the branch never ran" |
+
+The countermeasures were the same move every time — **hash the artifact, log the branch, refuse to
+emit a number** — and none of them check the answer. They check that there *was* an answer.
+
+That is why they are cheap and why they generalise. Checking the answer needs an oracle: you must
+already know the right result, which for a conformance run is the thing you are trying to find
+out. Checking that the step executed needs nothing but the pipeline's own artifacts — a hash, a
+log line, a case count.
+
+The related distinction, worth keeping separate: `Build FAILED` printing above a bad probe and the
+per-set gate both surface the same fact, but only one FAILS the run. Correctness that depends on a
+reader noticing is not a control, because the reader who most needs to notice is the one who
+already believes the run succeeded.
+
+*One of a pair had a fix its twin lacked* — the dominant shape in this codebase, and #39
+records three more in a single branch. It appears wherever the same job is done in two places:
+the two `fn:transform` implementations, the local and global variable paths, the XSLT and
+XQuery copies of a regex or atomization helper. Cheap countermeasure: when you fix one, grep for
+the other **in the same commit**. A helper that took a new parameter is the highest-yield thing
+to grep for, because the default hides every site you missed.

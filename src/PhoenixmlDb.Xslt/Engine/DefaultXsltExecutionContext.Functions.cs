@@ -823,6 +823,20 @@ internal sealed partial class DefaultXsltExecutionContext
                 results.Add(item);
             }
         }
+        // XQueryRuntimeException is a SIBLING of XQueryException, not a subclass — both derive
+        // straight from Exception. The catch below therefore never sees it, so an error raised
+        // through that type (FODC0002 from doc(), most of the runtime codes) recorded no
+        // location and left $err:module and $err:line-number empty in xsl:catch. try-018 asserts
+        // both and fails on exactly that. Record the location and rethrow unchanged: the
+        // diagnostic rewrapping below is deliberately NOT applied here, because these messages
+        // already carry their own position and rewrapping them would change text that other
+        // tests match on.
+        catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException)
+        {
+            if (expr.Location is not null)
+                _lastExpressionErrorLocation = expr.Location;
+            throw;
+        }
         catch (PhoenixmlDb.XQuery.Functions.XQueryException xqe) when (string.IsNullOrEmpty(xqe.Module))
         {
             var snippet = expr.ToString() ?? "(unknown)";
@@ -1456,7 +1470,13 @@ internal sealed partial class DefaultXsltExecutionContext
         pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.ConvertXsdEscapesToNet(pattern);
         if (!flags.Contains('m', StringComparison.Ordinal))
             pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDollarAnchor(pattern);
-        pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDotForSurrogatePairs(pattern);
+        // Pass the 's' flag through: this helper rewrites '.' into an explicit character
+        // class, and its non-single-line form is [^\r\n]. Rewriting unconditionally bakes
+        // "dot does not match a newline" into the PATTERN, where RegexOptions.Singleline —
+        // set above — can no longer affect it. The five XQuery callers pass the flag; these
+        // two XSLT ones did not (analyze-string-008/034/065).
+        pattern = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.FixDotForSurrogatePairs(pattern,
+            flags.Contains('s', StringComparison.Ordinal));
 
         var regex = new System.Text.RegularExpressions.Regex(pattern, regexOptions);
 

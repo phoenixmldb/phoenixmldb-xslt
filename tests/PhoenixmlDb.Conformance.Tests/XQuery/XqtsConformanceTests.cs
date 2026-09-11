@@ -1,4 +1,5 @@
 using FluentAssertions;
+using System.Xml.Linq;
 using Xunit;
 
 
@@ -229,17 +230,59 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
         }
     }
 
+    /// <summary>
+    /// Every test-set the QT3 catalog declares — 428 of them — one theory case each.
+    /// </summary>
+    /// <remarks>
+    /// This used to be nine hard-coded <c>InlineData</c> rows, with the other 419 sets reachable
+    /// only through <see cref="Xqts_ShouldRunFullTestSuite"/>: a single xunit test running all
+    /// 31,414 cases that prints nothing until it returns. That shape cost real time twice. It is
+    /// why a per-chunk timeout was read as a hang and went uninvestigated for weeks (BUGS.md #33),
+    /// and why a run that stopped after nine sets looked like a 39x slowdown, then like a wedge,
+    /// before turning out to be one long test being killed mid-flight — a diagnosis that took
+    /// three runs at different caps to reach and would have been obvious from a per-set listing.
+    /// <para>
+    /// Per-set cases give progress you can watch, a duration per set so a slow one is named
+    /// rather than inferred, a partial result when the suite is cut short instead of nothing, and
+    /// per-set counts the conformance gate can ratchet on exactly as it does for XSLT.
+    /// </para>
+    /// <para>
+    /// Enumerated from the catalog rather than listed, so a suite update adds its sets here
+    /// automatically instead of silently going unrun — the "corpus declares something the runner
+    /// never reads" defect this project keeps finding (BUGS.md #41).
+    /// </para>
+    /// </remarks>
+    public static TheoryData<string, string> AllTestSets()
+    {
+        var data = new TheoryData<string, string>();
+        var catalog = Path.Combine(ConformanceSuites.Locate("qt3tests", "QT3_TEST_SUITE"), "catalog.xml");
+        if (!File.Exists(catalog))
+        {
+            // No corpus: emit one placeholder so the theory is not empty (xunit fails an empty
+            // MemberData). The test body then hits the same Assert.Skip as every other case.
+            data.Add("none", "none");
+            return data;
+        }
+
+        var doc = XDocument.Load(catalog);
+        var ns = doc.Root?.Name.Namespace ?? XNamespace.None;
+        foreach (var ts in doc.Descendants(ns + "test-set"))
+        {
+            var name = ts.Attribute("name")?.Value;
+            var file = ts.Attribute("file")?.Value;
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(file)) continue;
+            // Category is the catalog's own directory grouping (fn/, op/, prod/, misc/).
+            var category = file.Contains('/', StringComparison.Ordinal)
+                ? file[..file.IndexOf('/', StringComparison.Ordinal)]
+                : "misc";
+            data.Add(category, name);
+        }
+        return data;
+    }
+
     [Theory]
     [Trait("Category", "Full")]
-    [InlineData("fn", "fn-abs")]
-    [InlineData("fn", "fn-concat")]
-    [InlineData("fn", "fn-contains")]
-    [InlineData("fn", "fn-count")]
-    [InlineData("fn", "fn-string-length")]
-    [InlineData("fn", "fn-sum")]
-    [InlineData("prod", "prod-ForClause")]
-    [InlineData("prod", "prod-LetClause")]
-    [InlineData("prod", "prod-WhereClause")]
+    [MemberData(nameof(AllTestSets))]
     public async Task Xqts_ShouldPassTestSet(string category, string testSetName)
     {
         if (!_fixture.IsTestDataAvailable)
