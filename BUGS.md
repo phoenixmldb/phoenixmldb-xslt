@@ -2392,6 +2392,54 @@ Related in kind rather than mechanism: #46 (tests that measure the machine), #43
 measured Debug and understated the engine), #57 (CI measures a different engine than a
 developer does). All four are the same question — *what did this number actually measure?*
 
+### 63. A streaming aggregate over the plain path answered from nothing (2026-09-11)
+
+Found by parsers2, fixed in xslt #35. **The third silent-wrong-answer class this week, and on
+the most ordinary path of the three.**
+
+Under a declared streamable mode, a `match="/"` template whose body aggregates over the stream
+returned answers computed from **no input at all**:
+
+| expression | returned | regardless of |
+|---|---|---|
+| `count(//PRICE)` | `0` | what the document held |
+| `sum(//PRICE)` | *empty* | what the document held |
+| `count(//*)` | `0` | what the document held |
+
+No error. A well-formed, plausible answer — `0` is exactly what a reader expects from a document
+with no matches, so nothing about the output says "this never looked."
+
+**Cause.** The document template's body was classified *literal-only* — it registers no
+`for-each` subscriptions — and a literal-only body runs **before** the streaming pass. It
+therefore evaluated against watchers that had seen nothing yet. `sum` over an empty watcher
+returned `null` while the watcher's own documentation said it should return `0`, which is its
+own small instance of code disagreeing with its comment.
+
+#### Why the W3C corpus could not catch it
+
+Every streaming test-set aggregates inside `xsl:source-document`, and that path already drains
+the stream before the body runs. **The corpus exercises the shape it happens to use, not the
+plain path** — and the plain path is the one the CLI takes: `xslt` auto-streams a file whenever
+the stylesheet declares a streamable mode. `--no-stream` gave the same wrong answers.
+
+This is the same structural blindness as #51's cache key, where four W3C cases used
+`cache="yes"` and none could collide because none called a function two different ways. A suite
+can have full coverage of a feature and zero coverage of the way users reach it. **Conformance
+counts constructs; it does not count paths.**
+
+#### Severity
+
+Worse than #51 and comparable to #52. Not opt-in — declaring a streamable mode is ordinary
+XSLT 3.0 — and the affected path is the default CLI behaviour rather than a library API. A user
+running `xslt` over a document gets `0`, and `0` is a number they will believe.
+
+Age not yet established. Fixed with `sum` over empty returning `0`, and W3C `function-5015a`
+gains with zero real losses.
+
+**For the 1.8.0 notes.** Alongside #51 and #52 this makes three silent wrong-answer classes in
+the release, and this one should lead: it needs no opt-in, no unusual API, and no unusual
+stylesheet — only a streamable mode and the CLI.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising

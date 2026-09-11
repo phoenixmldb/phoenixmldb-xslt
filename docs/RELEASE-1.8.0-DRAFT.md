@@ -16,8 +16,42 @@ measured in the **release configuration** once the Xslt train pins the XQuery of
 
 ## Why this release exists
 
-Not the conformance numbers. **Two classes of silently wrong output, both present in every
-version this project has ever published**, 1.1.0 through 1.7.0 — all 47 tags.
+Not the conformance numbers. **Four classes of silently wrong output**, three of them present in
+every version this project has ever published.
+
+### A streaming aggregate answered from nothing (BUGS.md #63)
+
+**Read this one first — it needs no opt-in and no unusual stylesheet.** Under a declared
+streamable mode, a `match="/"` template whose body aggregates over the stream computed its answer
+from **no input at all**:
+
+| expression | returned |
+|---|---|
+| `count(//PRICE)` | `0` |
+| `sum(//PRICE)` | *empty* |
+| `count(//*)` | `0` |
+
+Whatever the document held. No error — and `0` is exactly what a reader expects from a document
+with no matches, so nothing in the output says it never looked.
+
+The body was classified *literal-only* (it registers no `for-each` subscriptions) and literal-only
+bodies run **before** the streaming pass, so it evaluated against watchers that had seen nothing.
+
+**This is the default CLI path.** `xslt` auto-streams a file whenever the stylesheet declares a
+streamable mode, and `--no-stream` gave the same wrong answers. The W3C streaming tests could not
+catch it because every one of them aggregates inside `xsl:source-document`, whose path drains the
+stream first — full coverage of the feature, none of the way users reach it.
+
+### `xsl:text` moved to the end of any untyped variable (BUGS.md, xslt #34)
+
+```xml
+<xsl:variable>a<b>c</b><xsl:text>d</xsl:text>e</xsl:variable>
+```
+
+read as `aced` and copied as `a<b>c</b>ed` — the `d` relocated past the `e`. Any untyped variable
+mixing `xsl:text` with other content was affected. Predates 1.7.0.
+
+### And two that are in every version ever published — 1.1.0 through 1.7.0, all 47 tags
 
 ### `xsl:function cache="yes"` returned other calls' results (BUGS.md #51)
 
