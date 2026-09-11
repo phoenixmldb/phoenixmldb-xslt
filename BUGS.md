@@ -1805,6 +1805,53 @@ control** — a `RuntimeHelpers.GetHashCode` collision between two live nodes ca
 so that test passes on the old code too. Saying so in the test comment is right: a test that
 cannot fail on the defect it names is worth keeping and worth not miscounting as proof.
 
+### 53. PATTERN — one slot, two meanings, distinguished only by control flow (2026-09-11)
+
+Named while writing up #52, confirmed as a family by parsers2. Filed as a pattern entry in the
+same spirit as #40 (the unswept-twin audit), because the value is in the sweep it suggests, not
+in any single instance.
+
+**The shape.** A single field, slot or type carries two *different* meanings, and nothing in the
+value says which one it is — the reader is expected to know from where it sits in a loop, or
+from which code path wrote it. Every such slot is a silent-wrong-answer defect waiting for a
+reader who does not have that context. No error is possible, because both meanings are
+representationally identical; the value is simply interpreted as the wrong one.
+
+#### Instances found so far
+
+| # | slot | meaning A | meaning B | how they're told apart |
+|---|---|---|---|---|
+| 52 | `currentValues[i]` in `WalkAccumulatorsAsync` | before-value (provisional) | after-value (settled) | position in the declaration-order loop |
+| 52 | same slot, cycle detection | "not yet computed" | "computed, and this is it" | nothing — hence the missed two-accumulator cycle |
+| 20 | `TextNodeItem` in the function-result assembly | genuine text content | duplicate of text already in `_output` | which path wrote it (`Output.cs:239`, `Functions.cs:2198`) |
+
+#52's two halves are the clearest demonstration that these are one defect and not two: the
+off-by-one and the missed cycle both reduce to *reading a provisional entry is
+indistinguishable from reading a settled one.* Fixing the representation would have prevented
+both; fixing either symptom alone would have left the other.
+
+#### Why this is worth a deliberate sweep rather than case-by-case discovery
+
+#40 established the precedent — an audit of paired implementations found more in one pass than
+tripping over them individually had in a week. This family has the same property: the instances
+are invisible to tests (both meanings produce well-formed output), so they surface only when
+someone happens to construct the case that crosses the meanings. `accumulator-077` sat looking
+like a cardinality nit; the `TextNodeItem` case looked like lost text.
+
+**The audit question:** for each field that can hold a computed result, can a reader tell from
+the value alone whether it has been computed yet, and what it represents? Where the answer is
+"no, you have to know where you are", that is an instance.
+
+Two candidates named but **not yet verified** — recorded so they are checked rather than assumed:
+
+- `_sequenceAccumulator` and `_output` both carry function results (parsers2). Whether they are
+  genuinely ambiguous or merely parallel needs reading before it is claimed.
+- The empty sequence reportedly has two representations in places (`null` versus a zero-length
+  collection). If so it is the same shape, and unlike the others it would be engine-wide.
+
+Owner: parsers2 will take the sweep once the cardinality work lands. Not urgent; the instances
+are old, and the point of naming the shape is that the next one gets recognised on sight.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
