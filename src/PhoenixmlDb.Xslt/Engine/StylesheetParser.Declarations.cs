@@ -2064,12 +2064,20 @@ public sealed partial class StylesheetParser
                 throw new XsltException("XTSE0020: The 'override' and 'override-extension-function' attributes have conflicting values on xsl:function", location);
         }
 
+        // xsl:yes-or-no-or-maybe: true/1 and false/0 are synonyms of yes and no. Normalized, so
+        // the engine's memoization test sees new-each-time="false" as the "no" it is.
         var newEachTimeAttr = element.Attribute("new-each-time");
+        string? newEachTime = null;
         if (newEachTimeAttr != null)
         {
-            var val = newEachTimeAttr.Value.Trim();
-            if (val != "yes" && val != "no" && val != "maybe")
-                throw new XsltException($"XTSE0020: Invalid value '{newEachTimeAttr.Value}' for new-each-time attribute: must be 'yes', 'no', or 'maybe'", location);
+            newEachTime = newEachTimeAttr.Value.Trim() == "maybe"
+                ? "maybe"
+                : ParseYesNo(newEachTimeAttr) switch
+                {
+                    true => "yes",
+                    false => "no",
+                    null => throw new XsltException($"XTSE0020: Invalid value '{newEachTimeAttr.Value}' for new-each-time attribute: must be 'yes', 'no', or 'maybe'", location),
+                };
         }
 
         var cacheAttr = element.Attribute("cache");
@@ -2184,7 +2192,7 @@ public sealed partial class StylesheetParser
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
             VisibilityAttr = element.Attribute("visibility")?.Value,
             Cache = ParseYesNo(cacheAttr) ?? false,
-            NewEachTime = newEachTimeAttr?.Value?.Trim(),
+            NewEachTime = newEachTime,
             Streamability = streamabilityValue,
             BaseUri = ResolveEffectiveBaseUri(element)
         };

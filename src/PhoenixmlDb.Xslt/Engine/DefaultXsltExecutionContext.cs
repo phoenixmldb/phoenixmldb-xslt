@@ -484,61 +484,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
 
     /// <summary>
-    /// Appends a type-aware cache key representation for a function argument.
-    /// Different types need different key strategies to preserve identity/equality semantics.
-    /// </summary>
-    private static void AppendCacheKey(System.Text.StringBuilder sb, object? arg)
-    {
-        switch (arg)
-        {
-            case null:
-                sb.Append("()");
-                break;
-            case QName qn:
-                // Use resolved namespace URI — QNames from node-name() have RuntimeNamespace,
-                // not ExpandedNamespace, so ToString() only shows prefix:local
-                sb.Append("Q{").Append(qn.ResolvedNamespace ?? "").Append('}').Append(qn.LocalName);
-                break;
-            case XdmNode node:
-                // Node identity: use runtime hash code (reference identity)
-                sb.Append("node@").Append(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(node));
-                break;
-            case IDictionary<object, object?> map:
-                // Map deep content: serialize entries deterministically
-                sb.Append("map{");
-                var first = true;
-                foreach (var kvp in map.OrderBy(k => k.Key?.ToString() ?? "", StringComparer.Ordinal))
-                {
-                    if (!first) sb.Append(',');
-                    first = false;
-                    AppendCacheKey(sb, kvp.Key);
-                    sb.Append(':');
-                    AppendCacheKey(sb, kvp.Value);
-                }
-                sb.Append('}');
-                break;
-            case List<object?> array:
-                // Array deep content
-                sb.Append('[');
-                for (var i = 0; i < array.Count; i++)
-                {
-                    if (i > 0) sb.Append(',');
-                    AppendCacheKey(sb, array[i]);
-                }
-                sb.Append(']');
-                break;
-            case PhoenixmlDb.XQuery.Ast.XQueryFunction func:
-                // Function identity: use runtime hash code
-                sb.Append("fn@").Append(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(func));
-                break;
-            default:
-                sb.Append(arg.ToString());
-                break;
-        }
-    }
-
-
-    /// <summary>
     /// Checks cancellation token and output size limit. Called at loop boundaries
     /// (apply-templates per-node, for-each per-item, iterate per-item) and template entry
     /// to ensure runaway transformations are terminated promptly.
