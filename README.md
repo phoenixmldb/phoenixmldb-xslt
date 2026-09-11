@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (95.4% W3C conformance — 10,137/10,630 cases, measured 2026-09-11)
+### XSLT 3.0 (95.5% W3C conformance — 10,157/10,630 cases, measured 2026-09-11)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,23 +24,27 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,137/10,630 cases (95.4%), 493 failing
+### W3C XSLT 3.0 — 10,157/10,630 cases (95.5%), 473 failing
 
 Measured 2026-09-11 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, from the
-committed per-set baseline (`scripts/conformance-baseline.tsv`). Four sweeps of identical code
-produced identical per-set counts.
+committed per-set baseline (`scripts/conformance-baseline.tsv`).
+
+The baseline records the **minimum across full runs, not the best one seen**. Repeated sweeps
+agree on every set but one: `insn/call-template` alternates between 38 and 37, and the baseline
+holds 37. A baseline set to the maximum observed enshrines a lucky run and then reports a
+regression every time the suite behaves normally.
 
 | Group | Passing | | Failing |
 |---|---|---|---|
-| `attr` — attributes | 1075/1117 | 96.2% | 42 |
-| `decl` — declarations | 956/1080 | 88.5% | 124 |
-| `type` — types | 750/766 | 97.9% | 16 |
+| `attr` — attributes | 1076/1117 | 96.3% | 41 |
+| `decl` — declarations | 959/1080 | 88.8% | 121 |
+| `type` — types | 752/766 | 98.2% | 14 |
 | `fn` — functions | 1072/1131 | 94.8% | 59 |
 | `strm` — streaming | 2284/2373 | 96.2% | 89 |
 | `expr` — expressions | 636/648 | 98.1% | 12 |
-| `misc` | 1851/1921 | 96.4% | 70 |
-| `insn` — instructions | 1513/1594 | 94.9% | 81 |
-| **Total** | **10,137/10,630** | **95.4%** | **493** |
+| `misc` | 1857/1921 | 96.7% | 64 |
+| `insn` — instructions | 1521/1594 | 95.4% | 73 |
+| **Total** | **10,157/10,630** | **95.5%** | **473** |
 
 The `sandp` group runs but reports no per-case counts, so it is excluded from the total rather
 than counted as passing.
@@ -61,7 +65,7 @@ Measured both ways on the same commit, same machine:
 Debug against a 10s cap, ~5.7s in Release. `scripts/conformance.sh` now defaults to Release.
 
 That correction is why the published figure rose from 94.4% to 94.8% on 2026-09-10 without the
-engine changing. The rise since then — to 95.4% — *is* engine work. See `BUGS.md` #43.
+engine changing. The rise since then — to 95.5% — *is* engine work. See `BUGS.md` #43.
 
 **This number went DOWN from the 96.2% published on 2026-09-02, and the engine did not get
 worse — the measurement got honest.** Tests that expect a specific error code were scored as

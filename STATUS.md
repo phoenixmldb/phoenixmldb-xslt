@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-11 06:38 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-11 09:52 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -16,8 +16,8 @@ Generated 2026-09-11 06:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 | repo | open issues | open PRs |
 |---|---|---|
-| phoenixmldb-core | 2 | 0 |
-| phoenixmldb-xquery | 2 | 0 |
+| phoenixmldb-core | 3 | 0 |
+| phoenixmldb-xquery | 3 | 0 |
 | phoenixmldb-xslt | 7 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
@@ -25,11 +25,13 @@ Generated 2026-09-11 06:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-core**
 
+- [5] Naming decision: the prefix `dbxml` means three different things
 - [4] StringValue returns "" for nodes read from storage — string comparisons in cross-document queries silently match nothing
 - [3] Parse_ElementWithManyChildren_ScalesLinearly is a wall-clock assertion and fails under parallel load
 
 **phoenixmldb-xquery**
 
+- [18] Unbound external functions silently return () — and a host cannot bind one
 - [5] Atomizing fn:collection() nodes yields '' while fn:string() on the same nodes returns the text
 - [4] fn:sum returns 0 for xs:integer cast from text (BigInteger falls through SumHelper)
 
@@ -51,7 +53,7 @@ Generated 2026-09-11 06:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Defect register
 
-`BUGS.md`: **47** entries, **6** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **50** entries, **6** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -65,12 +67,12 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10137/10630 (95.36%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 10157/10630 (95.55%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 29509/31414 (93.94%)** across 428 test-sets,
+- **W3C QT3 baseline — 29524/31414 (93.98%)** across 428 test-sets,
   same file, same ratchet.
-- **W3C QT3 / XQuery** — 93.94% — 29,509 / 31,414 across all 428 catalog test-sets, measured 2026-09-11, Release build.
+- **W3C QT3 / XQuery** — 93.98% — 29,524 / 31,414 across all 428 catalog test-sets, measured 2026-09-11, Release build.
   Verified reproducible from two checkout paths with different execution
   orders. Source: `phoenixmldb-xquery/docs/CONFORMANCE.md`.
   Do NOT cite the whole-suite test's number — it runs in catalog order with shared state,

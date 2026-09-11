@@ -4,8 +4,11 @@
 > this date is overstated. Tests expecting a specific error code were scored as passes whenever
 > the transform threw anything at all, because both conformance runners read the expected code
 > from element text when the corpus writes it as an attribute. Re-measured against the same
-> corpus, the current figure is **10,020/10,630 (94.3%)**. The historical entries below are left
-> as written — they record what was believed at the time. See BUGS.md entry 28.
+> corpus, the figure **on that date** was **10,020/10,630 (94.3%)**. The historical entries below
+> are left as written — they record what was believed at the time. See BUGS.md entry 28.
+>
+> That 94.3% is itself now historical; do not quote it as current. The live figure is in
+> `README.md` and in the generated `STATUS.md`, each carrying its own measurement date.
 
 
 ## 1.7.0 — 2026-09-10
