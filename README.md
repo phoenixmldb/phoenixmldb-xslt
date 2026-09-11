@@ -29,6 +29,13 @@ Every figure below is measured, dated, and reproducible. Nothing here is an esti
 Measured 2026-09-11 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, from the
 committed per-set baseline (`scripts/conformance-baseline.tsv`).
 
+**Which XQuery this is measured against, because it changes the number.** The conformance
+project reaches XQuery through the `src/PhoenixmlDb.XQuery` symlink, so a local run measures
+`phoenixmldb-xquery` **main**, and that is the figure above. Measured instead against the
+`PhoenixmlDb.XQuery` package this repo *pins* — the combination a user installs — XSLT is
+**10,160**. The two coincide at release time, when the Xslt train pins the XQuery of the same
+train; they diverge only between trains, which is now. See `BUGS.md` #57.
+
 The baseline records the **minimum across full runs, not the best one seen**. Repeated sweeps
 agree on every set but one: `insn/call-template` alternates between 38 and 37, and the baseline
 holds 37. A baseline set to the maximum observed enshrines a lucky run and then reports a
