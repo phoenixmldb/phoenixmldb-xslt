@@ -1,7 +1,8 @@
 # Release policy — proposal
 
-**Status: PROPOSAL, awaiting Lucas.** Nothing here is implemented. Written in response to four
-directives given 2026-09-11:
+**Status: §5 DECIDED, the rest still proposal.** Lucas ruled 2026-09-11: **hold 1.8.0 and get
+lockstep in place first**, and **lockstep includes the MCP servers** — added below in §3a.
+Nothing else here is implemented. Written in response to four directives given 2026-09-11:
 
 > slow down the blistering cadence of NuGet releases — we have over 50 incremental releases
 > public on NuGet and this isn't a good look for us / XSLT, XQuery and XSpec releases in
@@ -23,8 +24,10 @@ Counted from nuget.org, 2026-09-11:
 | `PhoenixmlDb.Xslt.Cli` | 7 | **1.4.10** | `phoenixmldb-cli` — abandoned |
 | `PhoenixmlDb.XQuery.Cli` | 6 | **1.4.10** | `phoenixmldb-cli` — abandoned |
 | `PhoenixmlDb.XSpec.Cli` | 2 | 1.6.11 | `xspec` (fork, branch `phxspec`) |
+| `xquery-mcp` | 7 | **1.4.0.3** | `xquery-mcp` |
+| `xslt-mcp` | 10 | **1.5.0.1** | `xslt-mcp` |
 
-**503 published versions across 8 packages.** Publishing is tag-only in every repo — nothing
+**520 published versions across 10 packages.** Publishing is tag-only in every repo — nothing
 publishes per push — so the count is purely how often someone tags.
 
 ## 2. Lockstep is easier than it looks, because the blocking fact is wrong
@@ -59,6 +62,35 @@ the *previous* train. Today it is `1.6.15` in the `1.7.0` train. That file alrea
 
 That is also what lockstep needs. **Same fix, two motivations.**
 
+## 3a. The MCP servers join the train
+
+Added on Lucas's instruction. Both are `dotnet tool` packages published on a `v*` tag with
+trusted publishing, so mechanically they are ready; three things need deciding or fixing.
+
+| repo | package | tool command | pins | latest published |
+|---|---|---|---|---|
+| `xquery-mcp` | `xquery-mcp` | `xquery-mcp` | `PhoenixmlDb.XQuery` **1.6.14** | 1.4.0.3 |
+| `xslt-mcp` | `xslt-mcp` | `xslt-mcp` | `PhoenixmlDb.Xslt` **1.6.14** | 1.5.0.1 |
+
+**Dependencies are clean.** Each pins exactly one engine library and nothing pins back, so they
+slot in after the libraries with no cycle — unlike `XQuery.Cli`.
+
+**Both are already a train behind**, pinned at 1.6.14 while the engines are at 1.7.0. Neither
+has been rebuilt against the current engine, so nothing has verified that the MCP servers work
+against what we ship today.
+
+**Their version lines do not match the engines'** — `xquery-mcp` is at 1.4.0.3 and `xslt-mcp` at
+1.5.0.1, both four-part, against the engines' three-part 1.7.0. Lockstep means jumping both to
+the train version. That is a visible discontinuity in those packages' histories, and it is the
+right price: a user who installs `xslt-mcp 1.8.0` should get the 1.8.0 engine, which is the
+entire point.
+
+**Neither has `check-release-train.sh`.** Both run `check-pins.sh`, so pins are checked for
+internal consistency, but nothing asserts *pin == release version* at pack time. That is the
+control that makes lockstep real rather than aspirational, and it is exactly what caught nothing
+when these drifted to 1.6.14. Port it from `phoenixmldb-xslt` and mark the engine pins
+`check-pins: train-locked`.
+
 ### Proposed train order
 
 Libraries first, tools second, one version number across all of it:
@@ -68,7 +100,12 @@ phase 1  Core            (only if changed)
 phase 2  XQuery library
 phase 3  Xslt library            — pins XQuery at the train version
 phase 4  xslt, xquery4, XSpec.Cli, [XQuery.Cli, Xslt.Cli if revived]
+phase 5  xquery-mcp, xslt-mcp    — pin XQuery / Xslt at the train version
 ```
+
+Phases 4 and 5 can run together — nothing in either depends on the other — but keeping them
+distinct makes the failure obvious if an MCP server cannot build against the engine it is
+supposed to ship with, which is a thing we would rather learn at release than from a user.
 
 Phase 4 is where the cycle dissolves: by then Xslt at the train version exists, so `xquery4` can
 pin it directly instead of trailing. `check-release-train.sh` already enforces train-locked pins
@@ -99,7 +136,16 @@ mechanism:
 
 ## 5. The 1.8.0 question
 
-**Recommendation: cut it, as the last train under the old process, then adopt the above.**
+**DECIDED 2026-09-11: hold it. Lockstep goes in first, and 1.8.0 becomes the first lockstep
+train.** The argument below is left as written because it records what was weighed.
+
+My recommendation was to cut it as the last train under the old process; parsers2's was to hold.
+Lucas took parsers2's. The cost is that #51 and #52 stay unfixed in the wild for as long as the
+lockstep work takes, which makes that work the thing standing between users and two silent
+wrong-answer defects — worth saying plainly so it is scheduled like it matters, not treated as
+cleanup.
+
+*Original recommendation, superseded:*
 
 The directive objects to *incremental* releases. 1.8.0 is the opposite of incremental — it is
 the consolidation of everything since 1.7.0, and its case rests on correctness rather than on
@@ -126,7 +172,7 @@ per-set gate in `ci.yml`.
 
 ## 6. Decisions needed
 
-1. **Cut 1.8.0 now, or hold it to be the first lockstep train?**
+1. ~~Cut 1.8.0 now, or hold it?~~ **DECIDED: hold; it becomes the first lockstep train.**
 2. **Approve the train order** in §3, and the CLI/library publishing split it requires.
 3. **A minimum interval** — is two weeks right?
 4. **Tier 1b unlisting** — the two abandoned CLI packages that shadow `xslt` and `xquery` by
