@@ -1,15 +1,15 @@
 # Status
 
-Generated 2026-09-11 09:52 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-11 11:28 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 1.7.0 | 1.7.0 | current |
-| `PhoenixmlDb.XQuery` | 1.7.0 | 1.7.0 | current |
+| `PhoenixmlDb.Core` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
+| `PhoenixmlDb.XQuery` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
 | `PhoenixmlDb.Xslt` | 1.7.0 | 1.7.0 | current |
-| `xquery4` | 1.7.0 | 1.7.0 | current |
+| `xquery4` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
 | `xslt` | 1.7.0 | 1.7.0 | current |
 
 ## Open work
@@ -18,7 +18,7 @@ Generated 2026-09-11 09:52 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 3 | 0 |
-| phoenixmldb-xslt | 7 | 0 |
+| phoenixmldb-xslt | 7 | 2 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -47,13 +47,18 @@ Generated 2026-09-11 09:52 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
+**phoenixmldb-xslt**
+
+- [23] test: raise the baseline for #20 and #21 — XSLT 10,160
+- [22] fix: XSLT built-ins declare their spec parameter cardinalities
+
 **phoenixmldb-cli**
 
 - [3] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **50** entries, **6** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **52** entries, **7** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -62,6 +67,7 @@ the engines are split but the defects are not.
 - 44. OPEN — the harness ledger, and why these keep happening (2026-09-10)
 - 46. OPEN — tests that measure the machine, not the engine (2026-09-11)
 - 47. OPEN — static shadow-attribute evaluation silently DROPS what it cannot compute (2026-09-11)
+- 52. OPEN — accumulators read a later-declared accumulator's value one node late (2026-09-11)
 
 ## Conformance
 
@@ -72,11 +78,8 @@ Figures are only as good as their provenance, so each carries how and when it wa
   records what each set reaches every time.
 - **W3C QT3 baseline — 29524/31414 (93.98%)** across 428 test-sets,
   same file, same ratchet.
-- **W3C QT3 / XQuery** — 93.98% — 29,524 / 31,414 across all 428 catalog test-sets, measured 2026-09-11, Release build.
-  Verified reproducible from two checkout paths with different execution
-  orders. Source: `phoenixmldb-xquery/docs/CONFORMANCE.md`.
-  Do NOT cite the whole-suite test's number — it runs in catalog order with shared state,
-  scores differently, and its 95% assertion is permanently red (BUGS.md #44).
+- **W3C QT3 / XQuery — figure not readable** from
+  `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
 
 ## Blocked
 
