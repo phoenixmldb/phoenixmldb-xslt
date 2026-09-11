@@ -2012,6 +2012,59 @@ the raise was computed from.** It is process rather than machinery — raises ar
 min-of-runs rather than `CONFORMANCE_UPDATE_BASELINE=1`, so the script cannot enforce it, but a
 reviewer can: a raise whose PR carries no summary is incomplete.
 
+### 56. OPEN — the conformance workflow has never gated a release, and CI defeats its own timeout exemption (2026-09-11)
+
+Raised by parsers2 relaying Lucas's release-cadence directive; diagnosed here.
+
+**The workflow is red on every recent run — 8 of 8 — including BOTH `v1.7.0` release-tag runs
+and the `v1.6.15` one.** Anyone reading a red Conformance check as "this release was gated" has
+it backwards: no release on this line has ever passed it. It is not a gate; it is a signal
+nobody can act on, which is worse than no signal because it occupies the place where a gate
+would go.
+
+#### Why it fails, concretely
+
+`scripts/conformance.sh` gives the QT3 chunk a longer limit than the XSLT groups, and the
+exemption is conditional:
+
+```sh
+XQTS_TIMEOUT="${CONFORMANCE_XQTS_TIMEOUT:-3600}"
+...
+chunk_timeout="$TIMEOUT"
+[ "$g" = "xqts" ] && [ -z "${CONFORMANCE_TIMEOUT:-}" ] && chunk_timeout="$XQTS_TIMEOUT"
+```
+
+The exemption applies **only when `CONFORMANCE_TIMEOUT` is unset**. `.github/workflows/
+conformance.yml:103` sets `CONFORMANCE_TIMEOUT: '2400'` globally — so **xqts runs at 2400 s, not
+3600 s.** The CI configuration cancels the exemption written for exactly this chunk. There is
+already a dedicated `CONFORMANCE_XQTS_TIMEOUT` for raising xqts alone; CI does not use it.
+
+The script's own comment records that this chunk was "killed every time and reported TIMEOUT,
+which read [as a hang]" under the old 900 s default — the exemption was the fix for that, and
+the CI env var silently re-broke it.
+
+#### But the timeout is not the whole story
+
+parsers2 measured the runner reaching ~13,500 of 31,414 cases in 2400 s, against ~76 s locally.
+At that rate a full pass needs roughly **5,600 s**, so simply switching to
+`CONFORMANCE_XQTS_TIMEOUT` at its 3600 s default **still fails**. Two changes are needed, not
+one: use the xqts-specific variable *and* set it to something the runner can actually finish in.
+The job's own `timeout-minutes: 150` leaves room.
+
+The ~30-70x gap between runner and local is itself unexplained and worth its own look (#46 is
+the nearest relative — tests that measure the machine). Recording the ratio rather than
+theorising about it.
+
+#### Why this matters beyond the red X
+
+Lucas is now setting release policy (slow the cadence, lockstep the engines). A release process
+naturally wants a conformance gate, and this repo *looks* like it has one. It does not. Deciding
+policy on the assumption that conformance is enforced at tag time would be deciding on a false
+premise — so either fix the workflow or state plainly that conformance is verified by the
+committed baseline and the per-set gate in `ci.yml`, not by this workflow.
+
+**Owner: parsers2** (harness). Diagnosed and registered here rather than patched, per the split.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
