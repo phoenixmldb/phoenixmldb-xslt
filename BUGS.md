@@ -1852,6 +1852,68 @@ Two candidates named but **not yet verified** — recorded so they are checked r
 Owner: parsers2 will take the sweep once the cardinality work lands. Not urgent; the instances
 are old, and the point of naming the shape is that the next one gets recognised on sight.
 
+### 54. OPEN — the per-set gate cannot see a set that did not run (2026-09-11)
+
+Found by following up parsers2's SIGSEGV report, and **proven rather than reasoned**: the
+missing-set case was run against the gate's own awk.
+
+A test host died mid-sweep (exit 139, `strm3`, just after `sx-IntersectExpr`), so
+`sx-GeneralComp-le` and `-ne` never reported. Their rows are simply absent from the run's
+results file. The per-set gate at `scripts/conformance.sh:329` is:
+
+```awk
+NR==FNR { base[$1]=$2; tol[$1]=($4==""?0:$4); next }
+($1 in base) && $2 < base[$1] - tol[$1] { ...report regression... }
+```
+
+It iterates **CURRENT** and looks each row up in the baseline. A set present in the baseline and
+absent from CURRENT is never visited, so **no comparison happens and nothing is reported.**
+Demonstrated with a three-set fixture: removing a set worth 50 cases from CURRENT produces an
+empty regression report.
+
+This is the register's oldest refrain in a new place: *a set that did not run looks exactly like
+a set that ran and found nothing.* See #28, #44, #47, #52.
+
+#### What already protects us, and what does not
+
+**Chunk level: covered.** `conformance.sh` captures each chunk's exit code, prints
+`NO RESULT (exit $rc)`, and exits non-zero, so a crashed chunk fails the run. That is why
+parsers2 saw this at all.
+
+**Re-baselining: covered, deliberately.** `CONFORMANCE_UPDATE_BASELINE=1` merges rather than
+overwrites (`:290` keeps baseline rows absent from CURRENT), so a partial run cannot silently
+erase sets. That was a considered design and it holds here.
+
+**Per-set gate: not covered.** The summary's per-set section is what a reader consults to answer
+"did anything regress?", and it answers "no" for a set that vanished. The chunk-level failure
+and the per-set clean bill appear in the same `summary.txt`, and only one of them is alarming.
+
+The gap is narrow but real: it needs a set to disappear while its chunk still exits 0 — a
+filter that matches nothing, a fixture that fails to instantiate, a rename — for the run to look
+entirely clean. A crash is the loud version of a failure mode whose quiet versions are the
+dangerous ones.
+
+#### Proposed fix — four lines, symmetric with `newsets`
+
+The gate already computes `newsets` (in CURRENT, not in BASELINE). The inverse is missing:
+
+```awk
+missing="$(awk -F'\t' 'NR==FNR{cur[$1]=1; next} !($1 in cur){
+  printf "  %s: baselined %d, NO RESULT this run\n", $1, $2 }' "$CURRENT" "$BASELINE")"
+```
+
+Report it alongside `regressed` and treat it as failing. A baselined set producing no verdict is
+strictly worse news than one producing a lower count, and should not be quieter.
+
+**Owner: parsers2** (harness is theirs). Offered with the repro above rather than applied, to
+avoid editing their harness mid-sweep.
+
+#### The crash itself — recorded, not diagnosed
+
+First test-host crash in 46 run directories. `strm3` then ran clean three times (883/895, 27/27
+sets). Does not reproduce; no cause. If a SIGSEGV appears in `strm3` again, `sx-GeneralComp` is
+where it stopped. Logged so a second occurrence is a pattern rather than another first.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
