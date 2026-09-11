@@ -17,4 +17,5 @@ public sealed class XsltMergeKey
     public XsltAttributeValueTemplate? Collation { get; init; }
     public XsltAttributeValueTemplate? DataType { get; init; }
     public XsltAttributeValueTemplate? Lang { get; init; }
+    public XsltAttributeValueTemplate? CaseOrder { get; init; }
 }

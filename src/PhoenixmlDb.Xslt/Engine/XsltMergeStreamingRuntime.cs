@@ -21,37 +21,25 @@ internal sealed partial class DefaultXsltExecutionContext
         if (_nodeStore == null)
             throw Error("Streaming xsl:merge requires an in-memory node store");
 
-        // Resolve key orders / data types once from the first source. The non-streaming
-        // path already validates per-source agreement (XTDE2210); we mirror it here.
-        var template = instruction.Sources[0].MergeKeys;
-        var keyOrders = new List<string>(template.Count);
-        var keyDataTypes = new List<string>(template.Count);
-        foreach (var mk in template)
-        {
-            var order = mk.Order != null ? await EvaluateAvtAsync(mk.Order).ConfigureAwait(false) : "ascending";
-            if (order != "ascending" && order != "descending")
-                throw Error($"XTDE2210: Invalid value '{order}' for order attribute on xsl:merge-key (must be 'ascending' or 'descending')");
-            keyOrders.Add(order);
-            var dataType = mk.DataType != null ? await EvaluateAvtAsync(mk.DataType).ConfigureAwait(false) : "text";
-            if (dataType != "text" && dataType != "number")
-                throw Error($"XTDE2210: Invalid value '{dataType}' for data-type attribute on xsl:merge-key (must be 'text' or 'number')");
-            keyDataTypes.Add(dataType);
-        }
+        // Key settings from the first source, and XTDE2210 across sources — the same rules, and
+        // the same collation handling, as the in-memory path (ResolveMergeKeySettingsAsync).
+        var (keyOrders, keyDataTypes, keyCollations) =
+            await ResolveMergeKeySettingsAsync(instruction.Sources[0].MergeKeys).ConfigureAwait(false);
         for (var si = 1; si < instruction.Sources.Count; si++)
         {
-            var siKeys = instruction.Sources[si].MergeKeys;
-            for (var ki = 0; ki < siKeys.Count && ki < keyOrders.Count; ki++)
+            var (orders2, dataTypes2, collations2) =
+                await ResolveMergeKeySettingsAsync(instruction.Sources[si].MergeKeys).ConfigureAwait(false);
+            for (var ki = 0; ki < orders2.Count && ki < keyOrders.Count; ki++)
             {
-                var order = siKeys[ki].Order != null ? await EvaluateAvtAsync(siKeys[ki].Order!).ConfigureAwait(false) : "ascending";
-                if (order != keyOrders[ki])
-                    throw Error($"XTDE2210: Merge key order differs across sources: '{keyOrders[ki]}' vs '{order}'");
-                var dt = siKeys[ki].DataType != null ? await EvaluateAvtAsync(siKeys[ki].DataType!).ConfigureAwait(false) : "text";
-                if (dt != keyDataTypes[ki])
-                    throw Error($"XTDE2210: Merge key data-type differs across sources: '{keyDataTypes[ki]}' vs '{dt}'");
+                if (orders2[ki] != keyOrders[ki])
+                    throw Error($"XTDE2210: Merge key order differs across sources: '{keyOrders[ki]}' vs '{orders2[ki]}'");
+                if (dataTypes2[ki] != keyDataTypes[ki])
+                    throw Error($"XTDE2210: Merge key data-type differs across sources: '{keyDataTypes[ki]}' vs '{dataTypes2[ki]}'");
+                if (!string.Equals(collations2[ki], keyCollations[ki], StringComparison.Ordinal))
+                    throw Error($"XTDE2210: Merge key collation differs across sources: '{keyCollations[ki]}' vs '{collations2[ki]}'");
             }
         }
 
-        // Resolve URI list per source and prepare lazy iterators.
         var iterators = new MergeSourceIterator[instruction.Sources.Count];
         try
         {
@@ -66,7 +54,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 await iterators[si].AdvanceAsync().ConfigureAwait(false);
             }
 
-            await RunMergeAsync(instruction, iterators, keyOrders, keyDataTypes).ConfigureAwait(false);
+            await RunMergeAsync(instruction, iterators, keyOrders, keyDataTypes, keyCollations).ConfigureAwait(false);
         }
         finally
         {
@@ -79,7 +67,8 @@ internal sealed partial class DefaultXsltExecutionContext
         XsltMerge instruction,
         MergeSourceIterator[] iterators,
         List<string> keyOrders,
-        List<string> keyDataTypes)
+        List<string> keyDataTypes,
+        IReadOnlyList<string?> keyCollations)
     {
         // Build name → index map for current-merge-group('name') lookups.
         var sourceNames = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -96,7 +85,7 @@ internal sealed partial class DefaultXsltExecutionContext
             for (var si = 0; si < iterators.Length; si++)
             {
                 if (!iterators[si].HasCurrent) continue;
-                if (bestKey == null || CompareMergeKeys(iterators[si].CurrentKey!, bestKey, keyOrders, keyDataTypes) < 0)
+                if (bestKey == null || CompareMergeKeys(iterators[si].CurrentKey!, bestKey, keyOrders, keyDataTypes, keyCollations) < 0)
                 {
                     bestIdx = si;
                     bestKey = iterators[si].CurrentKey;
@@ -109,7 +98,7 @@ internal sealed partial class DefaultXsltExecutionContext
             for (var si = 0; si < iterators.Length; si++)
             {
                 while (iterators[si].HasCurrent
-                    && CompareMergeKeys(iterators[si].CurrentKey!, bestKey!, keyOrders, keyDataTypes) == 0)
+                    && CompareMergeKeys(iterators[si].CurrentKey!, bestKey!, keyOrders, keyDataTypes, keyCollations) == 0)
                 {
                     taggedItems.Add((iterators[si].CurrentItem!, si));
                     await iterators[si].AdvanceAsync().ConfigureAwait(false);

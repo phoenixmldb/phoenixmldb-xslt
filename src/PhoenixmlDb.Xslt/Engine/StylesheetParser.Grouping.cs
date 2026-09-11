@@ -1152,6 +1152,7 @@ public sealed partial class StylesheetParser
         var collationAttr = element.Attribute("collation");
         var dataTypeAttr = element.Attribute("data-type");
         var langAttr = element.Attribute("lang");
+        var caseOrderAttr = element.Attribute("case-order");
 
         // XTSE0090: Reject disallowed attributes on xsl:merge-key
         var stableAttr = element.Attribute("stable");
@@ -1186,7 +1187,8 @@ public sealed partial class StylesheetParser
             Order = orderAttr != null ? ParseAvt(orderAttr.Value, element, orderAttr) : null,
             Collation = collationAttr != null ? ParseAvt(collationAttr.Value, element, collationAttr) : null,
             DataType = dataTypeAttr != null ? ParseAvt(dataTypeAttr.Value, element, dataTypeAttr) : null,
-            Lang = langAttr != null ? ParseAvt(langAttr.Value, element, langAttr) : null
+            Lang = langAttr != null ? ParseAvt(langAttr.Value, element, langAttr) : null,
+            CaseOrder = caseOrderAttr != null ? ParseAvt(caseOrderAttr.Value, element, caseOrderAttr) : null
         };
     }
 
