@@ -59,8 +59,13 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
         await _context.EnsureAccumulatorsComputedAsync(accName, node).ConfigureAwait(false);
         await _context.EnsureAccumulatorPhaseAsync(accName, node, isAfter: true).ConfigureAwait(false);
 
+        // A declared accumulator with no value here was not applicable to this node's tree —
+        // e.g. not in the merge source's use-accumulators — which is XTDE3362; XTDE3340 is for a
+        // name that is not an accumulator at all (W3C merge-067).
         var values = _context.GetAccumulatorValue(accName, node, isAfter: true)
-            ?? throw new XsltException($"XTDE3340: No accumulator named '{name}' is available for the current node");
+            ?? throw new XsltException(_context._stylesheet.Accumulators.ContainsKey(accName)
+                ? $"XTDE3362: Accumulator '{name}' is not applicable to the tree containing the context node"
+                : $"XTDE3340: No accumulator named '{name}' is available for the current node");
 
         // Re-throw deferred errors from accumulator evaluation
         if (values.after is AccumulatorDeferredError deferredError)
