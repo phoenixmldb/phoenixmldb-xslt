@@ -3174,7 +3174,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         foreach (var attrId in element.Attributes)
         {
             if (store.GetNode(attrId) is XdmAttribute attr
-                && attr.LocalName == "id" && attr.Prefix == "xml" && attr.Value == id)
+                && attr.LocalName == "id" && attr.Prefix == "xml"
+                && XsltIdFunction.NormalizeIdValue(attr.Value) == id)
                 return element;
         }
         // Recurse into children

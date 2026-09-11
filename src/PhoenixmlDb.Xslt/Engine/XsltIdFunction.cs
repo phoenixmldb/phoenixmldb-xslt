@@ -65,13 +65,24 @@ internal sealed class XsltIdFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         return results.ToArray();
     }
 
+    // XML whitespace: the separators fn:id tokenizes on, and what ID normalization strips.
+    private static readonly char[] XmlWhitespace = [' ', '\t', '\n', '\r'];
+
+    /// <summary>
+    /// An ID attribute's value as an ID: whitespace-normalized. The xml:id specification requires
+    /// it ("the value is normalized as if the attribute were declared ID"), so
+    /// <c>xml:id="id3 "</c> is the ID <c>id3</c>. Comparing the raw value missed it: id('id3')
+    /// found nothing (W3C key-076).
+    /// </summary>
+    internal static string NormalizeIdValue(string value) => value.Trim(XmlWhitespace);
+
     internal static void CollectIdValues(object? arg, HashSet<string> ids)
     {
         if (arg == null)
             return;
         if (arg is string s)
         {
-            foreach (var part in s.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            foreach (var part in s.Split(XmlWhitespace, StringSplitOptions.RemoveEmptyEntries))
                 ids.Add(part);
         }
         else if (arg is object?[] arr)
@@ -86,12 +97,14 @@ internal sealed class XsltIdFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         }
         else if (arg is XdmNode node)
         {
-            foreach (var part in node.StringValue.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            foreach (var part in node.StringValue.Split(XmlWhitespace, StringSplitOptions.RemoveEmptyEntries))
                 ids.Add(part);
         }
         else
         {
-            ids.Add(arg.ToString()!);
+            // xs:untypedAtomic and the like: tokenized like any other string value.
+            foreach (var part in arg.ToString()!.Split(XmlWhitespace, StringSplitOptions.RemoveEmptyEntries))
+                ids.Add(part);
         }
     }
 
@@ -102,7 +115,7 @@ internal sealed class XsltIdFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         {
             foreach (var attr in store.GetAttributes(elem))
             {
-                if (attr.IsId && ids.Contains(attr.Value))
+                if (attr.IsId && ids.Contains(NormalizeIdValue(attr.Value)))
                 {
                     results.Add(elem);
                     break; // Only add the element once
