@@ -34,7 +34,12 @@ lockstep depend on db-engine — who has just been deprioritised. **That is not 
 
 Verified: it is in the **`xspec` fork** (`phoenixmldb/xspec`, branch `phxspec`), at
 `dotnet/PhoenixmlDb.XSpec.Cli/`, published by `.github/workflows/phxspec-publish.yml` on the tag
-pattern `phxspec-v*`. The `phoenixml/xspec/dotnet` path does not exist.
+pattern `phxspec-v*`.
+
+The confusion is worth recording, because it will recur: `phoenixml/xspec` is a **git submodule**
+of the database repo pointing at this same fork. A grep that walks into the submodule reads as
+though the source lives in the database repo. It does not — the fork is the source of truth, and
+the submodule is a consumer of it.
 
 **So "XSpec in lockstep" does not require db-engine, and the two directives do not conflict.**
 

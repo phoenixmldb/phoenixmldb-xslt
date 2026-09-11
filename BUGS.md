@@ -2065,6 +2065,67 @@ committed baseline and the per-set gate in `ci.yml`, not by this workflow.
 
 **Owner: parsers2** (harness). Diagnosed and registered here rather than patched, per the split.
 
+### 57. OPEN — our published conformance figures describe a build that does not ship (2026-09-11)
+
+Found by parsers2 while building dev mode. This one is mine to answer: I published the figures.
+
+`PhoenixmlDb.Conformance.Tests` reaches XQuery by `ProjectReference` through the **tracked
+symlink** `src/PhoenixmlDb.XQuery → ../../phoenixmldb-xquery/src/PhoenixmlDb.XQuery`
+(git mode 120000). The conformance workflow checks out **only this repo**, so in CI that symlink
+dangles, the referenced project cannot be found, and the build falls back to the
+`PhoenixmlDb.Xslt` project's **pinned `PhoenixmlDb.XQuery` package**.
+
+So the same suite measures two different engines:
+
+| where | XQuery under test | XSLT result |
+|---|---|---|
+| locally (symlink resolves) | `phoenixmldb-xquery` **main** | **10,163** |
+| in CI (symlink dangles) | pinned **package 1.7.0** | **10,160** |
+
+**The committed baseline, README, STATUS.md and the 1.8.0 draft all carry the 10,163 number** —
+the *main* figure. Every one of them is therefore a claim about an engine combination that no
+user can install today, because `PhoenixmlDb.Xslt` 1.7.0 depends on `PhoenixmlDb.XQuery` 1.7.0.
+
+#### The fail-open underneath it
+
+A `ProjectReference` whose target does not exist should stop the build — that is what MSB3202 is
+for, and `phoenixml/src`'s dead absolute symlinks do exactly that (see the workspace CLAUDE.md).
+Here it does not: **the build succeeds and silently substitutes the package.**
+
+Confirmed by observation rather than by running a build: CI conformance runs reach ~13,500 test
+cases before timing out. A build that failed on a missing project never reaches a test at all.
+So the substitution happens, quietly, and the run looks entirely normal.
+
+Same family as every other entry in this register: *a thing that did not happen is
+indistinguishable from a thing that happened and found nothing.* Here it is a dependency that
+did not resolve being indistinguishable from one that did.
+
+#### Which figure should we publish?
+
+**Recommendation: the shipped configuration is the headline.** A conformance percentage is a
+claim about the product someone installs. "95.61%" should mean "install this and you get this",
+not "check out two repos at main and you get this". The main-branch number is useful to
+engineering and belongs in the register or a clearly-labelled at-HEAD line, not in the README
+headline.
+
+The good news is that this mostly resolves itself at release time: if Xslt 1.8.0 pins XQuery
+1.8.0, and XQuery 1.8.0 contains main, then the two configurations **coincide** and the figure
+describes both. The divergence only exists between trains — which is precisely now, and is
+exactly the moment we were about to publish from.
+
+So the concrete fix is smaller than the finding sounds:
+
+1. Say in `README.md` which XQuery the figure was measured against. A figure without that is
+   ambiguous regardless of which one we choose.
+2. Measure the release figures in the **release configuration** — the pin, not the symlink.
+3. Keep the main-branch number where engineering needs it, labelled as such.
+4. Make the dangling reference **loud** rather than silent, so CI cannot quietly measure a
+   different engine than a developer does. parsers2's dev mode already has a missing-sibling
+   guard that fires; the conformance path wants the same.
+
+**Open for Lucas** (parsers2 is taking the same question to him): whether published conformance
+means *as shipped* or *at main*. Recorded rather than decided, and nothing has been republished.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
