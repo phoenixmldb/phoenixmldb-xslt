@@ -5020,15 +5020,30 @@ public sealed class XsltTransformEngine
                     context._activeStreamingProcessor = null;
                     context._activeStreamingReader = null;
 
-                    if (docSubscriptions == null)
+                    if (docSubscriptions == null && docWatchers != null)
                     {
-                        // Literal-only body (e.g. match="/" producing <ROOTRAN/>):
-                        // execute once; the forward pass below merely drains the reader
-                        // in dispatch-only mode without firing built-in templates.
+                        // Consuming aggregates (sum(//x), count(//*), …): the forward pass
+                        // FIRST, so the watchers have seen the document, THEN the body, which
+                        // reads their results — the order the xsl:source-document path uses.
+                        // This was handled as a literal-only body and run BEFORE the pass,
+                        // against watchers that had seen nothing: under a streamable mode,
+                        // <xsl:value-of select="count(//PRICE)"/> in match="/" gave 0 and
+                        // sum(//PRICE) gave nothing, whatever the input held.
+                        await docProcessor.ProcessAsync(inputReader, options.CancellationToken).ConfigureAwait(false);
                         await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
                     }
+                    else
+                    {
+                        if (docSubscriptions == null)
+                        {
+                            // Literal-only body (e.g. match="/" producing <ROOTRAN/>):
+                            // execute once; the forward pass below merely drains the reader
+                            // in dispatch-only mode without firing built-in templates.
+                            await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
+                        }
 
-                    await docProcessor.ProcessAsync(inputReader, options.CancellationToken).ConfigureAwait(false);
+                        await docProcessor.ProcessAsync(inputReader, options.CancellationToken).ConfigureAwait(false);
+                    }
                 }
                 else
                 {
