@@ -1456,6 +1456,52 @@ Reported by the parsers2 session.
 
 ---
 
+### 48. Every `xs:integer` from text was a BigInteger — one ternary, four defects (2026-09-11)
+
+`IntegerConstructorFunction.ParseIntegerText`:
+
+```csharp
+long.TryParse(t, ..., out var l) ? l : BigInteger.Parse(t, ...)
+```
+
+The conditional operator unifies its arms to one type, and `long` converts implicitly to
+`BigInteger`, so the `long` branch is widened back. **Every `xs:integer` cast from text has been a
+`BigInteger` since `2ea9564` (1.6.12)** — including `xs:integer('10')`.
+
+That single line is upstream of four defects found separately over two weeks:
+
+| symptom | where it was "fixed" |
+|---|---|
+| `sum((xs:integer("10"), xs:integer("30")))` returned **0** | #40 — added a BigInteger branch to `SumHelper` |
+| map keys the comparer called equal hashed apart | xquery#7 — added BigInteger to the hash |
+| `(10,20,30)[xs:integer('2')]` returned **all three** | positional predicates had three hand-written checks, none admitting BigInteger, so it fell to EBV |
+| `function-0701` | the regression that finally led here |
+
+Three of those were fixed **at the point of use**. Each added BigInteger to one more consumer,
+and each left the producer alone. Nobody asked why a small integer was a BigInteger in the first
+place.
+
+**The lesson is not "watch the ternary".** That warning is already in #40 — written about a
+*different* ternary, the `SumHelper` narrowing, nine days after this one was introduced and while
+this one sat upstream unfound. A note naming a hazard does not find existing instances of it.
+
+The lesson is: **when a consumer needs a special case for a value it should never have received,
+ask where the value came from.** `SumHelper` needing a BigInteger branch for `xs:integer('10')`
+was the evidence, and it was read as a gap in `SumHelper`. Fixing the symptom at each point of
+use is what let one line produce four defects and survive the fix of three of them.
+
+The test that would have caught it asserts the runtime TYPE of `xs:integer('10')`, not its value
+— the same distinction that made the `SumHelper` narrowing bug visible only to a type-checking
+assertion (#40). It exists now.
+
+Bisected with CLIs built against their pinned packages: xslt 1.6.10–1.6.12 pass, 1.6.13 fails;
+1.6.13 on XQuery 1.6.10 passes; a DLL swap isolates it to XQuery `2ea9564`. Measured, 0 newly
+failing: XSLT 10,137 → 10,139, QT3 29,509 → 29,524 (+15 across `fn:abs`, `avg`,
+`distinct-values`, `min`, `number`, `round-half-to-even` on integer arguments). Positive control:
+9 of 14 new tests fail on the old code. (phoenixmldb-xquery#12, found by parsers2.)
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
