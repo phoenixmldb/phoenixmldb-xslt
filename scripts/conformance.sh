@@ -337,6 +337,39 @@ elif [ -f "$BASELINE" ]; then
   ' "$BASELINE" "$CURRENT")"
   newsets="$(awk -F'\t' 'NR==FNR{base[$1]=1; next} !($1 in base){printf "  %s (%d/%d)\n", $1, $2, $3}' \
               "$BASELINE" "$CURRENT")"
+  # A baselined set this run should have covered but that reported NO result. The checks above
+  # all iterate CURRENT, so a set that never ran was never visited: when strm3's test host
+  # crashed, sx-GeneralComp-le/-ne vanished and the per-set section said nothing (BUGS.md #54).
+  # A set with no verdict is worse news than a set with a lower count, so it fails the run too.
+  #
+  # Only sets whose chunk ran are expected — a single-chunk run must not flag the rest of the
+  # baseline. Ownership: a QT3 set (no tests/ prefix) belongs to xqts; tests/<g>/ belongs to
+  # chunk <g>; the strm sub-chunks list their sets in their test classes, read from source here
+  # so there is no second copy of that list to drift.
+  EXPECTED_STRM="$OUT/per-set-expected-strm.txt"
+  : > "$EXPECTED_STRM"
+  for n in 1 2 3; do
+    case " ${CHUNKS[*]} " in *" strm$n "*) ;; *) continue ;; esac
+    cls="$PROJ/Xslt/XsltStreamingTests$([ $n -eq 1 ] || echo $n).cs"
+    listed="$(grep -o 'InlineData("tests/strm/[^"]*")' "$cls" 2>/dev/null | sed 's/^InlineData("//; s/")$//')"
+    # Fail closed: a renamed class or a reshaped attribute would otherwise yield an empty list,
+    # and this check would go blind for strm$n without saying so.
+    if [ -z "$listed" ]; then
+      echo "PER-SET CHECK BROKEN — could not read strm$n's test-set list from $cls" | tee -a "$OUT/summary.txt"
+      failed=1
+    fi
+    printf '%s\n' "$listed" >> "$EXPECTED_STRM"
+  done
+  noresult="$(awk -F'\t' -v ran=" ${CHUNKS[*]} " '
+    FILENAME == ARGV[1] { strm[$1] = 1; next }
+    FILENAME == ARGV[2] { cur[$1] = 1; next }
+    {
+      if ($1 !~ /^tests\//)          owned = index(ran, " xqts ") > 0
+      else if ($1 ~ /^tests\/strm\//) owned = ($1 in strm)
+      else { split($1, p, "/");       owned = index(ran, " " p[2] " ") > 0 }
+      if (owned && !($1 in cur)) printf "  %s: baselined %d, NO RESULT this run\n", $1, $2
+    }
+  ' "$EXPECTED_STRM" "$CURRENT" "$BASELINE")"
   [ -n "$gained" ]  && { echo "per-set GAINS:"    | tee -a "$OUT/summary.txt"; echo "$gained"  | tee -a "$OUT/summary.txt"; }
   [ -n "$newsets" ] && { echo "per-set NEW sets:" | tee -a "$OUT/summary.txt"; echo "$newsets" | tee -a "$OUT/summary.txt"; }
   if [ -n "$regressed" ]; then
@@ -344,6 +377,12 @@ elif [ -f "$BASELINE" ]; then
     echo "$regressed" | tee -a "$OUT/summary.txt"
     echo "If the drop is intended, re-run with CONFORMANCE_UPDATE_BASELINE=1 to re-baseline." |
       tee -a "$OUT/summary.txt"
+    failed=1
+  fi
+  if [ -n "$noresult" ]; then
+    echo "PER-SET NO RESULT — baselined test-sets this run should have covered did not report:" |
+      tee -a "$OUT/summary.txt"
+    echo "$noresult" | tee -a "$OUT/summary.txt"
     failed=1
   fi
 else
