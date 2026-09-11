@@ -31,7 +31,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
     };
     public override IReadOnlyList<PhoenixmlDb.XQuery.Ast.FunctionParameterDef> Parameters =>
     [
-        new() { Name = new QName(NamespaceId.None, "uri-sequence"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.OptionalString }
+        new() { Name = new QName(NamespaceId.None, "uri-sequence"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.ZeroOrMoreItems }
     ];
 
     public override ValueTask<object?> InvokeAsync(

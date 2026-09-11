@@ -29,7 +29,7 @@ internal sealed class XsltFormatNumber3Function : PhoenixmlDb.XQuery.Ast.XQueryF
     public override PhoenixmlDb.XQuery.Ast.XdmSequenceType ReturnType => PhoenixmlDb.XQuery.Ast.XdmSequenceType.String;
     public override IReadOnlyList<PhoenixmlDb.XQuery.Ast.FunctionParameterDef> Parameters =>
     [
-        new() { Name = new QName(NamespaceId.None, "value"), Type = new PhoenixmlDb.XQuery.Ast.XdmSequenceType { ItemType = PhoenixmlDb.XQuery.Ast.ItemType.Double, Occurrence = PhoenixmlDb.XQuery.Ast.Occurrence.ExactlyOne } },
+        new() { Name = new QName(NamespaceId.None, "value"), Type = new PhoenixmlDb.XQuery.Ast.XdmSequenceType { ItemType = PhoenixmlDb.XQuery.Ast.ItemType.Double, Occurrence = PhoenixmlDb.XQuery.Ast.Occurrence.ZeroOrOne } },
         new() { Name = new QName(NamespaceId.None, "picture"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.String },
         new() { Name = new QName(NamespaceId.None, "decimal-format-name"), Type = PhoenixmlDb.XQuery.Ast.XdmSequenceType.OptionalString }
     ];
