@@ -99,14 +99,30 @@ internal sealed class FunctionMemoKey : IEquatable<FunctionMemoKey>
         }
     }
 
+    /// <summary>
+    /// Hashes a value as the sequence it is, so every representation <see cref="ValueEquals"/>
+    /// treats as equal hashes alike: null and an empty array are both (), and a single item and
+    /// a one-element array are both that item. Hashing the representation instead let equal keys
+    /// land in different buckets, a cache miss that hands new-each-time="no" a fresh node.
+    /// </summary>
     private static int ValueHash(object? value)
     {
-        if (value is not object?[] items)
-            return ItemHash(value);
         var hash = new HashCode();
-        hash.Add(items.Length);
-        foreach (var item in items)
-            hash.Add(ItemHash(item));
+        switch (value)
+        {
+            case null:
+                hash.Add(0);
+                break;
+            case object?[] items:
+                hash.Add(items.Length);
+                foreach (var item in items)
+                    hash.Add(ItemHash(item));
+                break;
+            default:
+                hash.Add(1);
+                hash.Add(ItemHash(value));
+                break;
+        }
         return hash.ToHashCode();
     }
 
