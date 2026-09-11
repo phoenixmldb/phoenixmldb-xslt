@@ -347,7 +347,22 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
                 + "rescued — a possible masked defect)");
         }
 
-        passed.Should().BeGreaterThan(0, $"At least some tests in {testSetName} should pass");
+        // NOT `passed > 0`. That assertion was removed deliberately: it is a false RED on the
+        // sets that legitimately score zero — five QT3 sets do — and a false GREEN everywhere
+        // else, since one passing case in a set of two hundred satisfied it. It never gated
+        // anything (BUGS.md #7). The real gate is the per-set ratchet in
+        // scripts/conformance.sh, which fails the run if any set drops below what it reaches
+        // every time.
+        //
+        // What IS asserted here is that the set RAN: every loaded case produced a verdict.
+        // A runner that silently skipped cases is the defect this suite keeps finding — 419 of
+        // 428 QT3 sets unreachable behind a hard-coded list, a MemberData placeholder yielding
+        // one case instead of 428, a monolith killed mid-flight reporting the same nine sets at
+        // three different caps. Every one of those looked green. Asserting the COUNT is what
+        // tells a run that did nothing from a run that found nothing (BUGS.md #44).
+        (passed + failed).Should().Be(testCases.Count,
+            $"every case in {testSetName} must produce a verdict; a case that is neither passed nor "
+            + "failed was silently dropped by the runner");
     }
 
 }
