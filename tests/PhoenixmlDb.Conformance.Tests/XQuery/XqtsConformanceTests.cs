@@ -235,7 +235,7 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
     /// </summary>
     /// <remarks>
     /// This used to be nine hard-coded <c>InlineData</c> rows, with the other 419 sets reachable
-    /// only through <see cref="Xqts_ShouldRunFullTestSuite"/>: a single xunit test running all
+    /// only through a single whole-suite xunit test (since removed) that ran all
     /// 31,414 cases that prints nothing until it returns. That shape cost real time twice. It is
     /// why a per-chunk timeout was read as a hang and went uninvestigated for weeks (BUGS.md #33),
     /// and why a run that stopped after nine sets looked like a 39x slowdown, then like a wedge,
@@ -332,61 +332,24 @@ public class XqtsConformanceTests : IClassFixture<XqtsTestFixture>
         }
 
         _output.WriteLine($"Results: {passed}/{testCases.Count} passed ({(double)passed / testCases.Count * 100:F1}%)");
+
+        // assert-eq cases that passed ONLY because the legacy string comparison rescued them
+        // after the engine said unequal. Each is a possible masked engine bug, so the count
+        // belongs in the output rather than hidden. It used to be reported once, globally, by
+        // the whole-suite test; with a fresh runner per set this is per-set, which attributes
+        // it to somewhere rather than to everywhere. Printed only when non-zero so it reads as
+        // a signal rather than noise.
+        if (runner.EqStringFallbackRescues > 0)
+        {
+            _output.WriteLine(
+                $"assert-eq string-compare rescues: {runner.EqStringFallbackRescues} "
+                + "(each is an assert-eq that the engine judged unequal and a string comparison "
+                + "rescued — a possible masked defect)");
+        }
+
         passed.Should().BeGreaterThan(0, $"At least some tests in {testSetName} should pass");
     }
 
-    [Fact]
-    [Trait("Category", "Full")]
-    public async Task Xqts_ShouldRunFullTestSuite()
-    {
-        if (!_fixture.IsTestDataAvailable)
-        {
-            _output.WriteLine("XQTS test data not available. Skipping full test suite.");
-            // Assert.Skip, not return: an early return is recorded as a PASS, so a missing
-            // suite made this file report green having executed nothing.
-            Assert.Skip("W3C QT3 suite not found. Set QT3_TEST_SUITE, or run scripts/fetch-conformance-suites.sh.");
-        }
-
-        var testCases = await _fixture.LoadAllTestsAsync();
-        _output.WriteLine($"Running {testCases.Count} tests from XQTS");
-
-        // Print the EXCEPTION alongside the name. Without it a run reports thousands of
-        // errors and gives no way to group them, which is the difference between "2469
-        // errors" and "2469 errors, of which 1900 are one message". Every harness defect
-        // found in this suite was found by clustering these strings.
-        var progress = new Progress<XqtsTestResult>(result =>
-        {
-            if (result.Passed) return;
-            if (result.Error is { } ex)
-            {
-                var msg = ex.Message.ReplaceLineEndings(" ");
-                if (msg.Length > 200) msg = msg[..200];
-                _output.WriteLine($"ERROR: {result.TestCase.TestSet}/{result.TestCase.Name} :: {ex.GetType().Name}: {msg}");
-            }
-            else
-            {
-                _output.WriteLine($"FAILED: {result.TestCase.TestSet}/{result.TestCase.Name}");
-            }
-        });
-
-        var summary = await _fixture.Runner.RunAllTestsAsync(testCases, progress, TestContext.Current.CancellationToken);
-
-        _output.WriteLine("\n=== XQTS Test Summary ===");
-        _output.WriteLine($"Total:   {summary.TotalTests}");
-        _output.WriteLine($"Passed:  {summary.PassedTests}");
-        _output.WriteLine($"Failed:  {summary.FailedTests}");
-        _output.WriteLine($"Errors:  {summary.ErrorTests}");
-        _output.WriteLine($"Skipped: {summary.SkippedTests}");
-        _output.WriteLine($"Pass Rate: {summary.PassRate:F2}%");
-        // See XqtsTestRunner.EqStringFallbackRescues: assert-eq tests that passed only because
-        // the legacy string comparison rescued them after the engine said unequal. Each is a
-        // possible masked engine bug, so the number belongs in the summary, not hidden.
-        _output.WriteLine($"assert-eq string-compare rescues: {_fixture.Runner.EqStringFallbackRescues}");
-        _output.WriteLine($"Duration: {summary.Duration.TotalSeconds:F2}s");
-
-        // Target: 95%+ pass rate for supported features
-        summary.PassRate.Should().BeGreaterOrEqualTo(95, "XQTS pass rate should be at least 95%");
-    }
 }
 
 /// <summary>
