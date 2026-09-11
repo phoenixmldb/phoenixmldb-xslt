@@ -81,7 +81,14 @@ public class StreamingCancellationTests
         return sb.ToString();
     }
 
-    private static async Task RunAsync(string stylesheet, int rows, CancellationToken ct)
+    // `onTransformStarting` runs after setup, immediately before the transform, and mid-run
+    // tests start their deadline THERE. Started before setup, the deadline measured the machine
+    // rather than the code: these tests cancelled at 3 s and assumed the transform was still
+    // running, and on a fast machine it had finished in ~2 s, so nothing was cancelled and the
+    // test failed every time (BUGS.md #46). Started too early and short, it would land in setup
+    // instead, and pass without ever testing the loop.
+    private static async Task RunAsync(string stylesheet, int rows, CancellationToken ct,
+        Action? onTransformStarting = null)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"streaming-cancel-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
@@ -91,6 +98,7 @@ public class StreamingCancellationTests
             var transformer = new XsltTransformer();
             await transformer.LoadStylesheetAsync(stylesheet, new Uri(tempDir + "/"));
             transformer.SetInitialTemplate("xsl:initial-template", "http://www.w3.org/1999/XSL/Transform");
+            onTransformStarting?.Invoke();
             await transformer.TransformAsync((string?)null, ct);
         }
         finally
@@ -119,16 +127,16 @@ public class StreamingCancellationTests
     public async Task StreamedTransform_TokenCancelledMidRun_ThrowsBeforeCompletion()
     {
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(500));
 
         var sw = Stopwatch.StartNew();
-        Func<Task> act = () => RunAsync(StreamingStylesheet, 200_000, cts.Token);
+        Func<Task> act = () => RunAsync(StreamingStylesheet, 400_000, cts.Token,
+            () => cts.CancelAfter(TimeSpan.FromMilliseconds(500)));
 
         await act.Should().ThrowAsync<OperationCanceledException>(
             "a token cancelled mid-run must interrupt the streaming loop");
         sw.Stop();
         sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30),
-            "the loop must poll the token and stop well before completing all 200K iterations");
+            "the loop must poll the token and stop well before completing all 400K iterations");
     }
 
     [Fact]
@@ -137,10 +145,10 @@ public class StreamingCancellationTests
         // strip-space + xsl:try routes through the whole-input-buffer fallback; its
         // for-each loop must also observe cancellation.
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromSeconds(3));
 
         var sw = Stopwatch.StartNew();
-        Func<Task> act = () => RunAsync(BufferedStylesheet, 200_000, cts.Token);
+        Func<Task> act = () => RunAsync(BufferedStylesheet, 400_000, cts.Token,
+            () => cts.CancelAfter(TimeSpan.FromSeconds(1)));
 
         await act.Should().ThrowAsync<OperationCanceledException>(
             "the buffered (whole-input) sf-boolean-107 shape must observe cancellation");
@@ -155,10 +163,10 @@ public class StreamingCancellationTests
         // Mirrors the conformance harness: transform inside Task.Run joined with
         // WaitAsync(cts.Token), deadline via CancelAfter.
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromSeconds(3));
 
         var sw = Stopwatch.StartNew();
-        var transformTask = Task.Run(() => RunAsync(StreamingStylesheet, 200_000, cts.Token), cts.Token);
+        var transformTask = Task.Run(() => RunAsync(StreamingStylesheet, 400_000, cts.Token,
+            () => cts.CancelAfter(TimeSpan.FromSeconds(1))), cts.Token);
         Func<Task> act = async () => await transformTask.WaitAsync(cts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
         sw.Stop();
