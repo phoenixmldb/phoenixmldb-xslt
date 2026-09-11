@@ -93,6 +93,12 @@ correction is 1.9 points, and 204 failures that were previously invisible.
 Measured 2026-09-02 against the [XSpec](https://github.com/xspec/xspec) test corpus. This is the
 weakest of our conformance numbers and is published for the same reason as the strongest one.
 
+**Stale, and understating.** It predates a week of engine work — three `xsl:try` defects, the
+`analyze-string` dot-all flag, a copied element losing its text, seven wrong error-code sites,
+package-version validation, and the XQuery-side `fn:sum`, atomization and `map:put` fixes. The
+real figure is very likely higher. It is left as measured rather than estimated upward, and
+re-measuring it is open work.
+
 | | |
 |---|---|
 | Suites running to completion | 139 of 284 |
