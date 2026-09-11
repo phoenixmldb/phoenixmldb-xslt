@@ -1,15 +1,15 @@
 # Status
 
-Generated 2026-09-11 11:28 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-11 11:30 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
-| `PhoenixmlDb.XQuery` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
+| `PhoenixmlDb.Core` | 1.7.0 | 1.7.0 | current |
+| `PhoenixmlDb.XQuery` | 1.7.0 | 1.7.0 | current |
 | `PhoenixmlDb.Xslt` | 1.7.0 | 1.7.0 | current |
-| `xquery4` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
+| `xquery4` | 1.7.0 | 1.7.0 | current |
 | `xslt` | 1.7.0 | 1.7.0 | current |
 
 ## Open work
@@ -18,7 +18,7 @@ Generated 2026-09-11 11:28 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 3 | 0 |
-| phoenixmldb-xslt | 7 | 2 |
+| phoenixmldb-xslt | 7 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -49,8 +49,7 @@ Generated 2026-09-11 11:28 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [23] test: raise the baseline for #20 and #21 — XSLT 10,160
-- [22] fix: XSLT built-ins declare their spec parameter cardinalities
+- [24] fix: an accumulator rule sees the other accumulator's value for THIS node
 
 **phoenixmldb-cli**
 
@@ -73,13 +72,16 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10157/10630 (95.55%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 10160/10630 (95.58%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 29524/31414 (93.98%)** across 428 test-sets,
   same file, same ratchet.
-- **W3C QT3 / XQuery — figure not readable** from
-  `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
+- **W3C QT3 / XQuery** — 93.98% — 29,524 / 31,414 across all 428 catalog test-sets, measured 2026-09-11, Release build.
+  Verified reproducible from two checkout paths with different execution
+  orders. Source: `phoenixmldb-xquery/docs/CONFORMANCE.md`.
+  Do NOT cite the whole-suite test's number — it runs in catalog order with shared state,
+  scores differently, and its 95% assertion is permanently red (BUGS.md #44).
 
 ## Blocked
 
