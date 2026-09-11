@@ -345,6 +345,27 @@ internal sealed partial class DefaultXsltExecutionContext
             return;
         }
 
+        // Key settings first: sub-sequence order checks below need them. Each key compares with
+        // its own collation, or the default collation in scope (W3C merge-074: the template's
+        // default-collation governs a key with no collation attribute).
+        var (keyOrders, keyDataTypes, keyCollations) = instruction.Sources.Count > 0
+            ? await ResolveMergeKeySettingsAsync(instruction.Sources[0].MergeKeys).ConfigureAwait(false)
+            : (new List<string>(), new List<string>(), new List<string?>());
+        // XTDE2210: every source must agree on each key's order, data-type and collation.
+        for (var si = 1; si < instruction.Sources.Count; si++)
+        {
+            var (orders2, dataTypes2, collations2) = await ResolveMergeKeySettingsAsync(instruction.Sources[si].MergeKeys).ConfigureAwait(false);
+            for (var ki = 0; ki < orders2.Count && ki < keyOrders.Count; ki++)
+            {
+                if (orders2[ki] != keyOrders[ki])
+                    throw Error($"XTDE2210: Merge key order differs across sources: '{keyOrders[ki]}' vs '{orders2[ki]}'");
+                if (dataTypes2[ki] != keyDataTypes[ki])
+                    throw Error($"XTDE2210: Merge key data-type differs across sources: '{keyDataTypes[ki]}' vs '{dataTypes2[ki]}'");
+                if (!string.Equals(collations2[ki], keyCollations[ki], StringComparison.Ordinal))
+                    throw Error($"XTDE2210: Merge key collation differs across sources: '{keyCollations[ki]}' vs '{collations2[ki]}'");
+            }
+        }
+
         // Step 1: Collect items from each merge source
         var sourceSequences = new List<List<object>>();
 
@@ -361,15 +382,18 @@ internal sealed partial class DefaultXsltExecutionContext
                 foreach (var item in forEachItems)
                 {
                     PushContextItem(item, 1, 1);
+                    List<object> subSequence;
                     try
                     {
                         var selected = await EvaluateAsync(source.Select).ConfigureAwait(false);
-                        AddToList(allItems, selected);
+                        subSequence = new List<object>();
+                        AddToList(subSequence, selected);
                     }
                     finally
                     {
                         PopContextItem();
                     }
+                    allItems.AddRange(subSequence);
                 }
             }
             else if (source.ForEachSource != null)
@@ -418,15 +442,18 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
 
                     PushContextItem(contextItem, 1, 1);
+                    List<object> subSequence;
                     try
                     {
                         var selected = await EvaluateAsync(source.Select).ConfigureAwait(false);
-                        AddToList(allItems, selected);
+                        subSequence = new List<object>();
+                        AddToList(subSequence, selected);
                     }
                     finally
                     {
                         PopContextItem();
                     }
+                    allItems.AddRange(subSequence);
                 }
             }
             else
@@ -455,37 +482,6 @@ internal sealed partial class DefaultXsltExecutionContext
         // Pre-compute merge key values for all items in all sources
         var mergeKeysTemplate = instruction.Sources.Count > 0 ? instruction.Sources[0].MergeKeys : new List<XsltMergeKey>();
 
-        // Resolve key orders and data types once (from first source)
-        var keyOrders = new List<string>();
-        var keyDataTypes = new List<string>();
-        foreach (var mk in mergeKeysTemplate)
-        {
-            var order = mk.Order != null ? await EvaluateAvtAsync(mk.Order).ConfigureAwait(false) : "ascending";
-            if (order != "ascending" && order != "descending")
-                throw Error($"XTDE2210: Invalid value '{order}' for order attribute on xsl:merge-key (must be 'ascending' or 'descending')");
-            keyOrders.Add(order);
-            var dataType = mk.DataType != null ? await EvaluateAvtAsync(mk.DataType).ConfigureAwait(false) : "text";
-            if (dataType != "text" && dataType != "number")
-                throw Error($"XTDE2210: Invalid value '{dataType}' for data-type attribute on xsl:merge-key (must be 'text' or 'number')");
-            keyDataTypes.Add(dataType);
-        }
-
-        // XTDE2210: Validate that merge-key order/data-type agree across all sources
-        for (var si = 1; si < instruction.Sources.Count; si++)
-        {
-            var sourceKeys2 = instruction.Sources[si].MergeKeys;
-            for (var ki = 0; ki < sourceKeys2.Count && ki < keyOrders.Count; ki++)
-            {
-                var mk2 = sourceKeys2[ki];
-                var order2 = mk2.Order != null ? await EvaluateAvtAsync(mk2.Order).ConfigureAwait(false) : "ascending";
-                if (order2 != keyOrders[ki])
-                    throw Error($"XTDE2210: Merge key order differs across sources: '{keyOrders[ki]}' vs '{order2}'");
-                var dt2 = mk2.DataType != null ? await EvaluateAvtAsync(mk2.DataType).ConfigureAwait(false) : "text";
-                if (dt2 != keyDataTypes[ki])
-                    throw Error($"XTDE2210: Merge key data-type differs across sources: '{keyDataTypes[ki]}' vs '{dt2}'");
-            }
-        }
-
         // Compute keys for each item in each source — keep raw typed values
         var sourceKeys = new List<List<List<object?>>>();
         for (var si = 0; si < sourceSequences.Count; si++)
@@ -493,56 +489,7 @@ internal sealed partial class DefaultXsltExecutionContext
             var keysForSource = new List<List<object?>>();
             var currentSourceKeys = si < instruction.Sources.Count ? instruction.Sources[si].MergeKeys : mergeKeysTemplate;
             foreach (var item in sourceSequences[si])
-            {
-                PushContextItem(item, 1, 1);
-                try
-                {
-                    var itemKeys = new List<object?>();
-                    // XTDE1480: Merge key evaluation is in temporary output state
-                    _temporaryOutputDepth++;
-                    try
-                    {
-                        foreach (var mk in currentSourceKeys)
-                        {
-                            object? keyVal;
-                            if (mk.Select != null)
-                            {
-                                keyVal = await EvaluateAsync(mk.Select).ConfigureAwait(false);
-                                // XTTE1020: Merge key must be a singleton
-                                if (keyVal is object?[] keyArr)
-                                {
-                                    if (keyArr.Length > 1)
-                                        throw Error("XTTE1020: The value of a merge key must be a single atomic value");
-                                    keyVal = keyArr.Length == 1 ? keyArr[0] : null;
-                                }
-                                else if (keyVal is IEnumerable<object> keySeq && keyVal is not string && keyVal is not Xdm.Nodes.XdmNode)
-                                {
-                                    var keyList = keySeq.ToList();
-                                    if (keyList.Count > 1)
-                                        throw Error("XTTE1020: The value of a merge key must be a single atomic value");
-                                    keyVal = keyList.Count == 1 ? keyList[0] : null;
-                                }
-                            }
-                            else if (mk.Content != null)
-                            {
-                                BeginSequenceCollection();
-                                await mk.Content.ExecuteAsync(this).ConfigureAwait(false);
-                                var items = EndSequenceCollection();
-                                keyVal = items.Count == 1 ? items[0] : items.Count == 0 ? null : items;
-                            }
-                            else
-                                keyVal = null;
-                            itemKeys.Add(keyVal);
-                        }
-                    }
-                    finally { _temporaryOutputDepth--; }
-                    keysForSource.Add(itemKeys);
-                }
-                finally
-                {
-                    PopContextItem();
-                }
-            }
+                keysForSource.Add(await ComputeMergeKeysForItemAsync(item, currentSourceKeys).ConfigureAwait(false));
             // XTDE2220: Verify input is correctly sorted (unless sort-before-merge)
             // Only check when no for-each-item/for-each-source — those create independent sub-sequences
             var currentSource = si < instruction.Sources.Count ? instruction.Sources[si] : null;
@@ -552,7 +499,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 for (var ki = 1; ki < keysForSource.Count; ki++)
                 {
-                    var cmp = CompareMergeKeys(keysForSource[ki - 1], keysForSource[ki], keyOrders, keyDataTypes);
+                    var cmp = CompareMergeKeys(keysForSource[ki - 1], keysForSource[ki], keyOrders, keyDataTypes, keyCollations);
                     if (cmp > 0)
                         throw Error($"XTDE2220: Merge source '{currentSource.Name ?? ("source " + si)}' is not correctly sorted at item {ki + 1}");
                 }
@@ -577,7 +524,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     continue;
                 var currentKey = sourceKeys[si][indices[si]];
 
-                if (bestKey == null || CompareMergeKeys(currentKey, bestKey, keyOrders, keyDataTypes) < 0)
+                if (bestKey == null || CompareMergeKeys(currentKey, bestKey, keyOrders, keyDataTypes, keyCollations) < 0)
                 {
                     bestSource = si;
                     bestKey = currentKey;
@@ -592,7 +539,7 @@ internal sealed partial class DefaultXsltExecutionContext
             for (var si = 0; si < sourceSequences.Count; si++)
             {
                 while (indices[si] < sourceSequences[si].Count &&
-                       CompareMergeKeys(sourceKeys[si][indices[si]], bestKey!, keyOrders, keyDataTypes) == 0)
+                       CompareMergeKeys(sourceKeys[si][indices[si]], bestKey!, keyOrders, keyDataTypes, keyCollations) == 0)
                 {
                     group.Add((sourceSequences[si][indices[si]], si));
                     indices[si]++;
@@ -649,20 +596,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private async Task<List<object>> SortByMergeKeysAsync(List<object> items, List<XsltMergeKey> mergeKeys)
     {
-        // Resolve key orders and data types
-        var orders = new List<string>();
-        var dataTypes = new List<string>();
-        foreach (var mk in mergeKeys)
-        {
-            var order = mk.Order != null ? await EvaluateAvtAsync(mk.Order).ConfigureAwait(false) : "ascending";
-            if (order != "ascending" && order != "descending")
-                throw Error($"XTDE2210: Invalid value '{order}' for order attribute on xsl:merge-key (must be 'ascending' or 'descending')");
-            orders.Add(order);
-            var dataType = mk.DataType != null ? await EvaluateAvtAsync(mk.DataType).ConfigureAwait(false) : "text";
-            if (dataType != "text" && dataType != "number")
-                throw Error($"XTDE2210: Invalid value '{dataType}' for data-type attribute on xsl:merge-key (must be 'text' or 'number')");
-            dataTypes.Add(dataType);
-        }
+        var (orders, dataTypes, collations) = await ResolveMergeKeySettingsAsync(mergeKeys).ConfigureAwait(false);
 
         // Compute keys for each item — keep raw typed values
         var keyed = new List<(object Item, List<object?> Keys)>();
@@ -701,19 +635,20 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         }
 
-        keyed.Sort((a, b) => CompareMergeKeys(a.Keys, b.Keys, orders, dataTypes));
+        keyed.Sort((a, b) => CompareMergeKeys(a.Keys, b.Keys, orders, dataTypes, collations));
 
         return keyed.Select(k => k.Item).ToList();
     }
 
 
-    private static int CompareMergeKeys(List<object?> a, List<object?> b, List<string> orders, List<string> dataTypes)
+    private static int CompareMergeKeys(List<object?> a, List<object?> b, List<string> orders, List<string> dataTypes,
+        IReadOnlyList<string?> collations)
     {
         for (var i = 0; i < a.Count && i < b.Count && i < orders.Count; i++)
         {
             int cmp;
             var dataType = i < dataTypes.Count ? dataTypes[i] : "text";
-            cmp = CompareKeyValues(a[i], b[i], dataType);
+            cmp = CompareKeyValues(a[i], b[i], dataType, i < collations.Count ? collations[i] : null);
             if (orders[i] == "descending")
                 cmp = -cmp;
             if (cmp != 0)
@@ -723,7 +658,7 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
-    private static int CompareKeyValues(object? a, object? b, string dataType)
+    private static int CompareKeyValues(object? a, object? b, string dataType, string? collation)
     {
         if (a is null && b is null)
             return 0;
@@ -781,7 +716,122 @@ internal sealed partial class DefaultXsltExecutionContext
         // selects produce string values (not "PhoenixmlDb.Xdm.Nodes.XdmAttribute").
         var aStr = AtomizeMergeKeyToString(a);
         var bStr = AtomizeMergeKeyToString(b);
-        return string.Compare(aStr, bStr, StringComparison.Ordinal);
+        // The key's collation. Comparing with codepoints whatever the collation said merged keys
+        // a collation calls equal as different, and could not see input that was out of order
+        // under the collation it named (W3C merge-072/074, XTDE2220). Null is codepoint.
+        return PhoenixmlDb.XQuery.Functions.CollationHelper.CompareWithCollation(aStr, bStr, collation);
+    }
+
+
+    /// <summary>
+    /// One item's merge-key values (XTDE1480: evaluated in temporary output state; XTTE1020: each
+    /// key a single atomic value). Shared by the merge and its input-order check.
+    /// </summary>
+    private async Task<List<object?>> ComputeMergeKeysForItemAsync(object item, List<XsltMergeKey> currentSourceKeys)
+    {
+        PushContextItem(item, 1, 1);
+        try
+        {
+            var itemKeys = new List<object?>();
+            // XTDE1480: Merge key evaluation is in temporary output state
+            _temporaryOutputDepth++;
+            try
+            {
+                foreach (var mk in currentSourceKeys)
+                {
+                    object? keyVal;
+                    if (mk.Select != null)
+                    {
+                        keyVal = await EvaluateAsync(mk.Select).ConfigureAwait(false);
+                        // XTTE1020: Merge key must be a singleton
+                        if (keyVal is object?[] keyArr)
+                        {
+                            if (keyArr.Length > 1)
+                                throw Error("XTTE1020: The value of a merge key must be a single atomic value");
+                            keyVal = keyArr.Length == 1 ? keyArr[0] : null;
+                        }
+                        else if (keyVal is IEnumerable<object> keySeq && keyVal is not string && keyVal is not Xdm.Nodes.XdmNode)
+                        {
+                            var keyList = keySeq.ToList();
+                            if (keyList.Count > 1)
+                                throw Error("XTTE1020: The value of a merge key must be a single atomic value");
+                            keyVal = keyList.Count == 1 ? keyList[0] : null;
+                        }
+                    }
+                    else if (mk.Content != null)
+                    {
+                        BeginSequenceCollection();
+                        await mk.Content.ExecuteAsync(this).ConfigureAwait(false);
+                        var items = EndSequenceCollection();
+                        keyVal = items.Count == 1 ? items[0] : items.Count == 0 ? null : items;
+                    }
+                    else
+                        keyVal = null;
+                    itemKeys.Add(keyVal);
+                }
+            }
+            finally { _temporaryOutputDepth--; }
+            return itemKeys;
+        }
+        finally
+        {
+            PopContextItem();
+        }
+    }
+
+
+    /// <summary>
+    /// A merge-key list's order, data-type and collation, each evaluated from its AVT. A key with
+    /// no collation attribute uses the default collation in scope.
+    /// </summary>
+    private async Task<(List<string> Orders, List<string> DataTypes, List<string?> Collations)> ResolveMergeKeySettingsAsync(
+        List<XsltMergeKey> mergeKeys)
+    {
+        var orders = new List<string>(mergeKeys.Count);
+        var dataTypes = new List<string>(mergeKeys.Count);
+        var collations = new List<string?>(mergeKeys.Count);
+        foreach (var mk in mergeKeys)
+        {
+            var order = mk.Order != null ? await EvaluateAvtAsync(mk.Order).ConfigureAwait(false) : "ascending";
+            if (order != "ascending" && order != "descending")
+                throw Error($"XTDE2210: Invalid value '{order}' for order attribute on xsl:merge-key (must be 'ascending' or 'descending')");
+            orders.Add(order);
+            var dataType = mk.DataType != null ? await EvaluateAvtAsync(mk.DataType).ConfigureAwait(false) : "text";
+            if (dataType != "text" && dataType != "number")
+                throw Error($"XTDE2210: Invalid value '{dataType}' for data-type attribute on xsl:merge-key (must be 'text' or 'number')");
+            dataTypes.Add(dataType);
+            collations.Add(await ResolveMergeKeyCollationAsync(mk).ConfigureAwait(false));
+        }
+        return (orders, dataTypes, collations);
+    }
+
+
+    /// <summary>
+    /// The collation a merge key compares with: its collation attribute; else, when it has lang,
+    /// the UCA collation for that language (case-order giving caseFirst), as xsl:sort does; else
+    /// the default collation in scope.
+    /// </summary>
+    /// <remarks>
+    /// lang has to outrank the default. W3C merge-070 and friends merge Swedish-sorted city lists
+    /// with lang="sv" and no collation attribute; under the default (codepoint) collation that
+    /// input is out of order — "Aby" after "AElmhult" — and would be XTDE2220.
+    /// </remarks>
+    private async Task<string?> ResolveMergeKeyCollationAsync(XsltMergeKey mk)
+    {
+        if (mk.Collation != null)
+            return await EvaluateAvtAsync(mk.Collation).ConfigureAwait(false);
+        if (mk.Lang != null && await EvaluateAvtAsync(mk.Lang).ConfigureAwait(false) is { Length: > 0 } lang)
+        {
+            var uca = "http://www.w3.org/2013/collation/UCA?lang=" + lang;
+            if (mk.CaseOrder != null)
+            {
+                var caseOrder = await EvaluateAvtAsync(mk.CaseOrder).ConfigureAwait(false);
+                if (caseOrder == "upper-first") uca += ";caseFirst=upper";
+                else if (caseOrder == "lower-first") uca += ";caseFirst=lower";
+            }
+            return uca;
+        }
+        return DefaultCollation;
     }
 
 
