@@ -2184,6 +2184,53 @@ Repos affected: `xquery-mcp`, `xslt-mcp`, and any other consumer running `check-
 push alone. Noted for the lockstep work rather than done here — it belongs with the same
 release-mechanics pass.
 
+### 59. Two traps in the `xspec` fork — a misleading `gh` default and a permanently red Lint (2026-09-11)
+
+Both found by parsers2 bringing the fork into the lockstep train. Neither is an engine defect;
+both will cost the next person time, and one of them briefly produced a false conclusion.
+
+#### `gh` answers about the wrong repository
+
+The fork's checkout has upstream `xspec/xspec` as `gh`'s default repo, so a bare command
+resolves against **upstream, not ours**:
+
+```
+gh pr view 1                      # upstream xspec/xspec PR #1 — MERGED years ago
+gh pr view 1 --repo phoenixmldb/xspec   # ours
+```
+
+parsers2 briefly read their own open PR as already merged. That is the dangerous shape: it did
+not error, it answered confidently about a different repository. **Always pass
+`--repo phoenixmldb/xspec` in that checkout.**
+
+Worth generalising: a fork is the one place where a tool's "obvious" default is someone else's
+project. Any `gh` command in `xspec/` without `--repo` is suspect.
+
+#### Lint is red on `phxspec` and has been, independently of any current work
+
+`prettier` flags **21 files** — `phxspec-publish.yml`, `census/*.md`, `dotnet/README.md` — and
+the previous push to `phxspec` was red the same way. So the fork's Lint check is not reporting
+anything about the change in front of it.
+
+**A permanently red check is an ignored check**, and an ignored check is indistinguishable from
+no check at the moment it finally has something real to say. That is the same conclusion as #40
+and #56, reached from a third direction: #56's conformance workflow has been red on every
+release, and this is red on every push.
+
+**Decision: do not block lockstep work on it.** Refusing to merge a functional change until
+pre-existing formatting debt is cleared would be paying for someone else's backlog with the
+release timeline, and the debt predates every current PR.
+
+**But it should be fixed deliberately, not left.** Either bring the 21 files to prettier's
+satisfaction in one hygiene commit, or narrow the Lint scope to what we actually maintain — the
+fork carries a large upstream tree we did not write and do not intend to reformat, which is
+probably why this was allowed to drift in the first place. The second is likely the honest
+answer: a linter pointed at someone else's code will always be red, and configuring it to only
+cover `dotnet/`, `census/` and our workflows would make it mean something again.
+
+Owner: register side (release hygiene), not engineering. Not urgent; scheduled after the
+lockstep trains.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
