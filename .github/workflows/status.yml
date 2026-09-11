@@ -1,0 +1,51 @@
+# Regenerates STATUS.md — the one place that says what is published, what is open, and what is
+# blocked, across all four engine repos.
+#
+# Generated rather than hand-maintained on purpose. A hand-kept status page goes stale silently,
+# and a stale figure that still renders is the failure mode this project keeps finding
+# (BUGS.md #28, #43, #44). Anything the generator cannot read says so instead of showing a
+# remembered value.
+name: Status
+
+on:
+  schedule:
+    - cron: '23 6,18 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'BUGS.md'
+      - 'scripts/conformance-baseline.tsv'
+      - 'Directory.Build.props'
+      - 'scripts/status.sh'
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: status
+  cancel-in-progress: false
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/status.sh > STATUS.md
+
+      - name: Commit if it moved
+        run: |
+          if git diff --quiet -- STATUS.md; then
+            echo "no change"; exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add STATUS.md
+          git commit -m "chore: refresh STATUS.md"
+          git push
