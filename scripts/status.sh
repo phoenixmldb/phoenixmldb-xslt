@@ -97,10 +97,23 @@ if [ -f scripts/conformance-baseline.tsv ]; then
 else
   say "- **W3C XSLT 3.0 — no baseline file.** Not a claim of 0%; the file is missing."
 fi
-say "- **W3C QT3 / XQuery — no published figure.** \`phoenixmldb-xquery/docs/CONFORMANCE.md\` is"
-say "  marked SUPERSEDED: it measured 26,730 cases against today's 31,414 and predates the"
-say "  fail-open harness audit. Per-set results were order-dependent until the fresh-runner fix"
-say "  (BUGS.md #44). No honest number exists yet, and none is invented here."
+# Read the QT3 figure from the XQuery repo rather than restating it, so this cannot drift
+# from the report it claims to summarise. If the line is not found, say so — an absent figure
+# must not read as zero, and a remembered one must not be printed.
+qt3_line="$(grep -m1 -E '^\*\*Result\*\*:' "$WS/phoenixmldb-xquery/docs/CONFORMANCE.md" 2>/dev/null \
+            | sed 's/^\*\*Result\*\*: *//')"
+qt3_date="$(grep -m1 -E '^\*\*Date\*\*:' "$WS/phoenixmldb-xquery/docs/CONFORMANCE.md" 2>/dev/null \
+            | sed 's/^\*\*Date\*\*: *//')"
+if [ -n "$qt3_line" ]; then
+  say "- **W3C QT3 / XQuery** — ${qt3_line//\*\*/}, measured $qt3_date, Release build."
+  say "  Verified reproducible from two checkout paths with different execution"
+  say "  orders. Source: \`phoenixmldb-xquery/docs/CONFORMANCE.md\`."
+  say "  Do NOT cite the whole-suite test's number — it runs in catalog order with shared state,"
+  say "  scores differently, and its 95% assertion is permanently red (BUGS.md #44)."
+else
+  say "- **W3C QT3 / XQuery — figure not readable** from"
+  say "  \`phoenixmldb-xquery/docs/CONFORMANCE.md\`. NOT a claim that none exists."
+fi
 
 say ""
 say "## Blocked"

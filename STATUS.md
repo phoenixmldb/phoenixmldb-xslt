@@ -1,15 +1,15 @@
 # Status
 
-Generated 2026-09-11 05:39 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-11 05:41 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
-| `PhoenixmlDb.XQuery` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
+| `PhoenixmlDb.Core` | 1.7.0 | 1.7.0 | current |
+| `PhoenixmlDb.XQuery` | 1.7.0 | 1.7.0 | current |
 | `PhoenixmlDb.Xslt` | 1.7.0 | 1.7.0 | current |
-| `xquery4` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
+| `xquery4` | 1.7.0 | 1.7.0 | current |
 | `xslt` | 1.7.0 | 1.7.0 | current |
 
 ## Open work
@@ -18,7 +18,7 @@ Generated 2026-09-11 05:39 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 2 | 0 |
 | phoenixmldb-xquery | 2 | 0 |
-| phoenixmldb-xslt | 7 | 1 |
+| phoenixmldb-xslt | 7 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -45,10 +45,6 @@ Generated 2026-09-11 05:39 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-xslt**
-
-- [15] fix: seven error sites raised no code or the wrong one — +43 W3C cases, 0 lost
-
 **phoenixmldb-cli**
 
 - [3] build: Bump the phoenixmldb-engines group with 2 updates
@@ -71,10 +67,11 @@ Figures are only as good as their provenance, so each carries how and when it wa
 - **W3C XSLT 3.0 — 10082/10630 (94.84%)** across 221 test-sets, from the committed per-set
   baseline (`scripts/conformance-baseline.tsv`), Release build. This is a ratchet, not a
   live run: it records what each set reaches every time.
-- **W3C QT3 / XQuery — no published figure.** `phoenixmldb-xquery/docs/CONFORMANCE.md` is
-  marked SUPERSEDED: it measured 26,730 cases against today's 31,414 and predates the
-  fail-open harness audit. Per-set results were order-dependent until the fresh-runner fix
-  (BUGS.md #44). No honest number exists yet, and none is invented here.
+- **W3C QT3 / XQuery** — 93.94% — 29,509 / 31,414 across all 428 catalog test-sets, measured 2026-09-11, Release build.
+  Verified reproducible from two checkout paths with different execution
+  orders. Source: `phoenixmldb-xquery/docs/CONFORMANCE.md`.
+  Do NOT cite the whole-suite test's number — it runs in catalog order with shared state,
+  scores differently, and its 95% assertion is permanently red (BUGS.md #44).
 
 ## Blocked
 
