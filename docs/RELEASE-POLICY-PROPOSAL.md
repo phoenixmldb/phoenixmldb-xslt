@@ -26,8 +26,9 @@ Counted from nuget.org, 2026-09-11:
 | `PhoenixmlDb.XSpec.Cli` | 2 | 1.6.11 | `xspec` (fork, branch `phxspec`) |
 | `xquery-mcp` | 7 | **1.4.0.3** | `xquery-mcp` |
 | `xslt-mcp` | 10 | **1.5.0.1** | `xslt-mcp` |
+| `crucible.cli` | 8 | **1.1.76** | `crucible` |
 
-**520 published versions across 10 packages.** Publishing is tag-only in every repo — nothing
+**528 published versions across 11 packages.** Publishing is tag-only in every repo — nothing
 publishes per push — so the count is purely how often someone tags.
 
 ## 2. Lockstep is easier than it looks, because the blocking fact is wrong
@@ -62,6 +63,27 @@ the *previous* train. Today it is `1.6.15` in the `1.7.0` train. That file alrea
 
 That is also what lockstep needs. **Same fix, two motivations.**
 
+## 3b. Ordering constraint, added 2026-09-11
+
+Lucas:
+
+> parsers2 is under orders to advance as far as possible with xslt before updating xquery AND
+> before doing any releases. No more increments — we are far past daily half-measured public
+> nuget pushes
+
+Two things, and they compose with everything above:
+
+1. **XSLT work runs to its natural end first**, then XQuery, then a release. The train is not
+   cut while either engine still has obvious ground to cover.
+2. **No increments.** The policy in §4 stops being a proposal about cadence and becomes the
+   operating rule: a train is cut for a cause, not because work landed.
+
+Worth being concrete about what "no more increments" already means mechanically. Three repos
+published on **every merge to main** — `xquery-mcp`, `xslt-mcp` and `crucible` — with versions
+derived from commit counts. Those were not cadence *decisions* that anyone made too often; they
+were the absence of a decision. Making all three tag-only (this session) removes more actual
+publishing frequency than any policy could.
+
 ## 3a. The MCP servers join the train
 
 Added on Lucas's instruction. Both are `dotnet tool` packages published on a `v*` tag with
@@ -85,7 +107,15 @@ the train version. That is a visible discontinuity in those packages' histories,
 right price: a user who installs `xslt-mcp 1.8.0` should get the 1.8.0 engine, which is the
 entire point.
 
-**Neither has `check-release-train.sh`.** Both run `check-pins.sh`, so pins are checked for
+**`crucible` was worse than either, and is now fixed (PR #9).** It had **no tag trigger at
+all**: publishing ran on every merge and `VERSION="1.1.${COMMIT_COUNT}"`, so `crucible.cli
+1.1.76` meant the 76th commit. It had **no pin check of any kind**. And its pin was
+`PhoenixmlDb.Xslt` **1.6.13** — the sole Tier 1 known-bad version, which ships depending on
+XQuery 1.6.12. crucible builds **phoenixml.dev**, so our own documentation was rendered for
+three trains by an engine we had already flagged, and nothing noticed because nothing was
+looking.
+
+**Neither MCP repo has `check-release-train.sh`.** Both run `check-pins.sh`, so pins are checked for
 internal consistency, but nothing asserts *pin == release version* at pack time. That is the
 control that makes lockstep real rather than aspirational, and it is exactly what caught nothing
 when these drifted to 1.6.14. Port it from `phoenixmldb-xslt` and mark the engine pins
@@ -113,6 +143,7 @@ Concretely, for a 1.8.0 train:
 | 4 | bump Xslt pin in `phoenixmldb-xquery`, tag `cli-v1.8.0` | `xquery4` |
 | 5 | bump pins, tag `v1.8.0` in `xquery-mcp` / `xslt-mcp` | `xquery-mcp`, `xslt-mcp` |
 | 6 | bump pin, tag `phxspec-v1.8.0` in the `xspec` fork | `PhoenixmlDb.XSpec.Cli` |
+| 7 | bump pin, tag `v1.8.0` in `crucible` | `crucible.cli` |
 
 **Step 4 needs step 2's package to be *published*, not merely tagged.** `PhoenixmlDb.XQuery.Cli`
 carries a `ProjectReference` to the library, which packs as a dependency on
