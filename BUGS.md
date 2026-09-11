@@ -2126,6 +2126,64 @@ So the concrete fix is smaller than the finding sounds:
 **Open for Lucas** (parsers2 is taking the same question to him): whether published conformance
 means *as shipped* or *at main*. Recorded rather than decided, and nothing has been republished.
 
+### 58. A check that depends on the outside world, but only runs on our events, is stale between them (2026-09-11)
+
+Found while porting `check-release-train.sh` into the MCP repos, and it began as a mistake of
+mine: I wrote that `xquery-mcp` and `xslt-mcp` drifted to `1.6.14` through the whole 1.7.0 train
+"and nothing said so". **That is wrong.** `check-pins.sh` catches exactly this and was failing
+the moment I ran it:
+
+```
+FAIL  PhoenixmlDb.XQuery 1.6.14 is BEHIND published 1.7.0 by 2 release(s), policy allows 0
+```
+
+The true statement is narrower and more useful.
+
+#### The shape
+
+`check-pins.sh` compares a pin against **what is published on nuget.org** — a fact about the
+outside world, which can change while our repository does not. But it runs only on `push` and
+`pull_request`. So:
+
+- At the last push, the pin was current and the check passed.
+- `PhoenixmlDb.XQuery 1.7.0` was then published elsewhere.
+- The check's answer became FAIL at that instant — and **nothing evaluated it**, because nothing
+  pushed to those repos.
+
+A week of drift, with a correct check in place that would have caught it on any run. This is
+distinct from the fail-open family that fills this register: there, a check runs and wrongly
+passes. Here, a check that would correctly fail **never runs**. Both end in silence; the
+remedies differ.
+
+Verified, not inferred: running `./scripts/check-pins.sh` against `main` in both MCP repos fails
+today, while their most recent CI runs are green. The green runs are not wrong — they were right
+when they ran.
+
+#### Which of our checks have this property
+
+Any check whose verdict depends on state we do not control:
+
+| check | depends on | triggered by |
+|---|---|---|
+| `check-pins.sh` | latest published version on nuget.org | push / PR only |
+| `check-release-train.sh` | nothing external — compares two values in the repo | tag push |
+| conformance | the W3C corpora at a pinned SHA | schedule + push |
+
+`check-release-train.sh` is immune by construction: both operands are in the working tree, so its
+answer cannot change while the repo sits still. That is a property worth preserving in any
+future gate — **prefer a check whose inputs are all local.**
+
+#### Fix
+
+Give `check-pins.sh` a scheduled trigger in every repo that runs it, so the answer is
+re-evaluated when the world changes rather than when we happen to push. A daily cron is enough;
+the drift it catches is measured in days. Without that, the guarantee it offers is only ever
+"this was true at our last commit", which is not what anyone reads it as.
+
+Repos affected: `xquery-mcp`, `xslt-mcp`, and any other consumer running `check-pins.sh` on
+push alone. Noted for the lockstep work rather than done here — it belongs with the same
+release-mechanics pass.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
