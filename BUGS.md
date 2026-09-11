@@ -1824,6 +1824,8 @@ representationally identical; the value is simply interpreted as the wrong one.
 | 52 | `currentValues[i]` in `WalkAccumulatorsAsync` | before-value (provisional) | after-value (settled) | position in the declaration-order loop |
 | 52 | same slot, cycle detection | "not yet computed" | "computed, and this is it" | nothing — hence the missed two-accumulator cycle |
 | 20 | `TextNodeItem` in the function-result assembly | genuine text content | duplicate of text already in `_output` | which path wrote it (`Output.cs:239`, `Functions.cs:2198`) |
+| 37 | the prefixed-variable fallback | variable is **missing** | variable holds the **empty sequence** | nothing — both returned `null`, so `()` read as undefined inside map/array constructors and quantified expressions |
+| 41 | `current-merge-key()`'s "no key" marker | there **is no** merge key | the merge key **is empty** | nothing — both are a null variable. **Latent: no failing case yet** |
 
 #52's two halves are the clearest demonstration that these are one defect and not two: the
 off-by-one and the missed cycle both reduce to *reading a provisional entry is
@@ -1851,6 +1853,30 @@ Two candidates named but **not yet verified** — recorded so they are checked r
 
 Owner: parsers2 will take the sweep once the cardinality work lands. Not urgent; the instances
 are old, and the point of naming the shape is that the next one gets recognised on sight.
+
+#### The pattern is earning its keep (updated 2026-09-11)
+
+Two of the five instances above — #37 and #41 — came out of the XSLT audit batch *after* this
+entry was written, and neither was reported as an instance of it. They were found as ordinary
+defects and recognised as this shape afterwards, which is exactly the outcome a pattern entry
+is for: it does not find the bug, it tells you what you are looking at once you have.
+
+**#37 is the cleanest statement of the shape yet.** A prefixed-variable fallback returned `null`
+for *both* "this variable does not exist" and "this variable holds the empty sequence", so a
+variable legitimately holding `()` read as undefined inside map and array constructors and
+quantified expressions. One representation, two meanings, and the caller has no way to ask which.
+
+**#41 is the first one caught while still latent** — `current-merge-key()` marks "no key" with a
+null variable, and an empty merge key would be indistinguishable from it. There is no failing
+case, which is precisely why it is worth recording: found by recognising the shape rather than
+by tripping over an outcome. That is the pattern working forwards instead of backwards.
+
+Related but **not** an instance, kept here because it is easy to mistake for one:
+`count([()](1))` returns `1` on pinned 1.7.0 even with a literal — XQuery's empty-array-member
+representation. That belongs to the array/sequence family in the XQuery audit (and to the
+empty-sequence-has-two-representations problem), not to this one: the ambiguity is in how an
+empty *member* is stored, not in a slot doing double duty. XQuery-side, so it waits for that
+track.
 
 ### 54. OPEN — the per-set gate cannot see a set that did not run (2026-09-11)
 
