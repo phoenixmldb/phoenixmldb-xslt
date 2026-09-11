@@ -1013,7 +1013,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         {
                             System.Xml.XmlConvert.VerifyNCName(formatName);
                         }
-                        catch (System.Xml.XmlException)
+                        catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
                         {
                             throw Error($"XTDE1460: The format attribute of xsl:result-document ('{formatName}') is not a valid EQName");
                         }

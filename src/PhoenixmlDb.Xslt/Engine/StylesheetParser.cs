@@ -1539,14 +1539,16 @@ public sealed partial class StylesheetParser
             Content = selectAttr == null && element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
             Terminate = terminateAttr?.Value is "yes" or "true" or "1",
             TerminateAvt = isTerminateAvt ? ParseAvt(terminateAttr!.Value, element, terminateAttr) : null,
-            ErrorCode = errorCodeAttr?.Value
+            ErrorCode = errorCodeAttr?.Value,
+            ErrorCodeAvt = errorCodeAttr != null ? ParseAvt(errorCodeAttr.Value, element, errorCodeAttr) : null,
+            ErrorCodeNamespaces = errorCodeAttr != null ? InScopeNamespacesOf(element) : null,
         };
     }
 
 
     private XsltAssert ParseAssert(XElement element, SourceLocation? location)
     {
-        var test = ParseExpr(element.Attribute("test")!.Value, element.Attribute("test"));
+        var test = ParseExpr(RequiredAttribute(element, "test").Value, element.Attribute("test"));
         var selectAttr = element.Attribute("select");
         var errorCodeAttr = element.Attribute("error-code");
 
@@ -1603,7 +1605,7 @@ public sealed partial class StylesheetParser
 
     private XsltMapEntry ParseMapEntry(XElement element, SourceLocation? location)
     {
-        var key = ParseExpr(element.Attribute("key")!.Value, element.Attribute("key"));
+        var key = ParseExpr(RequiredAttribute(element, "key").Value, element.Attribute("key"));
         var selectAttr = element.Attribute("select");
 
         // XTSE3280: xsl:map-entry with select must not have content other than xsl:fallback
@@ -2914,6 +2916,17 @@ public sealed partial class StylesheetParser
         };
     }
 
+
+    /// <summary>
+    /// The attribute <paramref name="element"/> must carry, or the static error XTSE0010. The
+    /// parser used to dereference required attributes with <c>Attribute("x")!.Value</c>, which
+    /// asserts exactly the condition the stylesheet is being checked FOR: a missing attribute
+    /// became a NullReferenceException instead of a diagnosis (BUGS.md #32).
+    /// </summary>
+    private static XAttribute RequiredAttribute(XElement element, string name)
+        => element.Attribute(name) ?? throw new XsltException(
+            $"XTSE0010: xsl:{element.Name.LocalName} requires the '{name}' attribute",
+            GetSourceLocation(element));
 
     private static SourceLocation? GetSourceLocation(XElement element)
     {

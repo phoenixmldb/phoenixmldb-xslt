@@ -42,6 +42,7 @@ internal sealed class XsltAccumulatorBeforeFunction : PhoenixmlDb.XQuery.Ast.XQu
         // the XSLT context is the template match node, not the path step's current node.
         var node = XQueryFocus.ItemOrNull(context) ?? _context.ContextItem
             ?? throw new XsltException("XTDE3340: accumulator-before() called with no context item");
+        node = XsltFunctionValidation.RequireAccumulatorContextNode(node, "accumulator-before");
 
         // Check if the accumulator is applicable in the current mode. When it is not, the
         // error code depends on the tree: for the principal source document, the initial

@@ -2403,7 +2403,7 @@ public sealed partial class StylesheetParser
 
     private static XsltCharacterMap ParseCharacterMap(XElement element)
     {
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        var name = ParseQName(RequiredAttribute(element, "name").Value, element);
         var useAttr = element.Attribute("use-character-maps");
 
         var useCharacterMaps = new List<QName>();
@@ -2521,7 +2521,7 @@ public sealed partial class StylesheetParser
 
     private XsltAccumulator ParseAccumulator(XElement element)
     {
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        var name = ParseQName(RequiredAttribute(element, "name").Value, element);
         var asAttr = element.Attribute("as");
         var initialValueAttr = element.Attribute("initial-value");
         var streamableAttr = element.Attribute("streamable");
@@ -2529,7 +2529,7 @@ public sealed partial class StylesheetParser
         var rules = new List<XsltAccumulatorRule>();
         foreach (var child in element.Elements(XsltNs + "accumulator-rule"))
         {
-            var matchStr = child.Attribute("match")!.Value;
+            var matchStr = RequiredAttribute(child, "match").Value;
 
             // XPST0008: $value is not in scope in accumulator match patterns (only in select)
             if (System.Text.RegularExpressions.Regex.IsMatch(matchStr, @"\$value\b"))
@@ -2571,9 +2571,9 @@ public sealed partial class StylesheetParser
         return new XsltAccumulator
         {
             Name = name,
-            SourceName = element.Attribute("name")!.Value,
+            SourceName = RequiredAttribute(element, "name").Value,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
-            InitialValue = ParseExpr(initialValueAttr!.Value),
+            InitialValue = ParseExpr(RequiredAttribute(element, "initial-value").Value),
             Rules = rules,
             Streamable = isStreamable
         };

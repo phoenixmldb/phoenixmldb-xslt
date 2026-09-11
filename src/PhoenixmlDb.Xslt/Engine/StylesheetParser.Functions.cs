@@ -66,8 +66,8 @@ public sealed partial class StylesheetParser
 
     private XsltAnalyzeString ParseAnalyzeString(XElement element, SourceLocation? location)
     {
-        var select = ParseExpr(element.Attribute("select")!.Value, element.Attribute("select"));
-        var regex = ParseAvt(element.Attribute("regex")!.Value, element, element.Attribute("regex"));
+        var select = ParseExpr(RequiredAttribute(element, "select").Value, element.Attribute("select"));
+        var regex = ParseAvt(RequiredAttribute(element, "regex").Value, element, element.Attribute("regex"));
         var flagsAttr = element.Attribute("flags");
 
         XsltSequenceConstructor? matchingSubstring = null;
@@ -909,7 +909,7 @@ public sealed partial class StylesheetParser
                 System.Xml.XmlConvert.VerifyNCName(parts[0]);
                 System.Xml.XmlConvert.VerifyNCName(parts[1]);
             }
-            catch (System.Xml.XmlException)
+            catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
             {
                 throw new XsltException($"XTDE1400: The argument to function-available() ('{name}') is not a valid QName");
             }
@@ -927,7 +927,7 @@ public sealed partial class StylesheetParser
             {
                 System.Xml.XmlConvert.VerifyNCName(name);
             }
-            catch (System.Xml.XmlException)
+            catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
             {
                 throw new XsltException($"XTDE1400: The argument to function-available() ('{name}') is not a valid QName");
             }

@@ -242,21 +242,7 @@ public sealed partial class StylesheetParser
         }
 
         // Capture in-scope namespace bindings for prefix resolution at runtime
-        var inScopeNamespaces = new Dictionary<string, string>();
-        foreach (var nsAttr in element.Attributes().Where(a => a.IsNamespaceDeclaration))
-        {
-            var prefix = nsAttr.Name.LocalName == "xmlns" ? "" : nsAttr.Name.LocalName;
-            inScopeNamespaces[prefix] = nsAttr.Value;
-        }
-        // Also include inherited namespaces from ancestor elements
-        for (var ancestor = element.Parent; ancestor != null; ancestor = ancestor.Parent)
-        {
-            foreach (var nsAttr in ancestor.Attributes().Where(a => a.IsNamespaceDeclaration))
-            {
-                var prefix = nsAttr.Name.LocalName == "xmlns" ? "" : nsAttr.Name.LocalName;
-                inScopeNamespaces.TryAdd(prefix, nsAttr.Value);
-            }
-        }
+        var inScopeNamespaces = InScopeNamespacesOf(element);
 
         return new XsltElement
         {
@@ -300,20 +286,7 @@ public sealed partial class StylesheetParser
         ValidateSelectContentExclusive(selectAttr, element, "XTSE0840", "xsl:attribute", location);
 
         // Collect in-scope namespaces for prefix resolution (XTDE0860)
-        var inScopeNamespaces = new Dictionary<string, string>();
-        foreach (var nsAttr in element.Attributes().Where(a => a.IsNamespaceDeclaration))
-        {
-            var prefix = nsAttr.Name.LocalName == "xmlns" ? "" : nsAttr.Name.LocalName;
-            inScopeNamespaces[prefix] = nsAttr.Value;
-        }
-        for (var ancestor = element.Parent; ancestor != null; ancestor = ancestor.Parent)
-        {
-            foreach (var nsAttr in ancestor.Attributes().Where(a => a.IsNamespaceDeclaration))
-            {
-                var prefix = nsAttr.Name.LocalName == "xmlns" ? "" : nsAttr.Name.LocalName;
-                inScopeNamespaces.TryAdd(prefix, nsAttr.Value);
-            }
-        }
+        var inScopeNamespaces = InScopeNamespacesOf(element);
 
         return new XsltAttribute
         {
@@ -385,7 +358,7 @@ public sealed partial class StylesheetParser
 
     private XsltNamespace ParseNamespaceInstr(XElement element, SourceLocation? location)
     {
-        var name = ParseAvt(element.Attribute("name")!.Value, element, element.Attribute("name"));
+        var name = ParseAvt(RequiredAttribute(element, "name").Value, element, element.Attribute("name"));
         var selectAttr = element.Attribute("select");
 
         // XTSE0910: select and non-empty content are mutually exclusive
@@ -428,4 +401,22 @@ public sealed partial class StylesheetParser
         return new XsltLiteralText { Value = value };
     }
 
+    /// <summary>
+    /// Every namespace binding in scope on <paramref name="element"/>, nearest declaration
+    /// winning ("" is the default namespace). For prefixes that are only known at run time,
+    /// such as a QName produced by an AVT.
+    /// </summary>
+    private static Dictionary<string, string> InScopeNamespacesOf(XElement element)
+    {
+        var inScope = new Dictionary<string, string>();
+        for (var e = element; e != null; e = e.Parent)
+        {
+            foreach (var nsAttr in e.Attributes().Where(a => a.IsNamespaceDeclaration))
+            {
+                var prefix = nsAttr.Name.LocalName == "xmlns" ? "" : nsAttr.Name.LocalName;
+                inScope.TryAdd(prefix, nsAttr.Value);
+            }
+        }
+        return inScope;
+    }
 }

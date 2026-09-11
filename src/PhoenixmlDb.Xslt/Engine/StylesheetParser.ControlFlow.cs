@@ -109,7 +109,7 @@ public sealed partial class StylesheetParser
 
     private XsltForEach ParseForEach(XElement element, SourceLocation? location)
     {
-        var select = ParseExpr(element.Attribute("select")!.Value, element.Attribute("select"));
+        var select = ParseExpr(RequiredAttribute(element, "select").Value, element.Attribute("select"));
 
         var sorts = new List<XsltSort>();
         var bodyInstructions = new List<XsltInstruction>();
@@ -171,7 +171,7 @@ public sealed partial class StylesheetParser
 
     private XsltForEachGroup ParseForEachGroup(XElement element, SourceLocation? location)
     {
-        var select = ParseExpr(element.Attribute("select")!.Value, element.Attribute("select"));
+        var select = ParseExpr(RequiredAttribute(element, "select").Value, element.Attribute("select"));
         var groupByAttr = element.Attribute("group-by");
         var groupAdjacentAttr = element.Attribute("group-adjacent");
         var groupStartingWithAttr = element.Attribute("group-starting-with");
@@ -257,7 +257,7 @@ public sealed partial class StylesheetParser
 
     private XsltIterate ParseIterate(XElement element, SourceLocation? location)
     {
-        var select = ParseExpr(element.Attribute("select")!.Value, element.Attribute("select"));
+        var select = ParseExpr(RequiredAttribute(element, "select").Value, element.Attribute("select"));
 
         var parameters = new List<XsltParam>();
         XsltSequenceConstructor? onCompletion = null;

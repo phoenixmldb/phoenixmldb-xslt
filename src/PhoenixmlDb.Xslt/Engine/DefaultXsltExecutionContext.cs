@@ -2663,7 +2663,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // XTDE0890: The name must be a valid NCName and a valid PITarget
         try
         { System.Xml.XmlConvert.VerifyNCName(name); }
-        catch (System.Xml.XmlException)
+        catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
         {
             throw Error($"XTDE0890: The effective value of the 'name' attribute of xsl:processing-instruction ('{name}') is not a valid NCName");
         }
@@ -3263,10 +3263,60 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (shouldTerminate)
         {
-            // XTMM9000 is the code the spec assigns to a terminated transformation. It was the
-            // only throw in this method without one — XTDE0030 immediately above has carried its
-            // code all along.
-            throw Error($"XTMM9000: Transformation terminated: {message}");
+            // XTMM9000 is the code the spec assigns to a terminated transformation — unless the
+            // instruction names its own with error-code, which was parsed and then never read.
+            var code = instruction.ErrorCodeAvt is null
+                ? "XTMM9000"
+                : await ResolveMessageErrorCodeAsync(instruction).ConfigureAwait(false);
+            throw Error($"{code}: Transformation terminated: {message}");
+        }
+    }
+
+
+    /// <summary>
+    /// Evaluates xsl:message/@error-code to the code the terminated transformation reports: a
+    /// standard code (the xqt-errors namespace) as its bare local name, like every other code
+    /// this engine raises, and any other as an EQName, Q{uri}local — Q{} for no namespace.
+    /// The attribute is an AVT whose value is an EQName or a lexical QName, prefixed or not; an
+    /// unprefixed one is in no namespace. A value that is not a valid QName, or whose prefix is
+    /// not in scope, falls back to XTMM9000 (W3C message-0406).
+    /// </summary>
+    private async ValueTask<string> ResolveMessageErrorCodeAsync(XsltMessage instruction)
+    {
+        const string ErrNs = "http://www.w3.org/2005/xqt-errors";
+        const string Fallback = "XTMM9000";
+        var value = (await EvaluateAvtAsync(instruction.ErrorCodeAvt!).ConfigureAwait(false)).Trim();
+        string uri, local;
+        if (value.StartsWith("Q{", StringComparison.Ordinal) && value.IndexOf('}', StringComparison.Ordinal) is var close and > 1)
+        {
+            uri = value[2..close];
+            local = value[(close + 1)..];
+        }
+        else if (value.IndexOf(':', StringComparison.Ordinal) is var colon and > 0)
+        {
+            local = value[(colon + 1)..];
+            if (!IsNCName(value[..colon])
+                || instruction.ErrorCodeNamespaces is null
+                || !instruction.ErrorCodeNamespaces.TryGetValue(value[..colon], out uri!))
+                return Fallback;
+        }
+        else
+        {
+            uri = "";
+            local = value;
+        }
+        if (!IsNCName(local))
+            return Fallback;
+        return uri == ErrNs ? local : $"Q{{{uri}}}{local}";
+
+        static bool IsNCName(string s)
+        {
+            if (s.Length == 0 || !(char.IsLetter(s[0]) || s[0] == '_'))
+                return false;
+            foreach (var c in s)
+                if (!(char.IsLetterOrDigit(c) || c is '_' or '-' or '.'))
+                    return false;
+            return true;
         }
     }
 

@@ -454,7 +454,7 @@ public sealed partial class StylesheetParser
 
     private XsltProcessingInstruction ParsePI(XElement element, SourceLocation? location)
     {
-        var name = ParseAvt(element.Attribute("name")!.Value, element, element.Attribute("name"));
+        var name = ParseAvt(RequiredAttribute(element, "name").Value, element, element.Attribute("name"));
         var selectAttr = element.Attribute("select");
 
         // XTSE0880: select and non-empty content are mutually exclusive
