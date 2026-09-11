@@ -1,7 +1,7 @@
 app/app-CatalogCheck	13	14
 app/app-Demos	3	5
 app/app-Duplicates	14	14
-app/app-FunctxFn	493	502
+app/app-FunctxFn	495	502
 app/app-FunctxFunctx	611	627
 app/app-UseCaseCompoundValues	1	1
 app/app-UseCaseJSON	2	13
@@ -37,14 +37,14 @@ array/array-sort	35	37
 array/array-subarray	15	18
 array/array-tail	5	6
 fn/fn-QName	33	34
-fn/fn-abs	182	188
+fn/fn-abs	187	188
 fn/fn-adjust-date-to-timezone	41	41
 fn/fn-adjust-dateTime-to-timezone	48	48
 fn/fn-adjust-time-to-timezone	42	42
 fn/fn-analyze-string	24	34
 fn/fn-apply	17	17
 fn/fn-available-environment-variables	11	11
-fn/fn-avg	225	239
+fn/fn-avg	227	239
 fn/fn-base-uri	81	82
 fn/fn-boolean	143	143
 fn/fn-ceiling	94	94
@@ -68,7 +68,7 @@ fn/fn-days-from-duration	31	31
 fn/fn-deep-equal	248	253
 fn/fn-default-collation	7	7
 fn/fn-default-language	5	6
-fn/fn-distinct-values	98	105
+fn/fn-distinct-values	99	105
 fn/fn-doc	36	45
 fn/fn-doc-available	16	16
 fn/fn-document-uri	53	53
@@ -121,7 +121,7 @@ fn/fn-lower-case	27	28
 fn/fn-matches	164	166
 fn/fn-matches.re	1006	1009
 fn/fn-max	205	208
-fn/fn-min	203	207
+fn/fn-min	204	207
 fn/fn-minutes-from-dateTime	27	27
 fn/fn-minutes-from-duration	32	32
 fn/fn-minutes-from-time	27	27
@@ -137,7 +137,7 @@ fn/fn-node-name	42	43
 fn/fn-normalize-space	36	39
 fn/fn-normalize-unicode	40	46
 fn/fn-not	83	83
-fn/fn-number	64	66
+fn/fn-number	66	66
 fn/fn-one-or-more	56	56
 fn/fn-outermost	51	59
 fn/fn-parse-ietf-date	98	105
@@ -155,7 +155,7 @@ fn/fn-resolve-uri	39	39
 fn/fn-reverse	70	70
 fn/fn-root	34	38
 fn/fn-round	262	262
-fn/fn-round-half-to-even	126	128
+fn/fn-round-half-to-even	128	128
 fn/fn-seconds-from-dateTime	27	27
 fn/fn-seconds-from-duration	32	32
 fn/fn-seconds-from-time	27	27
@@ -439,7 +439,7 @@ tests/decl/accumulator/_accumulator-test-set.xml	82	103
 tests/decl/attribute-set/_attribute-set-test-set.xml	48	49
 tests/decl/character-map/_character-map-test-set.xml	28	29
 tests/decl/context-item/_context-item-test-set.xml	24	31
-tests/decl/function/_function-test-set.xml	95	104
+tests/decl/function/_function-test-set.xml	96	104
 tests/decl/global-context-item/_global-context-item-test-set.xml	12	14
 tests/decl/import/_import-test-set.xml	40	40
 tests/decl/include/_include-test-set.xml	13	15
@@ -497,7 +497,7 @@ tests/fn/type-available/_type-available-test-set.xml	2	3
 tests/fn/unparsed-text-lines/_unparsed-text-lines-test-set.xml	2	6
 tests/fn/unparsed-text/_unparsed-text-test-set.xml	4	4
 tests/fn/xml-to-json/_xml-to-json-test-set.xml	147	150
-tests/insn/analyze-string/_analyze-string-test-set.xml	51	53
+tests/insn/analyze-string/_analyze-string-test-set.xml	52	53
 tests/insn/apply-imports/_apply-imports-test-set.xml	1	1
 tests/insn/apply-templates/_apply-templates-test-set.xml	42	42
 tests/insn/assert/_assert-test-set.xml	9	9
