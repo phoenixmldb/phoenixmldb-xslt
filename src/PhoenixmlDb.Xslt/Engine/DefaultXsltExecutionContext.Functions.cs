@@ -2164,10 +2164,13 @@ internal sealed partial class DefaultXsltExecutionContext
             _collectedAttributesStack.Clear();
             _temporaryOutputDepth++;
             _functionBodyDepth++;
+            var savedFunctionBodyAccumulator = _functionBodyAccumulator;
+            _functionBodyAccumulator = _sequenceAccumulator;
             try
             { await func.Body.ExecuteAsync(this).ConfigureAwait(false); }
             finally
             {
+                _functionBodyAccumulator = savedFunctionBodyAccumulator;
                 _functionBodyDepth--;
                 _temporaryOutputDepth--;
                 // Restore namespace scopes

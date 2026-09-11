@@ -251,7 +251,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // comment/PI content), also write escaped text to _output so that
         // text and LRE elements preserve their source order when the function
         // result is assembled from both _sequenceAccumulator and _output.
-        if (_functionBodyDepth == 0 || _textContentDepth != 0)
+        if (!InFunctionBodyProper || _textContentDepth != 0)
             return false;
         EmitText(value);
         // This item now OWNS the text just written. Without this the weave emits the
@@ -270,7 +270,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // If sequence accumulation is active, add as a TextNodeItem marker
         // to distinguish text nodes from atomic strings (for §5.7.2 processing)
         var emittedToOutput = false;
-        if (_sequenceAccumulator != null)
+        if (_sequenceAccumulator != null && !InTreeBody)
         {
             emittedToOutput = AccumulateTextItem(value);
         }
