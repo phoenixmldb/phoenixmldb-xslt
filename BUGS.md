@@ -1893,26 +1893,100 @@ filter that matches nothing, a fixture that fails to instantiate, a rename — f
 entirely clean. A crash is the loud version of a failure mode whose quiet versions are the
 dangerous ones.
 
-#### Proposed fix — four lines, symmetric with `newsets`
+#### FIXED in xslt #26 (pending merge) — and my proposed patch was wrong
 
-The gate already computes `newsets` (in CURRENT, not in BASELINE). The inverse is missing:
+I proposed the obvious inverse of the existing `newsets` check: report every baselined set
+absent from CURRENT. **parsers2 correctly refused it.** It checks *every* baselined set, so any
+single-chunk run — `conformance.sh strm3`, or the xqts-only runs done routinely — would report
+every other chunk's sets as NO RESULT. Hundreds of false alarms on the most common invocation,
+which is #40's lesson exactly: a gate that cries wolf on ordinary use gets ignored, and an
+ignored gate catches nothing. Recorded because the flawed version is the one that looks obvious.
 
-```awk
-missing="$(awk -F'\t' 'NR==FNR{cur[$1]=1; next} !($1 in cur){
-  printf "  %s: baselined %d, NO RESULT this run\n", $1, $2 }' "$CURRENT" "$BASELINE")"
-```
+What shipped instead scopes the check to sets whose chunk **actually ran**:
 
-Report it alongside `regressed` and treat it as failing. A baselined set producing no verdict is
-strictly worse news than one producing a lower count, and should not be quieter.
+- QT3 sets (no `tests/` prefix) belong to `xqts`.
+- `tests/<g>/` belongs to chunk `<g>`, verified against a full run — every chunk's sets live in
+  its own directory.
+- The `strm` sub-chunks' sets are read from the `InlineData` lists in
+  `XsltStreamingTests{,2,3}.cs` — **the list the tests actually run**, not a second copy that
+  could drift.
+- If that list cannot be read, the check **fails closed** (`PER-SET CHECK BROKEN`) rather than
+  going blind. The right default for a control whose whole purpose is catching silence.
 
-**Owner: parsers2** (harness is theirs). Offered with the repro above rather than applied, to
-avoid editing their harness mid-sweep.
+Verified against recorded runs: the crashed run names exactly `sx-GeneralComp-le` and `-ne`;
+clean `--all`, strm3-only and xqts-only runs report nothing; deleting a set from a single-chunk
+run gets it reported; and feeding strm3's results to chunk `strm1` reports strm1's own sets,
+which proves ownership comes from the class lists rather than from the results file.
 
 #### The crash itself — recorded, not diagnosed
 
 First test-host crash in 46 run directories. `strm3` then ran clean three times (883/895, 27/27
 sets). Does not reproduce; no cause. If a SIGSEGV appears in `strm3` again, `sx-GeneralComp` is
 where it stopped. Logged so a second occurrence is a pattern rather than another first.
+
+### 55. OPEN — the evidence artifact for our published figures describes a different run (2026-09-11)
+
+Surfaced by a side question from parsers2 — whether `conformance-results/summary.txt` being
+tracked was intentional. It is, deliberately and for a good reason. The reason is currently not
+being served.
+
+`.gitignore:17-24` excludes the conformance output but re-includes `summary.txt`, explaining:
+
+> README.md publishes conformance figures, and a published number whose evidence is not
+> versioned cannot be audited later. That is not hypothetical — the previous headline claimed
+> "2604/2661 tests" and no artifact in the repo could confirm or refute it.
+
+So the mechanism exists precisely to stop an unauditable headline. **The committed artifact
+today is from a timed-out XQTS run** (`6f28d38`, "conformance summary from the XQTS timeout
+run"):
+
+```
+xqts    3600s  TIMEOUT after 3600s | 1271/1286 cases 98.8%, 15 failed
+```
+
+Nine test-sets, 1,286 cases, a run that did not finish. Meanwhile `README.md` and `STATUS.md`
+publish **10,163/10,630** and **29,534/31,414** from the committed baseline.
+
+**This is worse than the absence it was built to prevent.** A missing artifact makes a figure
+unverifiable; a stale one makes it look *refuted*. Anyone auditing the README against the
+repo's own evidence finds a 98.8%-across-1,286-cases timeout summary and concludes either that
+the headline is unsupported or — worse — that 98.8% is the real number.
+
+The control was built correctly and then quietly stopped tracking what it certifies. Same
+family as #43 and #44: the machinery exists, the discipline around it lapsed.
+
+#### Fix — make the artifact and the baseline a matched pair
+
+They are currently independent, which is why they drifted. The rule that removes the drift:
+
+> **`summary.txt` should be the summary of the run that produced the committed baseline.**
+> A baseline raise updates both, in the same commit, or neither.
+
+That makes the pair self-certifying — the baseline says what the figures are, the summary says
+what produced them, and a reviewer can see at a glance whether they match. It also costs
+nothing extra, because a baseline raise already involves exactly such a run.
+
+parsers2 has the recorded runs from the `#25` baseline raise (`0a48c76`, two full `--all` runs
+on xslt `be7b43d` / xquery `ab7c0ac`). Committing that run's summary restores the pair. Asked
+rather than done here: this session deliberately does not run full sweeps, and fabricating a
+summary from numbers rather than from a run would be the exact sin the artifact exists to
+prevent.
+
+#### The secondary hazard worth knowing
+
+Because the default `OUT` is the tracked directory, **any local run overwrites the artifact** —
+including a single-chunk run. `conformance.sh strm3` leaves a strm3-only summary in the working
+tree, and committing that replaces the repo's whole-suite evidence with one chunk's. parsers2
+hit the dirty-tree side of this and restored the file manually before committing.
+
+Options, none taken yet, register owner's call:
+
+1. **Keep it tracked, adopt the pairing rule above** — preferred; it keeps the audit property
+   that motivated tracking and fixes the drift at its source.
+2. Default `OUT` to an untracked directory and have baseline raises write the tracked copy
+   explicitly. Removes the accidental-overwrite hazard, adds a step.
+3. Stop tracking it. Cheapest, and throws away the audit property for the sake of a dirty tree
+   — which is how the "2604/2661" situation happened in the first place.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
