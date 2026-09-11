@@ -1732,6 +1732,12 @@ are ordinary XSLT 3.0, and nothing in the stylesheet marks the hazard. Two silen
 defects now, both dating to the first commit, and this is the one with the wider blast radius.
 It is also **not** the streaming path — `accumulator-077` is `STREAMABLE=false`.
 
+**Checked, and unlike #51 the answer is clean: our docs do not demonstrate this shape.** The
+seven `xsl:accumulator-rule` blocks in `phoenixml-docs` contain no `accumulator-after` or
+`accumulator-before` call — every published example reads accumulator values from a *template*,
+which happens after the walk has finished that node and is unaffected. So no docs caveat is
+needed here, and the negative result is recorded so it is not re-investigated.
+
 #### Fix approach (parsers2, in progress)
 
 Evaluate **on demand**: when `accumulator-after('B')` is requested for the node currently in its
