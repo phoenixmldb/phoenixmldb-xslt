@@ -194,9 +194,17 @@ public sealed partial class StylesheetParser
 
         // Recursion key: the absolute URI for HTTP imports, the canonical full path for file imports.
         var recursionKey = isHttp ? resolvedUri!.AbsoluteUri : Path.GetFullPath(resolvedPath!);
+        // The element that closes the cycle decides the code: XTSE0180 for a module that
+        // includes itself, XTSE0210 for one that imports itself. This method serves both,
+        // and reported XTSE0210 for include cycles too.
         if (!_loadedStylesheets.Add(recursionKey))
-            throw new XsltException($"XTSE0210: Stylesheet module '{href}' directly or indirectly imports itself",
-                GetSourceLocation(element));
+        {
+            throw element.Name.LocalName == "include"
+                ? new XsltException($"XTSE0180: Stylesheet module '{href}' directly or indirectly includes itself",
+                    GetSourceLocation(element))
+                : new XsltException($"XTSE0210: Stylesheet module '{href}' directly or indirectly imports itself",
+                    GetSourceLocation(element));
+        }
 
         // Resource policy: check import access and try custom resolver
         string? policyResolvedXml = null;

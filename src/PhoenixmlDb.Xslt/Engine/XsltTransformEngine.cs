@@ -342,6 +342,8 @@ public sealed class XsltTransformEngine
             // final — whether declared inline or raised by xsl:expose — is eligible as
             // an entry point. See W3C decl/package package-001a/001b, decl/accept
             // accept-001a.
+            if (context.FindNamedTemplate(initialTemplate.Value) is null)
+                throw InitialTemplateNotFound(initialTemplate.Value);
             if (_stylesheet.IsPackage
                 && _stylesheet.NamedTemplates.TryGetValue(initialTemplate.Value, out var tmpl)
                 && tmpl.VisibilityAttr is not ("public" or "final"))
@@ -1003,6 +1005,8 @@ public sealed class XsltTransformEngine
             // XTDE0040: Check that initial template is public (in packages)
             // In TransformRawAsync (used by fn:transform), check all templates since
             // fn:transform targets specific packages — xsl:expose visibility is enforced.
+            if (context.FindNamedTemplate(initialTemplate) is null)
+                throw InitialTemplateNotFound(initialTemplate);
             if (_stylesheet.IsPackage
                 && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
                 && rawTmpl.VisibilityAttr is not ("public" or "final"))
@@ -1111,6 +1115,15 @@ public sealed class XsltTransformEngine
         Xdm.Nodes.XdmDocument d => d.Children,
         _ => System.Array.Empty<NodeId>(),
     };
+
+    /// <summary>
+    /// XTDE0040 for an initial template that does not exist. All three entry points (Transform,
+    /// TransformRaw and the sequence variant) checked that an initial template was PUBLIC and
+    /// none checked that it EXISTED, so a missing one fell through to xsl:call-template's
+    /// lookup and surfaced as that instruction's error instead of the invocation's.
+    /// </summary>
+    private static XsltException InitialTemplateNotFound(QName name)
+        => new($"XTDE0040: Initial template '{name.LocalName}' does not exist in the stylesheet");
 
     /// <summary>
     /// Wraps any <see cref="Xdm.Nodes.XdmElement"/> / <see cref="Xdm.Nodes.XdmDocument"/>
@@ -1317,6 +1330,8 @@ public sealed class XsltTransformEngine
             {
                 var initialTemplate = options.InitialTemplate
                     ?? _stylesheet.NamedTemplates.Keys.First(k => k.LocalName == "initial-template");
+                if (context.FindNamedTemplate(initialTemplate) is null)
+                    throw InitialTemplateNotFound(initialTemplate);
                 if (_stylesheet.IsPackage
                     && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
                     && rawTmpl.VisibilityAttr is not ("public" or "final"))
