@@ -1621,6 +1621,7 @@ consequence** is the part that needs a decision, and it is unusually clean-cut.
 | `f((1,2))` vs `f((3,4))` | both `System.Object[]` | **second call returns the first call's result** |
 | `f('1')` vs `f(1)` | both `1` | string and integer share an entry |
 | `f((1,2), 3)` vs `f(1, (2,3))` | commas collide across argument boundaries | unrelated calls share an entry |
+| `map{1:'x'}` vs `map{'1':'x'}` | both `map{1:x}` | map keys render through the same arm |
 | any node argument | `RuntimeHelpers.GetHashCode(node)` | a hash code is not an identity; two nodes can collide |
 
 No error is raised. The function returns a well-formed answer computed for different arguments.
@@ -1670,6 +1671,58 @@ wrong when two *different* argument shapes collide, and a conformance case that 
 function one way never produces the collision. **A cache defect is invisible to any test that
 does not call the same function twice with different arguments** — worth remembering when
 reviewing #21's tests.
+### 52. OPEN — a lenient signature hid a streaming accumulator returning `()` (2026-09-11)
+
+Found by parsers2 while auditing built-in parameter cardinality. Recorded here because the
+defect it uncovered is a **real engine bug that nothing was reporting**, and because of how it
+surfaced.
+
+XSLT conformance case `accumulator-077`: a streaming `accumulator-after('header-id')` returns
+the empty sequence where an integer is expected. The value is then passed to `map:put` as its
+`$key`. `map:put` declares `$key` as `xs:anyAtomicType` — exactly-one — so a correct engine
+raises `XPTY0004` there. Ours did not enforce declared cardinality on built-ins at all, so
+`map:put` accepted `()` and the case went on to fail somewhere downstream, or not visibly at all.
+
+**The accumulator returning `()` is the bug. The lenient signature is why nobody saw it.**
+
+#### Why this is in the register rather than just in the fix
+
+This is the same shape as #28, #44 and #47: *a check that fails open does not merely miss a
+defect, it conceals one that other machinery would otherwise have surfaced.* The cardinality
+check is not a new feature here — it is a detector that was switched off, and switching it on
+is how the accumulator bug became visible at all.
+
+Three instances now where tightening a lenient check revealed a genuine defect rather than
+creating work. Worth remembering the next time a strictness change looks like churn: the
+question is not "does this cost us cases" but "what has it been hiding".
+
+#### It gates the cardinality work
+
+parsers2 measured the audit with declarations corrected: QT3 **29,524 → 29,534 (+10), zero
+per-set losses**. All 113 losses from the first blanket attempt were mis-declared signatures,
+not spec disagreements. XSLT still loses 22, in four groups:
+
+| cause | cases | status |
+|---|---|---|
+| `document()` — `$uri-sequence` declared `xs:string?`, spec says `item()*` | 19 | declaration fix |
+| `format-number()` — XSLT override declares `$value` exactly-one `xs:double` | 1 | declaration fix |
+| `string-join()` (`bug-2701`) — stylesheet never calls it, so it comes from engine internals | 1 | cause not yet found |
+| `map:put $key` (`accumulator-077`) | 1 | **this entry — a real bug, not a declaration** |
+
+Sequencing agreed: the XSLT declaration fixes land first as their own PR (harmless alone), then
+the XQuery check ships only when both sweeps show zero set losses. **`accumulator-077` must be
+fixed before the check lands, or the check itself books a −1 it did not cause** — which would
+then read in the history as the strictness change costing a case, exactly the wrong conclusion.
+
+
+Applying that shape to #21 found one more collision class: map keys were rendered by
+`ToString()` through the same `default:` arm, so `map{1:'x'}` and `map{'1':'x'}` shared an
+entry. Covered by a test that fails on the old code (`11f9d48`).
+
+The two-distinct-nodes case is the exception and is **documented as a guard, not a positive
+control** — a `RuntimeHelpers.GetHashCode` collision between two live nodes cannot be forced,
+so that test passes on the old code too. Saying so in the test comment is right: a test that
+cannot fail on the defect it names is worth keeping and worth not miscounting as proof.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
