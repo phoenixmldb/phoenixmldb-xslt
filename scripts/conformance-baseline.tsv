@@ -439,7 +439,7 @@ tests/decl/accumulator/_accumulator-test-set.xml	82	103
 tests/decl/attribute-set/_attribute-set-test-set.xml	48	49
 tests/decl/character-map/_character-map-test-set.xml	28	29
 tests/decl/context-item/_context-item-test-set.xml	24	31
-tests/decl/function/_function-test-set.xml	96	104
+tests/decl/function/_function-test-set.xml	99	104
 tests/decl/global-context-item/_global-context-item-test-set.xml	12	14
 tests/decl/import/_import-test-set.xml	40	40
 tests/decl/include/_include-test-set.xml	13	15
