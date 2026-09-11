@@ -2966,6 +2966,19 @@ public sealed partial class StylesheetParser
 
 
     /// <summary>
+    /// Annotates an attribute produced from a shadow attribute whose static expression this
+    /// parser could not evaluate (it evaluates only a subset of XPath statically — not
+    /// <c>doc('')</c>, not <c>system-property()</c> inside <c>replace()</c>). The unevaluable part
+    /// is dropped, so the attribute holds a value the stylesheet never asked for; a validator
+    /// that judged it would report the parser's gap as the author's error.
+    /// </summary>
+    internal sealed class UnevaluatedShadowValue
+    {
+        public static readonly UnevaluatedShadowValue Instance = new();
+        private UnevaluatedShadowValue() { }
+    }
+
+    /// <summary>
     /// Resolves XSLT 3.0 shadow attributes (section 3.6.2).
     /// Shadow attributes use the form _foo="{$param}" where the value is evaluated using
     /// static parameters, and the result replaces the real attribute foo.
@@ -3109,10 +3122,12 @@ public sealed partial class StylesheetParser
             foreach (var shadow in shadowAttrs)
             {
                 var realName = shadow.Name.LocalName[1..]; // Remove leading underscore
-                var value = ResolveShadowValue(shadow.Value, staticParams);
+                var value = ResolveShadowValue(shadow.Value, staticParams, out var complete);
 
                 // Set the real attribute (overriding any existing value)
                 element.SetAttributeValue(realName, value);
+                if (!complete)
+                    element.Attribute(realName)!.AddAnnotation(UnevaluatedShadowValue.Instance);
 
                 // Remove the shadow attribute
                 shadow.Remove();
@@ -3128,7 +3143,14 @@ public sealed partial class StylesheetParser
 
 
     private static string ResolveShadowValue(string template, Dictionary<string, string> staticParams)
+        => ResolveShadowValue(template, staticParams, out _);
+
+    // `complete` is false when some expression in the template could not be evaluated here
+    // and was dropped: the result is then not the value the stylesheet asked for, and must
+    // not be validated as if it were.
+    private static string ResolveShadowValue(string template, Dictionary<string, string> staticParams, out bool complete)
     {
+        complete = true;
         // Process static AVT: {$name} → variable value, {{/}} → literal {/}, {...} → expression result
         var result = new System.Text.StringBuilder();
         var i = 0;
@@ -3166,6 +3188,8 @@ public sealed partial class StylesheetParser
                         var evaluated = EvaluateShadowExpression(expr, staticParams);
                         if (evaluated != null)
                             result.Append(evaluated);
+                        else
+                            complete = false;
                     }
                     i = end + 1;
                     continue;
