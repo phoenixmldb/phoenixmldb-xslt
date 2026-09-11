@@ -1,8 +1,18 @@
 # 1.8.0 — draft release notes
 
-**STATUS: DRAFT. Nothing is tagged and nothing is published.** Awaiting Lucas's decision on
-whether to cut, and on the version number. Figures marked *provisional* move when the final
-baseline raise lands.
+**STATUS: HELD 2026-09-11 by Lucas.** Nothing is tagged and nothing is published.
+
+**This release is deliberately not being cut yet.** Lockstep goes in first — one version number
+across the engines, the CLIs, XSpec and the MCP servers — and 1.8.0 then becomes the **first
+lockstep train** rather than the last release under the old process. See
+`RELEASE-POLICY-PROPOSAL.md`.
+
+The content below is complete and stays accurate; what changes at release is the scope, which
+grows to include `xquery-mcp` and `xslt-mcp`, and the conformance figures, which should be
+measured in the **release configuration** once the Xslt train pins the XQuery of the same train
+(see `BUGS.md` #57 — today's figures are xquery-main numbers).
+
+**Do not cut from this file alone.** The lockstep ordering and its pack-time checks come first.
 
 ## Why this release exists
 
