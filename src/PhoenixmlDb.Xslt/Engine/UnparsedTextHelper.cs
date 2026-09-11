@@ -43,6 +43,40 @@ internal static class UnparsedTextHelper
     /// Checks that text does not contain characters forbidden in XML (NUL U+0000).
     /// Throws FOUT1190 if invalid characters are found.
     /// </summary>
+    /// <summary>
+    /// fn:unparsed-text-lines: the text split at each "\r\n", "\r" or "\n", without the empty
+    /// string a final line ending would otherwise leave — as a SEQUENCE of xs:string.
+    /// </summary>
+    /// <remarks>
+    /// Both XSLT overloads returned a <c>List&lt;object&gt;</c>, which the engine carries as an
+    /// XDM array: one item. So <c>count(unparsed-text-lines($f))</c> was 1 and xsl:for-each saw a
+    /// single item whose string value was every line joined by spaces (W3C
+    /// unparsed-text-lines-001/002/003/005). The split also ignored a bare "\r" line ending.
+    /// </remarks>
+    internal static object? SplitLines(string text)
+    {
+        var lines = new List<object?>();
+        var start = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '\r' && text[i] != '\n')
+                continue;
+            lines.Add(text[start..i]);
+            if (text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n')
+                i++;
+            start = i + 1;
+        }
+        if (start < text.Length)
+            lines.Add(text[start..]);
+        return lines.Count switch
+        {
+            0 => null,
+            1 => lines[0],
+            _ => lines.ToArray(),
+        };
+    }
+
+
     internal static void ValidateTextContent(string text)
     {
         if (text.Contains('\0', StringComparison.Ordinal))
