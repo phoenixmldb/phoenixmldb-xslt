@@ -1,15 +1,15 @@
 # Status
 
-Generated 2026-09-11 05:01 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-11 05:02 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 1.7.0 | 1.7.0 | current |
-| `PhoenixmlDb.XQuery` | 1.7.0 | 1.7.0 | current |
+| `PhoenixmlDb.Core` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
+| `PhoenixmlDb.XQuery` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
 | `PhoenixmlDb.Xslt` | 1.6.15 | 1.7.0 | **repo is at 1.7.0, nuget.org has 1.6.15** |
-| `xquery4` | 1.7.0 | 1.7.0 | current |
+| `xquery4` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
 | `xslt` | 1.6.15 | 1.7.0 | **repo is at 1.7.0, nuget.org has 1.6.15** |
 
 ## Open work
@@ -17,7 +17,7 @@ Generated 2026-09-11 05:01 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 2 | 0 |
-| phoenixmldb-xquery | 5 | 3 |
+| phoenixmldb-xquery | unreadable | 3 |
 | phoenixmldb-xslt | 7 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
