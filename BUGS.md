@@ -1671,7 +1671,7 @@ wrong when two *different* argument shapes collide, and a conformance case that 
 function one way never produces the collision. **A cache defect is invisible to any test that
 does not call the same function twice with different arguments** — worth remembering when
 reviewing #21's tests.
-### 52. OPEN — a lenient signature hid an accumulator returning `()` (2026-09-11)
+### 52. OPEN — accumulators read a later-declared accumulator's value one node late (2026-09-11)
 
 Found by parsers2 while auditing built-in parameter cardinality. Recorded here because the
 defect it uncovered is a **real engine bug that nothing was reporting**, and because of how it
@@ -1688,6 +1688,60 @@ raises `XPTY0004` there. Ours did not enforce declared cardinality on built-ins 
 `map:put` accepted `()` and the case went on to fail somewhere downstream, or not visibly at all.
 
 **The accumulator returning `()` is the bug. The lenient signature is why nobody saw it.**
+
+#### Root cause — found by parsers2, confirmed here from source
+
+Not an extra evaluation: an **off-by-one in declaration order**. At `header-item[1]`'s end
+`accumulator-after('header-id')` returns `()`; at `header-item[2]` it returns `1`, the
+*previous* item's value.
+
+`WalkAccumulatorsAsync` (`DefaultXsltExecutionContext.Streaming.cs:581`) runs every
+accumulator's end-phase rules at a node in **declaration order**, updating `currentValues[i]`
+as it goes. `header-map` is declared before `header-id`, so when `header-map`'s end rule asks
+for `header-id`'s after-value at this node, `header-id` has not run its end rule here yet — and
+the read returns the entry the start phase left, i.e. the before-value, which is the previous
+node's after-value.
+
+The comment directly above that loop is the tell:
+
+> `// Update after-values incrementally so cross-accumulator references work.`
+
+Incremental update makes cross-accumulator references work **in one direction only** — from a
+later-declared accumulator to an earlier-declared one. The comment asserts the general
+property; the loop delivers half of it. A comment that states an invariant the code only
+partly holds is the same failure shape as a check that fails open, and it is why this looked
+intentional to every reader since.
+
+`accumulator-077` passes its final assertion **by coincidence**: its single lookup
+(`idref="1"`) happens to hit the entry written one item late. The output being right is not
+evidence the values were.
+
+#### Severity: this is not the conformance case, it is every stylesheet with this shape
+
+**Any stylesheet whose accumulator reads a later-declared accumulator's after-value at the same
+node silently gets the previous node's value.** No error, no diagnostic, a well-formed answer
+built from stale data. Declaration order in the stylesheet — which an author has no reason to
+think is significant — decides whether the result is right.
+
+`WalkAccumulatorsAsync` dates to `030bfe1`, the **initial release commit**; `git tag --contains`
+returns **47 of 47 tags, 1.1.0 through 1.7.0**. As with #51 there is no good version to pin
+back to.
+
+Unlike #51 this is **not opt-in**. `cache="yes"` is a feature a user switches on; accumulators
+are ordinary XSLT 3.0, and nothing in the stylesheet marks the hazard. Two silent wrong-answer
+defects now, both dating to the first commit, and this is the one with the wider blast radius.
+It is also **not** the streaming path — `accumulator-077` is `STREAMABLE=false`.
+
+#### Fix approach (parsers2, in progress)
+
+Evaluate **on demand**: when `accumulator-after('B')` is requested for the node currently in its
+end phase and `B` has not run its end rule there yet, run it first. The existing
+`_evaluatingAccEndPhase` guard continues to raise `XTDE3400` on a genuine cycle.
+
+Deliberately not a static topological sort, because **accumulator names can be computed at run
+time** — a sort over the declaration graph cannot see an edge that only exists once a name is
+evaluated. Worth recording as the reason, since the static approach is the obvious one and this
+is why it is wrong here.
 
 #### Why this is in the register rather than just in the fix
 
@@ -1711,7 +1765,7 @@ not spec disagreements. XSLT still loses 22, in four groups:
 | `document()` — `$uri-sequence` declared `xs:string?`, spec says `item()*` | 19 | declaration fix |
 | `format-number()` — XSLT override declares `$value` exactly-one `xs:double` | 1 | declaration fix |
 | `string-join()` (`bug-2701`) — stylesheet never calls it, so it comes from engine internals | 1 | cause not yet found |
-| `map:put $key` (`accumulator-077`) | 1 | **this entry — a real bug, not a declaration** |
+| `map:put $key` (`accumulator-077`) | 1 | **this entry — root cause found, see above** |
 
 Sequencing agreed: the XSLT declaration fixes land first as their own PR (harmless alone), then
 the XQuery check ships only when both sweeps show zero set losses. **`accumulator-077` must be
