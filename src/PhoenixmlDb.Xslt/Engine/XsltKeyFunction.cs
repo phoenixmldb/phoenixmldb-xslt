@@ -93,7 +93,21 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             // Guard: only when context is non-null (EvaluateKeyPattern passes null context)
             if (context != null)
             {
-                if (XQueryFocus.ItemOrNull(context) is XdmNode xqNode
+                object? focus;
+                try
+                {
+                    focus = XQueryFocus.ItemOrNull(context);
+                }
+                catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException ex) when (ex.ErrorCode == "XPDY0002")
+                {
+                    // Absent focus — in a function body, say. The two-argument form needs a
+                    // context node, so that is XTDE1270 (error-1270a); the three-argument form
+                    // does not use the focus at all.
+                    if (arguments.Count <= 2)
+                        throw new XsltException("XTDE1270: The key() function with two arguments requires a context node, but the focus is absent");
+                    focus = null;
+                }
+                if (focus is XdmNode xqNode
                     && _context.FindDocumentForNode(xqNode) != null)
                     contextItem = xqNode;
             }
@@ -393,8 +407,11 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             // resolve against the in-scope namespaces of the element containing the key() call,
             // which needs the expression's static context at runtime; this is narrower but
             // sound where it applies, and it refuses to guess when it cannot tell.
+            // Only keys in SOME namespace: key('my:k') must not find a key named plain 'k'
+            // (error-1260e) — a prefixed name never expands to no namespace.
             var byLocalName = _context._stylesheet.Keys
-                .Where(kv => string.Equals(kv.Key.LocalName, localName, StringComparison.Ordinal))
+                .Where(kv => kv.Key.Namespace != NamespaceId.None
+                    && string.Equals(kv.Key.LocalName, localName, StringComparison.Ordinal))
                 .ToList();
             if (byLocalName.Count == 1)
                 return FilterToCallingPackage(byLocalName[0].Value);

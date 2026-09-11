@@ -81,7 +81,17 @@ public sealed partial class StylesheetParser
         if (formatAttr != null && formatAvt != null
             && formatAvt.Parts.Count == 1 && formatAvt.Parts[0] is AvtLiteral)
         {
-            resolvedFormat = ParseQName(formatAttr.Value.Trim(), element);
+            // Not a QName, or a prefix with no binding: XTDE1460 (which may be raised
+            // statically), not XTSE0280 (error-1460c).
+            try
+            {
+                resolvedFormat = ParseQName(formatAttr.Value.Trim(), element);
+            }
+            catch (XsltException ex) when (ex.Message.StartsWith("XTSE0280", StringComparison.Ordinal)
+                || ex.Message.StartsWith("XTSE0020", StringComparison.Ordinal))
+            {
+                throw new XsltException($"XTDE1460: The format attribute of xsl:result-document ('{formatAttr.Value}') is not a valid EQName", location);
+            }
         }
 
         var cdataSectionElementsAvt = cdataSectionElementsAttr != null

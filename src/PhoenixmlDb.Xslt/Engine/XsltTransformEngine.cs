@@ -353,6 +353,16 @@ public sealed class XsltTransformEngine
             // Only pass explicitly-set template params; global InitialParameters are set as
             // stylesheet-level variables separately and should NOT be passed as with-params.
             var withParams = BuildInitialTemplateWithParams(options);
+            // A required parameter the invocation does not supply is the dynamic XTDE0700 here:
+            // there is no xsl:call-template for the static XTSE0690 to point at (error-0700b).
+            if (context.FindNamedTemplate(initialTemplate.Value) is { } initial)
+            {
+                foreach (var p in initial.Parameters)
+                {
+                    if (p.Required && !p.Tunnel && !withParams.Any(w => !w.Tunnel && w.Name.Equals(p.Name)))
+                        throw new XsltException($"XTDE0700: Required parameter ${p.Name.LocalName} of the initial template is not supplied");
+                }
+            }
             // When calling an initial template with no source document, the context item
             // should be absent per XSLT 3.0 §2.3
             if (!options.HasSourceDocument)

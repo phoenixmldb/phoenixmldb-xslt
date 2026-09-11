@@ -85,11 +85,11 @@ public sealed partial class StylesheetParser
 
         // XTSE0010: name is REQUIRED on xsl:call-template — there is nothing to call without it.
         // Was dereferenced with `!`, giving a NullReferenceException (error-0010ad).
-        var name = ParseQName(
-            element.Attribute("name")?.Value
-                ?? throw new XsltException("XTSE0010: xsl:call-template requires a 'name' attribute",
-                    location),
-            element);
+        var nameValue = element.Attribute("name")?.Value
+            ?? throw new XsltException("XTSE0010: xsl:call-template requires a 'name' attribute", location);
+        // name="x/y" is not a QName: XTSE0020, not "template not found" (error-0020f).
+        ValidateQNameValue(nameValue, "name", location);
+        var name = ParseQName(nameValue, element);
 
         var withParams = new List<XsltWithParam>();
         foreach (var child in element.Elements())

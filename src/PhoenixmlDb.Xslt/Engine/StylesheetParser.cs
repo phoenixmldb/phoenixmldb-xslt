@@ -616,7 +616,9 @@ public sealed partial class StylesheetParser
                 // XTSE0550: validate mode token is a valid QName (no #, !, etc.)
                 if (mode.StartsWith('#'))
                     throw new XsltException($"XTSE0550: Invalid mode token '{mode}' in mode list of xsl:template", GetSourceLocation(element));
-                ValidateQNameValue(mode, "mode", GetSourceLocation(element));
+                // An invalid token in the list is XTSE0550 — the list's own rule — not the
+                // generic XTSE0020 (error-0550a/e/f).
+                ValidateQNameValue(mode, "mode", GetSourceLocation(element), "XTSE0550");
                 modes.Add(ParseQName(mode, element));
             }
             // XTSE0550: #all must not appear with other modes
@@ -1270,7 +1272,7 @@ public sealed partial class StylesheetParser
     /// Validates that a QName attribute value is syntactically valid (XTSE0020).
     /// Rejects AVT syntax ({...}) and invalid QName characters.
     /// </summary>
-    private static void ValidateQNameValue(string value, string attrName, SourceLocation? location)
+    private static void ValidateQNameValue(string value, string attrName, SourceLocation? location, string code = "XTSE0020")
     {
         value = value.Trim();
         // EQName syntax Q{uri}local is always valid — skip all checks
@@ -1278,13 +1280,13 @@ public sealed partial class StylesheetParser
             return;
         // AVT syntax {..} is not permitted in QName attributes
         if (value.Contains('{', StringComparison.Ordinal) || value.Contains('}', StringComparison.Ordinal))
-            throw new XsltException($"XTSE0020: Attribute value templates are not permitted in the '{attrName}' attribute", location);
+            throw new XsltException($"{code}: Attribute value templates are not permitted in the '{attrName}' attribute", location);
         if (value.Length > 0 && char.IsAsciiDigit(value[0]))
-            throw new XsltException($"XTSE0020: Invalid QName '{value}' for '{attrName}' attribute: names must not start with a digit", location);
+            throw new XsltException($"{code}: Invalid QName '{value}' for '{attrName}' attribute: names must not start with a digit", location);
         if (value.Contains('/', StringComparison.Ordinal))
-            throw new XsltException($"XTSE0020: Invalid QName '{value}' for '{attrName}' attribute", location);
+            throw new XsltException($"{code}: Invalid QName '{value}' for '{attrName}' attribute", location);
         if (value.Contains("::", StringComparison.Ordinal))
-            throw new XsltException($"XTSE0020: Invalid QName '{value}' for '{attrName}' attribute", location);
+            throw new XsltException($"{code}: Invalid QName '{value}' for '{attrName}' attribute", location);
         // Check for common invalid NCName characters
         foreach (var ch in value)
         {
@@ -1292,7 +1294,7 @@ public sealed partial class StylesheetParser
                 ch == '(' || ch == ')' || ch == '[' || ch == ']' || ch == ',' ||
                 ch == '=' || ch == '+' || ch == '<' || ch == '>' || ch == '?')
             {
-                throw new XsltException($"XTSE0020: Invalid QName '{value}' for '{attrName}' attribute: character '{ch}' is not allowed", location);
+                throw new XsltException($"{code}: Invalid QName '{value}' for '{attrName}' attribute: character '{ch}' is not allowed", location);
             }
         }
     }
