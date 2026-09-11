@@ -1871,7 +1871,28 @@ null variable, and an empty merge key would be indistinguishable from it. There 
 case, which is precisely why it is worth recording: found by recognising the shape rather than
 by tripping over an outcome. That is the pattern working forwards instead of backwards.
 
-Related but **not** an instance, kept here because it is easy to mistake for one:
+#### A sibling shape: the question is not ambiguous, the evidence is gone
+
+parsers2 filed one more finding under this entry, and it is worth distinguishing rather than
+absorbing. In `xsl:merge`, the `for-each-source` sub-sequences were concatenated and then
+**sorted unconditionally**, so *"is this input in order?"* could never be asked — the input's
+order was overwritten before anything looked at it. That is why the XTDE2220 check had nothing
+to check.
+
+Same *consequence* as this pattern — code needs an answer the data structure cannot give — but a
+different *mechanism*. In every instance above the answer is **ambiguous**: one representation,
+two meanings. Here the answer was **destroyed**: a property existed, and a step that did not
+care about it overwrote it before the step that did.
+
+Worth keeping the two apart, because the remedies differ. Ambiguity is fixed by widening the
+representation so it can say which meaning it holds. Destruction is fixed by **ordering** — ask
+the question before the step that erases its answer, or preserve what that step consumes. A
+sweep for "one slot, two meanings" would never have found the merge case.
+
+The generalised audit question, covering both: **does the code still have the evidence for every
+question it needs to answer, at the moment it needs to answer it?**
+
+Related to neither and kept here because it is easy to mistake for the first:
 `count([()](1))` returns `1` on pinned 1.7.0 even with a literal — XQuery's empty-array-member
 representation. That belongs to the array/sequence family in the XQuery audit (and to the
 empty-sequence-has-two-representations problem), not to this one: the ambiguity is in how an
@@ -2465,6 +2486,41 @@ gains with zero real losses.
 **For the 1.8.0 notes.** Alongside #51 and #52 this makes three silent wrong-answer classes in
 the release, and this one should lead: it needs no opt-in, no unusual API, and no unusual
 stylesheet — only a streamable mode and the CLI.
+
+### 64. OPEN (XQuery-side) — the UCA collation ignores `alternate=shifted` (2026-09-11)
+
+Found by parsers2 while implementing collation-aware `xsl:merge` (#42). Recorded here rather
+than acted on: it is XQuery-side, and the XSLT-first order parks it.
+
+```
+compare('Akersberga', 'Akers Styckebruk',
+        'http://www.w3.org/2013/collation/UCA?lang=sv;caseFirst=upper;alternate=shifted')
+  returns  1
+  expected -1
+```
+
+`alternate=shifted` means variable-weight characters — spaces and punctuation — are ignored at
+the primary level. With it honoured, the space in `Akers Styckebruk` drops out and the two
+strings compare as `Akersberga` against `AkersStyckebruk`, giving `-1`. The parameter is parsed
+and then dropped.
+
+**The blast radius is wider than merge.** This is `CollationHelper.MapUcaToStringComparison` /
+`CompareUca`, which backs **`fn:compare`, `fn:sort`, `xsl:sort`, `xsl:for-each-group`, key
+comparison — every collation-aware call in both engines.** Any caller passing `alternate=shifted`
+silently gets codepoint-ish ordering instead, with no diagnostic. A user sorting Swedish names
+gets a wrong order, not an error.
+
+Suggested mapping, from parsers2: .NET's `CompareOptions.IgnoreSymbols` is the natural fit for
+the shifted behaviour. Not verified here.
+
+Worth noting what this is *not*: not a missing feature we never claimed. The collation URI
+parameter is accepted, which is a promise that it is honoured. **Accepting a parameter and
+ignoring it is worse than rejecting it** — a rejected option tells the caller to change
+something; an ignored one tells them nothing while changing their results. Compare #47, where
+shadow-attribute evaluation silently dropped what it could not compute.
+
+**Blocked on the XSLT-first order, not on difficulty.** When the XQuery track reopens this
+should be near the front: it is a small mapping fix with a wide correctness surface.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
