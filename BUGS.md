@@ -2012,7 +2012,7 @@ the raise was computed from.** It is process rather than machinery — raises ar
 min-of-runs rather than `CONFORMANCE_UPDATE_BASELINE=1`, so the script cannot enforce it, but a
 reviewer can: a raise whose PR carries no summary is incomplete.
 
-### 56. OPEN — the conformance workflow has never gated a release, and CI defeats its own timeout exemption (2026-09-11)
+### 56. FIXED 2026-09-11 — the conformance workflow has never gated a release
 
 Raised by parsers2 relaying Lucas's release-cadence directive; diagnosed here.
 
@@ -2049,7 +2049,23 @@ Either alone is survivable.
 That is worth sitting with: two separately-registered findings turned out to be one story, and
 the one I diagnosed confidently was the downstream half.
 
-#### One harness change still worth making
+#### RESOLVED by xslt #31
+
+The hard per-case wall-clock is in: the QT3 runner starts each case on the thread pool and
+abandons it 15 s past the cancellation deadline, so a case that ignores cancellation costs
+**one case, not the chunk**. Measured both ways:
+
+| engine | before | after |
+|---|---|---|
+| pinned 1.7.0 | chunk **wedged** | **161 s**, all 428 sets run, `same-key-023` named as abandoned |
+| xquery main | 77 s | 77 s, nothing abandoned — unchanged |
+
+The second row is the part that makes it a good fix: on an engine without the underlying
+defects it changes nothing at all, so the remedy costs nothing where it is not needed. And the
+abandoned case is now *named* in the output, which is what turns this from a hang someone has to
+reproduce locally with a stack dump into something diagnosable from the CI artifact.
+
+#### The harness change, as originally proposed
 
 parsers2 is adding a hard per-case wall-clock in `XqtsTestRunner` — `WhenAny` against a delay,
 abandoning a query that ignores cancellation. A non-cooperative case then costs **one case, not
@@ -2110,10 +2126,15 @@ dangles, the referenced project cannot be found, and the build falls back to the
 
 So the same suite measures two different engines:
 
-| where | XQuery under test | XSLT result |
-|---|---|---|
-| locally (symlink resolves) | `phoenixmldb-xquery` **main** | **10,163** |
-| in CI (symlink dangles) | pinned **package 1.7.0** | **10,160** |
+| where | XQuery under test | XSLT result | QT3 result |
+|---|---|---|---|
+| locally (symlink resolves) | `phoenixmldb-xquery` **main** | **10,163** | **29,534** |
+| in CI (symlink dangles) | pinned **package 1.7.0** | **10,160** | **29,506** |
+
+**The gap is now measured on both suites** (parsers2, 2026-09-11, via xslt #31's runs): 3 XSLT
+cases and **28 QT3 cases depend on unreleased XQuery.** That is the concrete size of the
+question below — publishing the main figure over-states what an installed engine does by 3 and
+28 cases respectively.
 
 **The committed baseline, README, STATUS.md and the 1.8.0 draft all carry the 10,163 number** —
 the *main* figure. Every one of them is therefore a claim about an engine combination that no
@@ -2316,6 +2337,60 @@ harness for the engine we are about to push hard on, and it needs wiring rather 
 
 **Not needed:** moving the themes to XSLT 4.0. They are clean 3.0, nothing is straining against
 it, and 3.0 is the more portable target for a tool other people may run.
+
+### 61. OPEN — an indirect global cycle reports XPST0008 where XTDE0640 is due (2026-09-11)
+
+Found by parsers2 writing tests for xslt #33, and **pre-existing — identical on main**, so it is
+not a regression from that work.
+
+A cycle among global variables reached *indirectly* is reported as a static error naming a
+variable that is perfectly well defined:
+
+```
+$d → f:c() → a local variable reading $c,  with  $c := f:c()
+→ "XPST0008: Variable $c not defined"        (XTDE0640 is due)
+```
+
+The direct form is handled correctly: `$c + 1` inside `$c` is caught statically as `XPST0008
+... references itself`, which is right — a variable that literally names itself is a static
+defect. The indirect form is a *runtime* circularity, and XSLT 3.0 gives it `XTDE0640`.
+
+**Why the message matters more than the code here.** "Variable `$c` not defined" sends a reader
+looking for a missing declaration that is not missing, in a stylesheet where the real fault is a
+cycle they cannot see from that line. Anyone debugging this is looking in the wrong place
+entirely — which is #21's lesson (improve the error first) in a new instance.
+
+Suspected cause, **not yet traced**: the audit's `LazyValue` re-entry path, where a local
+variable returns `()` on re-entry. An empty sequence where a value was expected then reads
+downstream as "no such variable" rather than "you have a cycle". If that is right, the fix is at
+the re-entry guard rather than anywhere near the error-reporting code, and the wrong code is a
+symptom two layers down.
+
+### 62. A stale generated `runtimeconfig.json` makes a clean branch look like a 25-case regression (2026-09-11)
+
+Reported by parsers2, who lost time to it **twice in one day**. Registered because it is a
+measurement trap, and this project has learned the hard way that a measurement which lies
+quietly is worse than one that fails.
+
+**Removing a `runtimeconfig.template.json` does not regenerate `bin/*.runtimeconfig.json` on an
+incremental build.** The generated file survives, so its `AppContext` switches keep applying to
+a branch whose source no longer sets them. Both times, a sweep showed what looked like a
+**25-case regression** and the cause was `PhoenixmlDb.Xdm.StrictStringValue` still switched on
+from the other branch.
+
+The shape is familiar and worth naming: **build output is state, and state that outlives the
+source that produced it will be attributed to the source that did not.** An A/B across two
+branches is exactly the operation that exposes it, and exactly the operation whose whole purpose
+is attributing a difference to a change.
+
+**Rule: when A/B-ing branches that differ in a `runtimeconfig.template.json` — or in anything
+that lands in build output rather than in source — delete the generated file first**, or build
+clean. A stale `runtimeconfig.json` is indistinguishable from a real result, and it produced a
+plausible number twice rather than an error once.
+
+Related in kind rather than mechanism: #46 (tests that measure the machine), #43 (the harness
+measured Debug and understated the engine), #57 (CI measures a different engine than a
+developer does). All four are the same question — *what did this number actually measure?*
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
