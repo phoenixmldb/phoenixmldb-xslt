@@ -47,10 +47,7 @@ internal sealed class XsltUnparsedTextLinesFunction : PhoenixmlDb.XQuery.Ast.XQu
             if (policyText != null)
             {
                 UnparsedTextHelper.ValidateTextContent(policyText);
-                var policyLines = policyText.Split('\n').Select(l => (object)l.TrimEnd('\r')).ToList();
-                if (policyLines.Count > 0 && ((string)policyLines[^1]).Length == 0)
-                    policyLines.RemoveAt(policyLines.Count - 1);
-                return policyLines;
+                return UnparsedTextHelper.SplitLines(policyText);
             }
 
             var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
@@ -58,16 +55,13 @@ internal sealed class XsltUnparsedTextLinesFunction : PhoenixmlDb.XQuery.Ast.XQu
             {
                 var text = await UnparsedTextHelper.ReadWithEncodingDetectionAsync(filePath).ConfigureAwait(false);
                 UnparsedTextHelper.ValidateTextContent(text);
-                var lines = text.Split('\n').Select(l => (object)l.TrimEnd('\r')).ToList();
-                if (lines.Count > 0 && ((string)lines[^1]).Length == 0)
-                    lines.RemoveAt(lines.Count - 1);
-                return lines;
+                return UnparsedTextHelper.SplitLines(text);
             }
         }
         catch (IOException)
         {
             // Return empty for inaccessible resources
         }
-        return new List<object>();
+        return null;
     }
 }
