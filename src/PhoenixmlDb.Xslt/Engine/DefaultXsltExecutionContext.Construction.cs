@@ -132,7 +132,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 System.Xml.XmlConvert.VerifyNCName(name);
             }
         }
-        catch (System.Xml.XmlException)
+        catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
         {
             throw Error($"XTDE0820: The effective value of the 'name' attribute of xsl:element ('{name}') is not a valid QName");
         }
@@ -449,7 +449,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 System.Xml.XmlConvert.VerifyNCName(name);
             }
         }
-        catch (System.Xml.XmlException)
+        catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
         {
             throw Error($"XTDE0850: The effective value of the 'name' attribute of xsl:attribute ('{name}') is not a valid QName");
         }
@@ -789,7 +789,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             try
             { System.Xml.XmlConvert.VerifyNCName(prefix); }
-            catch (System.Xml.XmlException)
+            catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
             {
                 throw Error($"XTDE0920: The effective value of the 'name' attribute of xsl:namespace ('{prefix}') is not a valid NCName");
             }

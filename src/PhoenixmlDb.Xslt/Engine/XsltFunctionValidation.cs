@@ -26,6 +26,29 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </summary>
 internal static class XsltFunctionValidation
 {
+    /// <summary>
+    /// accumulator-before / accumulator-after apply to a node that is not an attribute or
+    /// namespace node; anything else is the type error XTTE3360. Without this check a non-node
+    /// context item fell through to the accumulator lookup and surfaced as XTDE3340 "no
+    /// accumulator is available" — a claim about the stylesheet, for a mistake in the call.
+    /// </summary>
+    internal static object RequireAccumulatorContextNode(object item, string functionName)
+    {
+        if (item is PhoenixmlDb.Xdm.Nodes.XdmNode and not (PhoenixmlDb.Xdm.Nodes.XdmAttribute or PhoenixmlDb.Xdm.Nodes.XdmNamespace))
+            return item;
+        // The XSLT context reports an absent focus as a sentinel object, not null (BUGS.md #17).
+        // No context item at all is XPDY0002, not a type error about the item.
+        if (ReferenceEquals(item, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
+            throw new XsltException($"XPDY0002: {functionName}() requires a context item, but the focus is absent");
+        var what = item switch
+        {
+            PhoenixmlDb.Xdm.Nodes.XdmAttribute => "an attribute node",
+            PhoenixmlDb.Xdm.Nodes.XdmNamespace => "a namespace node",
+            _ => "not a node",
+        };
+        throw new XsltException($"XTTE3360: {functionName}() requires the context item to be a node other than an attribute or namespace node, but it is {what}");
+    }
+
     internal static void ValidateQNameArgument(string name, string errorCode, string functionName)
     {
         if (string.IsNullOrEmpty(name))
@@ -48,7 +71,7 @@ internal static class XsltFunctionValidation
                 System.Xml.XmlConvert.VerifyNCName(name);
             }
         }
-        catch (System.Xml.XmlException)
+        catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
         {
             throw new XsltException($"{errorCode}: The argument to {functionName}() ('{name}') is not a valid EQName");
         }

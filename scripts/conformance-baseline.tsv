@@ -424,7 +424,7 @@ tests/attr/expand-text/_expand-text-test-set.xml	58	59
 tests/attr/match/_match-test-set.xml	179	179
 tests/attr/mode/_mode-test-set.xml	153	168
 tests/attr/package-version/_package-version-test-set.xml	33	35
-tests/attr/select/_select-test-set.xml	155	157
+tests/attr/select/_select-test-set.xml	156	157
 tests/attr/shadow/_shadow-test-set.xml	8	8
 tests/attr/static/_static-test-set.xml	46	50
 tests/attr/streamable/_streamable-test-set.xml	59	64
@@ -435,7 +435,7 @@ tests/attr/validation/_validation-test-set.xml	6	6
 tests/attr/version/_version-test-set.xml	31	33
 tests/attr/xpath-default-namespace/_xpath-default-namespace-test-set.xml	22	22
 tests/decl/accept/_accept-test-set.xml	27	50
-tests/decl/accumulator/_accumulator-test-set.xml	81	103
+tests/decl/accumulator/_accumulator-test-set.xml	82	103
 tests/decl/attribute-set/_attribute-set-test-set.xml	48	49
 tests/decl/character-map/_character-map-test-set.xml	28	29
 tests/decl/context-item/_context-item-test-set.xml	24	31
@@ -444,7 +444,7 @@ tests/decl/global-context-item/_global-context-item-test-set.xml	12	14
 tests/decl/import/_import-test-set.xml	40	40
 tests/decl/include/_include-test-set.xml	13	15
 tests/decl/namespace-alias/_namespace-alias-test-set.xml	26	26
-tests/decl/output/_output-test-set.xml	213	222
+tests/decl/output/_output-test-set.xml	214	222
 tests/decl/override/_override-test-set.xml	83	100
 tests/decl/package/_package-test-set.xml	58	72
 tests/decl/param/_param-test-set.xml	28	31
@@ -512,7 +512,7 @@ tests/insn/for-each-group/_for-each-group-test-set.xml	80	81
 tests/insn/iterate/_iterate-test-set.xml	38	44
 tests/insn/lre/_lre-test-set.xml	34	35
 tests/insn/merge/_merge-test-set.xml	86	104
-tests/insn/message/_message-test-set.xml	36	45
+tests/insn/message/_message-test-set.xml	43	45
 tests/insn/next-match/_next-match-test-set.xml	39	40
 tests/insn/number/_number-test-set.xml	264	267
 tests/insn/on-empty/_on-empty-test-set.xml	72	72
@@ -530,7 +530,7 @@ tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	2	4
 tests/misc/collations/_collations-test-set.xml	42	43
 tests/misc/docbook/_docbook-test-set.xml	2	4
-tests/misc/error/_error-test-set.xml	466	507
+tests/misc/error/_error-test-set.xml	472	507
 tests/misc/forwards/_forwards-test-set.xml	23	23
 tests/misc/initial-function/_initial-function-test-set.xml	33	35
 tests/misc/initial-mode/_initial-mode-test-set.xml	5	5
@@ -633,7 +633,7 @@ tests/type/arrays/_arrays-test-set.xml	59	62
 tests/type/boolean/_boolean-test-set.xml	111	112
 tests/type/date/_date-test-set.xml	128	130
 tests/type/maps/_maps-test-set.xml	48	50
-tests/type/namespace/_namespace-test-set.xml	181	187
+tests/type/namespace/_namespace-test-set.xml	183	187
 tests/type/node/_node-test-set.xml	31	31
 tests/type/string/_string-test-set.xml	135	136
 tests/type/type/_type-test-set.xml	57	58

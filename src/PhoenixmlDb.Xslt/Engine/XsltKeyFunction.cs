@@ -58,7 +58,7 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
                 System.Xml.XmlConvert.VerifyNCName(keyName);
             }
         }
-        catch (System.Xml.XmlException)
+        catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException) // "" throws ArgumentException
         {
             throw new XsltException($"XTDE1260: The first argument of the key() function ('{keyName}') is not a valid QName");
         }

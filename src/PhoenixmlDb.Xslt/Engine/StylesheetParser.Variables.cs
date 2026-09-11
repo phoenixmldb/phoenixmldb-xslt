@@ -112,7 +112,7 @@ public sealed partial class StylesheetParser
 
     private XsltParam ParseParam(XElement element, bool isGlobal = false, bool allowTunnel = true)
     {
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        var name = ParseQName(RequiredAttribute(element, "name").Value, element);
         var asAttr = element.Attribute("as");
         var selectAttr = element.Attribute("select");
         var requiredAttr = element.Attribute("required");
@@ -214,7 +214,7 @@ public sealed partial class StylesheetParser
 
     private XsltParamInstruction ParseParamInstr(XElement element, SourceLocation? location)
     {
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        var name = ParseQName(RequiredAttribute(element, "name").Value, element);
         var asAttr = element.Attribute("as");
         var selectAttr = element.Attribute("select");
         var requiredAttr = element.Attribute("required");
@@ -235,7 +235,7 @@ public sealed partial class StylesheetParser
 
     private XsltWithParam ParseWithParam(XElement element)
     {
-        var name = ParseQName(element.Attribute("name")!.Value, element);
+        var name = ParseQName(RequiredAttribute(element, "name").Value, element);
         var asAttr = element.Attribute("as");
         var selectAttr = element.Attribute("select");
         var tunnelAttr = element.Attribute("tunnel");
