@@ -23,13 +23,15 @@ internal sealed class XsltCurrentMergeKeyFunction : PhoenixmlDb.XQuery.Ast.XQuer
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "current-merge-key");
     public override XdmSequenceType ReturnType => XdmSequenceType.OptionalItem;
     public override IReadOnlyList<FunctionParameterDef> Parameters => [];
-    public override string? DynamicCallErrorCode => "XTDE3480";
+    // XTDE3510, not XTDE3480: the spec gives current-merge-key its own code (§15.4, "used when
+    // the current merge key is absent"); XTDE3480 is current-merge-group's. W3C merge-056/101.
+    public override string? DynamicCallErrorCode => "XTDE3510";
     public override ValueTask<object?> InvokeAsync(
         IReadOnlyList<object?> arguments, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         if (_context.TryGetVariable(new QName(NamespaceId.None, "current-merge-key"), out var key) && key != null)
             return ValueTask.FromResult<object?>(key);
 
-        throw new XsltException("XTDE3480: current-merge-key() called when there is no current merge key");
+        throw new XsltException("XTDE3510: current-merge-key() called when there is no current merge key");
     }
 }
