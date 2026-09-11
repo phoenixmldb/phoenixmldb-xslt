@@ -205,6 +205,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var elem = new XdmElement
         {
+            StringValueResolver = _nodeStore.StringValueResolver,
             Id = elemId,
             Document = docId,
             Parent = parentId,
@@ -353,6 +354,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
                     var newDoc = new XdmDocument
                     {
+                        StringValueResolver = _nodeStore.StringValueResolver,
                         Id = xdmDoc.Id,
                         Document = xdmDoc.Document,
                         Parent = xdmDoc.Parent,
@@ -467,6 +469,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var elem = new Xdm.Nodes.XdmElement
         {
+            StringValueResolver = _nodeStore!.StringValueResolver,
             Id = startId,
             Document = DocumentId.None,
             Parent = NodeId.None,

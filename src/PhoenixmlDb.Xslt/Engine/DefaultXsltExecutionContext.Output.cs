@@ -1725,6 +1725,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 var syntheticDocId = new NodeId(999_999);
                 var syntheticDoc = new XdmDocument
                 {
+                    StringValueResolver = streamNodeStore.StringValueResolver,
                     Id = syntheticDocId,
                     Document = new DocumentId(0),
                     Children = [],

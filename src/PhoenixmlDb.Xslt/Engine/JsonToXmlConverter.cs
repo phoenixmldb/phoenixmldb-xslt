@@ -36,6 +36,7 @@ internal static class JsonToXmlConverter
 
         var doc = new XdmDocument
         {
+            StringValueResolver = store.StringValueResolver,
             Id = docId,
             Document = default,
             Children = new[] { rootElem.Id },
@@ -91,6 +92,7 @@ internal static class JsonToXmlConverter
 
         var elem = new XdmElement
         {
+            StringValueResolver = store.StringValueResolver,
             Id = elemId,
             Document = default,
             Namespace = FnNs,
@@ -122,6 +124,7 @@ internal static class JsonToXmlConverter
 
         var elem = new XdmElement
         {
+            StringValueResolver = store.StringValueResolver,
             Id = elemId,
             Document = default,
             Namespace = FnNs,
@@ -177,6 +180,7 @@ internal static class JsonToXmlConverter
 
         var elem = new XdmElement
         {
+            StringValueResolver = store.StringValueResolver,
             Id = elemId,
             Document = default,
             Namespace = FnNs,
@@ -201,6 +205,7 @@ internal static class JsonToXmlConverter
 
         var elem = new XdmElement
         {
+            StringValueResolver = store.StringValueResolver,
             Id = elemId,
             Document = default,
             Namespace = FnNs,

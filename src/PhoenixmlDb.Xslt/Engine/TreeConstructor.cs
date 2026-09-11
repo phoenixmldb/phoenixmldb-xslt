@@ -286,6 +286,7 @@ internal sealed class TreeConstructor
         var frame = _open.Pop();
         var elem = new XdmElement
         {
+            StringValueResolver = _store.StringValueResolver,
             Id = frame.Id,
             Document = frame.DocumentId,
             Namespace = frame.Namespace,
@@ -323,6 +324,7 @@ internal sealed class TreeConstructor
         var docNodeId = _store.NextId();
         var doc = new XdmDocument
         {
+            StringValueResolver = _store.StringValueResolver,
             Id = docNodeId,
             Document = _documentId,
             Children = _roots.Count == 0 ? XdmDocument.EmptyChildren : _roots.ToImmutableArray(),

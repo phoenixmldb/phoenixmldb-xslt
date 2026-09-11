@@ -46,6 +46,7 @@ internal sealed class XsltParseXmlFragmentFunction : PhoenixmlDb.XQuery.Ast.XQue
                 var docId = _context._nodeStore.NextId();
                 var emptyDoc = new Xdm.Nodes.XdmDocument
                 {
+                    StringValueResolver = _context._nodeStore.StringValueResolver,
                     Id = docId,
                     Document = new DocumentId(1),
                     Parent = NodeId.None,
