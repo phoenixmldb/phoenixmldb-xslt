@@ -422,9 +422,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     };
                     if (uri != null)
                     {
-                        var doc = _policyResolver?.ResolveDocument(uri) ?? _documentResolver.ResolveDocument(uri);
-                        if (doc == null)
-                            continue;
+                        // Relative to the static base URI in scope — which xml:base on the xsl:merge
+                        // or an ancestor changes — as doc() would resolve it. It went to the
+                        // resolver raw, so it resolved against the stylesheet's own base, and a source
+                        // that could not be found was skipped in silence: merge-041's second source
+                        // (xml:base="../../" plus 'insn/merge/log-file-2.xml') contributed nothing.
+                        uri = ResolveAgainstStaticBaseUri(uri);
+                        var doc = _policyResolver?.ResolveDocument(uri) ?? _documentResolver.ResolveDocument(uri)
+                            ?? throw Error($"FODC0002: for-each-source document '{uri}' cannot be retrieved");
                         contextItem = doc;
 
                         // Compute specified accumulators on the merge source document
@@ -638,6 +643,16 @@ internal sealed partial class DefaultXsltExecutionContext
         keyed.Sort((a, b) => CompareMergeKeys(a.Keys, b.Keys, orders, dataTypes, collations));
 
         return keyed.Select(k => k.Item).ToList();
+    }
+
+
+    /// <summary>A URI resolved against the static base URI in scope (absolute URIs unchanged).</summary>
+    private string ResolveAgainstStaticBaseUri(string uri)
+    {
+        if (Uri.TryCreate(uri, UriKind.Absolute, out _) || StaticBaseUri is not { } staticBase
+            || !Uri.TryCreate(staticBase, UriKind.Absolute, out var baseUri))
+            return uri;
+        return new Uri(baseUri, uri).AbsoluteUri;
     }
 
 
