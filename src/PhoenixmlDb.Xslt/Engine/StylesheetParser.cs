@@ -369,6 +369,9 @@ public sealed partial class StylesheetParser
         // Abstract components are only valid in library packages intended for use-package overriding.
         if (!stylesheet.IsPackage) return;
 
+        if (stylesheet.HasAcceptedAbstractComponent)
+            throw new XsltException("XTSE3080: Top-level package accepts a component with visibility=\"abstract\"");
+
         foreach (var template in stylesheet.Templates)
         {
             if (template.Visibility == Visibility.Abstract)
@@ -447,7 +450,10 @@ public sealed partial class StylesheetParser
         {
             foreach (var usedName in useAttrSets)
             {
-                if (!stylesheet.AttributeSets.ContainsKey(usedName))
+                // An abstract set from a used package is declared but has no content: leave it
+                // to the runtime XTDE3052 at the point of use (accept-909..913).
+                if (!stylesheet.AttributeSets.ContainsKey(usedName)
+                    && !stylesheet.AbstractAttributeSetNames.Contains(usedName))
                     throw new XsltException($"XTSE0710: Attribute set '{usedName}' is not defined");
             }
         }

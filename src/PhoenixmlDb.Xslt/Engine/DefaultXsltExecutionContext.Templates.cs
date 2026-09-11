@@ -1117,6 +1117,14 @@ internal sealed partial class DefaultXsltExecutionContext
                 // transform engine checks that before it gets here.)
                 // Name the namespace too. The old message quoted only the local part, which is
                 // exactly the information that does not help when the namespace is the problem.
+                // A call from INSIDE the package that declares the template, where the name is
+                // visible but abstract — no implementation to run — is the dynamic XTDE3052
+                // (accept-045b/c, accept-905..908). From the USING package the same name is
+                // simply not visible, which stays the static XTSE0650 (error-3052a).
+                var callingPackage = XsltFormatNumberEngine.GetCurrentPackageStylesheet(this);
+                if (callingPackage != null && !ReferenceEquals(callingPackage, _stylesheet)
+                    && callingPackage.AbstractTemplateNames.Contains(name))
+                    throw Error($"XTDE3052: Named template '{name.LocalName}' is abstract and has no concrete implementation");
                 var uri = QNameNamespaces.UriOf(name, ResolveViaStylesheet);
                 throw Error(uri.Length > 0
                     ? $"XTSE0650: Named template 'Q{{{uri}}}{name.LocalName}' not found"
