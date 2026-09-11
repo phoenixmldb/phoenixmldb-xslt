@@ -77,12 +77,12 @@ first and the check enabled second.
 
 ## Conformance
 
-*Provisional — final figures come from the baseline raise covering #24 and #25.*
+Backed by the committed per-set baseline as of `0a48c76`.
 
 | suite | 1.7.0 | 1.8.0 |
 |---|---|---|
-| W3C XSLT 3.0 | 10,082/10,630 (94.84%) | ~10,163/10,630 (~95.6%) |
-| W3C QT3 | no reproducible figure | ~29,534/31,414 (~94.0%) |
+| W3C XSLT 3.0 | 10,082/10,630 (94.84%) | **10,163/10,630 (95.61%)** |
+| W3C QT3 | no reproducible figure | **29,534/31,414 (94.02%)** |
 
 The QT3 line is not a regression from the 99.72% that stood in `CONFORMANCE.md` until
 2026-09-11 — that figure measured a smaller corpus with a runner that scored an expected-error

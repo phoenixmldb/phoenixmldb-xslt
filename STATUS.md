@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-11 11:30 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-11 12:11 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-09-11 11:30 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 3 | 0 |
-| phoenixmldb-xslt | 7 | 1 |
+| phoenixmldb-xslt | 7 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -47,17 +47,13 @@ Generated 2026-09-11 11:30 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-xslt**
-
-- [24] fix: an accumulator rule sees the other accumulator's value for THIS node
-
 **phoenixmldb-cli**
 
 - [3] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **52** entries, **7** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **53** entries, **7** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -72,10 +68,10 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10160/10630 (95.58%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 10163/10630 (95.61%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 29524/31414 (93.98%)** across 428 test-sets,
+- **W3C QT3 baseline — 29534/31414 (94.02%)** across 428 test-sets,
   same file, same ratchet.
 - **W3C QT3 / XQuery** — 93.98% — 29,524 / 31,414 across all 428 catalog test-sets, measured 2026-09-11, Release build.
   Verified reproducible from two checkout paths with different execution

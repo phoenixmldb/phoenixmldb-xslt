@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (95.6% W3C conformance — 10,160/10,630 cases, measured 2026-09-11)
+### XSLT 3.0 (95.6% W3C conformance — 10,163/10,630 cases, measured 2026-09-11)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,7 +24,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,160/10,630 cases (95.6%), 470 failing
+### W3C XSLT 3.0 — 10,163/10,630 cases (95.6%), 467 failing
 
 Measured 2026-09-11 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, from the
 committed per-set baseline (`scripts/conformance-baseline.tsv`).
@@ -37,14 +37,14 @@ regression every time the suite behaves normally.
 | Group | Passing | | Failing |
 |---|---|---|---|
 | `attr` — attributes | 1076/1117 | 96.3% | 41 |
-| `decl` — declarations | 962/1080 | 89.1% | 118 |
-| `type` — types | 752/766 | 98.2% | 14 |
+| `decl` — declarations | 963/1080 | 89.2% | 117 |
+| `type` — types | 753/766 | 98.3% | 13 |
 | `fn` — functions | 1072/1131 | 94.8% | 59 |
 | `strm` — streaming | 2284/2373 | 96.2% | 89 |
 | `expr` — expressions | 636/648 | 98.1% | 12 |
-| `misc` | 1857/1921 | 96.7% | 64 |
+| `misc` | 1858/1921 | 96.7% | 63 |
 | `insn` — instructions | 1521/1594 | 95.4% | 73 |
-| **Total** | **10,160/10,630** | **95.6%** | **470** |
+| **Total** | **10,163/10,630** | **95.6%** | **467** |
 
 The `sandp` group runs but reports no per-case counts, so it is excluded from the total rather
 than counted as passing.
