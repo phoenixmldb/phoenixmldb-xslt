@@ -172,7 +172,7 @@ internal sealed partial class DefaultXsltExecutionContext
         if (_collectTextAsSequenceItems && _serializingElementDepth == 0
             && _sequenceAccumulator != null)
         {
-            AppendToSeqAccumulator(new Xdm.TextNodeItem(value));
+            AccumulateTextItem(value);
         }
         else if ((disableOutputEscaping && _temporaryOutputDepth == 0) || _textContentDepth > 0)
         {
@@ -230,6 +230,41 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// Adds a text node to the sequence being built and, at the top level of a function body,
+    /// also writes it to <c>_output</c>. Returns whether it wrote to <c>_output</c>.
+    /// </summary>
+    /// <remarks>
+    /// A function's result is assembled from BOTH channels: <c>_output</c> carries elements and
+    /// text in source order, and the assembly skips accumulated TextNodeItems as duplicates of
+    /// that text. So a text node that reaches only the accumulator is dropped. WriteTextItem
+    /// wrote both; WriteText's text-as-items branch — which xsl:copy-of of a text node reaches —
+    /// wrote only the accumulator. So a function returning <c>(text, element)</c> lost the text:
+    /// <c>f:id($d/r/node())</c> over <c>&lt;r&gt; inner &lt;b/&gt;&lt;/r&gt;</c> gave back only
+    /// the element, which is why W3C function-1022 found an index where the spec finds none.
+    /// One helper now, so the two cannot disagree again.
+    /// </remarks>
+    private bool AccumulateTextItem(string value)
+    {
+        AppendToSeqAccumulator(new Xdm.TextNodeItem(value));
+        // In function bodies at the top level (not inside value-of, attribute,
+        // comment/PI content), also write escaped text to _output so that
+        // text and LRE elements preserve their source order when the function
+        // result is assembled from both _sequenceAccumulator and _output.
+        if (_functionBodyDepth == 0 || _textContentDepth != 0)
+            return false;
+        EmitText(value);
+        // This item now OWNS the text just written. Without this the weave emits the
+        // item and then the same text again as a trailing output chunk.
+        if (_currentAsBodyCapture is { } cap
+            && ReferenceEquals(_sequenceAccumulator, cap.Accumulator)
+            && cap.ConsumedTo.Count > 0)
+        {
+            cap.ConsumedTo[^1] = _output.Length - cap.OutputBaseLen;
+        }
+        return true;
+    }
+
     public override void WriteTextItem(string value)
     {
         // If sequence accumulation is active, add as a TextNodeItem marker
@@ -237,24 +272,7 @@ internal sealed partial class DefaultXsltExecutionContext
         var emittedToOutput = false;
         if (_sequenceAccumulator != null)
         {
-            AppendToSeqAccumulator(new Xdm.TextNodeItem(value));
-            // In function bodies at the top level (not inside value-of, attribute,
-            // comment/PI content), also write escaped text to _output so that
-            // text and LRE elements preserve their source order when the function
-            // result is assembled from both _sequenceAccumulator and _output.
-            if (_functionBodyDepth > 0 && _textContentDepth == 0)
-            {
-                EmitText(value);
-                emittedToOutput = true;
-                // This item now OWNS the text just written. Without this the weave emits the
-                // item and then the same text again as a trailing output chunk.
-                if (_currentAsBodyCapture is { } cap
-                    && ReferenceEquals(_sequenceAccumulator, cap.Accumulator)
-                    && cap.ConsumedTo.Count > 0)
-                {
-                    cap.ConsumedTo[^1] = _output.Length - cap.OutputBaseLen;
-                }
-            }
+            emittedToOutput = AccumulateTextItem(value);
         }
         else
         {

@@ -201,6 +201,11 @@ internal sealed partial class DefaultXsltExecutionContext
         public bool CollectTextAsSequenceItems { get; init; }
         public bool LastResultWasAtomic { get; init; }
         public List<StringBuilder> CollectedAttributes { get; init; }
+        public TreeConstructor? ActiveTreeConstructor { get; init; }
+        public bool TcFragmentIncomplete { get; init; }
+        public bool SuppressTcIncomplete { get; init; }
+        public bool UntypedRtfFlipActive { get; init; }
+        public bool UntypedRtfFlipDivergent { get; init; }
     }
 
 

@@ -108,6 +108,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             CollectTextAsSequenceItems = _collectTextAsSequenceItems,
             LastResultWasAtomic = _lastResultWasAtomic,
             CollectedAttributes = new List<StringBuilder>(_collectedAttributesStack),
+            ActiveTreeConstructor = _activeTreeConstructor,
+            TcFragmentIncomplete = _tcFragmentIncomplete,
+            SuppressTcIncomplete = _suppressTcIncomplete,
+            UntypedRtfFlipActive = _untypedRtfFlipActive,
+            UntypedRtfFlipDivergent = _untypedRtfFlipDivergent,
         };
 
         // Declare this body's base: content below it belongs to an enclosing scope and must
@@ -133,6 +138,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _lastResultWasAtomic = false;
         _collectedAttributesStack.Clear();
 
+        // The body's value is assembled from its OWN channels, so it must not build into an
+        // enclosing temp tree's constructor. Only the two xsl:variable seams installed a
+        // constructor of their own; the function and typed-param seams inherited the caller's,
+        // and xsl:copy-of inside a function body cloned straight into the tree the caller was
+        // building — before the function's result was copied in again, so
+        //   <xsl:variable name="v"><xsl:copy-of select="f:wrap($nodes)"/></xsl:variable>
+        // held two <a> elements where f:wrap returns one. It also left _untypedRtfFlipActive
+        // set inside a typed body, which that flag's contract rules out. A seam that wants a
+        // constructor installs its own after this.
+        _activeTreeConstructor = null;
+        _tcFragmentIncomplete = false;
+        _suppressTcIncomplete = false;
+        _untypedRtfFlipActive = false;
+        _untypedRtfFlipDivergent = false;
+
         return saved;
     }
 
@@ -150,6 +170,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _collectedAttributesStack.Clear();
         for (var i = saved.CollectedAttributes.Count - 1; i >= 0; i--)
             _collectedAttributesStack.Push(saved.CollectedAttributes[i]);
+        _activeTreeConstructor = saved.ActiveTreeConstructor;
+        _tcFragmentIncomplete = saved.TcFragmentIncomplete;
+        _suppressTcIncomplete = saved.SuppressTcIncomplete;
+        _untypedRtfFlipActive = saved.UntypedRtfFlipActive;
+        _untypedRtfFlipDivergent = saved.UntypedRtfFlipDivergent;
     }
 
 
