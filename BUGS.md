@@ -1426,6 +1426,36 @@ Owned by the parsers2 session, to be fixed alongside the QT3 per-set baseline an
 
 ---
 
+### 47. OPEN — static shadow-attribute evaluation silently DROPS what it cannot compute (2026-09-11)
+
+`_xsl:`-prefixed shadow attributes are evaluated at compile time. The parser's implementation is a
+**string-substitution subset**, not an XPath evaluator: given an expression it cannot handle, it
+does not fail — it drops it, and compilation continues against an attribute value that is missing
+or partial.
+
+That is a fail-open at the point where a stylesheet states its own requirements. `package-version`
+is the case that surfaced it (`package-version-909/910/010/011`): a shadow attribute computing a
+version or range is silently discarded, so version validation then runs against nothing and
+passes. The defect is not in the validation — it is that the validator was handed garbage and
+could not tell.
+
+Found while fixing #13's package-version cases (phoenixmldb-xslt#16). That PR **annotates
+unevaluated shadow attributes** so nothing downstream validates the result, which converts the
+silent drop into a visible one. The underlying need is real static XPath evaluation, which is not
+done.
+
+**Why this one is worth its own entry rather than a line in #13.** The four failing cases are the
+symptom; the shape is the defect. A subset evaluator that returns a wrong answer instead of
+refusing is indistinguishable from a working one until something downstream disagrees — the same
+structure as the expected-error harness (#28), the empty-string atomization (#42) and the
+element-constructor fallback that returned a string where a node was required. It will not be
+confined to `package-version`: any shadow attribute whose expression exceeds the subset is
+affected, and nothing currently says which those are.
+
+Reported by the parsers2 session.
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
