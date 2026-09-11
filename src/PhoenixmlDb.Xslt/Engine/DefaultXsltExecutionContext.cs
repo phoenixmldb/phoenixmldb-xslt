@@ -2393,7 +2393,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // This ensures count(fn()) is correct when fn() uses xsl:value-of.
         // Only in function body context — not in variable/param body where text
         // needs to be serialized as part of the result tree.
-        if (_functionBodyDepth > 0 && _sequenceAccumulator != null
+        if (InFunctionBodyProper
             && _textContentDepth == 0 && _serializingElementDepth == 0
             && !instruction.DisableOutputEscaping)
         {

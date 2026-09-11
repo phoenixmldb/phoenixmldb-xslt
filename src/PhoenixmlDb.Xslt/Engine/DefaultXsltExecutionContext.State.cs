@@ -622,6 +622,36 @@ internal sealed partial class DefaultXsltExecutionContext
     // Track when inside function body so xsl:value-of routes to sequence accumulator
     private int _functionBodyDepth;
 
+    // The accumulator the innermost executing stylesheet function collects its result into.
+    // "Directly in a function body" is _sequenceAccumulator being THIS list — not
+    // _functionBodyDepth > 0, which is also true inside an xsl:variable nested in the body. See
+    // InFunctionBodyProper.
+    private List<object?>? _functionBodyAccumulator;
+
+    /// <summary>
+    /// True when the sequence being built is the executing function's own result — the only
+    /// place text is written to BOTH the accumulator and <c>_output</c>, because only the
+    /// function-result assembly knows to treat accumulated text as a duplicate of the output.
+    /// </summary>
+    /// <remarks>
+    /// This was <c>_functionBodyDepth &gt; 0</c>, which also holds inside an xsl:variable in the
+    /// body. That variable's accumulator got the text as an item AND its buffer got the text, and
+    /// its drain emitted both: <c>string($v)</c> of
+    /// <c>&lt;xsl:variable name="v"&gt;&lt;xsl:text&gt;x&lt;/xsl:text&gt;&lt;/xsl:variable&gt;</c>
+    /// inside a function was <c>xx</c>. It has been wrong at least since before 1.7.0.
+    /// </remarks>
+    // The accumulator an untyped (temporary-tree) xsl:variable body is building behind. It only
+    // catches typed results from nested instructions and is drained AFTER the body's text, so text
+    // written to it lands out of order: <xsl:variable>a<b>c</b><xsl:text>d</xsl:text>e</xsl:variable>
+    // read "aced", and copying it gave a<b>c</b>ed. Text in such a body goes to the buffer.
+    private List<object?>? _treeBodyAccumulator;
+
+    private bool InTreeBody =>
+        _sequenceAccumulator != null && ReferenceEquals(_sequenceAccumulator, _treeBodyAccumulator);
+
+    private bool InFunctionBodyProper =>
+        _sequenceAccumulator != null && ReferenceEquals(_sequenceAccumulator, _functionBodyAccumulator);
+
     // Track when inside xsl:where-populated so XTDE0410 is suppressed during trial evaluation
     private int _wherePopulatedDepth;
 

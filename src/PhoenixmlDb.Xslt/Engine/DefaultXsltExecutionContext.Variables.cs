@@ -884,6 +884,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 // body inside fp:run-transforms function).
                 var savedAccumulatorVar = _sequenceAccumulator;
                 _sequenceAccumulator = new List<object?>();
+                // This body builds a TREE. Its accumulator only catches typed results from nested
+                // instructions (drained after the text below); text belongs in the buffer, in
+                // document order. See _treeBodyAccumulator.
+                var savedTreeBodyAccumulator = _treeBodyAccumulator;
+                _treeBodyAccumulator = _sequenceAccumulator;
+                var savedCollectTextVar = _collectTextAsSequenceItems;
+                _collectTextAsSequenceItems = false;
                 _documentNodeDepth++;
                 _temporaryOutputDepth++;
                 // SP-C slice 3: install a fresh TreeConstructor for the duration of this
@@ -945,6 +952,8 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
                     capturedAccumulator = _sequenceAccumulator;
                     _sequenceAccumulator = savedAccumulatorVar;
+                    _treeBodyAccumulator = savedTreeBodyAccumulator;
+                    _collectTextAsSequenceItems = savedCollectTextVar;
                     _temporaryOutputDepth--;
                     _documentNodeDepth--;
                     _textContentDepth = savedTextDepth;
