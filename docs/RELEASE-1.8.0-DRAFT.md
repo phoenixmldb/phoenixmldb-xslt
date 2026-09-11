@@ -43,7 +43,11 @@ settled one. Accumulator values are now evaluated on demand.
 ## Behaviour change — read this before upgrading
 
 **Built-in functions now enforce declared parameter cardinality.** Previously they did not, so
-invalid calls returned a value instead of raising:
+invalid calls returned a value instead of raising.
+
+This applies to **every built-in**, not only the string functions the examples happen to show.
+Any built-in call passing an empty or multi-item argument where the spec requires exactly one
+now raises `XPTY0004`, carrying the call-site location. Examples, not an exhaustive list:
 
 | call | before | after |
 |---|---|---|
@@ -56,12 +60,20 @@ change a consumer notices. A stylesheet or query relying on the lenient behaviou
 where it previously produced a value. **That behaviour change is itself the argument for a minor
 version rather than a patch.**
 
-Enabling the check required correcting our own signatures first: 9 XSLT built-in declarations
-and 40+ XQuery ones were stricter than F&O 3.1 / XSLT 3.0 — `document()`'s `$uri-sequence`
-declared `xs:string?` where the spec says `item()*`, `format-number()`'s `$value`, all 48 `xs`
-constructors, the date/duration extractors, the math functions. A blanket check before that
-audit measured −113 QT3 cases, every one of them our own mis-declaration rather than a spec
-disagreement.
+Enabling the check required correcting our own signatures first, because many were stricter
+than F&O 3.1 / XSLT 3.0 demand:
+
+- **XQuery — 86 signatures**: 38 individually declared parameters, plus all 48 `xs:`
+  constructors through one shared base (`TypeConstructorFunction`). The 38 are 18 date/time/
+  duration component extractors, 12 math (11 one-argument functions plus `math:pow`'s `$x`),
+  `format-number#2`/`#3`, `json-to-xml#1`/`#2` and `parse-json#1`/`#2`, `round#2`'s `$arg`, and
+  `sum#2`'s `$zero`.
+- **XSLT — 9 parameters across 9 signatures**, including `document()`'s `$uri-sequence`
+  declared `xs:string?` where the spec says `item()*`, and `format-number()`'s `$value`.
+
+A blanket check *before* that audit measured −113 QT3 cases — every one of them our own
+mis-declaration rather than a spec disagreement, which is why the declarations were corrected
+first and the check enabled second.
 
 ## Conformance
 
