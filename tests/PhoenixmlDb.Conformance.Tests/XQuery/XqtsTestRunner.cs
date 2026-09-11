@@ -516,11 +516,16 @@ public sealed class XqtsTestRunner
         try
         {
             // Setup context with environment
-            var queryResult = await ExecuteQueryAsync(testCase, ct);
+            var queryResult = await ExecuteWithHardTimeoutAsync(testCase, ct).ConfigureAwait(false);
             result.ActualResult = queryResult;
 
             // Verify assertions
             result.Passed = await VerifyAssertionsAsync(testCase, testCase.Assertions, queryResult, ct).ConfigureAwait(false);
+        }
+        catch (QueryAbandonedException ex)
+        {
+            result.Error = ex;
+            result.Passed = false;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -554,6 +559,48 @@ public sealed class XqtsTestRunner
     /// Per-test execution timeout to prevent runaway queries from blocking the test suite.
     /// </summary>
     private static readonly TimeSpan PerTestTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How long past <see cref="PerTestTimeout"/> a query may keep running before the runner
+    /// stops waiting for it.
+    /// </summary>
+    private static readonly TimeSpan AbandonGrace = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Runs the query with a wall-clock limit that does not depend on the engine cooperating.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="PerTestTimeout"/> is a cancellation token, and a token only stops a query that
+    /// looks at it. An engine loop that never polls ran on forever: under PhoenixmlDb.XQuery 1.7.0,
+    /// QT3 op/same-key/same-key-023 (map:remove and map:put over a 421,875-key map, once per key,
+    /// inside <c>every</c>) copies the whole map on each call, and the quantifier did not poll
+    /// cancellation. The nightly's xqts chunk wedged on it for the rest of its budget and reported
+    /// TIMEOUT for the whole chunk, with 256 test-sets never run, and nothing in the artifact
+    /// naming the case.
+    ///
+    /// The query starts on the thread pool, so even a synchronous spin that never yields
+    /// returns control here. Past the token's deadline plus <see cref="AbandonGrace"/>, the case
+    /// is recorded as a failure naming what happened, and the runner moves on. The abandoned
+    /// query is not stopped, because .NET has no way to kill a thread. It keeps a core busy
+    /// until the process exits, which costs the rest of the chunk some speed but not its
+    /// results.
+    /// </remarks>
+    private async Task<object?> ExecuteWithHardTimeoutAsync(XqtsTestCase testCase, CancellationToken ct)
+    {
+        var query = Task.Run(() => ExecuteQueryAsync(testCase, ct), CancellationToken.None);
+        var deadline = Task.Delay(PerTestTimeout + AbandonGrace, ct);
+        if (await Task.WhenAny(query, deadline).ConfigureAwait(false) == query)
+            return await query.ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        // Observe the abandoned task's eventual fault, or it surfaces later as an
+        // UnobservedTaskException against whichever test happens to be running.
+        _ = query.ContinueWith(t => _ = t.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        throw new QueryAbandonedException(
+            $"Test '{testCase.Name}' ignored cancellation: still running {(PerTestTimeout + AbandonGrace).TotalSeconds}s " +
+            "after it was cancelled at the per-test timeout. Abandoned so the rest of the run can proceed; " +
+            "the engine has a loop that does not poll its CancellationToken.");
+    }
 
     private async Task<object?> ExecuteQueryAsync(XqtsTestCase testCase, CancellationToken ct)
     {
@@ -1556,4 +1603,13 @@ public sealed class XqtsTestSummary
     public DateTimeOffset EndTime { get; set; }
     public TimeSpan Duration => EndTime - StartTime;
     public List<XqtsTestResult> Results { get; } = new();
+}
+
+
+/// <summary>A test query that did not stop when cancelled and was left running.</summary>
+public sealed class QueryAbandonedException : TimeoutException
+{
+    public QueryAbandonedException() { }
+    public QueryAbandonedException(string message) : base(message) { }
+    public QueryAbandonedException(string message, Exception innerException) : base(message, innerException) { }
 }
