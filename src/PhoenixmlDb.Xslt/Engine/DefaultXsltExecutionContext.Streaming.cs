@@ -522,95 +522,205 @@ internal sealed partial class DefaultXsltExecutionContext
             IdPatternEvaluator = _matchCtxIdPatternEvaluator,
         };
 
-        // Evaluate start-phase rules for ALL accumulators at this node.
-        // Store before-values incrementally so cross-accumulator references
-        // (e.g., interval-1 calling accumulator-before('latest-1')) work correctly.
-        for (var i = 0; i < accumulators.Count; i++)
+        var frame = new AccumulatorWalkFrame(node, nodeId, matchContext, accumulators, currentValues, nodeValueMaps);
+        var savedFrame = _accumulatorWalkFrame;
+        _accumulatorWalkFrame = frame;
+        try
         {
-            // Skip evaluation if the accumulator is in error state
-            if (currentValues[i] is AccumulatorDeferredError)
+            // Start-phase rules for ALL accumulators at this node, in declaration order — but a
+            // rule that asks for another accumulator's value at this node runs that one first
+            // (see EnsureAccumulatorPhaseAsync), so declaration order never decides a value.
+            for (var i = 0; i < accumulators.Count; i++)
+                await RunAccumulatorStartPhaseAsync(frame, i).ConfigureAwait(false);
+
+            // Process children
+            IReadOnlyList<NodeId>? children = null;
+            if (node is XdmDocument d)
+                children = d.Children;
+            else if (node is XdmElement elem)
+                children = elem.Children;
+
+            if (children != null)
             {
-                nodeValueMaps[i][nodeId] = (before: currentValues[i], after: currentValues[i]);
+                foreach (var childId in children)
+                {
+                    var child = nodeStore.GetNode(childId);
+                    if (child != null)
+                        await WalkAccumulatorsAsync(child, accumulators, currentValues, nodeValueMaps, nodeStore).ConfigureAwait(false);
+                }
+            }
+
+            // End-phase rules for ALL accumulators at this node, on the same terms.
+            frame.InEndPhase = true;
+            for (var i = 0; i < accumulators.Count; i++)
+                await RunAccumulatorEndPhaseAsync(frame, i).ConfigureAwait(false);
+        }
+        finally
+        {
+            _accumulatorWalkFrame = savedFrame;
+        }
+    }
+
+
+    /// <summary>The accumulator walk's state at the node it is visiting.</summary>
+    /// <remarks>
+    /// Exists so a rule can ask for another accumulator's value at the SAME node before the walk
+    /// has reached that accumulator. Each phase ran accumulators in declaration order and stored
+    /// values as it went, so an end rule reading a later-declared accumulator's after-value got
+    /// the provisional entry the start phase left — the value from BEFORE this node's
+    /// descendants. W3C accumulator-077: header-map's end rule on header-item read
+    /// accumulator-after('header-id') and got the previous header-item's id, () for the first.
+    /// </remarks>
+    private sealed class AccumulatorWalkFrame(
+        object node,
+        NodeId nodeId,
+        XsltContext matchContext,
+        IReadOnlyList<XsltAccumulator> accumulators,
+        object?[] currentValues,
+        Dictionary<NodeId, (object? before, object? after)>[] nodeValueMaps)
+    {
+        public object Node { get; } = node;
+        public NodeId NodeId { get; } = nodeId;
+        public XsltContext MatchContext { get; } = matchContext;
+        public IReadOnlyList<XsltAccumulator> Accumulators { get; } = accumulators;
+        public object?[] CurrentValues { get; } = currentValues;
+        public Dictionary<NodeId, (object? before, object? after)>[] NodeValueMaps { get; } = nodeValueMaps;
+        public bool InEndPhase { get; set; }
+        /// <summary>Per accumulator: 0 = not run in the current phase, 1 = running, 2 = done.</summary>
+        public byte[] StartState { get; } = new byte[accumulators.Count];
+        public byte[] EndState { get; } = new byte[accumulators.Count];
+    }
+
+
+    private AccumulatorWalkFrame? _accumulatorWalkFrame;
+
+
+    private async ValueTask RunAccumulatorStartPhaseAsync(AccumulatorWalkFrame frame, int i)
+    {
+        if (frame.StartState[i] != 0)
+            return;
+        frame.StartState[i] = 1;
+        var currentValues = frame.CurrentValues;
+        // Skip evaluation if the accumulator is in error state
+        if (currentValues[i] is AccumulatorDeferredError)
+        {
+            frame.NodeValueMaps[i][frame.NodeId] = (before: currentValues[i], after: currentValues[i]);
+            frame.StartState[i] = 2;
+            return;
+        }
+
+        var acc = frame.Accumulators[i];
+        foreach (var rule in acc.Rules)
+        {
+            if (rule.Phase != AccumulatorPhase.Start)
                 continue;
-            }
+            if (!rule.Match.Matches(frame.Node, frame.MatchContext))
+                continue;
 
-            var acc = accumulators[i];
-            foreach (var rule in acc.Rules)
+            try
             {
-                if (rule.Phase != AccumulatorPhase.Start)
-                    continue;
-                if (!rule.Match.Matches(node, matchContext))
-                    continue;
-
-                try
-                {
-                    currentValues[i] = await EvaluateAccumulatorRuleAsync(
-                        node, rule, currentValues[i], acc).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (AccumulatorDeferredError.IsDeferrable(ex))
-                {
-                    currentValues[i] = new AccumulatorDeferredError(ex);
-                }
-                break; // Only first matching rule fires
+                currentValues[i] = await EvaluateAccumulatorRuleAsync(
+                    frame.Node, rule, currentValues[i], acc).ConfigureAwait(false);
             }
-
-            // Store before-value immediately so other accumulators can reference it
-            nodeValueMaps[i][nodeId] = (before: currentValues[i], after: currentValues[i]);
+            catch (Exception ex) when (AccumulatorDeferredError.IsDeferrable(ex))
+            {
+                currentValues[i] = new AccumulatorDeferredError(ex);
+            }
+            break; // Only first matching rule fires
         }
 
-        // Process children
-        IReadOnlyList<NodeId>? children = null;
-        if (node is XdmDocument d)
-            children = d.Children;
-        else if (node is XdmElement elem)
-            children = elem.Children;
+        // Store before-value immediately so other accumulators can reference it
+        frame.NodeValueMaps[i][frame.NodeId] = (before: currentValues[i], after: currentValues[i]);
+        frame.StartState[i] = 2;
+    }
 
-        if (children != null)
+
+    private async ValueTask RunAccumulatorEndPhaseAsync(AccumulatorWalkFrame frame, int i)
+    {
+        if (frame.EndState[i] != 0)
+            return;
+        frame.EndState[i] = 1;
+        var currentValues = frame.CurrentValues;
+        // Skip evaluation if the accumulator is in error state
+        if (currentValues[i] is AccumulatorDeferredError)
         {
-            foreach (var childId in children)
-            {
-                var child = nodeStore.GetNode(childId);
-                if (child != null)
-                    await WalkAccumulatorsAsync(child, accumulators, currentValues, nodeValueMaps, nodeStore).ConfigureAwait(false);
-            }
+            frame.EndState[i] = 2;
+            return;
         }
 
-        // Evaluate end-phase rules for ALL accumulators at this node.
-        // Update after-values incrementally so cross-accumulator references work.
         _evaluatingAccEndPhase ??= new();
-        for (var i = 0; i < accumulators.Count; i++)
+        var acc = frame.Accumulators[i];
+        foreach (var rule in acc.Rules)
         {
-            // Skip evaluation if the accumulator is in error state
-            if (currentValues[i] is AccumulatorDeferredError)
+            if (rule.Phase != AccumulatorPhase.End)
+                continue;
+            if (!rule.Match.Matches(frame.Node, frame.MatchContext))
                 continue;
 
-            var acc = accumulators[i];
-            foreach (var rule in acc.Rules)
+            var cycleKey = (acc.Name, frame.NodeId);
+            _evaluatingAccEndPhase.Add(cycleKey);
+            try
             {
-                if (rule.Phase != AccumulatorPhase.End)
-                    continue;
-                if (!rule.Match.Matches(node, matchContext))
-                    continue;
-
-                var cycleKey = (acc.Name, nodeId);
-                _evaluatingAccEndPhase.Add(cycleKey);
-                try
-                {
-                    currentValues[i] = await EvaluateAccumulatorRuleAsync(
-                        node, rule, currentValues[i], acc).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (AccumulatorDeferredError.IsDeferrable(ex))
-                {
-                    currentValues[i] = new AccumulatorDeferredError(ex);
-                }
-                finally
-                {
-                    _evaluatingAccEndPhase.Remove(cycleKey);
-                }
-                break; // Only first matching rule fires
+                currentValues[i] = await EvaluateAccumulatorRuleAsync(
+                    frame.Node, rule, currentValues[i], acc).ConfigureAwait(false);
             }
-            // Update this accumulator's after-value immediately so subsequent accumulators can see it
-            nodeValueMaps[i][nodeId] = (nodeValueMaps[i][nodeId].before, after: currentValues[i]);
+            catch (Exception ex) when (AccumulatorDeferredError.IsDeferrable(ex))
+            {
+                currentValues[i] = new AccumulatorDeferredError(ex);
+            }
+            finally
+            {
+                _evaluatingAccEndPhase.Remove(cycleKey);
+            }
+            break; // Only first matching rule fires
+        }
+        // Update this accumulator's after-value immediately so subsequent accumulators can see it
+        frame.NodeValueMaps[i][frame.NodeId] = (frame.NodeValueMaps[i][frame.NodeId].before, after: currentValues[i]);
+        frame.EndState[i] = 2;
+    }
+
+
+    /// <summary>
+    /// Before a rule reads another accumulator's value at the node the walk is visiting, runs
+    /// that accumulator's rule for the current phase if it has not run yet.
+    /// </summary>
+    /// <remarks>
+    /// accumulator-before needs the start phase done; accumulator-after, read from an end rule,
+    /// needs the end phase done. A request for an accumulator whose rule is running at this node
+    /// is a cycle among the accumulators, XTDE3400 — the end-phase case was already reported by
+    /// <see cref="GetAccumulatorValue"/>, and a start-phase cycle would otherwise read a value
+    /// that does not exist yet.
+    /// </remarks>
+    internal async ValueTask EnsureAccumulatorPhaseAsync(QName accumulatorName, object node, bool isAfter)
+    {
+        if (_accumulatorWalkFrame is not { } frame)
+            return;
+        var nodeId = node switch { XdmDocument d => d.Id, XdmNode n => n.Id, _ => (NodeId?)null };
+        if (nodeId != frame.NodeId)
+            return;
+        var index = -1;
+        for (var i = 0; i < frame.Accumulators.Count; i++)
+        {
+            if (frame.Accumulators[i].Name.Equals(accumulatorName))
+            {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0)
+            return;
+
+        if (!frame.InEndPhase)
+        {
+            if (isAfter)
+                return;
+            if (frame.StartState[index] == 1)
+                throw Error($"XTDE3400: Cyclic dependency detected in accumulator '{accumulatorName}' at the current node");
+            await RunAccumulatorStartPhaseAsync(frame, index).ConfigureAwait(false);
+        }
+        else if (isAfter && frame.EndState[index] == 0)
+        {
+            await RunAccumulatorEndPhaseAsync(frame, index).ConfigureAwait(false);
         }
     }
 

@@ -57,6 +57,7 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
 
         // Lazily compute accumulators for this document if not yet done
         await _context.EnsureAccumulatorsComputedAsync(accName, node).ConfigureAwait(false);
+        await _context.EnsureAccumulatorPhaseAsync(accName, node, isAfter: true).ConfigureAwait(false);
 
         var values = _context.GetAccumulatorValue(accName, node, isAfter: true)
             ?? throw new XsltException($"XTDE3340: No accumulator named '{name}' is available for the current node");
