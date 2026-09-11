@@ -694,7 +694,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Direct-output / streaming keep the existing child-recursion dispatch, as does
                 // any untyped-RTF body (flip-active OR blocked): only a typed as-body sequence
                 // accumulator (InTypedAsBodyAccumulator) delivers the copy as a node item.
-                if (!_isStreamingExecution && InTypedAsBodyAccumulator && _nodeStore != null)
+                // A function body is a sequence constructor too: returning the children there
+                // made f() as="document-node()" an XTTE0780 (W3C merge-096).
+                if (!_isStreamingExecution && (InTypedAsBodyAccumulator || InFunctionBodyProper) && _nodeStore != null)
                     await BuildBuiltInCopyDocNodeAsync(builtinShallowDoc, mode, withParams).ConfigureAwait(false);
                 else if (!_isStreamingExecution)
                     await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
@@ -951,8 +953,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 // produced. (fn/base-uri 053: deep-copy-doc2.) Direct-output / streaming keep the
                 // existing child-recursion dispatch (a doc node serializes as its children), as
                 // does any untyped-RTF body (flip-active OR blocked): only a typed as-body
-                // sequence accumulator (InTypedAsBodyAccumulator) delivers the copy as a node item.
-                if (!_isStreamingExecution && InTypedAsBodyAccumulator && _nodeStore != null)
+                // sequence accumulator (InTypedAsBodyAccumulator) or a function body delivers the
+                // copy as a node item.
+                if (!_isStreamingExecution && (InTypedAsBodyAccumulator || InFunctionBodyProper) && _nodeStore != null)
                     await BuildBuiltInCopyDocNodeAsync(builtinDeepDoc, mode, withParams).ConfigureAwait(false);
                 else if (!_isStreamingExecution)
                     await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
