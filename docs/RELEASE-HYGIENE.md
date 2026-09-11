@@ -70,6 +70,47 @@ that do work, in the order they apply:
 3. **Unlist** only to stop someone *newly* picking a version we know is wrong on its face —
    which is what Tier 1 is, and why it has exactly one entry.
 
+## Tier 1b — two abandoned packages shadow the current tools (found 2026-09-11)
+
+Stronger than anything else here on user impact, and not previously in this plan. Verified
+against nuget.org, not inferred:
+
+| package | latest | versions | installs command | source repo |
+|---|---|---|---|---|
+| `xslt` | **1.7.0** | 113 | `xslt` | `phoenixmldb-xslt` |
+| `PhoenixmlDb.Xslt.Cli` | **1.4.10** | 7 | `xslt` | `phoenixmldb-cli` |
+| `xquery4` | **1.7.0** | 89 | `xquery` | `phoenixmldb-xquery` |
+| `PhoenixmlDb.XQuery.Cli` | **1.4.10** | 6 | `xquery` | `phoenixmldb-cli` |
+
+**Two different packages install the same `dotnet tool` command**, and the abandoned one has the
+more official-looking name. A user searching nuget for our XSLT CLI is more likely to find
+`PhoenixmlDb.Xslt.Cli` — matching the naming of `PhoenixmlDb.Xslt` and `PhoenixmlDb.Core` — than
+the bare `xslt`. What they install is three minor versions stale, last published at 1.4.10, and
+missing every fix since, including #51 and #52.
+
+Installing both is a command-name collision on `xslt` / `xquery`, with whichever was installed
+last winning silently.
+
+**Recommendation: unlist `PhoenixmlDb.Xslt.Cli` and `PhoenixmlDb.XQuery.Cli` entirely — all 13
+versions.** This is the case where unlisting is the *right* tool, by the test in the section
+above: it stops someone newly picking a package that is wrong on its face, and there is a live,
+better-maintained replacement to land on. That is unlike the 1.6.x versions, which are merely
+superseded.
+
+Not a code change and not urgent, but it should happen before the CLI is promoted anywhere,
+because promotion drives search traffic toward the name we do not maintain.
+
+**Precondition: confirm nobody depends on them.** 13 published versions with no recent release
+suggests abandonment rather than use, but check download counts before unlisting rather than
+after.
+
+### Related: the version counts are themselves the argument
+
+`PhoenixmlDb.Xslt` has **128** published versions and `PhoenixmlDb.XQuery` **118**. That is the
+concrete form of the pace concern — a consumer choosing a version is picking from a list of a
+hundred-plus, nearly all of which are superseded within days. Tier 2 addresses the 1.6.x band;
+the same reasoning applies further back and is worth a decision rather than an accumulation.
+
 ## Tier 2 — unlist once 1.7.0 is published and the database has bumped
 
 All 1.6.x **except** the latest and the pinned ones. Concretely:
