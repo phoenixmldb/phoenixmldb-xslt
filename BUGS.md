@@ -1502,6 +1502,53 @@ failing: XSLT 10,137 → 10,139, QT3 29,509 → 29,524 (+15 across `fn:abs`, `av
 
 ---
 
+### 49. Timing tests, fourth instance — and the fix I recommended is not sufficient (2026-09-11)
+
+A fourth test measuring the machine rather than the engine, and this one matters more than the
+others because **it was written using the fix I proposed for the first three.**
+
+| # | test | what it asserted | how it failed |
+|---|---|---|---|
+| 1 | parser scaling | 50K children parse in under 2s | failed at load 19, code correct |
+| 2 | parser scaling, 2nd form | 2x ratio under 3.0 | failed CI at 3.71 on 69ms/255ms |
+| 3 | parser scaling, 3rd form | 4x ratio under 8.0 | failed CI at 18.4 — GC on a 2-core runner |
+| 4 | `StreamingCancellationTests` | still running after 3s | finishes in ~2s on a fast box |
+| 5 | xquery `#10` scaling | 4x ratio | **13.9x on net10.0, passed net8.0 in the SAME run** |
+
+Instance 5 is the informative one. It used a **ratio**, which is what I recommended after instance
+1 — a ratio cancels ambient load because both measurements carry it. That reasoning is correct and
+still insufficient:
+
+- **It only holds if both measurements carry the SAME load.** Parallel xunit classes on a 2-core
+  runner do not give that. One measurement got a free core, the other did not, and the ratio
+  amplified the difference rather than cancelling it.
+- **At small absolute sizes, fixed costs and GC dominate.** 69ms against 255ms is not measuring
+  the algorithm. Instance 3 failed at 18.4 on measurements where the small case was 29ms.
+
+Same code measured 196/265/502/910 ms at 4k/16k/64k/256k locally — linear, obviously.
+
+**What actually works, from five attempts:**
+
+1. **A large span.** 4x separates linear (4x) from quadratic (16x) far better than 2x, and 16x
+   better again. Instance 5's fix widened to 16x input with a 64x bound.
+2. **Absolute sizes big enough that fixed cost is noise.** If the small case is tens of
+   milliseconds, stop.
+3. **Isolation from parallel tests.** A non-parallel collection. Without this the other two do
+   not save you, which is the whole lesson of instance 5.
+4. **Or do not assert timing in CI at all.** Instance 3 ended here: assert correctness at scale
+   everywhere, compare timings only locally. A benchmark that reports beats a test that fails.
+
+**The transferable point is about advice, not timing.** I gave a fix that addressed the mechanism
+I had seen (absolute bounds are load-dependent) and not the mechanism I had not (co-scheduled
+tests break the assumption a ratio relies on). It was applied faithfully and failed the same way.
+A remedy that names one cause is worth exactly as much as that cause's share of the problem, and
+the way to find out is to let someone apply it and watch — which is what happened here.
+
+Held the 1.7.1 release: `xquery` main was red on this, not on a regression. (phoenixmldb-xquery#19,
+found and fixed by parsers2.)
+
+---
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
