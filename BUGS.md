@@ -1899,6 +1899,13 @@ happened and found nothing*, arriving at the destruction shape from the other si
 That convergence is the useful part. A silent skip is not merely a missing error; it is the
 **act of destroying the evidence** that any later check would need. Now `FODC0002`.
 
+**#50 is destruction again, and it was the largest single fix of the sweep (+21).** Invoking an
+abstract component reported "not found", because **abstract functions and named templates were
+dropped at merge time**. The component existed and was abstract; by the time anything asked
+about it, the record that it had ever existed was gone, leaving the only answer a lookup can
+give for something absent. `XTDE3052` — "you invoked an abstract component" — is unreachable if
+the component was deleted before the invocation was checked. Ask before the erasing step.
+
 Worth keeping the two apart, because the remedies differ. Ambiguity is fixed by widening the
 representation so it can say which meaning it holds. Destruction is fixed by **ordering** — ask
 the question before the step that erases its answer, or preserve what that step consumes. A
@@ -2536,6 +2543,36 @@ shadow-attribute evaluation silently dropped what it could not compute.
 
 **Blocked on the XSLT-first order, not on difficulty.** When the XQuery track reopens this
 should be near the front: it is a small mapping fix with a wide correctness surface.
+
+### 65. OPEN (XQuery-side, blocked) — two error-reporting defects found by the XSLT sweep (2026-09-11)
+
+Both found by parsers2 working the XSLT failure list, both XQuery-side, both parked by the
+XSLT-first order. Recorded so they are not rediscovered.
+
+#### `fn:collection()` conflates "declared but empty" with "not found"
+
+A collection that is declared and contains nothing raises `FODC0002` — the not-found error —
+where the empty sequence is due (`fn/collection-001`, `-003`). Same for `uri-collection()`.
+
+**This is #53's ambiguity at a different layer**, and the same conflation as #37's
+prefixed-variable fallback: *absent* and *empty* share one representation, so a caller cannot
+distinguish "there is no such collection" from "the collection is empty". #37 resolved it in
+one direction (`null` for both), this resolves it in the other (error for both). The pattern
+does not care which way the collapse runs.
+
+Consequence for a user: a perfectly valid empty collection is an error rather than an empty
+result, so a stylesheet that iterates a collection which happens to be empty aborts instead of
+producing nothing.
+
+#### An undeclared prefix in a function call reports the parser's error
+
+`XPST0003` comes back from the parser where `XPST0081` is due (`error-XPST0081a`). `XPST0003` is
+"syntax error"; `XPST0081` is "namespace prefix not declared". The query is *syntactically
+fine* — the parser simply cannot resolve the prefix and reports the only code it has.
+
+Worth noting as another instance of #21 (improve the error first): a user told their query has a
+syntax error will re-read their syntax. The actual fix is a missing namespace declaration, which
+is nowhere near what the message points at.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
