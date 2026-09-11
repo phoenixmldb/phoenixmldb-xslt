@@ -508,7 +508,9 @@ internal sealed class StreamWatcher
         return Aggregation switch
         {
             WatcherAggregation.Count => _count,
-            WatcherAggregation.Sum => _count > 0 ? _sum : null,
+            // fn:sum(()) is xs:integer 0. The two-argument form's default needs the live
+            // scope, so it stays null here and the caller evaluates SumDefaultExpression.
+            WatcherAggregation.Sum => _count > 0 ? _sum : SumDefaultExpression == null ? 0L : null,
             WatcherAggregation.Max => _max.HasValue ? _max.Value : null,
             WatcherAggregation.Min => _min.HasValue ? _min.Value : null,
             WatcherAggregation.Avg => _count > 0 ? _sum / _count : null,
