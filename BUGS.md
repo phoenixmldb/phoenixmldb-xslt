@@ -1906,6 +1906,41 @@ about it, the record that it had ever existed was gone, leaving the only answer 
 give for something absent. `XTDE3052` — "you invoked an abstract component" — is unreachable if
 the component was deleted before the invocation was checked. Ask before the erasing step.
 
+#### The dangerous compound: destruction plus a fallback that manufactures a plausible answer
+
+xslt #53 is the sharpest instance, and it adds something the earlier ones did not have. A
+template body needing the whole subtree ran on a **buffered copy materialised from the live
+reader**. The copy carried fresh node ids, so the per-node accumulator values the streaming pass
+had already computed *correctly* were unreachable from it — the evidence existed, and the
+identity connecting it to the node was gone by the time `accumulator-before()` asked.
+
+That alone would be ordinary destruction. What made it invisible rather than loud is what
+happened next: **the lookup missed and silently recomputed** the accumulator from its initial
+value over that one node — which always yields initial-plus-one-rule-firing. So it returned
+`1`: a number of exactly the right type, in exactly the right range, that a reader has no reason
+to doubt.
+
+**Destruction plus a plausible-answer fallback is worse than destruction alone.** Bare
+destruction tends to surface as a null, an empty sequence, or a crash — something visible. A
+fallback that recomputes converts a lost value into a *confident wrong one*, and nothing in the
+output records that anything was lost. When auditing for this shape, the fallback path deserves
+more suspicion than the lookup: **ask what the code does when it does not find what it expected,
+and treat "recompute a fresh answer" as a defect rather than resilience.**
+
+#### One record, two lifetimes
+
+parsers2's first attempt at that fix copied *both* the pre- and post-descent accumulator values
+and regressed the cases reading `accumulator-after()`. The reason is worth keeping: **at the
+moment the copy is taken, only the pre-descent value is final** — the element's end-phase rules
+have not run, so its post-descent value is not yet meaningful. The two halves of one record had
+**different lifetimes**, and treating them as a single unit was the error.
+
+That is a distinct trap from the ambiguity and destruction shapes, and a productive thing to ask
+of any record that gets copied, cached or snapshotted: *are all of its fields valid at the same
+instant?* Where they are not, copying the record is wrong however faithfully it is done — the
+fix here records the copy's **origin** instead of its values, so each half is resolved when it is
+actually final.
+
 Worth keeping the two apart, because the remedies differ. Ambiguity is fixed by widening the
 representation so it can say which meaning it holds. Destruction is fixed by **ordering** — ask
 the question before the step that erases its answer, or preserve what that step consumes. A
@@ -2573,6 +2608,39 @@ fine* — the parser simply cannot resolve the prefix and reports the only code 
 Worth noting as another instance of #21 (improve the error first): a user told their query has a
 syntax error will re-read their syntax. The actual fix is a missing namespace declaration, which
 is nowhere near what the message points at.
+
+### 66. OPEN — a streamed `accumulator-after()` counts only the matched subtree (2026-09-11)
+
+Found by parsers2 while fixing the buffered-copy identity loss, and **deliberately not fixed**.
+Pre-existing, unrelated to that change, and registered rather than quietly encoded in a test.
+
+Same stylesheet, same input, an accumulator that is never reset:
+
+```xml
+<doc><chap>…2 figures…</chap><chap>…2 figures…</chap></doc>
+```
+
+| mode | output | correct? |
+|---|---|---|
+| streamed | `2 2 2 2` | **no** |
+| non-streamed | `2 2 4 2` | yes — the second `chap` has seen four figures |
+
+`accumulator-after()` on the streamed path reports the total for the **matched subtree**, not for
+the stream so far, so an accumulator that deliberately runs across the whole document resets in
+effect at every match.
+
+**This is an asymmetric pair (#40).** Two implementations of one semantics, and one of them is
+right — the non-streamed path already produces the correct answer, so this is not an open
+question about what the spec means. The remedy is to make the streamed path agree, not to decide
+which is correct.
+
+**Why it was left alone is the good part.** parsers2 had a fix in hand for the adjacent defect
+and could have made these cases pass by encoding *either* answer in a test. Writing the test to
+match current behaviour would have frozen the bug into the suite as expected output — the exact
+move that makes a defect permanent and invisible. The test file says so explicitly instead.
+
+Start at `ExecuteWithBufferedSubtreeAsync`; it is the same buffered-copy path as the fix in
+xslt #53.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
