@@ -333,6 +333,15 @@ internal sealed partial class DefaultXsltExecutionContext
     // but whose end tags must be deferred until the StreamingXmlProcessor sees EndElement.
     internal readonly Stack<string> _streamingOpenElements = new();
 
+    /// <summary>
+    /// True while executing a template for an element whose subtree was already READ from the
+    /// stream (ReadStreamingElementForDispatchAsync materialises the whole element and leaves the
+    /// reader on its EndElement). An xsl:apply-templates in that body must walk the children in
+    /// memory: driving the reader instead consumes the element's FOLLOWING SIBLINGS as if they
+    /// were its children (W3C attr/mode mode-1418 and siblings).
+    /// </summary>
+    internal bool _streamingDispatchElementMaterialized;
+
     // Active streaming processor reference for triggering streaming from apply-templates
     // inside xsl:source-document Content bodies.
     internal StreamingXmlProcessor? _activeStreamingProcessor;

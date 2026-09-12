@@ -144,6 +144,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // not before). Without this, apply-templates returned immediately, `<post/>`
         // emitted, then the processor's outer loop read the children as siblings.
         if (_isStreamingExecution && _activeStreamingReader != null
+            && !_streamingDispatchElementMaterialized
             && IsConsumingChildSelect(select))
         {
             await ApplyTemplatesStreamingAsync(mode, withParams).ConfigureAwait(false);
@@ -840,7 +841,10 @@ internal sealed partial class DefaultXsltExecutionContext
                 // In streaming mode, child recursion is handled by the streaming loop:
                 // we leave the element open (no closing tag) and push the qname so that
                 // StreamingXmlProcessor can write the closing tag on EndElement.
-                if (_isStreamingExecution)
+                // Only when the streaming loop will deliver this element's EndElement. For an
+                // already-materialised element the loop has passed it, so a deferred close would
+                // never be popped (the tag stays open) — close it inline instead.
+                if (_isStreamingExecution && !_streamingDispatchElementMaterialized)
                 {
                     _streamingOpenElements.Push(qname);
                     // Descendants in the streaming loop inherit this subtree's base context;
@@ -1591,7 +1595,20 @@ internal sealed partial class DefaultXsltExecutionContext
                     // Fire matching template (or default rule) inline, same path the main
                     // streaming processor uses. Pop any deferred element close on the way
                     // out — element template body's shallow-copy / xsl:copy may have pushed.
-                    await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
+                    // The element arrives FULLY MATERIALISED (the helper read its whole subtree
+                    // and left the reader on its EndElement), so an apply-templates inside its
+                    // body must walk those children in memory rather than read on — reading on
+                    // consumed the element's following siblings as its children.
+                    var savedMaterialized = _streamingDispatchElementMaterialized;
+                    _streamingDispatchElementMaterialized = true;
+                    try
+                    {
+                        await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _streamingDispatchElementMaterialized = savedMaterialized;
+                    }
                     // After the template runs, the deferred-close stack may contain the
                     // element's open tag (if shallow-copy / xsl:copy was used). Close it
                     // now, since we already consumed the element's full subtree.
