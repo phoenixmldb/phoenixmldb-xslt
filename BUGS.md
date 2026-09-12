@@ -2642,6 +2642,92 @@ move that makes a defect permanent and invisible. The test file says so explicit
 Start at `ExecuteWithBufferedSubtreeAsync`; it is the same buffered-copy path as the fix in
 xslt #53.
 
+### 67. PATTERN — a proxy predicate is indistinguishable from the real one until it isn't (2026-09-11)
+
+Named by parsers2, from the AVT/accumulator routing fix. A third shape alongside #53's
+*ambiguity* and *destruction*, and distinct from both: here the evidence is present and intact,
+and the code **asks the wrong question of it**.
+
+#### The instance
+
+At the document level, an accumulator read against the context node needs the value after the
+whole tree is consumed, so such a body must be routed to the whole-input buffer. That was
+detected for a `select`, but **not for an attribute value template** — because the AVT check
+tested for input **navigation**, and an accumulator call navigates nothing.
+
+```xml
+<xsl:value-of select="accumulator-after('count')"/>   <!-- routed correctly -->
+<result count="{accumulator-after('count')}"/>        <!-- folded to the initial value -->
+```
+
+The identical call, in the same stylesheet, answered differently depending on where it was
+written. And it produced the same silent-plausible-number as #53: `0` for a count, with nothing
+to say a routing decision had been made against it.
+
+#### The shape
+
+The property that mattered was **"does this expression need the whole input?"**. The predicate
+implemented was **"does this expression navigate the input?"**. Navigation was a *proxy* — and
+it correlated perfectly, until a function family arrived that needs the whole input while
+touching no path at all.
+
+> **A proxy predicate that is right for every case anyone tested is indistinguishable from the
+> real predicate until it isn't.**
+
+That is what makes this different from #53. There is no lost evidence and no ambiguous slot to
+widen; the inputs were all there and the answer was computed correctly *for the question asked*.
+The defect is one level up, in the choice of question — which is why it survives code review
+comfortably: the implementation is a faithful answer to a reasonable-sounding predicate.
+
+#### Why proxies are so durable
+
+A proxy is adopted because it is **cheap and observable** where the real property is expensive or
+abstract. "Does it navigate?" is a syntactic question answerable from the AST. "Does it need the
+whole input?" is semantic and needs to know what each function means. The proxy is chosen
+honestly, it passes every test written against the cases that motivated it, and its failure mode
+is silent — it does not misbehave, it simply classifies a new case into the wrong bucket.
+
+#### The audit question
+
+For any classifier, router or streamability decision: **what property is this actually testing,
+and what property does the caller believe it tests?** Where those differ, enumerate the cases
+where the two come apart rather than trusting that the correlation holds. Function families that
+consume input without navigating it are the obvious first place to look here; there may be
+others.
+
+Sibling to #53 rather than an instance of it. Same consequence — a confident wrong answer — by a
+third route: not lost evidence, not an ambiguous representation, but a well-implemented answer to
+the wrong question.
+
+### 68. OPEN — the W3C corpus contradicts itself on streamable accumulator AVTs (2026-09-11)
+
+Found by parsers2, **deliberately not resolved**. Recorded because the blocker is a spec reading,
+not a code change, and guessing would be worse than waiting.
+
+Two sets disagree about the same construct — a `match="/"` template in a streamable mode reading
+`accumulator-after()`:
+
+| cases | expect | via |
+|---|---|---|
+| `accumulator-009s`, `accumulator-019s` | **`XTSE3430`** — a static "not guaranteed streamable" error | AVTs |
+| `attr/mode` `mode-1107a`, `mode-1107c` | **the value** (`3`) | `xsl:value-of` |
+
+**We pass `mode-1107a/c`.** Both cannot be right about whether that construct is streamable.
+
+#### Why it was left alone
+
+Making `009s`/`019s` pass means raising a static error on a construct we **deliberately support
+elsewhere** and are currently scored correct for. That is not a fix; it is trading two passes for
+two passes while making the engine less useful, on the strength of a guess about which set
+reflects the spec.
+
+The honest position: the engine is internally consistent and the corpus is not, and we do not yet
+know which side is right. **An unresolved contradiction recorded is worth more than a resolved
+one guessed** — the guess would be indistinguishable from knowledge six months from now.
+
+Unblocking it needs XSLT 3.0 §streamability read against both cases. Until then these two are not
+counted as engine failures, and should not be chased for the conformance number.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
