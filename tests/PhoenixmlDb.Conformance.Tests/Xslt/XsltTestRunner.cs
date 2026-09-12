@@ -977,6 +977,7 @@ public sealed class XsltTestRunner
             }
 
             // Execute transformation with timeout protection
+            var warnings = new List<string>();
             var transformTask = Task.Run(async () =>
             {
                 // The W3C corpus is trusted local data and 12 of its stylesheets carry a
@@ -984,6 +985,9 @@ public sealed class XsltTestRunner
                 // DTDs unless asked — the right default for arbitrary input, wrong for a
                 // conformance run, which must parse what the suite actually ships.
                 var transformer = new XsltTransformer { AllowDtdProcessing = true };
+                // xsl:mode warning-on-no-match reports through this channel. Without collecting
+                // it, every assert-warning failed for want of anywhere to look.
+                transformer.WarningListener = w => { lock (warnings) warnings.Add(w); };
                 Uri? baseUri = testCase.Environment.StylesheetPath != null
                     ? new Uri(Path.GetFullPath(testCase.Environment.StylesheetPath))
                     : null;
@@ -1097,8 +1101,9 @@ public sealed class XsltTestRunner
             var (output, secondaryResults) = await transformTask.WaitAsync(cts.Token);
             result.ActualResult = output;
 
-            // Verify assertions (pass secondary results for assert-result-document)
-            result.Passed = await VerifyAssertionsAsync(testCase.Assertions, output, cts.Token, secondaryResults);
+            // Verify assertions (pass secondary results for assert-result-document, and the
+            // warnings the transform reported for assert-warning)
+            result.Passed = await VerifyAssertionsAsync(testCase.Assertions, output, cts.Token, secondaryResults, warnings);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -1121,11 +1126,12 @@ public sealed class XsltTestRunner
         List<XsltAssertion> assertions,
         string? actualResult,
         CancellationToken ct,
-        IReadOnlyDictionary<string, string>? secondaryResults = null)
+        IReadOnlyDictionary<string, string>? secondaryResults = null,
+        IReadOnlyList<string>? warnings = null)
     {
         foreach (var assertion in assertions)
         {
-            if (!await VerifyAssertionAsync(assertion, actualResult, ct, secondaryResults))
+            if (!await VerifyAssertionAsync(assertion, actualResult, ct, secondaryResults, warnings))
             {
                 return false;
             }
@@ -1137,7 +1143,8 @@ public sealed class XsltTestRunner
         XsltAssertion assertion,
         string? actualResult,
         CancellationToken ct,
-        IReadOnlyDictionary<string, string>? secondaryResults = null)
+        IReadOnlyDictionary<string, string>? secondaryResults = null,
+        IReadOnlyList<string>? warnings = null)
     {
         return assertion.Type switch
         {
@@ -1151,8 +1158,8 @@ public sealed class XsltTestRunner
             "assert-deep-eq" => VerifyDeepEq(assertion, actualResult),
             "assert-message" => true, // Message assertions require special handling
             "error" => false, // Expected error, but we got a result
-            "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults),
-            "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults),
+            "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings),
+            "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings),
 
             // <assert> is an XPath predicate over the result tree, and the single most common
             // assertion in the whole corpus — 11024 occurrences. It was unimplemented, so the
@@ -1161,7 +1168,7 @@ public sealed class XsltTestRunner
 
             // <not> negates its single child.
             "not" => assertion.Children.Count == 1
-                && !await VerifyAssertionAsync(assertion.Children[0], actualResult, ct, secondaryResults),
+                && !await VerifyAssertionAsync(assertion.Children[0], actualResult, ct, secondaryResults, warnings),
 
             "assert-empty" => string.IsNullOrWhiteSpace(actualResult),
 
@@ -1177,9 +1184,9 @@ public sealed class XsltTestRunner
             // and sweep are ever exposed by the analyser, implement it here.
             "assert-posture-and-sweep" => false,
 
-            // The test expects the transform to raise a warning. Warnings are not collected by
-            // this runner, so the same reasoning applies — 6 occurrences.
-            "assert-warning" => false,
+            // The test expects the transform to raise a warning. The runner collects them from
+            // the transformer's WarningListener; a test that asks for one and got none fails.
+            "assert-warning" => warnings is { Count: > 0 },
 
             // Serialization was expected to fail with a given code. The transform produced a
             // result instead, so it did not — 45 occurrences. (A transform that DOES throw is
@@ -1353,22 +1360,22 @@ public sealed class XsltTestRunner
     }
 
     private async Task<bool> AllOfAsync(List<XsltAssertion> assertions, string? result, CancellationToken ct,
-        IReadOnlyDictionary<string, string>? secondaryResults = null)
+        IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null)
     {
         foreach (var a in assertions)
         {
-            if (!await VerifyAssertionAsync(a, result, ct, secondaryResults))
+            if (!await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings))
                 return false;
         }
         return true;
     }
 
     private async Task<bool> AnyOfAsync(List<XsltAssertion> assertions, string? result, CancellationToken ct,
-        IReadOnlyDictionary<string, string>? secondaryResults = null)
+        IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null)
     {
         foreach (var a in assertions)
         {
-            if (await VerifyAssertionAsync(a, result, ct, secondaryResults))
+            if (await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings))
                 return true;
         }
         return false;

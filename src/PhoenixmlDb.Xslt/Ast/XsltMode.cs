@@ -25,6 +25,14 @@ public sealed class XsltMode
     public OnNoMatchBehavior? OnNoMatch { get; init; }
 
     /// <summary>
+    /// xsl:mode warning-on-no-match="yes": the processor reports a warning each time a node is
+    /// processed in this mode with no matching template rule, so a stylesheet author can find the
+    /// nodes falling through to the built-in rule. Parsed but never acted on before — the
+    /// attribute was validated and dropped.
+    /// </summary>
+    public bool WarningOnNoMatch { get; init; }
+
+    /// <summary>
     /// Behavior when multiple templates match.
     /// </summary>
     public OnMultipleMatchBehavior OnMultipleMatch { get; init; } = OnMultipleMatchBehavior.UseLast;
