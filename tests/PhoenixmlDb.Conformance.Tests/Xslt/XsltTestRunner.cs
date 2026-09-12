@@ -385,10 +385,20 @@ public sealed class XsltTestRunner
         var testElem = elem.Element(ns + "test");
         if (testElem != null)
         {
-            // File-based stylesheet via <stylesheet file="..."/> or <package file="..." role="principal"/>
-            var stylesheetElem = testElem.Element(ns + "stylesheet")
-                ?? testElem.Elements(ns + "package")
-                    .FirstOrDefault(p => p.Attribute("role")?.Value != "secondary");
+            // The principal stylesheet is whichever element SAYS it is principal, whether that is
+            // <package role="principal"/> or <stylesheet role="principal"/>; only then a
+            // <stylesheet> with no role, and only then an unmarked <package>. Preferring
+            // <stylesheet> outright loaded the SECONDARY import as the principal whenever a test
+            // paired a principal package with a secondary stylesheet, so eight decl/package cases
+            // ran the wrong file — package-015 ran its import, whose xsl:mode declares
+            // on-no-match="fail", and duly failed with XTDE0555 for a stylesheet that says
+            // text-only-copy.
+            static bool IsRole(XElement e, string role) => e.Attribute("role")?.Value == role;
+            var stylesheetElem = testElem.Elements()
+                    .FirstOrDefault(e => (e.Name == ns + "stylesheet" || e.Name == ns + "package")
+                        && IsRole(e, "principal"))
+                ?? testElem.Elements(ns + "stylesheet").FirstOrDefault(e => !IsRole(e, "secondary"))
+                ?? testElem.Elements(ns + "package").FirstOrDefault(e => !IsRole(e, "secondary"));
             if (stylesheetElem != null)
             {
                 var stylesheetFile = stylesheetElem.Attribute("file")?.Value;
