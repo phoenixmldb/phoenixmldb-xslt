@@ -2953,6 +2953,69 @@ merge a −27 into a track whose whole discipline has been zero per-set losses. 
 the same refusal as #69 and #70 — with the difference that here the losses are honest arrears
 rather than new damage, which is exactly why they need scheduling instead of suppressing.
 
+### 72. Five W3C test-sets are present in TestData and never run (2026-09-11)
+
+Found and measured by parsers2. **The fourth blind spot in one day, and the outermost yet**: not
+"which attribute values does the parser accept" or "which invocation parameters does the runner
+read", but **which test files does the harness open at all.**
+
+The runner's `InlineData` lists **259 of the 264** test-set files present on disk. The five it
+does not:
+
+| set | cases | pass | fail |
+|---|---|---|---|
+| `tests/decl/expose` | 42 | 9 | **33** |
+| `tests/fn/system-property-gen` | 166 | — | **168** |
+| `tests/fn/collation` | 5 | 0 | **5** — cannot run, see below |
+| `tests/decl/import-schema` | — | — | not measured |
+| `tests/sandp/_base-expressions.xml` | — | — | not measured |
+
+#### `decl/expose` — the one that matters
+
+An entire feature area scored at **zero information**. We have **no `XTSE3010` and no `XTSE3020`
+anywhere in the engine**, and nothing ever said so because the set that would is not wired up:
+`expose-901..903` (XTSE3020, exposing an undeclared component) and `expose-908..911` (XTSE3010,
+raising visibility from private) sit unrun. It also explains `error-3010a`/`3020a` directly.
+
+Two cases additionally show `XTSE0630` "duplicate global variable", which looks like a real
+defect in how exposed variables are merged.
+
+#### `fn/collation` — verified as an upstream corpus defect, not our clone
+
+Checked here rather than left as a policy question. `tests/fn/collation/` at corpus commit
+`fddf1cf` contains **only `_collation-test-set.xml`**. The catalog references
+`collation-001.xsl` through `-005.xsl`; **none of the five exist.** A `--depth 1` clone takes the
+complete tree at a commit, so these are absent upstream, not dropped by our checkout.
+
+So these five cannot pass at any level of engine quality. **Excluding them is not a dodge — it
+is the only honest option** — provided the exclusion is documented, counted, and says *why*.
+Worth reporting upstream.
+
+#### `fn/system-property-gen` — a distortion question, and the trap inside it
+
+166 near-identical generated cases would be **~4% of the XSLT corpus**, one generated family
+outweighing several real feature areas and moving every future percentage.
+
+The trap is that "exclude it, it would distort the number" and "exclude it, we fail it" produce
+the same commit. **The discipline that keeps them apart: exclude only for distortion, never for
+difficulty, and make the exclusion visible in the published figure.** The cleanest form is not an
+exclusion at all — **report handwritten and generated sets as two figures**, so neither hides the
+other and nothing is dropped for failing.
+
+#### Sequencing — my judgement, since parsers2 asked
+
+1. **Wire `decl/expose`, but land it with the baseline raise.** It is real files, a real feature,
+   and 42 cases of truth we currently do not have. But it moves the denominator, and so does the
+   pending #57 mode decision. Doing both in one restatement means **one number change with one
+   explanation**; doing them separately means the published figure moves twice in a week for
+   reasons that will blur together. Prepare it now, merge it with the raise.
+2. **Exclude `fn/collation`** on the evidence above, with the reason in the exclusion.
+3. **Do not decide `system-property-gen` for the number.** Two figures, or include it and say so.
+
+The general form of this audit now has three questions, all of which found something today:
+**which attribute values does the parser accept (#71), which invocation parameters does the
+runner read (#69), and which test files does the harness open (this entry)?**
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
