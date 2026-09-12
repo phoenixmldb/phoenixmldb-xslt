@@ -399,11 +399,27 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
                 position++;
-                await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
-                // Mirror ApplyTemplatesStreamingAsync: if the matched body pushed a
-                // deferred open element (shallow-copy / xsl:copy), close it now — the
-                // element's full subtree was already consumed.
-                if (_streamingOpenElements.Count > 0)
+                // The element arrives FULLY MATERIALISED — the helper read its whole subtree and
+                // left the reader on its EndElement. Everything that would otherwise wait for the
+                // streaming loop to deliver those children has to use the ones in memory instead:
+                // the built-in shallow-copy left the element open for children the loop would
+                // never deliver, so a matched CATEGORIES came out empty rather than carrying its
+                // CATEGORY children (W3C strm/si-apply-templates-001). Same flag, same reason as
+                // the ApplyTemplatesStreamingAsync dispatch.
+                var savedMaterialized = _streamingDispatchElementMaterialized;
+                _streamingDispatchElementMaterialized = true;
+                var openBeforeDispatch = _streamingOpenElements.Count;
+                try
+                {
+                    await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _streamingDispatchElementMaterialized = savedMaterialized;
+                }
+                // Close only a tag THIS dispatch left open. A body that closed inline (the
+                // materialised path) pushes nothing, and popping then would close an ancestor.
+                if (_streamingOpenElements.Count > openBeforeDispatch)
                 {
                     var qn = _streamingOpenElements.Pop();
                     WriteStreamingEndTag(qn);
