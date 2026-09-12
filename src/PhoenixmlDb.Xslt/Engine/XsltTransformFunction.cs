@@ -382,11 +382,28 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             // Re-anchor into the CALLER's store, exactly as XsltTransformProvider does for
             // XQuery callers. Without this the CrossStoreNodeRef wrapper leaked out as an
             // atomic value and the result was not a node at all.
-            resultMap["output"] = XsltTransformProvider.ReanchorCrossStoreResult(
+            var reanchored = XsltTransformProvider.ReanchorCrossStoreResult(
                 rawResult, _context._nodeStore as PhoenixmlDb.XQuery.INodeBuilder);
+            // A template whose body CONSTRUCTS nodes (a literal result element, xsl:element…)
+            // writes them to the output buffer rather than the sequence collector, so the raw
+            // transform has nothing typed to return and falls back to the serialized text. Under
+            // delivery-format='raw' that text is the caller's whole result: handing back the
+            // markup as a STRING made ?output a string, and copy-of then emitted &lt;in/&gt;
+            // where the node was expected (W3C transform-005/006/008). Parse it back into the
+            // caller's store — unwrapped, since raw delivers the nodes themselves and not a
+            // document node (that is what delivery-format='document' is for). Text with no
+            // markup stays a string: there is no node to recover, and the string IS the result.
+            if (reanchored is string rawText && rawText.Contains('<', StringComparison.Ordinal))
+                reanchored = ParseResultAsXdm(rawText, _context._nodeStore) ?? reanchored;
+            resultMap["output"] = reanchored;
 
+            // Into the CALLER's store, like ?output above: a node parsed into a store the
+            // surrounding evaluation does not consult resolves its children against the caller's
+            // store instead, where the same ids belong to other nodes — the secondary result
+            // came back holding the PRIMARY result's content. That hazard was invisible while
+            // this parse failed on the XML declaration and returned the markup as a string.
             foreach (var (href, content) in engine.SecondaryResultDocuments)
-                resultMap[href] = ParseResultAsXdm(content);
+                resultMap[href] = ParseResultAsXdm(content, _context._nodeStore);
         }
         else
         {
@@ -477,16 +494,27 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         }
     }
 
-    private static object? ParseResultAsXdm(string xml)
+    private static object? ParseResultAsXdm(string xml, XdmInMemoryStore? store = null)
     {
         if (string.IsNullOrWhiteSpace(xml))
             return null;
+        // A serialized result document carries an XML declaration, which is legal at the start of
+        // a document and illegal inside the wrapper this parse uses. The parse then failed and the
+        // caller was handed the MARKUP AS A STRING, so the secondary results of a raw transform
+        // came back escaped (W3C transform-008). Drop the declaration — the wrapper supplies the
+        // document context it was describing.
+        var declEnd = xml.StartsWith("<?xml", StringComparison.Ordinal)
+            ? xml.IndexOf("?>", StringComparison.Ordinal)
+            : -1;
+        if (declEnd >= 0)
+            xml = xml[(declEnd + 2)..].TrimStart();
+
         try
         {
             var xmlDoc = new System.Xml.XmlDocument();
             xmlDoc.PreserveWhitespace = true;
             xmlDoc.LoadXml($"<_wrap_>{xml}</_wrap_>");
-            var nodeStore = new XdmInMemoryStore();
+            var nodeStore = store ?? new XdmInMemoryStore();
             var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore);
             if (xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
             {
