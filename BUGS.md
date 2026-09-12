@@ -3042,6 +3042,75 @@ The general form of this audit now has three questions, all of which found somet
 **which attribute values does the parser accept (#71), which invocation parameters does the
 runner read (#69), and which test files does the harness open (this entry)?**
 
+### 73. PATTERN — a permanently-failing operation is an accidental guard, and everything behind it is untested (2026-09-11)
+
+Named by parsers2 from `fn:transform` (xslt #59), where three defects were stacked and **each one
+hid the next**.
+
+| # | defect | exposed by |
+|---|---|---|
+| 1 | `delivery-format='raw'` returned a serialized **string** — a template constructing nodes writes to the output buffer, not the sequence collector, so the raw path had nothing typed and fell back to text | — |
+| 2 | the parse failed on secondary results — a serialized result document starts with an XML declaration, which cannot sit inside the wrapper the parse uses | fixing 1 |
+| 3 | the secondary result came back holding the **primary result's content** — parsed into a fresh node store the surrounding evaluation never consults, so the node resolved its children against the *caller's* store, where the same ids belong to other nodes | fixing 2 |
+
+**Defect 3 has been latent since the code was written, and was unreachable while defect 2 held.**
+A parse that always fails never produces a node whose store affiliation matters. The broken parse
+was, accidentally, a guard.
+
+#### The rule
+
+> **When you fix a failing parse, lookup or guard, assume the code behind it has never run.**
+> Everything downstream of a permanently-failing operation is untested *by construction* —
+> whatever the coverage numbers say, no test has ever reached it, because nothing could.
+
+Coverage instrumentation will report those lines as uncovered, which sounds like it should have
+warned someone. It does not, in practice: uncovered lines behind an error path are the most
+ordinary thing in a codebase, indistinguishable from defensive branches nobody expects to hit.
+The signal only becomes legible once you know the operation in front fails *always* rather than
+*sometimes*.
+
+#### Why the corpus could not have caught it
+
+Had only defect 2 been fixed, the result would have been a **wrong-content secondary result** and
+the conformance run would have shown **+0 with no losses** — a completely clean A/B. Nothing in
+the suite compares a secondary result's content against the document it should have come from.
+
+What caught it was **reading the output rather than the score**: the secondary said `892` when the
+primary said `892`, and the secondary document plainly contains `479`. This is the direct
+vindication of #70's "a floor on what is wrong, not a ceiling" — the number was not merely
+uninformative here, it was *perfectly clean* while the engine returned the wrong document.
+
+#### The tell: plausible for the wrong reason
+
+`892` is not a nonsense value, a null, or a zero. It is a **real number produced by the real
+transform** — just the other one. Same family as #53's confident-wrong-answer, reached by a
+different mechanism: not a recomputing fallback manufacturing a value, but **store confusion
+returning a genuine value from the wrong place.**
+
+The generalisation worth carrying: *a value that is correct for some other input is harder to
+doubt than a value that is obviously broken*, and the two are indistinguishable without checking
+what the answer should have been. Consistency between two outputs is not evidence — here it was
+the defect.
+
+#### The sweep this suggests
+
+**Node-store affiliation deserves its own audit.** The rule — *a node must live in the store the
+evaluation consults* — is invisible at the type level, because both sides are `XdmNode`. Nothing
+in a signature, a cast or a compiler check distinguishes a node from the right store from one
+that belongs to another, and getting it wrong is silent rather than loud. There may be other
+cross-store parses.
+
+That places it alongside #53 and #67 as a property the type system cannot express and no test
+happens to assert — which is the recurring shape of the worst defects in this register.
+
+#### Its mirror image
+
+#69, #71 and #72 catalogue **tests that never tested** — hollow passes where the suite exercised
+nothing. This is the same failure from the other side: **code that never ran.** Together they say
+the same thing about the relationship between a test suite and an implementation. A green suite
+can mean the tests are hollow, or that the code behind a broken gate was never reached, and
+neither leaves a mark in the score.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
