@@ -514,11 +514,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     if (tcAttrs != null)
                         RecordTreeAttribute(attrName, attrValue, copyNsBindings, tcNsDecls!, tcAttrs, ref tcAbort);
                 }
-                if (_isStreamingExecution && _activeStreamingReader != null)
+                if (_isStreamingExecution && _activeStreamingReader != null
+                    && !_streamingDispatchElementMaterialized)
                 {
                     // Streaming mode: leave the element open and push onto the
                     // deferred-close stack so StreamingXmlProcessor closes it when
-                    // the source element's EndElement event fires. Mirrors the
+                    // the source element's EndElement event fires. Not when the element
+                    // was already materialised — its EndElement has been consumed, so
+                    // nothing would ever pop the deferred close and the tag stayed open. Mirrors the
                     // built-in shallow-copy path. Without this, xsl:copy would emit
                     // <body>buffered</body> immediately and the processor's
                     // subsequent child events (h1, p, …) would leak out as siblings
