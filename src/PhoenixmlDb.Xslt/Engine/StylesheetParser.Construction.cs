@@ -208,15 +208,16 @@ public sealed partial class StylesheetParser
             "name", "namespace", "use-attribute-sets", "inherit-namespaces", "validation", "type");
 
         var nameAttr = element.Attribute("name");
-        if (nameAttr == null)
-            throw new XsltException("XTSE0010: xsl:element must have a name attribute", location);
-        var name = ParseAvt(nameAttr.Value, element, nameAttr);
         var namespaceAttr = element.Attribute("namespace");
         var useAttributeSetsAttr = element.Attribute("use-attribute-sets");
         var inheritNamespacesAttr = element.Attribute("inherit-namespaces");
         var validationAttr = element.Attribute("validation");
         var typeAttr = element.Attribute("type");
 
+        // XTSE1660 comes FIRST: an attribute this processor must not accept at all is a
+        // different and more informative answer than "name is missing", and an xsl:element
+        // carrying both gets told about the one it cannot fix by adding a name
+        // (W3C error-1660b/c).
         // XTSE1660: Non-schema-aware processor must reject type attribute
         if (typeAttr != null && ShouldRejectSchemaAware)
             throw new XsltException("XTSE1660: A non-schema-aware XSLT processor must not accept the type attribute on xsl:element", location);
@@ -227,6 +228,10 @@ public sealed partial class StylesheetParser
             if (v is "strict" or "type" && ShouldRejectSchemaAware)
                 throw new XsltException($"XTSE1660: A non-schema-aware XSLT processor must not accept validation=\"{v}\" on xsl:element", location);
         }
+
+        if (nameAttr == null)
+            throw new XsltException("XTSE0010: xsl:element must have a name attribute", location);
+        var name = ParseAvt(nameAttr.Value, element, nameAttr);
 
         // XTSE0020: Validate inherit-namespaces value
         if (inheritNamespacesAttr != null && ParseYesNo(inheritNamespacesAttr) == null)
