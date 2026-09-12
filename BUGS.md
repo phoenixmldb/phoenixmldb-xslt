@@ -2699,6 +2699,31 @@ Sibling to #53 rather than an instance of it. Same consequence — a confident w
 third route: not lost evidence, not an ambiguous representation, but a well-implemented answer to
 the wrong question.
 
+#### The corpus can embody a proxy too (added 2026-09-11, from #70)
+
+parsers2 noticed the extension, and it is the more uncomfortable half. A **test suite** can stand
+in the same relation to correctness that a proxy predicate stands in to the real property.
+
+In #70, every `XTDE0450` case in the corpus exercises the **element-content** shape — the half
+that is locally detectable. The other half of the same rule, a temporary tree from an untyped
+variable, appears in no case. So:
+
+> **An implementation that handles only the easy half of the rule scores 100% on that rule.**
+
+Passing the tests is therefore a proxy for implementing the rule, and it fails in exactly the way
+#67 describes: it correlates perfectly until a construct arrives on the side the suite never
+sampled. #69 is the same observation from another direction — there, five cases passed because a
+feature was absent; here, an incomplete implementation would pass because the missing half is
+untested.
+
+**The consequence for how we read our own number.** A conformance percentage is not a measure of
+correctness; it is a measure of agreement with a sample. Where the sample is systematically
+biased toward the detectable half of a rule — and #69 and #70 are two independent demonstrations
+that it is — the score overstates the engine in a way no amount of running it more carefully will
+reveal. This does not make the number worthless; it makes it a floor on what is wrong rather than
+a ceiling, and it is an argument for the kinds of evidence the suite cannot provide: real-world
+pipelines (#60), and defects found by reading rather than by running.
+
 ### 68. OPEN — the W3C corpus contradicts itself on streamable accumulator AVTs (2026-09-11)
 
 Found by parsers2, **deliberately not resolved**. Recorded because the blocker is a spec reading,
@@ -2795,6 +2820,58 @@ no-per-set-losses line kept all session. The right call: the scoreboard would ha
 the engine would have shipped two answers we knew were wrong. The diff is small and can be redone
 in minutes once the XQuery track opens — this entry exists so that is a lookup rather than a
 rediscovery.
+
+### 70. OPEN — SENR0001 vs XTDE0450 needs a destination marker, not an error-code swap (2026-09-11)
+
+Declined by parsers2 after probing, and registered with the evidence so the next attempt starts
+from the finding rather than the symptom.
+
+`decl/output-0710/0711/0712` expect `SENR0001` where we raise `XTDE0450`. The distinction is
+real and the spec is unambiguous:
+
+- **`XTDE0450`** — a map used as the **content** of an element or document node.
+- **`SENR0001`** — a map that reaches the **serializer** as an item of the final result.
+
+The three cases do the latter: `<xsl:sequence select="$maps"/>` as the whole result of the
+initial template.
+
+#### Why it is not a code swap — the probe
+
+Five shapes, all reaching the one code path where the error is raised:
+
+| shape | `attrs` | `doc` | distinguishable? |
+|---|---|---|---|
+| top-level sequence | 0 | 0 | — |
+| inside an element | 1 | 0 | **yes** |
+| inside `xsl:document` | 0 | 1 | **yes** |
+| variable with tree content | 0 | 0 | **no** — identical to top level |
+| variable with map only | 0 | 0 | **no** — identical to top level |
+
+A temporary tree built by an untyped `xsl:variable` is `XTDE0450` per §5.7.1, and **at the moment
+of the error it is indistinguishable from the top-level result.** So the only rule available from
+local state — *`attrs==0 && doc==0` means serializer* — would win the three tests and start
+answering `SENR0001` for a case that is genuinely `XTDE0450`.
+
+**And the suite would not catch the damage**: every `XTDE0450` case in the corpus is an
+element-content shape, which is the distinguishable half.
+
+#### What it actually needs
+
+A **destination marker** threaded to the serialization point — *this sequence is becoming a
+document node* versus *this sequence is the result*. That is engine plumbing, not an error-code
+change, and it is the right fix rather than the affordable one.
+
+#### The trade being refused, now twice in one day
+
+This is the second cluster declined for the same reason (the first is #69's `+5/−2`), and the
+shape is worth naming rather than counting:
+
+> **Buying N conformance cases by making a case silently wrong that the corpus cannot see.**
+
+Both times the scoreboard would have improved and the engine would have got worse, and in neither
+case would any test have registered the loss. A register that only recorded merged PRs would show
+two clean wins here; what actually happened is two correct refusals. **The absence of those
+commits is the achievement.**
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
