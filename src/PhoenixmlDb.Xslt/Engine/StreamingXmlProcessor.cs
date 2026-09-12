@@ -800,7 +800,14 @@ internal sealed class StreamingXmlProcessor
                                 }
                             }
 
-                            // Check if we're closing a suppressed element
+                            // Check if we're closing a suppressed element — or anything INSIDE
+                            // one. A suppressed element's descendants wrote no open tag either,
+                            // so they must not pop the deferred-close stack: <v> suppressed by an
+                            // empty template still delivers EndElement for its <deity> child, and
+                            // that pop closed an ANCESTOR early — </book> landed after the first
+                            // chapter, with the rest of the document outside the root element
+                            // (W3C attr/mode mode-1416).
+                            var insideSuppressed = suppressionDepth >= 0 && closingContext.Depth > suppressionDepth;
                             var wasSuppressedElement = suppressionDepth >= 0 && closingContext.Depth == suppressionDepth;
                             if (wasSuppressedElement)
                                 suppressionDepth = -1;
@@ -839,7 +846,7 @@ internal sealed class StreamingXmlProcessor
 
                             // Write the deferred closing tag for elements opened by shallow-copy.
                             // Skip this for suppressed elements — they never wrote an open tag.
-                            if (!wasSuppressedElement && _context._streamingOpenElements.Count > 0)
+                            if (!wasSuppressedElement && !insideSuppressed && _context._streamingOpenElements.Count > 0)
                             {
                                 var qname = _context._streamingOpenElements.Pop();
                                 _context.WriteStreamingEndTag(qname);
