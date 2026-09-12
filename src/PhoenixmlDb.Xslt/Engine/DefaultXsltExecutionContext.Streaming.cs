@@ -367,8 +367,14 @@ internal sealed partial class DefaultXsltExecutionContext
         List<PhoenixmlDb.XQuery.Ast.NameTest> steps,
         int stepIndex,
         QName? mode,
-        CancellationToken ct)
+        CancellationToken ct,
+        List<StridingAncestor>? openAncestors = null)
     {
+        // The elements this descent has entered, outermost first. A matched element is
+        // materialised detached, so without these its ancestor axis stops at its own parent:
+        // ancestor::* from a node under BOOKLIST/CATEGORIES answered CATEGORIES alone, where
+        // the unstreamed run answers BOOKLIST then CATEGORIES (W3C si-apply-templates-001).
+        openAncestors ??= new List<StridingAncestor>();
         var nameTest = steps[stepIndex];
         var isFinal = stepIndex == steps.Count - 1;
         // Depth of the children we iterate: reader.Depth after reading a start-tag equals
@@ -398,6 +404,7 @@ internal sealed partial class DefaultXsltExecutionContext
             if (matches && isFinal)
             {
                 var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                LinkStridingAncestors(elem, openAncestors);
                 position++;
                 // The element arrives FULLY MATERIALISED — the helper read its whole subtree and
                 // left the reader on its EndElement. Everything that would otherwise wait for the
@@ -427,9 +434,18 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             else if (matches && !reader.IsEmptyElement)
             {
-                // Intermediate match — descend one level for the next step.
-                await DriveStridingDescentLevelAsync(
-                    reader, steps, stepIndex + 1, mode, ct).ConfigureAwait(false);
+                // Intermediate match — descend one level for the next step, recording this
+                // element so a match below can be given a complete ancestor axis.
+                openAncestors.Add(CaptureStridingAncestor(reader));
+                try
+                {
+                    await DriveStridingDescentLevelAsync(
+                        reader, steps, stepIndex + 1, mode, ct, openAncestors).ConfigureAwait(false);
+                }
+                finally
+                {
+                    openAncestors.RemoveAt(openAncestors.Count - 1);
+                }
                 // DriveStridingDescentLevelAsync consumed through this element's
                 // EndElement; continue scanning the parent's remaining children.
             }
@@ -440,6 +456,97 @@ internal sealed partial class DefaultXsltExecutionContext
                 await SkipStreamingSubtreeAsync(reader, childDepth, ct).ConfigureAwait(false);
             }
         }
+    }
+
+
+    /// <summary>An element the striding descent has entered: its name and its attributes.</summary>
+    private readonly record struct StridingAncestor(
+        string LocalName, string NamespaceUri, string? Prefix,
+        List<(string LocalName, string NamespaceUri, string? Prefix, string Value)> Attributes);
+
+
+    /// <summary>Captures the element the reader is positioned on, attributes included.</summary>
+    private static StridingAncestor CaptureStridingAncestor(System.Xml.XmlReader reader)
+    {
+        var attrs = new List<(string, string, string?, string)>();
+        if (reader.HasAttributes)
+        {
+            for (var i = 0; i < reader.AttributeCount; i++)
+            {
+                reader.MoveToAttribute(i);
+                if (reader.Prefix == "xmlns" || (reader.Prefix.Length == 0 && reader.LocalName == "xmlns"))
+                    continue;
+                attrs.Add((reader.LocalName, reader.NamespaceURI,
+                    string.IsNullOrEmpty(reader.Prefix) ? null : reader.Prefix, reader.Value));
+            }
+            reader.MoveToElement();
+        }
+        return new StridingAncestor(reader.LocalName, reader.NamespaceURI,
+            string.IsNullOrEmpty(reader.Prefix) ? null : reader.Prefix, attrs);
+    }
+
+
+    /// <summary>
+    /// Gives a matched element the ancestors the descent passed through, plus the document node
+    /// every XDM tree is rooted at. Registered OUTERMOST FIRST so the ids ascend with document
+    /// order, which is what the ancestor axis (and the set operations) sort by — the same
+    /// contract as StreamingXmlProcessor.SynthesizeAncestorChain, which the processor's
+    /// subscription path has always had and this driver never used.
+    /// </summary>
+    private void LinkStridingAncestors(Xdm.Nodes.XdmElement elem, List<StridingAncestor> openAncestors)
+    {
+        if (_nodeStore == null)
+            return;
+
+        var documentId = new DocumentId(0);
+        var docId = _nodeStore.NextId();
+        _nodeStore.Register(new XdmDocument
+        {
+            StringValueResolver = _nodeStore.StringValueResolver,
+            Id = docId,
+            Document = documentId,
+            Parent = NodeId.None,
+            Children = [],
+        });
+
+        var parentId = docId;
+        foreach (var ancestor in openAncestors)
+        {
+            var id = _nodeStore.NextId();
+            var attrIds = new List<NodeId>();
+            foreach (var (localName, nsUri, prefix, value) in ancestor.Attributes)
+            {
+                var attrId = _nodeStore.NextId();
+                _nodeStore.Register(new Xdm.Nodes.XdmAttribute
+                {
+                    Id = attrId,
+                    Document = documentId,
+                    Parent = id,
+                    LocalName = localName,
+                    Namespace = string.IsNullOrEmpty(nsUri) ? NamespaceId.None : _nodeStore.InternNamespace(nsUri),
+                    Prefix = prefix,
+                    Value = value,
+                });
+                attrIds.Add(attrId);
+            }
+            _nodeStore.Register(new Xdm.Nodes.XdmElement
+            {
+                StringValueResolver = _nodeStore.StringValueResolver,
+                Id = id,
+                Document = documentId,
+                Parent = parentId,
+                LocalName = ancestor.LocalName,
+                Namespace = string.IsNullOrEmpty(ancestor.NamespaceUri)
+                    ? NamespaceId.None
+                    : _nodeStore.InternNamespace(ancestor.NamespaceUri),
+                Prefix = ancestor.Prefix,
+                Children = [],
+                Attributes = attrIds,
+                NamespaceDeclarations = [],
+            });
+            parentId = id;
+        }
+        elem.Parent = parentId;
     }
 
 
