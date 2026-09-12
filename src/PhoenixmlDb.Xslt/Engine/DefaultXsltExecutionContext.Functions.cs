@@ -2130,8 +2130,10 @@ internal sealed partial class DefaultXsltExecutionContext
             SetVariable(new QName(NamespaceId.None, "current-merge-key"), null);
 
             // Bind parameters with function conversion rules (XSLT 3.0 §5.4.1):
-            // Atomize node values and coerce to target type when target is atomic
-            // Then validate with XTTE0790 for strict atomic types
+            // Atomize node values and coerce to target type when target is atomic.
+            // A value the conversion rules cannot convert is XPTY0004 — the code XSLT 3.0
+            // gives this; XTTE0790 was its 2.0 spelling, and the 2.0-only corpus case that
+            // still expects it is skipped as a 3.0 processor (W3C error-0790a3 vs 0790a2).
             for (var i = 0; i < func.Parameters.Count && i < arguments.Count; i++)
             {
                 var param = func.Parameters[i];
@@ -2140,7 +2142,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     // Apply function conversion rules: atomize nodes, coerce to target type
                     value = ApplyFunctionConversionRules(value, param.As);
-                    ValidateValueMatchesType(value, param.As, "XTTE0790",
+                    ValidateValueMatchesType(value, param.As, "XPTY0004",
                         $"Value of parameter ${param.Name.LocalName} in function {func.Name.LocalName}");
                 }
                 else if (param.As != null && param.As.ItemType == ItemType.Function
