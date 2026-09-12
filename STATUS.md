@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-11 21:01 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-12 10:53 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-09-11 21:01 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 3 | 1 |
-| phoenixmldb-xslt | 7 | 0 |
+| phoenixmldb-xslt | 7 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -51,13 +51,17 @@ Generated 2026-09-11 21:01 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [28] release: publish the library and the CLI on separate tags
 
+**phoenixmldb-xslt**
+
+- [57] [HELD for baseline batch] Run the decl/expose test set, which the harness never opened
+
 **phoenixmldb-cli**
 
 - [3] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **64** entries, **11** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **79** entries, **18** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -71,6 +75,13 @@ the engines are split but the defects are not.
 - 57. OPEN — our published conformance figures describe a build that does not ship (2026-09-11)
 - 61. OPEN — an indirect global cycle reports XPST0008 where XTDE0640 is due (2026-09-11)
 - 64. OPEN (XQuery-side) — the UCA collation ignores `alternate=shifted` (2026-09-11)
+- 65. OPEN (XQuery-side, blocked) — two error-reporting defects found by the XSLT sweep (2026-09-11)
+- 66. OPEN — a streamed `accumulator-after()` counts only the matched subtree (2026-09-11)
+- 68. OPEN — the W3C corpus contradicts itself on streamable accumulator AVTs (2026-09-11)
+- 70. OPEN — SENR0001 vs XTDE0450 needs a destination marker, not an error-code swap (2026-09-11)
+- 71. OPEN — `streamable="true"` is silently not streamable, and 27 streaming cases measure nothing (2026-09-11)
+- 77. OPEN (policy) — 919 `sandp` cases are dependency-skipped, and the streamability analyser has no corpus evidence at all (2026-09-12)
+- 79. OPEN — the synthesized ancestor chain stops at the immediate parent (2026-09-12)
 
 ## Conformance
 
