@@ -119,6 +119,16 @@ The same loop also failed to detect a **two-accumulator cycle** (`a` reads `afte
 Both halves had one cause — reading a provisional entry was indistinguishable from reading a
 settled one. Accumulator values are now evaluated on demand.
 
+## A debugging capability that was silently absent
+
+`xsl:mode warning-on-no-match` was parsed and validated, then discarded — so it never warned. The
+attribute is the spec's answer to the fact that the **built-in template rule is silent by
+design**: a node no template matched yields text where the author expected markup, or nothing at
+all, with no indication a rule was missing. Well-formed, incomplete output is among the harder
+things to debug in XSLT, and this is the mechanism for catching it.
+
+It now warns. Worth more than the four conformance cases it also fixes.
+
 ## Behaviour change — read this before upgrading
 
 **Built-in functions now enforce declared parameter cardinality.** Previously they did not, so

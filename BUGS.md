@@ -3173,6 +3173,67 @@ The partial run reported +2; the full sweep came back **+5**, with `mode-1424` a
 also coming good. Worth remembering in both directions — a partial run can understate as easily
 as overstate, and the number to report is the one from the full sweep.
 
+### 75. `warning-on-no-match` was parsed, validated, and then dropped (2026-09-12)
+
+parsers2, xslt #61. **The fifth variety of #69's family, and the best-disguised.**
+
+The parser read `xsl:mode warning-on-no-match`, checked it for `XTSE0020`, and **threw the value
+away**. Nothing carried it, nothing consulted it, nothing warned.
+
+From outside it looked implemented. A stylesheet using the attribute compiles clean; an invalid
+value is correctly rejected. That is the disguise, and it is a good one:
+
+> **Validation without effect proves the code *read* the attribute — which is exactly the
+> evidence a reviewer would look for.**
+
+A validated-and-dropped attribute passes every **negative** test, because bad values really are
+rejected, and has no **positive** test, because nothing observable happens on the good path.
+There is no output to assert against, so the absence of a test looks like an oversight rather
+than a gap.
+
+#### Where it sits in the family
+
+| # | mechanism | the silence |
+|---|---|---|
+| 69 | an invocation parameter the runner never supplied | the engine's degenerate answer matched the expected one |
+| 71 | an attribute value the parser did not **recognise** | `streamable="true"` read as not streamable |
+| 72 | test files the harness never opened | an entire feature area unscored |
+| 73 | code behind a permanently-failing operation | never reached, so never tested |
+| **75** | an attribute the parser **recognised and discarded** | validated, so it looks implemented |
+
+#71 and #75 are worth holding side by side: one is a value the parser did not recognise, the
+other a value it recognised and dropped. **Different mechanism, identical silence.**
+
+**Audit question, the fifth in this family:** *for each attribute the parser validates, what
+reads the value afterwards?* A validation with no consumer is the tell.
+
+#### The corpus could not have caught it either — from the assertion side
+
+`assert-warning` returned **false unconditionally** in the harness, with an honest comment saying
+warnings were not collected. So four W3C cases were **unfailable and unpassable**: they could not
+pass however correct the engine became.
+
+That is #69's shape arriving from a third direction. #69 was a missing *invocation* parameter;
+#72 was a missing *file*; this is a missing *assertion capability*. A test whose assertion always
+returns false is not a failing test — it is a test that has been removed from the suite while
+still being counted in it.
+
+parsers2 implemented warning collection in the same PR and **kept it strict**: a test asking for
+a warning that gets none still fails. That matters — the easy version of this fix is to make
+`assert-warning` return true, which would have converted four unpassable tests into four hollow
+passes and moved the problem rather than solving it.
+
+#### Why the feature is worth more than its four cases
+
+The built-in template rule is **silent by design**. A node no template matched produces text
+where the author expected markup, or nothing at all, with no indication that a rule was missing —
+one of the genuinely hard things to debug in XSLT, because the output is well-formed and simply
+incomplete.
+
+`warning-on-no-match` is the spec's answer to exactly that, and we were ignoring it. **This is a
+debugging capability, not a conformance point** — the four cases are the smallest part of its
+value.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
