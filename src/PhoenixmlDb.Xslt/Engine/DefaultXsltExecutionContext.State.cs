@@ -299,6 +299,14 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private AsBodyCapture? _currentAsBodyCapture;
 
+    /// <summary>
+    /// Buffered-subtree root id → the streamed element it was materialised from. A template body
+    /// that needs the whole subtree runs on a copy with fresh node ids, which carries none of the
+    /// accumulator values the streaming pass recorded; this is how the pre-descent value is found
+    /// again. See <see cref="TryGetStreamedAccumulatorBefore"/>.
+    /// </summary>
+    internal Dictionary<NodeId, NodeId>? _bufferedSubtreeOrigin;
+
 
     private int _textOutputModeDepth; // >0 when inside method="text" result-document; text from xsl:sequence/value-of gets sentinel-escaped to protect from StripXmlMarkup
 

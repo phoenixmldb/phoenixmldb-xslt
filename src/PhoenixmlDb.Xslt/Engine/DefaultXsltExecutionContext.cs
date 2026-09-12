@@ -1354,6 +1354,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // here (unlike the prior ReadOuterXml path, which advanced too far).
             bufferedRoot = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore, new DocumentId(0))
                            ?? element;
+            // The buffered subtree is a FRESH set of nodes, so the accumulator values the
+            // streaming pass recorded against the streamed element do not reach the body that
+            // runs on the copy. accumulator-before() found nothing there and recomputed the
+            // accumulator from its initial value over this one node — so every match reported
+            // the same value, whatever the stream had accumulated (W3C accumulator-001s and its
+            // siblings: "Figure 1" four times where the non-streamed run counts 1, 2, 1, 2).
+            //
+            // Only the origin is recorded, not the values: the pre-descent value is final at the
+            // start tag, but the post-descent one is not — the element's end-phase rules have not
+            // run yet — so accumulator-after() must still be answered by the walk over the
+            // buffered subtree (accumulator-015s/036s/069s).
+            if (!ReferenceEquals(bufferedRoot, element))
+                (_bufferedSubtreeOrigin ??= new Dictionary<NodeId, NodeId>())[bufferedRoot.Id] = element.Id;
         }
         else
         {
@@ -3018,6 +3031,26 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>
     /// Looks up a pre-computed accumulator value for the given node.
     /// </summary>
+    /// <summary>
+    /// The pre-descent accumulator value recorded by the streaming pass for the element a buffered
+    /// subtree was materialised from, or null when this node is not such a copy (or the streaming
+    /// pass recorded nothing for it).
+    /// </summary>
+    internal bool TryGetStreamedAccumulatorBefore(QName accumulatorName, object node, out object? value)
+    {
+        value = null;
+        if (_bufferedSubtreeOrigin == null || _accumulatorValues == null || node is not XdmNode xdmNode)
+            return false;
+        if (!_bufferedSubtreeOrigin.TryGetValue(xdmNode.Id, out var streamedId))
+            return false;
+        if (!_accumulatorValues.TryGetValue(accumulatorName, out var nodeValues)
+            || !nodeValues.TryGetValue(streamedId, out var recorded))
+            return false;
+        value = recorded.before;
+        return true;
+    }
+
+
     internal (object? before, object? after)? GetAccumulatorValue(QName accumulatorName, object node, bool isAfter = false)
     {
         if (_accumulatorValues == null)
