@@ -755,6 +755,12 @@ public sealed class XsltTransformer
     public Action<string, bool>? MessageListener { get; set; }
 
     /// <summary>
+    /// Receives processor warnings — currently the xsl:mode warning-on-no-match diagnostic,
+    /// reported once per node processed with no matching template rule.
+    /// </summary>
+    public Action<string>? WarningListener { get; set; }
+
+    /// <summary>
     /// Extended listener for <c>xsl:message</c> that also receives source location (line, column).
     /// Takes precedence over <see cref="MessageListener"/> when set.
     /// </summary>
@@ -1158,6 +1164,7 @@ public sealed class XsltTransformer
             TraceListener = TraceListener,
             MessageListener = MessageListener,
             MessageListenerWithLocation = MessageListenerWithLocation,
+            WarningListener = WarningListener,
             ResourcePolicy = ResourcePolicy,
             PreloadedResources = PreloadedResources,
             ReturnRawXdm = rawBox != null,

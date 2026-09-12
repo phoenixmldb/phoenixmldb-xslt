@@ -130,6 +130,13 @@ public sealed class XsltTransformOptions
     public Action<string, bool>? MessageListener { get; init; }
 
     /// <summary>
+    /// Receives processor warnings — currently xsl:mode warning-on-no-match. A warning is a
+    /// diagnostic the transform continues past, so it has its own channel rather than sharing
+    /// xsl:message's.
+    /// </summary>
+    public Action<string>? WarningListener { get; init; }
+
+    /// <summary>
     /// Extended message listener that also receives source location.
     /// Receives (message, terminate, line, column). Takes precedence over <see cref="MessageListener"/>.
     /// </summary>

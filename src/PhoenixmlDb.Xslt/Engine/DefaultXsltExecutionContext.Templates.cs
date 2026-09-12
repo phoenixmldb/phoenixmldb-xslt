@@ -534,6 +534,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // Built-in template rules
                     if (_options?.TraceListener != null)
                         _options.TraceListener(_templateDepth, "built-in", DescribeTraceNode(node));
+                    ReportNoMatchWarning(node, mode);
                     await ApplyBuiltInTemplateAsync(node, mode, withParams).ConfigureAwait(false);
                 }
             }
@@ -1549,8 +1550,36 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             // No matching template found - apply built-in template rule
             // Note: xsl:fallback is NOT executed since we support xsl:next-match
+            ReportNoMatchWarning(node, _currentMode);
             await ApplyBuiltInTemplateAsync(node, _currentMode, withParams).ConfigureAwait(false);
         }
+    }
+
+
+    /// <summary>
+    /// xsl:mode warning-on-no-match="yes": report each node processed in this mode with no
+    /// matching template rule. The attribute was parsed, validated and then dropped, so the
+    /// diagnostic it asks for was never produced (W3C attr/mode mode-1427/1428/1440/1442).
+    /// </summary>
+    private void ReportNoMatchWarning(object? node, QName? mode)
+    {
+        if (_options.WarningListener is not { } listener)
+            return;
+        var modeKey = mode ?? new QName(NamespaceId.None, "");
+        if (!_stylesheet.Modes.TryGetValue(modeKey, out var modeDecl) || !modeDecl.WarningOnNoMatch)
+            return;
+        var what = node switch
+        {
+            XdmElement e => $"element {e.LocalName}",
+            XdmAttribute a => $"attribute {a.LocalName}",
+            XdmDocument => "document node",
+            XdmText => "text node",
+            XdmComment => "comment",
+            XdmProcessingInstruction => "processing instruction",
+            _ => "node",
+        };
+        var where = mode is { } m && m.LocalName.Length > 0 ? $" in mode {m.LocalName}" : "";
+        listener($"No template rule matches {what}{where}; the built-in rule was used");
     }
 
 

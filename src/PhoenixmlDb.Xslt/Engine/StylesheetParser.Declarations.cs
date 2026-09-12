@@ -2676,10 +2676,10 @@ public sealed partial class StylesheetParser
                     GetSourceLocation(element));
         }
 
-        // Validate warning-on-no-match (XTSE0020 for invalid values like "Yes")
+        // warning-on-no-match (XTSE0020 for invalid values like "Yes")
         var warningOnNoMatchAttr = element.Attribute("warning-on-no-match");
-        if (warningOnNoMatchAttr != null)
-            NormalizeYesNo(warningOnNoMatchAttr.Value.Trim(), "warning-on-no-match", "xsl:mode", element);
+        var warningOnNoMatch = warningOnNoMatchAttr != null
+            && NormalizeYesNo(warningOnNoMatchAttr.Value.Trim(), "warning-on-no-match", "xsl:mode", element);
 
         // Validate warning-on-multiple-match (XTSE0020 for invalid values like "Yes")
         var warningOnMultipleMatchAttr = element.Attribute("warning-on-multiple-match");
@@ -2703,6 +2703,7 @@ public sealed partial class StylesheetParser
         {
             Name = nameAttr != null ? ParseQName(nameAttr.Value, element) : null,
             Streamable = streamableAttr?.Value == "yes",
+            WarningOnNoMatch = warningOnNoMatch,
             OnNoMatch = onNoMatchAttr != null ? ParseOnNoMatchBehavior(onNoMatchAttr.Value, element) : null,
             OnMultipleMatch = onMultipleMatchAttr != null ? ParseOnMultipleMatchBehavior(onMultipleMatchAttr.Value, element) : OnMultipleMatchBehavior.UseLast,
             Visibility = ParseVisibility(visibilityAttr?.Value),
