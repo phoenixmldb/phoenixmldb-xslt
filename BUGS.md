@@ -2022,6 +2022,32 @@ clean `--all`, strm3-only and xqts-only runs report nothing; deleting a set from
 run gets it reported; and feeding strm3's results to chunk `strm1` reports strm1's own sets,
 which proves ownership comes from the class lists rather than from the results file.
 
+#### A third gap in the same gate: a set with no baseline row is never defended (2026-09-11)
+
+Found by parsers2 while wiring `decl/expose` (#72). The gate fails the run on two conditions —
+`regressed` (a baselined set lost cases) and `noresult` (a baselined set did not report, the fix
+above). **`newsets` is printed and never fails.**
+
+So a test-set that runs without a baseline row contributes its cases to the total and is **never
+defended**: it could lose every case it has and the gate would stay green. It is listed under
+"per-set NEW sets" each run, indefinitely, and nothing ever requires it to be baselined. Visible,
+but not gated — and a line that appears in every summary is a line nobody reads after the second
+time.
+
+This completes the set of three. The gate defends a set only while a baseline row exists for it:
+
+| condition | gated? |
+|---|---|
+| baselined set loses cases | **yes** — `regressed` |
+| baselined set does not report | **yes** — `noresult` (xslt #26) |
+| set runs with no baseline row | **no** — reported only |
+
+**Suggested fix**, symmetric with the other two: fail on `newsets` unless
+`CONFORMANCE_UPDATE_BASELINE=1` is set. That makes adding a set a deliberate act with an obvious
+remedy — exactly how `regressed` already behaves — rather than a line in a report. parsers2
+sidestepped it on #72 by adding the baseline row in the same commit, which is the right habit but
+not a mechanism.
+
 #### The crash itself — recorded, not diagnosed
 
 First test-host crash in 46 run directories. `strm3` then ran clean three times (883/895, 27/27
