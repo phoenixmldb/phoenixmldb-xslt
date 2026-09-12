@@ -1007,7 +1007,19 @@ public sealed class XsltTestRunner
                 var packageCatalog = testCase.Environment.Packages.Count > 0
                     ? testCase.Environment.Packages
                     : null;
-                await transformer.LoadStylesheetAsync(stylesheetContent, baseUri, staticParams, packageCatalog);
+                // A test may ask for a particular package-version resolution policy
+                // (<package_version_resolution value="lowest_version"/>). The engine takes that
+                // as a load option; the runner never passed it, so those cases ran under the
+                // default (highest) and reported the version they asked us NOT to choose.
+                var versionResolution = testCase.Dependencies
+                    .FirstOrDefault(d => d.Type == "package_version_resolution")?.Value switch
+                {
+                    "lowest_version" => PackageVersionResolution.Lowest,
+                    "unspecified" => PackageVersionResolution.Unspecified,
+                    _ => PackageVersionResolution.Highest,
+                };
+                await transformer.LoadStylesheetAsync(stylesheetContent, baseUri, staticParams, packageCatalog,
+                    versionResolution);
 
                 // Set parameters (evaluate select expressions to get typed values)
                 foreach (var (name, selectExpr) in testCase.Environment.Parameters)
