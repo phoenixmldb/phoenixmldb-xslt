@@ -55,6 +55,26 @@ fi
 mkdir -p "$OUT"
 echo "A/B: $BRANCH vs $BASE   chunks: ${*:-all}   out: $OUT"
 
+# ISOLATED MODE (AB_WORKTREE=1): run both arms in a throwaway git worktree so the
+# sweep never touches the tree you are working in. The guards above check their
+# preconditions at the START; "nobody edits or switches branches for the next ten
+# minutes" is a precondition that must hold THROUGHOUT, and no check can assert
+# that. A separate worktree removes it instead of verifying it — and lets you keep
+# working while the sweep runs.
+#
+# The corpus (tests/.../TestData) is untracked and ~550MB, so it is symlinked in
+# rather than copied; runs only read it.
+if [ "${AB_WORKTREE:-0}" = "1" ]; then
+  WT="$(mktemp -d /tmp/ab-worktree-XXXX)"
+  CORPUS="tests/PhoenixmlDb.Conformance.Tests/TestData"
+  cleanup_worktree() { cd "$ROOT"; git worktree remove --force "$WT/tree" >/dev/null 2>&1; rm -rf "$WT"; }
+  trap cleanup_worktree EXIT
+  git worktree add -q --detach "$WT/tree" HEAD || { echo "A/B ABORT: could not create worktree" >&2; exit 2; }
+  ln -s "$ROOT/$CORPUS" "$WT/tree/$CORPUS"
+  cd "$WT/tree"
+  echo "  isolated: $WT/tree (your working tree is untouched)"
+fi
+
 run_arm() {  # $1 = arm name, rest = chunks
   local arm="$1"; shift
   rm -rf "${OUT:?}/$arm"
@@ -64,7 +84,9 @@ run_arm() {  # $1 = arm name, rest = chunks
   CONFORMANCE_OUT="$OUT/$arm" ./scripts/conformance.sh ${*:-} > "$OUT/$arm.out" 2>&1
 }
 
-trap 'git checkout -q HEAD -- src tests' EXIT
+if [ "${AB_WORKTREE:-0}" != "1" ]; then
+  trap 'git checkout -q HEAD -- src tests' EXIT
+fi
 git checkout -q "$BASE" -- src tests
 run_arm base "$@"
 git checkout -q HEAD -- src tests
