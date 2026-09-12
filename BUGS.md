@@ -2800,8 +2800,19 @@ This is a third mechanism for the same outcome, and unlike those two it leaves n
 harness to find — the only way to catch it is to notice that a feature the suite exercises is
 not wired up.
 
+**Third instance, and it is the one with a number: #71.** Three parser comparisons against the
+literal `"yes"` mean `streamable="true"` reads as not streamable, so **27 streaming cases have
+been passing while running unstreamed** — they ask for streaming, get none, and agree with the
+expected output because unstreamed and streamed are supposed to produce the same answer. That
+agreement is exactly what hides the class.
+
+Three instances in one day, from three different mechanisms — an unsupplied invocation parameter
+(this entry), an untested half of a rule (#70), and an attribute value the parser does not
+recognise (#71). They are not variations on one bug; they are variations on one *blind spot*.
+
 Worth a deliberate pass, after the current track: **enumerate the invocation parameters the
-catalog can set, and check which ones the runner actually reads.** #41 already records eight
+catalog can set, and check which ones the runner actually reads** — and, from #71, **enumerate
+the attribute values the spec allows and check which ones the parser accepts.** #41 already records eight
 catalog environment attributes the XSLT runner never reads; this is the same audit reaching a
 different attribute, and it found five hollow passes in one small test-set. There is no reason to
 think `fn/current-output-uri` is the only place.
@@ -2872,6 +2883,75 @@ Both times the scoreboard would have improved and the engine would have got wors
 case would any test have registered the loss. A register that only recorded merged PRs would show
 two clean wins here; what actually happened is two correct refusals. **The absence of those
 commits is the achievement.**
+
+### 71. OPEN — `streamable="true"` is silently not streamable, and 27 streaming cases measure nothing (2026-09-11)
+
+Found by parsers2. **The third and largest instance of #69, and the only one with a direct
+user-facing cost.**
+
+XSLT boolean attributes accept `yes`/`no`/`true`/`false`/`1`/`0`. Three places in the parser
+compare against the string `"yes"` alone:
+
+| attribute | file |
+|---|---|
+| `xsl:source-document streamable=` | `StylesheetParser.Output.cs` |
+| `xsl:mode streamable=` | `StylesheetParser.Declarations.cs` |
+| `xsl:param required=` | `StylesheetParser.Variables.cs` |
+
+So **`streamable="true"` reads as not streamable.** The construct runs unstreamed, and for
+`xsl:source-document` its body is never checked for streamability at all.
+
+#### The user-facing cost, which is the part that matters most
+
+Streaming exists so a document larger than memory can be processed at all. A user who writes
+`streamable="true"` — the spelling half the world reaches for first — **gets no streaming and no
+diagnostic.** On a small document the answer is right and nothing is visibly wrong. On the large
+document that motivated the attribute, the engine buffers instead of streaming.
+
+Nothing in that story produces an error message naming the cause. This belongs in the 1.8.0 notes
+once fixed; it is not a conformance nicety.
+
+#### The 27 hollow passes
+
+Fixing the three comparisons measures **+3 / −27**:
+
+| set | cases | n |
+|---|---|---|
+| `attr` | `streamable-001/-002/-037/-039/-041`, `-046..-053`, `-063..-066`, `-135`, `doe-0802` | 19 |
+| `insn` | `stream-200/-201/-202/-203/-211` | 5 |
+| `decl` | `accumulator-003s`, `accumulator-005s` | 2 |
+| `strm3` | `sx-gc-eq-801` | 1 |
+
+Every one asks for streaming with `streamable="true"`, **has been running unstreamed**, and
+passes because the unstreamed answer agrees. They are not regressions; they are the bill for a
+feature that was never switched on, arriving at once.
+
+This is #69's line at its sharpest. A green result proves the engine produced the expected
+output; it does not prove the engine did anything. **Here it proves the engine did the opposite
+of what the test asked and got away with it** — precisely because streamed and unstreamed are
+supposed to agree, which is what makes the whole class invisible.
+
+It also puts a number on #70's "a floor on what is wrong, not a ceiling": **27 cases in the
+streaming sets are currently measuring nothing.**
+
+#### Sequencing — this is a project, not a three-line fix
+
+**Whoever fixes the attribute parsing inherits 27 streaming failures the same day.** The parser
+change is trivial; what it uncovers is a streaming-correctness effort. It should be planned and
+scheduled as one, not stumbled into by someone tidying a boolean comparison.
+
+Two notes for whoever takes it:
+
+- **`error-3430a` comes free.** `streamable="true"` with `//a` and `//b` — two consuming operands
+  — should raise `XTSE3430`, and the classifier already implements the multiple-consuming-operands
+  rule correctly. It was simply never called. Turning the attribute on calls it.
+- **`xsl:param required="true"`** is the same commit shape and probably harmless alone, but was
+  **not measured separately**. Do not assume it rides along cleanly.
+
+parsers2 reverted the boolean fix and shipped only the clean part of that branch, rather than
+merge a −27 into a track whose whole discipline has been zero per-set losses. Correct call, and
+the same refusal as #69 and #70 — with the difference that here the losses are honest arrears
+rather than new damage, which is exactly why they need scheduling instead of suppressing.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 

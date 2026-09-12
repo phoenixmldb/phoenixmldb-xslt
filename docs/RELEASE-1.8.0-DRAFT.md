@@ -42,6 +42,18 @@ streamable mode, and `--no-stream` gave the same wrong answers. The W3C streamin
 catch it because every one of them aggregates inside `xsl:source-document`, whose path drains the
 stream first — full coverage of the feature, none of the way users reach it.
 
+### `streamable="true"` silently did not stream (BUGS.md #71) — NOT YET FIXED
+
+**Listed here so it is not forgotten, not as a fix in this release.** XSLT booleans accept
+`yes`/`no`/`true`/`false`/`1`/`0`, and the parser compares `streamable=` against `"yes"` alone.
+So `streamable="true"` is read as not streamable: the construct runs buffered, with no
+diagnostic.
+
+Streaming exists so a document larger than memory can be processed at all, so the cost lands on
+exactly the input that motivated the attribute. The fix is three comparisons; what it uncovers is
+27 streaming cases that have been passing while running unstreamed, which is a scheduled piece of
+work rather than a one-liner. See #71.
+
 ### `xsl:merge` silently merged one of two sources (xslt #43)
 
 A relative `for-each-source` URI was resolved against the wrong base, and a source that could
