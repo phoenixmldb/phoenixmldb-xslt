@@ -272,11 +272,17 @@ internal static class StreamingSubtreeBufferDetector
             // See SelectNavigatesViaUnstreamableOperator. A bare path operand stays on the
             // streaming path (the operator helper returns false for it).
             case XsltValueOf vo:
-                return vo.Select != null
-                    && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select)
-                        || SelectNavigatesViaClimbingAxis(vo.Select)
-                        || SelectCopiesWholeContextItem(vo.Select)
-                        || SelectReferencesContextAccumulator(vo.Select));
+                // The SEPARATOR is an AVT and may consume the input in its own right —
+                // separator="{substring(head(//AUTHOR), 1, 1)}" reads the stream to decide what
+                // to put between the items. Only the select was examined, so at the document
+                // level that AVT evaluated against the empty synthetic node and folded to "":
+                // the items were joined with nothing at all (W3C si-value-of-044 and siblings).
+                return AvtNavigatesInput(vo.Separator)
+                    || (vo.Select != null
+                        && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select)
+                            || SelectNavigatesViaClimbingAxis(vo.Select)
+                            || SelectCopiesWholeContextItem(vo.Select)
+                            || SelectReferencesContextAccumulator(vo.Select)));
 
             case XsltCopyOf cof:
                 return SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select)
@@ -327,6 +333,14 @@ internal static class StreamingSubtreeBufferDetector
                 return AttributesNavigateInput(lre.Attributes)
                     || AttributesReferenceContextAccumulator(lre.Attributes)
                     || RequiresWholeInputBuffer(lre.Content);
+
+            case XsltAttribute attr:
+                // Same as the value-of separator: an xsl:attribute's separator (and its select)
+                // may consume the input, and at the document level an unbuffered AVT folds to ""
+                // (W3C si-attribute-044 and siblings).
+                return AvtNavigatesInput(attr.Separator)
+                    || (attr.Select != null && NavigatesInput(attr.Select))
+                    || (attr.Content != null && RequiresWholeInputBuffer(attr.Content));
 
             case XsltCopy cp:
                 // xsl:copy select="path" navigates INTO the input to pick the node to copy,
@@ -434,6 +448,22 @@ internal static class StreamingSubtreeBufferDetector
             foreach (var part in avt.Parts)
                 if (part is AvtExpression ae && NavigatesInput(ae.Expression))
                     return true;
+        return false;
+    }
+
+
+    /// <summary>
+    /// True when a single attribute value template contains an input-navigating expression.
+    /// Used for the AVTs that live on INSTRUCTIONS (xsl:value-of / xsl:attribute separator)
+    /// rather than on a constructed element.
+    /// </summary>
+    private static bool AvtNavigatesInput(XsltAttributeValueTemplate? avt)
+    {
+        if (avt == null)
+            return false;
+        foreach (var part in avt.Parts)
+            if (part is AvtExpression ae && (NavigatesInput(ae.Expression) || SelectAbsorbsInput(ae.Expression)))
+                return true;
         return false;
     }
 
