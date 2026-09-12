@@ -1636,6 +1636,16 @@ internal sealed partial class DefaultXsltExecutionContext
             // Use instruction's effective base URI (accounts for xml:base), falling back to stylesheet base
             var baseUri = instruction.BaseUri ?? _stylesheet.BaseUri;
 
+            // A href that is not a URI reference at all — a Windows path such as
+            // c:\my\doc\books.xml — is FODC0005 (invalid argument), not FODC0002 (a valid URI
+            // that cannot be retrieved). The backslashes were silently rewritten into a file:
+            // URI, which then reported "document not found" (W3C stream-006, non-stream-006).
+            foreach (var ch in hrefForResolve)
+            {
+                if (ch is '\\' or '<' or '>' or '"' or '{' or '}' or '|' or '^' or '`' || char.IsControl(ch))
+                    throw Error($"FODC0005: Invalid URI '{href}': the character '{ch}' is not allowed in a URI reference");
+            }
+
             if (Uri.TryCreate(hrefForResolve, UriKind.Absolute, out var absUri))
             {
                 resolvedUri = absUri;

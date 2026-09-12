@@ -265,6 +265,36 @@ public sealed partial class StylesheetParser
 
         var expandText = IsExpandTextActive(element);
 
+        // XTSE0010: the content of xsl:iterate is (xsl:param*, xsl:on-completion?, sequence
+        // constructor) — in that order. Checked BEFORE the children are parsed, because a
+        // misplaced xsl:param is otherwise reported by whatever its own body trips over first:
+        // "$x is not defined" for a param whose select reads a variable declared above it
+        // (iterate-008/901), or an attribute error inside a misplaced xsl:on-completion
+        // (iterate-024).
+        var seenNonParam = false;
+        var seenOnCompletion = false;
+        foreach (var child in element.Elements())
+        {
+            if (!ShouldIncludeElement(child))
+                continue;
+            var isParam = child.Name == XsltNs + "param";
+            var isOnCompletion = child.Name == XsltNs + "on-completion";
+            if (isParam && seenNonParam)
+                throw new XsltException(
+                    "XTSE0010: xsl:param must come first in xsl:iterate, before any other content",
+                    GetSourceLocation(child));
+            if (isOnCompletion && seenOnCompletion)
+                throw new XsltException(
+                    "XTSE0010: xsl:iterate must not have more than one xsl:on-completion",
+                    GetSourceLocation(child));
+            if (isOnCompletion && seenNonParam)
+                throw new XsltException(
+                    "XTSE0010: xsl:on-completion must come before the body of xsl:iterate, after any xsl:param",
+                    GetSourceLocation(child));
+            seenOnCompletion |= isOnCompletion;
+            seenNonParam |= !isParam;
+        }
+
         foreach (var node in element.Nodes())
         {
             switch (node)
