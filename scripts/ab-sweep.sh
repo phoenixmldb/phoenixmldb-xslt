@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Same-checkout A/B conformance sweep.
 #
-# Runs the suite twice from ONE checkout — once with src/ as it is on the base
-# branch, once with src/ as it is here — and reports the per-set difference in
+# Runs the suite twice from ONE checkout — once with the code as it is on the
+# base branch, once as it is here — and reports the per-set difference in
 # failing cases. One checkout means one corpus, one baseline and one machine
 # state, so a difference between the arms is the change and nothing else.
+#
+# Both src/ and tests/ are swapped: a harness change moves the numbers exactly
+# as an engine change does, and swapping only src/ would report a harness fix
+# as no change at all.
 #
 #   scripts/ab-sweep.sh                 # whole suite
 #   scripts/ab-sweep.sh insn misc       # named chunks only
@@ -29,8 +33,8 @@ OUT="${AB_OUT:-/tmp/ab-sweep-$$}"
 # and the run reports a flat, clean, meaningless result. A comparison that
 # cannot distinguish its two arms is not a weak measurement, it is not a
 # measurement.
-if git diff --quiet "$BASE" HEAD -- src; then
-  echo "A/B ABORT: src is identical to $BASE — the two arms would measure the same code." >&2
+if git diff --quiet "$BASE" HEAD -- src tests; then
+  echo "A/B ABORT: src and tests are identical to $BASE — the two arms would measure the same thing." >&2
   exit 2
 fi
 
@@ -60,10 +64,10 @@ run_arm() {  # $1 = arm name, rest = chunks
   CONFORMANCE_OUT="$OUT/$arm" ./scripts/conformance.sh ${*:-} > "$OUT/$arm.out" 2>&1
 }
 
-trap 'git checkout -q HEAD -- src' EXIT
-git checkout -q "$BASE" -- src
+trap 'git checkout -q HEAD -- src tests' EXIT
+git checkout -q "$BASE" -- src tests
 run_arm base "$@"
-git checkout -q HEAD -- src
+git checkout -q HEAD -- src tests
 run_arm change "$@"
 
 python3 - "$OUT/base" "$OUT/change" <<'PY'
