@@ -54,6 +54,20 @@ exactly the input that motivated the attribute. The fix is three comparisons; wh
 27 streaming cases that have been passing while running unstreamed, which is a scheduled piece of
 work rather than a one-liner. See #71.
 
+### Streamed shallow-copy produced malformed XML (xslt #60)
+
+Under a streamable mode, a template copying its element and applying templates to its children
+nested the source's **siblings** instead of keeping them siblings, and left the outer element
+unclosed:
+
+```
+source:    <book><bktlong>long</bktlong><bktshort>short</bktshort></book>
+streamed:  <book><bktlong><bktshort></bktshort></bktlong>     … <book> never closed
+```
+
+Not subtly wrong — the output is not well-formed XML. Any streaming pipeline using a shallow-skip
+mode with a copy template was affected.
+
 ### `xsl:merge` silently merged one of two sources (xslt #43)
 
 A relative `for-each-source` URI was resolved against the wrong base, and a source that could

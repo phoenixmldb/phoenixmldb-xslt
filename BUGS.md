@@ -3111,6 +3111,68 @@ the same thing about the relationship between a test suite and an implementation
 can mean the tests are hollow, or that the code behind a broken gate was never reached, and
 neither leaves a mark in the score.
 
+### 74. A streamed shallow-copy nested the source's siblings — and the corpus was ready to certify the half-fix (2026-09-12)
+
+parsers2, xslt #60. The first *structural* streaming defect of this track rather than an error
+code, and user-facing in the plainest possible way.
+
+Under a streamable mode, a template that copies its element and applies templates to its children
+turned siblings into a nest:
+
+```
+source:    <book><bktlong>long</bktlong><bktshort>short</bktshort></book>
+streamed:  <book><bktlong><bktshort></bktshort></bktlong>     … and <book> never closed
+expected:  <book><bktlong/><bktshort/></book>
+```
+
+**Not subtly wrong — malformed.** Anyone streaming a document with a shallow-skip mode and a copy
+template has been getting output that is not well-formed XML.
+
+**Cause.** The dispatch helper materialises an element's *whole subtree* and leaves the reader on
+its `EndElement`. The `apply-templates` in the body did not know that and kept driving the
+reader, so the first thing it read was the element's **next sibling**, processed as a child.
+
+#### The part worth keeping: how the second half was caught
+
+The first fix made the body walk the materialised children, and **the corpus said +2 with no
+losses.** A clean A/B on a fix that was still wrong.
+
+What caught it was a control parsers2 had written by hand — `<a><b><c/></b><b/></a>`, asserting
+the fix **does not flatten a real hierarchy**. It failed at depth 3 with `<c>` left open:
+`xsl:copy` and the built-in shallow-copy defer their closing tag to the streaming loop's
+`EndElement`, and for an already-materialised element that event has been consumed, so nothing
+ever popped the deferred close.
+
+> The corpus was ready to certify a fix that moved the defect **one level deeper** — +2, zero
+> losses, and still broken for any input nested one step further than the test data happens to
+> reach.
+
+#### Two lessons, both generalisable
+
+**1. Write down what the fix must NOT do.** In parsers2's words, the control exists because they
+wrote down what the fix must not do, not what it must do. A test asserting the intended outcome
+passes as soon as the intended case works. A test asserting the *invariant that must survive* —
+here, "a genuine hierarchy stays nested" — keeps holding the fix to account after it stops being
+new. Negative controls of this kind are the cheapest defence against a fix that relocates a
+defect instead of removing it.
+
+**2. Depth bias — a new form of the sample problem.** `mode-1418`'s fixture is two levels deep;
+nothing in the corpus exercises three under that shape. So the sample was biased toward the
+**depth** the test data happens to use, exactly as #70's sample is biased toward the detectable
+half of a rule. This is the same blind spot in a new dimension.
+
+**Audit question, alongside the three in #72:**
+
+> For a fix that changes a recursive or nested path, **does a test exist at a depth greater than
+> the one that motivated it?** A depth-2 fix validated only by depth-2 data is indistinguishable
+> from a correct one.
+
+#### Footnote on measurement
+
+The partial run reported +2; the full sweep came back **+5**, with `mode-1424` and `mode-1426`
+also coming good. Worth remembering in both directions — a partial run can understate as easily
+as overstate, and the number to report is the one from the full sweep.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
