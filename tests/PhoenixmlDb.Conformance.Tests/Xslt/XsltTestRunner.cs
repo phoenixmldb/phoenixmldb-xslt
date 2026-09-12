@@ -1439,14 +1439,36 @@ public sealed class XsltTestRunner
             var toParse = text.Contains('<', StringComparison.Ordinal)
                 ? text
                 : $"<phx-text-result>{System.Security.SecurityElement.Escape(text)}</phx-text-result>";
+            // An EMPTY result is a document node with no children — valid XDM, and what a
+            // transform that matched nothing produces. The wrapper above would give it one
+            // element child, so `not(/node())` (the assertion such tests use) saw a node and
+            // failed. The engine's answer was right and unscoreable. Build the empty document
+            // instead. (W3C misc/error error-0045aa/ab.)
             // Deliberately NOT WrapForParsing: a wrapper element would shift every absolute
             // path in the assertion by one step, so /result/@count would stop matching. Output
             // that is not a single well-formed document therefore fails to parse and the
             // assertion fails — which is the honest outcome, since such a result has no tree
             // for an absolute path to address.
-            var doc = store.LoadFromString(toParse, "urn:xslt-result");
-
             var engine = new PhoenixmlDb.XQuery.Execution.QueryEngine(nodeProvider: store, documentResolver: store);
+            object? doc;
+            if (text.Length == 0)
+            {
+                var emptyDoc = engine.Compile("document{()}");
+                if (!emptyDoc.Success) return false;
+                object? built = null;
+                await foreach (var item in emptyDoc.ExecutionPlan!
+                    .ExecuteAsync(engine.CreateContext(cancellationToken: ct)).ConfigureAwait(false))
+                {
+                    built = item;
+                    break;
+                }
+                if (built == null) return false;
+                doc = built;
+            }
+            else
+            {
+                doc = store.LoadFromString(toParse, "urn:xslt-result");
+            }
 
             // Parse with NormalizeLineEndings OFF, then compile the AST. QueryEngine.Compile(string)
             // builds its own parser with XQuery's query-SOURCE defaults, which apply §A.2.1
