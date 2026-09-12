@@ -25,6 +25,7 @@ public class XsltDeclarationTests : IClassFixture<XsltTestFixture>
 
     [Theory]
     [InlineData("tests/decl/accept/_accept-test-set.xml")]
+    [InlineData("tests/decl/expose/_expose-test-set.xml")]
     [InlineData("tests/decl/accumulator/_accumulator-test-set.xml")]
     [InlineData("tests/decl/attribute-set/_attribute-set-test-set.xml")]
     [InlineData("tests/decl/character-map/_character-map-test-set.xml")]
