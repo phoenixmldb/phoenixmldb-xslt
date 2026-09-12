@@ -3283,6 +3283,17 @@ side by side, since they are the same class of unchecked assumption:
 
 Neither costs anything, and both fail silently today.
 
+**A third, added 2026-09-12 (#78): do not switch branches while a sweep is running.** The sweep
+checks `base` out into the working tree and restores `HEAD`'s version when it finishes. If `HEAD`
+moved in between, it restores the wrong content and says nothing. Hit and survived on timing
+alone.
+
+All three share a shape worth naming: **the sweep mutates the working tree and assumes nothing
+else does.** It is a stateful operation wearing the interface of a measurement. Guards 1 and 2
+check preconditions at the start; this one is a precondition that must hold *throughout*, which
+is a harder thing to assert and a good argument for the sweep taking its own worktree rather than
+asking the operator to hold still.
+
 #### Why this belongs in the register rather than in a habit
 
 Three of this session's most valuable findings (#69, #71, #73) were counterfactuals of the form
@@ -3369,6 +3380,61 @@ without measuring. That is precisely the move this register spends its time cata
 that looks like evidence, produced by reasoning rather than by running. The `sandp` figure beside
 it **was** measured — 919 genuinely skipped, verified against the runner's own "all cases
 filtered by dependencies" line — which is the only reason it survives this correction.
+
+### 78. The runner was loading the wrong file — eight cases failed while testing nothing (2026-09-12)
+
+parsers2, xslt #65. **The sixth variety in #69's family, and the one that inverts it.**
+
+Eight `decl/package` cases failed with `XTDE0555` — *"no matching template … on-no-match='fail'"*
+— for stylesheets that declare `on-no-match="text-only-copy"`. The tests declare two files:
+
+```xml
+<package    file="package-015.xsl"        role="principal"/>
+<stylesheet file="package-015-import.xsl" role="secondary"/>
+```
+
+The runner's selection preferred **any `<stylesheet>` element outright**, so it loaded the
+**secondary import** as the principal. That import declares `<xsl:mode on-no-match="fail"/>`.
+
+**The engine was right the whole time** — the same transform through the CLI produces the
+expected output. Eight cases spent their existence testing the wrong stylesheet and reporting the
+engine's correctness as an engine defect.
+
+#### The symmetry, and the uncomfortable half of it
+
+#69, #71, #72 and #75 are tests that **passed** while testing nothing. This is tests that
+**failed** while testing nothing — the same hollowness with the opposite sign.
+
+> **A red result is no more self-verifying than a green one** — and red results likely get *less*
+> scrutiny, precisely because a failure feels like information.
+
+That is worth sitting with. A green result invites the question "did it really check?"; this
+register is four entries deep in that question. A red result arrives already looking like
+evidence: something is wrong, here is the code, someone should fix it. **The one shape nobody
+audits is a failure they believe.**
+
+Practical consequence for the remaining failure list: **a cluster of failures sharing one error
+code is as likely to be one harness defect as one engine defect**, and the cheap first test is to
+run the same transform through the CLI. Eight cases here, and the CLI disagreed with the harness
+immediately.
+
+#### Two notes on the tooling from the same stretch
+
+**The `ab-sweep` script found its own flaw on first use.** Pointed at this very harness fix, it
+aborted with *"src is identical to base"* — correct by its own rule and useless, because a
+harness change moves the numbers exactly as an engine change does. It now swaps `tests/` as well
+as `src/` (merged in xslt #64).
+
+The diagnosis is the sharper part: **guard 1 was right that the arms were identical, and wrong
+about which arms mattered.** That is a proxy predicate (#67) — `src` differing standing in for
+*the measurement is meaningful* — written into new tooling on the same day that pattern was being
+catalogued. Proxies are not a thing other people write.
+
+**A third unchecked precondition (see #76): do not switch branches while a sweep is running.**
+The sweep checks `base` out into the working tree and restores `HEAD`'s version afterwards. If
+`HEAD` has moved meanwhile, it restores the **wrong content**, silently. parsers2 switched
+branches mid-run and was saved only by timing. Same class as the other two, same silent failure
+mode.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
