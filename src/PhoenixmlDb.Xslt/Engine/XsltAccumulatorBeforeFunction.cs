@@ -55,6 +55,16 @@ internal sealed class XsltAccumulatorBeforeFunction : PhoenixmlDb.XQuery.Ast.XQu
             throw new XsltException($"XTDE3340: Accumulator '{name}' is not applicable in the current mode (not listed in use-accumulators)");
         }
 
+        // A template body that needs the whole subtree runs on a buffered copy of the streamed
+        // element, whose fresh node ids carry none of the streaming pass's values. The pre-descent
+        // value was final when that copy was taken, so it is read from the element it came from.
+        if (_context.TryGetStreamedAccumulatorBefore(accName, node, out var streamedBefore))
+        {
+            if (streamedBefore is AccumulatorDeferredError streamedError)
+                streamedError.Rethrow();
+            return streamedBefore;
+        }
+
         // Lazily compute accumulators for this document if not yet done
         await _context.EnsureAccumulatorsComputedAsync(accName, node).ConfigureAwait(false);
         await _context.EnsureAccumulatorPhaseAsync(accName, node, isAfter: false).ConfigureAwait(false);
