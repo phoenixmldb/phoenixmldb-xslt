@@ -2846,6 +2846,62 @@ Three instances in one day, from three different mechanisms — an unsupplied in
 (this entry), an untested half of a rule (#70), and an attribute value the parser does not
 recognise (#71). They are not variations on one bug; they are variations on one *blind spot*.
 
+#### The audit was run properly, and it is now largely ANSWERED (2026-09-12)
+
+parsers2 enumerated every element appearing inside `<test>` and `<environment>` across the
+corpus, filtered to catalog vocabulary, and grepped the runner for each. **Nineteen catalog
+inputs the runner never reads** — and then, because a raw count misleads exactly as the
+45-vs-43 count did, measured how many cases declare each and how many of those are *currently
+failing*:
+
+| catalog input | cases | failing |
+|---|---|---|
+| `schema` | 792 | **9** |
+| `resource` | 33 | 3 |
+| `supported_calendars_in_date_formatting_functions` | 4 | **3** |
+| `collation` | 39 | 1 |
+| `document` | 26 | 1 |
+| `extension-function` | 1 | 1 |
+| `languages_for_numbering` | 5 | 1 |
+| `ordinal_scheme_name` | 3 | 1 |
+| `default_language_for_numbering` | 1 | 1 |
+| `module` | 1 | 0 |
+| `additional_normalization_form` | 12 | 0 |
+| `default_html_version` | 4 | 0 |
+| `default_output_encoding` | 2 | 0 |
+| `unparsed_text_encoding` | 4 | 0 |
+| `available_documents` | 1 | 0 |
+| `detect_accumulator_cycles` | 1 | 0 |
+| `default_calendar_in_date_formatting_functions` | 2 | 0 |
+
+**Nineteen unread inputs, roughly twenty failing cases behind all of them combined, and seven
+inputs where every declaring case passes anyway.** `schema`'s 792 is almost entirely cases that
+declare a schema and do not need it — only 9 fail.
+
+Two readings, both worth keeping:
+
+**1. The question was worth asking, and is now answered for this corpus.** It found three real
+ones — the base output URI (this entry), the principal-vs-secondary stylesheet role (#78), and
+`package_version_resolution` (#69 above) — all fixed on 2026-09-12 for **+13 between them**. The
+tail is thin. **Nobody should read "19 unread inputs" as 19 opportunities.** An audit that
+concludes is worth more than one that becomes a standing backlog item, and this one concluded.
+
+**2. Frequency did not predict value.** `package_version_resolution` appears in **12** cases; the
+base output URI in **570**. The common input was not the valuable one. What predicted value was
+whether the input **changes the answer** for the tests that declare it — which is visible only by
+measuring, never by counting.
+
+That second reading generalises past this audit: *the size of a population is not evidence about
+the size of the defect within it.* Both times this register has been misled by a count — the
+45-vs-43 error and "19 opportunities" — the error was treating an occurrence count as an impact
+estimate.
+
+Best remaining candidates by the measure that matters:
+`supported_calendars_in_date_formatting_functions` (3 of 4 declaring cases failing) and
+`resource` (3 of 33). Both small, and both lower value than #79.
+
+#### Original audit note, superseded by the table above
+
 Worth a deliberate pass, after the current track: **enumerate the invocation parameters the
 catalog can set, and check which ones the runner actually reads** — and, from #71, **enumerate
 the attribute values the spec allows and check which ones the parser accepts.** #41 already records eight
