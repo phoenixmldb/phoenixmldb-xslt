@@ -2826,6 +2826,16 @@ This is a third mechanism for the same outcome, and unlike those two it leaves n
 harness to find — the only way to catch it is to notice that a feature the suite exercises is
 not wired up.
 
+**A fourth invocation parameter, 2026-09-12: `package_version_resolution`.** The catalog states
+the policy a test assumes — `<package_version_resolution value="lowest_version"/>` — the engine
+**already supports it as a load option**, and the runner never passed it. So those cases ran under
+the default and reported the version they had explicitly asked us not to choose:
+`use-package-203b` wanted `1.0.0` from `{1.0.0, 2.0.0}` and got `2.0.0`. Fixed, +4.
+
+That makes three catalog inputs now found unsupplied by this audit — the base output URI (this
+entry), the principal-vs-secondary stylesheet role (#78), and this one — each of which made real
+tests measure something other than what they named.
+
 **Third instance, and it is the one with a number: #71.** Three parser comparisons against the
 literal `"yes"` mean `streamable="true"` reads as not streamable, so **27 streaming cases have
 been passing while running unstreamed** — they ask for streaming, get none, and agree with the
@@ -3167,6 +3177,27 @@ half of a rule. This is the same blind spot in a new dimension.
 > the one that motivated it?** A depth-2 fix validated only by depth-2 data is indistinguishable
 > from a correct one.
 
+#### It recurs per CALL SITE — a generalisation of #40 (2026-09-12)
+
+The same defect reappeared at a **third dispatch site** (xslt, striding descent): the driver
+materialises the whole element and leaves the reader on its end tag, the built-in shallow-copy
+was not told, and a matched `CATEGORIES` with three `CATEGORY` children emitted
+`<CATEGORIES DESC="…"></CATEGORIES>` and ran no template for any child. **Silent rather than
+malformed this time** — the output is well-formed and simply missing everything inside, which is
+the harder of the two to notice.
+
+Of the **four** places that materialise-and-dispatch: two were wrong, one (`ControlFlow`) had
+solved it independently by suspending streaming for the body, and the second is now fixed.
+
+That is #40's asymmetric-pair shape scaled up: not two implementations where one has the fix, but
+**an invariant that must hold at every call site with no shared helper enforcing it.** One site
+solving it independently is the tell — it proves the problem is real *and* that the solution was
+never generalised. Same family as the node-store affiliation sweep in #73: a property the type
+system cannot express, no single place to enforce it, and silent when violated.
+
+**Worth a deliberate pass rather than a fourth encounter:** enumerate the materialise-and-dispatch
+sites and give them a shared helper, or at minimum a shared assertion.
+
 #### Footnote on measurement
 
 The partial run reported +2; the full sweep came back **+5**, with `mode-1424` and `mode-1426`
@@ -3435,6 +3466,32 @@ The sweep checks `base` out into the working tree and restores `HEAD`'s version 
 `HEAD` has moved meanwhile, it restores the **wrong content**, silently. parsers2 switched
 branches mid-run and was saved only by timing. Same class as the other two, same silent failure
 mode.
+
+### 79. OPEN — the synthesized ancestor chain stops at the immediate parent (2026-09-12)
+
+Found by parsers2 while fixing striding dispatch, **not fixed**, and recorded with its start point.
+
+Under streaming, `ancestor::*` from a matched element returns **only its parent**. The outer
+ancestors and the document node are missing, and the order is **innermost-first** where XPath
+requires document order.
+
+```
+<a><b><c/></b></a>, streamed match on c
+  streamed:    "b"
+  unstreamed:  "a b"
+```
+
+`si-apply-templates-001` asserts ancestors starting at `BOOKLIST`, so it still fails even now
+that it emits its children.
+
+#### This is an asymmetric pair (#40), and the good twin is in the same repo
+
+`StreamingXmlProcessor` **has the machinery** — `SynthesizeAncestorChain`, producing an
+outermost-first chain including a document node — and uses it for its subscription path. The
+striding-descent driver in `DefaultXsltExecutionContext.Streaming.cs` **does not call it.**
+
+So this is not missing capability, it is capability one of two paths never reaches for. That is
+#40's dominant shape — *one of a pair had a fix its twin lacked* — and it is where a fix starts.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
