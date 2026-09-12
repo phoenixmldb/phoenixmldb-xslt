@@ -3234,6 +3234,99 @@ incomplete.
 debugging capability, not a conformance point** — the four cases are the smallest part of its
 value.
 
+### 76. The A/B procedure has an unchecked precondition, and violating it looks like a clean result (2026-09-12)
+
+Caught by parsers2 on themselves, mid-run, and killed before it produced a number. Registered
+because **the failure mode of our measurement is silence, not noise** — which is the same
+sentence as every other entry in this register, turned on the method rather than the engine.
+
+The habit all session has been `git stash push -- src` to produce the baseline side of a
+same-checkout A/B. That works **only while the change is uncommitted.** This time the change was
+already committed, so the stash moved nothing, **both sides measured identical code**, and the
+run was on course to report a flat, zero-loss A/B — **indistinguishable from a correct result for
+a change that genuinely costs nothing.**
+
+> The procedure has a precondition that nothing checks, and violating it produces a
+> **passing-looking** result rather than an error.
+
+Every A/B this session has been reported as evidence. An A/B that silently compared a tree with
+itself would have carried exactly the same authority as the real ones.
+
+#### Suggested guard
+
+Before measuring, **assert the two sides actually differ**. The cheapest form:
+
+```sh
+git diff --quiet HEAD origin/main -- src && { echo "A/B ABORT: baseline and change are identical"; exit 2; }
+```
+
+Fail closed, as everything else here does. A comparison that cannot distinguish its two arms is
+not a weak measurement, it is not a measurement — and it costs one command to rule out.
+
+`git checkout origin/main -- src` is the correct baseline mechanism regardless of commit state,
+and is what parsers2 redid the run with.
+
+#### Why this belongs in the register rather than in a habit
+
+Three of this session's most valuable findings (#69, #71, #73) were counterfactuals of the form
+*"the clean A/B would have certified something wrong"*. This is the same statement about the
+tooling that produces those A/Bs. **The measurement apparatus is subject to the pattern it keeps
+detecting**, and there is no reason to expect it to be the one exception.
+
+### 77. OPEN (policy) — 919 `sandp` cases are dependency-skipped, and the streamability analyser has no corpus evidence at all (2026-09-12)
+
+Found and measured by parsers2, **deliberately not acted on**: the sequencing and denominator
+implications belong with Lucas, alongside #57 and the two policy calls in #72.
+
+The `sandp` group's **919 test cases** carry a dependency:
+
+```xml
+<sweep_and_posture satisfied="true" value="supports-sweep-and-posture-assessments"/>
+```
+
+Our runner reports *"all cases filtered by dependencies"* — **every one skipped.** That is
+**correct behaviour today**: it is an optional feature and we do not claim it.
+
+#### But we have the thing it tests
+
+The engine **has a streamability classifier with postures and sweeps.** Exposing that capability
+and implementing `assert-posture-and-sweep` would make 919 cases measurable — **~9% of the XSLT
+corpus by case count, the single largest coverage change available to us**, at an unknown pass
+rate.
+
+The part that matters more than the percentage:
+
+> **The streamability analyser currently has no corpus evidence whatsoever.** A major engine
+> component, responsible for decisions that produce silently wrong output when they are wrong
+> (#63, #71, #74, xslt #62), is validated by nothing in the W3C suite.
+
+Three of this session's malformed-output and silent-wrong-answer defects were in or adjacent to
+streaming. The one body of tests that would exercise the analyser directly is the one we skip.
+
+#### Why it is a policy call, not engineering
+
+- It moves the denominator by ~919 cases, on top of the #57 mode decision and the `decl/expose`
+  set in #72. Three denominator changes at once needs sequencing, not three separate surprises.
+- The pass rate is **unknown**. It could be an unflattering number, and the decision to look must
+  be made *before* the number is known, or it is not a decision.
+- Claiming `supports-sweep-and-posture-assessments` is a **public statement about the product**,
+  not an internal test-harness change.
+
+#### The remaining unconditionally-false assertions
+
+`assert-warning` was fixed in xslt #61. What still returns false unconditionally:
+
+| assertion | cases | note |
+|---|---|---|
+| `assert-posture-and-sweep` | 919 | dependency-skipped anyway, so currently invisible either way |
+| `assert-serialization-error` | **45** | **not** dependency-skipped — these run, and cannot pass |
+
+**The 45 are a live hollow cluster of #75's kind.** They execute, they assert, and the assertion
+cannot succeed however correct the engine is. Unlike `sandp`, nothing about them is a policy
+question — they are simply unpassable, and they are being counted in the denominator today.
+Worth fixing on the same terms as `assert-warning`: implement the collection strictly, so a test
+expecting a serialization error that gets none still fails.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
