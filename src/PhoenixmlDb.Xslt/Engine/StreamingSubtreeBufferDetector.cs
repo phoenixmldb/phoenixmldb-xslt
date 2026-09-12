@@ -324,7 +324,9 @@ internal static class StreamingSubtreeBufferDetector
                 // element (e.g. <banana x="{count(//*)}"/>) gets no watcher/document-level
                 // streaming dispatch — it evaluates against the synthetic empty node and folds
                 // to "" / 0. Any input-navigating AVT therefore needs the whole-input buffer. (#143)
-                return AttributesNavigateInput(lre.Attributes) || RequiresWholeInputBuffer(lre.Content);
+                return AttributesNavigateInput(lre.Attributes)
+                    || AttributesReferenceContextAccumulator(lre.Attributes)
+                    || RequiresWholeInputBuffer(lre.Content);
 
             case XsltCopy cp:
                 // xsl:copy select="path" navigates INTO the input to pick the node to copy,
@@ -431,6 +433,25 @@ internal static class StreamingSubtreeBufferDetector
         foreach (var avt in attrs.Values)
             foreach (var part in avt.Parts)
                 if (part is AvtExpression ae && NavigatesInput(ae.Expression))
+                    return true;
+        return false;
+    }
+
+
+    /// <summary>
+    /// True when any attribute value template in <paramref name="attrs"/> reads an accumulator
+    /// against the context node. At the document level that value is only known once the whole
+    /// tree has been consumed, exactly as for a select (see
+    /// <see cref="SelectReferencesContextAccumulator"/>) — but an accumulator call navigates
+    /// nothing, so the navigation test above does not see it, and
+    /// <c>&lt;result count="{accumulator-after('count')}"/&gt;</c> folded to the initial value
+    /// while the same call in an xsl:value-of was routed correctly (W3C accumulator-009s/019s).
+    /// </summary>
+    private static bool AttributesReferenceContextAccumulator(IReadOnlyDictionary<QName, XsltAttributeValueTemplate> attrs)
+    {
+        foreach (var avt in attrs.Values)
+            foreach (var part in avt.Parts)
+                if (part is AvtExpression ae && SelectReferencesContextAccumulator(ae.Expression))
                     return true;
         return false;
     }
