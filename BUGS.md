@@ -3266,6 +3266,23 @@ not a weak measurement, it is not a measurement — and it costs one command to 
 `git checkout origin/main -- src` is the correct baseline mechanism regardless of commit state,
 and is what parsers2 redid the run with.
 
+#### A second unchecked assumption in the same class: which branch am I on?
+
+Added 2026-09-12. A `SESU0013` commit landed on an **already-merged branch** rather than a fresh
+one, because the branch was never created. It surfaced only on push — *refspec does not match
+any* — and was harmless because that branch was already merged.
+
+**The failure mode if it had not been:** the commit sits quietly on the wrong branch and ships
+inside an unrelated PR, with nothing at commit time to say so.
+
+parsers2's proposal, which I agree with: the sweep wrapper should assert **both** preconditions
+side by side, since they are the same class of unchecked assumption:
+
+1. the baseline arm differs from the change arm (above), and
+2. **"am I on a branch that is neither `main` nor already merged?"**
+
+Neither costs anything, and both fail silently today.
+
 #### Why this belongs in the register rather than in a habit
 
 Three of this session's most valuable findings (#69, #71, #73) were counterfactuals of the form
@@ -3319,13 +3336,39 @@ streaming. The one body of tests that would exercise the analyser directly is th
 | assertion | cases | note |
 |---|---|---|
 | `assert-posture-and-sweep` | 919 | dependency-skipped anyway, so currently invisible either way |
-| `assert-serialization-error` | **45** | **not** dependency-skipped — these run, and cannot pass |
+| `assert-serialization-error` | 43 | **not a hollow cluster — see the correction below** |
 
-**The 45 are a live hollow cluster of #75's kind.** They execute, they assert, and the assertion
-cannot succeed however correct the engine is. Unlike `sandp`, nothing about them is a policy
-question — they are simply unpassable, and they are being counted in the denominator today.
-Worth fixing on the same terms as `assert-warning`: implement the collection strictly, so a test
-expecting a serialization error that gets none still fails.
+#### CORRECTION (2026-09-12) — I got the serialization-error cluster wrong
+
+I wrote above that these were "a live hollow cluster… they run, they assert, and the assertion
+cannot succeed however correct the engine is." **That is false, and it was my error, not a
+reported one.** parsers2 measured before starting work on it:
+
+- There are **43**, not 45.
+- **42 of them already pass.**
+
+Nearly all are `<any-of>` carrying an `<error code="…"/>` alternative alongside the
+`assert-serialization-error`, and the engine raises that alternative. `output-0197` is typical —
+`SEPM0016` **or** `XTSE0020`, and we raise `XTSE0020` statically at parse time. The harness also
+already matches `assert-serialization-error` codes against thrown exceptions
+(`MatchesExpectedError` handles both kinds), so this assertion is **not** in the category
+`assert-warning` was: that one genuinely returned false unconditionally, this one does not.
+
+The real work was **one case** — `output-0194`, `method="html" version="0.0"`, expecting
+`SESU0013` with no alternative. A missing engine check, not a harness gap. Fixed in xslt #63.
+
+**The lesson, which belongs on the audit list rather than in the engine:**
+
+> **An assertion kind returning false in the harness does not mean the tests using it fail.**
+> Most carry alternatives, and `any-of` needs only one to be satisfied. **Counting occurrences of
+> an assertion kind overstates the work by however many are satisfied elsewhere** — here by a
+> factor of 43.
+
+I reached "45 cases cannot pass" by counting occurrences of the assertion and inferring impact,
+without measuring. That is precisely the move this register spends its time cataloguing: a number
+that looks like evidence, produced by reasoning rather than by running. The `sandp` figure beside
+it **was** measured — 919 genuinely skipped, verified against the runner's own "all cases
+filtered by dependencies" line — which is the only reason it survives this correction.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
