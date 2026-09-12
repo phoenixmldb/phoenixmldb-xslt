@@ -698,8 +698,31 @@ public sealed class XsltTransformEngine
         return topElements == 1 && !topLevelText;
     }
 
+    /// <summary>
+    /// SESU0013: the html and xhtml output methods take a version this processor can actually
+    /// serialize — HTML 4.0/4.01/5 and XHTML 1.0/1.1/5. An unsupported one (version="0.0") was
+    /// accepted in silence and the result serialized as if nothing had been asked for, so a
+    /// stylesheet requesting a version we cannot produce got output that merely looked fine
+    /// (W3C decl/output output-0194).
+    /// </summary>
+    private static void RequireSupportedHtmlVersion(XsltOutput? outputDecl)
+    {
+        if (outputDecl?.Version is not { Length: > 0 } version
+            || outputDecl.EffectiveMethod is not (OutputMethod.Html or OutputMethod.Xhtml))
+            return;
+        if (!decimal.TryParse(version, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            || parsed is not (1.0m or 1.1m or 4.0m or 4.01m or 5.0m))
+        {
+            throw new XsltException(
+                $"SESU0013: The {(outputDecl.EffectiveMethod == OutputMethod.Html ? "html" : "xhtml")} output method does not support version '{version}'");
+        }
+    }
+
+
     internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind)
     {
+        RequireSupportedHtmlVersion(outputDecl);
         // Default output method (Serialization 4.0 §Default Output Method): when no method was
         // specified on xsl:output, a serialized result whose document element is `html` resolves to
         // the html method (html element in no namespace) or the xhtml method (html element in the
