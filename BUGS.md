@@ -2728,6 +2728,74 @@ one guessed** — the guess would be indistinguishable from knowledge six months
 Unblocking it needs XSLT 3.0 §streamability read against both cases. Until then these two are not
 counted as engine failures, and should not be chased for the conformance number.
 
+### 69. A test can pass because the feature is absent — and implementing it then scores as a regression (2026-09-11)
+
+Named by parsers2 while parking a +5/−2 change. **This is the most consequential thing in the
+register today**, because it says our conformance number may contain passes that were never
+tests.
+
+#### How it showed up
+
+The conformance runner never supplied a **base output URI**, which is an invocation parameter the
+catalog states explicitly — `<output file="results/x.xml"/>` in the test element, with
+`file="#absent"` meaning "supply none" (`013`/`015` test exactly that absence).
+
+Because it was never supplied, `current-output-uri()` returned the empty sequence
+**everywhere**. That happened to be:
+
+- **right** for the two cases that want empty (`016`, `017`)
+- **wrong** for the five that want a value (`002`, `003`, `004`, `010`, `014`)
+
+So two of the seven passed, and **five of the seven were never testing anything.** Supplying the
+parameter — making the engine *more* correct — turned 5 failures into passes and, by removing the
+accident, turned 2 passes into failures. A net +5/−2 that reads on the scoreboard as a partial
+regression.
+
+#### The shape, generalised
+
+> **An assertion of "empty", "absent", "error" or "nothing happened" can be satisfied by a
+> feature that was never implemented. The test then passes for a reason unrelated to the
+> behaviour it names, and implementing the feature correctly is scored as a regression.**
+
+This is the fail-open family (#28, #44, #54) seen from the *test's* side rather than the
+harness's. #28 was a runner that scored an expected-error case as passing on any exception. This
+is subtler: the runner is fine, the engine is fine, and the **capability the test depends on was
+never switched on**, so the engine's degenerate answer coincides with the expected one.
+
+#### The auditing consequence, which is the point
+
+**Any conformance case whose expected result is empty, absent, or an error is suspect until the
+feature it exercises is known to be implemented.** A green result there proves the engine
+produced the expected output; it does not prove the engine *did* anything.
+
+We have prior form: #28 found the harness inflating XSLT conformance by 1.9 points, and the QT3
+figure had to be restated from 99.72% to a reproducible 93.94% (`phoenixmldb-xquery/docs/
+CONFORMANCE.md`). Both were cases of a number describing something other than what it claimed.
+This is a third mechanism for the same outcome, and unlike those two it leaves no trace in the
+harness to find — the only way to catch it is to notice that a feature the suite exercises is
+not wired up.
+
+Worth a deliberate pass, after the current track: **enumerate the invocation parameters the
+catalog can set, and check which ones the runner actually reads.** #41 already records eight
+catalog environment attributes the XSLT runner never reads; this is the same audit reaching a
+different attribute, and it found five hollow passes in one small test-set. There is no reason to
+think `fn/current-output-uri` is the only place.
+
+#### The change itself, parked with its dependency
+
+Not merged. The +5 is real and the −2 are real, and both losses are one defect:
+`current-output-uri#0` called as a **function item** (`016`) and inside an **inline function
+body** (`017`) must return `()`, and **nothing distinguishes a dynamic invocation from a direct
+one** by the time the XSLT-side implementation runs. The signal belongs on
+`QueryExecutionContext`, beside `InsideXslEvaluate` — **XQuery-side, so parked by the XSLT-first
+order.**
+
+parsers2 declined to merge two known-wrong answers to buy five right ones, holding the
+no-per-set-losses line kept all session. The right call: the scoreboard would have improved and
+the engine would have shipped two answers we knew were wrong. The diff is small and can be redone
+in minutes once the XQuery track opens — this entry exists so that is a lookup rather than a
+rediscovery.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
