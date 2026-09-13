@@ -3019,7 +3019,7 @@ case would any test have registered the loss. A register that only recorded merg
 two clean wins here; what actually happened is two correct refusals. **The absence of those
 commits is the achievement.**
 
-### 71. OPEN — `streamable="true"` is silently not streamable, and 27 streaming cases measure nothing (2026-09-11)
+### 71. OPEN — `streamable="true"` is silently not streamable; 164 corpus stylesheets have never streamed (2026-09-11, re-measured 2026-09-13)
 
 Found by parsers2. **The third and largest instance of #69, and the only one with a direct
 user-facing cost.**
@@ -3068,6 +3068,60 @@ supposed to agree, which is what makes the whole class invisible.
 
 It also puts a number on #70's "a floor on what is wrong, not a ceiling": **27 cases in the
 streaming sets are currently measuring nothing.**
+
+#### RE-MEASURED 2026-09-13 — the scale is larger and the cost is smaller
+
+Re-measured after two days of intervening fixes. **The defect is unchanged; both numbers moved.**
+
+**Scale.** `641` corpus stylesheets use `streamable="yes"` and stream properly. **`164` use
+`"true"` or `"1"` and have never once been streamed on this engine** — roughly a fifth of the
+streaming corpus, silently demoted, with the streamability rules never running over those bodies
+either.
+
+**Cost, now 19 rather than 27:**
+
+```
+base 332  ->  change 349
+attr   LOST [doe-0802, streamable-037/039/041/047..053/064/065/066/135]  WON [mode-0014]
+decl   LOST [accumulator-003s, accumulator-005s]
+insn   LOST [stream-211]
+strm3  LOST [sx-gc-eq-801]
+misc   WON  [error-3430a]
+```
+
+**The losses are output mismatches, not errors.** The stylesheets now genuinely stream, and **the
+streaming implementation produces wrong results.** They were passing because streaming was
+switched off behind their backs.
+
+> This is #69's family an order of magnitude larger: a test can pass because a feature is absent —
+> and here **a whole attribute spelling was the off switch.**
+
+**Not shipped.** parsers2 dropped it from their branch and kept it as a patch at
+`/tmp/claude-1000/0001-streamable-true-silently-meant-not-streamable.patch`. **That location is a
+shared temp directory and should be a branch before anyone relies on it.**
+
+#### Why it is Lucas's decision
+
+The fix is **unambiguously correct and makes the numbers worse.** The 19 are **not new defects** —
+they are existing streaming defects that were invisible. Shipping it converts a silently-wrong
+baseline into an honestly-worse one.
+
+Same trade as #88's catalog alignment, and the two belong together: **both are about the
+denominator describing what the engine actually does.**
+
+**Recommendation: take it.** A baseline that counts unstreamed runs as streaming passes will keep
+hiding streaming defects indefinitely, and **every future streaming fix gets measured against a
+corrupted floor.** If he takes it, the 19 become a work list rather than a regression — and
+probably the most valuable streaming work available, since each is a real defect with a
+reproducing case already written.
+
+But it must be a **deliberate decision with the 19 named**, not something slipped in under a
+correctness heading.
+
+**Unresolved caveat if it lands.** The fix uses the shared `NormalizeYesNo`, which raises
+`XTSE0020` on a non-boolean value. **No test exercises that path**, so whether an invalid
+`streamable` value should be an error or a silent false is **unverified against the spec** and
+wants checking before it ships.
 
 #### Sequencing — this is a project, not a three-line fix
 
