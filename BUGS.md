@@ -4608,7 +4608,7 @@ The concrete cost here was small: a duplicate entry, caught. The general cost is
   nothing had ever measured 27 — losing the fact that the cost is *falling* as other work lands,
   which is itself a decision-relevant signal.
 - **Any decision already in flight is reopened.** #71 was with Lucas. A "new" finding with the
-  same content restarts that clock and makes the队 look less settled than it is.
+  same content restarts that clock and makes the question look less settled than it is.
 - **Nothing marks it as a repeat**, so the second telling is indistinguishable from the first and
   gets the same weight in a summary.
 
