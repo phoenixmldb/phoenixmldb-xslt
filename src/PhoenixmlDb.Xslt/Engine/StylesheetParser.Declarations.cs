@@ -627,6 +627,23 @@ public sealed partial class StylesheetParser
                         if (VisibilityConflict(mergedMode, mode))
                             stylesheet.ConflictingModeVisibility.Add(modeKey);
                     }
+                    // A second xsl:mode for the same mode ADDS to the first; it does not
+                    // replace it. Assigning outright made every attribute the earlier
+                    // declaration set and the later one omits silently revert to its default:
+                    //
+                    //   <xsl:mode name="X" streamable="yes"/>
+                    //   <xsl:mode name="X" visibility="public"/>   <- X stops being streamable
+                    //
+                    // Nothing complained, because the conflict checks above only compare
+                    // attributes that BOTH declarations state, and these two state none in
+                    // common. mode-1903 exists to catch exactly this and says so in its own
+                    // comment: "check that an xsl:mode with no @streamable attribute isn't
+                    // treated as streamable='no'".
+                    //
+                    // The loss is not specific to @streamable — on-no-match, on-multiple-match,
+                    // use-accumulators and visibility all go the same way.
+                    if (stylesheet.Modes.TryGetValue(modeKey, out var priorMode))
+                        mode = MergeModeDeclarations(priorMode, mode, child);
                     _modeElements[modeKey] = child;
                     stylesheet.Modes[modeKey] = mode;
                     if (mode.Name is { } namedMode)
@@ -2740,6 +2757,38 @@ public sealed partial class StylesheetParser
     /// <summary>
     /// Checks if two xsl:mode elements have conflicting values for a given attribute.
     /// </summary>
+    /// <summary>
+    /// Combines a repeated xsl:mode declaration with the earlier one: the later declaration
+    /// wins for every attribute it states, and the earlier value survives for every attribute
+    /// it does not. Presence is read off the element, because an unstated attribute and one
+    /// stated at its default value are indistinguishable once parsed.
+    /// </summary>
+    private static XsltMode MergeModeDeclarations(XsltMode prior, XsltMode current, XElement element)
+    {
+        bool States(string attr) => element.Attribute(attr) != null;
+        var statesAccumulators = States("use-accumulators");
+        return new XsltMode
+        {
+            Name = current.Name,
+            Streamable = States("streamable") ? current.Streamable : prior.Streamable,
+            WarningOnNoMatch = States("warning-on-no-match")
+                ? current.WarningOnNoMatch : prior.WarningOnNoMatch,
+            OnNoMatch = States("on-no-match") ? current.OnNoMatch : prior.OnNoMatch,
+            OnMultipleMatch = States("on-multiple-match")
+                ? current.OnMultipleMatch : prior.OnMultipleMatch,
+            Visibility = States("visibility") ? current.Visibility : prior.Visibility,
+            VisibilityAttr = States("visibility") ? current.VisibilityAttr : prior.VisibilityAttr,
+            UseAllAccumulators = statesAccumulators
+                ? current.UseAllAccumulators : prior.UseAllAccumulators,
+            UseAccumulatorNames = statesAccumulators
+                ? current.UseAccumulatorNames : prior.UseAccumulatorNames,
+            UseAccumulatorsAttr = statesAccumulators
+                ? current.UseAccumulatorsAttr : prior.UseAccumulatorsAttr,
+            Typed = States("typed") ? current.Typed : prior.Typed,
+            TypedValueWarnings = States("typed") ? current.TypedValueWarnings : prior.TypedValueWarnings,
+        };
+    }
+
     private static void CheckModeAttrConflict(XElement prev, XElement current, string attrName, string modeName)
     {
         var prevAttr = prev.Attribute(attrName);
