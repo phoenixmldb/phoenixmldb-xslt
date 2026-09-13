@@ -375,8 +375,16 @@ internal sealed class StreamingXmlProcessor
                         // /* silently fails, falling back to the built-in text-only rule
                         // (#143 si-iterate-013). Only the root is affected; deeper
                         // elements keep their real element parent from ancestorStack.
-                        if (ancestorStack.Count == 0)
-                            xdmElem.Parent = EnsureStreamingRootDocId();
+                        // Deeper elements were supposed to "keep their real element parent from
+                        // ancestorStack", but they never received one: ctx.Parent is set above,
+                        // and MaterializeElement does not pass it to the element it builds. So
+                        // only the root had a parent, and every element below it was an orphan —
+                        // ancestor::*, parent::* and count(..) all empty, where the unstreamed
+                        // run gives the full chain. The text-node path below has always taken
+                        // the id off this same stack; elements just never did.
+                        xdmElem.Parent = ancestorStack.Count > 0
+                            ? ancestorStack.Peek().NodeId
+                            : EnsureStreamingRootDocId();
 
                         // Fire start-phase accumulator rules before template execution
                         await FireAccumulatorRulesAsync(xdmElem, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
