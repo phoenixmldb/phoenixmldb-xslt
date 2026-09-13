@@ -4410,6 +4410,46 @@ it half-done.
 `sf-current` cases were filed under an entry-point error until someone looked, so at least some of
 those singletons may not be singletons — and the accumulator six may not all need the same rule.
 
+#### All five singletons diagnosed (2026-09-13) — four are real, one is not ours
+
+parsers2 diagnosed rather than implementing another rule, on the grounds that the diagnosis is
+worth more than one more merge at this point. **Two of their own reads were wrong and were
+corrected mid-investigation**, which is the part worth keeping.
+
+| case | the error it reports | what it actually is |
+|---|---|---|
+| `sx-fcall-027` | `FODC0002` document not found | streamability miss |
+| `si-assert-902` | `XX99: Assertion failed` | streamability miss |
+| `su-shallow-descent-902` | cannot cast `<whole document>` to double | streamability miss |
+| `square-array-201` | output mismatch vs `<any-of>` | mixed-posture, produced output |
+| `mode-1903` | output `"brown-fox"` | **not a streamability rule — see #90** |
+
+**`sx-fcall-027` was first called a corpus issue and is not.** The engine fails with *"document
+not found: sx-FunctionCall/books.xml"*, and the file genuinely is absent — but **the test expects
+`XTSE3430` at compile time, so a correct engine never opens it.** The missing file is
+*downstream* of the missed rejection.
+
+> **Third time today an error message pointed away from its own cause** — after `sf-current`'s
+> `XTDE0040` and `si-map`'s missing file. In this area the reported error is close to worthless
+> as a classifier.
+
+#### Diff-the-pair again — and the pair was in the KEYWORDS, not the source
+
+`sx-fcall-026` **is** correctly rejected; `-027` is not. The corpus keywords name the difference
+exactly:
+
+```
+026   striding  leading-lone-slash
+027   crawling  leading-double-slash  SimpleMapExpr
+```
+
+So the rule is **a user-function call with a crawling argument inside a simple map.**
+
+That extends the method: **the discriminating pair is not always two stylesheets to diff.** It can
+be one file under two regimes (`accumulator-009`/`-009s`), or — as here — **the test metadata**,
+where the corpus authors have already written down the distinction the rule turns on. Check the
+keywords before reading the source.
+
 #### Method note from the same session
 
 parsers2 first read this table as their own ancestor fix being incomplete, because the probe
@@ -4750,6 +4790,54 @@ decision was made, what a number cost, and which approaches were already tried a
 That only functions if it is **read**, not merely written. Every convention in the header exists
 because writing discipline alone was insufficient; this one exists because reading discipline was
 missing entirely, and nobody noticed until the same defect was discovered twice.
+
+### 90. OPEN — a second `xsl:mode` declaration silently discards the first's attributes (2026-09-13)
+
+Found by parsers2 diagnosing `mode-1903`. **Registered separately from #85 because it is #71's
+family, not a streamability rule** — streamability switched off silently, by a mechanism with
+nothing to do with streaming.
+
+Two `xsl:mode name="X"` declarations: the first carries `streamable="yes"`, the second only
+`visibility="public"`.
+
+```csharp
+StylesheetParser.Declarations.cs:631
+    stylesheet.Modes[modeKey] = mode;          // the second wholly REPLACES the first
+```
+
+Conflicts are checked **only for attributes the new declaration explicitly sets**, so an absent
+`@streamable` raises no conflict — and the replacement **silently discards `streamable="yes"`.**
+
+The stylesheet's own comment states the intent exactly: *"Check that an `xsl:mode` with no
+`@streamable` attribute isn't treated as `streamable='no'`"*.
+
+#### Blast radius is all mode attributes, not just `streamable`
+
+The same replacement will discard **`on-no-match`, `use-accumulators` and `visibility`** — any
+attribute present on an earlier declaration and absent from a later one. **Whoever takes this
+should estimate across all of them rather than fixing `streamable` alone**, because the mechanism
+is indifferent to which attribute it loses.
+
+#### Two independent ways to lose `streamable="yes"`, found in one session
+
+| # | mechanism |
+|---|---|
+| **71** | the parser compares the attribute against the literal `"yes"`, so `"true"` and `"1"` silently mean not-streamable |
+| **90** | a later mode declaration replaces an earlier one and drops the attribute entirely |
+
+Neither raises. Neither is about streaming. **A feature can have more than one off switch, and
+finding the first is not evidence you have found them all** — which is worth holding in mind
+before concluding #71 explains the streaming picture.
+
+#### Caveat before anyone starts it
+
+**The merge fix alone probably will not flip `mode-1903`.** Once mode X is correctly streamable,
+the body must then be *rejected* — two `xsl:copy-of` instructions, each consuming — and **it is
+unverified whether the engine detects two consuming instructions in one sequence constructor.**
+Likely two rules again, as with everything in this area (#84, #85).
+
+Recorded so the first measurement showing no movement is read as expected rather than as the fix
+not working.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
