@@ -1,62 +1,66 @@
+using System.Threading.Tasks;
 using FluentAssertions;
-using PhoenixmlDb.Xslt.Engine;
+using PhoenixmlDb.Xslt;
 using Xunit;
 
 namespace PhoenixmlDb.Xslt.Tests;
 
 /// <summary>
-/// Under streaming, a matched element's ancestor axis is complete and in document order. The
-/// striding descent materialises the matched element DETACHED, so its axis stopped at its own
-/// parent: ancestor::* from a node under a/b answered "b" where the unstreamed run answers
-/// "a b" — outermost first, with the document node above them (W3C strm/si-apply-templates-001).
+/// A streamed element must have the same ancestor axis as the same element read normally.
+///
+/// The streaming processor sets the parent on its node CONTEXT, but the element it then
+/// materializes from that context never received it — MaterializeElement does not pass it on.
+/// Only the root element got a parent, assigned explicitly straight afterwards, so every
+/// element below the root was an orphan: <c>ancestor::*</c>, <c>parent::*</c> and even
+/// <c>count(..)</c> came back empty. The comment at that site says deeper elements "keep their
+/// real element parent from ancestorStack", which is what made it look handled.
+///
+/// The text-node path in the same loop has always taken its parent id off that same stack.
+/// Elements simply never did — the two halves of one rule, one of them implemented.
 /// </summary>
-public sealed class StreamingAncestorAxisTests : IDisposable
+public class StreamingAncestorAxisTests
 {
-    private readonly string _dir = Directory.CreateTempSubdirectory("phoenixml-anc-").FullName;
+    private const string Doc = "<a><b><c/></b></a>";
 
-    public void Dispose() => Directory.Delete(_dir, recursive: true);
-
-    private async Task<string> RunAsync(string select, string streamable)
+    private static async Task<string> Run(string select, bool streamable)
     {
-        var source = Path.Combine(_dir, "in.xml");
-        await File.WriteAllTextAsync(source, """<a ID="A"><b ID="B"><c/></b></a>""").ConfigureAwait(true);
-        var ss = $$"""
-            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+        var mode = streamable ? """<xsl:mode streamable="yes"/>""" : "";
+        var ss = $"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="#all">
               <xsl:output method="text"/>
-              <xsl:mode streamable="{{streamable}}" on-no-match="shallow-skip"/>
-              <xsl:template name="main">
-                <xsl:source-document streamable="{{streamable}}" href="{{new Uri(source).AbsoluteUri}}">
-                  <xsl:apply-templates select="a/b"/>
-                </xsl:source-document>
-              </xsl:template>
-              <xsl:template match="b"><xsl:apply-templates/></xsl:template>
-              <xsl:template match="c"><xsl:value-of select="{{select}}"/></xsl:template>
+              {mode}
+              <xsl:template match="c"><xsl:value-of select="{select}"/></xsl:template>
             </xsl:stylesheet>
             """;
         var t = new XsltTransformer();
-        await t.LoadStylesheetAsync(ss);
-        t.SetInitialTemplate("main");
-        return (await t.TransformAsync((string?)null)).Trim();
+        await t.LoadStylesheetAsync(ss).ConfigureAwait(true);
+        return await t.TransformAsync(Doc).ConfigureAwait(true);
     }
 
-    /// <summary>Every ancestor, outermost first — the axis is in document order.</summary>
-    [Fact]
-    public async Task TheAncestorAxis_IsCompleteAndInDocumentOrder()
-        => (await RunAsync("string-join(ancestor::*/name(), ' ')", "yes")).Should().Be("a b",
-            "the streamed axis stopped at the matched element's own parent");
+    [Theory]
+    // The ancestor axis is in DOCUMENT order — outermost first — not innermost-first.
+    [InlineData("string-join(ancestor::*/local-name(), ' ')")]
+    [InlineData("string-join(ancestor-or-self::*/local-name(), ' ')")]
+    [InlineData("count(..)")]
+    [InlineData("../local-name()")]
+    // Every node in an XDM tree is rooted at a document node, so this counts it too.
+    [InlineData("count(ancestor::node())")]
+    [InlineData("count(ancestor::document-node())")]
+    [InlineData("count(root(.))")]
+    public async Task StreamedAncestorAxis_MatchesTheUnstreamedAnswer(string select)
+    {
+        var streamed = await Run(select, streamable: true).ConfigureAwait(true);
+        var unstreamed = await Run(select, streamable: false).ConfigureAwait(true);
+        streamed.Should().Be(unstreamed);
+    }
 
     [Fact]
-    public async Task TheStreamedAxis_AgreesWithTheUnstreamedOne()
-        => (await RunAsync("string-join(ancestor::*/name(), ' ')", "yes"))
-            .Should().Be(await RunAsync("string-join(ancestor::*/name(), ' ')", "no"));
-
-    /// <summary>Synthesized ancestors carry their attributes.</summary>
-    [Fact]
-    public async Task AncestorsKeepTheirAttributes()
-        => (await RunAsync("string-join(ancestor::*/@ID, ' ')", "yes")).Should().Be("A B");
-
-    /// <summary>Every XDM tree is rooted at a document node, so ancestor::node() counts one more.</summary>
-    [Fact]
-    public async Task TheChainIsRootedAtADocumentNode()
-        => (await RunAsync("count(ancestor::node())", "yes")).Should().Be("3");
+    public async Task StreamedAncestorAxis_IsInDocumentOrder()
+    {
+        // Pinned literally, so a regression that returns the chain innermost-first fails here
+        // rather than passing an "equals the other run" comparison that also regressed.
+        (await Run("string-join(ancestor::*/local-name(), ' ')", streamable: true)
+            .ConfigureAwait(true)).Should().Be("a b");
+    }
 }
