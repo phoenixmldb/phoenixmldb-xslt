@@ -2298,9 +2298,24 @@ internal sealed partial class DefaultXsltExecutionContext
                     || (func.As != null
                         && func.As.ItemType is ItemType.Element or ItemType.Node or ItemType.Document
                             or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Text))
+                // item() belongs on this list with the node types, and omitting it made
+                // DECLARING the widest type narrower than declaring nothing:
+                //
+                //   <xsl:function name="f:m">              A<e/>B  ->  3 items, T E T
+                //   <xsl:function name="f:m" as="item()*"> A<e/>B  ->  2 items, T T
+                //
+                // With as="item()*" this branch was skipped, so the markup sitting in the text
+                // output was never parsed; the branch below then returned the accumulator's
+                // text items and DISCARDED the output buffer the element was in. The element
+                // did not error, and did not arrive as a string — it was gone. A body of two
+                // elements came back as one text item for the same reason.
+                //
+                // item() is the widest type in the language, and the type a function gets by
+                // default, so it can only ever be the one declaration that loses nothing.
                 && (func.As == null
                     || func.As.ItemType is ItemType.Element or ItemType.Node or ItemType.Document
-                        or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Text))
+                        or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Text
+                        or ItemType.Item))
             {
                 // Parse text output to XDM nodes. This handles:
                 // - Functions with node return type (as="node()") — so instance-of checks work
