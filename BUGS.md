@@ -4507,7 +4507,7 @@ So neither is the better method; they answer different questions. The practical 
 Recorded because the temptation after a 13-case win is to conclude that probing was wasted
 effort. It was not; it found defects a user would meet and the sweep never would.
 
-### 88. The harness and the W3C catalog disagree in BOTH directions (2026-09-13)
+### 88. Two test-sets the harness runs are NOT in the catalog, and both are broken (2026-09-13)
 
 Found by parsers2. **Not acted on** — it changes the denominator, which is Lucas's call, and it
 reframes the held `decl/expose` PR (xslt #57) as one third of a package rather than a standalone.
@@ -4531,13 +4531,33 @@ case fails with *"Could not find file"*.
 `si-map-902`, `si-map-903`, `sx-path-001`, `transform-001`. **All phantom: they measure nothing
 about the engine.**
 
-#### In `catalog.xml` but NOT run by the harness — 3 sets, all present on disk
+#### NARROWED 2026-09-13 — the other direction is a re-derivation of #72
 
-```
-tests/decl/expose/_expose-test-set.xml                 <- what xslt PR #57 wires
-tests/decl/import-schema/_import-schema-test-set.xml
-tests/fn/system-property-gen/_system-property-gen-test-set.xml
-```
+parsers2 ran the new grep-first check (#89) retroactively over the day's findings and **it caught
+a second re-derivation within minutes.** The "3 catalog sets not run" half of this entry is a
+**strict subset of #72**, which already records `decl/expose`, `fn/system-property-gen` and
+`decl/import-schema` — **plus two that were not rediscovered today**: `fn/collation` and
+`sandp/_base-expressions.xml`.
+
+**See #72 for the unrun sets.** The genuinely new finding is the *other* direction — the two
+broken sets above, and `sf-map-new` appears nowhere else in this file.
+
+#### The two counts answer different questions, and the catalog is authoritative
+
+| population | count |
+|---|---|
+| test-set files **on disk** | **264** — what #72 counted against |
+| test-sets listed in **`catalog.xml`** | **260** |
+| test-sets hardcoded in the **harness** | **259** |
+
+#72's "five missing" is **disk versus harness**. This entry's is **catalog versus harness**. Both
+are correct and they answer different questions.
+
+> **The catalog is the authoritative population.** A file on disk that the W3C catalog does not
+> list is **not a test we are failing to run — it is a file we should not be running**, which is
+> exactly what `sf-map-new` and `sx-PathExpr` turn out to be.
+
+**The alignment decision to Lucas should use the catalog count**, not the disk count.
 
 #### The honest package is both directions at once
 
@@ -4631,6 +4651,35 @@ intervening fixes landed. That is an argument for recording *when* a number was 
 > one.** A number without a date invites being quoted as current.
 
 Both conventions are now in the file header.
+
+#### The convention worked immediately — on the very next thing checked
+
+parsers2 applied it retroactively to the day's other findings and **caught a second re-derivation
+within minutes**: half of #88 was a subset of #72, which they had also written, two days earlier.
+
+**Two re-derivations in one session, from the same cause.** And the cause is not unusual:
+
+> Compaction between the finding and the re-finding **is not an exceptional circumstance — it is
+> the normal one for any session long enough to do real work.**
+
+Which settles what kind of check this is. It is **not bookkeeping hygiene; it is load-bearing for
+any pair of sessions that compact**, and the failure it prevents scales with how productive the
+session was.
+
+#### A register only becomes memory when someone looks something up in it
+
+parsers2's refinement, and it is sharper than the framing below:
+
+> #72 was **written, filed, and correct** — and still did not prevent the re-derivation, because
+> it was not read. **A register only becomes memory at the moment someone looks something up in
+> it; until then it is an archive of things that were once known.**
+
+Two days was long enough for that distinction to bite, twice.
+
+That reframes every convention in this file's header. They are all rules about *writing*, and
+writing was never the failing part — both re-derived findings had been written up accurately the
+first time. **The grep-first rule is the only one about reading, and it is the only one that
+converts the archive into memory.**
 
 #### The structural point
 
