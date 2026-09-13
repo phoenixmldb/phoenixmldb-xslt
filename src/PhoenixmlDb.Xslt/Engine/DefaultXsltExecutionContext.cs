@@ -892,6 +892,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         lib.Register(new XsltLangFunction(this));
         lib.Register(new XsltLang2Function(this));
         lib.Register(new XsltDeepEqualFunction(this));
+        lib.Register(new XsltSerializeFunction(this));
+        lib.Register(new XsltSerialize2Function(this));
         lib.Register(new XsltOutermostFunction(this));
         lib.Register(new XsltInnermostFunction(this));
         lib.Register(new XsltSnapshotFunction(this));
