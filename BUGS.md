@@ -5282,6 +5282,70 @@ minutes."* Which is the useful general observation — **a real finding and an o
 are indistinguishable at the moment of discovery**, and the only thing that separates them is
 running the follow-up you would otherwise have written as a recommendation.
 
+### 95. PREREQUISITE — accumulator tree resolution walks to the root, and it blocks the whole missing-parent family (2026-09-13)
+
+**The most consequential structural finding of the streaming work.** Two independent fixes, in
+different drivers, measured and reverted for the same reason. That makes it a **prerequisite, not
+a coincidence.**
+
+#### The collision, hit twice
+
+> **The accumulator machinery decides which tree a node belongs to by walking to its root.** So
+> giving a streamed node a parent **moves its root**, and accumulator resolution breaks.
+
+| attempt | fix | result |
+|---|---|---|
+| buffered-subtree ancestors (#93) | `bufferedElement.Parent = element.Parent` | **+2**, broke `AccumulatorAfter_CountsTheSubtree` |
+| nested-dispatch parents (this entry) | one line | **+1 / −1**, broke `accumulator-080s` |
+
+The second is the sharper demonstration: the first broke a **unit test**, this one breaks a
+**conformance case the unit tests do not reach.** Same assumption, two different detectors, three
+hours apart.
+
+#### The dependency, and the sequencing that follows
+
+```
+accumulator tree resolution stops depending on root-walking
+  ├─ unblocks buffered-root ancestors    streamable-138/139   measured +2
+  ├─ unblocks nested-dispatch parents    doe-0802             measured +1
+  └─ probably unblocks others in the missing-parent family
+```
+
+**Five drivers in this engine have now been found missing a parent link — three fixed, two
+blocked — and the blocker is a single assumption in accumulator lookup, not five separate
+problems.**
+
+> **Do the accumulator work FIRST and treat the parent fixes as its dependents**, rather than
+> discovering the collision a third time.
+
+That is worth more than the three cases it unblocks. It converts a scattered family of
+symptom-filed defects into one named prerequisite with known dependents — and each dependent is
+already measured, so the payoff is knowable before the work starts.
+
+#### `doe-0802` was filed wrong all day, and the DIRECTORY misled
+
+**It is not a disable-output-escaping defect at all.** It lives in the `disable-output-escaping`
+directory, its output is double-escaped, and it was filed under d-o-e three times.
+
+The actual cause: a child dispatched by `apply-templates` inside a matched template **has no
+parent** — `name(..)` empty, `count(..)` 0, `root()` answering the child itself. So `match="doc/*"`
+never fires, the built-in rule shallow-copies the source element, and **the escaping is a
+downstream artifact of a matching failure.**
+
+New twist on a familiar shape. #45, #85 and #88 record error *messages* pointing away from their
+cause; here **the directory name did it** — a classification made by the corpus authors, inherited
+without question, and wrong for this case. The engine's assertion (#94) is what finally pointed
+at the truth.
+
+#### The diagnostic conclusion, recorded because it is cheap and would have saved hours
+
+> **In this streaming implementation, *"does this node know its parent?"* is the first question to
+> ask of any wrong-output case, not the last.**
+
+**Five for five so far.** Every missing-parent defect presented as something else — double
+escaping, a wrong ancestor axis, dropped children, a bad `position()`, structure collapsing to
+text. None presented as "this node has no parent".
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
