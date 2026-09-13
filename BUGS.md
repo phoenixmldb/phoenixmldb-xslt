@@ -3161,7 +3161,37 @@ from it. But it is a distinct failure from the ones recorded there — those are
 measurement was wrong. **Here the measurement was right and answered a different question than
 the one being asked.**
 
-#### Exposure falling: 19 → 10 (2026-09-13)
+#### Exposure falling: 19 → 8 (2026-09-13, later)
+
+    #83  deferred bodies + literal-element attribute AVTs   +3
+    #84  multi-step select routing                          +6
+    #85  shallow copy misread as consuming (over-rejection) +1
+    #86  position() across a multi-step descent             +1  (in CI)
+
+All zero-loss. `attr` chunk 44 → 33.
+
+**The remaining eight are not more of the same**, and parsers2 says so before the slope changes
+rather than after:
+
+```
+streamable-064/065      tunnel parameters; -065 mixes a secondary document and a non-streaming mode
+streamable-135          has-children() in a predicate
+streamable-137/138/139  fn:path() output
+accumulator-003s/005s   duplicated output
+stream-211, sx-gc-eq-801  content dropped
+doe-0802                double-escaping
+```
+
+Everything cleared so far was **routing or classification** — a predicate not consulted, an entry
+condition written for one call shape, a counter scoped per level. What remains is heavier;
+`streamable-065` currently emits `<out/>`, total content loss, combining `doc()`, a non-streaming
+mode and tunnel params in one case.
+
+> **Expect the rate to drop from here.** Said in advance so the slope is not read as a stall
+> later — which is the failure mode of reporting a run of easy wins without characterising what
+> is left.
+
+#### Superseded — exposure at 10 (2026-09-13, earlier)
 
 Three streaming fixes from this set have landed since the cost was measured. **The exposure is
 now 10, not 19**, and still falling:
@@ -4964,6 +4994,30 @@ unstreamed   <out><t>one</t></out>
 
 The element is emitted **empty** and its text **escapes outside it**. No explicit template with a
 multi-step select is required, so this is a **wider shape than #84 covers**.
+
+#### Clearing an entrance reveals everything behind it at once
+
+xslt #86 is small but worth the note: **it was unreachable until #84 landed.** A multi-step
+select never reached that driver, so its per-parent `position()` counter could not fire.
+
+> **In a code path that was previously unreachable, every defect behind the entrance is
+> invisible. Clearing the entrance reveals them all at once.**
+
+Two consecutive PRs touching the same driver could easily read as the first having been wrong. It
+was not, and parsers2 said so in the PR body for exactly that reason.
+
+Two consequences worth carrying into any cluster of this kind:
+
+- **The count going down more slowly than expected is not a sign the fixes are failing.** Each
+  fix can expose its successor, so a cluster of N can take more than N changes without anything
+  having gone backwards.
+- **A second PR against the same code is not evidence the first was incomplete** — and it looks
+  exactly like that in a commit log, which is why it needs saying at the time rather than being
+  reconstructed later.
+
+This is #73's accidental-guard shape in a new form. There, a permanently-failing parse hid the
+code behind it; here, an unreachable entry condition hid the code behind *it*. Same conclusion:
+**everything downstream of something that never runs is untested by construction.**
 
 #### Deliberately not covered by a test
 
