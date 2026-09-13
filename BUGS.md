@@ -1425,6 +1425,29 @@ failing, no set lower. `misc/error` 438 → 466. (phoenixmldb-xslt#15.)
 A third instance of the same shape, after the parser scaling test (#43 and its three corrections)
 and the `bug-3701` timeout that set a baseline from a lucky run.
 
+#### `sf-not-107` — a flicker that triggers on LOAD, not on ordering (2026-09-13)
+
+Found by parsers2 when an A/B reported it as the sole loss. **It is not a real loss.** It streams
+100,000 transactions and asserts `count(/out/t) = 100000`; **under a two-arm sweep it times
+out.** Two clean `strm1` re-runs on the branch, and it runs correctly under the CLI.
+
+It belongs on the known-flicker list with `call-template-1002/1003`, but **the trigger is a
+different species and the distinction matters:**
+
+| flicker | triggered by |
+|---|---|
+| `call-template-1002/1003` | test **ordering** |
+| `sf-not-107` | **machine load** — it fails because the sweep runs two arms on a shared box |
+
+The remedy is the same (re-run the chunk). The hazard is not:
+
+> **It is more likely to appear the busier the machine is — which is exactly when someone is
+> least inclined to re-check a single-case loss.**
+
+A flicker that correlates with the conditions under which you are least likely to verify it is
+strictly worse than a random one. Worth naming rather than filing alongside the ordering
+flickers.
+
 `tests/PhoenixmlDb.Xslt.Tests` `StreamingCancellationTests` cancels at 3 s and then asserts the
 transform is still running. On a fast machine it finishes in ~2 s, so 2 of the 4 tests fail
 **deterministically** — the assertion encodes an assumption about how slow the host is.
@@ -3499,6 +3522,26 @@ a flat A/B, a refspec error, restored content that looks wrong. This one you can
 asking a question the result never prompts. A precondition that produces no symptom cannot be
 enforced by attentiveness, however disciplined; it has to be enforced by the tool.
 
+#### A long sweep opens a window the guard cannot see into (2026-09-13)
+
+Guard 3 checks whether the branch is behind base **at the start**. parsers2's branch fell **6
+commits behind main while the sweep was running**, so the guard could not have caught it.
+
+Harmless in that instance — all six were BUGS.md edits, and they verified it with
+`git diff --name-only` rather than assuming, and said so on the PR. But the general case is real:
+
+> **The honest check is at PR time, not sweep time.** A ten-minute sweep on a moving main has a
+> ten-minute blind spot by construction.
+
+**Deliberately not fixed with a second guard.** The sweep is long and main moves; a guard that
+re-checks at the end would fail routinely on changes that do not affect the numbers, and a guard
+that fires routinely is one that gets ignored (#40). The remedy is a habit belonging in this
+section: **confirm what landed during the sweep before believing its numbers** — `git diff
+--name-only base..main` answers it in one command.
+
+Same shape as everything else here: **the tooling is sound at the moment it runs, and the risk
+lives in what you conclude afterwards.**
+
 #### The guards protect the sweep — not the ad-hoc check you run to interpret it
 
 Added 2026-09-13, after parsers2 made guard 1's exact mistake **by hand**: running
@@ -4288,6 +4331,23 @@ by axis.
 
 That is the recommended approach for the remaining rules, and it is better than reading the spec
 clause and guessing at its boundary — which is what produced the over-rejecting first version.
+
+#### RULE, evidenced twice: write the ACCEPT cases FIRST
+
+Not an observation any more. **Both rules implemented so far over-rejected on the first attempt,
+each from a correct reading of the spec clause:**
+
+| rule | caught by |
+|---|---|
+| #79, `current()` in a match pattern | `sf-current-100` — a corpus case that must be accepted |
+| #80, both operands consuming | **five existing accept-side unit tests, before a sweep ever ran** |
+
+> The reject cases only restate the targets you already know. **The accept cases find the
+> boundary — and the boundary is where the entire risk of this programme lives.**
+
+**Anyone continuing #85 should start from the accept cases, not from the failing case.** #80's
+version caught its over-rejection before any measurement, which is the cheapest possible place to
+find it.
 
 #### Test shape: for a tightening change, the ACCEPT cases are the valuable half
 
