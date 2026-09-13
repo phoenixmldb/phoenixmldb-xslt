@@ -125,6 +125,23 @@ internal sealed partial class DefaultXsltExecutionContext
                 ResolveExpressionNamespaceIds(ae.Expression);
                 ResolveExpressionNamespaceIds(ae.FunctionCall);
                 break;
+            // An inline function body is ordinary XPath and its name tests need the same
+            // interning as everything else. Without this case a prefixed step inside a
+            // closure — function($m) { $m/xdm:item } — kept ResolvedNamespace unset, and an
+            // unresolved prefixed name test matches only no-namespace nodes: the closure
+            // returned the empty sequence with no error, so a fold-left over it silently
+            // built an empty result. Reported by Martin Honnen against xdm-persistence.
+            case PhoenixmlDb.XQuery.Ast.InlineFunctionExpression ife:
+                if (ife.Body != null)
+                    ResolveExpressionNamespaceIds(ife.Body);
+                break;
+            // Same reasoning for the two other shapes the runtime walk already descends into:
+            // the callee and arguments of a dynamic call are expressions like any other.
+            case PhoenixmlDb.XQuery.Ast.DynamicFunctionCallExpression dfc:
+                ResolveExpressionNamespaceIds(dfc.FunctionExpression);
+                foreach (var arg in dfc.Arguments)
+                    ResolveExpressionNamespaceIds(arg);
+                break;
         }
     }
 
