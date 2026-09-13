@@ -5322,6 +5322,61 @@ That is worth more than the three cases it unblocks. It converts a scattered fam
 symptom-filed defects into one named prerequisite with known dependents — and each dependent is
 already measured, so the payoff is knowable before the work starts.
 
+#### ATTEMPTED 2026-09-13 and stopped — what it narrowed, and what it ruled out
+
+parsers2 attempted the prerequisite, reverted, and stopped. Clean tree, 1765 unit tests passing.
+**The attempt narrows the problem considerably and contradicts their own hypothesis, which is the
+useful part.**
+
+**The boundary rule is expressible with no new bookkeeping.** Materialised subtrees carry
+`Document = DocumentId.None`; streamed nodes carry a real id. So the distinction wanted —
+
+> **a parent link is for NAVIGATION and is not a claim about which tree a node belongs to**
+
+— can be stated as: when resolving tree identity, **stop climbing at a `None` → non-`None`
+transition.**
+
+**It was implemented at both resolution sites and did not fix `accumulator-080s`:**
+
+| site | state |
+|---|---|
+| `FindDocumentForNode` | patched |
+| the orphan walk in `EnsureAccumulatorsComputedAsync` | patched |
+| `FindDocumentIdForInput` | **delegates to the first — not a third site** |
+
+**That last row is the most valuable line here.** A third independent walk was expected and
+**there isn't one**, so the remaining cause is **not another root-walking site** — which is
+exactly where #74's per-call-site pattern would have sent the next person. **The pattern would
+have misled here**, and the search space is smaller than it suggests.
+
+**The most likely remaining explanation, unverified:** the parent link changes accumulator
+**values** rather than tree identity — the accumulator walk now sees different structure.
+Recorded as a hypothesis and explicitly **not** acted on.
+
+#### The stopping rule, applied
+
+> **Three build-measure-revert cycles in one area is enough to know it is not a patch.**
+
+Two in #95's collision, one on the boundary rule. It wants someone starting fresh with the
+accumulator machinery in front of them, **not another attempt appended to this one** — which is
+#84's judgement about half-built work, applied to a sequence of attempts rather than a single
+unfinished change.
+
+#### Handover — what is worth carrying into that work
+
+- **`doe-0802` is a missing-parent defect, not disable-output-escaping.** Measured **+1** in
+  isolation.
+- **`streamable-138/139` are the buffered-root version.** Measured **+2** in isolation.
+- **Both are blocked by the same accumulator collision**, confirmed by two different detectors.
+- **The `DocumentId.None` discriminator exists and the boundary compiles cleanly.** It is a
+  correct-looking start that is **provably insufficient on its own** — which is more than anyone
+  had before, and saves the next person from spending the same day proving it.
+- **`FindDocumentIdForInput` delegates**, so the search space is narrower than the per-call-site
+  pattern implies.
+
+A negative result of that last kind is worth as much as the positive ones: it removes the most
+obvious next place to look, which is where the register's own patterns would have pointed.
+
 #### `doe-0802` was filed wrong all day, and the DIRECTORY misled
 
 **It is not a disable-output-escaping defect at all.** It lives in the `disable-output-escaping`
