@@ -2751,6 +2751,40 @@ sampled. #69 is the same observation from another direction — there, five case
 feature was absent; here, an incomplete implementation would pass because the missing half is
 untested.
 
+#### CORRECTION 2026-09-13 — the coverage argument was overstated, and the true version is more useful
+
+I summarised a day's findings as *"the corpus was blind to all of them"*. **parsers2 corrected it
+with the numbers, and I had one of them wrong outright: #82 moved a case** (base 349 / change
+350, `insn WON [copy-5101]`), which was reported at the time and did not survive into my summary.
+
+The honest split for 2026-09-13:
+
+| outcome | findings |
+|---|---|
+| moved a conformance case | **#82** (`+copy-5101`), **#86** (`+as-0141`) |
+| invisible to the corpus | #71, #79, #84 (unfixed) |
+| not applicable | #69 — the suite does not reference the CLI project |
+| plus | the streaming separator AVT fix, **+5** |
+
+So **three of five**, not all of them. parsers2's framing, which I am keeping because it is the
+right instinct: *weaker arguments that are true survive contact better.*
+
+**And the correction contains something more useful than the number.** Two of the day's
+hand-found defects were things **the corpus could see and was already failing on** — nobody had
+traced those failures back to a cause.
+
+> **A suite failing on a defect without anyone knowing why is a different problem from a suite
+> not covering it — and a more tractable one.** Those failures are already sitting in the logs
+> with their causes attached to nothing.
+
+That splits the thesis below in two. The corpus genuinely cannot see some things (#71, #79, #85),
+and that part stands. But part of what looked like blindness was **unattributed failure**, which
+needs no new coverage at all — only someone asking what single cause explains a cluster.
+
+**The cheap sweep that follows, and it has a demonstrated yield:** take currently-failing cases
+and ask what one cause explains a group of them, rather than starting from a hand-probe. #86 was
+found by probing; it would equally have been found by asking why `as-0141` failed.
+
 **The consequence for how we read our own number.** A conformance percentage is not a measure of
 correctness; it is a measure of agreement with a sample. Where the sample is systematically
 biased toward the detectable half of a rule — and #69 and #70 are two independent demonstrations
@@ -4073,9 +4107,11 @@ patterns in this register with a syntactic tell rather than a semantic one.
 base 348 / change 349; `attr` WON `[as-0141]`, `insn` LOST the two known flickers (re-ran `insn`
 twice on the branch, neither failed). **Zero real losses, one real win.**
 
-Notable as **the first defect found today without an external report that also moves a
-conformance case** — most of the day's real finds were invisible to the corpus (#79, #82, #84,
-#85).
+**Do not over-read that win.** `as-0141` moved because a W3C case **already declared
+`as="item()*"` on a function returning an element** — a case the suite already had and was
+already failing. **The suite was not blind to #86; it was failing on it without anyone knowing
+why.** See the correction in #70: that is a different problem from missing coverage, and a more
+tractable one.
 
 Nine tests, six failing on main. One asserts **the invariant directly** — explicit `item()*` must
 agree with declaring nothing — rather than pinning two expectations that could later drift apart
