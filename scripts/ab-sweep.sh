@@ -52,6 +52,23 @@ if git merge-base --is-ancestor HEAD "$BASE" 2>/dev/null; then
   exit 2
 fi
 
+# GUARD 3 — the branch must not be BEHIND base.
+# The base arm is $BASE, so anything merged into $BASE since the branch was cut
+# is present in the base arm and absent from the change arm. The two arms then
+# differ by the change MINUS those commits, and the sweep credits their effect
+# to the change — in the flattering direction, if they were fixes.
+#
+# A stale branch defeats the guards above because it looks completely healthy:
+# it has a real diff against base and it is not merged. Measured for real once —
+# a serialize branch cut before a deep-equal fix landed reported 0 losses and
+# 3 wins; rebased onto current main it reported 0 losses and 1 win.
+BEHIND="$(git rev-list --count HEAD.."$BASE" 2>/dev/null || echo 0)"
+if [ "${BEHIND:-0}" -gt 0 ]; then
+  echo "A/B ABORT: '$BRANCH' is $BEHIND commit(s) behind $BASE — the base arm would carry fixes the change arm lacks." >&2
+  echo "  git rebase $BASE" >&2
+  exit 2
+fi
+
 mkdir -p "$OUT"
 echo "A/B: $BRANCH vs $BASE   chunks: ${*:-all}   out: $OUT"
 
