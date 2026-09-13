@@ -2719,7 +2719,10 @@ public sealed partial class StylesheetParser
         return new XsltMode
         {
             Name = nameAttr != null ? ParseQName(nameAttr.Value, element) : null,
-            Streamable = streamableAttr?.Value == "yes",
+            // Boolean-typed, as on xsl:source-document — and the typed= attribute two lines
+            // above already spells the full set out.
+            Streamable = streamableAttr != null
+                && NormalizeYesNo(streamableAttr.Value, "streamable", "xsl:mode", element),
             WarningOnNoMatch = warningOnNoMatch,
             OnNoMatch = onNoMatchAttr != null ? ParseOnNoMatchBehavior(onNoMatchAttr.Value, element) : null,
             OnMultipleMatch = onMultipleMatchAttr != null ? ParseOnMultipleMatchBehavior(onMultipleMatchAttr.Value, element) : OnMultipleMatchBehavior.UseLast,

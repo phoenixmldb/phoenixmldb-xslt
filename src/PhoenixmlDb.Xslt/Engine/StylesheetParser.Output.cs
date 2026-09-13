@@ -184,7 +184,14 @@ public sealed partial class StylesheetParser
         {
             Location = location,
             Href = ParseAvt(hrefAttr.Value, element, hrefAttr),
-            Streamable = forceStreamable || streamableAttr?.Value == "yes",
+            // XSLT 3.0 types @streamable as a boolean, so "yes", "true" and "1" all mean
+            // streamable and whitespace around them is insignificant. Comparing to the literal
+            // "yes" silently demoted streamable="true" to non-streaming: no error, no warning,
+            // just a stylesheet that quietly stopped being streamed — and the streamability
+            // rules then never ran over its body either.
+            Streamable = forceStreamable
+                || (streamableAttr != null
+                    && NormalizeYesNo(streamableAttr.Value, "streamable", "xsl:source-document", element)),
             Validation = ParseValidationMode(validationAttr) ?? Ast.ValidationMode.Strip,
             Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
             BaseUri = ResolveEffectiveBaseUri(element),
