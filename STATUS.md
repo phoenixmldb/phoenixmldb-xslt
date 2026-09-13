@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-12 20:37 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-13 11:58 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-09-12 20:37 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 3 | 1 |
-| phoenixmldb-xslt | 7 | 1 |
+| phoenixmldb-xslt | 7 | 2 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -53,6 +53,7 @@ Generated 2026-09-12 20:37 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [76] A streamed element below the root had no ancestors at all
 - [57] [HELD for baseline batch] Run the decl/expose test set, which the harness never opened
 
 **phoenixmldb-cli**
@@ -61,7 +62,7 @@ Generated 2026-09-12 20:37 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Defect register
 
-`BUGS.md`: **79** entries, **18** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **84** entries, **18** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -81,7 +82,7 @@ the engines are split but the defects are not.
 - 70. OPEN — SENR0001 vs XTDE0450 needs a destination marker, not an error-code swap (2026-09-11)
 - 71. OPEN — `streamable="true"` is silently not streamable, and 27 streaming cases measure nothing (2026-09-11)
 - 77. OPEN (policy) — 919 `sandp` cases are dependency-skipped, and the streamability analyser has no corpus evidence at all (2026-09-12)
-- 79. OPEN — the synthesized ancestor chain stops at the immediate parent (2026-09-12)
+- 84. OPEN — a function-produced text node fails every axis step, and the error names an internal type (2026-09-13)
 
 ## Conformance
 
