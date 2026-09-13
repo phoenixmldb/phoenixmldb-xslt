@@ -5105,7 +5105,8 @@ worth doing wherever a cheap wrong answer and a correct one are indistinguishabl
 | needs streaming-core work | **`streamable-135`** — this entry |
 | `fn:path()` output | `streamable-137/138/139` |
 | tunnel parameters | `streamable-064/065` — `-065` emits `<out/>`, total content loss |
-| other | `accumulator-003s/005s` duplication, `stream-211` + `sx-gc-eq-801` dropped content, `doe-0802` double-escaping |
+| other | `accumulator-003s/005s` duplication, `stream-211` + `sx-gc-eq-801` dropped content |
+| **reclassified (#94)** | **`doe-0802` and `streamable-064` share a root cause** — no `StreamingPlanner.Plan` for the shape, so the construct falls to the text-only sink. Filed apart under *double-escaping* and *tunnel parameters* until a `Debug.Assert` grouped them by cause. |
 
 ### 93. OPEN — the buffered subtree has no ancestors, and the missing parent is load-bearing (2026-09-13)
 
@@ -5177,6 +5178,71 @@ The tell was that the same loop iterated **three times with a literal body and o
 The body was selecting the route. That belongs with the instrument-first material (#80, #85):
 three readings of the code produced three wrong hypotheses, and one instrumented run produced the
 right one — the fourth time this session that instrumenting beat reading.
+
+### 94. The engine contains a purpose-built diagnostic for this class of defect, and no run exercises it (2026-09-13)
+
+Found by parsers2. **The codebase already held a detector for exactly the failure mode we spent
+the evening chasing** — dormant, because the build configuration that enables it was turned off
+for an unrelated and correct reason.
+
+```
+#143 Task 1.3 invariant: a guaranteed-streamable construct (...) reached the
+built-in text-only-copy sink for a element node. It must stream or buffer via
+StreamingPlanner.Plan, never collapse structure to text.
+```
+
+It is a `Debug.Assert`. **The conformance suite runs Release, so it never fires**, and every
+violation instead presents as **silently wrong output**.
+
+#### The decision that disabled it was correct — for a different purpose
+
+`conformance.sh` already supports `CONFORMANCE_CONFIG=Debug`. The header records why Release
+became the default: Debug times out on ~38 cases (#43).
+
+> **That is the right call for SCORING and the wrong one for DIAGNOSIS**, and nobody revisited
+> whether the diagnostic value survived the decision.
+
+A new shape worth naming, and distinct from the hollow-pass family: **not a check that fails
+open, and not a test that tests nothing — a working detector we built, switched off as a side
+effect of an unrelated correct choice.** The decision was sound, documented, and made for
+scoring; its cost to diagnosis was never priced because nobody was asking a diagnostic question
+at the time.
+
+#### It groups by CAUSE, not by symptom — and that is the whole payoff
+
+Run as a diagnostic rather than a score:
+
+```
+attr    2 violations
+  doe-0802         template match="doc",  body starts with XsltLiteralResultElement
+  streamable-064   template match="/",    body starts with XsltApplyTemplates
+strm1   0 violations
+```
+
+**Those two share a root cause.** They were filed separately — `doe-0802` under *double-escaping*
+and `streamable-064` under *tunnel parameters* — **from reading their symptoms.** They are the
+same defect: `StreamingPlanner.Plan` produces no plan for the shape, the construct falls to the
+text-only sink, and structure collapses to text. **Neither symptom hints at the other.**
+
+> **Clustering by error message groups by symptom. Clustering by this assertion groups by cause —
+> because the assertion is placed at the cause.**
+
+That extends #87's failure-log sweep to a strictly better signal where one exists. The sweep
+method asks *"what single cause explains this group of failures?"* and answers it by inference;
+an assertion at the cause answers it **directly**, and it found a pairing that three days of
+symptom-reading had filed apart.
+
+#### Negative result, recorded so nobody over-claims it
+
+**`strm1` produced zero violations.** This is **not** a universal streaming-defect detector — it
+finds one specific class. Cheap to run, and it will not explain everything.
+
+#### The general action
+
+**Sweep for other `Debug.Assert`s in this codebase that no run ever exercises.** Each one is a
+detector someone wrote deliberately, at the point where they understood the invariant best, and
+each is currently costing nothing and returning nothing. The question to ask of each: *what
+configuration would make this fire, and does anything we run use it?*
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
