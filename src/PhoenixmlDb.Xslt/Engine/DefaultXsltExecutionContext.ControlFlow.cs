@@ -145,6 +145,12 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             // The captured context is owned by the InlineFunctionItem closure for its
             // lifetime — it cannot be disposed eagerly here.
+            //
+            // The resolver is what turns a node's interned namespace id back into a URI
+            // string for a name test to compare against. Without it every prefixed step
+            // inside the closure body — $m/xdm:item — matched nothing and returned the
+            // empty sequence silently, so a fold-left over such a function produced empty
+            // results with no error. Reported by Martin Honnen against xdm-persistence.
 #pragma warning disable CA2000
             var capturedContext = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
                 container: default,
@@ -152,7 +158,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 nodeProvider: _nodeStore,
                 documentResolver: null,
                 schemaProvider: _schemaProvider,
-                namespaceResolver: null);
+                namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
 #pragma warning restore CA2000
             capturedContext.DefaultCollation = DefaultCollation;
             capturedContext.StaticBaseUri = StaticBaseUri;
@@ -212,14 +218,16 @@ internal sealed partial class DefaultXsltExecutionContext
         var fn = _functionLibrary.Resolve(fcall.Name, fcall.Arguments.Count);
         if (fn == null) return (false, null);
 
-        // Build a minimal execution context for the function invocation
+        // Build a minimal execution context for the function invocation. Minimal still has
+        // to include the namespace resolver: an argument may be a node and the function
+        // may apply a prefixed name test to it.
         using var execContext = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
             container: default,
             functions: _functionLibrary,
             nodeProvider: _nodeStore,
             documentResolver: null,
             schemaProvider: _schemaProvider,
-            namespaceResolver: null);
+            namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
         execContext.DefaultCollation = DefaultCollation;
         execContext.StaticBaseUri = StaticBaseUri;
 
