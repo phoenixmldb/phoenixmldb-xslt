@@ -68,6 +68,18 @@ streamed:  <book><bktlong><bktshort></bktshort></bktlong>     … <book> never c
 Not subtly wrong — the output is not well-formed XML. Any streaming pipeline using a shallow-skip
 mode with a copy template was affected.
 
+### `xsl:function` declared `as="item()*"` silently lost element nodes (xslt #77)
+
+```
+<xsl:function name="f:m">               A<e/>B  ->  3 items  (text, element, text)
+<xsl:function name="f:m" as="item()*">  A<e/>B  ->  2 items  (text, text)
+```
+
+No error, and the element is not stringified — it is **gone**. `item()` is the type that by
+definition excludes nothing, and it is also what a function gets when no `as` is written, so the
+same function returned different results depending on whether the type was spelled out. **Writing
+types explicitly — the careful habit — selected the broken path.**
+
 ### `xsl:merge` silently merged one of two sources (xslt #43)
 
 A relative `for-each-source` URI was resolved against the wrong base, and a source that could

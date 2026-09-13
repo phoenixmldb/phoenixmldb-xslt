@@ -3423,6 +3423,19 @@ questioned. Tooling cannot reach that check by definition — it is ad-hoc — s
 the habit: **`git checkout origin/main -- src`, never `stash`**, which is what produced the real
 numbers above.
 
+**That habit needs a second half, added 2026-09-13 after parsers2 hit it twice in one day.**
+`git checkout origin/main -- src` is the right tool for *taking* the comparison, and
+`git checkout HEAD -- src` to undo it **destroys the uncommitted working change** — and the
+working change is the entire point of the exercise. Caught within a minute both times, but it is
+a loss with no recovery, unlike every other trap in this list.
+
+> **Commit before comparing.** Checkout is the right tool for the comparison and the wrong tool
+> for the restore, and the restore is where the change lives.
+
+Three distinct ways to fool yourself while *interpreting* a measurement, all found in one day —
+the compound probe (#85), the ad-hoc stash (above), and this — and **none of them catchable by
+the sweep guards**, because all three happen outside the sweep.
+
 All four preconditions share a shape worth naming: **the sweep mutates the working tree and
 assumes nothing else does.** It is a stateful operation wearing the interface of a measurement. Guards 1 and 2
 check preconditions at the start; this one is a precondition that must hold *throughout*, which
@@ -4001,6 +4014,73 @@ Seven things tested at once nearly produced a report of a partial fix. Instrumen
 in under a minute — the stack frames showed the parent ids being set correctly all along, which
 placed the problem downstream of the change rather than in it. Second time in two days that
 instrumenting first beat reading.
+
+### 86. PATTERN — the default spelling of a type and its explicit spelling took different code paths (2026-09-13)
+
+Found by parsers2 probing where #84 died. Fixed in xslt #77. **The worst of today's findings by
+consequence: an `xsl:function` declared `as="item()*"` silently loses element nodes.**
+
+#### Reproduction
+
+```
+<xsl:function name="f:m">                A<e/>B    ->  3 items   T E T
+<xsl:function name="f:m" as="item()*">   A<e/>B    ->  2 items   T T
+<xsl:function name="f:m" as="item()+">   A<e/>B    ->  2 items   T T
+<xsl:function name="f:m" as="node()*">   A<e/>B    ->  3 items   T E T
+<xsl:function name="f:m" as="item()*">   <e/><g/>  ->  1 item    T
+```
+
+**No error. Not stringified. The element is gone.**
+
+#### Cause
+
+A function body writes elements as markup into the output buffer and text into the accumulator.
+One branch of the result assembly parses that buffer back into nodes; its guard listed the node
+item types and `func.As == null`, but **not `item()`**. With `as="item()*"` the branch is skipped,
+the branch below returns the accumulator's text items, and **the buffer holding the element is
+discarded.** The fix is one token — `item()` joins that list.
+
+#### The shape — and it is not #81, #83 or #84
+
+Not a marker type leaking, not a capability check degrading. This is:
+
+> **The widest type in the language behaved as the narrowest, and the DEFAULT spelling of it
+> behaved correctly while the EXPLICIT spelling lost data.**
+
+`item()` is by definition the type that excludes nothing, so it is the **one declaration that can
+never justify dropping anything** — and it is also what a function gets when you write no `as` at
+all. So the same function, with the same body, returns different results depending on whether you
+write the type out.
+
+**Anyone who declares types explicitly — the careful habit — gets the broken path.** And anyone
+comparing the two versions sees them disagree with no reason visible anywhere in the stylesheet.
+
+**The general form:**
+
+> When a type's **default** spelling and its **explicit** spelling take different code paths, they
+> will eventually disagree — and the explicit one is the one nobody tests, because the default is
+> what every existing test was written with.
+
+#### The tell is mechanically searchable
+
+Grep for allow-lists of the form `ItemType is X or Y or Z` that **accept `As == null` but omit
+`ItemType.Item`**. That pairing is the exact signature: a guard that admits "no declaration" while
+excluding "the declaration that means the same thing". Worth a sweep — this is one of the few
+patterns in this register with a syntactic tell rather than a semantic one.
+
+#### Measurement
+
+base 348 / change 349; `attr` WON `[as-0141]`, `insn` LOST the two known flickers (re-ran `insn`
+twice on the branch, neither failed). **Zero real losses, one real win.**
+
+Notable as **the first defect found today without an external report that also moves a
+conformance case** — most of the day's real finds were invisible to the corpus (#79, #82, #84,
+#85).
+
+Nine tests, six failing on main. One asserts **the invariant directly** — explicit `item()*` must
+agree with declaring nothing — rather than pinning two expectations that could later drift apart
+without the test noticing. That is the right shape for a defect of this kind: the bug *was* the
+disagreement, so the test should assert agreement, not two values.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
