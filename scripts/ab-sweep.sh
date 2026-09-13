@@ -17,9 +17,10 @@
 #   AB_BASE   base to compare against (default origin/main)
 #   AB_OUT    directory for the two runs (default a scratch dir under /tmp)
 #
-# The two guards below exist because both of their failure modes are SILENT:
+# The three guards below exist because all of their failure modes are SILENT:
 # each produces a clean-looking result rather than an error, which is the one
-# thing a measurement must never do.
+# thing a measurement must never do. Guard 3's is the worst of them, because it
+# produces a FLATTERING one.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
