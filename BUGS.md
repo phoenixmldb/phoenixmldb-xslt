@@ -3387,6 +3387,13 @@ measurement is least likely to be questioned.
 `git rev-list --count HEAD..origin/main` catches it; the sweep script currently cannot. parsers2
 rebased and re-measured, and xslt #73 carries the rebased numbers and says so.
 
+**Why this one belongs in the script rather than in a register entry**, in parsers2's sharper
+framing: the check is cheap and they *still* did not make it, because **a stale branch gives you
+no reason to look.** The other three preconditions are things you would suspect from the result —
+a flat A/B, a refspec error, restored content that looks wrong. This one you can only catch by
+asking a question the result never prompts. A precondition that produces no symptom cannot be
+enforced by attentiveness, however disciplined; it has to be enforced by the tool.
+
 All four share a shape worth naming: **the sweep mutates the working tree and assumes nothing
 else does.** It is a stateful operation wearing the interface of a measurement. Guards 1 and 2
 check preconditions at the start; this one is a precondition that must hold *throughout*, which
@@ -3648,7 +3655,7 @@ versus atomic. parsers2 has not run that sweep. It belongs beside the node-store
 sweep in #73 — both are properties the type system cannot express, and both are silent when
 violated.
 
-### 82. OPEN — `fn:serialize` emits `xmlns:p=""` and its output does not reparse (2026-09-13)
+### 82. FIXED 2026-09-13 (xslt #73) — `fn:serialize` emitted `xmlns:p=""` and its output did not reparse
 
 Found by parsers2 while working Martin Honnen's reports. **Not reported by Martin, and not yet
 fixed** — found by looking around the area rather than at the complaint.
@@ -3705,13 +3712,56 @@ the other, and every consumer that needs a node fails on the second.
 That is #40's shape again — one of a pair has something its twin lacks — and it is the root cause
 that #81's sweep predicted would exist at other sites.
 
-#### Sequencing
+#### Sequencing — my first recommendation was wrong
 
-Register owner's view, offered since parsers2 asked: **take Defect A now, schedule Defect B.**
-The message fix is small, independent, testable on its own, and removes a genuinely
-user-hostile diagnostic from the product. The materialisation change touches how every function
-text result is represented and deserves its own measurement rather than being bundled with a
-string change.
+I advised taking Defect A immediately as a small independent fix. **Defect A is an XQuery
+change** — the message is raised in `AxisNavigationOperator.cs:43/68`, `PhoenixmlDb.XQuery`,
+parked at `v1.7.0` under the XSLT-first order. There is no XSLT-side site for it. I recommended
+work that cannot be done, against a hold I had been relaying to Lucas all week.
+
+Two things make the hold the right answer rather than a problem to escalate:
+
+- **The message only appears via Defect B.** Fixing B removes it in practice, so the
+  user-hostile diagnostic is not independently reachable.
+- **Only the second half of the message leaks.** The first half — *"An axis step was used when
+  the context item is not a node"* — is accurate and actionable on its own.
+
+So: **wait for the XQuery track**, and if anyone thinks the diagnostic argument outranks the
+hold, that is Lucas's call to make, not one to settle between sessions.
+
+#### Defect B is a design question, not "copy the twin"
+
+parsers2 diagnosed it properly and the answer is more interesting than the asymmetry suggested.
+The failure is specific to **`as="item()*"` — the default**:
+
+| declared type | axis step | `root()` |
+|---|---|---|
+| `as="item()*"` | **`XPTY0020`** | `0` |
+| `as="text()*"` | works | `1` |
+| `as="node()*"` | works | `1` |
+
+**The materialisation already exists on the function path and works.** It is deliberately
+restricted to Text/Node, and the comment gives the reason: that block converts bare strings too,
+and under `item()` **a string must stay a string.**
+
+The narrow fix — materialise only `TextNodeItem`, never bare strings — respects that reason
+exactly, and **still did not fire.** The block is additionally gated on the text output buffer
+being empty, and under `item()` the body's text is written to **both** the accumulator and the
+output buffer. That dual channel exists so the assembly can restore source order between text and
+elements — **and it recognises the duplicate BY its `TextNodeItem` type.**
+
+> **The marker type that causes this defect is load-bearing for the mechanism that would have to
+> be changed to remove it.**
+
+Materialising early emits the same text twice; the comment records that having been hit before
+(`xsl:text` A + B coming back as `AB, A, B`). So the fix must either materialise *after* the
+assembly, or give the assembly another way to spot the duplicate — a real design question in the
+sequence-assembly path, needing its own A/B. parsers2 backed the experiment out rather than force
+it, which was right.
+
+Worth noting for #81: that entry predicted more sites where the marker leaks. This is the
+opposite finding and just as useful — a site where the marker is **depended upon**. A sweep to
+remove it will meet this, and should expect to.
 
 ### 83. PATTERN — a capability gated on a concrete type, degrading instead of erroring (2026-09-13)
 
