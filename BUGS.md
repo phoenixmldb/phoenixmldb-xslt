@@ -4192,6 +4192,63 @@ The measurement story for whoever takes it is unusually good, and each rule can 
 separately: **20 named targets**, **135 `XTSE3430` cases that must keep passing**, and **~2373
 executed streaming cases** that catch over-rejection immediately.
 
+#### First rule landed (xslt #79) — and the over-rejection risk fired on attempt one
+
+`current()` in a streamable mode's match pattern. **+4, zero losses.** `strm1` 712/729 → 716/729.
+
+**The first version was wrong in exactly the direction feared, and only the sweep caught it.**
+Rejecting *any* `current()` in a streamable pattern won all four targets and **lost
+`sf-current-100`** — a stylesheet that must be **accepted**. The most obvious reading of the spec
+clause produced an over-rejecting rule on the first attempt.
+
+That is the measurement design earning its keep immediately: the 135 must-keep-passing cases are
+not a formality, they caught a regression the author had no reason to suspect.
+
+#### The method for the remaining rules: diff the pair
+
+`sf-current-100` (must be accepted) and `sf-current-902` (must be rejected) **share three
+identical patterns and differ by one line.** So the rule cannot be "mentions `current()`":
+
+| pattern | why |
+|---|---|
+| `namespace-uri(current())` | name off the start tag | **motionless** |
+| `current()/@UNIT` | attribute on the start tag | **motionless** |
+| `current()/../@CAT` | ancestor already seen | **motionless** |
+| `current()='x'` | atomizes an element | **not** |
+| `current()/text()` | content not delivered yet | **not** |
+
+`current()` is treated as the node reference it is: motionless inside a name-inspection function
+or at the head of a path, non-motionless when its **value** is taken, and a path from it judged
+by axis.
+
+> **When a `-9xx` case must be rejected and a sibling must be accepted, diff them. The corpus
+> almost always ships the pair, and the diff IS the rule.**
+
+That is the recommended approach for the remaining rules, and it is better than reading the spec
+clause and guessing at its boundary — which is what produced the over-rejecting first version.
+
+#### Test shape: for a tightening change, the ACCEPT cases are the valuable half
+
+Eleven unit tests: **five accept, four reject, two controls.**
+
+> The **reject** cases merely restate the targets. The **accept** cases are what stops the *next*
+> person's tightening from over-rejecting.
+
+That inverts the usual instinct of testing the thing you just fixed. For any change that makes an
+analyser stricter, the tests worth writing are the ones asserting what must still be **allowed** —
+they are the only durable defence against the failure mode this rule already demonstrated once.
+
+#### Why nobody had traced these
+
+The `sf-current` cases were invisible **as streamability failures**, because the engine's error
+was `XTDE0040` about a missing entry point. Four cases sat in a cluster first read as an
+entry-point problem.
+
+#45's shape exactly — group by the **actual** message and you file them under the wrong heading
+entirely. Worth expecting the same for the remaining families: **accumulator 6, si-map 3,
+error-34xx 2, five singletons.** Some of those are probably not filed where their cause lives
+either.
+
 #### Method note from the same session
 
 parsers2 first read this table as their own ancestor fix being incomplete, because the probe
