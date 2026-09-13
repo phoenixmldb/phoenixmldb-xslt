@@ -390,7 +390,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 // so watchers can accumulate the consuming-expression results first.
                 // Without this deferral, the body evaluates count(*) before any children
                 // have been read and gets 0.
+                // Deferral exists so the watchers accumulating a consuming aggregate can see
+                // the child events before the body reads the result. A MATERIALISED element has
+                // no child events left to see — its whole subtree was read into memory before
+                // the template was matched — so deferring it accumulates nothing and the body
+                // reads zero. Evaluate directly against the subtree instead, which is present.
                 if (_activeStreamingReader != null
+                    && !_streamingDispatchElementMaterialized
                     && node is Xdm.Nodes.XdmElement deferredElem
                     && TryBuildDeferredExecution(template, deferredElem, mode, position) is { } deferredEntry)
                 {
