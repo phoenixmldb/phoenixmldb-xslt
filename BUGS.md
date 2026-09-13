@@ -3643,6 +3643,35 @@ rather than in the engine or the harness. The remedy is the same one that works 
 in this file: **make the absence visible.** Check the count, not the failures. Check the error's
 identity, not its presence. Confirm from totals, never by subtraction.
 
+#### FOURTH occurrence — and it undermines "sequence, not vigilance" (2026-09-13)
+
+The change was destroyed again with `git checkout HEAD -- src`, this time **after writing the
+tests and jumping straight to the base comparison.**
+
+We recorded *sequence, not vigilance* as the fix, and it is still the right idea — but it has a
+hole:
+
+> **The sequence only binds if you actually enter it.** parsers2 was not measuring; they were
+> checking whether new tests failed on base — **which does not feel like a measurement at all.**
+
+So the trap has a **second entrance we did not close**. It is not only the sweep that needs the
+commit-first order, it is **any base comparison — including the trivial-feeling one you run while
+still writing the change.** That entrance is *more* dangerous precisely because it is not
+recognised as the start of a procedure, so no procedure gets invoked.
+
+This is the limit of process design as a remedy: a sequence protects the path it is attached to,
+and the same hazard has other paths reaching it.
+
+**What actually saved the work, both times, was not a habit:**
+
+> **When a change is more than a couple of lines, apply it via a script you can re-run.** The
+> recovery cost then rounds to zero regardless of the habit failing.
+
+That is the practical mitigation, and it is of a different kind from everything else in this
+section — it does not prevent the mistake, it **makes the mistake cheap.** Given four occurrences
+in two days against a rule that has been written down twice, cheapening the failure is a better
+investment than preventing it.
+
 #### Zero failures and zero tests look identical in a grep (2026-09-13)
 
 Two of parsers2's first three attempts to measure #87 **reported clean results from tests that
@@ -4817,6 +4846,43 @@ The same replacement will discard **`on-no-match`, `use-accumulators` and `visib
 attribute present on an earlier declaration and absent from a later one. **Whoever takes this
 should estimate across all of them rather than fixing `streamable` alone**, because the mechanism
 is indifferent to which attribute it loses.
+
+#### MEASURED 2026-09-13 — the exposure is one case, not "all mode attributes"
+
+parsers2 measured before implementing. Of the **five** corpus stylesheets with a repeated
+`xsl:mode`:
+
+| stylesheet | shape | state |
+|---|---|---|
+| `mode-1502` | both state `on-no-match` | conflict — already handled, passing |
+| `mode-1904` | both state `visibility` | conflict — already handled, passing |
+| `error-0545a` | both state `on-no-match` | conflict — already handled, passing |
+| `error-0545b` | both state `on-multiple-match` | conflict — already handled, passing |
+| **`mode-1903`** | `streamable` then `visibility` | **the bug — no attribute in common** |
+
+**Only the fifth has the shape.** The corpus almost exclusively tests the *conflicting* case,
+which the engine already handles; the non-overlapping case appears **exactly once**.
+
+> **The mechanism's breadth and the corpus's exposure to it are different numbers** — and I had
+> been quoting the first as if it were the second when I asked for an estimate "across all mode
+> attributes."
+
+That is right as a description of the mechanism and wrong as an estimate of exposure. The fix is
+correct and safe and worth **one case at most**. Real stylesheets that split mode attributes
+across declarations would hit it; the W3C suite essentially does not.
+
+Worth carrying as a sizing caveat generally: **breadth tells you what could be affected, exposure
+tells you what is** — and only the second is measured.
+
+#### Fixed in xslt #81 — and the partial progress is visible, not inferred
+
+Zero losses, zero wins, no per-set differences. **`mode-1903` still fails, as predicted** — but
+the change is observable: it went from emitting `brown-fox` **unstreamed** to **streaming and
+emitting nothing.** The mode is now correctly streamable; the missing piece is rejecting its body
+for consuming twice (two `xsl:copy-of`).
+
+That is a better position than a flat result: the first half is *demonstrated* rather than argued
+for, and it is noted on the PR so a zero does not read as the fix not working.
 
 #### Two independent ways to lose `streamable="yes"`, found in one session
 
