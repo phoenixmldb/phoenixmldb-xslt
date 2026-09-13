@@ -13,9 +13,17 @@ without a fix must carry **the command that reproduces it and the literal output
 person re-runs rather than re-reasons. Record the **symptom you observed**, not the **site you
 suspect**: a symptom stays true, while a named site decays silently the moment someone changes
 that code — including you, fixing something else. Anything asserted about a *location* should be
-re-verified before it is acted on, and the entry should say so. And **record what did NOT
+re-verified before it is acted on, and the entry should say so. **Date every number** — a
+two-day-old cost estimate on a fast-moving tree is a different kind of claim from a fresh one,
+and a number without a date invites being quoted as current. And **record what did NOT
 reproduce it** — the next person's first instinct is the instinct that already failed, and an
 hour spent ruling out the obvious minimal cases should be spent once (#84).
+
+**Before reporting a finding as new, grep this file for the construct (#89).** This register is
+the only memory that survives a context compaction, and it has already had the same defect
+discovered twice — by the same person, two days apart, reported the second time as new. A finding
+you derived yourself does not feel like something to look up, which is exactly why the check has
+to be a habit rather than an instinct.
 
 Companion reading: `.remember/` for session history, and the memory notes
 `harness-defects-hide-behind-error-messages` and `conformance-suite-does-not-gate`.
@@ -4575,6 +4583,64 @@ The per-log diffing kept that honest. **A name-keyed comparison across chunks wo
 a case simultaneously fixed and broken by unrelated changes** — and the most likely response to
 that is to distrust the measurement rather than to discover two sets share a name. Worth
 recording as a design property of the sweep that mattered without anyone planning for it.
+
+### 89. The register is the only memory that survives compaction — and it was not consulted (2026-09-13)
+
+Not a defect. A fact about how this pair of sessions works, recorded by parsers2 at their own
+expense because the general cost is much larger than this instance's.
+
+**parsers2 found #71 on 2026-09-11, had their context compacted, re-derived it from scratch on
+2026-09-13, and reported it as a new discovery.** It landed on the existing entry only because
+the other session recognised it.
+
+> **The register was the only thing that survived the compaction, and it was not consulted before
+> reporting.** The path went from a failing case to a root cause without ever asking *"do we
+> already know this?"* — and the answer was yes, with a number and an estimate attached.
+
+#### Why the general cost is larger than this instance's
+
+The concrete cost here was small: a duplicate entry, caught. The general cost is not.
+
+> **A re-derived finding arrives with all the confidence of a new one and none of the accumulated
+> history.**
+
+- **The estimate is re-made from scratch.** 27 became 19, and 19 would have been reported as if
+  nothing had ever measured 27 — losing the fact that the cost is *falling* as other work lands,
+  which is itself a decision-relevant signal.
+- **Any decision already in flight is reopened.** #71 was with Lucas. A "new" finding with the
+  same content restarts that clock and makes the队 look less settled than it is.
+- **Nothing marks it as a repeat**, so the second telling is indistinguishable from the first and
+  gets the same weight in a summary.
+
+#### The convention that catches it
+
+> **Before reporting a finding as new, grep `BUGS.md` for the construct.**
+
+Cheap, and the only check that catches this. parsers2's own note on why it would not have
+occurred to them is the important half: **a finding you derived yourself does not feel like
+something to look up.** The trap is specific to genuine work — nobody re-derives something they
+half-remember; they re-derive something they have entirely forgotten, which feels exactly like
+discovery.
+
+#### And a second convention: date every number
+
+The estimate improved because it was re-measured against a **moved main** — 27 then, 19 now, as
+intervening fixes landed. That is an argument for recording *when* a number was taken:
+
+> **A two-day-old cost estimate on a fast-moving tree is a different kind of claim from a fresh
+> one.** A number without a date invites being quoted as current.
+
+Both conventions are now in the file header.
+
+#### The structural point
+
+This register began as a defect list. Across two sessions and at least one compaction on each
+side, it has become **the durable memory of the work** — the only artifact that holds why a
+decision was made, what a number cost, and which approaches were already tried and abandoned.
+
+That only functions if it is **read**, not merely written. Every convention in the header exists
+because writing discipline alone was insufficient; this one exists because reading discipline was
+missing entirely, and nobody noticed until the same defect was discovered twice.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
