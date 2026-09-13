@@ -81,6 +81,23 @@ internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         if (a is null || b is null)
             return false;
 
+        // Text nodes first, because one of the engine's two representations of a text node is
+        // not an XdmNode at all. TextNodeItem is a bare record holding the string, used where a
+        // sequence must remember that an item is a text node rather than an atomic string; an
+        // xsl:function whose body is <xsl:value-of/> returns one. The node arm below therefore
+        // saw "one is a node, the other is not" and answered false for two text nodes with the
+        // same content, while the atomizing arm at the end answered TRUE for a text node
+        // compared against a plain string. Both directions are wrong, and both are silent.
+        //
+        // deep-equal on two text nodes is a string-value comparison (F&O 14.2.2), so folding
+        // XdmText in here is the same rule it already had. Reported by Martin Honnen: a
+        // round-tripped standalone text node in xdm-persistence's node map compared unequal to
+        // itself-by-value, failing tests/test-map-nodes-roundtrip.xsl.
+        var aText = AsTextNodeValue(a);
+        var bText = AsTextNodeValue(b);
+        if (aText != null || bText != null)
+            return aText != null && bText != null && string.Equals(aText, bText, comparison);
+
         // Both are nodes — structural comparison
         if (a is XdmNode nodeA && b is XdmNode nodeB)
             return DeepEqualNodes(nodeA, nodeB, comparison);
@@ -130,6 +147,16 @@ internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             PhoenixmlDb.XQuery.Execution.QueryExecutionContext.Atomize(b),
             comparison);
     }
+
+    // The string value when the item is a text node in either of its two representations,
+    // null when it is not a text node at all. Callers rely on null meaning "not a text node",
+    // so an empty text node must still come back as "" and not null.
+    private static string? AsTextNodeValue(object? item) => item switch
+    {
+        PhoenixmlDb.Xdm.TextNodeItem t => t.Value,
+        XdmText t => t.Value,
+        _ => null
+    };
 
     private bool DeepEqualNodes(XdmNode a, XdmNode b, StringComparison comparison)
     {
