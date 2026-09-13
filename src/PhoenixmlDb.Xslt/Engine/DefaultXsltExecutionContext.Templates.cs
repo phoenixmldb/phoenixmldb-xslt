@@ -1630,6 +1630,20 @@ internal sealed partial class DefaultXsltExecutionContext
                     // consumed the element's following siblings as its children.
                     var savedMaterialized = _streamingDispatchElementMaterialized;
                     _streamingDispatchElementMaterialized = true;
+                    // A matched template whose body holds a consuming aggregate — count(*),
+                    // sum(.//x) — is not run on the spot. It is pushed onto the deferred stack
+                    // so the watchers accumulating that aggregate can finish first, and the
+                    // body runs when the element closes.
+                    //
+                    // Only StreamingXmlProcessor's main loop ever drained that stack, at
+                    // EndElement. This driver pushed onto it and walked away, so the body
+                    // simply never ran: the template matched, produced nothing, and the output
+                    // was silently short. `<xsl:apply-templates/>` inside a matched streaming
+                    // template reached its children and then discarded whatever they produced.
+                    //
+                    // Two drivers, one of them implementing the rule — the same shape as the
+                    // ancestor chain, and in the same pair of files.
+                    var deferredBefore = _streamingDeferredExecutions.Count;
                     try
                     {
                         await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
@@ -1637,6 +1651,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     finally
                     {
                         _streamingDispatchElementMaterialized = savedMaterialized;
+                    }
+                    // The subtree is fully consumed by the time the dispatch returns, so
+                    // anything it deferred is ready now. LIFO, so innermost first — the order
+                    // the processor's EndElement handling produces.
+                    while (_streamingDeferredExecutions.Count > deferredBefore)
+                    {
+                        var deferred = _streamingDeferredExecutions.Pop();
+                        await ExecuteDeferredAsync(deferred).ConfigureAwait(false);
                     }
                     // After the template runs, the deferred-close stack may contain the
                     // element's open tag (if shallow-copy / xsl:copy was used). Close it

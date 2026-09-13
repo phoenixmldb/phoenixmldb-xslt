@@ -92,6 +92,17 @@ internal static class StreamingSubtreeBufferDetector
                 return RequiresSubtreeBuffer(feg.Body);
 
             case XsltLiteralResultElement lre:
+                // An AVT on the element itself reads the subtree just as much as the content
+                // does. Only the content was inspected, so
+                //
+                //   <chapter total="{sum(.//section/page-count)}"/>
+                //
+                // had "no content, therefore nothing to buffer" concluded about it, ran against
+                // the shallow streamed element, and emitted total="0". No error — the aggregate
+                // simply summed an empty sequence. AvtTouchesMatchedSubtree is the predicate the
+                // rest of this file already uses for exactly this question.
+                foreach (var lreAttr in lre.Attributes.Values)
+                    if (AvtTouchesMatchedSubtree(lreAttr)) return true;
                 return RequiresSubtreeBuffer(lre.Content);
 
             case XsltCopy cp:
