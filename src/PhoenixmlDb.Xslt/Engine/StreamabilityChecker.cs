@@ -310,6 +310,10 @@ internal static class StreamabilityChecker
             if (ContainsPositionFunction(pred))
                 return "position() in predicate is not motionless in streaming";
 
+            // current() in predicate
+            if (ContainsCurrentFunction(pred))
+                return "current() in predicate is not motionless in streaming";
+
             // Context item access in predicate on element-selecting step is non-motionless
             // because accessing '.' on an element requires consuming child text content
             if (selectsElements && ContainsContextItemAccess(pred))
@@ -329,6 +333,10 @@ internal static class StreamabilityChecker
             // position() in predicate
             if (ContainsPositionFunction(pred))
                 return "position() in predicate is not motionless in streaming";
+
+            // current() in predicate
+            if (ContainsCurrentFunction(pred))
+                return "current() in predicate is not motionless in streaming";
 
             // Context item access ('.') in predicate — non-motionless because
             // the dot pattern can match element nodes where '.' accesses string value
@@ -420,6 +428,37 @@ internal static class StreamabilityChecker
     private static bool ContainsDescendantAxis(XQueryExpression expr)
     {
         var checker = new DescendantAxisDetector();
+        checker.Walk(expr);
+        return checker.Found;
+    }
+
+    // fn:current() in a pattern used by a streamable mode. XSLT 3.0 requires such a pattern to
+    // be motionless, and current() is not: it denotes the node the CALLER was processing, which
+    // under streaming is not reachable from the node being matched — the reader has already
+    // moved past it, or has not reached it. W3C sf-current-902..905 declare exactly this and
+    // expect XTSE3430; the engine accepted them, then failed much later and for an unrelated
+    // reason (looking up an entry point that the erroring stylesheet never defined), which is
+    // why the failures did not read as a streamability problem at all.
+    private sealed class CurrentFunctionDetector : XQueryExpressionWalker
+    {
+        public bool Found { get; private set; }
+
+        public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
+        {
+            if (Found) return null;
+            if (expr.Name.LocalName == "current" && expr.Arguments.Count == 0)
+            {
+                Found = true;
+                return null;
+            }
+            foreach (var arg in expr.Arguments) Walk(arg);
+            return null;
+        }
+    }
+
+    private static bool ContainsCurrentFunction(XQueryExpression expr)
+    {
+        var checker = new CurrentFunctionDetector();
         checker.Walk(expr);
         return checker.Found;
     }
