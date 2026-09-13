@@ -4249,6 +4249,45 @@ entirely. Worth expecting the same for the remaining families: **accumulator 6, 
 error-34xx 2, five singletons.** Some of those are probably not filed where their cause lives
 either.
 
+#### The pair can be one file — and the rules are not all the same size
+
+Applied to the accumulator family, "diff the pair" **sized the work rather than solving it**,
+which is worth as much.
+
+**The accumulator pair is cleaner than `sf-current`: one stylesheet, two test-cases.**
+`accumulator-009` and `accumulator-009s` share `accumulator-009.xsl`; the `s` case adds
+streaming. So it is not two files to diff but **one file evaluated under two regimes**, which
+removes all doubt about what the difference is.
+
+The rule behind it is far deeper. From the test's own description:
+
+> *post-descent accumulator function used repeatedly in a single instruction, with no preceding
+> consuming instruction … the rules take into account the **order of instructions** within a
+> sequence constructor.*
+
+So legality depends on **instruction order** and on what has consumed the stream **earlier in the
+same sequence constructor**. That needs a **consumption model across a sequence constructor**,
+not a predicate walk.
+
+> **`current()` was a leaf-level rule. This is a flow-sensitive one.** The remaining families are
+> not all the same size, and this one is at the far end.
+
+Not started deliberately — it is not a slice that finishes cleanly, and starting it would leave
+it half-done.
+
+#### Recommended order for the remaining rules, cheapest first
+
+| # | family | why here |
+|---|---|---|
+| 1 | **si-map** (3) | "saving streamed nodes in a map value" — sounds like a value-escape check, plausibly leaf-level like `current()` |
+| 2 | **error-34xx** (2) | likely direct assertions about the error itself; worth a look purely because they may be near-free |
+| 3 | **singletons** (`square-array-201` and four others) | one rule each, no leverage, but self-contained |
+| 4 | **accumulator** (6) | biggest cluster, deepest rule, needs the consumption model. **Best value per rule if it generalises; worst place to start** |
+
+**Carry the caveat with it: the family grouping is a hypothesis, not a map.** The four
+`sf-current` cases were filed under an entry-point error until someone looked, so at least some of
+those singletons may not be singletons — and the accumulator six may not all need the same rule.
+
 #### Method note from the same session
 
 parsers2 first read this table as their own ancestor fix being incomplete, because the probe
