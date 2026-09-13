@@ -5237,12 +5237,50 @@ symptom-reading had filed apart.
 **`strm1` produced zero violations.** This is **not** a universal streaming-defect detector — it
 finds one specific class. Cheap to run, and it will not explain everything.
 
-#### The general action
+#### DEFLATED 2026-09-13 — both follow-ups were run, and both came back empty
 
-**Sweep for other `Debug.Assert`s in this codebase that no run ever exercises.** Each one is a
-detector someone wrote deliberately, at the point where they understood the invariant best, and
-each is currently costing nothing and returning nothing. The question to ask of each: *what
-configuration would make this fire, and does anything we run use it?*
+parsers2 ran the checks proposed here rather than assuming they would pay, and **the entry as
+first written over-claimed twice. Both over-claims were mine.**
+
+**1. There are no other dormant detectors. That assertion is the only one.**
+
+| | count |
+|---|---|
+| `Debug.Assert` in `PhoenixmlDb.Xslt` | **1** — the one above |
+| `Trace.Assert` | 0 |
+| `#if DEBUG` blocks | 0 |
+| `Debug.Assert` in `PhoenixmlDb.XQuery` | 0 |
+
+So *"sweep for other dormant detectors"* is **done, and the answer is none.** This is a one-off,
+not the tip of an iceberg. My line — *each assert is a detector someone wrote at the moment they
+understood the invariant best* — is a fine argument about a population of **one**.
+
+**2. The full-corpus Debug sweep found exactly the same two cases.** All chunks, not just `attr`.
+**Total yield across the entire corpus: two.** Not two per chunk, not a cluster.
+
+So **"run Debug as a routine diagnostic pass alongside Release" is not supported by this
+evidence.** It costs a full extra sweep to re-find two already-known cases. Worth doing **once**
+when someone adds an assert — not every run.
+
+#### What actually survives, at its real size
+
+The pairing is real: an assertion sited at the cause connected two cases that symptom-reading had
+filed under *double-escaping* and *tunnel parameters*, and parsers2 would not have found it
+otherwise. **That stands.**
+
+But the mechanism found **two cases, in one class, from one assert that happens to exist.** The
+transferable claim is narrower than a method and still true:
+
+> **If a codebase has an assertion at the cause of a defect class, the configuration that enables
+> it is worth one run.** Here that cost about ten minutes and the answer was two.
+
+Deliberately written as *a good catch of limited scope* rather than as a method, because **the
+next person acting on the larger version will spend a sweep and get nothing.**
+
+parsers2's note on doing this to their own find: *"It looked like a method for about twenty
+minutes."* Which is the useful general observation — **a real finding and an over-generalised one
+are indistinguishable at the moment of discovery**, and the only thing that separates them is
+running the follow-up you would otherwise have written as a recommendation.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
