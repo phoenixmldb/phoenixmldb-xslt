@@ -3161,6 +3161,23 @@ from it. But it is a distinct failure from the ones recorded there — those are
 measurement was wrong. **Here the measurement was right and answered a different question than
 the one being asked.**
 
+#### Exposure falling: 19 → 10 (2026-09-13)
+
+Three streaming fixes from this set have landed since the cost was measured. **The exposure is
+now 10, not 19**, and still falling:
+
+```
+remaining:  streamable-030/053/064/065/066/135/137/138/139
+            accumulator-003s/005s   (duplication)
+            stream-211, sx-gc-eq-801 (dropped content)
+            doe-0802                 (double-escaping)
+```
+
+That **materially changes the release calculus**: shipping with a note is a much easier call at
+ten than at nineteen, and the question may stop being interesting on its own before it needs
+answering. Recorded so the "19" in the decision above is not quoted as current — the number was
+correct when measured and has a date on it for this reason (#89).
+
 #### Why it is Lucas's decision
 
 The fix is **unambiguously correct and makes the numbers worse.** The 19 are **not new defects** —
@@ -4934,6 +4951,47 @@ Likely two rules again, as with everything in this area (#84, #85).
 
 Recorded so the first measurement showing no movement is read as expected rather than as the fix
 not working.
+
+### 91. OPEN — built-in-rule descent to a matching template emits the element empty and leaks its text (2026-09-13)
+
+Found by parsers2 while writing tests for xslt #84. **Not fixed, and deliberately not
+test-covered** — see below. Present on main independently of anything merged today.
+
+```
+streamed     <out><t/>one</out>
+unstreamed   <out><t>one</t></out>
+```
+
+The element is emitted **empty** and its text **escapes outside it**. No explicit template with a
+multi-step select is required, so this is a **wider shape than #84 covers**.
+
+#### Deliberately not covered by a test
+
+parsers2 wrote the case, saw it fail, and **removed it rather than ship it.**
+
+> **A test that encodes a bug is worse than no test.** It either goes in red — where it is noise
+> that trains people to ignore a red suite — or it gets "fixed" by asserting the current output,
+> **and that is how a defect becomes a specification.**
+
+Registering the defect keeps it findable without pinning the wrong answer into the suite. Same
+judgement as #66, where the streamed/unstreamed `accumulator-after()` disagreement was recorded
+rather than encoded — and the same reasoning: the corpus is a claim about what is correct, and
+writing a known-wrong expectation into it makes the claim false in a way nobody re-reads.
+
+#### A failing accept-side test is only evidence about your change if it passes without it
+
+parsers2's first assumption on seeing the failure was that their own change had caused it. **It
+had not — it fails identically on main.** Confirming that took one command, which they nearly
+skipped because the conclusion felt obvious.
+
+Same species as #76's guard-3 material and #85's compound probe: **a result that implicates your
+own work is the one you are least inclined to check and most likely to misattribute.** The
+accept-side tests introduced by the #85 rule (write the accept cases first) make this *more*
+likely, not less — they are written before the fix is finished, so a failure among them naturally
+reads as "I have broken something" rather than "this was already broken".
+
+Cheap check, and it belongs beside the rest: **run the failing test on base before concluding
+anything about your change.**
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
