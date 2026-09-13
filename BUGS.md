@@ -3375,7 +3375,19 @@ checks `base` out into the working tree and restores `HEAD`'s version when it fi
 moved in between, it restores the wrong content and says nothing. Hit and survived on timing
 alone.
 
-All three share a shape worth naming: **the sweep mutates the working tree and assumes nothing
+**A fourth, added 2026-09-13: the branch must not be BEHIND base.** parsers2's first sweep of the
+`fn:serialize` branch was invalid because the branch predated xslt #72 — so the **base arm had a
+fix the change arm lacked**, and the two arms differed by *two* changes rather than one.
+
+It reported a **better** result than the truth: 0 losses / 3 wins against a real 0 / 1. That is
+the dangerous direction. A stale branch **silently attributes main's own progress to your
+change**, and the resulting number is flattering, which is the condition under which a
+measurement is least likely to be questioned.
+
+`git rev-list --count HEAD..origin/main` catches it; the sweep script currently cannot. parsers2
+rebased and re-measured, and xslt #73 carries the rebased numbers and says so.
+
+All four share a shape worth naming: **the sweep mutates the working tree and assumes nothing
 else does.** It is a stateful operation wearing the interface of a measurement. Guards 1 and 2
 check preconditions at the start; this one is a precondition that must hold *throughout*, which
 is a harder thing to assert and a good argument for the sweep taking its own worktree rather than
@@ -3662,6 +3674,80 @@ XSLT-first order**, so the remedy is an XSLT-side override. Being scoped now.
 Worth noting as a small instance of #40: the same operation is correct through one path
 (`xsl:result-document`) and wrong through another (`fn:serialize`), and the correct one is the
 common one — which is #80's concealment effect in miniature.
+
+### 84. OPEN — a function-produced text node fails every axis step, and the error names an internal type (2026-09-13)
+
+Found by parsers2 in the #81 sweep. **Not started.** Two separable defects, and the cheap half
+should not wait for the expensive one.
+
+A text node produced by `xsl:function` raises **`XPTY0020` on any axis step**, while `root()` and
+`path()` return empty. parsers2 compared **19 operations** across the two text-node
+representations; only those differ, so the leak is narrow but real.
+
+#### Defect A — the message names an internal type to the user
+
+> `got item of type TextNodeItem`
+
+`TextNodeItem` is an engine-internal representation. A user has no way to know what it is, cannot
+find it in any specification, and cannot act on it. The message tells them the implementation's
+private business and nothing about their stylesheet.
+
+**This is #21's "improve the error first" exactly, and it is cheap and independent.** Whatever
+happens to the underlying asymmetry, no user-facing diagnostic should name this type. Worth
+doing on its own rather than riding along with the harder fix.
+
+#### Defect B — the asymmetry underneath
+
+`xsl:variable` **materialises** its text result into a store-backed node; `xsl:function` does
+**not**. So the same text content is a real node through one construct and a bare marker through
+the other, and every consumer that needs a node fails on the second.
+
+That is #40's shape again — one of a pair has something its twin lacks — and it is the root cause
+that #81's sweep predicted would exist at other sites.
+
+#### Sequencing
+
+Register owner's view, offered since parsers2 asked: **take Defect A now, schedule Defect B.**
+The message fix is small, independent, testable on its own, and removes a genuinely
+user-hostile diagnostic from the product. The materialisation change touches how every function
+text result is represented and deserves its own measurement rather than being bundled with a
+string change.
+
+### 83. PATTERN — a capability gated on a concrete type, degrading instead of erroring (2026-09-13)
+
+Named by parsers2 from the `fn:serialize` fix (#82). **The third defect from a single type test.**
+
+```csharp
+if (provider is XdmDocumentStore store) { …resolve namespace URIs… }
+// else: return ""
+```
+
+Every other store silently gets a wrong answer. The XSLT engine's store is an
+`XdmInMemoryStore`, so prefixed namespaces serialized as `xmlns:p=""` and the output would not
+reparse (#82).
+
+#### How it differs from #81, and why both are worth naming
+
+| | #81 — a cheap marker type leaks | #83 — a capability gated on a concrete type |
+|---|---|---|
+| what is wrong | a **value** type consumers fail to recognise | a **capability check** that degrades instead of erroring |
+| the defect | `x is XdmNode` is false for something that is a node | `x is XdmDocumentStore` is false for something that can do the job |
+| the fallback | treats it as an atomic value | returns a plausible empty answer |
+
+Both are invisible for the same reason: **the fallback returns something plausible.** #81 answers
+with a string, #83 answers with `""`. Neither raises.
+
+The distinct lesson here is about the *else* branch. A type test guarding a capability has two
+honest options — implement the capability for the other type, or **fail** — and it took the third
+option, which is to answer anyway. An `else` that produces a value rather than an error converts
+"I cannot do this" into "the answer is nothing", and those are indistinguishable downstream.
+
+**Audit action:** find capability checks written as concrete-type tests, and look at what the
+else-branch returns. A branch returning empty, `""`, `null` or a default is the tell. The correct
+shape is usually an interface the capable types implement, or an explicit failure.
+
+Third instance from this one test — the earlier two are on
+`fn_serialize_adaptive_method_emits_map_with_node_values`, also found via Martin Honnen.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
