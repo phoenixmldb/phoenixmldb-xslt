@@ -5282,9 +5282,36 @@ minutes."* Which is the useful general observation — **a real finding and an o
 are indistinguishable at the moment of discovery**, and the only thing that separates them is
 running the follow-up you would otherwise have written as a recommendation.
 
-### 95. PREREQUISITE — accumulator tree resolution walks to the root, and it blocks the whole missing-parent family (2026-09-13)
+### 95. THE WEAKEST AREA IN THE ENGINE — accumulators, and the root-walk that blocks their streaming variants (2026-09-13)
 
-**The most consequential structural finding of the streaming work.** Two independent fixes, in
+#### Reframed 2026-09-13 — this was filed as an obstacle, and it is the headline
+
+Originally written as *"a prerequisite blocking four streaming cases"*, which treats it as
+something in the way of streaming work. **parsers2 measured the areas and corrected the framing:**
+
+| area | pass rate | failures |
+|---|---|---|
+| streaming (`strm1`+`2`+`3`) | **97.3%** | 64 |
+| `decl` | 92.7% | 79 — **worst chunk** |
+| `decl/accumulator` | **81.6%** | 19 — **worst set measured** |
+
+> **Accumulators fail at ~18%, streaming at ~2.7% — about seven times the rate.** An evening went
+> into the 97% area.
+
+**And they are not separable problems**, which is the part that matters: **ten of the eighteen
+accumulator failures are `-s` streaming variants**, and the accumulator machinery blocked four
+streaming fixes measured at **+3 combined**. **Accumulators are worst *under streaming*, and
+streaming progress is gated *on accumulators*.**
+
+So the root-walk collision below is **a symptom of the weakest feature area in the engine**, not
+an obstacle in front of a healthy one. **It should be the next thing started, ahead of the
+remaining streaming cases** — first thing, not fourth.
+
+The stopping call stands: three failed cycles means it wants a fresh session with the accumulator
+machinery in front of it, not a fourth attempt appended. But it should be the session's first
+work, not its last.
+
+#### The structural finding, as originally recorded Two independent fixes, in
 different drivers, measured and reverted for the same reason. That makes it a **prerequisite, not
 a coincidence.**
 
@@ -5400,6 +5427,42 @@ at the truth.
 **Five for five so far.** Every missing-parent defect presented as something else — double
 escaping, a wrong ancestor axis, dropped children, a bad `position()`, structure collapsing to
 text. None presented as "this node has no parent".
+
+### 96. INDEX — what is dammed behind the XQuery hold (2026-09-13)
+
+Not a defect. A single place to see what the XSLT-first order is holding back, because the items
+were scattered across six entries and nobody could answer *"what does lifting the hold buy?"*
+without reading the whole file.
+
+| item | where | cost of waiting |
+|---|---|---|
+| **Full-text stemming silently dropped** — `FullTextAnalysisOptions.Default` sets `Stemming=true` with `Language=null`, and `GetAnalyzer` falls through to a bare `StandardAnalyzer` for anything but `"en"`/`"english"`. So `contains text "carpenters"` will not match "carpenter". | `phoenixmldb-xquery#29` | **Blocking db-engine** — one guard test in their Lucene index work, correctly identified by them as upstream |
+| **UCA collation ignores `alternate=shifted`** — backs `fn:compare`, `fn:sort`, `xsl:sort`, `for-each-group`, key comparison | #64 | wrong sort order, no diagnostic, wide surface |
+| **`fn:collection()` conflates declared-but-empty with not-found** — `FODC0002` where the empty sequence is due | #65 | a valid empty collection aborts a stylesheet |
+| **Undeclared prefix reports `XPST0003`** where `XPST0081` is due | #65 | sends the reader to their syntax; the fix is a namespace declaration |
+| **`current-output-uri#0` as a function item / in an inline body** — needs a dynamic-vs-direct signal on `QueryExecutionContext` | #69 | **a measured +5/−2 sits parked on it** |
+| **`AxisNavigationOperator` names `TextNodeItem` to the user** | #84 | an engine-internal type in a user-facing diagnostic |
+| **`count([()](1))` returns 1** — empty-array-member representation | #53 | array/sequence family |
+
+**Three of these are silent wrong answers** (stemming, collation, `count`), **two are misleading
+diagnostics**, and **one is blocking another team.**
+
+#### How the full-text one was handled, which is the right pattern
+
+parsers2 **declined it and told db-engine why**, rather than leaving it queued in silence.
+db-engine had already identified it as upstream of their own code, so the alternative was them
+waiting on something that was never going to move without anyone saying so.
+
+> A hold is only honest if the people behind it are told they are behind it.
+
+Recorded because the same will apply to anything else routed in while the order stands.
+
+#### What this index is for
+
+**Nothing here needs doing while the hold stands.** It exists so the hold can be *re-decided on
+evidence* rather than by default — the question *"is the XSLT-first order still right?"* has an
+answer that changes as this table grows, and it was previously unanswerable without reading the
+whole register.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
