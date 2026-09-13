@@ -3470,6 +3470,40 @@ Three distinct ways to fool yourself while *interpreting* a measurement, all fou
 the compound probe (#85), the ad-hoc stash (above), and this — and **none of them catchable by
 the sweep guards**, because all three happen outside the sweep.
 
+#### Sequence, not vigilance (2026-09-13) — the rule did not work
+
+parsers2 destroyed their own uncommitted edit with `git checkout <ref> -- src` a **third** time,
+**minutes after writing "commit before comparing" to me as the remedy.**
+
+> **Writing the rule down did nothing.**
+
+What worked was **reordering the operations**: commit, *then* measure — so there is no
+uncommitted state for the comparison to eat. The hazard is removed rather than guarded against.
+
+That generalises past this one trap, and is the most useful thing in this entry:
+
+> **A rule only binds when it changes the order of operations. A rule that asks you to remember
+> something at the dangerous moment is not a control — it is a wish.**
+
+Every guard in this entry that *works* is a precondition the tool checks. Every one that has been
+violated repeatedly is a habit someone was asked to maintain. The register has now recorded this
+same trap three times with an increasingly emphatic rule attached, and the rule's emphasis made
+no difference at all; the sequence change did.
+
+#### Zero failures and zero tests look identical in a grep (2026-09-13)
+
+Two of parsers2's first three attempts to measure #87 **reported clean results from tests that
+never ran** — first a wrong filter (`Suite=XSLT&Group=strm2`, where `strm2` is a *class* filter,
+not a Group), then a run where all 26 tests were SKIPPED. **Both printed as zero failures.**
+
+> Always check the test **count**, not just the failure count. A suite that ran nothing is
+> indistinguishable from a suite that passed everything, by exactly the grep you would use to
+> check.
+
+This is #54's "a set that did not run looks exactly like a set that ran and found nothing", at
+the level of the ad-hoc command rather than the gate. `./scripts/conformance.sh strm2` is the
+supported path and would have avoided both.
+
 All four preconditions share a shape worth naming: **the sweep mutates the working tree and
 assumes nothing else does.** It is a stateful operation wearing the interface of a measurement. Guards 1 and 2
 check preconditions at the start; this one is a precondition that must hold *throughout*, which
@@ -4133,6 +4167,64 @@ Nine tests, six failing on main. One asserts **the invariant directly** — expl
 agree with declaring nothing — rather than pinning two expectations that could later drift apart
 without the test noticing. That is the right shape for a defect of this kind: the bug *was* the
 disagreement, so the test should assert agreement, not two values.
+
+### 87. FIXED 2026-09-13 (xslt #78) — `xsl:import-schema` failed on any schema referencing the XML namespace
+
+**13 conformance wins, zero real losses, from a one-method change.** The best single result of
+the session, and the **first application of the failure-log sweep method**.
+
+```
+base failures 347   change failures 336
+strm2  LOST []  WON [si-fork-001..009, si-fork-901, si-fork-902, si-map-007, si-map-009]
+insn   LOST [the two known flickers]  WON []
+```
+
+#### The defect
+
+```
+XQST0059: xsl:import-schema failed ... loans.xsd:
+  The 'http://www.w3.org/XML/1998/namespace:lang' attribute is not declared.
+```
+
+XSD 1.0 §4.2.6.2 lets a schema import the XML namespace **with no `schemaLocation`**, because
+every processor is expected to already know it. **.NET's `XmlSchemaSet` does not**, so
+`<xs:attribute ref="xml:lang"/>` was undeclared and the entire `import-schema` failed — **the
+stylesheet would not load at all.**
+
+The failure is *inside the imported `.xsd`*, so **nothing the stylesheet author writes avoids
+it.** Fixed by seeding the default provider with the XML namespace's four attributes and
+`specialAttrs`. Entirely XSLT-side: `XsdSchemaProvider.AddFromString` is public, so no XQuery
+change.
+
+#### Six remaining schema failures are a platform limit, not defects
+
+Of 19 schema-loading failures, that cluster was the tractable one. The other six use `xs:assert`
+— **XSD 1.1** — and .NET implements **XSD 1.0 only**. That is a platform constraint of the same
+kind as the .NET-8-runtime requirement, **not an open bug**, and it should not sit in the
+open-bug count pretending to be work someone could do.
+
+#### The method comparison — and it flatters neither approach alone
+
+This came from clustering the 346 currently-failing cases by family and looking for one cause
+behind a group. `si-fork` was the largest cluster at 22; a single error explained 13.
+
+> **The two methods find disjoint sets.**
+>
+> Today's **hand-probed** defects (#71, #79, #84) were mostly invisible to the corpus — real,
+> reproducible, worth fixing, and worth nothing in the numbers.
+>
+> This one was worth **13** and **would never have turned up by probing**, because nobody writes
+> a stylesheet importing `loans.xsd` by hand.
+
+So neither is the better method; they answer different questions. The practical ordering:
+
+- **The failure-log sweep is the default when there is a gap** — it starts from evidence already
+  paid for, and it has a **measurable denominator**, so you can tell when it is exhausted.
+- **Probing is what you do when someone hands you a real-world stylesheet** — it finds what users
+  hit, which is precisely the set the corpus was never built to contain.
+
+Recorded because the temptation after a 13-case win is to conclude that probing was wasted
+effort. It was not; it found defects a user would meet and the sweep never would.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
