@@ -107,8 +107,25 @@ internal sealed partial class DefaultXsltExecutionContext
         // apply-imports/next-match cases whose bodies were never reached. Only reached when
         // the body executes directly (document-level match="/"), where the processor is
         // active but _isStreamingExecution is not yet set.
-        if (_activeStreamingProcessor != null && _activeStreamingReader != null
-            && ContextItem is XdmDocument
+        // Two ways in, and they look nothing alike. At the DOCUMENT level the processor is
+        // still active and _isStreamingExecution is not yet set. Inside a matched template the
+        // reverse holds: the processor has been cleared for the duration of the body, and
+        // execution is already flagged as streaming.
+        //
+        // Only the first was accepted, so a multi-step select inside a matched template —
+        // apply-templates select="chapter/chtitle" in match="book" — fell through, evaluated
+        // against the shallow streamed element, selected nothing, and let the built-in rule
+        // copy the subtree's text out instead (streamable-047). The descent steps were
+        // recognised all along; the route to them was closed.
+        //
+        // The element form requires the subtree NOT to be materialised: once it has been read
+        // into memory the reader is past it, and the ordinary in-memory path is correct.
+        var stridingFromDocument = _activeStreamingProcessor != null && ContextItem is XdmDocument;
+        var stridingFromElement = _isStreamingExecution
+            && ContextItem is Xdm.Nodes.XdmElement
+            && !_streamingDispatchElementMaterialized;
+        if (_activeStreamingReader != null
+            && (stridingFromDocument || stridingFromElement)
             && TryGetStridingDescentSteps(select) is { } descentSteps)
         {
             var proc = _activeStreamingProcessor;
