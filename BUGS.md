@@ -13,7 +13,9 @@ without a fix must carry **the command that reproduces it and the literal output
 person re-runs rather than re-reasons. Record the **symptom you observed**, not the **site you
 suspect**: a symptom stays true, while a named site decays silently the moment someone changes
 that code — including you, fixing something else. Anything asserted about a *location* should be
-re-verified before it is acted on, and the entry should say so.
+re-verified before it is acted on, and the entry should say so. And **record what did NOT
+reproduce it** — the next person's first instinct is the instinct that already failed, and an
+hour spent ruling out the obvious minimal cases should be spent once (#84).
 
 Companion reading: `.remember/` for session history, and the memory notes
 `harness-defects-hide-behind-error-messages` and `conformance-suite-does-not-gate`.
@@ -3401,8 +3403,28 @@ a flat A/B, a refspec error, restored content that looks wrong. This one you can
 asking a question the result never prompts. A precondition that produces no symptom cannot be
 enforced by attentiveness, however disciplined; it has to be enforced by the tool.
 
-All four share a shape worth naming: **the sweep mutates the working tree and assumes nothing
-else does.** It is a stateful operation wearing the interface of a measurement. Guards 1 and 2
+#### The guards protect the sweep — not the ad-hoc check you run to interpret it
+
+Added 2026-09-13, after parsers2 made guard 1's exact mistake **by hand**: running
+`git stash push -- src` for a quick base comparison while the change was already **committed**, so
+the stash moved nothing and both arms of the manual check ran identical code. Two lines reported
+to themselves as base-vs-change before noticing they were byte-identical.
+
+Guard 1 exists in the script for precisely this. **They stepped outside the script to do it
+manually** — which is the normal thing to do when you want one quick answer rather than a full
+sweep.
+
+> The guards protect the **formal** measurement. The dangerous one is the **informal** check you
+> run to interpret a result you already half-believe.
+
+That is the worse position of the two: a sweep is run before you have a conclusion, an ad-hoc
+comparison *under* one, and a result that agrees with what you expect is the least likely to be
+questioned. Tooling cannot reach that check by definition — it is ad-hoc — so the only defence is
+the habit: **`git checkout origin/main -- src`, never `stash`**, which is what produced the real
+numbers above.
+
+All four preconditions share a shape worth naming: **the sweep mutates the working tree and
+assumes nothing else does.** It is a stateful operation wearing the interface of a measurement. Guards 1 and 2
 check preconditions at the start; this one is a precondition that must hold *throughout*, which
 is a harder thing to assert and a good argument for the sweep taking its own worktree rather than
 asking the operator to hold still.
@@ -3824,6 +3846,50 @@ it, which was right.
 Worth noting for #81: that entry predicted more sites where the marker leaks. This is the
 opposite finding and just as useful — a site where the marker is **depended upon**. A sweep to
 remove it will meet this, and should expect to.
+
+#### 2026-09-13 — the fix works, costs three cases, and DOES NOT SHIP
+
+Branch `fix/function-text-node-materialize` is pushed **with no PR**, for whoever picks it up.
+
+```
+base failures 348   change failures 353
+insn.log  LOST [call-template-1002, call-template-1003]  WON []   <- known flickers
+misc.log  LOST [seqtor-029, seqtor-034, seqtor-035]      WON []   <- real
+```
+
+`seqtor-029`, change against `origin/main`:
+
+```
+BASE    startendABCDEFGHIJKLMNOPQRSTUVWXYZ...      correct
+CHANGE  startend A B C D E F G H I J K L M N ...   spaces inserted
+```
+
+**A third dependent — and it is the one the marker was invented for.** The sequence-serialization
+path applies the top-level item separator between adjacent **nodes** and not between adjacent
+**markers**. Materialise the markers into real text nodes and adjacent text — which XSLT 3.0
+§5.7.2 requires to **merge** — comes out space-separated. `seqtor-029` is 61 levels of
+non-tail-recursive function building exactly that, and it asserts the concatenation.
+
+So the real work is **two changes**: materialise the marker, *and* teach sequence separation that
+adjacent text nodes merge. **The second is the risky half, and it is not the half anyone sets out
+to make.** That is the fourth change refused rather than merged on this track (see #69, #70, #71).
+
+#### The negative results, recorded because they are the expensive part
+
+**None of the obvious minimal cases reproduce it.** All three agree between the arms:
+
+| probe | result |
+|---|---|
+| two adjacent real text nodes from variables | `[AB]` in both |
+| function returning two atomics | `[A B]` in both |
+| function returning two TVT text nodes | `[AB]` in both |
+
+Only the recursive shape diverges, and the trigger was **not** pinned down — whatever it is needs
+the nesting. Reproduce with `seqtor-029` itself.
+
+*"I tried the obvious minimal cases and they pass"* is an hour that should be spent once. **A
+register entry is worth more when it records what did NOT reproduce**, because the next person's
+first instinct is exactly the instinct that already failed.
 
 ### 83. PATTERN — a capability gated on a concrete type, degrading instead of erroring (2026-09-13)
 
