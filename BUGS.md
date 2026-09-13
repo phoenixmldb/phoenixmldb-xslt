@@ -5047,6 +5047,66 @@ reads as "I have broken something" rather than "this was already broken".
 Cheap check, and it belongs beside the rest: **run the failing test on base before concluding
 anything about your change.**
 
+### 92. OPEN — `has-children()` always answers false under streaming, and the cheap fix is wrong (2026-09-13)
+
+`streamable-135`. Diagnosed by parsers2 and **deliberately not started** — it needs a streaming-core
+change, and the available shortcut is the trade refused four times already this session.
+
+#### The defect
+
+`has-children()` is implemented as `elem.Children.Count > 0`. **A streamed element is shallow**,
+so it always answers **false**, and the test's root matched `*[not(has-children())]`:
+
+```
+actual     <account nr="76543210" empty="true"/>
+expected   the element with its children copied through
+```
+
+#### Why the obvious fix is wrong
+
+The reader knows `IsEmptyElement` at the start tag, so `!reader.IsEmptyElement` **would pass this
+test immediately.** It is not the same question:
+
+> **`<a></a>` is not an empty element and has no children.**
+
+So the shortcut buys the case by making the function **silently incorrect on a shape the corpus
+happens not to exercise** — exactly the trade declined on the base output URI (#69), on
+`SENR0001` (#70), and on `streamable="true"` (#71). **Fifth refusal of that shape this session.**
+
+#### What a correct fix needs
+
+The pattern is evaluated **at the start tag, before any child event is read.** Answering
+truthfully requires reading the next event and keeping it — **a genuine one-event lookahead buffer
+that every downstream consumer of the reader respects.**
+
+`_streamingDeferReadOnNextIteration` is **not** that: it is a *do-not-advance* flag, not
+peek-and-pushback. So this is a streaming-core change with a wide blast radius, not a leaf fix.
+
+**Sized rather than started**, same call as the accumulator rule (#85): a half-built lookahead
+left at the end of a session is the worst possible artifact to hand over.
+
+#### A prospective warning, which is the valuable part
+
+> **The corpus cannot distinguish a correct implementation from `!IsEmptyElement` here.**
+
+`streamable-135` passes under both. So whoever builds the lookahead **must add the `<a></a>` case
+as a unit test themselves** — because the test they will naturally use to verify their work
+**will not verify the thing they got right.**
+
+This is #67's corpus-as-proxy used **forwards** rather than backwards. Everywhere else in this
+register that pattern is a diagnosis of how a defect survived; here it is a warning issued
+*before* the work starts, to someone who does not exist yet. That is a better use of it, and
+worth doing wherever a cheap wrong answer and a correct one are indistinguishable to the suite.
+
+#### Where that leaves #71's remaining eight
+
+| group | cases |
+|---|---|
+| needs streaming-core work | **`streamable-135`** — this entry |
+| `fn:path()` output | `streamable-137/138/139` |
+| tunnel parameters | `streamable-064/065` — `-065` emits `<out/>`, total content loss |
+| other | `accumulator-003s/005s` duplication, `stream-211` + `sx-gc-eq-801` dropped content, `doe-0802` double-escaping |
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
