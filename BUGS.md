@@ -3505,6 +3505,39 @@ reported nothing, but an **analysis of the logs** that treated absence as succes
 interpretation layer has now produced three of these in one afternoon — which is why this
 section keeps growing while the guarded sweep has produced none.
 
+#### Why this section will keep growing, and why that is correct
+
+I framed that contrast as *"we moved the risk rather than removing it"*. **parsers2 corrected it,
+and their version is better:**
+
+> The sweep produced zero interpretation errors partly because **it produces exactly one number
+> in one format — there is almost nothing to interpret.** The ad-hoc layer is where all the
+> *questions* get asked: which cases moved, why, is that a flicker, does this cluster share a
+> cause. **Those questions are the actual work; the sweep just scores it.**
+
+So the risk was never displaced by the tooling. **It was always in the questions, and the sweep
+never touched that part.** This section will keep growing however good the tooling gets — and
+that is the **correct outcome, not a gap to close.** A tool can make a measurement trustworthy;
+it cannot make an inference trustworthy.
+
+#### All of them are the same species: treating an absence as an answer
+
+The three failures of 2026-09-13 look unrelated and are not:
+
+| | the absence | read as |
+|---|---|---|
+| wrong filter, then 26 skipped | **an absent test run** | "zero failures" |
+| the 85-versus-0 error split | **an absent error of the right kind** | "it errored, so this is not silent acceptance" |
+| "135 passing" by subtraction | **an absent log line** | "not in the failure log, therefore passed" |
+
+**Every one read as "nothing wrong here."**
+
+That is the register's oldest sentence — *a thing that did not happen looks exactly like a thing
+that happened and found nothing* (#28, #44, #54, #69) — arriving in the **interpretation layer**
+rather than in the engine or the harness. The remedy is the same one that works everywhere else
+in this file: **make the absence visible.** Check the count, not the failures. Check the error's
+identity, not its presence. Confirm from totals, never by subtraction.
+
 #### Zero failures and zero tests look identical in a grep (2026-09-13)
 
 Two of parsers2's first three attempts to measure #87 **reported clean results from tests that
@@ -4136,6 +4169,28 @@ over-rejects — a change whose downside is invisible until it fires on a valid 
 So #77 is no longer only a policy question about the denominator. **It is a prerequisite for
 fixing this safely** — which is a much stronger argument for enabling those cases than the
 coverage percentage ever was, and it should be put to Lucas that way.
+
+#### Unblocked is not the same as small — this is a programme, not a fix (2026-09-13)
+
+parsers2 sampled the 20 failing `XTSE3430` cases. **They do not share a cause.** Four samples,
+three distinct analyser rules:
+
+| case | rule |
+|---|---|
+| `sf-current-902` | non-streamable use of `current()` in a match pattern |
+| `si-map-901` | saving streamed nodes in a map value inside `xsl:stream` |
+| `square-array-201` | mixed crawling and grounded sequence — LHS of `/` not scanning |
+| `accumulator-059` | accumulator streamability (no comment; 6 cases in that family) |
+
+By family: **accumulator 6, sf-current 4, si-map 3, error-34xx 2, and five singletons** —
+roughly **10–15 independent rules**, each needing its own reasoning about posture and sweep.
+
+**Recorded explicitly so "unblocked" is not read as "20 cases, go get them."** It is a good
+backlog and a bad single PR.
+
+The measurement story for whoever takes it is unusually good, and each rule can be landed
+separately: **20 named targets**, **135 `XTSE3430` cases that must keep passing**, and **~2373
+executed streaming cases** that catch over-rejection immediately.
 
 #### Method note from the same session
 
