@@ -5107,6 +5107,77 @@ worth doing wherever a cheap wrong answer and a correct one are indistinguishabl
 | tunnel parameters | `streamable-064/065` — `-065` emits `<out/>`, total content loss |
 | other | `accumulator-003s/005s` duplication, `stream-211` + `sx-gc-eq-801` dropped content, `doe-0802` double-escaping |
 
+### 93. OPEN — the buffered subtree has no ancestors, and the missing parent is load-bearing (2026-09-13)
+
+`streamable-137/138/139`. A fix was built, **measured at +2**, and **reverted** — it trades
+accumulator correctness for two cases. **Sixth refusal of that shape this session.**
+
+#### The defect — and it is the FOURTH driver missing this
+
+`ExecuteWithBufferedSubtreeAsync` materialises the subtree **detached**, so the buffered root has
+no parent and its ancestor axis stops at itself:
+
+```
+ancestor-or-self::node()    streamed 1 node    unstreamed 3 (document, root, match)
+```
+
+| driver | ancestors |
+|---|---|
+| processor's forward pass | sets a parent from its ancestor stack |
+| striding descent | `LinkStridingAncestors` |
+| **`ExecuteWithBufferedSubtreeAsync`** | **nothing** |
+
+**#74's per-call-site shape, fourth instance** — an invariant that must hold everywhere, with no
+shared helper enforcing it, and two of the three sites having solved it independently.
+
+#### Why the one-line fix cannot work
+
+`bufferedElement.Parent = element.Parent` works: `attr` 33 → 31, `streamable-138/139` pass. It
+also **breaks `AccumulatorAfter_CountsTheSubtree`** with `XTDE3362: accumulator is not applicable
+to the tree containing the context node`.
+
+The reason is **structural, not incidental**:
+
+> **The accumulator machinery decides which tree a node belongs to by walking to its root.** With
+> no parent, the buffered root **is** its own root, so the lookup walks the buffered subtree and
+> succeeds. **Any parent at all** moves the root onto the streamed tree, where the accumulator was
+> never computed in that context.
+
+Cloning the ancestors into fresh nodes does not help — it moves the root somewhere else that is
+equally wrong.
+
+So **the missing parent is load-bearing.** The absence that causes the defect is the same absence
+the accumulator lookup depends on. That is #84's shape exactly — there, the marker type causing
+the defect was load-bearing for the mechanism that would have to change to remove it. **Twice now
+a "just add the missing thing" fix has turned out to be removing a load-bearing absence.**
+
+#### What a correct fix needs
+
+Make the accumulator lookup **buffered-root aware**, or give the node ancestors **without changing
+what `root()` answers.** That is accumulator-machinery work and a **prerequisite**, not an
+alternative.
+
+**Start point, unverified:** `_bufferedSubtreeOrigin` already maps buffered root → streamed
+element and is used for accumulator-**before**. Extending that idea to the applicability/after
+path is the obvious first move, and the comment at that site explains why *after* differs from
+*before*. parsers2 stopped at the diagnosis and did not test this.
+
+#### The diagnostic tell — three wrong hypotheses first
+
+The ancestor axis was blamed, then `last()`, then the `for-each` loop. What settled it was
+instrumenting and seeing `items=1 strExec=False` — **a different execution path, not a bad
+count.**
+
+The tell was that the same loop iterated **three times with a literal body and once with
+`position()`**:
+
+> **When output changes with body content that should be irrelevant to iteration, suspect
+> ROUTING rather than the loop.**
+
+The body was selecting the route. That belongs with the instrument-first material (#80, #85):
+three readings of the code produced three wrong hypotheses, and one instrumented run produced the
+right one — the fourth time this session that instrumenting beat reading.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
