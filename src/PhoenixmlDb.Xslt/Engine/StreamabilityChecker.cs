@@ -310,6 +310,10 @@ internal static class StreamabilityChecker
             if (ContainsPositionFunction(pred))
                 return "position() in predicate is not motionless in streaming";
 
+            // current() in predicate
+            if (ContainsCurrentFunction(pred))
+                return "current() in predicate is not motionless in streaming";
+
             // Context item access in predicate on element-selecting step is non-motionless
             // because accessing '.' on an element requires consuming child text content
             if (selectsElements && ContainsContextItemAccess(pred))
@@ -329,6 +333,10 @@ internal static class StreamabilityChecker
             // position() in predicate
             if (ContainsPositionFunction(pred))
                 return "position() in predicate is not motionless in streaming";
+
+            // current() in predicate
+            if (ContainsCurrentFunction(pred))
+                return "current() in predicate is not motionless in streaming";
 
             // Context item access ('.') in predicate — non-motionless because
             // the dot pattern can match element nodes where '.' accesses string value
@@ -420,6 +428,91 @@ internal static class StreamabilityChecker
     private static bool ContainsDescendantAxis(XQueryExpression expr)
     {
         var checker = new DescendantAxisDetector();
+        checker.Walk(expr);
+        return checker.Found;
+    }
+
+    // fn:current() in a pattern used by a streamable mode. XSLT 3.0 requires such a pattern to
+    // be motionless, and current() is not: it denotes the node the CALLER was processing, which
+    // under streaming is not reachable from the node being matched — the reader has already
+    // moved past it, or has not reached it. W3C sf-current-902..905 declare exactly this and
+    // expect XTSE3430; the engine accepted them, then failed much later and for an unrelated
+    // reason (looking up an entry point that the erroring stylesheet never defined), which is
+    // why the failures did not read as a streamability problem at all.
+    private sealed class CurrentFunctionDetector : XQueryExpressionWalker
+    {
+        public bool Found { get; private set; }
+        private bool _motionlessUse;
+
+        public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
+        {
+            if (Found) return null;
+            var localName = expr.Name.LocalName;
+
+            // The value of current() is the matched node itself. Taking that VALUE means
+            // atomizing an element, which reads its text content — not motionless.
+            if (localName == "current" && expr.Arguments.Count == 0)
+            {
+                if (!_motionlessUse)
+                    Found = true;
+                return null;
+            }
+
+            // name(), namespace-uri(), node-name() and friends read only what the start tag
+            // already carries, so current() inside one of them is motionless.
+            if (MotionlessInspectionFunctions.Contains(localName))
+            {
+                var old = _motionlessUse;
+                _motionlessUse = true;
+                foreach (var arg in expr.Arguments) Walk(arg);
+                _motionlessUse = old;
+                return null;
+            }
+
+            foreach (var arg in expr.Arguments) Walk(arg);
+            return null;
+        }
+
+        // current()/@UNIT navigates FROM the node rather than reading its value, so the head
+        // of a path is a motionless USE of current(). Where the path then goes decides the
+        // rest: an attribute or an ancestor is on the start tag or already seen, while a
+        // child, a descendant or text() is content the reader has not delivered.
+        //
+        //   current()/@UNIT        motionless   (sf-current-100, must be accepted)
+        //   current()/../@CAT      motionless   (sf-current-100)
+        //   current()/text()       NOT          (sf-current-903, must be rejected)
+        public override object? VisitPathExpression(PathExpression expr)
+        {
+            if (Found) return null;
+            var headIsCurrent = expr.InitialExpression is FunctionCallExpression fc
+                && fc.Name.LocalName == "current" && fc.Arguments.Count == 0;
+            if (expr.InitialExpression != null)
+            {
+                var old = _motionlessUse;
+                _motionlessUse = true;
+                Walk(expr.InitialExpression);
+                _motionlessUse = old;
+            }
+            foreach (var step in expr.Steps)
+            {
+                if (headIsCurrent && IsDownwardAxis(step.Axis))
+                {
+                    Found = true;
+                    return null;
+                }
+                Walk(step);
+            }
+            return null;
+        }
+
+        private static bool IsDownwardAxis(Axis axis) => axis is
+            Axis.Child or Axis.Descendant or Axis.DescendantOrSelf
+            or Axis.Following or Axis.FollowingSibling;
+    }
+
+    private static bool ContainsCurrentFunction(XQueryExpression expr)
+    {
+        var checker = new CurrentFunctionDetector();
         checker.Walk(expr);
         return checker.Found;
     }
