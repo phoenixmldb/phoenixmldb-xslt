@@ -3012,6 +3012,14 @@ internal static class StreamabilityChecker
             if (HasDownwardNavigation(expr)) { Consumes = true; }
         }
 
+        // `.` on its own — either the context-item node or a path that is nothing but it.
+        private static bool IsBareContextItem(XQueryExpression expr) => expr switch
+        {
+            ContextItemExpression => true,
+            PathExpression { Steps.Count: 0, InitialExpression: ContextItemExpression } => true,
+            _ => false,
+        };
+
         private static bool HasDownwardNavigation(XQueryExpression expr)
         {
             var checker = new DownwardAxisDetector();
@@ -3115,7 +3123,21 @@ internal static class StreamabilityChecker
         // walks only .Content; a select reading the matched subtree must be checked.
         public override object? VisitCopy(XsltCopy insn)
         {
-            CheckExpr(insn.Select);
+            // xsl:copy is a SHALLOW copy — the node itself, its name and namespaces, nothing
+            // below it. So `xsl:copy select="."` reads only the start tag and is motionless,
+            // unlike xsl:copy-of or xsl:value-of of the same ".", which take the whole subtree
+            // or its string value. CheckExpr does not draw that distinction: it flags any bare
+            // context item as consuming, which is right for every other instruction here.
+            //
+            // The cost of getting it wrong is the expensive direction — a crawling
+            // xsl:for-each whose body merely shallow-copies each element was REJECTED as
+            // non-streamable, so the stylesheet did not run at all (W3C streamable-030, a
+            // plain identity-style crawl).
+            //
+            // A select that navigates DOWNWARD still consumes: xsl:copy select="child::x"
+            // reads below the context node to decide what to copy.
+            if (insn.Select != null && !IsBareContextItem(insn.Select))
+                CheckExpr(insn.Select);
             if (insn.Content != null) Walk(insn.Content);
             return null;
         }
