@@ -3444,6 +3444,20 @@ The part that matters more than the percentage:
 Three of this session's malformed-output and silent-wrong-answer defects were in or adjacent to
 streaming. The one body of tests that would exercise the analyser directly is the one we skip.
 
+#### UPDATE 2026-09-13 — this is now a prerequisite, not only a policy call
+
+#85 found that under a streamable mode, **non-streamable expressions answer instead of being
+rejected** — `last()` returns 1, `preceding::*` returns 0, and a stylesheet the spec says must be
+diagnosed runs quietly producing plausible output.
+
+The fix direction is **"reject more stylesheets"**, which can only lose conformance cases if the
+analyser over-rejects. Making that change to a component with **no corpus evidence whatsoever**
+is the worst available combination.
+
+**The 919 `sandp` cases are the evidence you would want before that change, not after.** That is
+a considerably stronger argument for enabling them than ~9% coverage, and it converts this entry
+from a denominator question into a sequencing dependency.
+
 #### Why it is a policy call, not engineering
 
 - It moves the denominator by ~919 cases, on top of the #57 mode decision and the `decl/expose`
@@ -3846,6 +3860,81 @@ shape is usually an interface the capable types implement, or an explicit failur
 
 Third instance from this one test — the earlier two are on
 `fn_serialize_adaptive_method_emits_map_with_node_values`, also found via Martin Honnen.
+
+### 85. OPEN — under a streamable mode, non-streamable expressions answer instead of being rejected (2026-09-13)
+
+Found by parsers2 probing while waiting on CI for something else. **Recorded per the convention
+at the top of this file: observed symptom and literal output, no suspected site.**
+
+#### Reproduction
+
+Same document, same stylesheet. The only difference is `streamable="yes"` present or absent:
+
+| expression | streamed | unstreamed |
+|---|---|---|
+| `last()` | **1** | 3 |
+| `preceding::*` | **0** | 1 |
+| `following::*` | **0** | 2 |
+| `preceding-sibling::*` | **0** | 1 |
+| `following-sibling::*` | **0** | 1 |
+| `root(.)/*` | **NONE** | `a` |
+| `path(.)` | **`Q{...}root()`** | `/Q{}a[1]/Q{}b[1]/Q{}c2[1]` |
+
+#### Why this is serious
+
+Every one of these is a **downward-only violation that XSLT 3.0 requires to be rejected**.
+`last()`, `preceding::` and `following::` are **not permitted** in a streamable construct. The
+engine accepts the stylesheet and answers `0`, `1`, or `NONE`.
+
+> A stylesheet that is wrong **in a way the spec says must be diagnosed** runs quietly and
+> produces plausible output.
+
+`count(preceding-sibling::*)` returning `0` for the second of three siblings is not obviously
+broken — **it is a correct answer to a question about the first sibling.** Nothing in the output
+distinguishes "there are none" from "I cannot see them".
+
+This is #83's shape one level up: not a capability check answering anyway, but **an entire class
+of expression** answering anyway. parsers2 rates it above the defect they were actually fixing,
+and so do I.
+
+#### The corpus cannot catch it, structurally
+
+The streaming sets test **streamable stylesheets**. This is about **unstreamable** ones — the
+error path. A suite built to confirm that valid constructs work will never discover that invalid
+ones are accepted. Same family as #71, #82 and #79: a real defect the corpus has no shape for.
+
+#### Sequencing — and it is coupled to a decision already with Lucas
+
+Not started, deliberately, and the reason is worth stating because it changes what #77 is.
+
+The likely fix is in the **streamability analyser**, and the direction is **"reject more
+stylesheets"**. That direction can only ever *lose* conformance cases if the analyser
+over-rejects — a change whose downside is invisible until it fires on a valid stylesheet.
+
+**And #77 records that the streamability analyser currently has no corpus evidence at all.** The
+919 `sandp` cases that would exercise it are dependency-skipped.
+
+> Tightening an analyser that has **zero corpus coverage**, in the direction most likely to
+> cause regressions, is the worst combination of the two. The `sandp` cases are the evidence you
+> would want *before* making this change, not after.
+
+So #77 is no longer only a policy question about the denominator. **It is a prerequisite for
+fixing this safely** — which is a much stronger argument for enabling those cases than the
+coverage percentage ever was, and it should be put to Lucas that way.
+
+#### Method note from the same session
+
+parsers2 first read this table as their own ancestor fix being incomplete, because the probe
+showed `parent=NONE anc=[]`. It was not: asking for parent and ancestors **alone** on the same
+document gives `parent=b anc=[a b]`, matching unstreamed exactly. The other expressions in the
+probe were dragging the whole template elsewhere.
+
+> **A compound probe attributes any failure to whatever you happened to be working on.**
+
+Seven things tested at once nearly produced a report of a partial fix. Instrumenting settled it
+in under a minute — the stack frames showed the parent ids being set correctly all along, which
+placed the problem downstream of the change rather than in it. Second time in two days that
+instrumenting first beat reading.
 
 ## Fixed 2026-08-22/24 — kept for the pattern
 
