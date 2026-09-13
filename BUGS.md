@@ -3549,6 +3549,120 @@ striding-descent driver in `DefaultXsltExecutionContext.Streaming.cs` **does not
 So this is not missing capability, it is capability one of two paths never reaches for. That is
 #40's dominant shape — *one of a pair had a fix its twin lacked* — and it is where a fix starts.
 
+### 80. PATTERN — two walks that disagree, and the correct one hides the broken one (2026-09-13)
+
+Named by parsers2 from a Martin Honnen report (xslt #71). A refinement of #40: not two
+implementations where one has a fix the other lacks, but **two implementations where the correct
+one handles most traffic, so the broken one is reached only by an unusual path.**
+
+#### The instance
+
+The **static** namespace-id walk (`DefaultXsltExecutionContext.Namespaces.cs`) descended into
+every expression shape **except** `InlineFunctionExpression` and `DynamicFunctionCallExpression`.
+An unresolved prefixed name test matches only no-namespace nodes, so:
+
+```
+function($m) { $m/xdm:item }   →   the empty sequence
+```
+
+No error, no warning. Measured: `outside=1 inline=0 fold=0 inline-unprefixed=1 for-each=1` — the
+same name test works everywhere except inside an inline function.
+
+**The runtime namespace walk, in the same file, already handled both shapes.** That is why this
+shipped: every ordinary path went through the correct walk, and only expressions routed through
+the static one hit the gap.
+
+#### The shape
+
+> A defect survives when **a second implementation of the same rule is correct**, and only one
+> code path reaches the broken one.
+
+The correct twin is not merely a missed opportunity to share code — it is **actively
+concealing**. It keeps the observable behaviour right for the common cases, which is exactly the
+evidence anyone would use to conclude the rule is implemented. The narrower the path reaching
+the broken walk, the longer it survives, and the more confident everyone is that the area is
+sound.
+
+**Audit action:** grep for other paired static/runtime walks over the same structure. Anywhere
+one rule is implemented twice — once at analysis time and once at execution time — the two must
+agree on the *shape list*, and nothing enforces that.
+
+#### The corpus, again
+
+A/B across all chunks: **base 356 / change 356, no per-set differences.** Zero losses *and* zero
+wins — **the suite has no case of this shape.** Found by an external user, not by us, and it
+would not have been found by running more tests. Add it to #70's tally of the corpus's blind
+spots.
+
+### 81. PATTERN — a cheap marker type leaks (2026-09-13)
+
+Named by parsers2 from a Martin Honnen report. **This is the second time `TextNodeItem` has
+produced a defect of exactly this kind**, which is what makes it a pattern rather than a bug.
+
+The engine represents a text node **two ways**: `XdmText`, a real node in a store, and
+`TextNodeItem`, a bare record holding the string — returned by an `xsl:function` whose body is
+`xsl:value-of`. The second exists for one narrow purpose: distinguishing a text node from a plain
+string in a sequence.
+
+`fn:deep-equal` knew only the first. Both arms were wrong, in opposite directions:
+
+| comparison | arm | answer | correct |
+|---|---|---|---|
+| two text nodes, same content | node arm saw *"one is a node, the other is not"* | `false` | `true` |
+| text node vs plain string | atomizing arm | `true` | `false` |
+
+Both silent.
+
+#### The shape
+
+> **An internal representation introduced for one narrow purpose is not known to every consumer
+> that must treat it as the thing it stands for.**
+
+The marker is cheap to introduce precisely because it avoids the cost of a real node — no
+identity, no parent, no store. That saving is what makes it attractive, and every consumer doing
+`x is XdmNode` is a place where the saving becomes a defect. Nothing in the type system connects
+them: `TextNodeItem` is not an `XdmNode` **by design**, which is the point of it and also the
+bug.
+
+#### It has form
+
+This is the same marker that previously **matched neither `text()` nor `node()` in patterns**
+(`TextNodeItemMatchingTests`), and it appears in #53's instance table for a third failure —
+the function-result assembly treating it as a duplicate of `_output` content based on which path
+wrote it. **Three distinct defects, one representation.**
+
+**Predicted sites, not yet swept:** anything doing `is XdmNode`, and anything branching on node
+versus atomic. parsers2 has not run that sweep. It belongs beside the node-store affiliation
+sweep in #73 — both are properties the type system cannot express, and both are silent when
+violated.
+
+### 82. OPEN — `fn:serialize` emits `xmlns:p=""` and its output does not reparse (2026-09-13)
+
+Found by parsers2 while working Martin Honnen's reports. **Not reported by Martin, and not yet
+fixed** — found by looking around the area rather than at the complaint.
+
+`PhoenixmlDb.XQuery`'s `SerializeFunction` resolves namespace URIs **only when the provider is an
+`XdmDocumentStore`**. The XSLT engine's store is an `XdmInMemoryStore`, so the URI comes back
+`""` and any prefixed namespace serializes as `xmlns:p=""`.
+
+**The output is not well-formed and does not reparse.** A user calling `fn:serialize` on a
+document with any prefixed namespace gets a string that no XML parser will accept back.
+
+#### Scope, measured rather than assumed
+
+Confined to the `fn:serialize` **function**. `xsl:result-document` file output is **correct** —
+parsers2 ran Martin's exact demo command: exit 0, well-formed on disk. So the defect does not
+touch the ordinary output path, which is why nobody hit it until someone serialized to a string.
+
+#### The fix is XSLT-side
+
+The natural home is `PhoenixmlDb.XQuery`, but **that tree is parked at `v1.7.0` under the
+XSLT-first order**, so the remedy is an XSLT-side override. Being scoped now.
+
+Worth noting as a small instance of #40: the same operation is correct through one path
+(`xsl:result-document`) and wrong through another (`fn:serialize`), and the correct one is the
+common one — which is #80's concealment effect in miniature.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
