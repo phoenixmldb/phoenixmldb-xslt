@@ -5436,7 +5436,7 @@ without reading the whole file.
 
 | item | where | cost of waiting |
 |---|---|---|
-| **Full-text stemming silently dropped** — `FullTextAnalysisOptions.Default` sets `Stemming=true` with `Language=null`, and `GetAnalyzer` falls through to a bare `StandardAnalyzer` for anything but `"en"`/`"english"`. So `contains text "carpenters"` will not match "carpenter". | `phoenixmldb-xquery#29` | **Blocking db-engine** — one guard test in their Lucene index work, correctly identified by them as upstream |
+| **Full-text stemming silently dropped** — see the correction below; **unreachable through the product**, blocking nobody | `phoenixmldb-xquery#29` | **none** — low priority when XQuery reopens |
 | **UCA collation ignores `alternate=shifted`** — backs `fn:compare`, `fn:sort`, `xsl:sort`, `for-each-group`, key comparison | #64 | wrong sort order, no diagnostic, wide surface |
 | **`fn:collection()` conflates declared-but-empty with not-found** — `FODC0002` where the empty sequence is due | #65 | a valid empty collection aborts a stylesheet |
 | **Undeclared prefix reports `XPST0003`** where `XPST0081` is due | #65 | sends the reader to their syntax; the fix is a namespace declaration |
@@ -5444,18 +5444,54 @@ without reading the whole file.
 | **`AxisNavigationOperator` names `TextNodeItem` to the user** | #84 | an engine-internal type in a user-facing diagnostic |
 | **`count([()](1))` returns 1** — empty-array-member representation | #53 | array/sequence family |
 
-**Three of these are silent wrong answers** (stemming, collation, `count`), **two are misleading
-diagnostics**, and **one is blocking another team.**
+**Two of these are silent wrong answers** (collation, `count`), **two are misleading
+diagnostics**, and **none is currently blocking anyone.**
 
-#### How the full-text one was handled, which is the right pattern
+#### CORRECTION — the full-text bug is not a hold-decision item
 
-parsers2 **declined it and told db-engine why**, rather than leaving it queued in silence.
-db-engine had already identified it as upstream of their own code, so the alternative was them
-waiting on something that was never going to move without anyone saying so.
+Filed twenty minutes earlier as *blocking db-engine*. **It is not, and parsers2 corrected their
+own routing.**
+
+`FullTextAnalysisOptions.Default` sets `Stemming=true` with `Language=null`, and `GetAnalyzer`
+falls through to a bare `StandardAnalyzer` for anything but `"en"`/`"english"` — so
+`contains text "carpenters"` will not match "carpenter". Genuine, and:
+
+> **The engine never constructs `FullTextAnalysisOptions.Default`.** `FullTextOptions.Language`
+> defaults to `"en"` (`IndexDefinitions.cs:126`), so the real indexing pipeline always passes a
+> language and both sides stem.
+
+db-engine's failing test constructed `Default` directly, which **no product code path does**.
+They have changed the test; nothing is red. **The XQuery hold costs nothing here, and no
+exception needs requesting.**
+
+#### A shape we have not catalogued: a defect no caller can reach
+
+> **A silent wrong answer that is currently unreachable, because the only configuration that
+> triggers it is one the product never builds.**
+
+That is the **inverse of a hollow pass**. #69's family is *a test that passes because the feature
+is absent*; this is **a defect that is absent because the caller is.** It becomes real the moment
+someone adds a caller that uses `Default` — **which is exactly what a test did.**
+
+#### And the way it was found cuts both ways
+
+**A test constructed configuration the product never constructs.** It found a real defect nobody
+can hit — and **by the same token would not have caught a defect in the configuration the product
+actually uses.** The cost is symmetric and easy to miss: a test pointed at an unused code path is
+not merely low-value, it is *actively looking away* from the one that ships.
+
+db-engine's own diagnosis — *"a defect in the plan I wrote, not in your code"* — is the right
+call and an unusually clean self-correction from a routing partner.
+
+#### How a declined item should be handled, which parsers2 got right regardless
+
+They **declined it and told db-engine why**, rather than leaving it queued in silence. That was
+correct even though the item turned out not to block anything, because the alternative was
+db-engine waiting on something nobody had said was not moving.
 
 > A hold is only honest if the people behind it are told they are behind it.
 
-Recorded because the same will apply to anything else routed in while the order stands.
+Recorded because the same applies to anything else routed in while the order stands.
 
 #### What this index is for
 
