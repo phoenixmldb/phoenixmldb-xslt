@@ -8,6 +8,13 @@
 Findings from the 2026-08-22/24 conformance push. Entries stay until fixed AND measured.
 Numbers are measured, not estimated; where a count is a guess it says so.
 
+**Convention for an OPEN entry, learned the hard way (see #79 and #85).** An entry recorded
+without a fix must carry **the command that reproduces it and the literal output**, so the next
+person re-runs rather than re-reasons. Record the **symptom you observed**, not the **site you
+suspect**: a symptom stays true, while a named site decays silently the moment someone changes
+that code — including you, fixing something else. Anything asserted about a *location* should be
+re-verified before it is acted on, and the entry should say so.
+
 Companion reading: `.remember/` for session history, and the memory notes
 `harness-defects-hide-behind-error-messages` and `conformance-suite-does-not-gate`.
 
@@ -3542,31 +3549,65 @@ The sweep checks `base` out into the working tree and restores `HEAD`'s version 
 branches mid-run and was saved only by timing. Same class as the other two, same silent failure
 mode.
 
-### 79. OPEN — the synthesized ancestor chain stops at the immediate parent (2026-09-12)
+### 79. FIXED 2026-09-13 (xslt #76) — a streamed element had no ancestors at all
 
-Found by parsers2 while fixing striding dispatch, **not fixed**, and recorded with its start point.
+**Every particular of this entry as originally written was wrong.** parsers2 wrote it, corrected
+it, and asked that the correction land as method rather than apology. Kept in full, because how
+it aged is worth more than the defect.
 
-Under streaming, `ancestor::*` from a matched element returns **only its parent**. The outer
-ancestors and the document node are missing, and the order is **innermost-first** where XPath
-requires document order.
+| as recorded | actually |
+|---|---|
+| "returns only its parent" | returns **nothing** — no parent, no document node, `count(..) = 0` |
+| "innermost-first where XPath requires document order" | order was never the issue; there was no chain to order |
+| cause: the striding driver never calls `SynthesizeAncestorChain` | the striding driver **already links its ancestors** (#68 fixed that), and the subscription path has its own chain — the break was in a **third** path |
+| "`si-apply-templates-001` still fails" | it passes on main today |
 
-```
-<a><b><c/></b></a>, streamed match on c
-  streamed:    "b"
-  unstreamed:  "a b"
-```
+#### The real cause
 
-`si-apply-templates-001` asserts ancestors starting at `BOOKLIST`, so it still fails even now
-that it emits its children.
+The streaming processor sets the parent on its node **context**, and `MaterializeElement` never
+passes it to the element it builds from that context. Only the root got one, assigned explicitly
+on the next line.
 
-#### This is an asymmetric pair (#40), and the good twin is in the same repo
+The comment at that site says deeper elements *"keep their real element parent from
+ancestorStack"* — **which is why it looked handled.** The assignment it names is real; it simply
+lands on the wrong object. A comment describing a mechanism that exists, attached to a path where
+it does not apply, is worse than no comment: it answers the question a reader would otherwise ask.
 
-`StreamingXmlProcessor` **has the machinery** — `SynthesizeAncestorChain`, producing an
-outermost-first chain including a document node — and uses it for its subscription path. The
-striding-descent driver in `DefaultXsltExecutionContext.Streaming.cs` **does not call it.**
+**The good twin was not in another component.** It is the **text-node path in the same loop, two
+hundred lines below**, which has always taken its parent id off that same stack — with a comment
+explaining what a parentless node does to pattern matching. Elements never did.
 
-So this is not missing capability, it is capability one of two paths never reaches for. That is
-#40's dominant shape — *one of a pair had a fix its twin lacked* — and it is where a fix starts.
+#### Why the entry decayed — the method lesson
+
+> **I recorded a start point instead of a diagnosis, and a start point has a shelf life.**
+
+"The striding driver doesn't call the good twin" was true when written and false a day later,
+because **#68 — the same author's own PR — fixed exactly that**, and the entry it invalidated was
+never revisited. **An entry naming a suspected SITE decays silently when the site changes; one
+naming an observed SYMPTOM does not.**
+
+The symptom was wrong too, and that half is more fixable: *"only its parent"* was recorded from
+**reasoning about the code rather than running it**. Two minutes with a three-element document
+would have said `count(..) = 0`. This is the register's own recurring finding — a number produced
+by reasoning wears the clothes of a number produced by measurement — turned on the register
+itself.
+
+Hence the convention now stated at the top of this file.
+
+#### Measurement, honestly
+
+**No conformance movement.** base 350 / change 349, LOST [] WON [`call-template-1002`, a known
+flicker]; streaming sets identical in both arms at 80 failures each. **Zero losses, zero real
+wins** — the suite never asks a streamed element for its ancestors. Same shape as #71 and #82: a
+real defect the corpus cannot see.
+
+Carried instead by `StreamingAncestorAxisTests`: 8 tests, **7 fail on main**. Seven compare
+streamed against unstreamed for the same document, so the two cannot drift apart unnoticed, and
+one pins document order **literally**, so an innermost-first regression cannot hide behind an
+equality check.
+
+Guard 3 from #76 earned itself here: it caught that the branch had fallen one commit behind main
+(#75, comment-only) **before** the measurement ran. First thing it flagged, and it was right to.
 
 ### 80. PATTERN — two walks that disagree, and the correct one hides the broken one (2026-09-13)
 
@@ -3601,6 +3642,13 @@ concealing**. It keeps the observable behaviour right for the common cases, whic
 evidence anyone would use to conclude the rule is implemented. The narrower the path reaching
 the broken walk, the longer it survives, and the more confident everyone is that the area is
 sound.
+
+**Find out which one RUNS before reading either.** From #79: the pair can be **twenty lines
+apart in the same file**, not across components — and going to the place the register pointed
+cost two wrong guesses at the dispatch path before instrumenting. **Instrumenting first would
+have been faster than reading**; the stack frame named the caller immediately. When a rule has
+two implementations, the cheap first move is to observe which one executes, not to read both and
+reason about which should.
 
 **Audit action:** grep for other paired static/runtime walks over the same structure. Anywhere
 one rule is implemented twice — once at analysis time and once at execution time — the two must
