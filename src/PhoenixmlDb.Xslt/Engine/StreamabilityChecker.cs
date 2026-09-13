@@ -60,6 +60,27 @@ internal static class StreamabilityChecker
                 location);
         }
 
+        // Both operands of an arithmetic or comparison operator descending into the stream
+        // asks for two independent passes, and the reader makes one. //a + //b is the
+        // canonical case (error-3430a, which emitted <out/> where XTSE3430 is required).
+        //
+        // Deliberately narrow. The existing MultiConsumingExpressionDetector counts downward
+        // navigations per expression, which is right inside a for-each body but over-rejects
+        // here: it treats the operands of a union, an except, and a comma-separated sequence
+        // as independent consumers when they are one traversal or a per-item choice. Running
+        // it over a whole source-document body failed five accept-side unit tests
+        // (StreamingSetOpSeqTests, StreamingStridingUnionTests). Union and friends are
+        // therefore not part of this rule.
+        var twoSided = new TwoSidedConsumingDetector();
+        twoSided.Walk(body);
+        if (twoSided.Found)
+        {
+            throw new XsltException(
+                "XTSE3430: The body of xsl:source-document is not guaranteed streamable: "
+                + "both operands of an operator consume the streamed input",
+                location);
+        }
+
         // Check if a variable captures the streaming context item and is used
         // with child/descendant navigation inside a loop (for-each/iterate).
         if (HasStreamingVariableNavigatedInLoop(body))
@@ -3189,6 +3210,64 @@ internal static class StreamabilityChecker
     /// uses child/descendant axis navigation multiple times. E.g., count(*) + count(*/*)
     /// requires traversing children twice — not streamable.
     /// </summary>
+    /// <summary>
+    /// An arithmetic or comparison operator whose BOTH operands descend into the streamed
+    /// input. Each side needs its own pass over the children, and there is only one pass.
+    /// Union/intersect/except and sequence construction are excluded: those are a single
+    /// traversal or a per-item choice, not two independent descents.
+    /// </summary>
+    private sealed class TwoSidedConsumingDetector : XsltInstructionWalker
+    {
+        public bool Found { get; private set; }
+
+        private void CheckExpr(XQueryExpression? expr)
+        {
+            if (expr == null || Found) return;
+            var walker = new ExprWalker();
+            walker.Walk(expr);
+            if (walker.Found) Found = true;
+        }
+
+        public override object? VisitValueOf(XsltValueOf insn) { CheckExpr(insn.Select); return null; }
+        public override object? VisitSequence(XsltSequence insn) { CheckExpr(insn.Select); return null; }
+        public override object? VisitCopyOf(XsltCopyOf insn) { CheckExpr(insn.Select); return null; }
+
+        private sealed class ExprWalker : XQueryExpressionWalker
+        {
+            public bool Found { get; private set; }
+
+            public override object? VisitBinaryExpression(BinaryExpression expr)
+            {
+                if (Found) return null;
+                if (IsTwoSidedOperator(expr.Operator))
+                {
+                    var left = new DownwardAxisDetector();
+                    left.Walk(expr.Left);
+                    var right = new DownwardAxisDetector();
+                    right.Walk(expr.Right);
+                    if (left.Found && right.Found)
+                    {
+                        Found = true;
+                        return null;
+                    }
+                }
+                Walk(expr.Left);
+                Walk(expr.Right);
+                return null;
+            }
+
+            private static bool IsTwoSidedOperator(BinaryOperator op) => op is
+                BinaryOperator.Add or BinaryOperator.Subtract or BinaryOperator.Multiply
+                or BinaryOperator.Divide or BinaryOperator.IntegerDivide or BinaryOperator.Modulo
+                or BinaryOperator.Equal or BinaryOperator.NotEqual
+                or BinaryOperator.LessThan or BinaryOperator.LessOrEqual
+                or BinaryOperator.GreaterThan or BinaryOperator.GreaterOrEqual
+                or BinaryOperator.GeneralEqual or BinaryOperator.GeneralNotEqual
+                or BinaryOperator.GeneralLessThan or BinaryOperator.GeneralLessOrEqual
+                or BinaryOperator.GeneralGreaterThan or BinaryOperator.GeneralGreaterOrEqual;
+        }
+    }
+
     private sealed class MultiConsumingExpressionDetector : XsltInstructionWalker
     {
         public bool Found { get; private set; }
