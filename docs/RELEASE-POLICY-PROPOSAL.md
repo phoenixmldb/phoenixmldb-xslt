@@ -151,6 +151,16 @@ carries a `ProjectReference` to the library, which packs as a dependency on
 restore until `PhoenixmlDb.XQuery 1.8.0` is live on nuget.org. Wait for the package to appear,
 not for the tag to go green. The same applies to steps 5 and 6 against step 3.
 
+**Before step 2, re-run the external reporter's own cases against the tip you are about to tag.**
+parsers2 re-verified Martin Honnen's three reproductions after five streaming merges had landed —
+they still pass — and made the point that matters: **that check is worth repeating immediately
+before cutting rather than trusting an earlier run**, because more merges land in between.
+
+The reasoning generalises past Martin. A conformance sweep tells you which corpus cases moved; it
+does not tell you whether the thing a real user reported still works. Those are different
+questions (BUGS.md #71), and the second one is the one that gets asked publicly after a release.
+It costs one command per reproduction and it is the cheapest insurance in this list.
+
 Every step whose pin must match is gated by `check-release-train.sh`, which fails closed. The
 steps that are *not* machine-checked are the tags themselves — forgetting step 4 or 6 publishes
 nothing and fails silently. That is the remaining manual risk in this design, and it is the
