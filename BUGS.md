@@ -3490,6 +3490,21 @@ violated repeatedly is a habit someone was asked to maintain. The register has n
 same trap three times with an increasingly emphatic rule attached, and the rule's emphasis made
 no difference at all; the sequence change did.
 
+#### The same error one remove deeper: inside the analysis of the logs (2026-09-13)
+
+parsers2 nearly reported "135 passing" **derived by subtraction** — the expect-set minus the
+failed-set. That is unsound, because **the logs record failures only.** A skipped case and a
+passing case are both simply absent, so subtraction silently counts every skip as a pass.
+Confirmed on `accumulator-058`: zero occurrences in any log, pass and skip indistinguishable.
+
+The sound number needed confirming from the **per-chunk totals** that none of the 155 live in
+`sandp` and that every other chunk reports real case counts.
+
+This is the *same* error as the section below, one level further out: not a test run that
+reported nothing, but an **analysis of the logs** that treated absence as success. The
+interpretation layer has now produced three of these in one afternoon — which is why this
+section keeps growing while the guarded sweep has produced none.
+
 #### Zero failures and zero tests look identical in a grep (2026-09-13)
 
 Two of parsers2's first three attempts to measure #87 **reported clean results from tests that
@@ -3547,7 +3562,40 @@ The part that matters more than the percentage:
 Three of this session's malformed-output and silent-wrong-answer defects were in or adjacent to
 streaming. The one body of tests that would exercise the analyser directly is the one we skip.
 
-#### UPDATE 2026-09-13 — this is now a prerequisite, not only a policy call
+#### RETRACTED 2026-09-13 — the premise was false, and #85 is NOT blocked on this
+
+**The claim below is wrong and the escalation built on it has been withdrawn.** parsers2
+measured it:
+
+| XTSE3430 cases (non-streamable must be REJECTED) | count |
+|---|---|
+| total in the corpus | **155** |
+| in `sandp` | **0** |
+| in chunks that actually execute | **155** — 135 passing, 20 failing |
+
+**Not one** `XTSE3430` case is in `sandp`. They live in `accumulator`, `mode`, `sf-current`,
+`si-map`, `si-assert`, `square-array`, `su-shallow-descent`, `sx-fcall` and `error-34xx` — all in
+chunks that run. **The streamability analyser does not have "zero corpus coverage"; it has 155
+executed cases.**
+
+So the risk picture for tightening it is close to the opposite of what I argued:
+
+- **Under-rejection** (the defect in #85) has **20 failing cases as direct targets**, with 135
+  passing ones that must stay passing — a real before/after signal.
+- **Over-rejection** (the direction worth fearing) would surface **immediately** in the ~2373
+  executed streaming cases (`strm1` 712/729, `strm2` 710/749, `strm3` 884/895): a valid streamable
+  stylesheet newly rejected fails there.
+
+**`sandp` remains worth enabling on its own merits** — breadth, and the analyser's posture/sweep
+assertions specifically. It is **not a prerequisite for #85**, and Lucas should not be asked to
+decide it as one.
+
+**How I got it wrong:** I inferred "no corpus evidence" from "the 919 cases that would exercise
+it are skipped", without checking whether any *other* cases exercise it. That is the same move as
+the 45-vs-43 error — an impact claim derived from one population without measuring the others.
+Third time this session, and the first where it reached a recommendation to Lucas.
+
+#### Superseded — the original escalation, kept for the record
 
 #85 found that under a streamable mode, **non-streamable expressions answer instead of being
 rejected** — `last()` returns 1, `preceding::*` returns 0, and a stylesheet the spec says must be
@@ -4044,11 +4092,31 @@ This is #83's shape one level up: not a capability check answering anyway, but *
 of expression** answering anyway. parsers2 rates it above the defect they were actually fixing,
 and so do I.
 
-#### The corpus cannot catch it, structurally
+#### CORRECTED — the corpus CAN see this, and 20 cases fail on it today
 
-The streaming sets test **streamable stylesheets**. This is about **unstreamable** ones — the
-error path. A suite built to confirm that valid constructs work will never discover that invalid
-ones are accepted. Same family as #71, #82 and #79: a real defect the corpus has no shape for.
+The original claim here — *"the streaming sets test streamable stylesheets, not unstreamable
+ones"* — was parsers2's and they retracted it. **The `-9xx` cases exist precisely to test
+rejection, and 20 of them fail today.**
+
+`sf-current-902` is the clean example, and it shows why nobody traced them: the test-set expects
+`XTSE3430` at compile time; the engine **accepts** the non-streamable `current()` pattern,
+proceeds, and then dies with **`XTDE0040`** looking for a template named `main` that the
+stylesheet does not have. **The engine's error is unrelated to the defect** — which is why these
+were first classified as an entry-point problem rather than as streamability.
+
+#### "Did it error?" is the wrong question
+
+parsers2 had run a check splitting the 85 wrong-error-code failures into *raised some error* (85)
+and *raised none* (0), and concluded that #85's silent-acceptance class was invisible to the
+suite. It is not. **The engine raises an error — just not for the reason the test is about.**
+
+> **"Did it error?" is the wrong question. "Did it error for the right reason?" is the question —
+> and the first one looks like a rigorous check while answering nothing.**
+
+That belongs beside #45 (group wrong-code failures by the ACTUAL message, not the pair) and #28
+(the harness scored an expected-error case as passing on *any* exception). Three entries now, all
+saying that an error's *presence* carries almost no information and its *identity* carries all of
+it.
 
 #### Sequencing — and it is coupled to a decision already with Lucas
 
