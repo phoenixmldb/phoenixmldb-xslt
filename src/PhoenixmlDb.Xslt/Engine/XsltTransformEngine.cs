@@ -1988,6 +1988,12 @@ public sealed class XsltTransformEngine
             }
             case Xdm.Nodes.XdmNode node when node is not Xdm.Nodes.XdmAttribute:
                 return SerializeXdmNodeAsXml(node, store);
+            // A sequence — a map entry declared element()+, say — arrives as object?[]. Without
+            // this it fell to the default arm and became its string value ("a b") rather than
+            // the markup of each item. XPath 3.1 §27.7: space-separated, no parentheses.
+            case object?[] seq:
+                return string.Join(" ", seq.Where(x => x != null)
+                    .Select(x => SerializeItemAdaptive(x, store)));
             default:
                 return DefaultXsltExecutionContext.StringValueOf(item);
         }
