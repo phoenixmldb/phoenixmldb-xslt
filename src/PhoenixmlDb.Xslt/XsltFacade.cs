@@ -216,7 +216,66 @@ public sealed class XsltTransformer
     /// XPST0008 and every <c>validation="strict"</c> raises a runtime error).
     /// </remarks>
     public PhoenixmlDb.XQuery.ISchemaProvider? SchemaProvider { get; set; }
-        = new PhoenixmlDb.XQuery.XsdSchemaProvider();
+        = CreateDefaultSchemaProvider();
+
+    // XSD 1.0 §4.2.6.2: a schema may import the XML namespace with no schemaLocation, because
+    // every processor is expected to already know it. .NET's XmlSchemaSet does not, so
+    //
+    //     <xs:import namespace="http://www.w3.org/XML/1998/namespace"/>
+    //     ...
+    //     <xs:attribute ref="xml:lang" use="optional"/>
+    //
+    // failed with "the 'xml:lang' attribute is not declared", and that took the whole
+    // xsl:import-schema down with XQST0059 — the stylesheet would not load at all. The failure
+    // is inside the imported .xsd, so nothing the stylesheet author writes avoids it. The W3C
+    // streaming tests' loans.xsd is exactly this shape.
+    //
+    // Seeded into the DEFAULT provider only: a caller who supplies their own ISchemaProvider
+    // owns what is in it.
+    private static PhoenixmlDb.XQuery.XsdSchemaProvider CreateDefaultSchemaProvider()
+    {
+        var provider = new PhoenixmlDb.XQuery.XsdSchemaProvider();
+        provider.AddFromString(XmlNamespaceUri, XmlNamespaceSchema);
+        return provider;
+    }
+
+    private const string XmlNamespaceUri = "http://www.w3.org/XML/1998/namespace";
+
+    // The four attributes the XML namespace defines, plus the specialAttrs group, per the W3C
+    // schema for that namespace.
+    private const string XmlNamespaceSchema = """
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   xmlns:xml="http://www.w3.org/XML/1998/namespace"
+                   targetNamespace="http://www.w3.org/XML/1998/namespace">
+          <xs:attribute name="lang">
+            <xs:simpleType>
+              <xs:union memberTypes="xs:language">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value=""/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:union>
+            </xs:simpleType>
+          </xs:attribute>
+          <xs:attribute name="space">
+            <xs:simpleType>
+              <xs:restriction base="xs:NCName">
+                <xs:enumeration value="default"/>
+                <xs:enumeration value="preserve"/>
+              </xs:restriction>
+            </xs:simpleType>
+          </xs:attribute>
+          <xs:attribute name="base" type="xs:anyURI"/>
+          <xs:attribute name="id" type="xs:ID"/>
+          <xs:attributeGroup name="specialAttrs">
+            <xs:attribute ref="xml:base"/>
+            <xs:attribute ref="xml:lang"/>
+            <xs:attribute ref="xml:space"/>
+            <xs:attribute ref="xml:id"/>
+          </xs:attributeGroup>
+        </xs:schema>
+        """;
 
     // Upper bound on stylesheet element-nesting, a little above StylesheetParser.MaxNestingDepth
     // (the binding limit the instruction/executor passes enforce) so it never rejects a stylesheet
