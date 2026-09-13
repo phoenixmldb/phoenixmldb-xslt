@@ -368,8 +368,16 @@ internal sealed partial class DefaultXsltExecutionContext
         int stepIndex,
         QName? mode,
         CancellationToken ct,
-        List<StridingAncestor>? openAncestors = null)
+        List<StridingAncestor>? openAncestors = null,
+        int[]? finalPosition = null)
     {
+        // position() over a multi-step select counts across the WHOLE selected sequence, not
+        // per parent. apply-templates select="chapter/chtitle" selects every chtitle in
+        // document order, so the one under the second chapter is position 2 — but each level
+        // of this descent recurses with its own local counter, so every chapter restarted at
+        // 1 and every chtitle reported position 1 (W3C streamable-053 emitted chapter="1"
+        // twice). One counter, shared down the descent, created by the outermost call.
+        finalPosition ??= new int[1];
         // The elements this descent has entered, outermost first. A matched element is
         // materialised detached, so without these its ancestor axis stops at its own parent:
         // ancestor::* from a node under BOOKLIST/CATEGORIES answered CATEGORIES alone, where
@@ -382,7 +390,6 @@ internal sealed partial class DefaultXsltExecutionContext
         // the parent is the document node (depth -1 conceptually); the root element arrives
         // at depth 0. Track the depth of the parent whose children we scan.
         int parentDepth = reader.Depth; // element currently open (or -1/0 sentinel at doc start)
-        var position = 0;
 
         while (await reader.ReadAsync().ConfigureAwait(false))
         {
@@ -405,7 +412,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
                 LinkStridingAncestors(elem, openAncestors);
-                position++;
+                finalPosition[0]++;
                 // The element arrives FULLY MATERIALISED — the helper read its whole subtree and
                 // left the reader on its EndElement. Everything that would otherwise wait for the
                 // streaming loop to deliver those children has to use the ones in memory instead:
@@ -418,7 +425,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 var openBeforeDispatch = _streamingOpenElements.Count;
                 try
                 {
-                    await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
+                    await MatchAndExecuteStreamingNodeAsync(elem, mode, finalPosition[0]).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -440,7 +447,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 try
                 {
                     await DriveStridingDescentLevelAsync(
-                        reader, steps, stepIndex + 1, mode, ct, openAncestors).ConfigureAwait(false);
+                        reader, steps, stepIndex + 1, mode, ct, openAncestors, finalPosition)
+                        .ConfigureAwait(false);
                 }
                 finally
                 {
