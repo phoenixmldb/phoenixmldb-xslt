@@ -259,7 +259,7 @@ try
             {
                 transformer.ResultDocumentHandler = href =>
                 {
-                    var path = Path.Combine(options.OutputDir, href);
+                    var path = ResolveResultDocumentPath(options.OutputDir, href);
                     var dir = Path.GetDirectoryName(path);
                     if (dir != null && !Directory.Exists(dir))
                         Directory.CreateDirectory(dir);
@@ -378,7 +378,7 @@ try
 
         foreach (var (href, content) in transformer.SecondaryResultDocuments)
         {
-            var secondaryPath = Path.Combine(baseDir!, href);
+            var secondaryPath = ResolveResultDocumentPath(baseDir!, href);
             var secondaryDir = Path.GetDirectoryName(secondaryPath);
             if (secondaryDir != null && !Directory.Exists(secondaryDir))
                 Directory.CreateDirectory(secondaryDir);
@@ -488,6 +488,23 @@ catch (Exception ex)
     else
         await Console.Error.WriteLineAsync("(run with --verbose for the stack trace)").ConfigureAwait(true);
     return 2;
+}
+
+// Turns an xsl:result-document href into a filesystem path.
+//
+// A stylesheet that resolves its own href — resolve-uri(..., static-base-uri()), or any
+// absolute URI — hands us "file:///C:/dir/out/x.xml". Path.Combine does not treat that as
+// rooted, so it CONCATENATED it onto the base directory and produced
+// "C:\dir\file:\C:\dir\out", which Windows rejects as a directory name. Reported by
+// Martin Honnen running the xdm-persistence example: the file was written and the run then
+// failed creating a directory that should never have been named.
+static string ResolveResultDocumentPath(string baseDir, string href)
+{
+    if (Uri.TryCreate(href, UriKind.Absolute, out var uri) && uri.IsFile)
+        return uri.LocalPath;
+    if (Path.IsPathRooted(href))
+        return href;
+    return Path.Combine(baseDir, href);
 }
 
 static string FormatBytes(long bytes)
