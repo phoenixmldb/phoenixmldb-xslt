@@ -4095,6 +4095,22 @@ comparing the two versions sees them disagree with no reason visible anywhere in
 > will eventually disagree — and the explicit one is the one nobody tests, because the default is
 > what every existing test was written with.
 
+#### The sweep was run: clean — no other instances (2026-09-13)
+
+parsers2 ran it across the XSLT engine. **Negative result, recorded so nobody repeats it:** the
+function path was the only site.
+
+| site | state |
+|---|---|
+| `Variables.cs:329`, `:1203` (variable paths) | already include `Item` |
+| `IsNodeType` | correctly excludes `Item` — `item()` genuinely is not a node type |
+| `PreservesItems` | includes `Item` |
+| parser's static-value check | falls through conservatively |
+
+**A negative result from a mechanical sweep is worth as much as a positive one, and is almost
+never written down.** Without this, the next person reads the tell below, runs the same grep, and
+spends the same hour confirming nothing.
+
 #### The tell is mechanically searchable
 
 Grep for allow-lists of the form `ItemType is X or Y or Z` that **accept `As == null` but omit
