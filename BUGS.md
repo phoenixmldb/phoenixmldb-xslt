@@ -3131,6 +3131,36 @@ switched off behind their backs.
 `/tmp/claude-1000/0001-streamable-true-silently-meant-not-streamable.patch`. **That location is a
 shared temp directory and should be a branch before anyone relies on it.**
 
+#### The sweep tells you which cases moved. It never tells you who gets hurt.
+
+Recorded 2026-09-13, after a release-timing decision nearly turned on a misreading — mine.
+
+I summarised this change to Lucas as one the conformance numbers *"scored as +17"*. **They said
+the opposite: 332 → 349, nineteen losses against two wins.** The numbers were entirely honest
+about the cost.
+
+**What they could not show is that the cost was a different kind of thing.** Nineteen losses
+normally means *tests we were already failing, now visible*. Here it means **real users, running
+stylesheets that worked, getting wrong output.** In the sweep's output those two are
+**indistinguishable**:
+
+> **A correct-looking regression report and a user-harming change produce identical numbers.**
+
+That is worse than a misleading measurement, because nothing about it invites a second look. The
+19 were reported accurately, read accurately as "cases we already fail", and the user-facing
+consequence was invisible in every artifact the tooling produces.
+
+**The general rule:**
+
+> For a change that alters **what executes** rather than **what a result is**, the case counts
+> cannot answer the question that matters. Someone has to ask *"who is running this today, and
+> what happens to them?"* **by hand — and nothing in the tooling prompts it.**
+
+This belongs with #76's ad-hoc section: the sweep is sound, and the risk is in what is concluded
+from it. But it is a distinct failure from the ones recorded there — those are cases where the
+measurement was wrong. **Here the measurement was right and answered a different question than
+the one being asked.**
+
 #### Why it is Lucas's decision
 
 The fix is **unambiguously correct and makes the numbers worse.** The 19 are **not new defects** —
