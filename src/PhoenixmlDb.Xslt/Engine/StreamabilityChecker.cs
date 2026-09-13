@@ -442,18 +442,72 @@ internal static class StreamabilityChecker
     private sealed class CurrentFunctionDetector : XQueryExpressionWalker
     {
         public bool Found { get; private set; }
+        private bool _motionlessUse;
 
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
             if (Found) return null;
-            if (expr.Name.LocalName == "current" && expr.Arguments.Count == 0)
+            var localName = expr.Name.LocalName;
+
+            // The value of current() is the matched node itself. Taking that VALUE means
+            // atomizing an element, which reads its text content — not motionless.
+            if (localName == "current" && expr.Arguments.Count == 0)
             {
-                Found = true;
+                if (!_motionlessUse)
+                    Found = true;
                 return null;
             }
+
+            // name(), namespace-uri(), node-name() and friends read only what the start tag
+            // already carries, so current() inside one of them is motionless.
+            if (MotionlessInspectionFunctions.Contains(localName))
+            {
+                var old = _motionlessUse;
+                _motionlessUse = true;
+                foreach (var arg in expr.Arguments) Walk(arg);
+                _motionlessUse = old;
+                return null;
+            }
+
             foreach (var arg in expr.Arguments) Walk(arg);
             return null;
         }
+
+        // current()/@UNIT navigates FROM the node rather than reading its value, so the head
+        // of a path is a motionless USE of current(). Where the path then goes decides the
+        // rest: an attribute or an ancestor is on the start tag or already seen, while a
+        // child, a descendant or text() is content the reader has not delivered.
+        //
+        //   current()/@UNIT        motionless   (sf-current-100, must be accepted)
+        //   current()/../@CAT      motionless   (sf-current-100)
+        //   current()/text()       NOT          (sf-current-903, must be rejected)
+        public override object? VisitPathExpression(PathExpression expr)
+        {
+            if (Found) return null;
+            var headIsCurrent = expr.InitialExpression is FunctionCallExpression fc
+                && fc.Name.LocalName == "current" && fc.Arguments.Count == 0;
+            if (expr.InitialExpression != null)
+            {
+                var old = _motionlessUse;
+                _motionlessUse = true;
+                Walk(expr.InitialExpression);
+                _motionlessUse = old;
+            }
+            foreach (var step in expr.Steps)
+            {
+                if (headIsCurrent && IsDownwardAxis(step.Axis))
+                {
+                    Found = true;
+                    return null;
+                }
+                Walk(step);
+            }
+            return null;
+        }
+
+        private static bool IsDownwardAxis(Axis axis) => axis is
+            Axis.Child or Axis.Descendant or Axis.DescendantOrSelf
+            or Axis.Following or Axis.FollowingSibling;
     }
 
     private static bool ContainsCurrentFunction(XQueryExpression expr)
