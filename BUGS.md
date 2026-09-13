@@ -4445,6 +4445,83 @@ So neither is the better method; they answer different questions. The practical 
 Recorded because the temptation after a 13-case win is to conclude that probing was wasted
 effort. It was not; it found defects a user would meet and the sweep never would.
 
+### 88. The harness and the W3C catalog disagree in BOTH directions (2026-09-13)
+
+Found by parsers2. **Not acted on** — it changes the denominator, which is Lucas's call, and it
+reframes the held `decl/expose` PR (xslt #57) as one third of a package rather than a standalone.
+
+> **Note on numbering:** xslt PR **#57** wires `decl/expose`. BUGS.md **#57** is the separate
+> as-shipped-vs-at-main question. They share a number by coincidence and are different decisions.
+
+#### Run by the harness but NOT in `catalog.xml` — 2 sets, both broken
+
+```
+tests/strm/sf-map-new/_sf-map-new-test-set.xml
+tests/strm/sx-PathExpr/_sx_PathExpr-test-set.xml
+```
+
+Both are **duplicate test-sets whose stylesheet references do not exist beside them**.
+`sf-map-new/` contains `sf-map-new-*.xsl` while its test-set asks for `si-map-*.xsl`;
+`sx-PathExpr/` contains `sx-path-001.xsl` while its test-set asks for `sx-treat-901.xsl`. Every
+case fails with *"Could not find file"*.
+
+**They account for 7 of the current 331 failures** — `si-map-007`, `si-map-009`, `si-map-901`,
+`si-map-902`, `si-map-903`, `sx-path-001`, `transform-001`. **All phantom: they measure nothing
+about the engine.**
+
+#### In `catalog.xml` but NOT run by the harness — 3 sets, all present on disk
+
+```
+tests/decl/expose/_expose-test-set.xml                 <- what xslt PR #57 wires
+tests/decl/import-schema/_import-schema-test-set.xml
+tests/fn/system-property-gen/_system-property-gen-test-set.xml
+```
+
+#### The honest package is both directions at once
+
+- **Dropping only the 2 non-catalog sets** looks like a 7-case gain and is **pure denominator
+  shrinkage**.
+- **Wiring only the 3 catalog sets** adds unknown failures and **looks like a regression**.
+- **Together** they make the suite match the catalog — **the only defensible definition of what
+  the denominator should be.**
+
+That is how it should go to Lucas: one alignment decision, not three.
+
+**`import-schema` is the one to look at first.** It has never run, and xslt #78 (the built-in XML
+namespace schema, #87 here) merged an hour before this was found. **Those cases have never been
+measured against an engine that can load a schema importing the XML namespace.** Genuinely
+unknown which way they go.
+
+#### Reading the intent comment is not reading the failure
+
+parsers2 went looking for the `si-map` streamability rules from #85's list. **There are no
+`si-map` streamability defects** — the three "failures" are a missing file.
+
+They had **already written three plausible rules into a handoff note**, derived from reading the
+stylesheets' own comments: nodes in a map value, key and value both consuming, non-map-entry
+children.
+
+> **All three were plausible. None was the actual cause. At least one would have been implemented
+> before anyone noticed.**
+
+The stylesheet's comment says what the test *intends to exercise*. It says nothing about why the
+run failed — and when the failure is environmental, the comment is a **confident, well-written
+description of something that never happened.** Same species as #85's misfiled `sf-current` cases,
+from the opposite side: there the error message pointed away from the cause, here the source
+comment pointed at a cause that was not operating.
+
+`si-map` comes off #85's list entirely.
+
+#### The same case name existed in two test-sets, one real and one broken
+
+`si-map-007` and `si-map-009` appear as **wins** in xslt #78's A/B (from `strm2`, the real set)
+and as **failures** here (from `strm1`, the phantom set).
+
+The per-log diffing kept that honest. **A name-keyed comparison across chunks would have reported
+a case simultaneously fixed and broken by unrelated changes** — and the most likely response to
+that is to distrust the measurement rather than to discover two sets share a name. Worth
+recording as a design property of the sweep that mattered without anyone planning for it.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
