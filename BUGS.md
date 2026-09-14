@@ -2675,7 +2675,7 @@ Worth noting as another instance of #21 (improve the error first): a user told t
 syntax error will re-read their syntax. The actual fix is a missing namespace declaration, which
 is nowhere near what the message points at.
 
-### 66. OPEN — a streamed `accumulator-after()` counts only the matched subtree (2026-09-11)
+### 66. FIXED 2026-09-14 — a streamed `accumulator-after()` counts only the matched subtree (2026-09-11)
 
 Found by parsers2 while fixing the buffered-copy identity loss, and **deliberately not fixed**.
 Pre-existing, unrelated to that change, and registered rather than quietly encoded in a test.
@@ -2694,6 +2694,26 @@ Same stylesheet, same input, an accumulator that is never reset:
 `accumulator-after()` on the streamed path reports the total for the **matched subtree**, not for
 the stream so far, so an accumulator that deliberately runs across the whole document resets in
 effect at every match.
+
+**Fixed 2026-09-14 (xslt #87, +2: `accumulator-003s`, `accumulator-005s`).** The cause was one
+step below where this entry pointed. `ExecuteWithBufferedSubtreeAsync` takes its copy by consuming
+the subtree from the reader with `ReadSubtree`, so **the forward pass never sees those events at
+all** and never fires their accumulator rules. The running value stayed where the matched element's
+own start rule left it; the subtree walk that answered `accumulator-after()` then started from the
+accumulator's *initial* value, which is why every match looked like a reset.
+
+Seeding that walk from the streamed node's recorded before-value was tried first and did not work —
+the recorded value was itself 0 at the second `chap`, which is what proved the pass, not the walk,
+was where the value was lost. The fix replays the skipped descendants into the pass's own state.
+
+**One thing this entry got right and it mattered:** the non-streamed arm is the oracle. It was
+checked first and independently, and the first repro written for it was unsound — it declared
+`streamable="yes"` on both arms, so "non-streamed" reproduced the bug too and would have sent the
+work after a phantom. Parameterising `streamable` gave `2 2 4 2` and the real target.
+
+**Not covered:** the `snapshot()`/`copy-of()` buffering paths in
+`DefaultXsltExecutionContext.Functions.cs` set `_streamingSubtreeBufferConsumed` without going
+through `ExecuteWithBufferedSubtreeAsync`, and keep the old behaviour.
 
 **This is an asymmetric pair (#40).** Two implementations of one semantics, and one of them is
 right — the non-streamed path already produces the correct answer, so this is not an open
@@ -5310,6 +5330,51 @@ remaining streaming cases** — first thing, not fourth.
 The stopping call stands: three failed cycles means it wants a fresh session with the accumulator
 machinery in front of it, not a fourth attempt appended. But it should be the session's first
 work, not its last.
+
+#### Corrected 2026-09-14 — I had the area's shape wrong, and the correction changes what to do next
+
+The characterisation above ("accumulators are the weakest area") is right about the *numbers* and
+wrong about the *kind* of defect, because I built it from output strings without reading what each
+case EXPECTED. Doing that properly:
+
+| cluster | count | cases |
+|---|---|---|
+| **XTSE3430 — static streamability of the declaration** | **7** | `030s` `059` `060` `076` `009s` `019s`, plus `034s` (an OVER-rejection) |
+| other expected errors not raised | 3 | `031` XTDE0640, `038` XPTY0004, `061` XTDE3350 |
+| genuine accumulation behaviour | 8 | `003s` `005s` `040` `048s` `049s` `062` `077s` `079s` |
+
+**The largest single cluster is not accumulation at all — it is static analysis**, and it lives in
+`StreamabilityChecker` / `StylesheetParser`, not in the accumulator machinery. Six under-rejections
+and one over-rejection, from ONE blanket rule: *"a streamable accumulator pattern must not contain
+predicates."*
+
+The right question is not "is there a predicate?" but **"does this expression read something the
+stream has not delivered at this node?"**, which resolves into three clauses:
+
+| expression | motionless? | why |
+|---|---|---|
+| navigates child/descendant | **no** | the content has not arrived |
+| reads the matched node's own value, and it is an element | **no** | an element's string value IS its descendant text |
+| reads an attribute's value | **yes** | attributes arrive with the start tag |
+
+**Fixed on that reading: `034s` + `030s` (xslt #88, +2) and `076` (xslt #89, +1).**
+
+The middle clause was not in the first attempt and is the useful part. Judging by written axes
+alone measured **+2/−1**: it lost `stream-204`, whose pattern `part-name[$selected-parts =
+current()]` writes no axis but atomizes the matched element. **That single loss is what produced
+the clause** — worth more than the two wins, and an argument for the zero-per-set-loss rule
+earning its keep rather than being a tax.
+
+**What this means for sequencing.** #95 said accumulators should be first because they are worst
+under streaming. That still holds. But "accumulators are broken" pointed the work at the
+accumulator machinery, where three cycles had already failed — and seven of eighteen were reachable
+from the streamability checker, a file with no root-walk problem in it at all. **The root-walk
+blocker below gates fewer cases than this entry implied.**
+
+Remaining, in order of tractability: `060` (`../accumulator-after()` reads the post-descent value
+off a parent) and `059` (`accumulator-after()` in the pre-descent phase) — both checks on a
+TEMPLATE BODY rather than on the declaration, and `059` needs positional analysis of the body
+relative to its consuming instructions. `009s`/`019s` stay blocked on #68.
 
 #### The structural finding, as originally recorded Two independent fixes, in
 different drivers, measured and reverted for the same reason. That makes it a **prerequisite, not
