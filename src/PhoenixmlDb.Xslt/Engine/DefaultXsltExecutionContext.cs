@@ -1368,7 +1368,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // run yet — so accumulator-after() must still be answered by the walk over the
             // buffered subtree (accumulator-015s/036s/069s).
             if (!ReferenceEquals(bufferedRoot, element))
+            {
                 (_bufferedSubtreeOrigin ??= new Dictionary<NodeId, NodeId>())[bufferedRoot.Id] = element.Id;
+                // ReadSubtree consumed the descendants, so the forward pass will never fire their
+                // accumulator rules. Replay them into the pass's own running values, so the
+                // accumulator carries past this match instead of resuming where the match began.
+                if (_accumulatorStreamOwner != null)
+                    await _accumulatorStreamOwner.CarryAccumulatorsOverBufferedSubtreeAsync(bufferedRoot).ConfigureAwait(false);
+            }
         }
         else
         {
