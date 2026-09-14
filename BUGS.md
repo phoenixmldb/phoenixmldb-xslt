@@ -5311,6 +5311,43 @@ minutes."* Which is the useful general observation — **a real finding and an o
 are indistinguishable at the moment of discovery**, and the only thing that separates them is
 running the follow-up you would otherwise have written as a recommendation.
 
+### 97. A 222-line workaround for a downcast past an interface that already existed (2026-09-14)
+
+`Engine/XsltSerializeFunction.cs` overrode `fn:serialize` entirely, because XQuery's serializer
+emitted `xmlns:p=""` for XSLT's nodes and the output did not reparse. Its own header called this
+"the third defect from that one type test" — the signature of a workaround sitting on a
+structural gap rather than a bug.
+
+**The gap:** `XQueryResultSerializer` asked `provider is XdmDocumentStore` before every
+namespace-id lookup, in eleven places, and any other store answered nothing.
+
+**The part worth recording:** the interface was already written. `INodeStore : INodeProvider`
+declares `GetNamespaceUri(NamespaceId)`, and BOTH stores already implement it — `XdmDocumentStore`
+explicitly, and XSLT's own `XdmInMemoryStore` as a plain member. **The serializer was downcasting
+past an abstraction it already had.** Nothing needed inventing; xquery #31 is the existing
+interface being used.
+
+**Retiring the override: prepared, held on the pin.** With xquery #31 in the build, deleting the
+222 lines leaves **1776 XSLT unit tests passing, XSLT 10,310/10,672 and QT3 29,534/31,414 —
+unchanged**. Branch `fix/retire-serialize-override`. Against the pinned XQuery 1.8.0 the override
+is genuinely still needed: removing it fails 6 tests and CI catches it. **The hold has a trigger —
+the pin bump — not a date.**
+
+#### Two environment faults found on the way, the same shape as #98
+
+Neither was a code defect; both produced confident wrong readings:
+
+- `phoenixmldb-core` sat on `main` but **9 commits behind origin**, at 1.6.7 while 1.7.0 is
+  published. Dev mode then failed to compile (`XdmStringValueResolver` absent), which reads as
+  "the dev-mode wiring is broken" rather than "your checkout is stale".
+- Earlier, the XSLT unit tests were run against the **pinned package** instead of the modified
+  source, and the conclusion drawn was that the XQuery fix had not worked — six tests failing with
+  the original symptom, unchanged. The fix was fine; the build was not testing it.
+
+**Three sibling checkouts, three different stale states, in one session** (#98's XQuery detached
+at v1.7.0, Core nine behind, and the pin-vs-source build here). Each turned a signal into a
+statement about the wrong thing.
+
 ### 95. THE WEAKEST AREA IN THE ENGINE — accumulators, and the root-walk that blocks their streaming variants (2026-09-13)
 
 #### Reframed 2026-09-13 — this was filed as an obstacle, and it is the headline
@@ -5530,7 +5567,22 @@ at the truth.
 escaping, a wrong ancestor axis, dropped children, a bad `position()`, structure collapsing to
 text. None presented as "this node has no parent".
 
-### 96. INDEX — what is dammed behind the XQuery hold (2026-09-13)
+### 96. INDEX — what is dammed behind the XQuery hold (2026-09-13) — HOLD LIFTED 2026-09-14
+
+> **Lucas, 2026-09-14: "nothing is necessarily frozen so much as we're not going to continuously
+> push nuget updates."** The constraint was always **release cadence**, not the repositories. The
+> index below is therefore a work queue, not a dam.
+>
+> **parsers2 had applied it far more broadly than it was meant**, declining XQuery-side fixes
+> outright and paying XSLT-side costs to avoid them — most visibly a **222-line `fn:serialize`
+> override** written around a one-interface problem in XQuery (#97, xquery #31). Recorded because
+> the failure was not in following the instruction but in **widening it**: "advance XSLT first" was
+> read as "XQuery is frozen", and the gap between those two never got checked until it was raised.
+>
+> A hold that is never re-examined becomes a standing cost with no owner. The release process is
+> what governs shipping; source changes do not need to wait on it.
+
+
 
 Not a defect. A single place to see what the XSLT-first order is holding back, because the items
 were scattered across six entries and nobody could answer *"what does lifting the hold buy?"*
