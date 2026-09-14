@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-14 12:56 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-14 21:52 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,8 +17,8 @@ Generated 2026-09-14 12:56 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 5 | 0 |
-| phoenixmldb-xslt | 7 | 0 |
+| phoenixmldb-xquery | 4 | 0 |
+| phoenixmldb-xslt | 9 | 2 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -35,10 +35,11 @@ Generated 2026-09-14 12:56 UTC by `scripts/status.sh`. Do not edit by hand.
 - [29] FullTextAnalysisOptions.Default performs no stemming despite Stemming=true
 - [18] Unbound external functions silently return () — and a host cannot bind one
 - [5] Atomizing fn:collection() nodes yields '' while fn:string() on the same nodes returns the text
-- [4] fn:sum returns 0 for xs:integer cast from text (BigInteger falls through SumHelper)
 
 **phoenixmldb-xslt**
 
+- [96] Xslt 1.8.0 regresses three streaming conformance sets that passed on 1.6.10 (attr/streamable below floor, stream-211, sx-gc-eq-801)
+- [95] Any predicate in a match pattern is quadratic — not just chained ones (#10 is a special case)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 - [12] A node passed to SetParameter is not usable as a node in the stylesheet
 - [11] xsl:for-each over a range crashes with InvalidCastException when an operand is a cast xs:integer
@@ -49,13 +50,18 @@ Generated 2026-09-14 12:56 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
+**phoenixmldb-xslt**
+
+- [97] Report the serialized form when a QT3 serialization assertion fails
+- [94] [HELD on the XQuery pin] Retire the XSLT fn:serialize override
+
 **phoenixmldb-cli**
 
 - [4] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **96** entries, **22** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **97** entries, **22** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -85,7 +91,7 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10172/10672 (95.31%)** across 222 test-sets,
+- **W3C XSLT 3.0 — 10309/10672 (96.60%)** across 222 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 29534/31414 (94.02%)** across 428 test-sets,
