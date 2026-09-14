@@ -346,6 +346,17 @@ internal sealed partial class DefaultXsltExecutionContext
     // inside xsl:source-document Content bodies.
     internal StreamingXmlProcessor? _activeStreamingProcessor;
 
+    /// <summary>
+    /// The processor that owns the forward pass's accumulator state, for the whole of that pass.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="_activeStreamingProcessor"/> is deliberately nulled while a matched template's
+    /// body runs, so that a nested apply-templates does not re-enter streaming. That is exactly
+    /// when a body needs to hand skipped nodes back to the accumulator state, so it cannot be the
+    /// handle used for that. This one is set and cleared by the processor's own pass.
+    /// </remarks>
+    internal StreamingXmlProcessor? _accumulatorStreamOwner;
+
     internal XmlReader? _activeStreamingReader;
 
     internal CancellationToken _activeStreamingCancellationToken;

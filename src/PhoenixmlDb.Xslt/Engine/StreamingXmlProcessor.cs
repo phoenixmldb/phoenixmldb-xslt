@@ -192,6 +192,8 @@ internal sealed class StreamingXmlProcessor
         _context._activeStreamingReader = reader;
         var previousStreamingCt = _context._activeStreamingCancellationToken;
         _context._activeStreamingCancellationToken = ct;
+        var previousAccumulatorOwner = _context._accumulatorStreamOwner;
+        _context._accumulatorStreamOwner = this;
         try
         {
             while (true)
@@ -985,6 +987,7 @@ internal sealed class StreamingXmlProcessor
             _context._isStreamingExecution = previousStreamingFlag;
             _context._activeStreamingReader = previousStreamingReader;
             _context._activeStreamingCancellationToken = previousStreamingCt;
+            _context._accumulatorStreamOwner = previousAccumulatorOwner;
         }
     }
 
@@ -1094,6 +1097,61 @@ internal sealed class StreamingXmlProcessor
             }
         }
     }
+
+    /// <summary>
+    /// Advances the pass's running accumulator values over a subtree that was buffered whole, and
+    /// records per-node values for the nodes of the copy.
+    /// </summary>
+    /// <remarks>
+    /// A template body that needs the whole matched subtree consumes it from the reader with
+    /// ReadSubtree, so the forward pass never sees those start/end events and
+    /// <see cref="FireAccumulatorRulesAsync"/> never fires for them. The running value therefore
+    /// stayed where the matched element's own start rule left it, and every later match resumed
+    /// from an accumulator that had not counted the buffered nodes — a second chapter reported the
+    /// two figures it contains rather than the four the document had shown (register #66).
+    ///
+    /// The copy's root is not re-fired: the processor already fired its start phase before the body
+    /// ran, and fires its end phase when it reaches the matched EndElement. Only the descendants
+    /// the pass is about to skip are replayed, in document order, exactly as it would have taken
+    /// them.
+    /// </remarks>
+    internal async ValueTask CarryAccumulatorsOverBufferedSubtreeAsync(Xdm.Nodes.XdmElement bufferedRoot)
+    {
+        if (_accCurrentValues == null || _accNodeValueMaps == null || _accumulators.Count == 0)
+            return;
+
+        // The value the pass holds at the matched element's start tag — its pre-descent value.
+        var before = new object?[_accumulators.Count];
+        Array.Copy(_accCurrentValues, before, _accumulators.Count);
+
+        foreach (var childId in bufferedRoot.Children)
+            await ReplayAccumulatorNodeAsync(childId).ConfigureAwait(false);
+
+        // accumulator-after() on the copy is answered from here. The root's own end-phase rules
+        // have NOT run — the processor runs them at the matched EndElement — so what is recorded
+        // is the post-descent value, which is what the buffered-subtree walk used to produce and
+        // what accumulator-015s/036s/069s depend on.
+        for (var i = 0; i < _accumulators.Count; i++)
+            _accNodeValueMaps[i][bufferedRoot.Id] = (before[i], _accCurrentValues[i]);
+    }
+
+
+    /// <summary>Replays one skipped node and its descendants into the accumulator state.</summary>
+    private async ValueTask ReplayAccumulatorNodeAsync(NodeId nodeId)
+    {
+        var node = _nodeStore.GetNode(nodeId);
+        if (node == null)
+            return;
+
+        await FireAccumulatorRulesAsync(node, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
+        if (node is Xdm.Nodes.XdmElement elem)
+        {
+            foreach (var childId in elem.Children)
+                await ReplayAccumulatorNodeAsync(childId).ConfigureAwait(false);
+        }
+        await FireAccumulatorRulesAsync(node, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
+    }
+
 
     /// <summary>
     /// Fires watchers for element start events.
