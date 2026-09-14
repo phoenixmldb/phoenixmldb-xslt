@@ -189,6 +189,26 @@ the whole gate before cutting 1.8.0. Both checks are required; neither substitut
 them — that is exactly what happened here, and the step was briefly unexecutable by the only
 person able to tag. A checklist step only one participant can perform is not a checklist step.
 
+**After the train is published, install a tool from nuget.org and run one query.** Nothing in
+this process does that, and nothing did it for the 1.8.0 train until an unrelated task happened to
+need the CLI:
+
+```sh
+dotnet tool install --global xquery4 --version <train>
+xquery 'sum((xs:integer("10"), xs:integer("30")))' ctx.xml    # -> 40
+```
+
+**Every check before this point runs against a build tree or a local package cache.** CI proves the
+code compiles and the suites pass; `check-release-train.sh` proves the pins agree; the publish job
+proves nuget accepted the upload. **None of them proves the artifact a user downloads installs and
+executes.** A packaging fault — a missing dependency, a bad tool manifest, a runtime that resolves
+differently outside the build tree — would pass every gate we have and be discovered by the first
+person to install it.
+
+It costs two commands, and it retired an open issue on its first use: `xquery4 1.8.0` installed
+clean and returned `80` for `phoenixmldb-xquery#4`'s own scenario, which is the difference between
+*"the fix is in the tag"* and *"the fix is in the thing people get"*.
+
 Every step whose pin must match is gated by `check-release-train.sh`, which fails closed. The
 steps that are *not* machine-checked are the tags themselves — forgetting step 4 or 6 publishes
 nothing and fails silently. That is the remaining manual risk in this design, and it is the
