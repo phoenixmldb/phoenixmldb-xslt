@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (95.6% W3C conformance — 10,163/10,630 cases, measured 2026-09-11)
+### XSLT 3.0 (96.6% W3C conformance — 10,307/10,672 cases, measured 2026-09-14)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,17 +24,31 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,163/10,630 cases (95.6%), 467 failing
+### W3C XSLT 3.0 — 10,307/10,672 cases (96.6%), 365 failing
 
-Measured 2026-09-11 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, from the
+Measured 2026-09-14 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, from the
 committed per-set baseline (`scripts/conformance-baseline.tsv`).
+
+**The denominator grew, and that is the point.** It was 10,630 because the harness never opened
+`decl/expose` — 42 cases of an entire feature area, scoring no information at all rather than
+scoring zero. Wiring it in adds 42 cases of which 9 pass, so it **lowers the percentage** while
+the engine has only improved. A number that went up because a failing area stayed invisible is
+worse than a smaller number that counts it, so the smaller honest one is published here. See
+`BUGS.md` #72.
 
 **Which XQuery this is measured against, because it changes the number.** The conformance
 project reaches XQuery through the `src/PhoenixmlDb.XQuery` symlink, so a local run measures
-`phoenixmldb-xquery` **main**, and that is the figure above. Measured instead against the
-`PhoenixmlDb.XQuery` package this repo *pins* — the combination a user installs — XSLT is
-**10,160**. The two coincide at release time, when the Xslt train pins the XQuery of the same
-train; they diverge only between trains, which is now. See `BUGS.md` #57.
+whatever that working tree is checked out at — normally `phoenixmldb-xquery` **main**. For the
+2026-09-14 figure above it was at the **v1.7.0 release commit**, 27 behind main, because the
+shared checkout was mid-comparison for other work. The sensitivity is small for XSLT and large
+for QT3: main against pin previously differed by 3 XSLT cases (10,163 vs 10,160), while QT3 moves
+by ~28. The nightly `Conformance` workflow checks out both repos fresh at main and is the
+canonical figure; this one is a local measurement with its basis stated. See `BUGS.md` #57.
+
+**This is why the QT3 line moved.** QT3 reads 29,506 here against a baseline of 29,534, and that
+is not a regression — it is the same engine measured against an older XQuery source tree. A
+per-set gate cannot tell those apart, which is the argument for stating the basis rather than
+trusting the delta.
 
 The baseline records the **minimum across full runs, not the best one seen**. Repeated sweeps
 agree on every set but one: `insn/call-template` alternates between 38 and 37, and the baseline
@@ -43,15 +57,18 @@ regression every time the suite behaves normally.
 
 | Group | Passing | | Failing |
 |---|---|---|---|
-| `attr` — attributes | 1076/1117 | 96.3% | 41 |
-| `decl` — declarations | 963/1080 | 89.2% | 117 |
-| `type` — types | 753/766 | 98.3% | 13 |
-| `fn` — functions | 1072/1131 | 94.8% | 59 |
-| `strm` — streaming | 2284/2373 | 96.2% | 89 |
-| `expr` — expressions | 636/648 | 98.1% | 12 |
-| `misc` | 1858/1921 | 96.7% | 63 |
-| `insn` — instructions | 1521/1594 | 95.4% | 73 |
-| **Total** | **10,163/10,630** | **95.6%** | **467** |
+| `attr` — attributes | 1084/1117 | 97.0% | 33 |
+| `decl` — declarations | 1016/1122 | 90.6% | 106 |
+| `type` — types | 752/766 | 98.2% | 14 |
+| `fn` — functions | 1082/1131 | 95.7% | 49 |
+| `strm` — streaming | 2309/2373 | 97.3% | 64 |
+| `expr` — expressions | 637/648 | 98.3% | 11 |
+| `misc` | 1884/1921 | 98.1% | 37 |
+| `insn` — instructions | 1543/1594 | 96.8% | 51 |
+| **Total** | **10,307/10,672** | **96.6%** | **365** |
+
+`decl` is the only group whose denominator changed: 1080 to 1122, the 42 newly-opened
+`decl/expose` cases.
 
 The `sandp` group runs but reports no per-case counts, so it is excluded from the total rather
 than counted as passing.

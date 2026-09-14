@@ -3270,7 +3270,7 @@ merge a −27 into a track whose whole discipline has been zero per-set losses. 
 the same refusal as #69 and #70 — with the difference that here the losses are honest arrears
 rather than new damage, which is exactly why they need scheduling instead of suppressing.
 
-### 72. Five W3C test-sets are present in TestData and never run (2026-09-11)
+### 72. PARTLY RESOLVED 2026-09-14 — five W3C test-sets present in TestData and never run (2026-09-11)
 
 Found and measured by parsers2. **The fourth blind spot in one day, and the outermost yet**: not
 "which attribute values does the parser accept" or "which invocation parameters does the runner
@@ -3286,6 +3286,15 @@ does not:
 | `tests/fn/collation` | 5 | 0 | **5** — cannot run, see below |
 | `tests/decl/import-schema` | — | — | not measured |
 | `tests/sandp/_base-expressions.xml` | — | — | not measured |
+
+**`decl/expose` is now wired (xslt #57, merged 2026-09-14) at a gated baseline of 9/42.** The
+published figure moves from 10,163/10,630 (95.6%) to **10,307/10,672 (96.6%)** — the denominator
+grows by 42 because a set that was never opened is now opened, so wiring it LOWERS the percentage
+relative to what the same engine would have scored on the old denominator. That is the intended
+direction: a number that rose because a failing area stayed invisible is worse than a smaller one
+that counts it.
+
+The other four remain unrun, and remain policy calls rather than engineering ones.
 
 #### `decl/expose` — the one that matters
 
