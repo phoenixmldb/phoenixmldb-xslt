@@ -224,6 +224,23 @@ bad nuspec, a missing dependency, a wrong tool manifest. Once against nuget.org 
 version — that catches anything the feed does to it. They fail differently and neither implies
 the other.
 
+**And the two runs collapse into one silently, via the global packages folder** (db-engine).
+Packing locally puts the same id and version into `~/.nuget/packages`; the "against nuget.org"
+run is then satisfied from cache and **never touches the feed.** Both runs pass, one of them
+proved nothing, and nothing says so.
+
+So the second run needs:
+
+- `NUGET_PACKAGES=$(mktemp -d)` — a packages folder of its own
+- a generated `nuget.config` with `<clear/>` and **one** source
+- **a post-restore assertion over `obj/project.assets.json`**: every `PhoenixmlDb.*` is type
+  `package`, at the expected version, from the expected source
+
+That third item is the one that generalises. The first two **arrange** for the right resolution;
+only the assertion **verifies** it happened. Every other trap in this section — dev mode, a
+sibling checkout, a stale `bin/`, the cache — is defeated by the same check, because they all
+end in the assets file disagreeing with what you intended.
+
 It costs two commands, and it retired an open issue on its first use: `xquery4 1.8.0` installed
 clean and returned `80` for `phoenixmldb-xquery#4`'s own scenario, which is the difference between
 *"the fix is in the tag"* and *"the fix is in the thing people get"*.
