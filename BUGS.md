@@ -5331,6 +5331,34 @@ The stopping call stands: three failed cycles means it wants a fresh session wit
 machinery in front of it, not a fourth attempt appended. But it should be the session's first
 work, not its last.
 
+#### Measured result of the 2026-09-14 session — the area is no longer the worst
+
+| | before | after | |
+|---|---|---|---|
+| `decl/accumulator` | 84/103 **81.6%** | **91/103 88.3%** | +6 net, 18 failures → 12 |
+| `decl` chunk | 1000/1080 92.6% | **1007/1080 93.2%** | 80 failures → 73 |
+
+Six fixed across five PRs, **every one A/B-swept over all eleven chunks with zero per-set
+losses**: `003s` `005s` (xslt #87, the #66 carry-over), `030s` `034s` (#88), `076` (#89), `060`
+(#91).
+
+**Five of the six were static analysis, not accumulator machinery** — exactly as the correction
+above predicted. None of them touched the root-walk. That is the evidence for the reframing, not
+just an argument for it.
+
+**Twelve left, and only ONE of them is unblocked and in this cluster:**
+
+| case | status |
+|---|---|
+| `059` | the last open XTSE3430. Needs POSITIONAL analysis of a template body relative to its consuming instructions — a structurally different check from the four landed here, all of which were contained questions about one expression or declaration. **Deliberately not attempted late in a session**; it is a good first task, not a fifth one. |
+| `009s` `019s` | blocked on #68 (spec reading) |
+| `031` `038` `061` | other expected errors not raised — XTDE0640, XPTY0004, XTDE3350. Unexamined; three separate questions, not a cluster |
+| `040` `048s` `049s` `062` `077s` `079s` | genuine accumulation behaviour. `077s` is #52. **This is now the largest group**, and it is where the root-walk work belongs |
+
+**So the sequencing advice inverts from where it started.** The static-analysis cluster is spent;
+what remains is mostly real accumulation behaviour, which IS the machinery this entry was
+originally about. The root-walk gates that group — it just never gated the seven that went first.
+
 #### Corrected 2026-09-14 — I had the area's shape wrong, and the correction changes what to do next
 
 The characterisation above ("accumulators are the weakest area") is right about the *numbers* and
