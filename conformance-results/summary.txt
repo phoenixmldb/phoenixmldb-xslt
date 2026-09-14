@@ -1,19 +1,40 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
 
-attr       8s  fixture Successful (18 tests) | 1084/1117 cases 97.0%, 33 failed
+attr       7s  fixture Successful (18 tests) | 1084/1117 cases 97.0%, 33 failed
 decl       7s  fixture Successful (19 tests) | 1017/1122 cases 90.6%, 105 failed
-type       3s  fixture Successful (9 tests) | 753/766 cases 98.3%, 13 failed
-sandp      2s  fixture Successful (25 tests)
-fn         5s  fixture Successful (35 tests) | 1082/1131 cases 95.7%, 49 failed
-strm1     28s  fixture Successful (37 tests) | 716/729 cases 98.2%, 13 failed
+type       4s  fixture Successful (9 tests) | 753/766 cases 98.3%, 13 failed
+sandp      1s  fixture Successful (25 tests)
+fn         6s  fixture Successful (35 tests) | 1082/1131 cases 95.7%, 49 failed
+strm1     29s  fixture Successful (37 tests) | 716/729 cases 98.2%, 13 failed
 strm2     24s  fixture Successful (26 tests) | 710/749 cases 94.8%, 39 failed
-strm3     23s  fixture Successful (27 tests) | 883/895 cases 98.7%, 12 failed
+strm3     25s  fixture Successful (27 tests) | 883/895 cases 98.7%, 12 failed
 expr       3s  fixture Successful (14 tests) | 637/648 cases 98.3%, 11 failed
-misc      18s  fixture Successful (22 tests) | 1884/1921 cases 98.1%, 37 failed
-insn       9s  fixture Successful (27 tests) | 1544/1594 cases 96.9%, 50 failed
-xqts      82s  fixture Successful (438 tests) | 29534/31414 cases 94.0%, 1880 failed
+misc      15s  fixture Successful (22 tests) | 1884/1921 cases 98.1%, 37 failed
+insn      12s  fixture Successful (27 tests) | 1544/1594 cases 96.9%, 50 failed
+xqts      81s  fixture Successful (438 tests) | 29651/31379 cases 94.5%, 1728 failed
 per-set GAINS:
+  app/app-FunctxFn: 495 -> 498  (+3)
+  app/app-FunctxFunctx: 611 -> 618  (+7)
+  app/app-spec-examples: 611 -> 618  (+7)
+  fn/fn-in-scope-prefixes: 45 -> 51  (+6)
+  fn/fn-namespace-uri: 26 -> 33  (+7)
+  fn/fn-namespace-uri-for-prefix: 28 -> 29  (+1)
+  fn/fn-node-name: 42 -> 43  (+1)
+  fn/fn-serialize: 155 -> 157  (+2)
+  prod/prod-AxisStep: 317 -> 319  (+2)
+  prod/prod-DefaultNamespaceDecl: 54 -> 57  (+3)
+  prod/prod-DirAttributeList: 127 -> 130  (+3)
+  prod/prod-DirectConstructor: 77 -> 79  (+2)
+  prod/prod-DirElemConstructor: 66 -> 69  (+3)
+  prod/prod-DirElemContent.namespace: 90 -> 113  (+23)
+  prod/prod-EQName: 43 -> 47  (+4)
+  prod/prod-MapConstructor: 38 -> 42  (+4)
+  prod/prod-NamespaceDecl: 27 -> 43  (+16)
+  prod/prod-NameTest: 113 -> 120  (+7)
+  ser/method-html: 49 -> 54  (+5)
+  ser/method-xhtml: 27 -> 34  (+7)
+  ser/method-xml: 9 -> 15  (+6)
   tests/insn/call-template/_call-template-test-set.xml: 37 -> 38  (+1)
 
-12 chunk(s) in 3m32s — logs in /mnt/data/repos/phoenixml/phoenixmldb-xslt/conformance-results
+12 chunk(s) in 3m35s — logs in /mnt/data/repos/phoenixml/phoenixmldb-xslt/conformance-results
