@@ -205,6 +205,25 @@ executes.** A packaging fault — a missing dependency, a bad tool manifest, a r
 differently outside the build tree — would pass every gate we have and be discovered by the first
 person to install it.
 
+**The test must be unable to resolve anything but the package.** A project reference, a sibling
+checkout, a stale `bin/`, or a dev-mode marker is a path by which it silently tests the wrong
+artifact — and reports success. Two specific traps in this workspace:
+
+- **Dev mode activates from a marker file outside every repo.** `Directory.Build.targets` turns
+  `PhoenixmlDb.*` package references into project references when
+  `<workspace>/.phoenixml-dev` exists or `PHOENIXML_DEV=1` is set. A scratch project created
+  *inside* the workspace inherits that. **Create it outside the tree** — `$(mktemp -d)` — and
+  assert dev mode is off before trusting the result. The existing guards (pack refuses, CI
+  errors) do not cover a smoke test, which runs *after* pack.
+- **`--no-build` against a source project cannot fail for a packaging reason**, because
+  packaging is not in its path. The engine repo's existing "smoke tests" are this shape: they
+  verify the code in the tree and look like a release gate.
+
+**Run it twice, and for different reasons.** Once against the packed `.nupkg` — that catches a
+bad nuspec, a missing dependency, a wrong tool manifest. Once against nuget.org at the published
+version — that catches anything the feed does to it. They fail differently and neither implies
+the other.
+
 It costs two commands, and it retired an open issue on its first use: `xquery4 1.8.0` installed
 clean and returned `80` for `phoenixmldb-xquery#4`'s own scenario, which is the difference between
 *"the fix is in the tag"* and *"the fix is in the thing people get"*.
