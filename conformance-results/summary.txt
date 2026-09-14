@@ -1,17 +1,72 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
 
-attr       7s  fixture Successful (18 tests) | 1076/1117 cases 96.3%, 41 failed
-decl       7s  fixture Successful (18 tests) | 963/1080 cases 89.2%, 117 failed
-type       4s  fixture Successful (9 tests) | 753/766 cases 98.3%, 13 failed
+attr       7s  fixture Successful (18 tests) | 1084/1117 cases 97.0%, 33 failed
+decl      17s  fixture Successful (19 tests) | 1016/1122 cases 90.6%, 106 failed
+type       4s  fixture Successful (9 tests) | 752/766 cases 98.2%, 14 failed
 sandp      1s  fixture Successful (25 tests)
-fn         6s  fixture Successful (35 tests) | 1072/1131 cases 94.8%, 59 failed
-strm1     28s  fixture Successful (37 tests) | 712/729 cases 97.7%, 17 failed
-strm2     23s  fixture Successful (26 tests) | 689/749 cases 92.0%, 60 failed
+fn         6s  fixture Successful (35 tests) | 1082/1131 cases 95.7%, 49 failed
+strm1     28s  fixture Successful (37 tests) | 716/729 cases 98.2%, 13 failed
+strm2     23s  fixture Successful (26 tests) | 710/749 cases 94.8%, 39 failed
 strm3     23s  fixture Successful (27 tests) | 883/895 cases 98.7%, 12 failed
-expr       3s  fixture Successful (14 tests) | 636/648 cases 98.1%, 12 failed
-misc      14s  fixture Successful (22 tests) | 1858/1921 cases 96.7%, 63 failed
-insn      10s  fixture Successful (27 tests) | 1521/1594 cases 95.4%, 73 failed
-xqts      76s  fixture Successful (438 tests) | 29534/31414 cases 94.0%, 1880 failed
+expr       3s  fixture Successful (14 tests) | 637/648 cases 98.3%, 11 failed
+misc      17s  fixture Successful (22 tests) | 1884/1921 cases 98.1%, 37 failed
+insn       9s  fixture Successful (27 tests) | 1543/1594 cases 96.8%, 51 failed
+xqts     162s  fixture Successful (438 tests) | 29506/31414 cases 93.9%, 1908 failed
+per-set GAINS:
+  tests/attr/as/_as-test-set.xml: 94 -> 95  (+1)
+  tests/attr/mode/_mode-test-set.xml: 153 -> 163  (+10)
+  tests/decl/accept/_accept-test-set.xml: 27 -> 44  (+17)
+  tests/decl/accumulator/_accumulator-test-set.xml: 83 -> 91  (+8)
+  tests/decl/output/_output-test-set.xml: 214 -> 215  (+1)
+  tests/decl/override/_override-test-set.xml: 83 -> 86  (+3)
+  tests/decl/package/_package-test-set.xml: 58 -> 67  (+9)
+  tests/decl/param/_param-test-set.xml: 28 -> 29  (+1)
+  tests/decl/use-package/_use-package-test-set.xml: 44 -> 49  (+5)
+  tests/expr/axes/_axes-test-set.xml: 189 -> 190  (+1)
+  tests/fn/key/_key-test-set.xml: 87 -> 90  (+3)
+  tests/fn/transform/_transform-test-set.xml: 3 -> 6  (+3)
+  tests/fn/unparsed-text-lines/_unparsed-text-lines-test-set.xml: 2 -> 6  (+4)
+  tests/insn/call-template/_call-template-test-set.xml: 37 -> 38  (+1)
+  tests/insn/copy/_copy-test-set.xml: 127 -> 128  (+1)
+  tests/insn/evaluate/_evaluate-test-set.xml: 36 -> 39  (+3)
+  tests/insn/iterate/_iterate-test-set.xml: 38 -> 40  (+2)
+  tests/insn/merge/_merge-test-set.xml: 86 -> 100  (+14)
+  tests/insn/source-document/_source-document-test-set.xml: 34 -> 36  (+2)
+  tests/misc/bug/_bug-test-set.xml: 74 -> 75  (+1)
+  tests/misc/error/_error-test-set.xml: 473 -> 496  (+23)
+  tests/misc/initial-function/_initial-function-test-set.xml: 33 -> 34  (+1)
+  tests/misc/initial-template/_initial-template-test-set.xml: 4 -> 5  (+1)
+  tests/strm/sf-current/_sf-current-test-set.xml: 8 -> 12  (+4)
+  tests/strm/si-apply-templates/_si-apply-templates-test-set.xml: 4 -> 7  (+3)
+  tests/strm/si-attribute/_si-attribute-test-set.xml: 41 -> 45  (+4)
+  tests/strm/si-fork/_si-fork-test-set.xml: 33 -> 44  (+11)
+  tests/strm/si-map/_si-map-test-set.xml: 3 -> 5  (+2)
+  tests/strm/si-value-of/_si-value-of-test-set.xml: 34 -> 35  (+1)
+  tests/strm/su-shallow-descent/_su-shallow-descent-test-set.xml: 10 -> 11  (+1)
+PER-SET REGRESSION — these test-sets lost cases:
+  app/app-FunctxFn: 495 -> 493  (-2, tolerance 0)
+  array/array-get: 9 -> 6  (-3, tolerance 0)
+  fn/fn-abs: 187 -> 182  (-5, tolerance 0)
+  fn/fn-avg: 227 -> 225  (-2, tolerance 0)
+  fn/fn-distinct-values: 99 -> 98  (-1, tolerance 0)
+  fn/fn-id: 42 -> 41  (-1, tolerance 0)
+  fn/fn-idref: 30 -> 29  (-1, tolerance 0)
+  fn/fn-min: 204 -> 203  (-1, tolerance 0)
+  fn/fn-number: 66 -> 64  (-2, tolerance 0)
+  fn/fn-QName: 34 -> 33  (-1, tolerance 0)
+  fn/fn-round-half-to-even: 128 -> 126  (-2, tolerance 0)
+  fn/fn-tokenize: 65 -> 64  (-1, tolerance 0)
+  fn/fn-unparsed-text: 41 -> 40  (-1, tolerance 0)
+  fn/fn-unparsed-text-lines: 41 -> 40  (-1, tolerance 0)
+  misc/misc-CombinedErrorCodes: 195 -> 194  (-1, tolerance 0)
+  op/op-same-key: 26 -> 23  (-3, tolerance 0)
+  tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml: 26 -> 25  (-1, tolerance 0)
+  tests/attr/streamable/_streamable-test-set.xml: 59 -> 57  (-2, tolerance 0)
+  tests/insn/analyze-string/_analyze-string-test-set.xml: 52 -> 51  (-1, tolerance 0)
+  tests/strm/sx-GeneralComp-eq/_sx-GeneralComp-eq-test-set.xml: 53 -> 52  (-1, tolerance 0)
+  tests/type/type/_type-test-set.xml: 58 -> 57  (-1, tolerance 0)
+If the drop is intended, re-run with CONFORMANCE_UPDATE_BASELINE=1 to re-baseline.
 
-12 chunk(s) in 3m22s — logs in /mnt/data/repos/phoenixml/phoenixmldb-xslt/conformance-results
+12 chunk(s) in 5m00s — logs in /mnt/data/repos/phoenixml/phoenixmldb-xslt/conformance-results
+one or more chunks failed
