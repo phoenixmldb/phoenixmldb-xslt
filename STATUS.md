@@ -1,24 +1,24 @@
 # Status
 
-Generated 2026-09-13 20:53 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-14 12:56 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
-| `PhoenixmlDb.XQuery` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
-| `PhoenixmlDb.Xslt` | 1.7.0 | 1.7.0 | current |
-| `xquery4` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
-| `xslt` | 1.7.0 | 1.7.0 | current |
+| `PhoenixmlDb.XQuery` | 1.8.0 | ? | **repo is at ?, nuget.org has 1.8.0** |
+| `PhoenixmlDb.Xslt` | 1.8.0 | 1.8.0 | current |
+| `xquery4` | 1.8.0 | ? | **repo is at ?, nuget.org has 1.8.0** |
+| `xslt` | 1.8.0 | 1.8.0 | current |
 
 ## Open work
 
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 3 | 1 |
-| phoenixmldb-xslt | 7 | 1 |
+| phoenixmldb-xquery | 5 | 0 |
+| phoenixmldb-xslt | 7 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -31,6 +31,8 @@ Generated 2026-09-13 20:53 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
+- [30] contains text: phrase matching ignores term positions, so a phrase matches across a stop-word gap
+- [29] FullTextAnalysisOptions.Default performs no stemming despite Stemming=true
 - [18] Unbound external functions silently return () — and a host cannot bind one
 - [5] Atomizing fn:collection() nodes yields '' while fn:string() on the same nodes returns the text
 - [4] fn:sum returns 0 for xs:integer cast from text (BigInteger falls through SumHelper)
@@ -47,21 +49,13 @@ Generated 2026-09-13 20:53 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-xquery**
-
-- [28] release: publish the library and the CLI on separate tags
-
-**phoenixmldb-xslt**
-
-- [57] [HELD for baseline batch] Run the decl/expose test set, which the harness never opened
-
 **phoenixmldb-cli**
 
-- [3] build: Bump the phoenixmldb-engines group with 2 updates
+- [4] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **94** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **96** entries, **22** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -76,7 +70,6 @@ the engines are split but the defects are not.
 - 61. OPEN — an indirect global cycle reports XPST0008 where XTDE0640 is due (2026-09-11)
 - 64. OPEN (XQuery-side) — the UCA collation ignores `alternate=shifted` (2026-09-11)
 - 65. OPEN (XQuery-side, blocked) — two error-reporting defects found by the XSLT sweep (2026-09-11)
-- 66. OPEN — a streamed `accumulator-after()` counts only the matched subtree (2026-09-11)
 - 68. OPEN — the W3C corpus contradicts itself on streamable accumulator AVTs (2026-09-11)
 - 70. OPEN — SENR0001 vs XTDE0450 needs a destination marker, not an error-code swap (2026-09-11)
 - 71. OPEN — `streamable="true"` is silently not streamable; 164 corpus stylesheets have never streamed (2026-09-11, re-measured 2026-09-13)
@@ -92,7 +85,7 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10163/10630 (95.61%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 10172/10672 (95.31%)** across 222 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 29534/31414 (94.02%)** across 428 test-sets,
