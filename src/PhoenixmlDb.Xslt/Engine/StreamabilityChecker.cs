@@ -149,6 +149,104 @@ internal static class StreamabilityChecker
                 "XTSE3430: The body of this template in a streamable mode uses current-group() or current-grouping-key(), which is not available in applied templates during streaming",
                 location);
         }
+
+        // accumulator-after() answers for the node being processed, whose subtree the pass has
+        // just finished. Reached through a path step it is asked of some OTHER node, whose
+        // post-descent value is not known yet: ../accumulator-after('x') wants the parent's
+        // total, and the parent does not end until later (W3C accumulator-060).
+        if (ContainsAccumulatorAfterOnForeignNode(body))
+        {
+            throw new XsltException(
+                "XTSE3430: The body of this template in a streamable mode reads accumulator-after() of a node other than the one being processed, whose post-descent value is not yet known",
+                location);
+        }
+    }
+
+
+    private static bool ContainsAccumulatorAfterOnForeignNode(XsltSequenceConstructor body)
+    {
+        var walker = new AccumulatorAfterOnForeignNodeDetector();
+        walker.Walk(body);
+        return walker.Found;
+    }
+
+
+    /// <summary>
+    /// Finds <c>accumulator-after()</c> reached through a path step, so that it is asked of a node
+    /// other than the one being processed.
+    /// </summary>
+    /// <remarks>
+    /// A bare call is fine — that is the node whose subtree has just been read. What is not fine is
+    /// a call that some step has re-pointed at another node, of which <c>../accumulator-after()</c>
+    /// is the plain case. accumulator-BEFORE is untouched: a pre-descent value is settled for any
+    /// node the pass has already started, so reading it off an ancestor asks nothing of the future.
+    /// </remarks>
+    private sealed class AccumulatorAfterOnForeignNodeDetector : XsltInstructionWalker
+    {
+        public bool Found { get; private set; }
+
+        private void CheckExpr(XQueryExpression? expr)
+        {
+            if (expr == null || Found) return;
+            var inner = new ExprWalker();
+            inner.Walk(expr);
+            if (inner.Found) Found = true;
+        }
+
+        public override object? VisitValueOf(XsltValueOf insn) { CheckExpr(insn.Select); return null; }
+        public override object? VisitSequence(XsltSequence insn) { CheckExpr(insn.Select); return null; }
+        public override object? VisitCopyOf(XsltCopyOf insn) { CheckExpr(insn.Select); return null; }
+
+        private sealed class ExprWalker : XQueryExpressionWalker
+        {
+            public bool Found { get; private set; }
+
+            /// <remarks>
+            /// <c>../accumulator-after('x')</c> is not a path with a function-call step: a function
+            /// call in step position parses as a SIMPLE MAP, <c>.. ! accumulator-after('x')</c>,
+            /// which is what XPath 3.0 makes of it. The first version of this check looked for a
+            /// path and never fired.
+            /// </remarks>
+            public override object? VisitSimpleMapExpression(SimpleMapExpression expr)
+            {
+                if (Found) return null;
+                // The left operand re-points the context unless it is the context item itself.
+                if (expr.Left is not ContextItemExpression && ContainsAccumulatorAfter(expr.Right))
+                {
+                    Found = true;
+                    return null;
+                }
+                Walk(expr.Left);
+                Walk(expr.Right);
+                return null;
+            }
+
+            private static bool ContainsAccumulatorAfter(XQueryExpression? expr)
+            {
+                if (expr == null) return false;
+                var finder = new AccumulatorAfterCallFinder();
+                finder.Walk(expr);
+                return finder.Found;
+            }
+        }
+
+
+        private sealed class AccumulatorAfterCallFinder : XQueryExpressionWalker
+        {
+            public bool Found { get; private set; }
+
+            public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
+            {
+                if (Found) return null;
+                if (expr.Name.LocalName == "accumulator-after")
+                {
+                    Found = true;
+                    return null;
+                }
+                foreach (var arg in expr.Arguments) Walk(arg);
+                return null;
+            }
+        }
     }
 
     /// <summary>
