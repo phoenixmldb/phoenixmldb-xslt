@@ -11,6 +11,89 @@
 > `README.md` and in the generated `STATUS.md`, each carrying its own measurement date.
 
 
+## 1.8.0 — 2026-09-13
+
+Minor rather than patch: two behaviour changes, both spec-correct, both able to change what an
+existing stylesheet does. **Read the first section before upgrading.**
+
+Takes **PhoenixmlDb.XQuery 1.8.0** and PhoenixmlDb.Core 1.7.0.
+
+### Behaviour changes — read this before upgrading
+
+**1. `streamable="true"` and `streamable="1"` are now honoured.**
+
+XSLT 3.0 types `@streamable` as a boolean, but previous releases compared it against the literal
+string `"yes"`. Any other spelling — including `true`, `1`, and `yes` with surrounding whitespace —
+was silently treated as not streamable, and such stylesheets ran unstreamed.
+
+**If you use one of these spellings, this release changes how your stylesheet executes.** It will
+now genuinely stream, which is faster and uses less memory, but streaming support has known gaps
+that unstreamed execution does not: some constructs produce different output rather than raising
+an error. If you see unexpected results after upgrading, setting the mode or source-document to
+`streamable="no"` restores the previous behaviour, and we would like to hear about the case.
+
+Of the nineteen conformance cases this change exposed, **eleven are already fixed in this same
+release** — the change and most of its fallout ship together.
+
+**2. Built-in functions now enforce declared argument cardinality** (from PhoenixmlDb.XQuery
+1.8.0). `substring('abc', ())` now raises `XPTY0004` rather than returning `""`. This applies to
+every built-in; see that package's notes.
+
+### Silent wrong answers — fixed
+
+Each of these produced a well-formed, plausible result with no error.
+
+- **A streaming aggregate answered from nothing.** Under a streamable mode, a `match="/"` template
+  aggregating over the stream computed from no input at all: `count(//PRICE)` gave `0`,
+  `sum(//PRICE)` gave empty, whatever the document held. This is the default CLI path —
+  `--no-stream` gave the same wrong answers.
+- **`xsl:function cache="yes"` returned other calls' results.** The memo key was a string
+  concatenation, so `f((1,2))` and `f((3,4))` shared an entry, as did `f('1')` and `f(1)`. Present
+  in every release since 1.1.0.
+- **Accumulators read a later-declared accumulator one node late.** End-phase rules ran in
+  declaration order, so reading another accumulator's after-value at the same node returned the
+  *previous* node's value. Declaration order decided correctness. Also present since 1.1.0. A
+  two-accumulator cycle now correctly raises `XTDE3400` instead of resolving to stale data.
+- **`xsl:function` declared `as="item()*"` silently lost element nodes.** Writing the type
+  explicitly — the careful habit — selected the broken path; omitting `as` worked.
+- **`xsl:merge` silently merged one of two sources.** A relative `for-each-source` URI resolved
+  against the wrong base, and an unretrievable source was skipped without an error. Now
+  `FODC0002`.
+- **`xsl:text` moved to the end of any untyped variable.**
+- **Streamed shallow-copy produced malformed XML** — siblings nested inside one another, with the
+  outer element left unclosed.
+- **`fn:serialize` emitted `xmlns:p=""`**, so its output did not reparse.
+
+### Added
+
+- **`xsl:mode warning-on-no-match` now warns.** It was parsed, validated, and discarded. The
+  built-in template rule is silent by design, so a node no template matched yields text where
+  markup was expected with no indication — this is the mechanism for catching that.
+
+### Also fixed
+
+- `xsl:merge` key comparison uses the key's collation rather than codepoint order.
+- `xsl:merge` rejects a streamable source that crawls or sorts; duration keys compare by length.
+- A schema importing the XML namespace without a location now loads — previously
+  `xsl:import-schema` failed outright and the stylesheet would not load at all.
+- Abstract component invocation raises `XTDE3052` rather than "not found".
+- Numerous error codes corrected: `XTSE3430`, `XTDE3362`, `XTDE3160`, `XTTE3210`, `XTSE3155`,
+  `XTSE3080`, `SESU0013`, `XTSE0010`, `XTSE0730`, `XTDE1162`, `XTSE2210`, `XTDE3510`.
+- Streaming: ancestors are linked on the striding path, `position()` counts per parent, a
+  suppressed subtree no longer closes its ancestor early, and a matched element's children are
+  delivered rather than dropped.
+- CLI: an `xsl:result-document` `href` that is already a URI is written to the right path.
+
+### Conformance
+
+**W3C XSLT 3.0: 10,163/10,630 (95.61%)**, W3C QT3 **29,534/31,414 (94.02%)** — both measured
+2026-09-11 against `xslt30-test` @ `fddf1cf` and `qt3tests` @ `201a6e4`, in a Release build, from
+the committed per-set baseline.
+
+**That measurement predates most of the streaming work in this release**, so it is a floor rather
+than a current figure. The live numbers are in `README.md` and the generated `STATUS.md`, each
+carrying its own date.
+
 ## 1.7.0 — 2026-09-10
 
 Takes PhoenixmlDb.XQuery 1.7.0 and PhoenixmlDb.Core 1.7.0.
