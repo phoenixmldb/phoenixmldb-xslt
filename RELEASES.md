@@ -86,13 +86,15 @@ Each of these produced a well-formed, plausible result with no error.
 
 ### Conformance
 
-**W3C XSLT 3.0: 10,163/10,630 (95.61%)**, W3C QT3 **29,534/31,414 (94.02%)** — both measured
-2026-09-11 against `xslt30-test` @ `fddf1cf` and `qt3tests` @ `201a6e4`, in a Release build, from
-the committed per-set baseline.
+**W3C XSLT 3.0: 10,292/10,630 (96.82%)** — a full-corpus run at the exact commit tagged for this
+release, 2026-09-13, against `xslt30-test` @ `fddf1cf` in a Release build.
 
-**That measurement predates most of the streaming work in this release**, so it is a floor rather
-than a current figure. The live numbers are in `README.md` and the generated `STATUS.md`, each
-carrying its own date.
+W3C QT3 **29,534/31,414 (94.02%)**, measured 2026-09-11 against `qt3tests` @ `201a6e4` from the
+committed per-set baseline. That figure predates this release's XQuery bump and is a floor.
+
+The engine pin moved from `PhoenixmlDb.XQuery` 1.7.0 to 1.8.0 in this release, and that bump was
+measured as its own change: **full corpus at both commits, no per-set differences.** The
+built-in cardinality change reaches nothing the XSLT corpus exercises.
 
 ## 1.7.0 — 2026-09-10
 
