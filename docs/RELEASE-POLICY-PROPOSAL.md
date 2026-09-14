@@ -151,6 +151,23 @@ carries a `ProjectReference` to the library, which packs as a dependency on
 restore until `PhoenixmlDb.XQuery 1.8.0` is live on nuget.org. Wait for the package to appear,
 not for the tag to go green. The same applies to steps 5 and 6 against step 3.
 
+**A pin bump needs a two-checkout comparison, not `ab-sweep.sh`.** The sweep swaps `src` and
+`tests` between arms; a pin lives in `Directory.Packages.props`, which **both arms share**, so it
+cannot see the change. Guard 1 refuses rather than reporting a meaningless clean result —
+
+```
+A/B ABORT: src and tests are identical — the two arms would measure the same thing.
+```
+
+— which is right, but **the abort does not tell you what to do instead**, and the natural
+instinct is to reach for the sweep. The substitute is **two full runs at the two commits and a
+per-set diff of the failing cases.** Compare by *set*, not by totals: equal totals can hide
+offsetting moves, which is why the per-set gate exists.
+
+Worth stating plainly: **every engine merge is measured by a tool that is structurally blind to
+dependency changes.** Fine for engine work, wrong the moment someone reaches for it to check a
+pin.
+
 **Before step 2, re-run the external reporter's own cases against the tip you are about to tag.**
 parsers2 re-verified Martin Honnen's three reproductions after five streaming merges had landed —
 they still pass — and made the point that matters: **that check is worth repeating immediately
@@ -160,6 +177,17 @@ The reasoning generalises past Martin. A conformance sweep tells you which corpu
 does not tell you whether the thing a real user reported still works. Those are different
 questions (BUGS.md #71), and the second one is the one that gets asked publicly after a release.
 It costs one command per reproduction and it is the cheapest insurance in this list.
+
+**Two things about that step, learned by nearly getting it wrong (2026-09-13).**
+
+**It verifies REPORTED BUGS, not conformance.** Those reproductions confirm that specific
+user-reported defects are still fixed. They say **nothing** about whether conformance held up
+under a dependency bump — and this checklist's author came within one command of treating them as
+the whole gate before cutting 1.8.0. Both checks are required; neither substitutes for the other.
+
+**Name where the reproductions live.** The person cutting a release may not be the person holding
+them — that is exactly what happened here, and the step was briefly unexecutable by the only
+person able to tag. A checklist step only one participant can perform is not a checklist step.
 
 Every step whose pin must match is gated by `check-release-train.sh`, which fails closed. The
 steps that are *not* machine-checked are the tags themselves — forgetting step 4 or 6 publishes

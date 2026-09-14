@@ -1,5 +1,8 @@
 # 1.8.0 — draft release notes
 
+> **SUPERSEDED 2026-09-13.** This draft is now the 1.8.0 entry in `RELEASES.md`, which is the
+> published text. Kept for the decision history: what was weighed, what was held, and why.
+
 **STATUS: HELD 2026-09-11 by Lucas.** Nothing is tagged and nothing is published.
 
 **This release is deliberately not being cut yet.** Lockstep goes in first — one version number
