@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (96.6% W3C conformance — 10,307/10,672 cases, measured 2026-09-14)
+### XSLT 3.0 (96.6% W3C conformance — 10,310/10,672 cases, measured 2026-09-14)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,7 +24,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,307/10,672 cases (96.6%), 365 failing
+### W3C XSLT 3.0 — 10,310/10,672 cases (96.6%), 362 failing
 
 Measured 2026-09-14 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, from the
 committed per-set baseline (`scripts/conformance-baseline.tsv`).
@@ -38,17 +38,16 @@ worse than a smaller number that counts it, so the smaller honest one is publish
 
 **Which XQuery this is measured against, because it changes the number.** The conformance
 project reaches XQuery through the `src/PhoenixmlDb.XQuery` symlink, so a local run measures
-whatever that working tree is checked out at — normally `phoenixmldb-xquery` **main**. For the
-2026-09-14 figure above it was at the **v1.7.0 release commit**, 27 behind main, because the
-shared checkout was mid-comparison for other work. The sensitivity is small for XSLT and large
-for QT3: main against pin previously differed by 3 XSLT cases (10,163 vs 10,160), while QT3 moves
-by ~28. The nightly `Conformance` workflow checks out both repos fresh at main and is the
-canonical figure; this one is a local measurement with its basis stated. See `BUGS.md` #57.
+whatever that working tree is checked out at. The figure above is against `phoenixmldb-xquery`
+**main** at 1.8.0, which is the intended basis.
 
-**This is why the QT3 line moved.** QT3 reads 29,506 here against a baseline of 29,534, and that
-is not a regression — it is the same engine measured against an older XQuery source tree. A
-per-set gate cannot tell those apart, which is the argument for stating the basis rather than
-trusting the delta.
+**A worked example of why the basis is stated and not assumed.** That checkout was found sitting
+detached at the v1.7.0 release commit, 27 behind main, left over from an A/B three days earlier.
+Measured there, the suite reported **21 test-sets below baseline, 34 cases** — which reads
+exactly like a regression, and QT3 alone accounted for 28 of it. Restoring the checkout to main
+cleared 18 of the 21 sets and returned QT3 to 29,534 on the nose. Same engine throughout; only
+the dependency source had moved. A per-set gate cannot distinguish "the code got worse" from
+"a sibling checkout moved", so the environment has to be part of the reading.
 
 The baseline records the **minimum across full runs, not the best one seen**. Repeated sweeps
 agree on every set but one: `insn/call-template` alternates between 38 and 37, and the baseline
@@ -58,14 +57,14 @@ regression every time the suite behaves normally.
 | Group | Passing | | Failing |
 |---|---|---|---|
 | `attr` — attributes | 1084/1117 | 97.0% | 33 |
-| `decl` — declarations | 1016/1122 | 90.6% | 106 |
-| `type` — types | 752/766 | 98.2% | 14 |
+| `decl` — declarations | 1017/1122 | 90.6% | 105 |
+| `type` — types | 753/766 | 98.3% | 13 |
 | `fn` — functions | 1082/1131 | 95.7% | 49 |
 | `strm` — streaming | 2309/2373 | 97.3% | 64 |
 | `expr` — expressions | 637/648 | 98.3% | 11 |
 | `misc` | 1884/1921 | 98.1% | 37 |
-| `insn` — instructions | 1543/1594 | 96.8% | 51 |
-| **Total** | **10,307/10,672** | **96.6%** | **365** |
+| `insn` — instructions | 1544/1594 | 96.9% | 50 |
+| **Total** | **10,310/10,672** | **96.6%** | **362** |
 
 `decl` is the only group whose denominator changed: 1080 to 1122, the 42 newly-opened
 `decl/expose` cases.

@@ -3270,6 +3270,49 @@ merge a −27 into a track whose whole discipline has been zero per-set losses. 
 the same refusal as #69 and #70 — with the difference that here the losses are honest arrears
 rather than new damage, which is exactly why they need scheduling instead of suppressing.
 
+### 98. A stale sibling checkout read as a 34-case regression (2026-09-14)
+
+Found by parsers2 while restating the published figure for #57, and worth recording because the
+false signal was indistinguishable from the real thing it imitates.
+
+A full `--all` reported **21 test-sets below baseline, 34 cases**, 28 of them in QT3. That is the
+exact shape of a genuine regression and it survived the obvious checks: it reproduced across three
+runs, and it was present on `main` as well as on the branch, which ruled out the change under test.
+
+**It was the environment.** `phoenixmldb-xslt` reaches XQuery through the
+`src/PhoenixmlDb.XQuery` symlink into the sibling `phoenixmldb-xquery` checkout, and that checkout
+was sitting **detached at the v1.7.0 release commit, 27 behind main** — left over from an A/B
+three days earlier. Restoring it to main cleared **18 of the 21 sets** and returned QT3 to 29,534
+on the nose. Same engine the whole time; only the dependency source had moved.
+
+The three that remained are `attr/disable-output-escaping` (−1), `attr/streamable` (−2) and
+`strm/sx-GeneralComp-eq` (−1) — the known, recorded cost of #82, which Lucas decided to keep.
+
+#### What this says about the gate
+
+The per-set gate is the right control and it did its job — it refused to stay quiet. But **it
+cannot distinguish "the code got worse" from "a sibling checkout moved"**, because both present as
+the same number going down. Nothing in the run states which XQuery it was measured against, so the
+reading depends on someone thinking to look.
+
+Two corrections came out of it:
+
+- The README claimed a local run measures `phoenixmldb-xquery` **main**. It measures whatever that
+  tree is checked out at. Now stated as such, with this episode as the worked example.
+- The first diagnosis of the same evidence was **also wrong, in the other direction**: from an
+  unfetched local object database, `origin/main` looked 27 commits behind and still on 1.7.0, and
+  the conclusion drawn was "the 1.8.0 version bump never happened." A `git fetch` showed `v1.8.0`
+  tagged and `<Version>1.8.0</Version>` on main all along. **Stale refs produced a confident wrong
+  answer twice in one session, in opposite directions.** Fetch before concluding anything from
+  `origin/*`.
+
+#### The lesson that generalises
+
+A measurement harness that reads one repo but *builds* against another needs the second one's
+identity in its output. Until it is, a clean-looking baseline gate can be measuring something
+other than the commit under test — and it will say so in the only vocabulary it has, which is
+"regression".
+
 ### 72. PARTLY RESOLVED 2026-09-14 — five W3C test-sets present in TestData and never run (2026-09-11)
 
 Found and measured by parsers2. **The fourth blind spot in one day, and the outermost yet**: not
