@@ -3178,6 +3178,91 @@ internal static class StreamabilityChecker
     /// Unlike DescendantAxisDetector, this also detects child axis steps
     /// (which are "striding" — consume one level of children).
     /// </summary>
+    /// <summary>
+    /// True when the expression reads the VALUE of the node being matched — a bare <c>.</c> or
+    /// <c>current()</c> in a position that atomizes it.
+    /// </summary>
+    /// <remarks>
+    /// This is motion even though no axis is written. An element's string value is the
+    /// concatenation of its descendant text, so <c>$parts = current()</c> cannot be answered at the
+    /// start tag: it needs the subtree (W3C stream-204). Reading an ATTRIBUTE's value is a
+    /// different matter — attributes arrive with the start tag — which is why
+    /// <c>chap[not(@nr = $seven)]</c> stays streamable, and why the head of an attribute step is
+    /// not counted here.
+    ///
+    /// Only meaningful for a node that HAS a subtree. Matching <c>text()</c> or an attribute
+    /// delivers the value with the node, so the caller applies this to element patterns only.
+    /// </remarks>
+    internal static bool AtomizesMatchedNode(XQueryExpression? expr)
+    {
+        if (expr == null)
+            return false;
+        var detector = new MatchedNodeValueDetector();
+        detector.Walk(expr);
+        return detector.Found;
+    }
+
+
+    private sealed class MatchedNodeValueDetector : XQueryExpressionWalker
+    {
+        public bool Found { get; private set; }
+
+        public override object? VisitContextItem(ContextItemExpression expr)
+        {
+            Found = true;
+            return null;
+        }
+
+        public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
+        {
+            if (Found) return null;
+            if (expr.Name.LocalName == "current" && expr.Arguments.Count == 0)
+            {
+                Found = true;
+                return null;
+            }
+            foreach (var arg in expr.Arguments) Walk(arg);
+            return null;
+        }
+
+        public override object? VisitPathExpression(PathExpression expr)
+        {
+            if (Found) return null;
+            // './@id' reads an attribute: the leading '.' is a starting point, not a value read.
+            if (expr.InitialExpression != null && expr.InitialExpression is not ContextItemExpression)
+                Walk(expr.InitialExpression);
+            foreach (var step in expr.Steps)
+            {
+                if (Found) return null;
+                Walk(step);
+            }
+            return null;
+        }
+
+        public override object? VisitStepExpression(StepExpression expr)
+        {
+            if (Found) return null;
+            foreach (var pred in expr.Predicates) Walk(pred);
+            return null;
+        }
+    }
+
+
+    /// <summary>
+    /// True when the expression navigates into content the stream has not delivered yet — a child
+    /// or descendant step. Attribute and self steps are motionless: they are in hand at the
+    /// element's start tag, which is why an attribute-only predicate is streamable.
+    /// </summary>
+    internal static bool NavigatesDownward(XQueryExpression? expr)
+    {
+        if (expr == null)
+            return false;
+        var detector = new DownwardAxisDetector();
+        detector.Walk(expr);
+        return detector.Found;
+    }
+
+
     private sealed class DownwardAxisDetector : XQueryExpressionWalker
     {
         public bool Found { get; private set; }

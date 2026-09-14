@@ -2076,13 +2076,31 @@ public sealed partial class StylesheetParser
     /// nodes that may require traversing children to evaluate). Predicates on leaf nodes
     /// (text, attribute, comment, PI) are considered motionless.
     /// </summary>
+    /// <summary>
+    /// Whether a pattern's predicates read content the stream has not delivered at the node being
+    /// matched. Motionlessness is a property of what a predicate READS, not of whether one is
+    /// present: <c>chap[not(@nr = $seven)]</c> reads an attribute and a global variable, both in
+    /// hand at the start tag, and is perfectly streamable (W3C accumulator-034). Rejecting every
+    /// predicate turned that into a spurious XTSE3430.
+    /// </summary>
     private static bool HasNonMotionlessPredicates(XsltPattern pattern) => pattern switch
     {
-        PathPattern pp => pp.Steps.Any(s => s.Predicates.Count > 0 && !IsLeafNodeTest(s.NodeTest)),
+        PathPattern pp => pp.Steps.Any(s => s.Predicates.Any(p => IsNonMotionlessPredicate(p, IsLeafNodeTest(s.NodeTest)))),
         UnionPattern up => up.Patterns.Any(HasNonMotionlessPredicates),
-        DotPattern dp => dp.Predicates.Count > 0,
+        DotPattern dp => dp.Predicates.Any(p => IsNonMotionlessPredicate(p, leafNode: false)),
         _ => false
     };
+
+
+    /// <summary>
+    /// A predicate moves if it navigates below the matched node, or if it reads that node's value
+    /// when the node is an element — an element's string value is its descendant text, so reading
+    /// it needs the subtree. A text node, attribute, comment or PI arrives with its value, so for
+    /// those the second question does not arise.
+    /// </summary>
+    private static bool IsNonMotionlessPredicate(PhoenixmlDb.XQuery.Ast.XQueryExpression predicate, bool leafNode)
+        => StreamabilityChecker.NavigatesDownward(predicate)
+           || (!leafNode && StreamabilityChecker.AtomizesMatchedNode(predicate));
 
 
     private static bool IsLeafNodeTest(PhoenixmlDb.XQuery.Ast.NodeTest test) => test switch

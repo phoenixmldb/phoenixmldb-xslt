@@ -2627,7 +2627,13 @@ public sealed partial class StylesheetParser
             foreach (var rule in rules)
             {
                 if (HasNonMotionlessPredicates(rule.Match))
-                    throw new XsltException("XTSE3430: Accumulator rule pattern is not motionless: patterns in a streamable accumulator must not contain predicates",
+                    throw new XsltException("XTSE3430: Accumulator rule pattern is not motionless: a predicate in a streamable accumulator pattern must not navigate into child or descendant content",
+                        GetSourceLocation(element));
+                // The rule's own value expression is held to the same standard, and was not
+                // checked at all: $value + string-length(caption) reads a child of the matched
+                // element, which the stream has not delivered (W3C accumulator-030).
+                if (StreamabilityChecker.NavigatesDownward(rule.Select))
+                    throw new XsltException("XTSE3430: Accumulator rule select is not motionless: it navigates into child or descendant content of the matched node",
                         GetSourceLocation(element));
             }
         }
