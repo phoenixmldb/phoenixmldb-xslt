@@ -3878,6 +3878,21 @@ internal static class StreamabilityChecker
     /// produces an atomic result, not a node reference. Only bare '.' or '.' in
     /// sequences/conditionals is considered "retaining" the node.
     /// </summary>
+    /// <summary>
+    /// True when the expression yields the context node ITSELF rather than a value derived from
+    /// it — a bare <c>.</c>, or one in a sequence or conditional. A <c>.</c> inside a function
+    /// call argument is a value extraction, not a retained node reference.
+    /// </summary>
+    internal static bool RetainsContextNode(XQueryExpression? expr)
+    {
+        if (expr == null)
+            return false;
+        var detector = new UngroundedContextItemDetector();
+        detector.Walk(expr);
+        return detector.Found;
+    }
+
+
     private sealed class UngroundedContextItemDetector : XQueryExpressionWalker
     {
         public bool Found { get; private set; }

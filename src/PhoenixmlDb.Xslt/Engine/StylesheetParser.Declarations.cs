@@ -2619,6 +2619,7 @@ public sealed partial class StylesheetParser
             throw new XsltException("XTSE0010: xsl:accumulator must contain at least one xsl:accumulator-rule", GetSourceLocation(element));
 
         var isStreamable = NormalizeYesNo(streamableAttr?.Value, "streamable", "xsl:accumulator", element);
+        var declaredType = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null;
 
         // XTSE3430: Streamable accumulator patterns must be motionless
         // (no predicates, no upward/sibling axis navigation)
@@ -2635,6 +2636,14 @@ public sealed partial class StylesheetParser
                 if (StreamabilityChecker.NavigatesDownward(rule.Select))
                     throw new XsltException("XTSE3430: Accumulator rule select is not motionless: it navigates into child or descendant content of the matched node",
                         GetSourceLocation(element));
+                // A streamable accumulator's value must also be GROUNDED — it may not hold nodes
+                // of the streamed tree, which are gone once the pass moves past them. With
+                // as="item()*", select="$value, ." keeps the matched node itself (W3C
+                // accumulator-076). A declared atomic type makes the same expression grounded,
+                // because the function conversion rules atomize it on the way in.
+                if (!IsGroundedAccumulatorType(declaredType) && StreamabilityChecker.RetainsContextNode(rule.Select))
+                    throw new XsltException("XTSE3430: Accumulator value is not grounded: a streamable accumulator must not retain nodes of the streamed tree",
+                        GetSourceLocation(element));
             }
         }
 
@@ -2642,12 +2651,28 @@ public sealed partial class StylesheetParser
         {
             Name = name,
             SourceName = RequiredAttribute(element, "name").Value,
-            As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
+            As = declaredType,
             InitialValue = ParseExpr(RequiredAttribute(element, "initial-value").Value),
             Rules = rules,
             Streamable = isStreamable
         };
     }
+
+
+    /// <summary>
+    /// Whether an accumulator's declared type forces its value to be atomic, so that a rule
+    /// yielding a node is grounded by the function conversion rules rather than keeping it.
+    /// </summary>
+    /// <remarks>
+    /// An absent <c>as</c> means <c>item()*</c>, which keeps nodes — so no declaration is the
+    /// ungrounded case, not the safe one.
+    /// </remarks>
+    private static bool IsGroundedAccumulatorType(XdmSequenceType? type)
+        => type != null && type.ItemType is not (ItemType.Item
+            or ItemType.Node or ItemType.Element or ItemType.Attribute or ItemType.Text
+            or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Document
+            or ItemType.SchemaElement or ItemType.SchemaAttribute
+            or ItemType.Map or ItemType.Array or ItemType.Function or ItemType.Record);
 
 
     private static XsltMode ParseMode(XElement element)

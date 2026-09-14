@@ -14,13 +14,13 @@ public sealed class StreamableAccumulatorMotionlessTests
 {
     private const string Source = """<doc><chap><fig alt="a"><caption>x</caption></fig></chap></doc>""";
 
-    private static async Task<Exception?> LoadAsync(string accumulatorRules)
+    private static async Task<Exception?> LoadAsync(string accumulatorRules, string declaredAs = "xs:integer")
     {
         var ss = $"""
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
               xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="#all">
               <xsl:output method="text"/>
-              <xsl:accumulator name="a" as="xs:integer" initial-value="0" streamable="yes">
+              <xsl:accumulator name="a" as="{declaredAs}" initial-value="0" streamable="yes">
                 {accumulatorRules}
               </xsl:accumulator>
               <xsl:mode streamable="yes" on-no-match="shallow-skip" use-accumulators="a"/>
@@ -78,6 +78,34 @@ public sealed class StreamableAccumulatorMotionlessTests
     public async Task APredicateThatAtomizesAMatchedTextNode_IsAllowed()
         => (await LoadAsync("""<xsl:accumulator-rule match="text()[. = 'x']" select="$value + 1"/>"""))
             .Should().BeNull("a text node is delivered with its value");
+
+    /// <summary>
+    /// W3C accumulator-076: with as="item()*" the value keeps the matched node itself, and a
+    /// streamed node does not survive the pass moving past it.
+    /// </summary>
+    [Fact]
+    public async Task AnUngroundedValue_IsRejected()
+    {
+        var ex = await LoadAsync(
+            """<xsl:accumulator-rule match="fig" select="$value, ."/>""", declaredAs: "item()*");
+        ex.Should().NotBeNull();
+        ex!.Message.Should().Contain("XTSE3430");
+    }
+
+    /// <summary>
+    /// The grounding check fires on RETAINING a node, not on the declared type alone: a
+    /// node-preserving type whose rule keeps nothing of the tree is still streamable.
+    /// </summary>
+    /// <remarks>
+    /// The obvious counter-case — the same <c>$value, .</c> under a declared atomic type — is not
+    /// written here, because it is not actually grounded-and-fine: atomizing the matched element
+    /// reads its string value, which is its descendant text, so it fails the motionless clause
+    /// instead. Asserting it either way would encode a guess about which clause should own it.
+    /// </remarks>
+    [Fact]
+    public async Task ANodePreservingTypeThatRetainsNothing_IsAllowed()
+        => (await LoadAsync("""<xsl:accumulator-rule match="fig" select="$value, 1"/>""", declaredAs: "item()*"))
+            .Should().BeNull("the value holds no node of the streamed tree");
 
     /// <summary>A predicate that descends is still rejected — the loosening is only for attributes.</summary>
     [Fact]
