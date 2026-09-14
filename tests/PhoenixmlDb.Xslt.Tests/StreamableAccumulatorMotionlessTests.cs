@@ -61,6 +61,24 @@ public sealed class StreamableAccumulatorMotionlessTests
         ex!.Message.Should().Contain("XTSE3430");
     }
 
+    /// <summary>
+    /// W3C stream-204: no axis is written, but comparing against current() atomizes the matched
+    /// element, and an element's string value is its descendant text.
+    /// </summary>
+    [Fact]
+    public async Task APredicateThatAtomizesTheMatchedElement_IsRejected()
+    {
+        var ex = await LoadAsync("""<xsl:accumulator-rule match="fig[current() = 'x']" select="$value + 1"/>""");
+        ex.Should().NotBeNull();
+        ex!.Message.Should().Contain("XTSE3430");
+    }
+
+    /// <summary>The same shape on a text() pattern is fine: the value arrives with the node.</summary>
+    [Fact]
+    public async Task APredicateThatAtomizesAMatchedTextNode_IsAllowed()
+        => (await LoadAsync("""<xsl:accumulator-rule match="text()[. = 'x']" select="$value + 1"/>"""))
+            .Should().BeNull("a text node is delivered with its value");
+
     /// <summary>A predicate that descends is still rejected — the loosening is only for attributes.</summary>
     [Fact]
     public async Task APredicateThatReadsAChild_IsStillRejected()
