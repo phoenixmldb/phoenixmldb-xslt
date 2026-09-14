@@ -2076,20 +2076,19 @@ public sealed partial class StylesheetParser
     /// nodes that may require traversing children to evaluate). Predicates on leaf nodes
     /// (text, attribute, comment, PI) are considered motionless.
     /// </summary>
+    /// <summary>
+    /// Whether a pattern's predicates read content the stream has not delivered at the node being
+    /// matched. Motionlessness is a property of what a predicate READS, not of whether one is
+    /// present: <c>chap[not(@nr = $seven)]</c> reads an attribute and a global variable, both in
+    /// hand at the start tag, and is perfectly streamable (W3C accumulator-034). Rejecting every
+    /// predicate turned that into a spurious XTSE3430.
+    /// </summary>
     private static bool HasNonMotionlessPredicates(XsltPattern pattern) => pattern switch
     {
-        PathPattern pp => pp.Steps.Any(s => s.Predicates.Count > 0 && !IsLeafNodeTest(s.NodeTest)),
+        PathPattern pp => pp.Steps.Any(s => s.Predicates.Any(StreamabilityChecker.NavigatesDownward)),
         UnionPattern up => up.Patterns.Any(HasNonMotionlessPredicates),
-        DotPattern dp => dp.Predicates.Count > 0,
+        DotPattern dp => dp.Predicates.Any(StreamabilityChecker.NavigatesDownward),
         _ => false
-    };
-
-
-    private static bool IsLeafNodeTest(PhoenixmlDb.XQuery.Ast.NodeTest test) => test switch
-    {
-        PhoenixmlDb.XQuery.Ast.KindTest kt => kt.Kind is XdmNodeKind.Text or XdmNodeKind.Attribute
-            or XdmNodeKind.Comment or XdmNodeKind.ProcessingInstruction,
-        _ => false // NameTest matches elements by default — not a leaf node
     };
 
 

@@ -3178,6 +3178,21 @@ internal static class StreamabilityChecker
     /// Unlike DescendantAxisDetector, this also detects child axis steps
     /// (which are "striding" — consume one level of children).
     /// </summary>
+    /// <summary>
+    /// True when the expression navigates into content the stream has not delivered yet — a child
+    /// or descendant step. Attribute and self steps are motionless: they are in hand at the
+    /// element's start tag, which is why an attribute-only predicate is streamable.
+    /// </summary>
+    internal static bool NavigatesDownward(XQueryExpression? expr)
+    {
+        if (expr == null)
+            return false;
+        var detector = new DownwardAxisDetector();
+        detector.Walk(expr);
+        return detector.Found;
+    }
+
+
     private sealed class DownwardAxisDetector : XQueryExpressionWalker
     {
         public bool Found { get; private set; }
