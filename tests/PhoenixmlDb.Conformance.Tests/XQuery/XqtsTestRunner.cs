@@ -1046,6 +1046,19 @@ public sealed class XqtsTestRunner
     /// </summary>
     private static bool MatchesExpectedError(XqtsAssertion assertion, Exception ex)
     {
+        // XQuery 3.1 §2.2.4 lets a serialization error in an output declaration be raised statically,
+        // so <assert-serialization-error> is satisfied by a query that fails with that SE code as well
+        // as by a serializer that raises it (QT3 Serialization-031, -032). Only SE codes count: another
+        // error is not a serialization error, whatever the assertion names.
+        if (assertion.Type == "assert-serialization-error")
+        {
+            var code = assertion.Code;
+            return !string.IsNullOrEmpty(code)
+                && code.StartsWith("SE", StringComparison.Ordinal)
+                && (ex.Message.Contains(code, StringComparison.Ordinal)
+                    || ReportedErrorCodes(ex).Contains(code, StringComparer.Ordinal));
+        }
+
         if (assertion.Type == "error")
         {
             // XQTS writes the code as an ATTRIBUTE — <error code="XPST0003"/> — so Element.Value,
