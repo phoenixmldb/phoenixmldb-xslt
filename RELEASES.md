@@ -11,6 +11,37 @@
 > `README.md` and in the generated `STATUS.md`, each carrying its own measurement date.
 
 
+## 2.0.0 — 2026-09-15
+
+**Major because the train is.** `PhoenixmlDb.Core`, `PhoenixmlDb.XQuery` and `PhoenixmlDb.Xslt`
+move to 2.0.0 together for the namespace consolidation. The XSLT engine's own surface is
+compatible with 1.8.0 — **what breaks is reaching the extension functions**, and that breaks in
+the XQuery layer this engine embeds.
+
+Takes **PhoenixmlDb.XQuery 2.0.0** and **PhoenixmlDb.Core 2.0.0**.
+
+### Breaking — the extension functions moved
+
+A stylesheet reaching the engine's extension functions must now declare:
+
+```xml
+xmlns:phx="https://schemas.phoenixml.dev/2026/functions"
+```
+
+and call `phx:metadata`, `phx:stem`, `phx:tokenize`, `phx:score`, `phx:is-stop-word` and
+`phx:thesaurus-lookup`. The old `ft:` and `dbxml:` namespaces are retired with no aliases, so a
+stylesheet using them fails rather than behaving differently. See `PhoenixmlDb.XQuery` 2.0.0 for
+the full rename table and the two non-obvious breaks (a host can no longer rebind `phx`, and
+metadata providers now receive `Q{uri}local` rather than a prefixed key).
+
+### Fixed
+
+- **`fn:serialize` no longer needs an XSLT-side override.** The override existed because
+  `fn:serialize` resolved namespace URIs only for one store type and emitted `xmlns:p=""` for
+  everything else — output that would not reparse. XQuery 2.0.0 carries the store-aware
+  serializers, so the override is retired rather than maintained in two places.
+- **Four defects found by compiling the NEMSIS schematrons**, from the Schematron session.
+
 ## 1.8.0 — 2026-09-13
 
 Minor rather than patch: two behaviour changes, both spec-correct, both able to change what an
