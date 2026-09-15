@@ -3242,33 +3242,91 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
 
+    /// <summary>
+    /// Renders an xsl:message select result as message text without touching the result tree.
+    /// </summary>
+    /// <remarks>
+    /// A message is its own document (XSLT 3.0 §23.1), so its items must not go through the result
+    /// writer: an attribute node written there lands on whatever element is open in the RESULT
+    /// (W3C message-0001 grew &lt;out att="An attribute"/&gt;), and no buffer rollback removes it.
+    /// Nodes are serialized as markup by the standalone serializer. Attribute and namespace nodes
+    /// cannot be children of the message's document node — XTDE0420, which a message recovers from
+    /// with unspecified output — so they, like atomic values, contribute their string value, with
+    /// adjacent string values separated by a space.
+    /// </remarks>
+    private void AppendMessageItems(object? result, StringBuilder sb)
+    {
+        object?[] items = result switch
+        {
+            null => [],
+            object?[] arr => arr,
+            List<object?> array => array.ToArray(),   // arrays flatten (XSLT 3.0 §5.7.2)
+            _ => [result],
+        };
+        var lastWasString = false;
+        foreach (var item in items)
+        {
+            switch (item)
+            {
+                case null:
+                    continue;
+                case List<object?> nested:
+                    AppendMessageItems(nested, sb);
+                    lastWasString = false;
+                    continue;
+                case XdmAttribute or XdmNamespace:
+                    break;
+                case XdmNode node:
+                    sb.Append(SerializeXdmNodeToXml(node));
+                    lastWasString = false;
+                    continue;
+                case ResultTreeFragment rtf:
+                    var rtfDoc = ParseResultTreeFragment(rtf);
+                    sb.Append(rtfDoc != null ? SerializeXdmNodeToXml(rtfDoc) : rtf.XmlContent);
+                    lastWasString = false;
+                    continue;
+            }
+            if (lastWasString)
+                sb.Append(' ');
+            sb.Append(StringValueOf(item));
+            lastWasString = true;
+        }
+    }
+
     public override async ValueTask MessageAsync(XsltMessage instruction)
     {
         string message;
 
         try
         {
+            // XSLT 3.0 §23.1: the message is built from the select result FOLLOWED BY the content.
+            // Only the select's string value was used, and the content never ran when select was
+            // present — select="'Error Message:'" with content lost the content, and a selected
+            // element lost its markup (W3C message-0202, -0302, -0304, -0305, xsl-document-0603).
+            var text = new StringBuilder();
             if (instruction.Select != null)
-            {
-                var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
-                message = StringValueOf(result);
-            }
-            else if (instruction.Content != null)
+                AppendMessageItems(await EvaluateAsync(instruction.Select).ConfigureAwait(false), text);
+            if (instruction.Content != null)
             {
                 var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                 // Save/restore sequence accumulator so xsl:sequence inside xsl:message
                 // doesn't pollute the parent variable's accumulator
                 var savedAccumulator = _sequenceAccumulator;
                 _sequenceAccumulator = null;
-                await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
-                _sequenceAccumulator = savedAccumulator;
-                message = savedScope.GetWritten();
-                savedScope.Dispose();
+                try
+                {
+                    await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+                    text.Append(savedScope.GetWritten());
+                }
+                finally
+                {
+                    // Always discard the message from the result: an error inside the content used
+                    // to skip this and leave a partial message in the transform's output.
+                    _sequenceAccumulator = savedAccumulator;
+                    savedScope.Dispose();
+                }
             }
-            else
-            {
-                message = "";
-            }
+            message = text.ToString();
         }
 #pragma warning disable CA1031 // XSLT 3.0: dynamic errors in xsl:message content are recoverable
         catch (Exception)
