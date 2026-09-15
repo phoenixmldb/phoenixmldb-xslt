@@ -1591,6 +1591,15 @@ found and fixed by parsers2.)
 
 ### 50. Three tables disagree about what the prefix `dbxml` means (2026-09-11)
 
+**Resolved by owner decision, 2026-09-15: namespace consolidation**
+(endpointsystems/phoenixml `docs/superpowers/specs/2026-09-15-namespace-consolidation-design.md`).
+The decision went the other way from the recommendation below. All six extension functions move to one
+namespace, `phx` → `https://schemas.phoenixml.dev/2026/functions` (id 13), which the XQuery library
+predeclares. `dbxml` means only `/2026/meta`, and inside `phx:metadata` keys only. `/2026/db` (id 9) is
+retired and never reused. There are no aliases: `dbxml:metadata` and `ft:*` stop compiling. The `Ft`/`Xslt`
+id-10 collision below goes with `Ft`. Core: phoenixmldb-core#8. XQuery and this repo's URI mapping for
+`xmlns:phx`: the phx consolidation PRs, released together.
+
 Found by db-engine, reported via parsers2, confirmed here from source. Not a crash and
 not release-blocking — it is a naming decision that needs settling once, by a human,
 before more docs and more user queries are written against the disagreement.
