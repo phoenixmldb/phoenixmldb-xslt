@@ -1649,7 +1649,9 @@ public sealed partial class StylesheetParser
             Content = selectAttr == null && element.HasElements
                 ? ParseSequenceConstructor(element)
                 : null,
-            ErrorCode = errorCodeAttr?.Value
+            ErrorCode = errorCodeAttr?.Value,
+            ErrorCodeAvt = errorCodeAttr != null ? ParseAvt(errorCodeAttr.Value, element, errorCodeAttr) : null,
+            ErrorCodeNamespaces = errorCodeAttr != null ? InScopeNamespacesOf(element) : null,
         };
     }
 

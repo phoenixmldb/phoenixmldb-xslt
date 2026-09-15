@@ -727,6 +727,21 @@ public sealed class XsltTestRunner
         return deps;
     }
 
+    /// <summary>
+    /// The <c>code</c> attribute as an EQName, <c>Q{uri}local</c>, when it is a prefixed lexical QName whose prefix the
+    /// element binds. assert-006 expects <c>my:ABCD9999</c> with <c>xmlns:my</c> on the &lt;error&gt;, and an engine
+    /// reports a code by its expanded name, not by the prefix the test catalog happens to use.
+    /// </summary>
+    private static string? ExpandErrorCode(XElement assertionElem)
+    {
+        var code = assertionElem.Attribute("code")?.Value;
+        var colon = code?.IndexOf(':', StringComparison.Ordinal) ?? -1;
+        if (code is null || colon <= 0 || code.StartsWith("Q{", StringComparison.Ordinal))
+            return null;
+        var uri = assertionElem.GetNamespaceOfPrefix(code[..colon]);
+        return uri is null ? null : $"Q{{{uri.NamespaceName}}}{code[(colon + 1)..]}";
+    }
+
     private List<XsltAssertion> ParseAssertions(XElement resultElem, XNamespace ns, string basePath)
     {
         var assertions = new List<XsltAssertion>();
@@ -743,6 +758,7 @@ public sealed class XsltTestRunner
                 // <error code="..."/> and <assert-serialization-error code="..."/> carry the
                 // expected code as an ATTRIBUTE, not as element text, so Value is "" for both.
                 Code = child.Attribute("code")?.Value,
+                ExpandedCode = ExpandErrorCode(child),
                 Flags = child.Attribute("flags")?.Value
             };
 
@@ -2088,7 +2104,10 @@ public sealed class XsltTestRunner
                 : assertion.Value;
             return string.IsNullOrEmpty(expectedCode)
                 || ex.Message.Contains(expectedCode, StringComparison.Ordinal)
-                || ReportedErrorCodes(ex).Contains(expectedCode, StringComparer.Ordinal);
+                || ReportedErrorCodes(ex).Contains(expectedCode, StringComparer.Ordinal)
+                || (assertion.ExpandedCode is { } expanded
+                    && (ex.Message.Contains(expanded, StringComparison.Ordinal)
+                        || ReportedErrorCodes(ex).Contains(expanded, StringComparer.Ordinal)));
         }
 
         // <any-of> is satisfied when any one alternative is — and its <error> alternatives must
@@ -2336,6 +2355,9 @@ public sealed class XsltAssertion
 
     /// <summary>The <c>code</c> attribute of &lt;error&gt; / &lt;assert-serialization-error&gt;.</summary>
     public string? Code { get; init; }
+
+    /// <summary><see cref="Code"/> as <c>Q{uri}local</c> when it is a prefixed QName the element binds; otherwise null.</summary>
+    public string? ExpandedCode { get; init; }
     public string? ExpectedFile { get; set; }
     public string Compare { get; set; } = "XML";
     public bool IgnorePrefixes { get; set; }
