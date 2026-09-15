@@ -197,6 +197,10 @@ public sealed partial class StylesheetParser
         ["http://www.w3.org/2005/xpath-functions/array"] = NamespaceId.Array,        // 7
         ["http://www.w3.org/2005/xpath-functions/math"] = NamespaceId.Math,          // 8
         ["http://www.w3.org/1999/XSL/Transform"] = NamespaceId.Xslt,                // 10
+        // PhoeniXML extension functions (FunctionNamespaces.Phx, Core's PhoenixmlFunctions). Without this entry a
+        // stylesheet's xmlns:phx got a dynamic id that no function carries, so phx:stem was "not found" and only
+        // the Q{uri}local form reached it, as ft: and dbxml: did before the namespace consolidation.
+        ["https://schemas.phoenixml.dev/2026/functions"] = new NamespaceId(13),
     };
 
 }
