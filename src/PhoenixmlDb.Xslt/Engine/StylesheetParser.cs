@@ -1577,7 +1577,10 @@ public sealed partial class StylesheetParser
         {
             Location = location,
             Select = selectAttr != null ? ParseExpr(selectAttr.Value, selectAttr) : null,
-            Content = selectAttr == null && element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
+            // Content is parsed even when select is present: the message is the select result followed
+            // by the content (XSLT 3.0 §23.1). Dropping it here is why select="'Error Message:'" with
+            // content produced only "Error Message:".
+            Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
             Terminate = terminateAttr?.Value is "yes" or "true" or "1",
             TerminateAvt = isTerminateAvt ? ParseAvt(terminateAttr!.Value, element, terminateAttr) : null,
             ErrorCode = errorCodeAttr?.Value,
