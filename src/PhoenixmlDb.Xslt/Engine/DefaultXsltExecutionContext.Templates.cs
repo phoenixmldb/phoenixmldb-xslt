@@ -27,7 +27,8 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         CheckResourceLimits();
         if (_recursionDepth >= MaxRecursionDepth)
-            return;
+            throw RecursionLimitExceeded("xsl:apply-templates");
+        withParams = await EvaluateWithParamsInCallerScopeAsync(withParams).ConfigureAwait(false);
 
         _recursionDepth++;
         try
@@ -267,6 +268,8 @@ internal sealed partial class DefaultXsltExecutionContext
             PushContextItem(node, position, expandedNodes.Count);
             PushCurrentItem(node); // For XSLT current() function
             PushScope();
+            // Lexical scope: the matched template does not see the applying template's local variables (with-params were pre-evaluated above).
+            _scopes.Peek().IsVariableBarrier = true;
 
             // XTDE3480: Clear merge-group context — not available in applied templates
             ClearMergeGroupContext();
@@ -1111,8 +1114,290 @@ internal sealed partial class DefaultXsltExecutionContext
 
         CheckResourceLimits();
         if (_recursionDepth >= MaxRecursionDepth)
-            return;
+            throw RecursionLimitExceeded("xsl:call-template");
 
+        var template = ResolveCallTemplateTarget(name);
+
+        // Pre-evaluate ALL with-param values in the CALLING context before pushing scope.
+        // This prevents parameter cross-contamination where a later param sees the value
+        // of an earlier param that was already bound in the new scope.
+        var preEvaluatedParams = new Dictionary<QName, object?>();
+        foreach (var wp in withParams)
+        {
+            preEvaluatedParams[wp.Name] = await EvaluateWithParamAsync(wp).ConfigureAwait(false);
+        }
+
+        Dictionary<QName, object?>? tailTunnelParameters = null;
+
+        // Each iteration runs one template body. A call-template in tail position of that body schedules the
+        // next iteration (TryScheduleTailCallAsync) instead of nesting, so tail recursion — the ISO Schematron
+        // skeleton's sch-check:strip-strings walks an assert test one character per call — runs in constant
+        // stack and does not count toward MaxRecursionDepth.
+        while (true)
+        {
+            // Enforce xsl:context-item constraints
+            var makeContextAbsent = EnforceContextItemConstraint(template);
+
+            _recursionDepth++;
+            _currentTemplateStack.Push(template);
+            PushScope();
+            // Lexical scope: the called template does not see the caller's local variables (with-params were pre-evaluated above).
+            _scopes.Peek().IsVariableBarrier = true;
+
+            try
+            {
+                // XTDE3480: Clear merge-group context — not available in called templates
+                ClearMergeGroupContext();
+
+                // If use="absent" or optional type mismatch, make context item absent
+                if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
+                {
+                    PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+                    SuppressGroupingFocus();
+                }
+
+                // Forward inherited tunnel parameters from parent scopes.
+                // NOTE: Only store in TunnelParameters, NOT as variables.
+                // Variables are bound later based on each template param's tunnel flag.
+                if (tailTunnelParameters != null)
+                {
+                    // A tail call: the scopes the callee would have inherited from are already popped, so
+                    // use the set captured when the call was scheduled (see TryScheduleTailCallAsync).
+                    foreach (var (tunnelName, tunnelValue) in tailTunnelParameters)
+                        _scopes.Peek().TunnelParameters[tunnelName] = tunnelValue;
+                }
+                else
+                {
+                    InheritTunnelParameters();
+                }
+
+                // Track explicitly provided tunnel params (using pre-evaluated values)
+                foreach (var wp in withParams.Where(p => p.Tunnel))
+                {
+                    var value = preEvaluatedParams[wp.Name];
+                    _scopes.Peek().TunnelParameters[wp.Name] = value;
+                }
+
+                // Bind parameters (using pre-evaluated values)
+                foreach (var param in template.Parameters)
+                {
+                    var withParam = withParams.FirstOrDefault(p => p.Name.Equals(param.Name) && !p.Tunnel);
+
+                    if (withParam != null && !param.Tunnel)
+                    {
+                        // Non-tunnel with-param binds only to non-tunnel template param
+                        var value = preEvaluatedParams[withParam.Name];
+                        if (param.As != null)
+                        {
+                            value = CoerceToType(value, param.As);
+                            ValidateValueMatchesType(value, param.As, "XTTE0590",
+                                $"Parameter ${param.Name.LocalName}");
+                        }
+                        SetVariable(param.Name, value);
+                    }
+                    else if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
+                    {
+                        if (param.As != null)
+                        {
+                            tunnelValue = CoerceToType(tunnelValue, param.As);
+                            ValidateValueMatchesType(tunnelValue, param.As, "XTTE0590",
+                                $"Parameter ${param.Name.LocalName}");
+                        }
+                        SetVariable(param.Name, tunnelValue);
+                    }
+                    else if (param.Required)
+                    {
+                        // Under xsl:call-template a missing required non-tunnel parameter is the
+                        // STATIC error XTSE0690 (the call site is visible); a tunnel parameter can
+                        // only be known missing at run time, XTDE0700. This message had no code.
+                        var code = param.Tunnel ? "XTDE0700" : "XTSE0690";
+                        throw Error($"{code}: Required parameter ${param.Name.LocalName} not supplied");
+                    }
+                    else if (param.Select != null)
+                    {
+                        var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                        if (param.As != null)
+                        {
+                            value = CoerceToType(value, param.As);
+                            ValidateValueMatchesType(value, param.As, "XTTE0600",
+                                $"Parameter ${param.Name.LocalName} default value");
+                        }
+                        SetVariable(param.Name, value);
+                    }
+                    else if (param.Content != null)
+                    {
+                        // Accumulator-isolating evaluation — see comment at the helper definition.
+                        var value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
+                        if (param.As != null)
+                        {
+                            value = CoerceToType(value, param.As);
+                            ValidateValueMatchesType(value, param.As, "XTTE0600",
+                                $"Parameter ${param.Name.LocalName} default value");
+                        }
+                        SetVariable(param.Name, value);
+                    }
+                    else
+                    {
+                        // No select, no content, no with-param: default is empty sequence.
+                        if (param.As != null && param.As.Occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore
+                            && IsStrictAtomicType(param.As.ItemType))
+                            throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
+                        else if (param.As != null && param.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
+                            SetVariable(param.Name, null);
+                        else
+                            SetVariable(param.Name, "");
+                    }
+                }
+
+                // XTSE0680: In XSLT 2.0+, passing a non-tunnel parameter that the template doesn't declare,
+                // or that matches a tunnel param, is a static error.
+                // Note: tunnel with-params matching non-tunnel params are NOT errors — they pass through.
+                if (!IsBackwardsCompatible)
+                {
+                    foreach (var wp in withParams.Where(p => !p.Tunnel && !p.FromRuntimeOptions))
+                    {
+                        var matchingParam = template.Parameters.FirstOrDefault(p => p.Name.Equals(wp.Name));
+                        if (matchingParam == null)
+                            throw Error($"XTSE0680: Parameter '{wp.Name.LocalName}' is not declared in the called template '{name.LocalName}'");
+                        if (matchingParam.Tunnel)
+                            throw Error($"XTSE0680: Non-tunnel parameter '{wp.Name.LocalName}' in xsl:call-template does not match tunnel parameter in template '{name.LocalName}'");
+                    }
+                }
+
+                if (template.Version != null)
+                    _effectiveVersionStack.Push(template.Version);
+                if (template.DefaultCollation != null)
+                    _defaultCollationStack.Push(template.DefaultCollation);
+                if (template.BaseUri != null)
+                    _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
+                try
+                {
+                    // Execute template body, capturing output for type checking if 'as' is declared
+                    if (template.As != null)
+                    {
+                        var savedAccum = _sequenceAccumulator;
+                        var savedCapture = _currentAsBodyCapture;
+                        var savedLen = _output.Length;
+                        var bodyAccum = new List<object?>();
+                        _sequenceAccumulator = bodyAccum;
+                        _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen, AttrDepthAtStart = _collectedAttributesStack.Count };
+                        var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
+                        var savedTailFrameAs = _tailCallFrameScope;
+                        _tailCallFrameScope = null; // the captured result is post-processed below
+                        try
+                        {
+                            await template.Body.ExecuteAsync(this).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            _tailCallFrameScope = savedTailFrameAs;
+                        }
+                        var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
+                        var bodyCapture = _currentAsBodyCapture;
+                        _currentAsBodyCapture = savedCapture;
+
+                        // Reassemble in document order: parse `bodyOutput` into top-level XDM nodes,
+                        // then weave accumulator items in at the offsets recorded when each was added.
+                        var resultItems = AssembleAsBodyResultItems(bodyOutput, bodyCapture.Accumulator, bodyCapture.Positions, bodyCapture.ConsumedTo);
+                        // Track whether results are only from body serialization
+                        // (no sequence accumulator items). When true, emit bodyOutput
+                        // directly to preserve exact namespace declarations (e.g. xmlns=""
+                        // from inherit-namespaces="no") and disable-output-escaping text
+                        // that would be lost by XDM re-serialization round-trip.
+                        bool canEmitBodyDirectly2 = bodyCapture.Accumulator.Count == 0
+                            && !string.IsNullOrEmpty(bodyOutput);
+
+                        _sequenceAccumulator = savedAccum;
+
+                        // XTTE0505: Validate template return value against 'as' type
+                        ValidateTemplateReturnType(template, resultItems);
+
+                        // Re-output validated items: if the outer context is collecting
+                        // individual items (e.g. another template with 'as'), preserve them
+                        // in the accumulator. Otherwise serialize to _output.
+                        if (resultItems.Count > 0)
+                        {
+                            if (_sequenceAccumulator != null)
+                            {
+                                // When the outer scope is itself an `as=` body capture, each
+                                // item we forward records its position via AppendToSeqAccumulator
+                                // so the outer reassembly can interleave correctly.
+                                foreach (var item in resultItems)
+                                    AppendToSeqAccumulator(item);
+                            }
+                            else if (canEmitBodyDirectly2)
+                            {
+                                // Append bodyOutput directly to preserve DOE text,
+                                // xmlns="" undeclarations, and other serialization details
+                                // that would be lost by XDM round-trip re-serialization.
+                                _sink.RawText(bodyOutput);
+                                _lastResultWasAtomic = false;
+                            }
+                            else
+                            {
+                                SerializeSequenceItems(resultItems);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // This frame takes a tail call from its own body — unless it made the focus absent,
+                        // because a later iteration would then run with the invoker's focus instead.
+                        var savedTailFrame = _tailCallFrameScope;
+                        _tailCallFrameScope = template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent
+                            ? null
+                            : _scopes.Peek();
+                        try
+                        {
+                            await template.Body.ExecuteAsync(this).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            _tailCallFrameScope = savedTailFrame;
+                        }
+                    }
+                }
+                finally
+                {
+                    if (template.BaseUri != null)
+                        _staticBaseUriStack.Pop();
+                    if (template.DefaultCollation != null)
+                        _defaultCollationStack.Pop();
+                    if (template.Version != null)
+                        _effectiveVersionStack.Pop();
+                }
+            }
+            catch
+            {
+                _pendingTailCall = null;
+                throw;
+            }
+            finally
+            {
+                if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
+                    PopContextItem();
+                PopScope();
+                _currentTemplateStack.Pop();
+                _recursionDepth--;
+            }
+
+            if (_pendingTailCall is not { } next)
+                return;
+            _pendingTailCall = null;
+            name = next.Name;
+            withParams = next.WithParams;
+            template = next.Template;
+            preEvaluatedParams = next.Params;
+            tailTunnelParameters = next.TunnelParameters;
+            if (_options?.TraceListener != null)
+                _options.TraceListener(_templateDepth, "call-template", name.LocalName);
+            CheckResourceLimits();
+        }
+    }
+
+    /// <summary>Resolves the template an xsl:call-template names, including xsl:original.</summary>
+    private XsltTemplate ResolveCallTemplateTarget(QName name)
+    {
         XsltTemplate? template;
 
         // xsl:original resolution — call the overridden template from a package
@@ -1154,221 +1439,40 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         }
 
-        // Pre-evaluate ALL with-param values in the CALLING context before pushing scope.
-        // This prevents parameter cross-contamination where a later param sees the value
-        // of an earlier param that was already bound in the new scope.
+        return template;
+    }
+
+    public override async ValueTask<bool> TryScheduleTailCallAsync(QName name, List<XsltWithParam> withParams)
+    {
+        // Only straight from the body of the innermost call-template frame: its own scope must be the top of
+        // the stack. Any scope pushed since (apply-templates, for-each, a function call) means this call is
+        // not the frame's tail call.
+        if (_tailCallFrameScope is null || _pendingTailCall is not null || !ReferenceEquals(_scopes.Peek(), _tailCallFrameScope))
+            return false;
+
+        var template = ResolveCallTemplateTarget(name);
+        if (template.As != null)
+            return false; // its result is type-checked by the call; run it normally
+
+        // Exactly what a nested call would do before pushing its scope: with-params evaluated in the calling
+        // context, and the tunnel parameters it would inherit from the scopes currently on the stack.
         var preEvaluatedParams = new Dictionary<QName, object?>();
         foreach (var wp in withParams)
-        {
             preEvaluatedParams[wp.Name] = await EvaluateWithParamAsync(wp).ConfigureAwait(false);
-        }
-
-        // Enforce xsl:context-item constraints
-        var makeContextAbsent = EnforceContextItemConstraint(template);
-
-        _recursionDepth++;
-        _currentTemplateStack.Push(template);
-        PushScope();
-
-        try
+        var tunnelParameters = new Dictionary<QName, object?>();
+        foreach (var scope in _scopes)
         {
-            // XTDE3480: Clear merge-group context — not available in called templates
-            ClearMergeGroupContext();
-
-            // If use="absent" or optional type mismatch, make context item absent
-            if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
+            if (scope.TunnelParametersOrNull is { Count: > 0 } inherited)
             {
-                PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
-                SuppressGroupingFocus();
+                foreach (var (tunnelName, tunnelValue) in inherited)
+                    tunnelParameters.TryAdd(tunnelName, tunnelValue);
             }
-
-            // Forward inherited tunnel parameters from parent scopes.
-            // NOTE: Only store in TunnelParameters, NOT as variables.
-            // Variables are bound later based on each template param's tunnel flag.
-            InheritTunnelParameters();
-
-            // Track explicitly provided tunnel params (using pre-evaluated values)
-            foreach (var wp in withParams.Where(p => p.Tunnel))
-            {
-                var value = preEvaluatedParams[wp.Name];
-                _scopes.Peek().TunnelParameters[wp.Name] = value;
-            }
-
-            // Bind parameters (using pre-evaluated values)
-            foreach (var param in template.Parameters)
-            {
-                var withParam = withParams.FirstOrDefault(p => p.Name.Equals(param.Name) && !p.Tunnel);
-
-                if (withParam != null && !param.Tunnel)
-                {
-                    // Non-tunnel with-param binds only to non-tunnel template param
-                    var value = preEvaluatedParams[withParam.Name];
-                    if (param.As != null)
-                    {
-                        value = CoerceToType(value, param.As);
-                        ValidateValueMatchesType(value, param.As, "XTTE0590",
-                            $"Parameter ${param.Name.LocalName}");
-                    }
-                    SetVariable(param.Name, value);
-                }
-                else if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
-                {
-                    if (param.As != null)
-                    {
-                        tunnelValue = CoerceToType(tunnelValue, param.As);
-                        ValidateValueMatchesType(tunnelValue, param.As, "XTTE0590",
-                            $"Parameter ${param.Name.LocalName}");
-                    }
-                    SetVariable(param.Name, tunnelValue);
-                }
-                else if (param.Required)
-                {
-                    // Under xsl:call-template a missing required non-tunnel parameter is the
-                    // STATIC error XTSE0690 (the call site is visible); a tunnel parameter can
-                    // only be known missing at run time, XTDE0700. This message had no code.
-                    var code = param.Tunnel ? "XTDE0700" : "XTSE0690";
-                    throw Error($"{code}: Required parameter ${param.Name.LocalName} not supplied");
-                }
-                else if (param.Select != null)
-                {
-                    var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
-                    if (param.As != null)
-                    {
-                        value = CoerceToType(value, param.As);
-                        ValidateValueMatchesType(value, param.As, "XTTE0600",
-                            $"Parameter ${param.Name.LocalName} default value");
-                    }
-                    SetVariable(param.Name, value);
-                }
-                else if (param.Content != null)
-                {
-                    // Accumulator-isolating evaluation — see comment at the helper definition.
-                    var value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
-                    if (param.As != null)
-                    {
-                        value = CoerceToType(value, param.As);
-                        ValidateValueMatchesType(value, param.As, "XTTE0600",
-                            $"Parameter ${param.Name.LocalName} default value");
-                    }
-                    SetVariable(param.Name, value);
-                }
-                else
-                {
-                    // No select, no content, no with-param: default is empty sequence.
-                    if (param.As != null && param.As.Occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore
-                        && IsStrictAtomicType(param.As.ItemType))
-                        throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
-                    else if (param.As != null && param.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
-                        SetVariable(param.Name, null);
-                    else
-                        SetVariable(param.Name, "");
-                }
-            }
-
-            // XTSE0680: In XSLT 2.0+, passing a non-tunnel parameter that the template doesn't declare,
-            // or that matches a tunnel param, is a static error.
-            // Note: tunnel with-params matching non-tunnel params are NOT errors — they pass through.
-            if (!IsBackwardsCompatible)
-            {
-                foreach (var wp in withParams.Where(p => !p.Tunnel && !p.FromRuntimeOptions))
-                {
-                    var matchingParam = template.Parameters.FirstOrDefault(p => p.Name.Equals(wp.Name));
-                    if (matchingParam == null)
-                        throw Error($"XTSE0680: Parameter '{wp.Name.LocalName}' is not declared in the called template '{name.LocalName}'");
-                    if (matchingParam.Tunnel)
-                        throw Error($"XTSE0680: Non-tunnel parameter '{wp.Name.LocalName}' in xsl:call-template does not match tunnel parameter in template '{name.LocalName}'");
-                }
-            }
-
-            if (template.Version != null)
-                _effectiveVersionStack.Push(template.Version);
-            if (template.DefaultCollation != null)
-                _defaultCollationStack.Push(template.DefaultCollation);
-            if (template.BaseUri != null)
-                _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
-            try
-            {
-                // Execute template body, capturing output for type checking if 'as' is declared
-                if (template.As != null)
-                {
-                    var savedAccum = _sequenceAccumulator;
-                    var savedCapture = _currentAsBodyCapture;
-                    var savedLen = _output.Length;
-                    var bodyAccum = new List<object?>();
-                    _sequenceAccumulator = bodyAccum;
-                    _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen, AttrDepthAtStart = _collectedAttributesStack.Count };
-                    var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
-                    await template.Body.ExecuteAsync(this).ConfigureAwait(false);
-                    var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
-                    var bodyCapture = _currentAsBodyCapture;
-                    _currentAsBodyCapture = savedCapture;
-
-                    // Reassemble in document order: parse `bodyOutput` into top-level XDM nodes,
-                    // then weave accumulator items in at the offsets recorded when each was added.
-                    var resultItems = AssembleAsBodyResultItems(bodyOutput, bodyCapture.Accumulator, bodyCapture.Positions, bodyCapture.ConsumedTo);
-                    // Track whether results are only from body serialization
-                    // (no sequence accumulator items). When true, emit bodyOutput
-                    // directly to preserve exact namespace declarations (e.g. xmlns=""
-                    // from inherit-namespaces="no") and disable-output-escaping text
-                    // that would be lost by XDM re-serialization round-trip.
-                    bool canEmitBodyDirectly2 = bodyCapture.Accumulator.Count == 0
-                        && !string.IsNullOrEmpty(bodyOutput);
-
-                    _sequenceAccumulator = savedAccum;
-
-                    // XTTE0505: Validate template return value against 'as' type
-                    ValidateTemplateReturnType(template, resultItems);
-
-                    // Re-output validated items: if the outer context is collecting
-                    // individual items (e.g. another template with 'as'), preserve them
-                    // in the accumulator. Otherwise serialize to _output.
-                    if (resultItems.Count > 0)
-                    {
-                        if (_sequenceAccumulator != null)
-                        {
-                            // When the outer scope is itself an `as=` body capture, each
-                            // item we forward records its position via AppendToSeqAccumulator
-                            // so the outer reassembly can interleave correctly.
-                            foreach (var item in resultItems)
-                                AppendToSeqAccumulator(item);
-                        }
-                        else if (canEmitBodyDirectly2)
-                        {
-                            // Append bodyOutput directly to preserve DOE text,
-                            // xmlns="" undeclarations, and other serialization details
-                            // that would be lost by XDM round-trip re-serialization.
-                            _sink.RawText(bodyOutput);
-                            _lastResultWasAtomic = false;
-                        }
-                        else
-                        {
-                            SerializeSequenceItems(resultItems);
-                        }
-                    }
-                }
-                else
-                {
-                    await template.Body.ExecuteAsync(this).ConfigureAwait(false);
-                }
-            }
-            finally
-            {
-                if (template.BaseUri != null)
-                    _staticBaseUriStack.Pop();
-                if (template.DefaultCollation != null)
-                    _defaultCollationStack.Pop();
-                if (template.Version != null)
-                    _effectiveVersionStack.Pop();
-            }
+            if (scope.IsTunnelBarrier)
+                break;
         }
-        finally
-        {
-            if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
-                PopContextItem();
-            PopScope();
-            _currentTemplateStack.Pop();
-            _recursionDepth--;
-        }
+
+        _pendingTailCall = new PendingTailCall(name, withParams, template, preEvaluatedParams, tunnelParameters);
+        return true;
     }
 
 
@@ -1382,6 +1486,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // XTDE0560: apply-imports requires a context item (fails when context-item use="absent")
         if (node == null || ReferenceEquals(node, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
             throw Error("XTDE0560: xsl:apply-imports requires a context item, but the context item is absent");
+        withParams = await EvaluateWithParamsInCallerScopeAsync(withParams).ConfigureAwait(false);
 
         // apply-imports searches only templates from imported stylesheets
         // (lower precedence than the module containing the current template).
@@ -1418,6 +1523,8 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
                 }
 
+                // Lexical scope: the imported template's parameters and body see globals, not the caller's locals (with-params above were evaluated in the caller's scope).
+                _scopes.Peek().IsVariableBarrier = true;
                 foreach (var p in importedTemplate.Parameters)
                 {
                     if (!_scopes.Peek().Variables.ContainsKey(p.Name))
@@ -1478,6 +1585,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             throw Error("XTDE0560: xsl:next-match requires a context item, but the context item is absent");
         }
+        withParams = await EvaluateWithParamsInCallerScopeAsync(withParams).ConfigureAwait(false);
 
         XsltTemplate? nextTemplate;
         using (var mc = AcquireMatchContext())
@@ -1521,6 +1629,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
 
                 // Bind template parameters with defaults
+                // Lexical scope: the next template's parameters and body see globals, not this template's locals (with-params above were evaluated in the caller's scope).
+                _scopes.Peek().IsVariableBarrier = true;
                 foreach (var param in nextTemplate.Parameters)
                 {
                     if (!_scopes.Peek().Variables.ContainsKey(param.Name))

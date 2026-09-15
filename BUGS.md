@@ -5726,3 +5726,146 @@ the two `fn:transform` implementations, the local and global variable paths, the
 XQuery copies of a regex or atomization helper. Cheap countermeasure: when you fix one, grep for
 the other **in the same commit**. A helper that took a new parameter is the highest-yield thing
 to grep for, because the default hides every site you missed.
+
+---
+
+### 99. FIXED on `fix/schematron-conformance` — namespaced name tests inside `some`/`every` selected nothing (2026-09-15)
+
+Found by the phx-schematron conformance harness (ISO Schematron three-step compile of 77 state EMS
+schematrons + 6 national, compared against Saxon-HE 12.10). Before this, **wrong accept/reject decisions**
+came from AL.EMS.v350 and PA.EMS.v350/v351 state rules, plus national `nemSch_e077`.
+
+**Symptom.** Inside an XPath quantified expression, a prefixed or EQName element name test (`nem:x`,
+`Q{uri}x`) matched only no-namespace nodes: `some` returned false and `every` returned true for any data,
+with no error. `*:x` and `local-name()` tests worked, as did `for`/`if` with the same paths. The standalone XQuery
+engine was correct (`xquery` CLI 1.8.0 with `declare namespace`).
+
+    # repro + literal Saxon/xquery4 table: phx-schematron/findings/quantified-expression-namespaced-name-test/
+    some $x in ../nem:eSituation.10 satisfies true()     Saxon true   1.8.0 false
+    every $x in ../nem:eSituation.10 satisfies false()   Saxon false  1.8.0 true
+
+**Cause.** The three stylesheet-namespace walkers — `StylesheetParser.ResolveExpressionNamespaces`,
+`DefaultXsltExecutionContext.ResolveExpressionNamespaceIds` and `ResolveExpressionNamespacesRuntime` — were
+hand-written switches covering 18–20 of the 65 expression node kinds, with no `QuantifiedExpression` case (also
+missing: switch, typeswitch, try/catch, map/array constructors, lookups, string constructors; castable/treat in
+the runtime walker). `InlineFunctionExpression` was an earlier instance of the same gap.
+
+**Fix.** All three subclass `PhoenixmlDb.XQuery.Ast.XQueryExpressionWalker` (shipped in XQuery 1.8.0) and
+override only the name-bearing nodes, so traversal covers every node kind. One consequence caught by the unit
+suite: a function name using an XQuery-predeclared prefix the stylesheet does not declare (`xs:double(...)` with no
+`xmlns:xs`, inside a map constructor the old walker never reached) is now left to the XQuery layer, as before,
+instead of raising XTSE0280.
+
+---
+
+### 100. FIXED on `fix/schematron-conformance` — templates and functions saw their caller's local variables (2026-09-15)
+
+**Symptom.** A template invoked by apply-templates, call-template, next-match or apply-imports, and a stylesheet
+function body, resolved `$v` to the invoker's local `$v` instead of the global (XSLT 3.0 §9.9 lexical scope).
+The ISO Schematron skeleton compiles each rule to a template that declares its `sch:let`s and then applies templates
+to children in the same mode, so a descendant rule read an ancestor rule's value for a schema-level default. That was
+seen as wrong NEMSIS diagnostic content (OR.EMS.v351 `or_e142`). Harness micro-suite case 27 shows the
+decision-bearing form.
+
+    # repro: phx-schematron/findings/template-variable-dynamic-scoping/repro.xsl
+    apply-templates / call-template / next-match from a template with local $v='LOCAL', global $v='GLOBAL'
+    Saxon: GLOBAL ×3      1.8.0: LOCAL-IN-PARENT, LOCAL-IN-CALLER, LOCAL-BEFORE-NEXT-MATCH
+
+**Cause.** `TryGetVariable` / `GetVariable` / the prefix fallback searched every scope on the stack, and
+`EvaluateAsync` bound every scope on the stack into the XQuery context.
+
+**Fix.** Scopes pushed by those five invocations carry `IsVariableBarrier`. Lookups and the `EvaluateAsync` binding
+stop there and fall through to globals. Engine pseudo-variables (current-group, current-grouping-key,
+current-merge-group/key, regex-groups) still pass through. Two follow-ups surfaced by measurement:
+
+- **Conditions.** The first cut covered only the `GetVariable` fast path. A bare `$v` was right while
+  `test="number(.) <= $v"` still leaked. Caught by harness case 27.
+- **Forwarded with-params.** The W3C A/B then showed **insn/merge merge-096, merge-097, merge-097s failing
+  (XPST0008 `$nodes`)**. Built-in template rules and the streamed dispatch forwarded with-params unevaluated and
+  re-evaluated the select from deeper scopes. apply-templates, apply-imports and next-match now evaluate their
+  with-params once, in the caller's scope, and forward values (`XsltWithParam.RuntimeValue`).
+
+A side effect of `EvaluateAsync` no longer binding every scope of a deep call stack: GA.EMS.v350 compile step C1
+went from 40s to 18.4s, output identical.
+
+---
+
+### 101. FIXED on `fix/schematron-conformance` — recursion past 1,200 frames truncated silently; call-template tail calls (2026-09-15)
+
+**Symptom.** apply-templates, call-template, xsl:element and literal result elements **returned silently** at
+`MaxRecursionDepth` (1,200), truncating output. The ISO skeleton's `sch-check:strip-strings` (in
+`iso_dsdl_include.xsl`) walks each assert test one character per call. For tests longer than ~1,150 characters it
+returned a truncated string, and `test-paren` printed `Bad assert: XPath syntax error. Unclosed parenthesis` for
+balanced expressions: 403 asserts in 52 of 77 state schematrons. Recursive `xsl:function` raised `err:XSLT0000`
+instead.
+
+    # repro: phx-schematron/findings/named-template-recursion-depth/repro.xsl
+    depth 5000, named template emitting then recursing:  Saxon 5000   1.8.0 1193 (no error)
+    depth 5000, tail-recursive accumulator:              Saxon 5000   1.8.0 ""   (no error)
+
+**What did not work, measured.** Raising the cap to 200,000 exhausted the native stack at 5,000 frames
+(`XTDE0000`, identical with `DOTNET_DefaultStackSize=0x10000000`) and turned the GA include step into a hard
+failure. Throwing at the cap without deeper recursion would have broken the compile of 52 schematrons.
+
+**Fix.**
+
+- **Tail calls.** An `xsl:call-template` that is the last instruction a template body (without `as`) executes —
+  directly, or last in the chosen `xsl:choose` branch or `xsl:if` — is marked at parse time (`MarkTailCalls`).
+  At run time `TryScheduleTailCallAsync` accepts it only when the top scope is exactly the scope the enclosing
+  call-template frame pushed. It evaluates with-params in the caller's scope and captures the tunnel parameters the
+  callee would inherit. `CallTemplateAsync` then runs the call as its next iteration with constant stack and depth.
+  Frames that made the focus absent, or that capture an `as` result, run calls normally.
+- **Cap exceeded is an error.** The silent returns now raise `XTDE0000`.
+
+**Measured (Release CLI, 2026-09-15).**
+
+| | 1.8.0 | this branch |
+|---|---|---|
+| GA C1 time | 40s | 5.4s (Saxon 0.7s) |
+| false messages | 12 | 0 |
+| 20,000-deep | truncated | correct, 1.2s |
+| 70,000-deep | truncated | correct, 4.4s |
+| 77 state schematrons, 3-step compile, sequential | 25.1 min | 5.8 min (Saxon ~1.8 min) |
+| schematrons with false C1 messages | 52 | 0 (WY.EMS.v350's one message is a real malformed assert; Saxon prints it too) |
+
+- `TailCallTemplateTests` 8/8, including 100,000-deep recursion.
+- The remaining gap to Saxon is per-evaluation overhead: in a deep-recursion profile `EvaluateAsync` is ~91%
+  inclusive, `QueryExecutionContext.PushContextItem` 28%, with-param evaluation 40%. **OPEN.**
+
+---
+
+### 102. FIXED on `fix/schematron-conformance` — `extension-element-prefixes` on `xsl:stylesheet` not excluded from literal result elements (2026-09-15)
+
+**Symptom.** A namespace named in `extension-element-prefixes` on `xsl:stylesheet` was copied onto literal result
+elements (XSLT 3.0 §11.1.3 excludes it). Every validator compiled from `iso_schematron_skeleton_for_saxon.xsl`
+therefore carried `xmlns:exsl="http://exslt.org/common"`. That was the only difference between this engine's
+compiled validators and Saxon's (and the customer's production `.xsl`) across all 77 state schematrons. The
+harness's canonical diff ignored namespaces until this was found.
+
+    # repro: phx-schematron/findings/extension-element-prefixes-not-excluded/
+    lre.xsl → Saxon <out xmlns:keep="urn:keep"/>   1.8.0 <out xmlns:exsl="http://exslt.org/common" xmlns:keep="urn:keep"/>
+
+**Cause.** `StylesheetParser.Declarations` stores stylesheet-level entries as namespace URIs, but the runtime
+exclusion check looked the set up by prefix. The LRE parser also inherited only `exclude-result-prefixes` from
+ancestors. **Fix:** match the URI (and `#default`), and inherit ancestor `extension-element-prefixes`.
+
+---
+
+### 103. Measurement for 99–102 (2026-09-15)
+
+All against `c0fc41a`, same machine, Release conformance.
+
+| | `c0fc41a` | `fix/schematron-conformance` |
+|---|---|---|
+| W3C XSLT 3.0 suite failures (`scripts/conformance.sh`, all chunks) | 360 | **358** |
+
+- **Newly failing: 0.** Newly passing: `attr/as-0702`, `strm2/si-apply-templates-006`.
+- **The intermediate snapshot (entries 99, 100 before the with-param follow-up, and 102)** measured 363:
+  +3 in insn/merge. That is what exposed the forwarding defect described under 100.
+- **`call-template-1002` / `call-template-1003` pass on both arms.** An older committed `conformance-results/insn.log` showed them
+  failing; today's baseline does not. The suite recurses only to ~1,000, so no W3C case exercises tail calls at
+  the depths the Schematron skeleton needs (~70,000); `TailCallTemplateTests` covers that.
+- **Unit suite:** 1,811 tests, 0 failed (new: `SchematronSkeletonConformanceTests` 16, `TailCallTemplateTests` 8).
+- **phx-schematron harness micro-suite:** 58/58; before, 55/58.
+- **Harness corpus (950 NEMSIS national/state cases) with the lexical-scope, namespace and exclusion fixes:**
+  950/950 Tier-A-clean, 0 compiled-validator differences (was 945/950 and 83 schemas differing).

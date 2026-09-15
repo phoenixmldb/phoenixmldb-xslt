@@ -835,6 +835,11 @@ public sealed partial class StylesheetParser
 
         _nsContext = prevContext;
         _currentDefaultMode = prevDefaultMode;
+        var templateBody = new XsltSequenceConstructor { Instructions = bodyInstructions };
+        // A template whose result is not type-checked (no `as`) can run a call-template in tail position as
+        // a tail call. With `as`, the call's output is captured and validated after it returns.
+        if (asAttr == null)
+            MarkTailCalls(templateBody);
         return new XsltTemplate
         {
             Name = templateName,
@@ -843,7 +848,7 @@ public sealed partial class StylesheetParser
             Modes = modes,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
             Parameters = parameters,
-            Body = new XsltSequenceConstructor { Instructions = bodyInstructions },
+            Body = templateBody,
             Version = versionAttr?.Value ?? moduleVersion,
             BaseUri = ResolveEffectiveBaseUri(element),
             DefaultCollation = ResolveDefaultCollation(element.Attribute("default-collation")?.Value),
@@ -852,6 +857,46 @@ public sealed partial class StylesheetParser
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
             VisibilityAttr = element.Attribute("visibility")?.Value.Trim()
         };
+    }
+
+    /// <summary>
+    /// Marks the xsl:call-template a template body executes last — its final instruction, or the final
+    /// instruction of the chosen xsl:choose branch or xsl:if — as a tail call. Nothing runs after such a call
+    /// that could observe it, so the calling frame may run it as its next iteration instead of nesting
+    /// (DefaultXsltExecutionContext.TryScheduleTailCallAsync). Not marked: a sequence constructor with
+    /// xsl:on-empty / xsl:on-non-empty (it re-inspects its output afterwards), and an instruction carrying its
+    /// own version, default-collation or xml:base (those are popped when the instruction returns, so a tail-run
+    /// body would see the frame's settings instead).
+    /// </summary>
+    private static void MarkTailCalls(XsltSequenceConstructor body)
+    {
+        var instructions = body.Instructions;
+        if (instructions.Count == 0)
+            return;
+        for (var i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is XsltOnEmpty or XsltOnNonEmpty)
+                return;
+        }
+
+        var last = instructions[instructions.Count - 1];
+        if (last.Version != null || last.DefaultCollation != null || last.StaticBaseUri != null)
+            return;
+        switch (last)
+        {
+            case XsltCallTemplate call:
+                call.IsTailCall = true;
+                break;
+            case XsltChoose choose:
+                foreach (var when in choose.When)
+                    MarkTailCalls(when.Body);
+                if (choose.Otherwise != null)
+                    MarkTailCalls(choose.Otherwise);
+                break;
+            case XsltIf conditional:
+                MarkTailCalls(conditional.Then);
+                break;
+        }
     }
 
 

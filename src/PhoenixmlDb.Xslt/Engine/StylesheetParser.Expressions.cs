@@ -317,6 +317,19 @@ public sealed partial class StylesheetParser
                     }
                 }
             }
+
+            // Inherit extension-element-prefixes the same way: a namespace designated as an
+            // extension namespace on an ancestor is not copied to literal result elements
+            // (XSLT 3.0 §11.1.3). Only the LRE's own xsl:extension-element-prefixes was honoured,
+            // so the ISO Schematron skeleton's stylesheet-level extension-element-prefixes="exsl"
+            // put xmlns:exsl on every validator it generated.
+            var eepAttr = ancestor.Attribute("extension-element-prefixes")
+                          ?? ancestor.Attribute(XsltNs + "extension-element-prefixes");
+            if (eepAttr != null)
+            {
+                foreach (var p in eepAttr.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    excludeResultPrefixes.Add(p);
+            }
         }
 
         // Resolve xml:base on LRE for static-base-uri() of descendant expressions
@@ -1052,150 +1065,120 @@ public sealed partial class StylesheetParser
     /// </summary>
     private static void ResolveExpressionNamespaces(XQueryExpression expr, XElement context)
     {
-        switch (expr)
+        // Traversal comes from XQueryExpressionWalker, which descends into every composite node kind.
+        // This was a hand-written switch that knew 20 of the 65 kinds: a name test under any other — a
+        // some/every binding or satisfies clause, switch, typeswitch, try/catch, a map or array
+        // constructor, a lookup — was never bound to its namespace, so a prefixed step matched only
+        // no-namespace nodes and quietly selected nothing (e.g. `some $e in nem:x satisfies …` was
+        // always false). Found by the Schematron conformance harness against the state EMS schematrons.
+        if (expr is not null)
+            new StylesheetNamespaceResolver(context).Walk(expr);
+    }
+
+    /// <summary>Binds prefixed names in an XPath expression to the stylesheet element's in-scope namespaces.</summary>
+    private sealed class StylesheetNamespaceResolver(XElement context) : XQueryExpressionWalker
+    {
+        public override void Walk(XQueryExpression expr)
         {
-            case VariableReference vr:
-                if (!string.IsNullOrEmpty(vr.Name.Prefix) && vr.Name.Namespace == NamespaceId.None)
-                    vr.Name = ParseQName($"{vr.Name.Prefix}:{vr.Name.LocalName}", context);
-                // EQName variable references: resolve ExpandedNamespace to NamespaceId so
-                // Dictionary lookup matches the declared variable's QName (record struct equality)
-                else if (vr.Name.ExpandedNamespace != null && vr.Name.Namespace == NamespaceId.None)
-                    vr.Name = ParseQName($"Q{{{vr.Name.ExpandedNamespace}}}{vr.Name.LocalName}", context);
-                break;
-            case FunctionCallExpression fc:
-                if (!string.IsNullOrEmpty(fc.Name.Prefix) && fc.Name.Namespace == NamespaceId.None)
-                    fc.Name = ParseQName($"{fc.Name.Prefix}:{fc.Name.LocalName}", context);
-                foreach (var arg in fc.Arguments)
-                    ResolveExpressionNamespaces(arg, context);
-                break;
-            case BinaryExpression be:
-                ResolveExpressionNamespaces(be.Left, context);
-                ResolveExpressionNamespaces(be.Right, context);
-                break;
-            case UnaryExpression ue:
-                ResolveExpressionNamespaces(ue.Operand, context);
-                break;
-            case PathExpression pe:
-                if (pe.InitialExpression != null)
-                    ResolveExpressionNamespaces(pe.InitialExpression, context);
-                foreach (var step in pe.Steps)
-                    ResolveExpressionNamespaces(step, context);
-                break;
-            case StepExpression se:
-                if (se.NodeTest is NameTest nt)
+            if (expr is not null)
+                base.Walk(expr);
+        }
+
+        public override object? VisitVariableReference(VariableReference vr)
+        {
+            if (!string.IsNullOrEmpty(vr.Name.Prefix) && vr.Name.Namespace == NamespaceId.None)
+                vr.Name = ParseQName($"{vr.Name.Prefix}:{vr.Name.LocalName}", context);
+            // EQName variable references: resolve ExpandedNamespace to NamespaceId so
+            // Dictionary lookup matches the declared variable's QName (record struct equality)
+            else if (vr.Name.ExpandedNamespace != null && vr.Name.Namespace == NamespaceId.None)
+                vr.Name = ParseQName($"Q{{{vr.Name.ExpandedNamespace}}}{vr.Name.LocalName}", context);
+            return null;
+        }
+
+        public override object? VisitFunctionCallExpression(FunctionCallExpression fc)
+        {
+            if (!string.IsNullOrEmpty(fc.Name.Prefix) && fc.Name.Namespace == NamespaceId.None
+                && (context.GetNamespaceOfPrefix(fc.Name.Prefix) != null || !XQueryPredeclaredPrefixes.Contains(fc.Name.Prefix)))
+                fc.Name = ParseQName($"{fc.Name.Prefix}:{fc.Name.LocalName}", context);
+            return base.VisitFunctionCallExpression(fc);
+        }
+
+        // A function name using one of XQuery's predeclared prefixes but not declared on the stylesheet
+        // (e.g. xs:double(...) without xmlns:xs) is left for the XQuery layer, which resolves these
+        // prefixes itself — the behaviour such calls always had where the old hand-written walker did not
+        // reach (inside a map constructor, for instance). Any other undeclared prefix is still XTSE0280.
+        private static readonly HashSet<string> XQueryPredeclaredPrefixes =
+            ["xs", "fn", "math", "map", "array", "err", "local", "xml", "xsi", "output"];
+
+        public override object? VisitStepExpression(StepExpression se)
+        {
+            if (se.NodeTest is NameTest nt)
+            {
+                if (!string.IsNullOrEmpty(nt.Prefix) && nt.Prefix != "*" && nt.NamespaceUri == null)
                 {
-                    if (!string.IsNullOrEmpty(nt.Prefix) && nt.Prefix != "*" && nt.NamespaceUri == null)
-                    {
-                        // Resolve explicit prefix to URI
-                        var ns = context.GetNamespaceOfPrefix(nt.Prefix)?.NamespaceName;
-                        if (ns != null)
-                            nt.NamespaceUri = ns;
-                        else if (!IsBackwardsCompatible(context))
-                            throw new XsltException($"XPST0081: Namespace prefix '{nt.Prefix}' has not been declared");
-                        // In backwards-compatible mode (XSLT 1.0), leave prefix unresolved —
-                        // error deferred to runtime per XSLT §3.12
-                    }
-                    else if (nt.Prefix == null && nt.NamespaceUri == null && !nt.IsLocalNameWildcard
-                             && se.Axis != Axis.Attribute && se.Axis != Axis.Namespace)
-                    {
-                        // Apply xpath-default-namespace for unprefixed element name tests
-                        var xdn = GetXpathDefaultNamespace(context);
-                        if (xdn != null)
-                            nt.NamespaceUri = xdn;
-                    }
-                }
-                else if (se.NodeTest is KindTest { Name: NameTest ktName } && !string.IsNullOrEmpty(ktName.Prefix)
-                         && ktName.Prefix != "*" && ktName.NamespaceUri == null)
-                {
-                    // element(x:foo) / attribute(x:foo) name test — the XQuery parser leaves
-                    // the prefix unresolved for XSLT callers (it can't see the stylesheet's
-                    // namespaces). Resolve it here against the XSLT element's in-scope
-                    // namespaces, mirroring the NameTest case. Martin Honnen 2026-07-30:
-                    // self::attribute(x:expand-text). Element/attribute kind tests default to
-                    // NO namespace (not the xpath-default-namespace), so an unprefixed name is
-                    // left as-is.
-                    var ktNs = context.GetNamespaceOfPrefix(ktName.Prefix)?.NamespaceName;
-                    if (ktNs != null)
-                        ktName.NamespaceUri = ktNs;
+                    // Resolve explicit prefix to URI
+                    var ns = context.GetNamespaceOfPrefix(nt.Prefix)?.NamespaceName;
+                    if (ns != null)
+                        nt.NamespaceUri = ns;
                     else if (!IsBackwardsCompatible(context))
-                        throw new XsltException($"XPST0081: Namespace prefix '{ktName.Prefix}' has not been declared");
+                        throw new XsltException($"XPST0081: Namespace prefix '{nt.Prefix}' has not been declared");
+                    // In backwards-compatible mode (XSLT 1.0), leave prefix unresolved —
+                    // error deferred to runtime per XSLT §3.12
                 }
-                foreach (var pred in se.Predicates)
-                    ResolveExpressionNamespaces(pred, context);
-                break;
-            case FilterExpression fe:
-                ResolveExpressionNamespaces(fe.Primary, context);
-                foreach (var pred in fe.Predicates)
-                    ResolveExpressionNamespaces(pred, context);
-                break;
-            case IfExpression ie:
-                ResolveExpressionNamespaces(ie.Condition, context);
-                ResolveExpressionNamespaces(ie.Then, context);
-                if (ie.Else != null)
-                    ResolveExpressionNamespaces(ie.Else, context);
-                break;
-            case FlworExpression flwor:
-                foreach (var clause in flwor.Clauses)
+                else if (nt.Prefix == null && nt.NamespaceUri == null && !nt.IsLocalNameWildcard
+                         && se.Axis != Axis.Attribute && se.Axis != Axis.Namespace)
                 {
-                    if (clause is ForClause forClause)
-                        foreach (var binding in forClause.Bindings)
-                            ResolveExpressionNamespaces(binding.Expression, context);
-                    else if (clause is LetClause letClause)
-                        foreach (var binding in letClause.Bindings)
-                            ResolveExpressionNamespaces(binding.Expression, context);
-                    else if (clause is WhereClause whereClause)
-                        ResolveExpressionNamespaces(whereClause.Condition, context);
-                    else if (clause is OrderByClause orderBy)
-                        foreach (var spec in orderBy.OrderSpecs)
-                            ResolveExpressionNamespaces(spec.Expression, context);
+                    // Apply xpath-default-namespace for unprefixed element name tests
+                    var xdn = GetXpathDefaultNamespace(context);
+                    if (xdn != null)
+                        nt.NamespaceUri = xdn;
                 }
-                ResolveExpressionNamespaces(flwor.ReturnExpression, context);
-                break;
-            case SequenceExpression seq:
-                foreach (var item in seq.Items)
-                    ResolveExpressionNamespaces(item, context);
-                break;
-            case InstanceOfExpression inst:
-                ResolveExpressionNamespaces(inst.Expression, context);
-                ValidateUnprefixedTypeName(inst.TargetType, context);
-                break;
-            case CastExpression cast:
-                ResolveExpressionNamespaces(cast.Expression, context);
-                ValidateUnprefixedTypeName(cast.TargetType, context);
-                break;
-            case CastableExpression castable:
-                ResolveExpressionNamespaces(castable.Expression, context);
-                ValidateUnprefixedTypeName(castable.TargetType, context);
-                break;
-            case TreatExpression treat:
-                ResolveExpressionNamespaces(treat.Expression, context);
-                ValidateUnprefixedTypeName(treat.TargetType, context);
-                break;
-            case SimpleMapExpression sme:
-                ResolveExpressionNamespaces(sme.Left, context);
-                ResolveExpressionNamespaces(sme.Right, context);
-                break;
-            case StringConcatExpression sce:
-                foreach (var operand in sce.Operands)
-                    ResolveExpressionNamespaces(operand, context);
-                break;
-            case RangeExpression re:
-                ResolveExpressionNamespaces(re.Start, context);
-                ResolveExpressionNamespaces(re.End, context);
-                break;
-            case ArrowExpression ae:
-                ResolveExpressionNamespaces(ae.Expression, context);
-                ResolveExpressionNamespaces(ae.FunctionCall, context);
-                break;
-            case InlineFunctionExpression ife:
-                if (ife.Body != null)
-                    ResolveExpressionNamespaces(ife.Body, context);
-                break;
-            case DynamicFunctionCallExpression dfc:
-                ResolveExpressionNamespaces(dfc.FunctionExpression, context);
-                foreach (var arg in dfc.Arguments)
-                    ResolveExpressionNamespaces(arg, context);
-                break;
+            }
+            else if (se.NodeTest is KindTest { Name: NameTest ktName } && !string.IsNullOrEmpty(ktName.Prefix)
+                     && ktName.Prefix != "*" && ktName.NamespaceUri == null)
+            {
+                // element(x:foo) / attribute(x:foo) name test — the XQuery parser leaves
+                // the prefix unresolved for XSLT callers (it can't see the stylesheet's
+                // namespaces). Resolve it here against the XSLT element's in-scope
+                // namespaces, mirroring the NameTest case. Martin Honnen 2026-07-30:
+                // self::attribute(x:expand-text). Element/attribute kind tests default to
+                // NO namespace (not the xpath-default-namespace), so an unprefixed name is
+                // left as-is.
+                var ktNs = context.GetNamespaceOfPrefix(ktName.Prefix)?.NamespaceName;
+                if (ktNs != null)
+                    ktName.NamespaceUri = ktNs;
+                else if (!IsBackwardsCompatible(context))
+                    throw new XsltException($"XPST0081: Namespace prefix '{ktName.Prefix}' has not been declared");
+            }
+            return base.VisitStepExpression(se);
+        }
+
+        public override object? VisitInstanceOfExpression(InstanceOfExpression inst)
+        {
+            var result = base.VisitInstanceOfExpression(inst);
+            ValidateUnprefixedTypeName(inst.TargetType, context);
+            return result;
+        }
+
+        public override object? VisitCastExpression(CastExpression cast)
+        {
+            var result = base.VisitCastExpression(cast);
+            ValidateUnprefixedTypeName(cast.TargetType, context);
+            return result;
+        }
+
+        public override object? VisitCastableExpression(CastableExpression castable)
+        {
+            var result = base.VisitCastableExpression(castable);
+            ValidateUnprefixedTypeName(castable.TargetType, context);
+            return result;
+        }
+
+        public override object? VisitTreatExpression(TreatExpression treat)
+        {
+            var result = base.VisitTreatExpression(treat);
+            ValidateUnprefixedTypeName(treat.TargetType, context);
+            return result;
         }
     }
 

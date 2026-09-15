@@ -486,6 +486,34 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private const int MaxRecursionDepth = 1200;
 
+    /// <summary>
+    /// The scope pushed by the call-template frame whose body is executing directly and can take a tail call,
+    /// or null. A tail call is accepted only while that exact scope is on top of the stack, so a call-template
+    /// reached through any other invocation or scope-pushing instruction (apply-templates, for-each, a
+    /// function) can never be scheduled against an outer frame.
+    /// </summary>
+    private Scope? _tailCallFrameScope;
+
+    /// <summary>A tail call scheduled by the innermost call-template frame, run as that frame's next iteration.</summary>
+    private PendingTailCall? _pendingTailCall;
+
+    private sealed record PendingTailCall(
+        QName Name,
+        List<XsltWithParam> WithParams,
+        XsltTemplate Template,
+        Dictionary<QName, object?> Params,
+        Dictionary<QName, object?> TunnelParameters);
+
+    /// <summary>
+    /// Nesting past <see cref="MaxRecursionDepth"/> is an error. It used to return silently, which truncated
+    /// the output of any deeper recursion with no diagnostic (ISO Schematron's sch-check:strip-strings on a
+    /// long assert test lost everything past ~1,150 characters). Tail-recursive call-template does not count.
+    /// </summary>
+    private XsltException RecursionLimitExceeded(string instruction) =>
+        Error($"XTDE0000: {instruction} nested more than {MaxRecursionDepth} levels deep. The transformation may " +
+              "contain unbounded recursion; a named template that calls itself as its last instruction runs as a " +
+              "tail call and is not limited.");
+
 
     /// <summary>
     /// Stack tracking the current xsl:function being executed, for xsl:original resolution.
@@ -1074,6 +1102,15 @@ internal sealed partial class DefaultXsltExecutionContext
         /// </summary>
         public bool IsTunnelBarrier { get; set; }
 
+        /// <summary>
+        /// When true, variable lookup does not continue past this scope into the caller's scopes: it
+        /// goes straight to the global variables. Set on the scope a template or stylesheet function
+        /// invocation pushes, because XSLT variables are lexically scoped (XSLT 3.0 §9.9) — the body of
+        /// an invoked template must not see the invoker's local variables. Engine pseudo-variables
+        /// (see <see cref="IsDynamicPseudoVariable"/>) still pass through.
+        /// </summary>
+        public bool IsVariableBarrier { get; set; }
+
         public Scope(Scope? parent = null)
         {
             Parent = parent;
@@ -1088,6 +1125,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             Parent = null;
             IsTunnelBarrier = false;
+            IsVariableBarrier = false;
             _variables?.Clear();
             _tunnelParameters?.Clear();
         }
