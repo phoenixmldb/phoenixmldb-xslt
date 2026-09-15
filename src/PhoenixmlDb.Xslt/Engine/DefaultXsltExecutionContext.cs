@@ -853,6 +853,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // at runtime via _currentXsltFunctionStack
         lib.Register(new XsltOriginalFunctionAdapter(this));
 
+        // fn:current-dateTime/date/time are stable for the whole transformation, not per XPath evaluation: the
+        // standard versions read the per-evaluation QueryExecutionContext's clock (xslt#107). This library is built
+        // once per DefaultXsltExecutionContext, which is once per transformation, so one snapshot serves all three.
+        var currentDateTime = new PhoenixmlDb.XQuery.Functions.CurrentDateTimeSnapshot();
+        lib.Register(new XsltCurrentDateTimeFunction(currentDateTime));
+        lib.Register(new XsltCurrentDateFunction(currentDateTime));
+        lib.Register(new XsltCurrentTimeFunction(currentDateTime));
+
         // Register XSLT-specific built-in functions
         var rootFunc = new XsltRootFunction(this);
         var root0Func = new XsltRoot0Function(this);

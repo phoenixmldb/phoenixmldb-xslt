@@ -632,7 +632,7 @@ tests/strm/sx-TreatExpr/_sx-TreatExpr-test-set.xml	36	36
 tests/strm/sx-UnionExpr/_sx-UnionExpr-test-set.xml	70	74
 tests/type/arrays/_arrays-test-set.xml	59	62
 tests/type/boolean/_boolean-test-set.xml	111	112
-tests/type/date/_date-test-set.xml	128	130
+tests/type/date/_date-test-set.xml	129	130
 tests/type/maps/_maps-test-set.xml	48	50
 tests/type/namespace/_namespace-test-set.xml	184	187
 tests/type/node/_node-test-set.xml	31	31
