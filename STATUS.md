@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-14 21:52 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-15 11:50 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,9 +17,9 @@ Generated 2026-09-14 21:52 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 4 | 0 |
-| phoenixmldb-xslt | 9 | 2 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-xquery | 7 | 0 |
+| phoenixmldb-xslt | 10 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -31,6 +31,9 @@ Generated 2026-09-14 21:52 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
+- [57] Selected and copied nodes lose inherited in-scope namespaces (QT3 nscons-031..039, fn-union/intersect-node-args, ns-queries q5)
+- [49] QT3 runner's assert-type passes any type it doesn't list — 17 engine type defects hidden, 11 correct results failed
+- [40] XsdSchemaProvider.Validate validates an element's string value, not its markup
 - [30] contains text: phrase matching ignores term positions, so a phrase matches across a stop-word gap
 - [29] FullTextAnalysisOptions.Default performs no stemming despite Stemming=true
 - [18] Unbound external functions silently return () — and a host cannot bind one
@@ -38,6 +41,7 @@ Generated 2026-09-14 21:52 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [100] xslt30 runner passes every assert-message unchecked — 9 cases fail when messages are captured
 - [96] Xslt 1.8.0 regresses three streaming conformance sets that passed on 1.6.10 (attr/streamable below floor, stream-211, sx-gc-eq-801)
 - [95] Any predicate in a match pattern is quadratic — not just chained ones (#10 is a special case)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
@@ -52,12 +56,7 @@ Generated 2026-09-14 21:52 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [97] Report the serialized form when a QT3 serialization assertion fails
 - [94] [HELD on the XQuery pin] Retire the XSLT fn:serialize override
-
-**phoenixmldb-cli**
-
-- [4] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
@@ -94,7 +93,7 @@ Figures are only as good as their provenance, so each carries how and when it wa
 - **W3C XSLT 3.0 — 10309/10672 (96.60%)** across 222 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 29534/31414 (94.02%)** across 428 test-sets,
+- **W3C QT3 baseline — 29532/31379 (94.11%)** across 428 test-sets,
   same file, same ratchet.
 - **W3C QT3 / XQuery — figure not readable** from
   `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
