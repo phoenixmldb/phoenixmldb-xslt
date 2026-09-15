@@ -416,7 +416,7 @@ ser/method-json	61	74
 ser/method-text	15	18
 ser/method-xhtml	27	49
 ser/method-xml	9	43
-tests/attr/as/_as-test-set.xml	95	99
+tests/attr/as/_as-test-set.xml	96	99
 tests/attr/avt/_avt-test-set.xml	33	35
 tests/attr/declared-modes/_declared-modes-test-set.xml	14	14
 tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml	25	28
@@ -449,7 +449,7 @@ tests/decl/output/_output-test-set.xml	215	222
 tests/decl/override/_override-test-set.xml	86	100
 tests/decl/package/_package-test-set.xml	67	72
 tests/decl/param/_param-test-set.xml	29	31
-tests/decl/strip-space/_strip-space-test-set.xml	24	27
+tests/decl/strip-space/_strip-space-test-set.xml	25	27
 tests/decl/template/_template-test-set.xml	6	6
 tests/decl/use-package/_use-package-test-set.xml	49	54
 tests/decl/variable/_variable-test-set.xml	106	107
@@ -531,7 +531,7 @@ tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	2	4
 tests/misc/collations/_collations-test-set.xml	42	43
 tests/misc/docbook/_docbook-test-set.xml	2	4
-tests/misc/error/_error-test-set.xml	496	507
+tests/misc/error/_error-test-set.xml	497	507
 tests/misc/forwards/_forwards-test-set.xml	23	23
 tests/misc/initial-function/_initial-function-test-set.xml	34	35
 tests/misc/initial-mode/_initial-mode-test-set.xml	5	5
@@ -579,7 +579,7 @@ tests/strm/sf-xml-to-json/_sf-xml-to-json-test-set.xml	7	7
 tests/strm/sf-zero-or-one/_sf-zero-or-one-test-set.xml	7	7
 tests/strm/si-LRE/_si-lre-test-set.xml	69	69
 tests/strm/si-apply-imports/_si-apply-imports-test-set.xml	0	3
-tests/strm/si-apply-templates/_si-apply-templates-test-set.xml	7	11
+tests/strm/si-apply-templates/_si-apply-templates-test-set.xml	8	11
 tests/strm/si-assert/_si-assert-test-set.xml	11	13
 tests/strm/si-attribute/_si-attribute-test-set.xml	45	45
 tests/strm/si-call-template/_si-call-template-test-set.xml	2	2
@@ -634,7 +634,7 @@ tests/type/arrays/_arrays-test-set.xml	59	62
 tests/type/boolean/_boolean-test-set.xml	111	112
 tests/type/date/_date-test-set.xml	128	130
 tests/type/maps/_maps-test-set.xml	48	50
-tests/type/namespace/_namespace-test-set.xml	183	187
+tests/type/namespace/_namespace-test-set.xml	184	187
 tests/type/node/_node-test-set.xml	31	31
 tests/type/string/_string-test-set.xml	135	136
 tests/type/type/_type-test-set.xml	58	58
