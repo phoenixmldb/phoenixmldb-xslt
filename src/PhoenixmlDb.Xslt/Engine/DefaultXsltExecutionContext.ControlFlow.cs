@@ -2281,6 +2281,19 @@ internal sealed partial class DefaultXsltExecutionContext
                             _lastResultWasAtomic = true;
                         }
                     }
+                    else if (AtWherePopulatedTopLevel && IsDeemedEmpty(result))
+                    {
+                        // An item deemed empty in xsl:where-populated's own result is discarded, not written or separated:
+                        // a zero-length atomic of any type, a childless element or document (§8.4). Only at its top level;
+                        // a childless element inside a constructed child is that child's content (W3C si-group-043,
+                        // si-merge-006).
+                    }
+                    else if (AtWherePopulatedTopLevel && result is object?[] items && Array.Exists(items, IsDeemedEmpty))
+                    {
+                        // Discard the empty items before serializing, so they leave no separators behind
+                        // (W3C coco-003 expects "23 2011-01-01 0").
+                        SerializeResult(Array.FindAll(items, static item => !IsDeemedEmpty(item)));
+                    }
                     else
                     {
                         SerializeResult(result!);

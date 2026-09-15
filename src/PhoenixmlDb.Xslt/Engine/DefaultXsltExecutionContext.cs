@@ -600,6 +600,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <see cref="AssembleAsBodyResultItems"/> uses to weave accumulator items back into
     /// document order at result assembly time.
     /// </summary>
+    /// <summary>
+    /// True if <paramref name="item"/> is "deemed empty" for xsl:where-populated (XSLT 3.0 §8.4): a document or element
+    /// node with no children; any other node whose string value is zero-length; a zero-length atomic value; or an array
+    /// every member of which is deemed empty. An empty map qualifies under the spec but is exempt here — see the map
+    /// case below.
+    /// </summary>
+    internal static bool IsDeemedEmpty(object? item) => item switch
+    {
+        null => true,
+        XdmDocument document => document.Children.Count == 0,
+        XdmElement element => element.Children.Count == 0,
+        XdmAttribute attribute => string.IsNullOrEmpty(attribute.Value),
+        XdmText text => string.IsNullOrEmpty(text.Value),
+        XdmComment comment => string.IsNullOrEmpty(comment.Value),
+        XdmProcessingInstruction pi => string.IsNullOrEmpty(pi.Value),
+        XdmNode => false,
+        // An empty map is deemed empty under §8.4, but a map built by a streamed xsl:map is still empty when this
+        // filter runs and is populated afterwards (#117), so applying the rule discards a map that turns out to have
+        // entries (W3C si-coco-014). Restoring it — and with it W3C coco-013 and si-coco-013 — waits on that fix.
+        IDictionary<object, object?> => false,
+        List<object?> array => array.TrueForAll(static member => member is object?[] items
+            ? Array.TrueForAll(items, IsDeemedEmpty)
+            : IsDeemedEmpty(member)),
+        XQueryFunction => false,
+        object?[] items => Array.TrueForAll(items, IsDeemedEmpty),
+        _ => PhoenixmlDb.XQuery.Functions.ConcatFunction.XQueryStringValue(item).Length == 0,
+    };
+
     private void AppendToSeqAccumulator(object? item)
     {
         // Record the `_output` offset only when the item is going into the current
@@ -4497,6 +4525,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var capturePositionsStartCount = _currentAsBodyCapture?.Positions.Count ?? 0;
 
         _wherePopulatedDepth++;
+        var savedWherePopulatedElementDepth = _wherePopulatedElementDepth;
+        _wherePopulatedElementDepth = _serializingElementDepth;
         BeginPopulatedTracking();
         try
         {
@@ -4505,12 +4535,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         finally
         {
             _wherePopulatedDepth--;
+            _wherePopulatedElementDepth = savedWherePopulatedElementDepth;
         }
         var trackingMarked = EndPopulatedTracking();
 
-        // Filter accumulator items added during the body: drop XdmAttributes whose value is a
-        // zero-length string (insignificant per §11.4). Other items (elements, text, etc.) are
-        // preserved unconditionally — `where-populated` only filters at the attribute level.
+        // Filter accumulator items added during the body: drop every item deemed empty (§8.4). This filtered only
+        // zero-length attributes, so a childless document, an empty map, a zero-length atomic or an array of empty
+        // members survived (W3C coco-012, -013, -103).
         if (_sequenceAccumulator != null && _sequenceAccumulator.Count > accumStartCount)
         {
             var addedRange = _sequenceAccumulator.GetRange(accumStartCount, _sequenceAccumulator.Count - accumStartCount);
@@ -4524,7 +4555,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 cap.Positions.RemoveRange(capturePositionsStartCount, cap.Positions.Count - capturePositionsStartCount);
             foreach (var item in addedRange)
             {
-                if (item is XdmAttribute attr && string.IsNullOrEmpty(attr.Value))
+                if (IsDeemedEmpty(item))
                     continue;
                 AppendToSeqAccumulator(item);
             }
