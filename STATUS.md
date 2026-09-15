@@ -1,24 +1,24 @@
 # Status
 
-Generated 2026-09-15 11:50 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-15 21:25 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 1.7.0 | ? | **repo is at ?, nuget.org has 1.7.0** |
-| `PhoenixmlDb.XQuery` | 1.8.0 | ? | **repo is at ?, nuget.org has 1.8.0** |
-| `PhoenixmlDb.Xslt` | 1.8.0 | 1.8.0 | current |
-| `xquery4` | 1.8.0 | ? | **repo is at ?, nuget.org has 1.8.0** |
-| `xslt` | 1.8.0 | 1.8.0 | current |
+| `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
+| `PhoenixmlDb.XQuery` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
+| `PhoenixmlDb.Xslt` | 2.0.0 | 2.0.0 | current |
+| `xquery4` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
+| `xslt` | 2.0.0 | 2.0.0 | current |
 
 ## Open work
 
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 7 | 0 |
-| phoenixmldb-xslt | 10 | 1 |
+| phoenixmldb-xquery | 6 | 0 |
+| phoenixmldb-xslt | 10 | 0 |
 | phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
@@ -31,7 +31,6 @@ Generated 2026-09-15 11:50 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
-- [57] Selected and copied nodes lose inherited in-scope namespaces (QT3 nscons-031..039, fn-union/intersect-node-args, ns-queries q5)
 - [49] QT3 runner's assert-type passes any type it doesn't list — 17 engine type defects hidden, 11 correct results failed
 - [40] XsdSchemaProvider.Validate validates an element's string value, not its markup
 - [30] contains text: phrase matching ignores term positions, so a phrase matches across a stop-word gap
@@ -54,13 +53,9 @@ Generated 2026-09-15 11:50 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-xslt**
-
-- [94] [HELD on the XQuery pin] Retire the XSLT fn:serialize override
-
 ## Defect register
 
-`BUGS.md`: **97** entries, **22** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **103** entries, **22** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -90,7 +85,7 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10309/10672 (96.60%)** across 222 test-sets,
+- **W3C XSLT 3.0 — 10315/10672 (96.65%)** across 222 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 29532/31379 (94.11%)** across 428 test-sets,
