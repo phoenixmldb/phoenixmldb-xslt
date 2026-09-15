@@ -711,6 +711,13 @@ internal sealed partial class DefaultXsltExecutionContext
     // Track when inside xsl:where-populated so XTDE0410 is suppressed during trial evaluation
     private int _wherePopulatedDepth;
 
+    // The element depth at which the innermost xsl:where-populated runs its sequence constructor, or -1 outside one.
+    // Items are deemed empty and discarded only at this depth: an empty item inside a constructed child element is
+    // content of that element, not an item of the where-populated result.
+    private int _wherePopulatedElementDepth = -1;
+
+    private bool AtWherePopulatedTopLevel => _wherePopulatedDepth > 0 && _serializingElementDepth == _wherePopulatedElementDepth;
+
     // Count of characters written to _output as atomic value separators (spaces between
     // adjacent atomic values in xsl:sequence). Used by content tracking to distinguish
     // separator-only growth from significant content growth.
