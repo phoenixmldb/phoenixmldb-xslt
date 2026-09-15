@@ -702,17 +702,29 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         }
 
-        // Resolve NamespaceUri → ResolvedNamespace on NameTests using node store
-        if (_nodeStore != null)
-            ResolveExpressionNamespaceIds(expr);
+        // Full XQuery evaluation via optimizer + executor. What depends only on the expression is kept
+        // per expression rather than redone on every evaluation: the plan, the namespace ids interned
+        // onto its name tests, and the names of the variables it references.
+        if (!_planCache.TryGetValue(expr, out var cached))
+        {
+            cached = new CachedXPathPlan(expr);
+            _planCache[expr] = cached;
+        }
 
-        // Full XQuery evaluation via optimizer + executor (with plan caching)
-        if (!_planCache.TryGetValue(expr, out var plan))
+        // Resolve NamespaceUri → ResolvedNamespace on NameTests using node store. The ids are written onto
+        // the expression's name tests, so walking it again resolves nothing new.
+        if (_nodeStore != null && !cached.NamespaceIdsResolved)
+        {
+            ResolveExpressionNamespaceIds(expr);
+            cached.NamespaceIdsResolved = true;
+        }
+
+        if (cached.Plan is not { } plan)
         {
             var optimizer = new PhoenixmlDb.XQuery.Optimizer.QueryOptimizer();
             var optContext = new PhoenixmlDb.XQuery.Optimizer.OptimizationContext { Container = default, BackwardsCompatible = IsBackwardsCompatible, FunctionLibrary = _functionLibrary };
             plan = optimizer.Optimize(expr, optContext);
-            _planCache[expr] = plan;
+            cached.Plan = plan;
         }
 
         // Pass the node store directly as the node provider — this preserves INodeBuilder
@@ -725,7 +737,7 @@ internal sealed partial class DefaultXsltExecutionContext
             nodeProvider: nodeProvider,
             documentResolver: (PhoenixmlDb.XQuery.IDocumentResolver?)_policyResolver ?? _documentResolver,
             schemaProvider: _schemaProvider,
-            namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
+            namespaceResolver: _nodeStoreNamespaceUriResolver ??= _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
         // Provide in-scope namespace prefix bindings so XSLT functions (system-property, etc.)
         // can resolve prefixed QName string arguments at runtime
         // When inside xsl:evaluate with namespace-context, use those bindings instead
@@ -740,7 +752,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // Set up variable fallback for lazy global initialization.
         // When the XQuery engine encounters a variable not yet bound, this callback
         // triggers the XSLT GetVariable which can lazily initialize pending globals.
-        execContext.VariableFallback = varName =>
+        // The callback depends only on this context, so one delegate serves every evaluation.
+        execContext.VariableFallback = _xqueryVariableFallback ??= varName =>
         {
             try
             {
@@ -755,13 +768,42 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         };
 
-        // Bind XSLT variables into XQuery context
-        // Bind outer scopes first, then inner scopes, so inner scope values override (proper shadowing)
-        // Convert ResultTreeFragments to XDM documents so XPath can navigate into them
+        // Bind the XSLT variables the expression references, each to the value a bare $name sees: the
+        // innermost binding in the lexically visible scopes, then the global. Visibility ends at the nearest
+        // variable barrier — the scope a template or stylesheet-function invocation pushed; the scopes below
+        // it belong to the invoker. Binding every scope on the stack let a condition such as
+        // test="number(.) <= $limit" see an ancestor Schematron rule's local while a bare $limit (the
+        // GetVariable fast path) correctly saw the global. Engine pseudo-variables (current-group and
+        // friends) are dynamically scoped and are still found below the barrier.
+        //
+        // Only referenced names are bound. Binding every global and every visible local cost more than most
+        // evaluations themselves, and converted each visible result tree fragment to a document whether the
+        // expression used it or not. Closures capture from these bindings, and the variable references in a
+        // closure body are part of the expression, so they are bound as well. A name bound nowhere is left
+        // to VariableFallback. Convert ResultTreeFragments to XDM documents so XPath can navigate into them.
         var privateGlobals = _stylesheet.PackagePrivateGlobals;
         var currentPkgForGlobals = privateGlobals.Count > 0 ? CurrentComponentPackage() : null;
-        foreach (var (name, value) in GlobalVariables)
+        foreach (var name in cached.VariableNames)
         {
+            var foundLocal = false;
+            object? local = null;
+            foreach (var scope in _scopes)
+            {
+                if (scope.VariablesOrNull is { } vars && vars.TryGetValue(name, out local))
+                {
+                    foundLocal = true;
+                    break;
+                }
+                if (scope.IsVariableBarrier && !IsDynamicPseudoVariable(name))
+                    break;
+            }
+            if (foundLocal)
+            {
+                execContext.BindVariable(name, ConvertRtfForXQuery(local));
+                continue;
+            }
+            if (!GlobalVariables.TryGetValue(name, out var value))
+                continue;
             // A global a used package keeps private must not be bound into an expression
             // evaluated by a DIFFERENT package: leaving it unbound routes the reference through
             // VariableFallback → GetVariable, which raises XPST0008 (use-package-006/007). The
@@ -779,40 +821,6 @@ internal sealed partial class DefaultXsltExecutionContext
             if (value is LazyValue)
                 continue;
             execContext.BindVariable(name, ConvertRtfForXQuery(value));
-        }
-        // Bind the local scopes that are lexically visible, outermost first so inner values override.
-        // Visibility ends at the nearest variable barrier — the scope a template or stylesheet-function
-        // invocation pushed; the scopes below it belong to the invoker. Binding every scope on the stack
-        // let a condition such as test="number(.) <= $limit" see an ancestor Schematron rule's local
-        // while a bare $limit (the GetVariable fast path) correctly saw the global. Engine
-        // pseudo-variables (current-group and friends) are dynamically scoped and are still bound from
-        // below the barrier, before the visible scopes so a visible binding wins.
-        var scopes = _scopes.ToArray(); // innermost first
-        var visible = scopes.Length;
-        for (var i = 0; i < scopes.Length; i++)
-        {
-            if (scopes[i].IsVariableBarrier)
-            {
-                visible = i + 1;
-                break;
-            }
-        }
-        for (var i = scopes.Length - 1; i >= visible; i--)
-        {
-            if (scopes[i].VariablesOrNull is not { } hidden)
-                continue;
-            foreach (var (name, value) in hidden)
-            {
-                if (IsDynamicPseudoVariable(name))
-                    execContext.BindVariable(name, ConvertRtfForXQuery(value));
-            }
-        }
-        for (var i = visible - 1; i >= 0; i--)
-        {
-            if (scopes[i].VariablesOrNull is not { } vars)
-                continue;
-            foreach (var (name, value) in vars)
-                execContext.BindVariable(name, ConvertRtfForXQuery(value));
         }
 
         // Bind stream watcher results as synthetic variables for map constructor entries etc.

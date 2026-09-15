@@ -1172,8 +1172,10 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
 
                 // Track explicitly provided tunnel params (using pre-evaluated values)
-                foreach (var wp in withParams.Where(p => p.Tunnel))
+                foreach (var wp in withParams)
                 {
+                    if (!wp.Tunnel)
+                        continue;
                     var value = preEvaluatedParams[wp.Name];
                     _scopes.Peek().TunnelParameters[wp.Name] = value;
                 }
@@ -1181,7 +1183,15 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Bind parameters (using pre-evaluated values)
                 foreach (var param in template.Parameters)
                 {
-                    var withParam = withParams.FirstOrDefault(p => p.Name.Equals(param.Name) && !p.Tunnel);
+                    XsltWithParam? withParam = null;
+                    foreach (var wp in withParams)
+                    {
+                        if (!wp.Tunnel && wp.Name.Equals(param.Name))
+                        {
+                            withParam = wp;
+                            break;
+                        }
+                    }
 
                     if (withParam != null && !param.Tunnel)
                     {
@@ -1254,12 +1264,24 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Note: tunnel with-params matching non-tunnel params are NOT errors — they pass through.
                 if (!IsBackwardsCompatible)
                 {
-                    foreach (var wp in withParams.Where(p => !p.Tunnel && !p.FromRuntimeOptions))
+                    foreach (var wp in withParams)
                     {
-                        var matchingParam = template.Parameters.FirstOrDefault(p => p.Name.Equals(wp.Name));
-                        if (matchingParam == null)
+                        if (wp.Tunnel || wp.FromRuntimeOptions)
+                            continue;
+                        var declared = false;
+                        var declaredAsTunnel = false;
+                        foreach (var p in template.Parameters)
+                        {
+                            if (p.Name.Equals(wp.Name))
+                            {
+                                declared = true;
+                                declaredAsTunnel = p.Tunnel;
+                                break;
+                            }
+                        }
+                        if (!declared)
                             throw Error($"XTSE0680: Parameter '{wp.Name.LocalName}' is not declared in the called template '{name.LocalName}'");
-                        if (matchingParam.Tunnel)
+                        if (declaredAsTunnel)
                             throw Error($"XTSE0680: Non-tunnel parameter '{wp.Name.LocalName}' in xsl:call-template does not match tunnel parameter in template '{name.LocalName}'");
                     }
                 }
@@ -1449,6 +1471,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // not the frame's tail call.
         if (_tailCallFrameScope is null || _pendingTailCall is not null || !ReferenceEquals(_scopes.Peek(), _tailCallFrameScope))
             return false;
+        var frame = _tailCallFrameScope;
 
         var template = ResolveCallTemplateTarget(name);
         if (template.As != null)
@@ -1459,17 +1482,13 @@ internal sealed partial class DefaultXsltExecutionContext
         var preEvaluatedParams = new Dictionary<QName, object?>();
         foreach (var wp in withParams)
             preEvaluatedParams[wp.Name] = await EvaluateWithParamAsync(wp).ConfigureAwait(false);
-        var tunnelParameters = new Dictionary<QName, object?>();
-        foreach (var scope in _scopes)
-        {
-            if (scope.TunnelParametersOrNull is { Count: > 0 } inherited)
-            {
-                foreach (var (tunnelName, tunnelValue) in inherited)
-                    tunnelParameters.TryAdd(tunnelName, tunnelValue);
-            }
-            if (scope.IsTunnelBarrier)
-                break;
-        }
+        // The frame's own scope already holds every tunnel parameter it inherited from the scopes below it
+        // (InheritTunnelParameters, or the set the previous tail call carried), with its own tunnel with-params
+        // taking precedence, so a copy of it is exactly what walking the stack would collect. The walk cost the
+        // depth of the stack on every iteration.
+        var tunnelParameters = frame.TunnelParametersOrNull is { Count: > 0 } frameTunnels
+            ? new Dictionary<QName, object?>(frameTunnels)
+            : new Dictionary<QName, object?>();
 
         _pendingTailCall = new PendingTailCall(name, withParams, template, preEvaluatedParams, tunnelParameters);
         return true;
