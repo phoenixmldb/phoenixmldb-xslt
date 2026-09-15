@@ -1254,6 +1254,13 @@ public sealed class XsltTransformEngine
         {
             case CrossStoreNodeRef wrapped:
                 return ReparseCrossStoreNode(wrapped, store);
+            // A LINQ to XML or System.Xml node handed to SetParameter (xslt#12). It reached XPath as a foreign .NET
+            // object, so $p instance of node() was false and every axis step failed ("context item is not a node").
+            case System.Xml.Linq.XNode xnode:
+                return ReparseXml(xnode.ToString(System.Xml.Linq.SaveOptions.DisableFormatting),
+                    isElement: xnode is System.Xml.Linq.XElement, store);
+            case XmlNode xmlNode:
+                return ReparseXml(xmlNode.OuterXml, isElement: xmlNode is XmlElement, store);
             case object?[] items:
             {
                 object?[]? rebuilt = null;
@@ -1271,14 +1278,21 @@ public sealed class XsltTransformEngine
     }
 
     private static object? ReparseCrossStoreNode(CrossStoreNodeRef wrapped, XdmInMemoryStore store)
+        => ReparseXml(wrapped.Xml, wrapped.IsElement, store);
+
+    /// <summary>
+    /// Parses serialized node markup into <paramref name="store"/>: a document node, or its element when
+    /// <paramref name="isElement"/> — the shape the caller supplied.
+    /// </summary>
+    private static object? ReparseXml(string? xml, bool isElement, XdmInMemoryStore store)
     {
-        if (string.IsNullOrEmpty(wrapped.Xml)) return null;
+        if (string.IsNullOrEmpty(xml)) return null;
         try
         {
             var doc = new XmlDocument { PreserveWhitespace = true };
-            doc.LoadXml(wrapped.Xml);
+            doc.LoadXml(xml);
             var localDoc = ConvertToXdm(doc, store);
-            if (wrapped.IsElement && localDoc.DocumentElement.HasValue)
+            if (isElement && localDoc.DocumentElement.HasValue)
             {
                 var rootId = localDoc.DocumentElement.Value;
                 return (object?)(store.GetNode(rootId) as Xdm.Nodes.XdmElement) ?? localDoc;

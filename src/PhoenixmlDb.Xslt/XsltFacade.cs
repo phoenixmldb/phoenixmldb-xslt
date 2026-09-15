@@ -504,6 +504,9 @@ public sealed class XsltTransformer
     /// <see cref="long"/> become <c>xs:integer</c>, <see cref="double"/> becomes
     /// <c>xs:double</c>, <see cref="bool"/> becomes <c>xs:boolean</c>, <see cref="decimal"/>
     /// becomes <c>xs:decimal</c>, and <see cref="string"/> becomes <c>xs:untypedAtomic</c>.
+    /// An <see cref="System.Xml.Linq.XDocument"/> or <see cref="System.Xml.XmlDocument"/> becomes a document node, and
+    /// an <see cref="System.Xml.Linq.XElement"/> or <see cref="System.Xml.XmlElement"/> an element node, copied into
+    /// the transformation so XPath can navigate it.
     /// Pass <c>null</c> to set the parameter to an empty sequence.
     /// </param>
     /// <remarks>
