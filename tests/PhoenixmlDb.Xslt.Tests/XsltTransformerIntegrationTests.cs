@@ -3170,7 +3170,8 @@ public class XsltTransformerIntegrationTests
     {
         var transformer = new XsltTransformer();
         await transformer.LoadStylesheetAsync("""
-            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema">
               <xsl:output method="json" indent="no"/>
               <xsl:template match="/items">
                 <xsl:sequence select="

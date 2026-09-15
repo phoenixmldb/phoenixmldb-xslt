@@ -1087,7 +1087,7 @@ public sealed partial class StylesheetParser
         public override object? VisitVariableReference(VariableReference vr)
         {
             if (!string.IsNullOrEmpty(vr.Name.Prefix) && vr.Name.Namespace == NamespaceId.None)
-                vr.Name = ParseQName($"{vr.Name.Prefix}:{vr.Name.LocalName}", context);
+                vr.Name = ResolveXPathQName(vr.Name);
             // EQName variable references: resolve ExpandedNamespace to NamespaceId so
             // Dictionary lookup matches the declared variable's QName (record struct equality)
             else if (vr.Name.ExpandedNamespace != null && vr.Name.Namespace == NamespaceId.None)
@@ -1097,18 +1097,31 @@ public sealed partial class StylesheetParser
 
         public override object? VisitFunctionCallExpression(FunctionCallExpression fc)
         {
-            if (!string.IsNullOrEmpty(fc.Name.Prefix) && fc.Name.Namespace == NamespaceId.None
-                && (context.GetNamespaceOfPrefix(fc.Name.Prefix) != null || !XQueryPredeclaredPrefixes.Contains(fc.Name.Prefix)))
-                fc.Name = ParseQName($"{fc.Name.Prefix}:{fc.Name.LocalName}", context);
+            if (!string.IsNullOrEmpty(fc.Name.Prefix) && fc.Name.Namespace == NamespaceId.None)
+                fc.Name = ResolveXPathQName(fc.Name);
             return base.VisitFunctionCallExpression(fc);
         }
 
-        // A function name using one of XQuery's predeclared prefixes but not declared on the stylesheet
-        // (e.g. xs:double(...) without xmlns:xs) is left for the XQuery layer, which resolves these
-        // prefixes itself — the behaviour such calls always had where the old hand-written walker did not
-        // reach (inside a map constructor, for instance). Any other undeclared prefix is still XTSE0280.
-        private static readonly HashSet<string> XQueryPredeclaredPrefixes =
-            ["xs", "fn", "math", "map", "array", "err", "local", "xml", "xsi", "output"];
+        /// <summary>
+        /// Binds a prefixed function or variable name in an XPath expression to the stylesheet element's in-scope
+        /// namespaces, raising XPST0081 when the prefix is not declared there (xslt#109).
+        /// </summary>
+        /// <remarks>
+        /// XSLT predeclares no prefixes for XPath: <c>fn</c>, <c>xs</c>, <c>math</c> and the rest must be declared
+        /// on the stylesheet, while unprefixed function names use the default function namespace (W3C namespace-6202,
+        /// "Namespace fn is not predeclared"). This walker used to leave an undeclared prefix that XQuery predeclares
+        /// to the XQuery layer, which resolved it, so <c>fn:current-dateTime()</c> with no <c>xmlns:fn</c> ran instead
+        /// of failing. Before the full walker it raised XTSE0280, which is the code for a QName in an XSLT attribute,
+        /// not in an XPath expression.
+        /// </remarks>
+        private QName ResolveXPathQName(QName name)
+        {
+            if (context.GetNamespaceOfPrefix(name.Prefix!) is null)
+                throw new XsltException(
+                    $"XPST0081: Namespace prefix '{name.Prefix}' in '{name.Prefix}:{name.LocalName}' has not been declared",
+                    GetSourceLocation(context));
+            return ParseQName($"{name.Prefix}:{name.LocalName}", context);
+        }
 
         public override object? VisitStepExpression(StepExpression se)
         {
