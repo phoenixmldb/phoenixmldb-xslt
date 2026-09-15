@@ -16,6 +16,12 @@ public sealed class XsltAssert : XsltInstruction
     public XsltSequenceConstructor? Content { get; init; }
     public string? ErrorCode { get; init; }
 
+    /// <summary>@error-code as the attribute value template XSLT 3.0 §23.2 defines it (xslt#112).</summary>
+    public XsltAttributeValueTemplate? ErrorCodeAvt { get; init; }
+
+    /// <summary>The namespaces in scope on the xsl:assert element, for resolving a prefixed error code.</summary>
+    public IReadOnlyDictionary<string, string>? ErrorCodeNamespaces { get; init; }
+
     public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitAssert(this);
 
     public override async ValueTask ExecuteAsync(XsltExecutionContext context)

@@ -3396,11 +3396,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// unprefixed one is in no namespace. A value that is not a valid QName, or whose prefix is
     /// not in scope, falls back to XTMM9000 (W3C message-0406).
     /// </summary>
-    private async ValueTask<string> ResolveMessageErrorCodeAsync(XsltMessage instruction)
+    private ValueTask<string> ResolveMessageErrorCodeAsync(XsltMessage instruction)
+        => ResolveErrorCodeAsync(instruction.ErrorCodeAvt!, instruction.ErrorCodeNamespaces, "XTMM9000");
+
+    /// <summary>
+    /// Evaluates an xsl:message or xsl:assert @error-code AVT and normalizes it to an error code: the local name for the
+    /// xqt-errors namespace, <c>Q{uri}local</c> otherwise, with a prefixed name resolved through the element's in-scope
+    /// namespaces. An unusable value yields <paramref name="fallback"/>.
+    /// </summary>
+    private async ValueTask<string> ResolveErrorCodeAsync(
+        XsltAttributeValueTemplate errorCodeAvt, IReadOnlyDictionary<string, string>? errorCodeNamespaces, string fallback)
     {
         const string ErrNs = "http://www.w3.org/2005/xqt-errors";
-        const string Fallback = "XTMM9000";
-        var value = (await EvaluateAvtAsync(instruction.ErrorCodeAvt!).ConfigureAwait(false)).Trim();
+        var Fallback = fallback;
+        var value = (await EvaluateAvtAsync(errorCodeAvt).ConfigureAwait(false)).Trim();
         string uri, local;
         if (value.StartsWith("Q{", StringComparison.Ordinal) && value.IndexOf('}', StringComparison.Ordinal) is var close and > 1)
         {
@@ -3411,8 +3420,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             local = value[(colon + 1)..];
             if (!IsNCName(value[..colon])
-                || instruction.ErrorCodeNamespaces is null
-                || !instruction.ErrorCodeNamespaces.TryGetValue(value[..colon], out uri!))
+                || errorCodeNamespaces is null
+                || !errorCodeNamespaces.TryGetValue(value[..colon], out uri!))
                 return Fallback;
         }
         else
@@ -3442,7 +3451,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (!testResult)
         {
-            var errorCode = instruction.ErrorCode ?? "XTMM9001";
+            // @error-code is an AVT: evaluate it and normalize it as xsl:message does. It was used as the raw attribute,
+            // so error-code="Q{{…xqt-errors}}XTDE1665" reported the doubled braces (xslt#112, W3C error-1665a).
+            var errorCode = instruction.ErrorCodeAvt != null
+                ? await ResolveErrorCodeAsync(instruction.ErrorCodeAvt, instruction.ErrorCodeNamespaces, "XTMM9001").ConfigureAwait(false)
+                : "XTMM9001";
             string message;
             if (instruction.Select != null)
             {
