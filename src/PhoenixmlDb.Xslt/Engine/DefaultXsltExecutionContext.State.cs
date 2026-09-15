@@ -138,7 +138,51 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     // Cache optimized query plans by expression identity to avoid re-optimizing in loops
-    private readonly Dictionary<XQueryExpression, PhoenixmlDb.XQuery.Execution.ExecutionPlan> _planCache = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<XQueryExpression, CachedXPathPlan> _planCache = new(ReferenceEqualityComparer.Instance);
+
+    // Delegates handed to every XQuery evaluation context; created once instead of per evaluation.
+    private Func<NamespaceId, string?>? _nodeStoreNamespaceUriResolver;
+    private Func<QName, (bool found, object? value)>? _xqueryVariableFallback;
+
+    /// <summary>
+    /// What <see cref="EvaluateAsync"/> keeps per expression: the optimized plan, whether the node store's
+    /// namespace ids have been interned onto its name tests, and the variable names it references.
+    /// </summary>
+    private sealed class CachedXPathPlan(XQueryExpression expr)
+    {
+        public PhoenixmlDb.XQuery.Execution.ExecutionPlan? Plan { get; set; }
+        public bool NamespaceIdsResolved { get; set; }
+        public QName[] VariableNames { get; } = VariableReferenceCollector.Collect(expr);
+    }
+
+    /// <summary>
+    /// Collects the distinct names of every variable reference in an expression, inline function bodies
+    /// included. A name bound inside the expression (a for/let/some/every variable or a function parameter)
+    /// is collected too; binding an outer value under it is harmless because the inner binding shadows it.
+    /// </summary>
+    private sealed class VariableReferenceCollector : PhoenixmlDb.XQuery.Ast.XQueryExpressionWalker
+    {
+        private readonly HashSet<QName> _names = [];
+
+        public static QName[] Collect(XQueryExpression expr)
+        {
+            var collector = new VariableReferenceCollector();
+            collector.Walk(expr);
+            return [.. collector._names];
+        }
+
+        public override void Walk(XQueryExpression expr)
+        {
+            if (expr is not null)
+                base.Walk(expr);
+        }
+
+        public override object? VisitVariableReference(VariableReference vr)
+        {
+            _names.Add(vr.Name);
+            return null;
+        }
+    }
 
 
     // Attribute collection mode for xsl:element
