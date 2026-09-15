@@ -438,7 +438,7 @@ tests/decl/accept/_accept-test-set.xml	44	50
 tests/decl/accumulator/_accumulator-test-set.xml	91	103
 tests/decl/attribute-set/_attribute-set-test-set.xml	48	49
 tests/decl/character-map/_character-map-test-set.xml	28	29
-tests/decl/context-item/_context-item-test-set.xml	24	31
+tests/decl/context-item/_context-item-test-set.xml	28	31
 tests/decl/expose/_expose-test-set.xml	9	42
 tests/decl/function/_function-test-set.xml	100	104
 tests/decl/global-context-item/_global-context-item-test-set.xml	12	14
@@ -523,7 +523,7 @@ tests/insn/sequence/_sequence-test-set.xml	87	87
 tests/insn/sort/_sort-test-set.xml	78	80
 tests/insn/source-document/_source-document-test-set.xml	36	47
 tests/insn/try/_try-test-set.xml	35	35
-tests/insn/where-populated/_where-populated-test-set.xml	22	27
+tests/insn/where-populated/_where-populated-test-set.xml	25	27
 tests/insn/xsl-document/_xsl-document-test-set.xml	23	25
 tests/misc/backwards/_backwards-test-set.xml	43	47
 tests/misc/bug/_bug-test-set.xml	75	78
@@ -580,7 +580,7 @@ tests/strm/sf-zero-or-one/_sf-zero-or-one-test-set.xml	7	7
 tests/strm/si-LRE/_si-lre-test-set.xml	69	69
 tests/strm/si-apply-imports/_si-apply-imports-test-set.xml	0	3
 tests/strm/si-apply-templates/_si-apply-templates-test-set.xml	8	11
-tests/strm/si-assert/_si-assert-test-set.xml	11	13
+tests/strm/si-assert/_si-assert-test-set.xml	12	13
 tests/strm/si-attribute/_si-attribute-test-set.xml	45	45
 tests/strm/si-call-template/_si-call-template-test-set.xml	2	2
 tests/strm/si-choose/_si-choose-test-set.xml	12	12
@@ -596,13 +596,13 @@ tests/strm/si-map/_si-map-test-set.xml	5	5
 tests/strm/si-merge/_si-merge-test-set.xml	7	7
 tests/strm/si-message/_si-message-test-set.xml	11	11
 tests/strm/si-next-match/_si-next-match-test-set.xml	0	1
-tests/strm/si-on-empty/_si-on-empty-test-set.xml	32	33
+tests/strm/si-on-empty/_si-on-empty-test-set.xml	33	33
 tests/strm/si-on-non-empty/_si-on-non-empty-test-set.xml	42	42
 tests/strm/si-perform-sort/_si-perform-sort-test-set.xml	1	2
 tests/strm/si-result-document/_si-result-document-test-set.xml	18	18
 tests/strm/si-try/_si-try-test-set.xml	47	47
 tests/strm/si-value-of/_si-value-of-test-set.xml	35	39
-tests/strm/si-where-populated/_si-where-populated-test-set.xml	17	21
+tests/strm/si-where-populated/_si-where-populated-test-set.xml	19	21
 tests/strm/su-absorbing/_su-absorbing-test-set.xml	34	35
 tests/strm/su-ascent/_su-ascent-test-set.xml	6	6
 tests/strm/su-filter/_su-filter-test-set.xml	10	10

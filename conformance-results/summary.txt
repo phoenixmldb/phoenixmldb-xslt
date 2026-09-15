@@ -2,17 +2,17 @@ xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
 
 attr       7s  fixture Successful (18 tests) | 1085/1117 cases 97.1%, 32 failed
-decl       6s  fixture Successful (19 tests) | 1018/1122 cases 90.7%, 104 failed
-type       4s  fixture Successful (9 tests) | 755/766 cases 98.6%, 11 failed
+decl       6s  fixture Successful (19 tests) | 1022/1122 cases 91.1%, 100 failed
+type       3s  fixture Successful (9 tests) | 755/766 cases 98.6%, 11 failed
 sandp      1s  fixture Successful (25 tests)
 fn         6s  fixture Successful (35 tests) | 1082/1131 cases 95.7%, 49 failed
 strm1     28s  fixture Successful (37 tests) | 716/729 cases 98.2%, 13 failed
-strm2     24s  fixture Successful (26 tests) | 711/749 cases 94.9%, 38 failed
-strm3     25s  fixture Successful (27 tests) | 883/895 cases 98.7%, 12 failed
+strm2     22s  fixture Successful (26 tests) | 715/749 cases 95.5%, 34 failed
+strm3     24s  fixture Successful (27 tests) | 883/895 cases 98.7%, 12 failed
 expr       3s  fixture Successful (14 tests) | 637/648 cases 98.3%, 11 failed
-misc      17s  fixture Successful (22 tests) | 1885/1921 cases 98.1%, 36 failed
-insn      10s  fixture Successful (27 tests) | 1545/1594 cases 96.9%, 49 failed
-xqts      80s  fixture Successful (438 tests) | 29731/31379 cases 94.7%, 1648 failed
+misc      16s  fixture Successful (22 tests) | 1885/1921 cases 98.1%, 36 failed
+insn       9s  fixture Successful (27 tests) | 1548/1594 cases 97.1%, 46 failed
+xqts      79s  fixture Successful (438 tests) | 29731/31379 cases 94.7%, 1648 failed
 per-set GAINS:
   app/app-FunctxFn: 495 -> 498  (+3)
   app/app-FunctxFunctx: 611 -> 618  (+7)
@@ -46,4 +46,4 @@ per-set GAINS:
   ser/method-xml: 9 -> 35  (+26)
   tests/insn/call-template/_call-template-test-set.xml: 37 -> 39  (+2)
 
-12 chunk(s) in 3m31s — logs in /tmp/claude-1000/xslt-wt-107/conformance-results
+12 chunk(s) in 3m24s — logs in /tmp/claude-1000/xslt-wt-raise/conformance-results
