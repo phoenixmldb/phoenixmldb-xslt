@@ -963,6 +963,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 return value;
             }
+            // Lexical scope: an invoked template or function does not see its invoker's locals.
+            if (scope.IsVariableBarrier && !IsDynamicPseudoVariable(name))
+                break;
         }
 
         // Package-local shadow globals: when executing inside a used package whose same-named
@@ -1084,6 +1087,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     return true;
                 }
             }
+            if (scope.IsVariableBarrier && !IsDynamicPseudoVariable(name))
+                break;
         }
 
         // Search global variables
@@ -1147,6 +1152,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
     }
 
+
+    /// <summary>
+    /// Engine state that is kept in scope variables but is dynamically scoped by definition — the
+    /// current group, grouping key, merge group/key and regex groups follow the invocation, not the
+    /// stylesheet's lexical structure — so it is still found past an <c>IsVariableBarrier</c> scope.
+    /// </summary>
+    private static bool IsDynamicPseudoVariable(QName name) =>
+        name.Namespace == NamespaceId.None
+        && name.LocalName is "current-group" or "current-grouping-key" or "current-merge-group"
+            or "current-merge-key" or "regex-groups"
+        || name.Namespace == NamespaceId.None && name.LocalName.StartsWith("current-merge-group:", StringComparison.Ordinal);
 
     public void SetVariable(QName name, object? value)
     {

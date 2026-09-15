@@ -41,7 +41,7 @@ internal sealed partial class DefaultXsltExecutionContext
     public override async ValueTask CreateElementAsync(XsltElement instruction)
     {
         if (_recursionDepth >= MaxRecursionDepth)
-            return;
+            throw RecursionLimitExceeded("xsl:element");
         _recursionDepth++;
         try
         {
@@ -1217,7 +1217,7 @@ internal sealed partial class DefaultXsltExecutionContext
     public override async ValueTask CreateLiteralElementAsync(XsltLiteralResultElement instruction)
     {
         if (_recursionDepth >= MaxRecursionDepth)
-            return;
+            throw RecursionLimitExceeded("A literal result element");
         _recursionDepth++;
         try
         {
@@ -1368,7 +1368,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 instruction.ExcludeResultPrefixes.Contains("#all") ||
                 (!string.IsNullOrEmpty(prefix) && (_stylesheet.ExcludeResultPrefixes.Contains(prefix) || instruction.ExcludeResultPrefixes.Contains(prefix))) ||
                 (string.IsNullOrEmpty(prefix) && (_stylesheet.ExcludeResultPrefixes.Contains("#default") || instruction.ExcludeResultPrefixes.Contains("#default"))) ||
-                (!string.IsNullOrEmpty(prefix) && _stylesheet.ExtensionElementPrefixes.Contains(prefix))))
+                // StylesheetParser.Declarations stores a stylesheet-level extension-element-prefixes
+                // entry as the namespace URI ("#default" for the default namespace), so match on the
+                // URI. Matching the prefix against that set never succeeded, and the extension
+                // namespace was copied onto every literal result element (XSLT 3.0 §11.1.3).
+                (!string.IsNullOrEmpty(prefix) && (_stylesheet.ExtensionElementPrefixes.Contains(uri) || _stylesheet.ExtensionElementPrefixes.Contains(prefix))) ||
+                (string.IsNullOrEmpty(prefix) && _stylesheet.ExtensionElementPrefixes.Contains("#default"))))
                 continue;
 
             nsBindings[effectivePrefix] = effectiveUri;

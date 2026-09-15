@@ -25,123 +25,49 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private void ResolveExpressionNamespaceIds(XQueryExpression expr)
     {
-        switch (expr)
+        // Traversal comes from XQueryExpressionWalker so every composite node kind is visited. The
+        // hand-written switch this replaces missed some/every (and switch, typeswitch, try/catch, map
+        // and array constructors, lookups): a name test inside one kept ResolvedNamespace unset and
+        // matched only no-namespace nodes. InlineFunctionExpression was an earlier instance of the same
+        // gap (see the note on NamespaceIdResolver below).
+        if (expr is not null)
+            new NamespaceIdResolver(this).Walk(expr);
+    }
+
+    /// <summary>
+    /// Interns the namespace of every name test in an expression. An inline function body is ordinary
+    /// XPath and needs the same interning: without it a prefixed step inside a closure —
+    /// function($m) { $m/xdm:item } — matched only no-namespace nodes and a fold-left over it silently
+    /// built an empty result (reported by Martin Honnen against xdm-persistence).
+    /// </summary>
+    private sealed class NamespaceIdResolver(DefaultXsltExecutionContext ctx) : PhoenixmlDb.XQuery.Ast.XQueryExpressionWalker
+    {
+        public override void Walk(XQueryExpression expr)
         {
-            case StepExpression se:
-                if (se.NodeTest is NameTest nt)
+            if (expr is not null)
+                base.Walk(expr);
+        }
+
+        public override object? VisitStepExpression(StepExpression se)
+        {
+            if (se.NodeTest is NameTest nt)
+            {
+                // If prefix is set but URI wasn't resolved at parse time, resolve from stylesheet namespaces
+                if (nt.Prefix != null && string.IsNullOrEmpty(nt.NamespaceUri) && nt.NamespaceUri != "*")
                 {
-                    // If prefix is set but URI wasn't resolved at parse time, resolve from stylesheet namespaces
-                    if (nt.Prefix != null && string.IsNullOrEmpty(nt.NamespaceUri) && nt.NamespaceUri != "*")
-                    {
-                        if (_stylesheet.Namespaces.TryGetValue(nt.Prefix, out var uri))
-                            nt.NamespaceUri = uri;
-                    }
-                    // Apply stylesheet-level xpath-default-namespace for unprefixed element name tests
-                    else if (nt.Prefix == null && string.IsNullOrEmpty(nt.NamespaceUri) && !nt.IsLocalNameWildcard
-                             && se.Axis != Axis.Attribute && se.Axis != Axis.Namespace
-                             && _stylesheet.XpathDefaultNamespace != null && !nt.ResolvedNamespace.HasValue)
-                    {
-                        nt.NamespaceUri = _stylesheet.XpathDefaultNamespace;
-                    }
-                    nt.ResolveNamespace(_nodeStore!.InternNamespace);
+                    if (ctx._stylesheet.Namespaces.TryGetValue(nt.Prefix, out var uri))
+                        nt.NamespaceUri = uri;
                 }
-                foreach (var pred in se.Predicates)
-                    ResolveExpressionNamespaceIds(pred);
-                break;
-            case PathExpression pe:
-                if (pe.InitialExpression != null)
-                    ResolveExpressionNamespaceIds(pe.InitialExpression);
-                foreach (var step in pe.Steps)
-                    ResolveExpressionNamespaceIds(step);
-                break;
-            case BinaryExpression be:
-                ResolveExpressionNamespaceIds(be.Left);
-                ResolveExpressionNamespaceIds(be.Right);
-                break;
-            case UnaryExpression ue:
-                ResolveExpressionNamespaceIds(ue.Operand);
-                break;
-            case FilterExpression fe:
-                ResolveExpressionNamespaceIds(fe.Primary);
-                foreach (var pred in fe.Predicates)
-                    ResolveExpressionNamespaceIds(pred);
-                break;
-            case FunctionCallExpression fc:
-                foreach (var arg in fc.Arguments)
-                    ResolveExpressionNamespaceIds(arg);
-                break;
-            case IfExpression ie:
-                ResolveExpressionNamespaceIds(ie.Condition);
-                ResolveExpressionNamespaceIds(ie.Then);
-                if (ie.Else != null)
-                    ResolveExpressionNamespaceIds(ie.Else);
-                break;
-            case SequenceExpression seq:
-                foreach (var item in seq.Items)
-                    ResolveExpressionNamespaceIds(item);
-                break;
-            case FlworExpression flwor:
-                foreach (var clause in flwor.Clauses)
+                // Apply stylesheet-level xpath-default-namespace for unprefixed element name tests
+                else if (nt.Prefix == null && string.IsNullOrEmpty(nt.NamespaceUri) && !nt.IsLocalNameWildcard
+                         && se.Axis != Axis.Attribute && se.Axis != Axis.Namespace
+                         && ctx._stylesheet.XpathDefaultNamespace != null && !nt.ResolvedNamespace.HasValue)
                 {
-                    if (clause is ForClause forClause)
-                        foreach (var binding in forClause.Bindings)
-                            ResolveExpressionNamespaceIds(binding.Expression);
-                    else if (clause is LetClause letClause)
-                        foreach (var binding in letClause.Bindings)
-                            ResolveExpressionNamespaceIds(binding.Expression);
-                    else if (clause is WhereClause whereClause)
-                        ResolveExpressionNamespaceIds(whereClause.Condition);
-                    else if (clause is OrderByClause orderBy)
-                        foreach (var spec in orderBy.OrderSpecs)
-                            ResolveExpressionNamespaceIds(spec.Expression);
+                    nt.NamespaceUri = ctx._stylesheet.XpathDefaultNamespace;
                 }
-                ResolveExpressionNamespaceIds(flwor.ReturnExpression);
-                break;
-            case SimpleMapExpression sme:
-                ResolveExpressionNamespaceIds(sme.Left);
-                ResolveExpressionNamespaceIds(sme.Right);
-                break;
-            case InstanceOfExpression inst:
-                ResolveExpressionNamespaceIds(inst.Expression);
-                break;
-            case CastExpression cast:
-                ResolveExpressionNamespaceIds(cast.Expression);
-                break;
-            case CastableExpression castable:
-                ResolveExpressionNamespaceIds(castable.Expression);
-                break;
-            case TreatExpression treat:
-                ResolveExpressionNamespaceIds(treat.Expression);
-                break;
-            case StringConcatExpression sce:
-                foreach (var operand in sce.Operands)
-                    ResolveExpressionNamespaceIds(operand);
-                break;
-            case RangeExpression re:
-                ResolveExpressionNamespaceIds(re.Start);
-                ResolveExpressionNamespaceIds(re.End);
-                break;
-            case ArrowExpression ae:
-                ResolveExpressionNamespaceIds(ae.Expression);
-                ResolveExpressionNamespaceIds(ae.FunctionCall);
-                break;
-            // An inline function body is ordinary XPath and its name tests need the same
-            // interning as everything else. Without this case a prefixed step inside a
-            // closure — function($m) { $m/xdm:item } — kept ResolvedNamespace unset, and an
-            // unresolved prefixed name test matches only no-namespace nodes: the closure
-            // returned the empty sequence with no error, so a fold-left over it silently
-            // built an empty result. Reported by Martin Honnen against xdm-persistence.
-            case PhoenixmlDb.XQuery.Ast.InlineFunctionExpression ife:
-                if (ife.Body != null)
-                    ResolveExpressionNamespaceIds(ife.Body);
-                break;
-            // Same reasoning for the two other shapes the runtime walk already descends into:
-            // the callee and arguments of a dynamic call are expressions like any other.
-            case PhoenixmlDb.XQuery.Ast.DynamicFunctionCallExpression dfc:
-                ResolveExpressionNamespaceIds(dfc.FunctionExpression);
-                foreach (var arg in dfc.Arguments)
-                    ResolveExpressionNamespaceIds(arg);
-                break;
+                nt.ResolveNamespace(ctx._nodeStore!.InternNamespace);
+            }
+            return base.VisitStepExpression(se);
         }
     }
 
@@ -263,113 +189,55 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private void ResolveExpressionNamespacesRuntime(XQueryExpression expr, Dictionary<string, string> nsBindings, string? xpathDefaultNs)
     {
-        switch (expr)
+        // Traversal comes from XQueryExpressionWalker so every composite node kind is visited; the
+        // hand-written switch this replaces missed some/every, castable, treat, switch, typeswitch,
+        // try/catch, map and array constructors and lookups, leaving their name tests unbound.
+        if (expr is not null)
+            new RuntimeNamespaceResolver(this, nsBindings, xpathDefaultNs).Walk(expr);
+    }
+
+    private sealed class RuntimeNamespaceResolver(
+        DefaultXsltExecutionContext ctx, Dictionary<string, string> nsBindings, string? xpathDefaultNs)
+        : PhoenixmlDb.XQuery.Ast.XQueryExpressionWalker
+    {
+        public override void Walk(XQueryExpression expr)
         {
-            case PhoenixmlDb.XQuery.Ast.VariableReference vr:
-                if (!string.IsNullOrEmpty(vr.Name.Prefix) && vr.Name.Namespace == NamespaceId.None)
-                    vr.Name = ResolveQNameRuntime(vr.Name.Prefix!, vr.Name.LocalName, nsBindings);
-                break;
-            case PhoenixmlDb.XQuery.Ast.FunctionCallExpression fc:
-                if (!string.IsNullOrEmpty(fc.Name.Prefix) && fc.Name.Namespace == NamespaceId.None)
-                    fc.Name = ResolveQNameRuntime(fc.Name.Prefix!, fc.Name.LocalName, nsBindings);
-                foreach (var arg in fc.Arguments)
-                    ResolveExpressionNamespacesRuntime(arg, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.BinaryExpression be:
-                ResolveExpressionNamespacesRuntime(be.Left, nsBindings, xpathDefaultNs);
-                ResolveExpressionNamespacesRuntime(be.Right, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.UnaryExpression ue:
-                ResolveExpressionNamespacesRuntime(ue.Operand, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.PathExpression pe:
-                if (pe.InitialExpression != null)
-                    ResolveExpressionNamespacesRuntime(pe.InitialExpression, nsBindings, xpathDefaultNs);
-                foreach (var step in pe.Steps)
-                    ResolveExpressionNamespacesRuntime(step, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.StepExpression se:
-                if (se.NodeTest is PhoenixmlDb.XQuery.Ast.NameTest nt)
+            if (expr is not null)
+                base.Walk(expr);
+        }
+
+        public override object? VisitVariableReference(PhoenixmlDb.XQuery.Ast.VariableReference vr)
+        {
+            if (!string.IsNullOrEmpty(vr.Name.Prefix) && vr.Name.Namespace == NamespaceId.None)
+                vr.Name = ctx.ResolveQNameRuntime(vr.Name.Prefix!, vr.Name.LocalName, nsBindings);
+            return null;
+        }
+
+        public override object? VisitFunctionCallExpression(PhoenixmlDb.XQuery.Ast.FunctionCallExpression fc)
+        {
+            if (!string.IsNullOrEmpty(fc.Name.Prefix) && fc.Name.Namespace == NamespaceId.None)
+                fc.Name = ctx.ResolveQNameRuntime(fc.Name.Prefix!, fc.Name.LocalName, nsBindings);
+            return base.VisitFunctionCallExpression(fc);
+        }
+
+        public override object? VisitStepExpression(PhoenixmlDb.XQuery.Ast.StepExpression se)
+        {
+            if (se.NodeTest is PhoenixmlDb.XQuery.Ast.NameTest nt)
+            {
+                if (!string.IsNullOrEmpty(nt.Prefix) && nt.Prefix != "*" && nt.NamespaceUri == null)
                 {
-                    if (!string.IsNullOrEmpty(nt.Prefix) && nt.Prefix != "*" && nt.NamespaceUri == null)
-                    {
-                        if (nsBindings.TryGetValue(nt.Prefix, out var ns))
-                            nt.NamespaceUri = ns;
-                    }
-                    else if (nt.Prefix == null && nt.NamespaceUri == null && !nt.IsLocalNameWildcard
-                             && se.Axis != PhoenixmlDb.XQuery.Ast.Axis.Attribute
-                             && se.Axis != PhoenixmlDb.XQuery.Ast.Axis.Namespace)
-                    {
-                        if (xpathDefaultNs != null)
-                            nt.NamespaceUri = xpathDefaultNs;
-                    }
+                    if (nsBindings.TryGetValue(nt.Prefix, out var ns))
+                        nt.NamespaceUri = ns;
                 }
-                foreach (var pred in se.Predicates)
-                    ResolveExpressionNamespacesRuntime(pred, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.FilterExpression fe:
-                ResolveExpressionNamespacesRuntime(fe.Primary, nsBindings, xpathDefaultNs);
-                foreach (var pred in fe.Predicates)
-                    ResolveExpressionNamespacesRuntime(pred, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.IfExpression ie:
-                ResolveExpressionNamespacesRuntime(ie.Condition, nsBindings, xpathDefaultNs);
-                ResolveExpressionNamespacesRuntime(ie.Then, nsBindings, xpathDefaultNs);
-                if (ie.Else != null)
-                    ResolveExpressionNamespacesRuntime(ie.Else, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.FlworExpression flwor:
-                foreach (var clause in flwor.Clauses)
+                else if (nt.Prefix == null && nt.NamespaceUri == null && !nt.IsLocalNameWildcard
+                         && se.Axis != PhoenixmlDb.XQuery.Ast.Axis.Attribute
+                         && se.Axis != PhoenixmlDb.XQuery.Ast.Axis.Namespace)
                 {
-                    if (clause is PhoenixmlDb.XQuery.Ast.ForClause forClause)
-                        foreach (var binding in forClause.Bindings)
-                            ResolveExpressionNamespacesRuntime(binding.Expression, nsBindings, xpathDefaultNs);
-                    else if (clause is PhoenixmlDb.XQuery.Ast.LetClause letClause)
-                        foreach (var binding in letClause.Bindings)
-                            ResolveExpressionNamespacesRuntime(binding.Expression, nsBindings, xpathDefaultNs);
-                    else if (clause is PhoenixmlDb.XQuery.Ast.WhereClause whereClause)
-                        ResolveExpressionNamespacesRuntime(whereClause.Condition, nsBindings, xpathDefaultNs);
-                    else if (clause is PhoenixmlDb.XQuery.Ast.OrderByClause orderBy)
-                        foreach (var spec in orderBy.OrderSpecs)
-                            ResolveExpressionNamespacesRuntime(spec.Expression, nsBindings, xpathDefaultNs);
+                    if (xpathDefaultNs != null)
+                        nt.NamespaceUri = xpathDefaultNs;
                 }
-                ResolveExpressionNamespacesRuntime(flwor.ReturnExpression, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.SequenceExpression seq:
-                foreach (var item in seq.Items)
-                    ResolveExpressionNamespacesRuntime(item, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.InstanceOfExpression inst:
-                ResolveExpressionNamespacesRuntime(inst.Expression, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.CastExpression cast:
-                ResolveExpressionNamespacesRuntime(cast.Expression, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.SimpleMapExpression sme:
-                ResolveExpressionNamespacesRuntime(sme.Left, nsBindings, xpathDefaultNs);
-                ResolveExpressionNamespacesRuntime(sme.Right, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.StringConcatExpression sce:
-                foreach (var operand in sce.Operands)
-                    ResolveExpressionNamespacesRuntime(operand, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.RangeExpression re:
-                ResolveExpressionNamespacesRuntime(re.Start, nsBindings, xpathDefaultNs);
-                ResolveExpressionNamespacesRuntime(re.End, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.ArrowExpression ae:
-                ResolveExpressionNamespacesRuntime(ae.Expression, nsBindings, xpathDefaultNs);
-                ResolveExpressionNamespacesRuntime(ae.FunctionCall, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.InlineFunctionExpression ife:
-                if (ife.Body != null)
-                    ResolveExpressionNamespacesRuntime(ife.Body, nsBindings, xpathDefaultNs);
-                break;
-            case PhoenixmlDb.XQuery.Ast.DynamicFunctionCallExpression dfc:
-                ResolveExpressionNamespacesRuntime(dfc.FunctionExpression, nsBindings, xpathDefaultNs);
-                foreach (var arg in dfc.Arguments)
-                    ResolveExpressionNamespacesRuntime(arg, nsBindings, xpathDefaultNs);
-                break;
+            }
+            return base.VisitStepExpression(se);
         }
     }
 

@@ -780,13 +780,39 @@ internal sealed partial class DefaultXsltExecutionContext
                 continue;
             execContext.BindVariable(name, ConvertRtfForXQuery(value));
         }
-        // Reverse iteration: bind outer scopes before inner scopes
-        foreach (var scope in _scopes.Reverse())
+        // Bind the local scopes that are lexically visible, outermost first so inner values override.
+        // Visibility ends at the nearest variable barrier — the scope a template or stylesheet-function
+        // invocation pushed; the scopes below it belong to the invoker. Binding every scope on the stack
+        // let a condition such as test="number(.) <= $limit" see an ancestor Schematron rule's local
+        // while a bare $limit (the GetVariable fast path) correctly saw the global. Engine
+        // pseudo-variables (current-group and friends) are dynamically scoped and are still bound from
+        // below the barrier, before the visible scopes so a visible binding wins.
+        var scopes = _scopes.ToArray(); // innermost first
+        var visible = scopes.Length;
+        for (var i = 0; i < scopes.Length; i++)
         {
-            foreach (var (name, value) in scope.Variables)
+            if (scopes[i].IsVariableBarrier)
             {
-                execContext.BindVariable(name, ConvertRtfForXQuery(value));
+                visible = i + 1;
+                break;
             }
+        }
+        for (var i = scopes.Length - 1; i >= visible; i--)
+        {
+            if (scopes[i].VariablesOrNull is not { } hidden)
+                continue;
+            foreach (var (name, value) in hidden)
+            {
+                if (IsDynamicPseudoVariable(name))
+                    execContext.BindVariable(name, ConvertRtfForXQuery(value));
+            }
+        }
+        for (var i = visible - 1; i >= 0; i--)
+        {
+            if (scopes[i].VariablesOrNull is not { } vars)
+                continue;
+            foreach (var (name, value) in vars)
+                execContext.BindVariable(name, ConvertRtfForXQuery(value));
         }
 
         // Bind stream watcher results as synthetic variables for map constructor entries etc.
@@ -1813,6 +1839,34 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>
     /// Evaluates a with-param value, handling both select and content body.
     /// </summary>
+    /// <summary>
+    /// Evaluates with-params once, in the scope of the instruction that supplies them, and returns equivalents
+    /// that carry the values. apply-templates hands its with-params on — to the built-in template rules (which
+    /// pass them unchanged to every level they apply templates to) and to the streamed dispatch — and those used
+    /// to evaluate the select/content again from inside their own scopes. With lexical variable scope a
+    /// variable of the calling template or function is not visible there (W3C insn/merge merge-096/097/097s:
+    /// XPST0008 for a function parameter forwarded through on-no-match="shallow-copy").
+    /// </summary>
+    private async ValueTask<List<XsltWithParam>> EvaluateWithParamsInCallerScopeAsync(List<XsltWithParam> withParams)
+    {
+        if (withParams.Count == 0 || withParams.TrueForAll(static p => p.HasRuntimeValue))
+            return withParams;
+        var evaluated = new List<XsltWithParam>(withParams.Count);
+        foreach (var p in withParams)
+        {
+            evaluated.Add(p.HasRuntimeValue ? p : new XsltWithParam
+            {
+                Name = p.Name,
+                As = p.As,
+                Tunnel = p.Tunnel,
+                FromRuntimeOptions = p.FromRuntimeOptions,
+                RuntimeValue = await EvaluateWithParamAsync(p).ConfigureAwait(false),
+                HasRuntimeValue = true,
+            });
+        }
+        return evaluated;
+    }
+
     private async ValueTask<object?> EvaluateWithParamAsync(XsltWithParam param)
     {
         // A value handed in directly needs no evaluation, and must not be converted on the way
@@ -2083,7 +2137,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         _recursionDepth++;
         if (_recursionDepth > MaxRecursionDepth)
-            throw Error($"Maximum recursion depth ({MaxRecursionDepth}) exceeded in function '{func.Name.LocalName}'");
+            throw Error($"XTDE0000: Maximum recursion depth ({MaxRecursionDepth}) exceeded in function '{func.Name.LocalName}'");
         // Probe the physical stack: recursive stylesheet functions overflow the native
         // stack (uncatchable SIGABRT) well before _recursionDepth hits the limit above,
         // because each call burns ~15 async frames. CheckResourceLimits converts that
@@ -2118,6 +2172,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // Mark this scope as a tunnel barrier — per XSLT spec, tunnel parameters
         // are not propagated through stylesheet function calls
         _scopes.Peek().IsTunnelBarrier = true;
+        // Lexical scope: a stylesheet function body sees its parameters and globals, never the caller's locals.
+        _scopes.Peek().IsVariableBarrier = true;
         // Per XSLT spec, context item is absent inside stylesheet functions (XPDY0002)
         PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
         // current() must also return absent focus in functions (XTDE1360)

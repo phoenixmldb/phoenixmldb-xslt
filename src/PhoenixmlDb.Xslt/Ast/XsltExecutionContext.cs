@@ -53,6 +53,13 @@ public abstract class XsltExecutionContext
     public abstract ValueTask ApplyTemplatesAsync(XQueryExpression? select, QName? mode,
         List<XsltSort> sorts, List<XsltWithParam> withParams);
     public abstract ValueTask CallTemplateAsync(QName name, List<XsltWithParam> withParams);
+
+    /// <summary>
+    /// Offers an <c>xsl:call-template</c> in tail position to the enclosing call-template frame. Returns
+    /// true when the frame accepted it: the call then runs as the frame's next iteration instead of as a
+    /// nested call, so tail recursion uses no stack. The default declines, which means a normal call.
+    /// </summary>
+    public virtual ValueTask<bool> TryScheduleTailCallAsync(QName name, List<XsltWithParam> withParams) => ValueTask.FromResult(false);
     public abstract ValueTask ApplyImportsAsync(List<XsltWithParam> withParams);
     public abstract ValueTask NextMatchAsync(List<XsltWithParam> withParams, XsltSequenceConstructor? fallback);
     public abstract ValueTask ForEachAsync(XQueryExpression select, List<XsltSort> sorts, XsltSequenceConstructor body);

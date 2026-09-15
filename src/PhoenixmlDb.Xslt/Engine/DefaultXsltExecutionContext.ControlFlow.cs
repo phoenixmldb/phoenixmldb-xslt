@@ -351,6 +351,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 return true;
             }
+            // Lexical scope: an invoked template or function does not see its invoker's locals.
+            if (scope.IsVariableBarrier && !IsDynamicPseudoVariable(name))
+                break;
         }
 
         if (GlobalVariables.TryGetValue(name, out value))
