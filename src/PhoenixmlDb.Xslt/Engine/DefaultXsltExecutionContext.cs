@@ -5134,8 +5134,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
 
     /// <summary>
-    /// Enforces xsl:context-item constraints on a template invocation.
-    /// Returns true if the context item should be made absent (use="optional" with type mismatch).
+    /// Enforces xsl:context-item constraints on a template invocation: XTTE3090 when a required context item
+    /// is absent, XTTE0590 when a present one does not match @as.
+    /// Returns true if the context item should be made absent; no constraint currently requires that
+    /// (use="absent" is handled at the call site).
     /// </summary>
     private bool EnforceContextItemConstraint(XsltTemplate template)
     {
@@ -5168,16 +5170,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     typeMatches = false;
             }
 
+            // A context item that does not match @as is always a type error. use="optional" permits an ABSENT
+            // context item; it does not turn a present one of the wrong type into an absent one. The template
+            // used to run with an absent focus instead, so its first use of "." raised XPDY0002 (W3C
+            // context-item-002, -004, -005, -013 expect XTTE0590).
             if (!typeMatches)
-            {
-                if (template.ContextItemUse == ContextItemUse.Optional)
-                {
-                    // XSLT 3.0 §9.6.2: If use="optional" and the context item doesn't match the type,
-                    // the template executes as if the context item were absent.
-                    return true;
-                }
                 throw Error("XTTE0590: The context item does not match the required type declared by xsl:context-item");
-            }
         }
         return false;
     }
