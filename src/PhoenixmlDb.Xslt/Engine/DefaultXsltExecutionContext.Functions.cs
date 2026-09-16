@@ -980,6 +980,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     var savedForAttr = _output.ToString();
                     _output.Clear();
 
+                    // The swapped-out state below is restored in the finally: expanding an attribute set can throw
+                    // (XTDE0640 for a circular reference, XTDE3052 for an abstract set with no implementation), and an
+                    // early exit used to leave _scopes holding only the fresh scope. Unwinding then reached the
+                    // caller's own PopScope, which popped that and left the stack empty, so the next pop raised
+                    // InvalidOperationException("Stack empty") and replaced the error the test expected
+                    // (W3C attribute-set-0106a, override-as-003, accept-047b, accept-047c).
+                    try
+                    {
                     if (attrSet.Parts is { Count: > 0 })
                     {
                         // Multiple definitions: evaluate each part's use-attribute-sets
@@ -1026,18 +1034,23 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
 
                     target.Append(_output);
-                    _output.Clear();
-                    _output.Append(savedForAttr);
+                    }
+                    finally
+                    {
+                        _output.Clear();
+                        _output.Append(savedForAttr);
 
-                    // Restore scope stack
-                    _scopes.Clear();
-                    foreach (var scope in savedScopes.Reverse())
-                        _scopes.Push(scope);
+                        // Restore scope stack
+                        _scopes.Clear();
+                        foreach (var scope in savedScopes.Reverse())
+                            _scopes.Push(scope);
 
-                    // Restore attribute collection stack and document node depth
-                    _documentNodeDepth = savedDocDepth;
-                    foreach (var sb in savedStack.Reverse())
-                        _collectedAttributesStack.Push(sb);
+                        // Restore attribute collection stack and document node depth
+                        _documentNodeDepth = savedDocDepth;
+                        _collectedAttributesStack.Clear();
+                        foreach (var sb in savedStack.Reverse())
+                            _collectedAttributesStack.Push(sb);
+                    }
                 }
             }
             finally
