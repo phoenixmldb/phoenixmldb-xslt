@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-15 21:25 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-16 11:43 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,9 +17,9 @@ Generated 2026-09-15 21:25 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 6 | 0 |
-| phoenixmldb-xslt | 10 | 0 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-xquery | 8 | 1 |
+| phoenixmldb-xslt | 9 | 2 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -31,6 +31,8 @@ Generated 2026-09-15 21:25 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
+- [71] phx:score returns 0 for every node, including one contains text has just matched
+- [70] phx:is-stop-word is false for every stop word and true for any letterless input
 - [49] QT3 runner's assert-type passes any type it doesn't list — 17 engine type defects hidden, 11 correct results failed
 - [40] XsdSchemaProvider.Validate validates an element's string value, not its markup
 - [30] contains text: phrase matching ignores term positions, so a phrase matches across a stop-word gap
@@ -40,22 +42,34 @@ Generated 2026-09-15 21:25 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [124] xsl:map-entry stores the node as the key instead of atomizing it, so node-keyed lookups always miss
+- [122] Shadow attributes used a hand-rolled string matcher where use-when has a real AST evaluator (superseded)
+- [117] A streamed xsl:map produces nothing: the subscription scanner never descends into its body
 - [100] xslt30 runner passes every assert-message unchecked — 9 cases fail when messages are captured
 - [96] Xslt 1.8.0 regresses three streaming conformance sets that passed on 1.6.10 (attr/streamable below floor, stream-211, sx-gc-eq-801)
 - [95] Any predicate in a match pattern is quadratic — not just chained ones (#10 is a special case)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
-- [12] A node passed to SetParameter is not usable as a node in the stylesheet
-- [11] xsl:for-each over a range crashes with InvalidCastException when an operand is a cast xs:integer
 - [10] Chained predicates in a match pattern make the whole transform quadratic (169x)
-- [9] XTDE1260 not raised for an unknown key name (key-080, error-1260e/f) — since 1.6.10, unfixed at 1.6.15
-- [8] position-2201: last() on a virtual copy loses content, holding fn/position one below floor
 - [7] 16 xslt30-test cases regress between 1.6.10 and 1.6.15 (try, analyze-string, match, base-uri)
 
 ### Open PRs
 
+**phoenixmldb-xquery**
+
+- [67] Pay per-call-site and per-context setup once instead of per evaluation
+
+**phoenixmldb-xslt**
+
+- [123] Align the conformance harness with the W3C catalog, and fix what that exposed
+- [116] Cut per-evaluation setup in XPath evaluation and call-template
+
+**phoenixmldb-cli**
+
+- [5] build: Bump the phoenixmldb-engines group with 2 updates
+
 ## Defect register
 
-`BUGS.md`: **103** entries, **22** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **104** entries, **22** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -85,7 +99,7 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10315/10672 (96.65%)** across 222 test-sets,
+- **W3C XSLT 3.0 — 10326/10672 (96.76%)** across 222 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 29532/31379 (94.11%)** across 428 test-sets,
