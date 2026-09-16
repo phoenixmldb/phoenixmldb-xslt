@@ -6356,3 +6356,47 @@ volunteered by parsers2, against their own result.)
 A fifth instance, same day, smaller: this register attributed si-map-006 to #117 on the strength of
 a description of the case rather than the case — see the correction in #104. A citation that reads
 as a diagnosis is the same object as a comment that reads as a check.
+---
+
+### 107. A check that cannot fail is worse than no check (2026-09-16)
+
+#106 is about a *claim* standing where a check belongs. This is the closer cousin: a check that
+**runs**, reports success, and could never have reported anything else. The two are the same
+object seen from either side, and #97 — a check that validates what the method already guarantees
+— is the special case where the tautology is in the assertion rather than the plumbing.
+
+**Why it is worse than no check.** An absent check is visibly absent; someone eventually asks
+whether the thing was verified. A check that always passes is *indistinguishable from a passing
+one*, and it actively consumes the attention that would have gone to verifying. It converts "not
+yet checked" into "checked" without touching the underlying question.
+
+Seven of these were found in a single day by one session, all while chasing two real defects
+(parsers2, on the SchXslt2 and DocBook reports):
+
+- output redirected to `/dev/null`, so the comparison compared nothing
+- `find -xdev` that never crossed the mount the files were actually on
+- a grep written for double-quoted attributes, against single-quoted source
+- an instrumentation insert that landed outside the scope it was meant to observe
+- **two builds that failed while `--no-build` ran the stale binaries** — a green test run of code
+  that was never compiled
+- a diagnostic printing `LocalName` for two globals that differ only by prefix, so it printed the
+  same name twice and looked like a duplicate
+- a timeout gate whose own `bc: command not found` became its passing value (see #106)
+
+And two from this session in the same window: a `SlowTests` justification measured for two cases
+and asserted over six, and an unwrap guard testing `is List<object?>` where the sequence type is
+`object?[]` — so `key="(1,2)"` sailed past a guard written precisely to catch it, and the patch
+would have shipped with a guard that never fires.
+
+**The pattern in the failures themselves:** every one is a plumbing defect, not a logic defect.
+Nobody wrote a wrong assertion. The assertion never received the data — wrong file, wrong quoting,
+wrong scope, wrong binary, wrong stream. Reviewing the *assertion* finds none of these.
+
+**What works, and it is cheap:** make the check fail once on purpose. Break the thing it is
+supposed to catch and confirm it goes red. That is the counterfactual from #106 applied to the
+instrument rather than the claim, and it is the only technique on this list that catches all nine
+instances above. A check never observed failing has not been tested; it has been run.
+
+Corollary for anything printing a count: **state the count even when it is zero**, and assert the
+input was non-empty before trusting it. `timeouts: 0` from an empty glob and `timeouts: 0` from a
+clean run are the same three characters.
