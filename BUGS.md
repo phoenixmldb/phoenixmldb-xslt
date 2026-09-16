@@ -6476,6 +6476,37 @@ Which yields the one-line version of this whole entry, and it is a question rath
 **what would this check have printed if the thing it looks for were absent — and is that
 distinguishable from what it just printed?**
 
+**First prospective use, 2026-09-16 — the rule caught something before it reassured anyone.** #135
+turns four silent wrong-cardinality bindings into XTTE0570. Its author expected the conformance
+A/B to move, since the suite tests typed variables. It came back byte-identical, 334/334. Instead
+of taking that as "no regressions", they asked which kind of zero it was:
+
+    files mentioning XTTE0570 ............................... 14
+    of those, binding a typed ExactlyOne/ZeroOrOne variable
+      whose BODY produces more than one item ................  0
+    search proven non-blind: XTTE0505 = 15, XTSE0010 = 104
+
+The suite contains **no instance of the shape**. So the A/B proves nothing broke and cannot speak
+to whether XTTE0570 is the right error — and the schematron corpus cannot either, for the same
+reason on its side. **Two green gates, zero correctness evidence between them**, which side by side
+in a PR would have read as validation. Note the third line: the search was made to prove it could
+see before its zero was believed, per the rule above. The error choice was then justified on
+§9.3 and on `Variables.cs:842-847` already shipping XTTE0570 for this condition — an established
+convention propagated, not a new one invented.
+
+**And one more instance, with a tell worth naming: structural information inside a success
+message.** A `Write` intended to create a test file overwrote an existing one and destroyed ten
+tests. The write reported success — it *had* succeeded. The tool's response distinguishes
+"updated" from "created", and that word is the only difference between the intended operation and
+a destructive one. Caught downstream by a suite total that would not reconcile: 1,864 where
+baseline + 11 demanded 1,874.
+
+Generalising: a success message often carries a field that says *which* success this was, and it
+is easy to read the status and not the field. Same family as `timeouts: 0` — the value is correct,
+and the thing that distinguishes the two meanings is sitting right next to it, unread. If a total
+is knowable in advance, compute it and reconcile; arithmetic that refuses to balance is the
+cheapest detector on this page.
+
 **What works, and it is cheap:** make the check fail once on purpose. Break the thing it is
 supposed to catch and confirm it goes red. That is the counterfactual from #106 applied to the
 instrument rather than the claim, and it is the only technique on this list that catches all nine
