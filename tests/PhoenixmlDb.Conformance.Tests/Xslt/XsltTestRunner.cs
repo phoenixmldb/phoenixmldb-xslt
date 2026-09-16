@@ -965,7 +965,27 @@ public sealed class XsltTestRunner
         "docbook-002",
         "docbook-003",
         // Large ot.xml (3.5MB, 23K verse elements) streaming test
-        "streamable-003"
+        "streamable-003",
+        // Computationally expensive and machine-speed-dependent: these completed inside the 10s
+        // cap on one machine and timed out on another, with no code change between the two runs.
+        // A timeout recorded as an ordinary FAILED makes a baseline that flips on a slower runner,
+        // and CI is usually the slower runner. call-template-1003 has already been misread once
+        // that way — BUGS #103 noted a committed log showing it failing while the run at hand
+        // passed, and attributed it to the suite rather than the clock.
+        "function-0701",
+        "sf-fold-left-021",
+        "bug-6301",
+        "evaluate-047",
+        "next-match-030",
+        // call-template-1003 is here for a DIFFERENT reason and is not fixed by being here.
+        // It has returned three verdicts on identical code — timeout, pass, and
+        // "XTDE0000: exhausted the execution stack before reaching the recursion-depth limit
+        // (1200)" — the last of those on a run with the extended timeout and no timeouts
+        // anywhere. Its verdict depends on available stack, not elapsed time. The longer
+        // timeout stops it consuming a slot for 10s before failing; it does not make it
+        // deterministic. See BUGS.md #105 — do not read a green result here as the case
+        // working.
+        "call-template-1003"
     ];
 
     /// <summary>

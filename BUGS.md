@@ -1494,6 +1494,117 @@ affected, and nothing currently says which those are.
 
 Reported by the parsers2 session.
 
+**Update 2026-09-15 — blast radius measured, and a second failure mode.** #47 predicted this
+"will not be confined to `package-version`" and that "nothing currently says which those are".
+It is now enumerated for one set: **every one of the 166 cases in `tests/fn/system-property-gen`
+fails from this single cause**, which is why that catalog set scores 0/166 the moment it is added
+to the harness. One cause, 166 manifestations — not 166 defects.
+
+**But fixing #47 will not clear them, and this entry should not be read as though it would.**
+Checked against the corpus rather than inferred: `system-property-100-data.xsl` declares its static
+variables as `replace(?, '''', '''''')` (argument placeholder), several `function($x) { ... }`
+inline function items including nested ones, `$ns-scope = 'switch-xsl-namespace'` (depending on
+another static variable), and sequence literals; `system-property-100-dc-normal.xsl` then chains
+`_select="{$v:static-call}"` through six further shadow-defined variables. Evaluating those at
+compile time needs inline function items, partial application, simple map and inter-variable
+chaining — i.e. the "real static XPath evaluation, which is not done" that this entry already names
+as the underlying need. That is feature-sized. The 166 are a standing measurement of an absent
+feature, not a cluster waiting on a fix. (Established by parsers2, who took the cluster and then
+retracted it after reading what the cases actually depend on.)
+
+**Update 2026-09-16 — four defects fixed; the set still does not pass, for a different reason.**
+The root shape turned out to be an asymmetric pair (#40), not merely a weak evaluator. The engine
+has **two** compile-time XPath evaluators:
+
+| path | evaluator | operates on |
+|---|---|---|
+| `use-when` | `EvaluateStaticExpression` | the parsed AST — binaries, sequences, ranges, `if`, quantified, `instance of` |
+| shadow attributes | `EvaluateShadowExpression` | raw strings — `\|\|`, `$var`, literals, `QName()` |
+
+Same job — evaluate XPath at compile time with no context item — and only one got the real one.
+Shadow attributes now go through the `use-when` pipeline
+(`ParseXPathWithContext` → `ResolveExpressionNamespaces` → `EvaluateStaticExpression`), with the
+string matcher kept only as a fallback. Four defects fell out, each with a regression test in
+`ShadowAttributeStaticValueTests` (5 of its 7 tests fail on unfixed source):
+
+1. **`CollectStaticDeclarations` stored a static variable's raw select TEXT as its value.** That
+   text is what got pasted into shadow attributes. Now evaluated.
+2. **The "is it a literal?" test was `StartsWith('\'') && EndsWith('\'')`** — also true of
+   `'a' || 'b'`, which it therefore stripped to `a' || 'b`. Only something that parses the
+   expression can tell those apart, so the real evaluator now runs first.
+3. **`||` parses to `StringConcatExpression`, a separate AST node** from
+   `BinaryExpression{Operator=Concat}`. `EvaluateStaticExpression`'s switch had only the latter, so
+   every static concatenation fell to `default:` and was reported unevaluable. Two representations
+   of one operator, one consumer handling one of them — the #53 shape again.
+4. **`ResolveShadowValue`'s `{$name}` arm appended nothing and reported success** for an unknown
+   variable. Now marks the result incomplete.
+
+**What this does NOT do is make `fn/system-property-gen` pass, and the reason is worth recording.**
+Those 166 rest on `doc('…')/data:test`, predicated paths, `!`, inline function items and dynamic
+invocation of them — evaluated at compile time. The engine owns exactly one thing that could do
+that, `EvaluateAsync` on the execution context, and it is async and needs a source document, while
+shadow resolution is a **sync pre-pass over the XML tree before anything is compiled**. Closing
+that gap is a feature, not a fix.
+
+What did change for that set: all 166 failed with `XPST0003: mismatched input '<EOF>'` — the XPath
+parser describing the empty string the shadow resolver had handed it, naming neither the attribute
+nor the expression. An unevaluable shadow attribute on `select`/`test`/`match`/`group-by`/
+`group-adjacent` now raises at resolution time naming both, and says plainly that it is a processor
+limitation rather than an error in the stylesheet. 166 identical unreadable errors became 166
+errors that state what is missing. **Improve the error first** — the rule that keeps earning out.
+
+**The guard closes empty-and-unevaluated, not the whole class.** `!complete && IsNullOrWhiteSpace(value)`
+does not catch a *partially* evaluated AVT: `_select="{$a}{$b}"` with `$a` evaluable and `$b` not
+produces a NON-empty value, skips the throw, and compiles against a partially-substituted string.
+That is the annotation path behaving as #16 designed it, so it is correct rather than broken — but
+"fails open" still describes that subset, and it is the shape most likely to surface later as a
+confusing downstream error, because the value looks plausible and is wrong. Stated precisely:
+empty-and-unevaluated now raises at resolution time naming the attribute and sub-expression;
+partially-evaluated values remain annotated and compile, as before. (Named by parsers2 while
+reviewing the guard's scope.)
+
+A scoping concern on `group-by`/`group-adjacent` was raised and withdrawn: `!complete` is the
+load-bearing half of the guard, so a grouping key that legitimately evaluates to empty resolves
+with `complete == true` and never reaches the throw. An empty `group-by=""` is not a valid XPath
+expression in any case.
+
+Unit gate after all four: 1,853 passed, 0 failed, 1 skipped.
+
+The subset evaluator has a **second** failure mode beyond the silent drop. Minimal repro on the
+published `xslt` 2.0.0 tool:
+
+```xml
+<xsl:param    name="prefix" static="yes" select="''"/>
+<xsl:variable name="fname"  static="yes" select="$prefix || 'string-length'" as="xs:string"/>
+<xsl:template name="main">
+  <xsl:variable name="f" _select="{$fname}#1"/>
+  <out><xsl:value-of select="$f('hello')"/></out>
+</xsl:template>
+```
+
+```
+XPath parse error: XPST0003: mismatched input '#' expecting <EOF>
+  ↳ parsing in variable/@select ... : $prefix || 'string-length'#1
+```
+
+It substituted the static variable's **unevaluated select text** where its **value** belonged, so
+the shadow attribute became `$prefix || 'string-length'#1` instead of `string-length#1`. Not a
+drop — a paste of source text that then fails to parse. In `system-property-gen` the same paste
+yields an empty expression, hence 166 identical `XPST0003: mismatched input '<EOF>'`.
+
+The boundary is exact, and explains why this hid:
+
+| static variable's `select` | read as | result |
+|---|---|---|
+| `'string-length'` (literal) | shadow attribute | passes — `<out>5</out>` |
+| `concat($prefix,'string-length')` | AVT value | passes — `sees="string-length"` |
+| `concat($prefix,'string-length')` | shadow attribute | **fails** — pastes source text |
+
+The variable itself evaluates correctly everywhere *except* a shadow attribute; inside one, the
+substitution is textual. A literal `select` is textually identical to its own value, so the common
+case is indistinguishable from correct. That is the same "wrong answer rather than a refusal"
+structure #47 already names — confirmed here with the case that separates the two.
+
 ---
 
 ### 48. Every `xs:integer` from text was a BigInteger — one ternary, four defects (2026-09-11)
@@ -6009,3 +6120,92 @@ All against `c0fc41a`, same machine, Release conformance.
 - **phx-schematron harness micro-suite:** 58/58; before, 55/58.
 - **Harness corpus (950 NEMSIS national/state cases) with the lexical-scope, namespace and exclusion fixes:**
   950/950 Tier-A-clean, 0 compiled-validator differences (was 945/950 and 83 schemas differing).
+
+---
+
+### 104. A skip justified by a fact nobody checked — seven si-map cases (2026-09-15)
+
+**Symptom.** `tests/strm/si-map` reported 5/5 for months. It has twelve cases.
+
+**What was hidden.** `XsltConformanceTests.cs` carried `config.SkipTests.Add("si-map-001")` through
+`-006` plus `-008`. `SkipTests` matches by **case name**, and the broken non-catalog copy
+`strm/sf-map-new` declares the *same* twelve case names, so the seven skips suppressed both sets at once.
+Five cases ran in each; a perfect 5/5 on the good catalog was the visible result.
+
+**Cause.** The skip comment — mine — read: *"tests/strm/si-map's test-set references si-map-\*.xsl files the
+suite ships under sf-map-new/ as sf-map-new-\*.xsl, so they fail on a missing file rather than on engine
+behaviour."* Every clause of that is false for si-map. It references **no** per-case stylesheet:
+
+```xml
+<test-case name="si-map-001">
+  <environment ref="si-map-A"/>            <!-- si-map-A.xsl — present in tests/strm/si-map/ -->
+  <test><initial-template name="m-001"/></test>
+```
+
+Cases 001–009 are nine named templates (`m-001`..`m-009`) inside one shared stylesheet that exists.
+The missing-file failures belong entirely to sf-map-new's copies. The comment generalised sf-map-new's
+breakage onto a working catalog set and closed with *"si-map IS a catalog set, so these stay skipped"* —
+a reason to keep hiding it, built on a premise never verified against the corpus.
+
+**Shape.** Hollow pass (#69/#71/#72/#75/#78), with the aggravating factor from #89: the suppression was
+load-bearing prose. A skip with no comment invites checking; a skip with a confident, specific,
+wrong comment stops anyone looking. Corroborated independently by parsers2, whose run showed only
+si-map-007 and -009 ever appearing in the logs.
+
+**Fix:** seven skips removed. `sf-map-new` dropped from the harness (not a catalog set); `si-map` retained.
+Two cases surface as failures and are pre-existing engine gaps, not regressions from this change —
+si-map-006 is #117 (streamed `xsl:map` produces nothing; the subscription scanner never descends into its
+body) and si-map-005 is the map deemed-empty exemption from #118.
+
+**Rule this earns.** A skip must cite evidence that can be re-run, not a description of the corpus.
+`ls` the directory the comment claims is broken before believing it — including when you wrote it.
+
+---
+
+### 105. OPEN — call-template-1003 gives three different verdicts on identical code (2026-09-16)
+
+**Symptom.** `insn/call-template-1003` ("test tail recursion within a singleton `xsl:for-each`")
+has produced **three** outcomes from the same commit, on two machines:
+
+| where | outcome |
+|---|---|
+| this machine, sweep v2 | `Test 'call-template-1003' timed out after 10s` |
+| this machine, sweep v3 (180s allowed) | **passed** |
+| this machine, verification sweep (180s allowed, zero timeouts) | `XTDE0000: exhausted the execution stack` |
+| parsers2's machine, six saved runs | `XTDE0000`-class failure, never a timeout |
+
+The verification run is the one that settles it, because it had the extended timeout AND recorded
+no timeout anywhere: the case ran to completion and failed.
+
+```
+XTDE0000: The transformation exhausted the execution stack before reaching the
+recursion-depth limit (1200). It may contain unbounded recursion
+```
+
+**So it is not the clock.** The engine ran out of *stack*, and how much stack is available varies
+run to run — thread, runtime state, what ran before it in the same host. A case whose verdict
+depends on that is nondeterministic, and it will be whatever the machine felt like that morning.
+
+**This corrects two earlier readings, one of them today's.** BUGS #103 saw a committed `insn.log`
+with 1002/1003 failing while the run at hand passed, and reached for recursion depth — and was
+closer to right than it was given credit for. I then found the 10s timeout, established it as the
+cause of two *other* sets' drift, and extended it to this case as well. The timeout finding is
+real and stands for `function-0701` and `sf-fold-left-021`, which pass at 180s every time. It is
+the wrong explanation here, and the neatness of one mechanism covering all six cases is exactly
+what made it attractive.
+
+**Why it matters beyond one case.** The message says the stack was exhausted *before* reaching
+the recursion-depth limit of 1200 — so the guard designed to produce a clean diagnostic never
+fires, and the real limit is whatever the host stack happens to allow. `TailCallTemplateTests`
+covers ~70,000-deep tail calls and passes, so tail-call elimination works somewhere; it is not
+reliably applying on this path. That is the thing to investigate — not the timeout, and not the
+1200 limit.
+
+**Consequence for the gate.** `insn/call-template` stays at its floor of 37. Lucas set it,
+#119 deliberately held it, and it now has a better justification than "the set drifts": the set
+contains a case that returns different verdicts for the same code. Do not raise it while that is
+true — a baseline of 39 or 40 is a coin toss, and the floor is what stopped this being noticed
+the first two times.
+
+Found by the parsers2 session refusing to accept the timeout explanation for this case after it
+had been accepted for the other five, and asking for the failure text.

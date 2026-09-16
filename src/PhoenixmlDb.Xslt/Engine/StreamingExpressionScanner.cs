@@ -235,7 +235,17 @@ internal sealed class StreamingExpressionScanner
             // the gate. Skip descending here entirely — the for-each (and any
             // consuming aggregates inside) fall back to the buffered execution
             // path that honours the wrapper's semantics.
-            case XsltWherePopulated:
+            // xsl:where-populated always evaluates its content — only the emptiness of the RESULT
+            // decides whether it is kept — so a streamable for-each inside it must still register.
+            // The scan used to stop here, so nothing drove that for-each during the streaming pass
+            // and a map built inside came out empty (#117; W3C si-coco-014, si-map-006).
+            case XsltWherePopulated wherePopulated:
+                ScanInstructions(wherePopulated.Content);
+                break;
+
+            // xsl:on-empty and xsl:on-non-empty stay opaque on purpose: their content may not be
+            // evaluated at all, so subscribing a for-each inside one could dispatch against the
+            // stream for content that is then discarded. No W3C case asks for it.
             case XsltOnEmpty:
             case XsltOnNonEmpty:
                 break;
@@ -274,6 +284,27 @@ internal sealed class StreamingExpressionScanner
                     ScanExpression(tryInsn.SelectExpression);
                 if (tryInsn.Body != null)
                     ScanInstructions(tryInsn.Body);
+                break;
+
+            // xsl:map and xsl:map-entry hold their children in a Content property and are not
+            // themselves sequence constructors, so the default arm below never descended into them.
+            // A streamable for-each inside a map was therefore never registered as a subscription,
+            // nothing drove it during the streaming pass, and its select ran against the synthetic
+            // empty document: the map came out empty and stayed empty (#117, W3C si-coco-014).
+            // xsl:map-entry needs its own arm rather than relying on the map's: si-map-006 has no
+            // for-each at all, just entries whose key/select consume the stream.
+            case XsltMap map:
+                if (map.Content != null)
+                    ScanInstructions(map.Content);
+                break;
+
+            case XsltMapEntry mapEntry:
+                if (mapEntry.Key != null)
+                    ScanExpression(mapEntry.Key);
+                if (mapEntry.Select != null)
+                    ScanExpression(mapEntry.Select);
+                if (mapEntry.Content != null)
+                    ScanInstructions(mapEntry.Content);
                 break;
 
             // Skip xsl:apply-templates and xsl:iterate — handled by existing streaming

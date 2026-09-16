@@ -616,10 +616,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         XdmComment comment => string.IsNullOrEmpty(comment.Value),
         XdmProcessingInstruction pi => string.IsNullOrEmpty(pi.Value),
         XdmNode => false,
-        // An empty map is deemed empty under §8.4, but a map built by a streamed xsl:map is still empty when this
-        // filter runs and is populated afterwards (#117), so applying the rule discards a map that turns out to have
-        // entries (W3C si-coco-014). Restoring it — and with it W3C coco-013 and si-coco-013 — waits on that fix.
-        IDictionary<object, object?> => false,
+        // An empty map is deemed empty (§8.4). This was exempted while a streamed xsl:map produced nothing at all —
+        // its body was invisible to the subscription scanner, so the rule discarded a map that should have had
+        // entries (W3C si-coco-014). With the scanner descending into xsl:map, xsl:map-entry and
+        // xsl:where-populated, a streamed map populates and the rule applies again (W3C coco-013, si-coco-013).
+        IDictionary<object, object?> map => map.Count == 0,
         List<object?> array => array.TrueForAll(static member => member is object?[] items
             ? Array.TrueForAll(items, IsDeemedEmpty)
             : IsDeemedEmpty(member)),
