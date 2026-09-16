@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-16 11:43 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-16 21:22 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-09-16 11:43 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 1 |
-| phoenixmldb-xslt | 9 | 2 |
+| phoenixmldb-xslt | 10 | 3 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -42,7 +42,8 @@ Generated 2026-09-16 11:43 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [124] xsl:map-entry stores the node as the key instead of atomizing it, so node-keyed lookups always miss
+- [142] xsl:use-package whitespace declarations get an approximate import precedence (nested composition unmodelled)
+- [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
 - [122] Shadow attributes used a hand-rolled string matcher where use-when has a real AST evaluator (superseded)
 - [117] A streamed xsl:map produces nothing: the subscription scanner never descends into its body
 - [100] xslt30 runner passes every assert-message unchecked — 9 cases fail when messages are captured
@@ -60,7 +61,8 @@ Generated 2026-09-16 11:43 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [123] Align the conformance harness with the W3C catalog, and fix what that exposed
+- [138] BUGS #107: three follow-ups, including a defect in today's timeout fix
+- [128] Let the streaming scanner descend into xsl:map, xsl:map-entry and xsl:where-populated, and retire the map exemption
 - [116] Cut per-evaluation setup in XPath evaluation and call-template
 
 **phoenixmldb-cli**
@@ -69,7 +71,7 @@ Generated 2026-09-16 11:43 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Defect register
 
-`BUGS.md`: **104** entries, **22** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **108** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -94,12 +96,13 @@ the engines are split but the defects are not.
 - 91. OPEN — built-in-rule descent to a matching template emits the element empty and leaks its text (2026-09-13)
 - 92. OPEN — `has-children()` always answers false under streaming, and the cheap fix is wrong (2026-09-13)
 - 93. OPEN — the buffered subtree has no ancestors, and the missing parent is load-bearing (2026-09-13)
+- 105. OPEN — call-template-1003 gives three different verdicts on identical code (2026-09-16)
 
 ## Conformance
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10326/10672 (96.76%)** across 222 test-sets,
+- **W3C XSLT 3.0 — 10336/10839 (95.36%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 29532/31379 (94.11%)** across 428 test-sets,
