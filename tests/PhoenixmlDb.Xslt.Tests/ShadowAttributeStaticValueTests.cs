@@ -42,6 +42,30 @@ public sealed class ShadowAttributeStaticValueTests : IDisposable
     }
 
     /// <summary>
+    /// The OUTCOME of a compile-and-run: <c>"ok:"</c> plus the output when it worked, or the
+    /// exception message when it did not.
+    /// </summary>
+    /// <remarks>
+    /// Two reasons this is not just RunAsync. A test asserting "the outcome does not contain the
+    /// source text" must see the FAILURE path too — on unfixed source this stylesheet throws, and
+    /// the pasted text is inside the exception message, which is exactly where it must not be. And
+    /// the <c>ok:</c> prefix separates "compiled and produced the right answer" from "failed for
+    /// some unrelated reason", without which a NotContain assertion passes trivially on any
+    /// failure. Design from the parsers2 session.
+    /// </remarks>
+    private async Task<string> OutcomeAsync(string stylesheet)
+    {
+        try
+        {
+            return "ok:" + await RunAsync(stylesheet).ConfigureAwait(false);
+        }
+        catch (XsltException ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    /// <summary>
     /// THE regression test. A static variable whose select is an expression must reach the shadow
     /// attribute as its VALUE. Before the fix the source text was pasted, so the compiled
     /// expression read <c>$prefix || 'string-length'#1</c> and died in the XPath parser.
@@ -49,7 +73,7 @@ public sealed class ShadowAttributeStaticValueTests : IDisposable
     [Fact]
     public async Task An_expression_valued_static_variable_is_not_pasted_as_source_text()
     {
-        var result = await RunAsync("""
+        var outcome = await OutcomeAsync("""
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
               <xsl:param name="prefix" static="yes" select="''"/>
               <xsl:variable name="fname" static="yes" select="$prefix || 'string-length'" as="xs:string"/>
@@ -60,8 +84,11 @@ public sealed class ShadowAttributeStaticValueTests : IDisposable
             </xsl:stylesheet>
             """);
 
-        result.Should().Contain("5");
-        result.Should().NotContain("$prefix", "the variable's source text must never reach the compiled expression");
+        outcome.Should().NotContain("$prefix || 'string-length'",
+            "the variable's source text must not appear in the outcome — not in the output, and not "
+            + "inside an error message either, which is where it landed before the fix");
+        outcome.Should().StartWith("ok:", "the stylesheet must actually compile and run, not merely avoid the text");
+        outcome.Should().Contain("5", "string-length('hello') is 5");
     }
 
     /// <summary>

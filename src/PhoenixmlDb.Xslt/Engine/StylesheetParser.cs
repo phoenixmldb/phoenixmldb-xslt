@@ -3113,6 +3113,14 @@ public sealed partial class StylesheetParser
         // Collect static params AND variables from top-level elements
         var staticParams = new Dictionary<string, string>();
 
+        // The pre-pass evaluates static declarations so that a later one can reference an earlier
+        // one, and parks the typed values in _staticVariables because that is where the evaluator
+        // looks. They MUST NOT survive this method. use-when on a declaration is evaluated during
+        // the declarations pass and depends on that declaration NOT yet being in scope — W3C
+        // attr/static static-019 is a param whose own use-when references itself and must raise
+        // XPST0008. Leaking the pre-pass values made it resolve, and the error disappeared.
+        var preExistingStaticKeys = new HashSet<QName>(_staticVariables.Keys);
+
         // Also collect from imported stylesheets (process xsl:import/xsl:include first)
         var baseUri = root.BaseUri;
         Uri? baseUriObj = explicitBaseUri;
@@ -3166,6 +3174,10 @@ public sealed partial class StylesheetParser
         // Walk all elements and resolve shadow attributes
         // (even with no static params, shadow attributes need validation for XPST0017)
         ResolveShadowAttributesRecursive(root, staticParams);
+
+        // Unwind what the pre-pass added, restoring the scope the declarations pass expects.
+        foreach (var key in _staticVariables.Keys.Where(k => !preExistingStaticKeys.Contains(k)).ToList())
+            _staticVariables.Remove(key);
     }
 
 

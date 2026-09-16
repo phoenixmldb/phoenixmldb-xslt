@@ -1553,6 +1553,21 @@ nor the expression. An unevaluable shadow attribute on `select`/`test`/`match`/`
 limitation rather than an error in the stylesheet. 166 identical unreadable errors became 166
 errors that state what is missing. **Improve the error first** — the rule that keeps earning out.
 
+**The guard closes empty-and-unevaluated, not the whole class.** `!complete && IsNullOrWhiteSpace(value)`
+does not catch a *partially* evaluated AVT: `_select="{$a}{$b}"` with `$a` evaluable and `$b` not
+produces a NON-empty value, skips the throw, and compiles against a partially-substituted string.
+That is the annotation path behaving as #16 designed it, so it is correct rather than broken — but
+"fails open" still describes that subset, and it is the shape most likely to surface later as a
+confusing downstream error, because the value looks plausible and is wrong. Stated precisely:
+empty-and-unevaluated now raises at resolution time naming the attribute and sub-expression;
+partially-evaluated values remain annotated and compile, as before. (Named by parsers2 while
+reviewing the guard's scope.)
+
+A scoping concern on `group-by`/`group-adjacent` was raised and withdrawn: `!complete` is the
+load-bearing half of the guard, so a grouping key that legitimately evaluates to empty resolves
+with `complete == true` and never reaches the throw. An empty `group-by=""` is not a valid XPath
+expression in any case.
+
 Unit gate after all four: 1,853 passed, 0 failed, 1 skipped.
 
 The subset evaluator has a **second** failure mode beyond the silent drop. Minimal repro on the
