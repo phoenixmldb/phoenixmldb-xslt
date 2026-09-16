@@ -965,7 +965,36 @@ public sealed class XsltTestRunner
         "docbook-002",
         "docbook-003",
         // Large ot.xml (3.5MB, 23K verse elements) streaming test
-        "streamable-003"
+        "streamable-003",
+        // Cases that exceeded the 10s cap on a slower host and not on a faster one, with no code
+        // change between. A timeout recorded as an ordinary FAILED makes a baseline that flips on
+        // a slower runner, and CI is usually the slower runner.
+        //
+        // BEING ON THIS LIST IS NOT A CLAIM THAT THE CASE PASSES. Stating per case what was
+        // actually demonstrated, because the earlier version of this comment asserted "passes
+        // given the time" over all six and that was verified for only two:
+        //
+        //   function-0701       timed out; VERIFIED passing at 180s (decl 1025 -> 1026)
+        //   sf-fold-left-021    timed out; VERIFIED passing at 180s (strm1 715 -> 716)
+        //   bug-6301            timed out; passes
+        //   evaluate-047        timed out AND fails on a host where it does not time out —
+        //   next-match-030      the cap was incidental; these are genuine failures that are
+        //                       also slow, and the longer timeout only stops them consuming
+        //                       a slot for 10s before failing.
+        "function-0701",
+        "sf-fold-left-021",
+        "bug-6301",
+        "evaluate-047",
+        "next-match-030",
+        // call-template-1003 is here for a DIFFERENT reason and is not fixed by being here.
+        // It has returned three verdicts on identical code — timeout, pass, and
+        // "XTDE0000: exhausted the execution stack before reaching the recursion-depth limit
+        // (1200)" — the last of those on a run with the extended timeout and no timeouts
+        // anywhere. Its verdict depends on available stack, not elapsed time. The longer
+        // timeout stops it consuming a slot for 10s before failing; it does not make it
+        // deterministic. See BUGS.md #105 — do not read a green result here as the case
+        // working.
+        "call-template-1003"
     ];
 
     /// <summary>

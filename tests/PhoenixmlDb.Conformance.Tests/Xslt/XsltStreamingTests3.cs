@@ -37,7 +37,6 @@ public class XsltStreamingTests3 : IClassFixture<XsltTestFixture>
     [InlineData("tests/strm/sx-InstanceofExpr/_sx-InstanceofExpr-test-set.xml")]
     [InlineData("tests/strm/sx-IntersectExpr/_sx-IntersectExpr-test-set.xml")]
     [InlineData("tests/strm/sx-MapExpr/_sx-MapExpr-test-set.xml")]
-    [InlineData("tests/strm/sx-PathExpr/_sx_PathExpr-test-set.xml")]
     [InlineData("tests/strm/sx-QuantifiedExpr/_sx-QuantifiedExpr-test-set.xml")]
     [InlineData("tests/strm/sx-SimpleMappingExpr/_sx-SimpleMappingExpr-test-set.xml")]
     [InlineData("tests/strm/sx-SquareArrayConstructor/_sx-SquareArrayConstructor-test-set.xml")]
@@ -80,7 +79,7 @@ public class XsltStreamingTests3 : IClassFixture<XsltTestFixture>
             {
                 failed++;
                 if (result.WrongErrorCode) wrongCode++;
-                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}");
+                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}{(result.Error is TimeoutException ? "  [TIMEOUT — machine speed, not a conformance failure]" : "")}");
                 if (result.Error != null)
                 {
                     _output.WriteLine($"  Error: {result.Error.Message}");

@@ -1494,6 +1494,117 @@ affected, and nothing currently says which those are.
 
 Reported by the parsers2 session.
 
+**Update 2026-09-15 — blast radius measured, and a second failure mode.** #47 predicted this
+"will not be confined to `package-version`" and that "nothing currently says which those are".
+It is now enumerated for one set: **every one of the 166 cases in `tests/fn/system-property-gen`
+fails from this single cause**, which is why that catalog set scores 0/166 the moment it is added
+to the harness. One cause, 166 manifestations — not 166 defects.
+
+**But fixing #47 will not clear them, and this entry should not be read as though it would.**
+Checked against the corpus rather than inferred: `system-property-100-data.xsl` declares its static
+variables as `replace(?, '''', '''''')` (argument placeholder), several `function($x) { ... }`
+inline function items including nested ones, `$ns-scope = 'switch-xsl-namespace'` (depending on
+another static variable), and sequence literals; `system-property-100-dc-normal.xsl` then chains
+`_select="{$v:static-call}"` through six further shadow-defined variables. Evaluating those at
+compile time needs inline function items, partial application, simple map and inter-variable
+chaining — i.e. the "real static XPath evaluation, which is not done" that this entry already names
+as the underlying need. That is feature-sized. The 166 are a standing measurement of an absent
+feature, not a cluster waiting on a fix. (Established by parsers2, who took the cluster and then
+retracted it after reading what the cases actually depend on.)
+
+**Update 2026-09-16 — four defects fixed; the set still does not pass, for a different reason.**
+The root shape turned out to be an asymmetric pair (#40), not merely a weak evaluator. The engine
+has **two** compile-time XPath evaluators:
+
+| path | evaluator | operates on |
+|---|---|---|
+| `use-when` | `EvaluateStaticExpression` | the parsed AST — binaries, sequences, ranges, `if`, quantified, `instance of` |
+| shadow attributes | `EvaluateShadowExpression` | raw strings — `\|\|`, `$var`, literals, `QName()` |
+
+Same job — evaluate XPath at compile time with no context item — and only one got the real one.
+Shadow attributes now go through the `use-when` pipeline
+(`ParseXPathWithContext` → `ResolveExpressionNamespaces` → `EvaluateStaticExpression`), with the
+string matcher kept only as a fallback. Four defects fell out, each with a regression test in
+`ShadowAttributeStaticValueTests` (5 of its 7 tests fail on unfixed source):
+
+1. **`CollectStaticDeclarations` stored a static variable's raw select TEXT as its value.** That
+   text is what got pasted into shadow attributes. Now evaluated.
+2. **The "is it a literal?" test was `StartsWith('\'') && EndsWith('\'')`** — also true of
+   `'a' || 'b'`, which it therefore stripped to `a' || 'b`. Only something that parses the
+   expression can tell those apart, so the real evaluator now runs first.
+3. **`||` parses to `StringConcatExpression`, a separate AST node** from
+   `BinaryExpression{Operator=Concat}`. `EvaluateStaticExpression`'s switch had only the latter, so
+   every static concatenation fell to `default:` and was reported unevaluable. Two representations
+   of one operator, one consumer handling one of them — the #53 shape again.
+4. **`ResolveShadowValue`'s `{$name}` arm appended nothing and reported success** for an unknown
+   variable. Now marks the result incomplete.
+
+**What this does NOT do is make `fn/system-property-gen` pass, and the reason is worth recording.**
+Those 166 rest on `doc('…')/data:test`, predicated paths, `!`, inline function items and dynamic
+invocation of them — evaluated at compile time. The engine owns exactly one thing that could do
+that, `EvaluateAsync` on the execution context, and it is async and needs a source document, while
+shadow resolution is a **sync pre-pass over the XML tree before anything is compiled**. Closing
+that gap is a feature, not a fix.
+
+What did change for that set: all 166 failed with `XPST0003: mismatched input '<EOF>'` — the XPath
+parser describing the empty string the shadow resolver had handed it, naming neither the attribute
+nor the expression. An unevaluable shadow attribute on `select`/`test`/`match`/`group-by`/
+`group-adjacent` now raises at resolution time naming both, and says plainly that it is a processor
+limitation rather than an error in the stylesheet. 166 identical unreadable errors became 166
+errors that state what is missing. **Improve the error first** — the rule that keeps earning out.
+
+**The guard closes empty-and-unevaluated, not the whole class.** `!complete && IsNullOrWhiteSpace(value)`
+does not catch a *partially* evaluated AVT: `_select="{$a}{$b}"` with `$a` evaluable and `$b` not
+produces a NON-empty value, skips the throw, and compiles against a partially-substituted string.
+That is the annotation path behaving as #16 designed it, so it is correct rather than broken — but
+"fails open" still describes that subset, and it is the shape most likely to surface later as a
+confusing downstream error, because the value looks plausible and is wrong. Stated precisely:
+empty-and-unevaluated now raises at resolution time naming the attribute and sub-expression;
+partially-evaluated values remain annotated and compile, as before. (Named by parsers2 while
+reviewing the guard's scope.)
+
+A scoping concern on `group-by`/`group-adjacent` was raised and withdrawn: `!complete` is the
+load-bearing half of the guard, so a grouping key that legitimately evaluates to empty resolves
+with `complete == true` and never reaches the throw. An empty `group-by=""` is not a valid XPath
+expression in any case.
+
+Unit gate after all four: 1,853 passed, 0 failed, 1 skipped.
+
+The subset evaluator has a **second** failure mode beyond the silent drop. Minimal repro on the
+published `xslt` 2.0.0 tool:
+
+```xml
+<xsl:param    name="prefix" static="yes" select="''"/>
+<xsl:variable name="fname"  static="yes" select="$prefix || 'string-length'" as="xs:string"/>
+<xsl:template name="main">
+  <xsl:variable name="f" _select="{$fname}#1"/>
+  <out><xsl:value-of select="$f('hello')"/></out>
+</xsl:template>
+```
+
+```
+XPath parse error: XPST0003: mismatched input '#' expecting <EOF>
+  ↳ parsing in variable/@select ... : $prefix || 'string-length'#1
+```
+
+It substituted the static variable's **unevaluated select text** where its **value** belonged, so
+the shadow attribute became `$prefix || 'string-length'#1` instead of `string-length#1`. Not a
+drop — a paste of source text that then fails to parse. In `system-property-gen` the same paste
+yields an empty expression, hence 166 identical `XPST0003: mismatched input '<EOF>'`.
+
+The boundary is exact, and explains why this hid:
+
+| static variable's `select` | read as | result |
+|---|---|---|
+| `'string-length'` (literal) | shadow attribute | passes — `<out>5</out>` |
+| `concat($prefix,'string-length')` | AVT value | passes — `sees="string-length"` |
+| `concat($prefix,'string-length')` | shadow attribute | **fails** — pastes source text |
+
+The variable itself evaluates correctly everywhere *except* a shadow attribute; inside one, the
+substitution is textual. A literal `select` is textually identical to its own value, so the common
+case is indistinguishable from correct. That is the same "wrong answer rather than a refusal"
+structure #47 already names — confirmed here with the case that separates the two.
+
 ---
 
 ### 48. Every `xs:integer` from text was a BigInteger — one ternary, four defects (2026-09-11)
@@ -6009,3 +6120,507 @@ All against `c0fc41a`, same machine, Release conformance.
 - **phx-schematron harness micro-suite:** 58/58; before, 55/58.
 - **Harness corpus (950 NEMSIS national/state cases) with the lexical-scope, namespace and exclusion fixes:**
   950/950 Tier-A-clean, 0 compiled-validator differences (was 945/950 and 83 schemas differing).
+
+---
+
+### 104. A skip justified by a fact nobody checked — seven si-map cases (2026-09-15)
+
+**Symptom.** `tests/strm/si-map` reported 5/5 for months. It has twelve cases.
+
+**What was hidden.** `XsltConformanceTests.cs` carried `config.SkipTests.Add("si-map-001")` through
+`-006` plus `-008`. `SkipTests` matches by **case name**, and the broken non-catalog copy
+`strm/sf-map-new` declares the *same* twelve case names, so the seven skips suppressed both sets at once.
+Five cases ran in each; a perfect 5/5 on the good catalog was the visible result.
+
+**Cause.** The skip comment — mine — read: *"tests/strm/si-map's test-set references si-map-\*.xsl files the
+suite ships under sf-map-new/ as sf-map-new-\*.xsl, so they fail on a missing file rather than on engine
+behaviour."* Every clause of that is false for si-map. It references **no** per-case stylesheet:
+
+```xml
+<test-case name="si-map-001">
+  <environment ref="si-map-A"/>            <!-- si-map-A.xsl — present in tests/strm/si-map/ -->
+  <test><initial-template name="m-001"/></test>
+```
+
+Cases 001–009 are nine named templates (`m-001`..`m-009`) inside one shared stylesheet that exists.
+The missing-file failures belong entirely to sf-map-new's copies. The comment generalised sf-map-new's
+breakage onto a working catalog set and closed with *"si-map IS a catalog set, so these stay skipped"* —
+a reason to keep hiding it, built on a premise never verified against the corpus.
+
+**Shape.** Hollow pass (#69/#71/#72/#75/#78), with the aggravating factor from #89: the suppression was
+load-bearing prose. A skip with no comment invites checking; a skip with a confident, specific,
+wrong comment stops anyone looking. Corroborated independently by parsers2, whose run showed only
+si-map-007 and -009 ever appearing in the logs.
+
+**Fix:** seven skips removed. `sf-map-new` dropped from the harness (not a catalog set); `si-map` retained.
+Two cases surface as failures and are pre-existing engine gaps, not regressions from this change —
+si-map-005 is the map deemed-empty exemption from #118, and si-map-006 is its own defect — see below.
+
+**Correction 2026-09-16: si-map-006 is NOT #117, and it is not a streaming defect at all.**
+Instrumentation reports `streaming=False` — the case never takes the streaming path, so nothing in
+that area could ever have fixed it. It is `xsl:map-entry` storing the key expression's **node**
+instead of atomizing it (XSLT 3.0 §11.6), filed as phoenixmldb-xslt#124.
+
+Four mechanisms were proposed for this one case across three sessions before the right one, and
+**every proposal including both of mine was wrong**: "`m-006` has no `xsl:for-each`" (it has one);
+"the streaming subscription scanner never descends into the map body" (it descends, and the case
+isn't streaming); "the keys are relative paths atomized into keys, so the entries are built with
+keys that aren't the atomized text" — mine, and false in both branches, since the entries ARE built
+and the keys are NOT atomized at all; and "untypedAtomic compared against xs:string".
+
+What it actually is, confirmed on two hosts:
+
+    key-is-node="true"  key-is-element="true"  key-is-atomic="false"
+    lookup-by-the-node="MISS"  lookup-by-string="MISS"
+
+The key is an `element()`, and **the entry is unreachable by any key, including the node itself** —
+so a map built this way silently drops what was put in it. `map:size()` is right and `map:keys()`
+prints the expected strings, so every diagnostic a user reaches for says the map is fine.
+
+That last fact is why the case beat four explanations: an unbuilt map and an unreachable-keyed map
+are indistinguishable at the `xsl:if`, so anyone who probes the **lookup** concludes "empty map" and
+stops. The instrumentation that settled it was the map's **size and key type**. When two failure
+modes are identical at the assertion, the discriminator must be somewhere other than the
+assertion — which is #106's rule applied to a probe rather than a comment.
+
+Original text of this correction, retained because it was itself a wrong mechanism confidently
+stated — the keys are not atomized:
+
+```xml
+<xsl:for-each select="BOOKLIST/BOOKS/ITEM[1]">
+  <xsl:variable name="m" as="map(*)">
+    <xsl:map>
+      <xsl:map-entry key="AUTHOR" select="true()"/>   <!-- key is that ITEM's author string -->
+```
+
+looked up later as `$m('Jane Austen')`. So the entries are either not built during dispatch, or
+built with keys that are not the atomized text. Different mechanism, different fix, and #117
+measured no change on this case exactly as that predicts.
+
+Left uncorrected, this is #106 in miniature: a citation that reads as a diagnosis and sends the
+next person to a scanner that already descends. Note also that `$m('Jane Austen')` returns `()`
+both for an empty map and for a map keyed wrongly, so the discriminator is the map's **size**, not
+a lookup. Identified by the parsers2 session, who read `m-006` instead of the description of it.
+
+**Rule this earns.** A skip must cite evidence that can be re-run, not a description of the corpus.
+`ls` the directory the comment claims is broken before believing it — including when you wrote it.
+
+---
+
+### 105. OPEN — call-template-1003 gives three different verdicts on identical code (2026-09-16)
+
+**Symptom.** `insn/call-template-1003` ("test tail recursion within a singleton `xsl:for-each`")
+has produced **three** outcomes from the same commit, on two machines:
+
+| where | outcome |
+|---|---|
+| this machine, sweep v2 | `Test 'call-template-1003' timed out after 10s` |
+| this machine, sweep v3 (180s allowed) | **passed** |
+| this machine, verification sweep (180s allowed, zero timeouts) | `XTDE0000: exhausted the execution stack` |
+| parsers2's machine, six saved runs | `XTDE0000`-class failure, never a timeout |
+
+The verification run is the one that settles it, because it had the extended timeout AND recorded
+no timeout anywhere: the case ran to completion and failed.
+
+```
+XTDE0000: The transformation exhausted the execution stack before reaching the
+recursion-depth limit (1200). It may contain unbounded recursion
+```
+
+**So it is not the clock.** The engine ran out of *stack*, and how much stack is available varies
+run to run — thread, runtime state, what ran before it in the same host. A case whose verdict
+depends on that is nondeterministic, and it will be whatever the machine felt like that morning.
+
+**This corrects two earlier readings, one of them today's.** BUGS #103 saw a committed `insn.log`
+with 1002/1003 failing while the run at hand passed, and reached for recursion depth — and was
+closer to right than it was given credit for. I then found the 10s timeout, established it as the
+cause of two *other* sets' drift, and extended it to this case as well. The timeout finding is
+real and stands for `function-0701` and `sf-fold-left-021`, which pass at 180s every time. It is
+the wrong explanation here, and the neatness of one mechanism covering all six cases is exactly
+what made it attractive.
+
+**Why it matters beyond one case.** The message says the stack was exhausted *before* reaching
+the recursion-depth limit of 1200 — so the guard designed to produce a clean diagnostic never
+fires, and the real limit is whatever the host stack happens to allow. `TailCallTemplateTests`
+covers ~70,000-deep tail calls and passes, so tail-call elimination works somewhere; it is not
+reliably applying on this path. That is the thing to investigate — not the timeout, and not the
+1200 limit.
+
+**Consequence for the gate.** `insn/call-template` stays at its floor of 37. Lucas set it,
+#119 deliberately held it, and it now has a better justification than "the set drifts": the set
+contains a case that returns different verdicts for the same code. Do not raise it while that is
+true — a baseline of 39 or 40 is a coin toss, and the floor is what stopped this being noticed
+the first two times.
+
+Found by the parsers2 session refusing to accept the timeout explanation for this case after it
+had been accepted for the other five, and asking for the failure text.
+
+**Fourth verdict, 2026-09-16.** On the *other* host, from the `fix/streamed-map-scanner` branch —
+which touches only `StreamingExpressionScanner.cs` and cannot reach `insn/call-template` — 1003
+**passed**, where the same host's A run had it failing. So it now disagrees with itself across
+runs on one host, across hosts, and across two branches that cannot affect it. Four observations,
+three of them contradicting whichever was read first. It was spotted because the branch's only
+apparent "gain" was arithmetically impossible for what it touched — a case-name diff caught what a
+per-set total would have banked as +1.
+
+
+---
+
+### 106. The shape our mistakes take: a claim standing where a check belongs (2026-09-16)
+
+Four defects found in one day, by two sessions, looked unrelated. They are one shape.
+
+| | the claim | what it displaced |
+|---|---|---|
+| #104 | a skip comment describing why si-map's stylesheets were missing | `ls` on the directory — they were not missing |
+| the timeout gate | `timeouts=0` printed by a check whose own error was its passing value | any audit of the gate |
+| `SlowTests` | "these pass given the time", asserted over six cases | measuring; it was true of two |
+| #118's map exemption | a streamed map is exempt from deemed-empty *because it produces nothing* | noticing that si-coco-014 then passed whether the map had six entries or none |
+
+Each is **a statement that reads as verified, occupying the exact spot where someone would
+otherwise verify.** The wrong claim is not the damage. The damage is that the claim is
+load-bearing for the decision not to look: a skip with no comment gets checked, a skip with a
+confident and specific comment does not. A gate that prints nothing gets audited; one that prints
+`timeouts=0` does not. An exemption with a stated rationale is not re-derived when the rationale
+expires.
+
+This is the same family as the hollow passes (#69/#71/#72/#75/#78) and the checks that validate
+what the method guarantees (#97), but sharper about the mechanism: those entries describe a check
+that cannot fail; this one describes **prose that prevents the check from being written**. #89's
+rule — grep this file before reporting a finding as new — is the countermeasure pointed at the
+register. This entry is the same rule pointed at comments.
+
+**What actually caught all four, and neither was a better assumption:**
+
+- **A counterfactual.** Does this test fail without the fix? Five of seven in
+  `ShadowAttributeStaticValueTests` do; the two that do not are labelled guards, not coverage. The
+  same question applied to #118's exemption — does si-coco-014 fail if the map is empty? — would
+  have found that one the day it was written.
+- **A second observer on different hardware.** Six timeouts on one host, zero in ten runs on the
+  other. The one with clean numbers gets no warning and is therefore the one who believes them.
+
+Neither scales to everything. Both work by making a claim answer for itself rather than by
+doubting it harder. When a comment is doing real work — justifying a skip, an exemption, a
+timeout, a floor — the cheap move is to write down what would falsify it, and then spend the two
+minutes.
+
+**The sharper form, arrived at after the fourth instance: the bound was always stated from ONE KIND
+of evidence.** Not "one probe short" — that describes the remedy, not the mistake. Every time, the
+evidence gathered was several samples of a single kind, and the conclusion ranged over kinds that
+were never sampled:
+
+| claim | sampled | generalised to |
+|---|---|---|
+| "si-map's stylesheets are missing" | a description of the corpus | the corpus |
+| "timeouts=0" | the gate's output | whether the gate works |
+| "these six pass given the time" | two cases | six |
+| "nothing can read a node-keyed map entry" | four **lookup** forms | all access paths — `map:for-each` reads it fine |
+| "+6 and +2 means +8" | two separate measurements | their combination |
+| "#118's exemption is still needed" | the case it was written for | the premise it rested on |
+
+Four of those were checked by more than one sample, which is exactly what made them feel checked.
+Sampling harder inside one kind does not help.
+
+**The practice that does:** enumerate the *kinds* first and probe one of each. For a data structure
+that means keyed access, iteration, serialization, type checks, equality. For a claim about a test
+suite: does it run, does it fail without the fix, does it fail for the stated reason, does it pass
+on other hardware. For an arithmetic claim about two changes: measure the combination, never add.
+One probe per kind beats five probes of one kind, and it is usually cheaper.
+(parsers2's formulation, after retracting the node-keyed-map bound on #124.)
+
+**The maintenance form, for claims that are true when written.** #118's exemption is the one that
+rotted rather than being born wrong, and a counterfactual at authoring time would have passed. What
+that case needs instead: **an exemption must name the condition that retires it, in a form someone
+can evaluate.** #118 said "waits on that fix" and cited #117 — close, but nobody re-runs a
+citation. The evaluable form is a test: *"remove when a streamed `xsl:map` yields entries — check
+with si-coco-014 asserting count AND size."* The first is a note; the second fails when the
+premise expires. (parsers2's formulation.)
+
+**And a caveat on the evidence for that rule, from the case that appears to prove it.** #118's
+exemption *did* retire the same evening, on exactly the condition above: `fix/streamed-map-scanner`
+plus the exemption removal measured **+2 with si-coco-014 holding** — coco-013 and si-coco-013
+newly passing, nothing newly failing, and si-coco-014 now green because its map has six entries
+rather than because an empty map was being kept alive. A clean demonstration.
+
+Except the note that actually sat in the code said *"waits on that fix"* and cited #117. It did not
+fire. The exemption was re-examined because two sessions happened to be discussing expiry
+conditions at the time — the evaluable form was written *afterwards*, and then matched. So what was
+demonstrated is that the rule **describes** the retirement correctly, not that the artifact would
+have **caused** it. The countermeasure has not yet been tested in the only condition that matters:
+a note left alone for months with nobody thinking about expiry.
+
+Recorded because the opposite conclusion is the attractive one and would be this entry's own sixth
+instance — a rule that reads as validated, standing where the validation belongs. (Distinction
+volunteered by parsers2, against their own result.)
+
+A fifth instance, same day, smaller: this register attributed si-map-006 to #117 on the strength of
+a description of the case rather than the case — see the correction in #104. A citation that reads
+as a diagnosis is the same object as a comment that reads as a check.
+---
+
+### 107. A check that cannot fail is worse than no check (2026-09-16)
+
+#106 is about a *claim* standing where a check belongs. This is the closer cousin: a check that
+**runs**, reports success, and could never have reported anything else. The two are the same
+object seen from either side, and #97 — a check that validates what the method already guarantees
+— is the special case where the tautology is in the assertion rather than the plumbing.
+
+**Why it is worse than no check.** An absent check is visibly absent; someone eventually asks
+whether the thing was verified. A check that always passes is *indistinguishable from a passing
+one*, and it actively consumes the attention that would have gone to verifying. It converts "not
+yet checked" into "checked" without touching the underlying question.
+
+Seven of these were found in a single day by one session, all while chasing two real defects
+(parsers2, on the SchXslt2 and DocBook reports):
+
+- output redirected to `/dev/null`, so the comparison compared nothing
+- `find -xdev` that never crossed the mount the files were actually on
+- a grep written for double-quoted attributes, against single-quoted source
+- an instrumentation insert that landed outside the scope it was meant to observe
+- **two builds that failed while `--no-build` ran the stale binaries** — a green test run of code
+  that was never compiled
+- a diagnostic printing `LocalName` for two globals that differ only by prefix, so it printed the
+  same name twice and looked like a duplicate
+- a timeout gate whose own `bc: command not found` became its passing value (see #106)
+
+And two from this session in the same window: a `SlowTests` justification measured for two cases
+and asserted over six, and an unwrap guard testing `is List<object?>` where the sequence type is
+`object?[]` — so `key="(1,2)"` sailed past a guard written precisely to catch it, and the patch
+would have shipped with a guard that never fires.
+
+**The pattern in the failures themselves:** every one is a plumbing defect, not a logic defect.
+Nobody wrote a wrong assertion. The assertion never received the data — wrong file, wrong quoting,
+wrong scope, wrong binary, wrong stream. Reviewing the *assertion* finds none of these.
+
+**The exception, and it is a different axis entirely: a check can be correct end-to-end and still
+unable to fail, because the input contains no instance of the thing.** Correct assertion, correct
+plumbing, and a dataset with nothing in it to catch. Nothing is broken anywhere.
+
+This defeats every remedy above. Making the check fail on purpose proves the *instrument* works —
+and it still cannot fail on *that corpus*. Proving it can report non-zero on the same inputs in the
+same run proves it can see what is there, not that what matters is there. So it needs its own
+question, and the question is not about the check at all:
+
+> **Does this input contain the thing? Does this corpus contain the shape, does this suite contain
+> a test for it, could this run have failed at all?**
+
+Three instances today, all found by asking it rather than by anything going wrong:
+
+- **#133's corpus gate.** 33,464 `xsl:variable`/`xsl:param` declarations in the Schematron path,
+  **zero** with an `as=` attribute — so a 950-case run never constructs a typed variable and cannot
+  exercise the defect. A green row there means "no regression" and nothing more. (Strengthened
+  further: 0 of 77 use `@documents`, so the one typed declaration never reaches a compiled
+  validator.)
+- **The #129 and #132 conformance A/Bs.** Byte-identical 334/334 failure sets on both arms. That
+  proves nothing broke; it proves nothing whatever about whether either fix *works*, because the
+  W3C suite contains no test for either shape. Both were validated by other means — a real corpus
+  and a Saxon reference verdict — and the sweeps were reported as "nothing broke", which is the
+  honest reading and not the one a byte-identical result usually gets.
+- **The obvious test for #133**, which is the sharpest form. Assert the bound value; assert
+  XTTE0570. Both are structurally unable to fail on that defect's worst mode, because the worst
+  mode *is* a value that binds cleanly — to the empty sequence, so `empty()` is true, `xsl:if`
+  takes the other branch, `for-each` never runs its body, and nothing is raised. A well-written,
+  correctly plumbed test that cannot fail on the failure it exists for. The fix for the test is to
+  assert the **downstream effect**, not the binding.
+
+**So "we ran it against the real corpus" is a claim needing the same treatment as any other.** It
+sounds like the end of an argument and is the start of one. (Direction identified by the
+schematron session, who asked it about their own corpus unprompted, and by parsers2.)
+
+**A third kind: the data arrives intact and is mangled in transit, so the verdict is computed from
+real values assembled wrongly.** Not "never received the data" and not "the data contains no
+instance" — the values are right and the *aggregation* is wrong.
+
+The instance: a blast-radius table built by accumulating probe results into a `|`-delimited string,
+where the probe's own output contained `|`. Fields shifted, and the comparison ended up comparing
+two fields **of the same run** against each other, printing five spurious "MOVED" verdicts. The
+tell was on the same screen — a row reading `v2.0.0=[1] d89=[7] main=[1]`, where `7` is a string
+value and `1` is a count. Two different quantities, formatted identically, compared as if they were
+the same measurement.
+
+This one is nastier than a plumbing defect because **every individual value in the output is
+correct**. Nothing looks wrong on inspection; only the alignment is wrong, and alignment is what a
+comparison *is*. Checking the inputs verifies them; checking the verdict verifies it; neither
+catches the join.
+
+Remedy, and it differs from the others: **compare artifacts, not parsed values.** `cmp` or `diff`
+on separate files per arm, rather than parsing values into a shared in-memory string and comparing
+fields. A delimiter that can appear in the data is not a delimiter. (parsers2, who also nearly
+filed two harness artifacts as engine defects from the same run — an `XPTY0004` raised by their own
+probe calling `string()` on a two-item sequence.)
+
+---
+
+**One roof over all three kinds** (schematron's formulation, and it holds against every instance in
+this entry):
+
+> **Any token a check relies on to be structural — delimiter, prefix, zero, denominator — must be
+> shown not to occur as content, in the same run.**
+
+Checked against each:
+
+| token treated as structural | occurred as content | instance |
+|---|---|---|
+| `\|` as a field separator | `\|` inside a probe's own output | the blast-radius table |
+| `w/` `b/` as path markers | the same prefixes inside file *contents* | the branch-vs-patch comparison |
+| `0` as "absent" | `0` as "the glob matched nothing" | `timeouts: 0`, and the corpus scan |
+| a count as a denominator | a count from a different run or file set | capability proven elsewhere |
+
+The three kinds are then three ways the same confusion lands: the token is misread in **transit**
+(delimiter collision), the token is never **produced** because the plumbing diverted the data
+(`/dev/null`, stale binary, out-of-scope insert), or the token is genuinely absent because the
+**input has no instance** of the thing (the corpus with no `as=` attributes). In each case the check
+reports a structurally valid answer that means something other than what it appears to mean.
+
+**A fourth kind, and the most dangerous: the check receives real, correct, well-formed data from
+the WRONG INSTANCE.** Not "never received the data", not "the input has no instance", not "mangled
+in transit" — everything is genuine, and it belongs to a different event.
+
+Two traps from one diagnosis (schematron and parsers2, chasing a RED corpus row on #135):
+
+- **Re-running to diagnose destroys the evidence.** `--no-cache` skips the cache *read* and still
+  does `Directory.Delete(dir, recursive: true)` before recompiling. So the instinctive response to
+  an anomaly — run it again — deletes the artifact that would have explained it. **Capture first,
+  re-run second.** The only copy of the corrupt validator was lost this way.
+- **A capture that fires is not a capture of the right thing.** The preservation hook worked. It
+  reported success and preserved a genuinely corrupt artifact — whose mtime was the *previous
+  day*, an incomplete cache directory from an unrelated failure. The artifact was real, the
+  corruption was real, and the signature matched the hypothesis exactly. It was still the wrong
+  file, and it would have been completely convincing.
+
+That second one has no tell at any level: nothing is malformed, nothing is empty, no count is
+wrong. The only discriminator was a **timestamp nobody would think to print**, and it arrived at
+the last step of a long investigation when everyone wanted an answer — which is when scrutiny is
+lowest and a matching signature is most welcome.
+
+> **Evidence must be shown to belong to the event it is offered as evidence of.**
+
+Same family as the zero rule and the delimiter rule: a structural property — *this artifact is from
+this run* — assumed rather than demonstrated. Print the timestamp, the run id, the commit; a
+provenance field is to an artifact what a denominator is to a count.
+
+**And a note on normalisers, which failed in both directions in one day.** Under-matching fabricated
+differences twice, once in the very pattern written to fix the first. Over-matching silently erased
+85 pure-decimal NEMSIS code values from *both sides* of a comparison — invisible, because deleting
+the same thing from both arms leaves them equal. **Under-match is loud and costs an investigation;
+over-match is silent and costs the finding.** The over-match was caught only because the under-match
+screamed and prompted an audit, which is not a detection method.
+
+Which yields the one-line version of this whole entry, and it is a question rather than a rule:
+**what would this check have printed if the thing it looks for were absent — and is that
+distinguishable from what it just printed?**
+
+**One prospective use out of three opportunities, 2026-09-16 — and the two misses were the same
+sentence in the same words.** #135
+turns four silent wrong-cardinality bindings into XTTE0570. Its author expected the conformance
+A/B to move, since the suite tests typed variables. It came back byte-identical, 334/334. Instead
+of taking that as "no regressions", they asked which kind of zero it was:
+
+    files mentioning XTTE0570 ............................... 14
+    of those, binding a typed ExactlyOne/ZeroOrOne variable
+      whose BODY produces more than one item ................  0
+    search proven non-blind: XTTE0505 = 15, XTSE0010 = 104
+
+The suite contains **no instance of the shape**. So the A/B proves nothing broke and cannot speak
+to whether XTTE0570 is the right error — and the schematron corpus cannot either, for the same
+reason on its side. **Two green gates, zero correctness evidence between them**, which side by side
+in a PR would have read as validation. Note the third line: the search was made to prove it could
+see before its zero was believed, per the rule above. The error choice was then justified on
+§9.3 and on `Variables.cs:842-847` already shipping XTTE0570 for this condition — an established
+convention propagated, not a new one invented.
+
+**The correction that matters more than the success.** The same claim — *"the W3C suite has no test
+for this shape"* — appears in the #129 and #132 PR bodies, **asserted and never measured**, in
+merged work. Measured afterwards it is not obviously true: 20 functions with an atomic return type
+and an `xsl:value-of` body, 3 of which could yield the zero-length string; 35 files where a typed
+variable's body references a content-bound global (non-blindness: 516 files with `<xsl:function>`,
+3,772 with `<xsl:value-of>`). Over-inclusive, none confirmed to hit the exact trigger — but not
+zero, and **"I did not find it" is not "it is absent"**. Corrections are posted on both PRs; what
+survives is the narrower true statement, *no conformance case changed outcome*. Neither fix rested
+on the sweep anyway — both rested on a real-stylesheet reproduction, a Saxon reference verdict, and
+the schematron corpus.
+
+So the habit fired **once, on the third try, and only because movement was predicted and did not
+arrive**. Recording the prospective use without the two misses would overstate how reliably it
+fires — and the misses are the more instructive half, because that sentence is the kind that makes
+a PR look rigorous and therefore goes unchecked.
+
+It also travelled. This session repeated the unmeasured claim to the user as fact, in a summary of
+why two green gates proved little. **Writing an assertion down is what makes it evidence for
+everyone downstream**, and nothing in the pipeline between "plausible sentence in a PR body" and
+"stated as established" asks whether it was measured. So the reconciliation rule extends from
+counts to claims: **if an assertion is checkable, check it before writing it down.** The
+`1,864 vs 1,874` arithmetic caught a destroyed file within minutes; two false sentences in merged
+PRs were caught by nothing except someone going back to look.
+
+**And one more instance, with a tell worth naming: structural information inside a success
+message.** A `Write` intended to create a test file overwrote an existing one and destroyed ten
+tests. The write reported success — it *had* succeeded. The tool's response distinguishes
+"updated" from "created", and that word is the only difference between the intended operation and
+a destructive one. Caught downstream by a suite total that would not reconcile: 1,864 where
+baseline + 11 demanded 1,874.
+
+Generalising: a success message often carries a field that says *which* success this was, and it
+is easy to read the status and not the field. Same family as `timeouts: 0` — the value is correct,
+and the thing that distinguishes the two meanings is sitting right next to it, unread. If a total
+is knowable in advance, compute it and reconcile; arithmetic that refuses to balance is the
+cheapest detector on this page.
+
+**What works, and it is cheap:** make the check fail once on purpose. Break the thing it is
+supposed to catch and confirm it goes red. That is the counterfactual from #106 applied to the
+instrument rather than the claim, and it is the only technique on this list that catches all nine
+instances above. A check never observed failing has not been tested; it has been run.
+
+Corollary for anything printing a count: **state the count even when it is zero**, and assert the
+input was non-empty before trusting it. `timeouts: 0` from an empty glob and `timeouts: 0` from a
+clean run are the same three characters.
+
+**Why these cluster in instrumentation rather than in shipped code.** Instrumentation is written
+once, read never, and trusted immediately. Shipped code is reviewed, exercised by tests, and
+revisited; a probe is believed the moment it prints something. That is also why the cost lands on
+whoever is furthest into an investigation and least inclined to doubt their own tools.
+(parsers2's observation.)
+
+**A check that reports zero must first demonstrate it can report non-zero — on the same inputs, in
+the same run.** The tenth instance today, and the only one caught *before* it misled anyone — which is the order this whole entry is
+supposed to run in, achieved once in ten.
+
+Schematron scanned their corpus for the typed-variable shape in #133 and got "none". They declined
+to believe it, because the same scan reported no atomic declarations and no counts of anything:
+**a scan reporting zero of everything is indistinguishable from a blind scan.** So they made the
+instrument prove it could see — 33,464 `xsl:variable`/`xsl:param` declarations counted across the
+same files — and only then trusted the zero.
+
+This generalises the `logs=11 timeouts=0` corollary past counters to **any check whose interesting
+answer is an absence**: "no matches", "no diffs", "no regressions", "not present in the corpus".
+Each is indistinguishable from a broken search. The remedy is to make the instrument produce a
+known non-zero on data you control, then read its zero.
+
+And that zero had teeth, which is the part worth carrying: 33,464 declarations with zero `as=`
+attributes means their 950-case corpus **never constructs a typed variable**, so it cannot exercise
+#133's defect at all. A green row there means "no regression" and nothing more. Believed without
+proof, it would have read exactly like validation — a corpus gate incapable of gating the thing it
+was being run for, which is #97 arriving from the data side rather than the assertion side.
+**The "same inputs, same run" clause is load-bearing, and its absence has already bitten.** A
+branch-vs-patch comparison worked perfectly on file *contents* and was blind to `w/` versus `b/`
+path prefixes — so it failed only on paths. Any capability demonstration that did not happen to
+exercise paths, or that ran yesterday, or that ran against a different file set, would have
+certified a blind check as seeing. **Capability proven elsewhere is not capability proven here**,
+which is the same structure as `logs=11 timeouts=0`: the denominator has to come from the same
+place as the numerator or it is not a denominator for it.
+
+Without the clause, two of the nine instances above survive their own remedy: `find -xdev` would
+have found files on `/` and never proven it could cross onto the mount, and the single-quote
+`grep` would have matched double-quoted attributes on any other page and never proven it could see
+this one. Demonstrating on a toy file and then trusting the zero on the real corpus is the exact
+loophole. (parsers2 and the schematron session; tightened after the looser form had been
+written down.)
+
+**A rule of its own, because it is the one most likely to ship: never pass `--no-build` in the
+same breath as a build whose exit status you did not check.** A failed build followed by
+`--no-build` gives a perfectly green test run of a binary compiled before the change existed.
+parsers2 hit it twice in one day and was saved both times only by grepping the build output for
+` error ` rather than for success. This session hit it too: after a CS0136 name collision, a repro
+matrix ran clean against stale binaries and the results were read as real until the build log was
+checked. The failure is silent on both sides — the build's error scrolls past, and the test run
+has nothing to complain about.

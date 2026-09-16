@@ -175,6 +175,57 @@ it turns `main` red when that set drifts. So the two numbers agree only when not
 and the published figure comes from a **confirming full run** (`conformance-results/summary.txt`).
 On 2026-09-15 the gap was 2 cases, from one pinned set.
 
+**A conformance number with a timeout in it is not a measurement, so gate every arm on zero
+timeouts BEFORE reading a single per-set row.** `XsltTestRunner` caps a case at 10s
+(`SlowTests` grants 180s). On 2026-09-16 six cases tripped that cap on one machine and zero on
+another, on identical source, and two of them reached a per-set table as engine regressions
+before anyone read the failure text. A timeout and a wrong answer are both `FAILED:`; they are
+not the same finding and they do not compare across machines or across a loaded and an idle
+moment on the same one.
+
+The check is now easy — the runner labels them — but **it must fail closed, because the obvious
+way to write it does not**:
+
+```bash
+logs=$(ls "$OUT"/*.log 2>/dev/null | wc -l)
+[ "$logs" -ge 11 ] || { echo "FAIL: found $logs chunk logs, expected 11"; exit 1; }
+timeouts=$(grep -rh -E "TIMEOUT|timed out after" "$OUT"/*.log 2>/dev/null | wc -l)
+echo "chunk logs: $logs   timeouts: $timeouts"      # state it even when zero
+[ "$timeouts" -eq 0 ] || { echo "FAIL: $timeouts timeout(s) — this run is not a measurement"; exit 1; }
+```
+
+Four rules, each from a way this was actually got wrong:
+
+- **Count with something guaranteed present.** Not an external calculator. `grep -rhc` emits one
+  count per file, so zero matching files emits nothing, `paste -sd+` yields an empty string, and
+  `${n:-0}` reads 0 — a gate that passes unconditionally whether or not the calculator exists.
+- **Assert the logs are there first.** A missing directory counts zero timeouts exactly as
+  convincingly as a clean run. Same shape as the conformance corpora, where an absent `TestData/`
+  makes every test green without running anything: absence reading as success.
+- **Print the count even when it is zero**, so a silent gate is visibly distinguishable from a
+  passing one. An inert check and a satisfied check look identical from the outside.
+- **Audit the gate itself once.** parsers2 wrote this check, ran three sweeps behind it, and
+  found by chance that it had been inert the whole time — on the same day they were holding
+  someone else to BUGS #97, which is precisely "a check that validates what the method already
+  guarantees".
+- **Never capture stderr into a value you then test numerically.** The inert gate above failed in
+  a way neither an empty-count nor a missing-binary theory predicts: `2>&1` put the shell's own
+  `bc: command not found` *into* the variable, so `${n:-0}` never took its default — the value was
+  non-empty, it was an error message — and `[ "…command not found" -eq 0 ]` is a bash arithmetic
+  error, which inside `cmd || fail` never reached the failure branch. The check's own error became
+  its passing value.
+
+**These runs are not interchangeable across machines.** The two sessions working on this repo are
+on different hosts (`palukerjr`, `mechapaluker`) with materially different speed: six cases trip
+the 10s cap on the slower one and zero across ten runs on the faster. Any A/B whose arms were
+measured on different hosts is not an A/B. This is also why the gate matters more than it looks —
+whoever is on the faster host will not see the problem at all, and will be the one who believes
+the number.
+
+Related: a set total can hide two cases swapping inside it, one fixed and one broken. When an A/B
+matters, diff the FAILED **case names**, not just the per-set counts — the per-set gate is the
+same blindness as chunk totals, one level down.
+
 **Before step 2, re-run the external reporter's own cases against the tip you are about to tag.**
 parsers2 re-verified Martin Honnen's three reproductions after five streaming merges had landed —
 they still pass — and made the point that matters: **that check is worth repeating immediately

@@ -3096,8 +3096,11 @@ public sealed partial class StylesheetParser
     /// </summary>
     internal sealed class UnevaluatedShadowValue
     {
+        /// <summary>The sub-expression that could not be evaluated, for diagnostics.</summary>
+        public string? Expression { get; init; }
+
         public static readonly UnevaluatedShadowValue Instance = new();
-        private UnevaluatedShadowValue() { }
+        public UnevaluatedShadowValue() { }
     }
 
     /// <summary>
@@ -3105,10 +3108,18 @@ public sealed partial class StylesheetParser
     /// Shadow attributes use the form _foo="{$param}" where the value is evaluated using
     /// static parameters, and the result replaces the real attribute foo.
     /// </summary>
-    private static void ResolveShadowAttributes(XElement root, Dictionary<string, string>? externalStaticParams = null, Uri? explicitBaseUri = null)
+    private void ResolveShadowAttributes(XElement root, Dictionary<string, string>? externalStaticParams = null, Uri? explicitBaseUri = null)
     {
         // Collect static params AND variables from top-level elements
         var staticParams = new Dictionary<string, string>();
+
+        // The pre-pass evaluates static declarations so that a later one can reference an earlier
+        // one, and parks the typed values in _staticVariables because that is where the evaluator
+        // looks. They MUST NOT survive this method. use-when on a declaration is evaluated during
+        // the declarations pass and depends on that declaration NOT yet being in scope — W3C
+        // attr/static static-019 is a param whose own use-when references itself and must raise
+        // XPST0008. Leaking the pre-pass values made it resolve, and the error disappeared.
+        var preExistingStaticKeys = new HashSet<QName>(_staticVariables.Keys);
 
         // Also collect from imported stylesheets (process xsl:import/xsl:include first)
         var baseUri = root.BaseUri;
@@ -3163,13 +3174,17 @@ public sealed partial class StylesheetParser
         // Walk all elements and resolve shadow attributes
         // (even with no static params, shadow attributes need validation for XPST0017)
         ResolveShadowAttributesRecursive(root, staticParams);
+
+        // Unwind what the pre-pass added, restoring the scope the declarations pass expects.
+        foreach (var key in _staticVariables.Keys.Where(k => !preExistingStaticKeys.Contains(k)).ToList())
+            _staticVariables.Remove(key);
     }
 
 
     /// <summary>
     /// Collects static param and variable declarations from a stylesheet root element.
     /// </summary>
-    private static void CollectStaticDeclarations(XElement root, Dictionary<string, string> staticParams, bool checkConsistency = false)
+    private void CollectStaticDeclarations(XElement root, Dictionary<string, string> staticParams, bool checkConsistency = false)
     {
         // Track names seen in THIS module for same-precedence consistency check
         HashSet<string>? seenInModule = checkConsistency ? new() : null;
@@ -3187,7 +3202,7 @@ public sealed partial class StylesheetParser
                 var shadowStatic = child.Attribute("_static");
                 if (shadowStatic != null)
                 {
-                    var resolved = ResolveShadowValue(shadowStatic.Value, staticParams);
+                    var resolved = ResolveShadowValue(shadowStatic.Value, staticParams, child);
                     isStatic = resolved.Trim() is "yes" or "true" or "1";
                 }
             }
@@ -3202,14 +3217,47 @@ public sealed partial class StylesheetParser
             if (selectAttr != null)
             {
                 var val = selectAttr.Trim();
-                if (val.StartsWith('\'') && val.EndsWith('\''))
-                    resolvedValue = val[1..^1].Replace("''", "'", StringComparison.Ordinal);
-                else if (val.StartsWith('"') && val.EndsWith('"'))
-                    resolvedValue = val[1..^1].Replace("\"\"", "\"", StringComparison.Ordinal);
+                object? typedValue = null;
+                var haveTypedValue = true;
+
+                // The real evaluator FIRST. It parses the expression, so it is the only thing here
+                // that can tell a string literal from an expression that merely begins and ends
+                // with a quote — `'a' || 'b'` satisfies StartsWith('\'') && EndsWith('\'') and the
+                // hand-rolled check below would strip it to `a' || 'b`.
+                if (TryEvaluateStaticSelect(val, child, child.Attribute("select"), out var evaluated))
+                {
+                    typedValue = evaluated;
+                }
+                else if (val.StartsWith('\'') && val.EndsWith('\'') && val.Length >= 2
+                         && val[1..^1].Replace("''", "", StringComparison.Ordinal).IndexOf('\'', StringComparison.Ordinal) < 0)
+                    typedValue = val[1..^1].Replace("''", "'", StringComparison.Ordinal);
+                else if (val.StartsWith('"') && val.EndsWith('"') && val.Length >= 2
+                         && val[1..^1].Replace("\"\"", "", StringComparison.Ordinal).IndexOf('"', StringComparison.Ordinal) < 0)
+                    typedValue = val[1..^1].Replace("\"\"", "\"", StringComparison.Ordinal);
                 else if (val is "true()" or "false()")
-                    resolvedValue = val == "true()" ? "yes" : "no";
+                    typedValue = val == "true()";
                 else
-                    resolvedValue = val;
+                {
+                    // Genuinely not statically evaluable. Leave it UNSET rather than fall back to
+                    // the source text: an absent value is visible downstream, a wrong one is not.
+                    // Storing the source text here is what pasted `$prefix || 'string-length'` into
+                    // a shadow attribute where `string-length` belonged (BUGS.md #47).
+                    haveTypedValue = false;
+                }
+
+                if (haveTypedValue)
+                {
+                    // A boolean keeps its legacy yes/no string form for the existing string-keyed
+                    // consumers (notably _static="{...}"), while the typed map gets the real value.
+                    resolvedValue = typedValue is bool tb ? (tb ? "yes" : "no") : StaticValueToString(typedValue);
+
+                    // EVERY static declaration registers its typed value, including plain literals.
+                    // Registering only the computed ones left `$prefix` (select="''") invisible to
+                    // the evaluator, so the next declaration that referenced it failed XPST0008 and
+                    // silently produced nothing.
+                    if (TryParseStaticName(child, nameAttr, out var typedKey) && !_staticVariables.ContainsKey(typedKey))
+                        _staticVariables[typedKey] = typedValue;
+                }
             }
 
             if (staticParams.TryGetValue(nameAttr, out var existing))
@@ -3231,7 +3279,7 @@ public sealed partial class StylesheetParser
     }
 
 
-    private static void ResolveShadowAttributesRecursive(XElement element, Dictionary<string, string> staticParams)
+    private void ResolveShadowAttributesRecursive(XElement element, Dictionary<string, string> staticParams)
     {
         // Shadow attributes only apply to XSLT elements, not LREs (§3.9.3)
         if (element.Name.Namespace == XsltNs)
@@ -3244,12 +3292,31 @@ public sealed partial class StylesheetParser
             foreach (var shadow in shadowAttrs)
             {
                 var realName = shadow.Name.LocalName[1..]; // Remove leading underscore
-                var value = ResolveShadowValue(shadow.Value, staticParams, out var complete);
+                var value = ResolveShadowValue(shadow.Value, staticParams, out var complete, out var failedExpr, element);
+
+                // An expression-valued attribute that came out EMPTY because the shadow expression
+                // could not be evaluated will be handed to the XPath parser, which reports
+                // "XPST0003: mismatched input '<EOF>'" — a parse error describing the empty string
+                // we produced, naming neither the attribute nor the expression that failed. Every
+                // one of the 166 cases in fn/system-property-gen fails exactly that way. Report the
+                // real cause here instead.
+                if (!complete && string.IsNullOrWhiteSpace(value)
+                    && realName is "select" or "test" or "match" or "group-by" or "group-adjacent")
+                {
+                    throw new XsltException(
+                        $"Static expression not supported: the shadow attribute '_{realName}' could not be " +
+                        "evaluated at compile time" +
+                        (failedExpr is null ? "" : $", because '{failedExpr}' is beyond what this processor evaluates statically") +
+                        ". Compile-time evaluation covers literals, operators, static variables and a subset of " +
+                        "functions; it does not cover a context item, a source document (doc()), path expressions, " +
+                        "or inline function items. This is a processor limitation, not an error in the stylesheet.",
+                        GetSourceLocation(element));
+                }
 
                 // Set the real attribute (overriding any existing value)
                 element.SetAttributeValue(realName, value);
                 if (!complete)
-                    element.Attribute(realName)!.AddAnnotation(UnevaluatedShadowValue.Instance);
+                    element.Attribute(realName)!.AddAnnotation(new UnevaluatedShadowValue { Expression = failedExpr });
 
                 // Remove the shadow attribute
                 shadow.Remove();
@@ -3264,15 +3331,97 @@ public sealed partial class StylesheetParser
     }
 
 
-    private static string ResolveShadowValue(string template, Dictionary<string, string> staticParams)
-        => ResolveShadowValue(template, staticParams, out _);
+    /// <summary>
+    /// Evaluates a static expression the same way <c>use-when</c> does — parse to an AST, resolve
+    /// namespaces, then run the real static evaluator — rather than through the string-matching
+    /// subset in <see cref="EvaluateShadowExpression"/>.
+    /// </summary>
+    /// <remarks>
+    /// These are two implementations of one job: evaluating XPath at compile time with no context
+    /// item. <c>use-when</c> got the AST evaluator; shadow attributes got a string matcher that
+    /// understood <c>||</c>, <c>$var</c> and literals, and fell back to pasting the expression's
+    /// SOURCE TEXT where its value belonged. That produced stylesheets compiled against garbage
+    /// (BUGS.md #47). Shadow attributes now try the real evaluator first and only fall back to the
+    /// subset for shapes it cannot reach. Returns false when the expression genuinely cannot be
+    /// evaluated statically — a context item, an inline function item — so the caller can record
+    /// an honest non-evaluation instead of inventing a value.
+    /// </remarks>
+    /// <summary>
+    /// Resolves a static variable's <c>name</c> to a QName in the declaring element's namespace
+    /// context, so its evaluated value can be keyed the same way <c>use-when</c> looks it up.
+    /// </summary>
+    private static bool TryParseStaticName(XElement declaration, string name, out QName key)
+    {
+        try
+        {
+            key = ParseQName(name, declaration);
+            return true;
+        }
+        catch (XsltException)
+        {
+            key = default!;
+            return false;
+        }
+    }
+
+    private bool TryEvaluateStaticSelect(string exprText, XElement context, System.Xml.Linq.XObject? origin, out object? value)
+    {
+        value = null;
+        try
+        {
+            var expr = ParseXPathWithContext(exprText, origin ?? context);
+            ResolveExpressionNamespaces(expr, context);
+            value = EvaluateStaticExpression(expr, context);
+            return true;
+        }
+        catch (XsltException)
+        {
+            // Not statically evaluable here (no context item, undeclared static variable, a
+            // function not available statically). The caller must NOT substitute source text.
+            return false;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException or NotSupportedException)
+        {
+            // Shapes the static evaluator does not implement (inline function items, argument
+            // placeholders). Same contract: report failure rather than fabricate a value.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Renders a statically-evaluated value for substitution into an attribute.
+    /// </summary>
+    /// <remarks>
+    /// Not <c>ToString()</c>: that yields "True"/"False" for booleans where XPath requires
+    /// "true"/"false", and silently stringifies a sequence to its type name. A sequence is
+    /// space-joined, matching attribute-value-template atomization.
+    /// </remarks>
+    private static string StaticValueToString(object? value) => value switch
+    {
+        null => "",
+        bool b => b ? "true" : "false",
+        string str => str,
+        double d when !double.IsInfinity(d) && !double.IsNaN(d) && d == Math.Floor(d) && Math.Abs(d) < 1e15
+            => ((long)d).ToString(System.Globalization.CultureInfo.InvariantCulture),
+        IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+        System.Collections.IEnumerable seq and not string
+            => string.Join(" ", seq.Cast<object?>().Select(StaticValueToString)),
+        _ => value.ToString() ?? ""
+    };
+
+    private string ResolveShadowValue(string template, Dictionary<string, string> staticParams, XElement? contextElement = null)
+        => ResolveShadowValue(template, staticParams, out _, contextElement);
 
     // `complete` is false when some expression in the template could not be evaluated here
     // and was dropped: the result is then not the value the stylesheet asked for, and must
     // not be validated as if it were.
-    private static string ResolveShadowValue(string template, Dictionary<string, string> staticParams, out bool complete)
+    private string ResolveShadowValue(string template, Dictionary<string, string> staticParams, out bool complete, XElement? contextElement = null)
+        => ResolveShadowValue(template, staticParams, out complete, out _, contextElement);
+
+    private string ResolveShadowValue(string template, Dictionary<string, string> staticParams, out bool complete, out string? failedExpression, XElement? contextElement = null)
     {
         complete = true;
+        failedExpression = null;
         // Process static AVT: {$name} → variable value, {{/}} → literal {/}, {...} → expression result
         var result = new System.Text.StringBuilder();
         var i = 0;
@@ -3303,15 +3452,33 @@ public sealed partial class StylesheetParser
                         var paramName = expr[1..];
                         if (staticParams.TryGetValue(paramName, out var paramValue))
                             result.Append(paramValue);
+                        else
+                        {
+                            // Appending nothing AND reporting success let an unknown static
+                            // variable silently become the empty string.
+                            complete = false;
+                            failedExpression ??= expr;
+                        }
                     }
                     else
                     {
-                        // Try to evaluate the expression statically
-                        var evaluated = EvaluateShadowExpression(expr, staticParams);
-                        if (evaluated != null)
-                            result.Append(evaluated);
+                        // Real static evaluation first (the use-when path); the string-matching
+                        // subset only for shapes it cannot reach.
+                        if (contextElement != null && TryEvaluateStaticSelect(expr, contextElement, null, out var realValue))
+                        {
+                            result.Append(StaticValueToString(realValue));
+                        }
                         else
-                            complete = false;
+                        {
+                            var evaluated = EvaluateShadowExpression(expr, staticParams);
+                            if (evaluated != null)
+                                result.Append(evaluated);
+                            else
+                            {
+                                complete = false;
+                                failedExpression ??= expr;
+                            }
+                        }
                     }
                     i = end + 1;
                     continue;

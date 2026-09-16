@@ -26,6 +26,7 @@ public class XsltDeclarationTests : IClassFixture<XsltTestFixture>
     [Theory]
     [InlineData("tests/decl/accept/_accept-test-set.xml")]
     [InlineData("tests/decl/expose/_expose-test-set.xml")]
+    [InlineData("tests/decl/import-schema/_import-schema-test-set.xml")]
     [InlineData("tests/decl/accumulator/_accumulator-test-set.xml")]
     [InlineData("tests/decl/attribute-set/_attribute-set-test-set.xml")]
     [InlineData("tests/decl/character-map/_character-map-test-set.xml")]
@@ -74,7 +75,7 @@ public class XsltDeclarationTests : IClassFixture<XsltTestFixture>
             {
                 failed++;
                 if (result.WrongErrorCode) wrongCode++;
-                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}");
+                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}{(result.Error is TimeoutException ? "  [TIMEOUT — machine speed, not a conformance failure]" : "")}");
                 if (result.Error != null)
                 {
                     _output.WriteLine($"  Error: {result.Error.Message}");

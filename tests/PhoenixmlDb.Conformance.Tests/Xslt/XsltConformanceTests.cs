@@ -482,15 +482,6 @@ public sealed class XsltTestFixture : IAsyncLifetime
         // schema validation is a storage concern, not an XSLT concern. This trade-off enables
         // 12+ tests whose stylesheets use import-schema without needing schema features.
         config.SkipTests.Add("error-1650a");
-        // Skip si-map tests in sf-map-new — W3C test suite bug: references si-map-A.xsl
-        // from wrong directory (file exists in si-map/ not sf-map-new/)
-        config.SkipTests.Add("si-map-001");
-        config.SkipTests.Add("si-map-002");
-        config.SkipTests.Add("si-map-003");
-        config.SkipTests.Add("si-map-004");
-        config.SkipTests.Add("si-map-005");
-        config.SkipTests.Add("si-map-006");
-        config.SkipTests.Add("si-map-008");
 
         Runner = new XsltTestRunner(_testDataPath, config);
         return ValueTask.CompletedTask;
