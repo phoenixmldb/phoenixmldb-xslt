@@ -5729,6 +5729,62 @@ evidence* rather than by default — the question *"is the XSLT-first order stil
 answer that changes as this table grows, and it was previously unanswerable without reading the
 whole register.
 
+### 97. A check that validates what your method guarantees (2026-09-15)
+
+Named after parsers2's squash silently reverted two of this register's own commits. The mechanism
+matters less than the shape, which is one this file has now met from five directions.
+
+**What happened.** The squash procedure soft-resets onto `origin/main` and re-commits, which is
+correct **only while the branch's base still is `origin/main`.** Two docs commits landed while the
+branch was in test, so the reset replayed an older tree onto newer main and committed the
+difference **as deletions** — 29 lines of `BUGS.md`, 16 of `README.md`, 7 of the release
+checklist, none related to the change being merged.
+
+**Why the guard did not fire**, in parsers2's words:
+
+> The tree-equality check can't catch this — **the tree is unchanged by construction**, which is
+> exactly why it passed.
+
+#### The shape
+
+> **A check that validates the property your method already guarantees will always pass, and
+> tells you nothing.**
+
+Tree-equality is the *right* check for *"did the squash preserve my work?"* — and useless for
+*"is my base still current?"* Two questions, one check, and the gap never showed because the
+answer to the one being asked was always yes.
+
+That is what distinguishes this from the rest of the family. #54's gate had no baseline row, #69's
+tests passed because a feature was absent, #94's assertion never ran. **Here the check ran,
+answered honestly, and answered a different question than the one that mattered** — closest to
+#67's proxy predicate, but arrived at from the method rather than the data.
+
+#### The control that works
+
+The guard parsers2 already had on every other PR that day:
+
+```
+merge-base origin/main HEAD != origin/main   ->  rebase, never squash
+```
+
+Two notes on why it belongs somewhere durable rather than in per-job habit:
+
+- *"It was in every other PR today"* is the signature of something that **is not a control.** A
+  control that depends on remembering is a habit, and habits fail on the job you were rushing.
+- **Main moving under a branch in test is the normal case here**, not bad luck — two sessions
+  commit to these repos all day. The control has to *assume* it rather than treat it as an
+  exception. Same conclusion as #76's sequence-not-vigilance, reached from the other side.
+
+**Detection, for when it happens anyway:** check the squashed commit's **diffstat for files the
+change never touched.** That is the cheap signal, and it is visible in the PR before merge.
+
+#### Recovery
+
+Forward fix, not force-push. The bad merge was already on `main` and may have been pulled; a
+rewrite removes the record of what happened along with the mistake. The restore was a plain
+`git checkout <good-sha> -- <files>`, gated so `src` and `tests` stayed identical. Verified from
+both sides afterwards rather than assumed — the content, not the merge line.
+
 ## Fixed 2026-08-22/24 — kept for the pattern
 
 **Engine.** `fn:partition` two-arg split · `fn` lambda shorthand · `fn:parse-html` raising
