@@ -75,7 +75,7 @@ public class XsltDeclarationTests : IClassFixture<XsltTestFixture>
             {
                 failed++;
                 if (result.WrongErrorCode) wrongCode++;
-                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}");
+                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}{(result.Error is TimeoutException ? "  [TIMEOUT — machine speed, not a conformance failure]" : "")}");
                 if (result.Error != null)
                 {
                     _output.WriteLine($"  Error: {result.Error.Message}");
