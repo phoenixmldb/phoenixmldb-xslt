@@ -240,7 +240,12 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>
     /// Describes a sequence for a cardinality error: how many items, and what the first few are.
     /// </summary>
-    private static string DescribeSequenceForDiagnostics(System.Collections.Generic.IEnumerable<object?> source)
+    /// <remarks>
+    /// Internal rather than private: the global-variable binding seams live in
+    /// <see cref="XsltTransformEngine"/> and must report a cardinality failure in the same words
+    /// as the local seam. Three copies of one rule's phrasing is how those seams drifted apart.
+    /// </remarks>
+    internal static string DescribeSequenceForDiagnostics(System.Collections.Generic.IEnumerable<object?> source)
     {
         var items = new System.Collections.Generic.List<object?>(source);
         if (items.Count == 0)
