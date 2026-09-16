@@ -843,8 +843,8 @@ public class XsltTransformEngineTests
             Version = "3.0",
             StripSpace =
             [
-                new NameTest { LocalName = "p" },
-                new NameTest { LocalName = "div" }
+                new WhitespaceDeclaration(new NameTest { LocalName = "p" }, 0),
+                new WhitespaceDeclaration(new NameTest { LocalName = "div" }, 0)
             ]
         };
 
@@ -861,8 +861,8 @@ public class XsltTransformEngineTests
             Version = "3.0",
             PreserveSpace =
             [
-                new NameTest { LocalName = "pre" },
-                new NameTest { LocalName = "code" }
+                new WhitespaceDeclaration(new NameTest { LocalName = "pre" }, 0),
+                new WhitespaceDeclaration(new NameTest { LocalName = "code" }, 0)
             ]
         };
 

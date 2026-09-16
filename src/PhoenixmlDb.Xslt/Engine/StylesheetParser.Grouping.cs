@@ -187,9 +187,15 @@ public sealed partial class StylesheetParser
                 target.Modes.TryAdd(key, mode);
         }
 
-        // Strip/preserve space: merge
-        target.StripSpace.AddRange(package.StripSpace);
-        target.PreserveSpace.AddRange(package.PreserveSpace);
+        // Strip/preserve space: merge at LOWER import precedence than the using package's own
+        // declarations. One level below is an approximation — nested xsl:use-package composition is
+        // not modelled, so a package used by a package shares the level of a direct import. Before
+        // #139 these arrived at level 0 and tied with the using package's own declarations, so this
+        // is a strict improvement rather than a complete treatment.
+        foreach (var decl in package.StripSpace)
+            target.StripSpace.Add(decl with { ImportPrecedence = 1 });
+        foreach (var decl in package.PreserveSpace)
+            target.PreserveSpace.Add(decl with { ImportPrecedence = 1 });
 
         // Accumulators: merge all. Accumulators are package-local, so record which names
         // came from the used package — a same-named accumulator declared in the using
@@ -242,7 +248,7 @@ public sealed partial class StylesheetParser
     /// Called in reverse import order so later imports (higher precedence) are TryAdd'd first.
     /// A stylesheet's own declarations take precedence over its imports, so TryAdd own first.
     /// </summary>
-    private static void MergeImportedNamedDeclarations(XsltStylesheet target, XsltStylesheet imported)
+    private static void MergeImportedNamedDeclarations(XsltStylesheet target, XsltStylesheet imported, int precedenceLevel = 1)
     {
         // Add the imported stylesheet's OWN declarations first (higher precedence than its imports)
         foreach (var (name, template) in imported.NamedTemplates)
@@ -293,12 +299,21 @@ public sealed partial class StylesheetParser
         // space.xsl), which is why it emitted an empty <div class="db-bfs"> where Saxon emits
         // none (#130).
         //
-        // AddRange, not TryAdd like the named declarations above: whitespace tests are unnamed and
-        // cumulative — every declaration stays live, and conflicts are resolved per element at
-        // strip time. Order does not matter either, because StripWhitespaceNodes takes the MAXIMUM
-        // default priority over each list rather than the first or last match.
-        target.StripSpace.AddRange(imported.StripSpace);
-        target.PreserveSpace.AddRange(imported.PreserveSpace);
+        // Added rather than TryAdd like the named declarations above: whitespace tests are unnamed
+        // and cumulative — every declaration stays live, and conflicts are resolved per element at
+        // strip time.
+        //
+        // Each one is tagged with the importing depth, because §4.4 resolves a conflict by import
+        // precedence FIRST and only then by NameTest default priority. An earlier version of this
+        // comment asserted that order did not matter "because StripWhitespaceNodes takes the MAXIMUM
+        // default priority over each list" — that was the defect (#139). It described
+        // specificity-only resolution, which inverts every case where a LESS specific declaration
+        // sits in a HIGHER-precedence module: a principal preserve-space elements="*" must beat an
+        // imported strip-space elements="db:para", however much more specific the latter is.
+        foreach (var decl in imported.StripSpace)
+            target.StripSpace.Add(decl with { ImportPrecedence = precedenceLevel });
+        foreach (var decl in imported.PreserveSpace)
+            target.PreserveSpace.Add(decl with { ImportPrecedence = precedenceLevel });
 
         // Merge accumulators from imports (TryAdd preserves higher-precedence definitions)
         foreach (var (name, acc) in imported.Accumulators)
@@ -373,9 +388,10 @@ public sealed partial class StylesheetParser
         foreach (var extNs in imported.ExtensionElementPrefixes)
             target.ExtensionElementPrefixes.Add(extNs);
 
-        // Then recursively merge nested imports (reverse order for precedence among siblings)
+        // Then recursively merge nested imports (reverse order for precedence among siblings).
+        // A nested import sits one level lower again, mirroring CollectImportedOutputs.
         for (var i = imported.Imports.Count - 1; i >= 0; i--)
-            MergeImportedNamedDeclarations(target, imported.Imports[i]);
+            MergeImportedNamedDeclarations(target, imported.Imports[i], precedenceLevel + 1);
     }
 
 

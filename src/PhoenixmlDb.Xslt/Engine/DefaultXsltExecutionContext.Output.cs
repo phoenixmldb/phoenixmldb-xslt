@@ -1881,10 +1881,10 @@ internal sealed partial class DefaultXsltExecutionContext
         if (_stylesheet.StripSpace.Count > 0)
         {
             // Ensure namespace resolution for strip-space/preserve-space NameTests
-            foreach (var nt in _stylesheet.StripSpace)
-                nt.ResolveNamespace(nodeStore.InternNamespace);
-            foreach (var nt in _stylesheet.PreserveSpace)
-                nt.ResolveNamespace(nodeStore.InternNamespace);
+            foreach (var decl in _stylesheet.StripSpace)
+                decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+            foreach (var decl in _stylesheet.PreserveSpace)
+                decl.Test.ResolveNamespace(nodeStore.InternNamespace);
 
             XsltTransformEngine.StripWhitespaceNodes(xdmDoc, _stylesheet.StripSpace, _stylesheet.PreserveSpace, nodeStore);
         }

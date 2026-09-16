@@ -182,14 +182,14 @@ public sealed class XsltStylesheet
     public Dictionary<QName, XsltDecimalFormat> DecimalFormats { get; init; } = new();
 
     /// <summary>
-    /// Strip-space elements.
+    /// Strip-space elements, each tagged with the import precedence of the declaring module.
     /// </summary>
-    public List<NameTest> StripSpace { get; init; } = new();
+    public List<WhitespaceDeclaration> StripSpace { get; init; } = new();
 
     /// <summary>
-    /// Preserve-space elements.
+    /// Preserve-space elements, each tagged with the import precedence of the declaring module.
     /// </summary>
-    public List<NameTest> PreserveSpace { get; init; } = new();
+    public List<WhitespaceDeclaration> PreserveSpace { get; init; } = new();
 
     /// <summary>
     /// xsl:import-schema declarations. Each entry records a target namespace and any

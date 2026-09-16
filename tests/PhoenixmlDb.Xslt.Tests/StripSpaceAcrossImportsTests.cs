@@ -100,14 +100,21 @@ public sealed class StripSpaceAcrossImportsTests : IDisposable
         """))).Should().Be("1/0");
 
     /// <summary>
-    /// Guard: specificity still decides. An explicit NameTest outranks a blanket
-    /// <c>preserve-space elements="*"</c> even when the blanket one is in the higher-precedence
-    /// module — merging imported tests into the same list must not invert that.
+    /// Import precedence outranks specificity, and this test asserted the opposite when it was
+    /// first merged (#137), which is the defect #139 fixes. XSLT 1.0 §3.4, carried into 3.0 §4.4:
+    /// "First, any match with lower import precedence than another match is ignored. Next, any
+    /// match with a NameTest that has a lower default priority ... is ignored."
+    ///
+    /// Here the imported leaf declares both <c>strip-space db:doc</c> and <c>preserve-space *</c>,
+    /// and the principal declares <c>preserve-space *</c>. Step 1 discards BOTH imported matches
+    /// because the principal's match has higher precedence, leaving preserve — so the whitespace
+    /// survives ("3/2"). The explicit <c>db:doc</c> test never gets to compete, however specific
+    /// it is: default priority only separates declarations already tied on precedence.
     /// </summary>
     [Fact]
-    public async Task ExplicitStrip_BeatsBlanketPreserveInTheImportingModule() =>
+    public async Task PrincipalBlanketPreserve_OutranksMoreSpecificImportedStrip() =>
         (await RunAsync(Principal($"  <xsl:import href=\"{LeafUri()}\"/>\n  <xsl:preserve-space elements=\"*\"/>")))
-            .Should().Be("1/0");
+            .Should().Be("3/2");
 
     /// <summary>Guard: with no declaration anywhere, whitespace is preserved (the default).</summary>
     [Fact]
@@ -177,5 +184,64 @@ public sealed class StripSpaceAcrossImportsTests : IDisposable
         };
         (await act.Should().ThrowAsync<System.Exception>())
             .Which.Message.Should().Contain("XTSE0270");
+    }
+
+    /// <summary>
+    /// The shape of W3C <c>decl/strip-space/strip-space-020</c> ("Test import precedence for
+    /// xsl:strip-space"): the principal declares a LESS specific <c>strip-space db:*</c> while the
+    /// imported module declares a MORE specific <c>preserve-space db:section</c>. Precedence wins,
+    /// so the element is stripped.
+    ///
+    /// This is written as a unit test because the conformance suite cannot check it. The runner's
+    /// <c>assert-xml</c> parses both sides with <c>XDocument.Parse</c> at <c>LoadOptions.None</c>,
+    /// which discards whitespace-only text nodes before comparison, so strip-space-020 and -027
+    /// pass while emitting the wrong tree (#140). Counting text nodes, as these tests do, is
+    /// whitespace-sensitive and actually fails when the rule is wrong.
+    /// </summary>
+    [Fact]
+    public async Task PrincipalWildcardStrip_OutranksMoreSpecificImportedPreserve()
+    {
+        // Both declarations must match db:doc — the element whose whitespace children decide the
+        // count — or the case does not discriminate. An earlier draft named db:section/db:info in
+        // the imported module; those never match db:doc, so only the principal's strip matched and
+        // the test passed on the UNFIXED engine too, proving nothing.
+        var lib = Write("prec-lib.xsl", """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:db="http://docbook.org/ns/docbook">
+              <xsl:preserve-space elements="db:doc"/>
+            </xsl:stylesheet>
+            """);
+        (await RunAsync(Principal($"  <xsl:import href=\"{lib}\"/>\n  <xsl:strip-space elements=\"db:*\"/>")))
+            .Should().Be("1/0");
+    }
+
+    /// <summary>
+    /// Depth ordering across a two-level import chain, and the only test exercising the
+    /// <c>precedenceLevel + 1</c> recursion in MergeImportedNamedDeclarations. The principal imports
+    /// mid, mid imports leaf. Leaf declares the MORE specific <c>preserve-space db:doc</c> at depth 2;
+    /// mid declares the LESS specific <c>strip-space db:*</c> at depth 1. Mid is nearer, so its
+    /// declaration wins and the whitespace is stripped.
+    ///
+    /// The specificity is deliberately inverted against the depth. With equal specificity on both
+    /// sides the old tie-break (<c>bestStrip &gt;= bestPreserve</c>) already stripped, so the case
+    /// would pass unfixed and gate nothing.
+    /// </summary>
+    [Fact]
+    public async Task NearerImport_OutranksDeeperImport_EvenWhenDeeperIsMoreSpecific()
+    {
+        var leaf = Write("depth-leaf.xsl", """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:db="http://docbook.org/ns/docbook">
+              <xsl:preserve-space elements="db:doc"/>
+            </xsl:stylesheet>
+            """);
+        var mid = Write("depth-mid.xsl", $"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:db="http://docbook.org/ns/docbook">
+              <xsl:import href="{leaf}"/>
+              <xsl:strip-space elements="db:*"/>
+            </xsl:stylesheet>
+            """);
+        (await RunAsync(Principal($"  <xsl:import href=\"{mid}\"/>"))).Should().Be("1/0");
     }
 }
