@@ -98,7 +98,7 @@ When a guard fires and the enclosing scope looks innocent, the depth may have be
 or leaked. Insert a tracer after every mutation:
 
 ```bash
-cd /repos/phoenixml/phoenixmldb-xslt
+cd "$(git rev-parse --show-toplevel)"
 python3 - <<'PY'
 import re
 p='src/PhoenixmlDb.Xslt/Engine/XsltTransformer.cs'
@@ -121,7 +121,7 @@ if a real fix is in progress in the same file.**
 ## Verifying a fix
 
 ```bash
-cd /repos/phoenixml/phoenixmldb-xslt
+cd "$(git rev-parse --show-toplevel)"
 dotnet test tests/PhoenixmlDb.Xslt.Tests/PhoenixmlDb.Xslt.Tests.csproj -f net10.0   # gate: 0 fail
 $S/run-docbook.sh                                                                   # real-world check
 ```
@@ -191,6 +191,10 @@ clean run are the same three characters. (BUGS #107.)
 ## Adding a target
 
 Drop a `run-<target>.sh` in `scripts/` following `run-docbook.sh`: run the transform, check
-the exit code, then assert landmarks in the output. Corpora live at
-`/repos/phoenixml/docbook/xslTNG`, `/repos/phoenixml/martin/` (Martin Honnen's repros and
-notes), and `/repos/phoenixml/martin/xspec`.
+the exit code, then assert landmarks in the output.
+
+**Locate corpora, do not assume paths.** The hard-coded locations this file used to give were
+wrong on the machine it was read on, which made the corpora look absent. Martin's repros are
+checked into this project (`repros/martin/`, alongside `xspec/`); find them from the repo root
+rather than from an absolute path, and note `find / -xdev` will not cross onto a separate mount
+such as `/mnt/data`. xslTNG is not checked in at all — fetch the release from the CDN as above.
