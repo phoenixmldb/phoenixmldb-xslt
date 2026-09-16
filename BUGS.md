@@ -6599,6 +6599,14 @@ that does not **compile** produces failing tests for the wrong reason: "3 of 10 
 A counterfactual that reports failures without proving the tree compiled is the same object as a
 green test run of a stale binary — the `--no-build` trap, arriving from the opposite direction.
 
+**The inverse, and it is worse: a test that asserts the defect.** #137's own test encoded the
+behaviour #139 then had to fix, so the bug was *pinned* by a passing test. This is not a check that
+cannot fail — it fails precisely when the code becomes correct, which turns a fix into an apparent
+regression and creates pressure to revert it. The tell is a test written from observed output
+rather than from the specification: it will always pass on the day it is written. Corrected in
+#141, together with the two justification comments that had explained the wrong behaviour as
+intended.
+
 Corollary for anything printing a count: **state the count even when it is zero**, and assert the
 input was non-empty before trusting it. `timeouts: 0` from an empty glob and `timeouts: 0` from a
 clean run are the same three characters.
