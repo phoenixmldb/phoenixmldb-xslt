@@ -504,7 +504,7 @@ tests/insn/apply-imports/_apply-imports-test-set.xml	1	1
 tests/insn/apply-templates/_apply-templates-test-set.xml	42	42
 tests/insn/assert/_assert-test-set.xml	9	9
 tests/insn/attribute/_attribute-test-set.xml	20	21
-tests/insn/call-template/_call-template-test-set.xml	40	41
+tests/insn/call-template/_call-template-test-set.xml	37	41
 tests/insn/choose/_choose-test-set.xml	53	55
 tests/insn/construct-node/_construct-node-test-set.xml	34	34
 tests/insn/copy/_copy-test-set.xml	128	128
