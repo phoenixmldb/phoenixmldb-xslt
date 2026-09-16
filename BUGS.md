@@ -6392,6 +6392,41 @@ would have shipped with a guard that never fires.
 Nobody wrote a wrong assertion. The assertion never received the data — wrong file, wrong quoting,
 wrong scope, wrong binary, wrong stream. Reviewing the *assertion* finds none of these.
 
+**The exception, and it is a different axis entirely: a check can be correct end-to-end and still
+unable to fail, because the input contains no instance of the thing.** Correct assertion, correct
+plumbing, and a dataset with nothing in it to catch. Nothing is broken anywhere.
+
+This defeats every remedy above. Making the check fail on purpose proves the *instrument* works —
+and it still cannot fail on *that corpus*. Proving it can report non-zero on the same inputs in the
+same run proves it can see what is there, not that what matters is there. So it needs its own
+question, and the question is not about the check at all:
+
+> **Does this input contain the thing? Does this corpus contain the shape, does this suite contain
+> a test for it, could this run have failed at all?**
+
+Three instances today, all found by asking it rather than by anything going wrong:
+
+- **#133's corpus gate.** 33,464 `xsl:variable`/`xsl:param` declarations in the Schematron path,
+  **zero** with an `as=` attribute — so a 950-case run never constructs a typed variable and cannot
+  exercise the defect. A green row there means "no regression" and nothing more. (Strengthened
+  further: 0 of 77 use `@documents`, so the one typed declaration never reaches a compiled
+  validator.)
+- **The #129 and #132 conformance A/Bs.** Byte-identical 334/334 failure sets on both arms. That
+  proves nothing broke; it proves nothing whatever about whether either fix *works*, because the
+  W3C suite contains no test for either shape. Both were validated by other means — a real corpus
+  and a Saxon reference verdict — and the sweeps were reported as "nothing broke", which is the
+  honest reading and not the one a byte-identical result usually gets.
+- **The obvious test for #133**, which is the sharpest form. Assert the bound value; assert
+  XTTE0570. Both are structurally unable to fail on that defect's worst mode, because the worst
+  mode *is* a value that binds cleanly — to the empty sequence, so `empty()` is true, `xsl:if`
+  takes the other branch, `for-each` never runs its body, and nothing is raised. A well-written,
+  correctly plumbed test that cannot fail on the failure it exists for. The fix for the test is to
+  assert the **downstream effect**, not the binding.
+
+**So "we ran it against the real corpus" is a claim needing the same treatment as any other.** It
+sounds like the end of an argument and is the start of one. (Direction identified by the
+schematron session, who asked it about their own corpus unprompted, and by parsers2.)
+
 **What works, and it is cheap:** make the check fail once on purpose. Break the thing it is
 supposed to catch and confirm it goes red. That is the counterfactual from #106 applied to the
 instrument rather than the claim, and it is the only technique on this list that catches all nine
