@@ -6427,6 +6427,28 @@ Three instances today, all found by asking it rather than by anything going wron
 sounds like the end of an argument and is the start of one. (Direction identified by the
 schematron session, who asked it about their own corpus unprompted, and by parsers2.)
 
+**A third kind: the data arrives intact and is mangled in transit, so the verdict is computed from
+real values assembled wrongly.** Not "never received the data" and not "the data contains no
+instance" — the values are right and the *aggregation* is wrong.
+
+The instance: a blast-radius table built by accumulating probe results into a `|`-delimited string,
+where the probe's own output contained `|`. Fields shifted, and the comparison ended up comparing
+two fields **of the same run** against each other, printing five spurious "MOVED" verdicts. The
+tell was on the same screen — a row reading `v2.0.0=[1] d89=[7] main=[1]`, where `7` is a string
+value and `1` is a count. Two different quantities, formatted identically, compared as if they were
+the same measurement.
+
+This one is nastier than a plumbing defect because **every individual value in the output is
+correct**. Nothing looks wrong on inspection; only the alignment is wrong, and alignment is what a
+comparison *is*. Checking the inputs verifies them; checking the verdict verifies it; neither
+catches the join.
+
+Remedy, and it differs from the others: **compare artifacts, not parsed values.** `cmp` or `diff`
+on separate files per arm, rather than parsing values into a shared in-memory string and comparing
+fields. A delimiter that can appear in the data is not a delimiter. (parsers2, who also nearly
+filed two harness artifacts as engine defects from the same run — an `XPTY0004` raised by their own
+probe calling `string()` on a two-item sequence.)
+
 **What works, and it is cheap:** make the check fail once on purpose. Break the thing it is
 supposed to catch and confirm it goes red. That is the counterfactual from #106 applied to the
 instrument rather than the claim, and it is the only technique on this list that catches all nine
