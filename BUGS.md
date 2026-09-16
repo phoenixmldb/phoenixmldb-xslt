@@ -6154,8 +6154,30 @@ si-map-007 and -009 ever appearing in the logs.
 
 **Fix:** seven skips removed. `sf-map-new` dropped from the harness (not a catalog set); `si-map` retained.
 Two cases surface as failures and are pre-existing engine gaps, not regressions from this change —
-si-map-006 is #117 (streamed `xsl:map` produces nothing; the subscription scanner never descends into its
-body) and si-map-005 is the map deemed-empty exemption from #118.
+si-map-005 is the map deemed-empty exemption from #118, and si-map-006 is its own defect — see below.
+
+**Correction 2026-09-16: si-map-006 is NOT #117, and this entry said it was.** The attribution came
+from a description of the case rather than from the case, and the description was wrong: it said
+`m-006` has no `xsl:for-each`, which would make it the #117 shape — a subscription the scanner never
+registers. `m-006` does have one, and the for-each IS the subscription, so the scanner descent #117
+fixes is already happening here. What actually fails is that the map's keys are **relative paths
+atomized into keys**:
+
+```xml
+<xsl:for-each select="BOOKLIST/BOOKS/ITEM[1]">
+  <xsl:variable name="m" as="map(*)">
+    <xsl:map>
+      <xsl:map-entry key="AUTHOR" select="true()"/>   <!-- key is that ITEM's author string -->
+```
+
+looked up later as `$m('Jane Austen')`. So the entries are either not built during dispatch, or
+built with keys that are not the atomized text. Different mechanism, different fix, and #117
+measured no change on this case exactly as that predicts.
+
+Left uncorrected, this is #106 in miniature: a citation that reads as a diagnosis and sends the
+next person to a scanner that already descends. Note also that `$m('Jane Austen')` returns `()`
+both for an empty map and for a map keyed wrongly, so the discriminator is the map's **size**, not
+a lookup. Identified by the parsers2 session, who read `m-006` instead of the description of it.
 
 **Rule this earns.** A skip must cite evidence that can be re-run, not a description of the corpus.
 `ls` the directory the comment claims is broken before believing it — including when you wrote it.
@@ -6258,3 +6280,15 @@ Neither scales to everything. Both work by making a claim answer for itself rath
 doubting it harder. When a comment is doing real work — justifying a skip, an exemption, a
 timeout, a floor — the cheap move is to write down what would falsify it, and then spend the two
 minutes.
+
+**The maintenance form, for claims that are true when written.** #118's exemption is the one that
+rotted rather than being born wrong, and a counterfactual at authoring time would have passed. What
+that case needs instead: **an exemption must name the condition that retires it, in a form someone
+can evaluate.** #118 said "waits on that fix" and cited #117 — close, but nobody re-runs a
+citation. The evaluable form is a test: *"remove when a streamed `xsl:map` yields entries — check
+with si-coco-014 asserting count AND size."* The first is a note; the second fails when the
+premise expires. (parsers2's formulation.)
+
+A fifth instance, same day, smaller: this register attributed si-map-006 to #117 on the strength of
+a description of the case rather than the case — see the correction in #104. A citation that reads
+as a diagnosis is the same object as a comment that reads as a check.
