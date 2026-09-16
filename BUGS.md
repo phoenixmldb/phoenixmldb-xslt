@@ -6289,6 +6289,23 @@ citation. The evaluable form is a test: *"remove when a streamed `xsl:map` yield
 with si-coco-014 asserting count AND size."* The first is a note; the second fails when the
 premise expires. (parsers2's formulation.)
 
+**And a caveat on the evidence for that rule, from the case that appears to prove it.** #118's
+exemption *did* retire the same evening, on exactly the condition above: `fix/streamed-map-scanner`
+plus the exemption removal measured **+2 with si-coco-014 holding** — coco-013 and si-coco-013
+newly passing, nothing newly failing, and si-coco-014 now green because its map has six entries
+rather than because an empty map was being kept alive. A clean demonstration.
+
+Except the note that actually sat in the code said *"waits on that fix"* and cited #117. It did not
+fire. The exemption was re-examined because two sessions happened to be discussing expiry
+conditions at the time — the evaluable form was written *afterwards*, and then matched. So what was
+demonstrated is that the rule **describes** the retirement correctly, not that the artifact would
+have **caused** it. The countermeasure has not yet been tested in the only condition that matters:
+a note left alone for months with nobody thinking about expiry.
+
+Recorded because the opposite conclusion is the attractive one and would be this entry's own sixth
+instance — a rule that reads as validated, standing where the validation belongs. (Distinction
+volunteered by parsers2, against their own result.)
+
 A fifth instance, same day, smaller: this register attributed si-map-006 to #117 on the strength of
 a description of the case rather than the case — see the correction in #104. A citation that reads
 as a diagnosis is the same object as a comment that reads as a check.
