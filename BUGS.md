@@ -6156,12 +6156,35 @@ si-map-007 and -009 ever appearing in the logs.
 Two cases surface as failures and are pre-existing engine gaps, not regressions from this change —
 si-map-005 is the map deemed-empty exemption from #118, and si-map-006 is its own defect — see below.
 
-**Correction 2026-09-16: si-map-006 is NOT #117, and this entry said it was.** The attribution came
-from a description of the case rather than from the case, and the description was wrong: it said
-`m-006` has no `xsl:for-each`, which would make it the #117 shape — a subscription the scanner never
-registers. `m-006` does have one, and the for-each IS the subscription, so the scanner descent #117
-fixes is already happening here. What actually fails is that the map's keys are **relative paths
-atomized into keys**:
+**Correction 2026-09-16: si-map-006 is NOT #117, and it is not a streaming defect at all.**
+Instrumentation reports `streaming=False` — the case never takes the streaming path, so nothing in
+that area could ever have fixed it. It is `xsl:map-entry` storing the key expression's **node**
+instead of atomizing it (XSLT 3.0 §11.6), filed as phoenixmldb-xslt#124.
+
+Four mechanisms were proposed for this one case across three sessions before the right one, and
+**every proposal including both of mine was wrong**: "`m-006` has no `xsl:for-each`" (it has one);
+"the streaming subscription scanner never descends into the map body" (it descends, and the case
+isn't streaming); "the keys are relative paths atomized into keys, so the entries are built with
+keys that aren't the atomized text" — mine, and false in both branches, since the entries ARE built
+and the keys are NOT atomized at all; and "untypedAtomic compared against xs:string".
+
+What it actually is, confirmed on two hosts:
+
+    key-is-node="true"  key-is-element="true"  key-is-atomic="false"
+    lookup-by-the-node="MISS"  lookup-by-string="MISS"
+
+The key is an `element()`, and **the entry is unreachable by any key, including the node itself** —
+so a map built this way silently drops what was put in it. `map:size()` is right and `map:keys()`
+prints the expected strings, so every diagnostic a user reaches for says the map is fine.
+
+That last fact is why the case beat four explanations: an unbuilt map and an unreachable-keyed map
+are indistinguishable at the `xsl:if`, so anyone who probes the **lookup** concludes "empty map" and
+stops. The instrumentation that settled it was the map's **size and key type**. When two failure
+modes are identical at the assertion, the discriminator must be somewhere other than the
+assertion — which is #106's rule applied to a probe rather than a comment.
+
+Original text of this correction, retained because it was itself a wrong mechanism confidently
+stated — the keys are not atomized:
 
 ```xml
 <xsl:for-each select="BOOKLIST/BOOKS/ITEM[1]">
