@@ -6407,8 +6407,8 @@ revisited; a probe is believed the moment it prints something. That is also why 
 whoever is furthest into an investigation and least inclined to doubt their own tools.
 (parsers2's observation.)
 
-**A check that reports zero must first demonstrate it can report non-zero.** The tenth instance
-today, and the only one caught *before* it misled anyone — which is the order this whole entry is
+**A check that reports zero must first demonstrate it can report non-zero — on the same inputs, in
+the same run.** The tenth instance today, and the only one caught *before* it misled anyone — which is the order this whole entry is
 supposed to run in, achieved once in ten.
 
 Schematron scanned their corpus for the typed-variable shape in #133 and got "none". They declined
@@ -6427,7 +6427,20 @@ attributes means their 950-case corpus **never constructs a typed variable**, so
 #133's defect at all. A green row there means "no regression" and nothing more. Believed without
 proof, it would have read exactly like validation — a corpus gate incapable of gating the thing it
 was being run for, which is #97 arriving from the data side rather than the assertion side.
-(parsers2 and the schematron session.)
+**The "same inputs, same run" clause is load-bearing, and its absence has already bitten.** A
+branch-vs-patch comparison worked perfectly on file *contents* and was blind to `w/` versus `b/`
+path prefixes — so it failed only on paths. Any capability demonstration that did not happen to
+exercise paths, or that ran yesterday, or that ran against a different file set, would have
+certified a blind check as seeing. **Capability proven elsewhere is not capability proven here**,
+which is the same structure as `logs=11 timeouts=0`: the denominator has to come from the same
+place as the numerator or it is not a denominator for it.
+
+Without the clause, two of the nine instances above survive their own remedy: `find -xdev` would
+have found files on `/` and never proven it could cross onto the mount, and the single-quote
+`grep` would have matched double-quoted attributes on any other page and never proven it could see
+this one. Demonstrating on a toy file and then trusting the zero on the real corpus is the exact
+loophole. (parsers2 and the schematron session; tightened after the looser form had been
+written down.)
 
 **A rule of its own, because it is the one most likely to ship: never pass `--no-build` in the
 same breath as a build whose exit status you did not check.** A failed build followed by
