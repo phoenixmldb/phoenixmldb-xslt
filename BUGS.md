@@ -6476,7 +6476,8 @@ Which yields the one-line version of this whole entry, and it is a question rath
 **what would this check have printed if the thing it looks for were absent — and is that
 distinguishable from what it just printed?**
 
-**First prospective use, 2026-09-16 — the rule caught something before it reassured anyone.** #135
+**One prospective use out of three opportunities, 2026-09-16 — and the two misses were the same
+sentence in the same words.** #135
 turns four silent wrong-cardinality bindings into XTTE0570. Its author expected the conformance
 A/B to move, since the suite tests typed variables. It came back byte-identical, 334/334. Instead
 of taking that as "no regressions", they asked which kind of zero it was:
@@ -6493,6 +6494,30 @@ in a PR would have read as validation. Note the third line: the search was made 
 see before its zero was believed, per the rule above. The error choice was then justified on
 §9.3 and on `Variables.cs:842-847` already shipping XTTE0570 for this condition — an established
 convention propagated, not a new one invented.
+
+**The correction that matters more than the success.** The same claim — *"the W3C suite has no test
+for this shape"* — appears in the #129 and #132 PR bodies, **asserted and never measured**, in
+merged work. Measured afterwards it is not obviously true: 20 functions with an atomic return type
+and an `xsl:value-of` body, 3 of which could yield the zero-length string; 35 files where a typed
+variable's body references a content-bound global (non-blindness: 516 files with `<xsl:function>`,
+3,772 with `<xsl:value-of>`). Over-inclusive, none confirmed to hit the exact trigger — but not
+zero, and **"I did not find it" is not "it is absent"**. Corrections are posted on both PRs; what
+survives is the narrower true statement, *no conformance case changed outcome*. Neither fix rested
+on the sweep anyway — both rested on a real-stylesheet reproduction, a Saxon reference verdict, and
+the schematron corpus.
+
+So the habit fired **once, on the third try, and only because movement was predicted and did not
+arrive**. Recording the prospective use without the two misses would overstate how reliably it
+fires — and the misses are the more instructive half, because that sentence is the kind that makes
+a PR look rigorous and therefore goes unchecked.
+
+It also travelled. This session repeated the unmeasured claim to the user as fact, in a summary of
+why two green gates proved little. **Writing an assertion down is what makes it evidence for
+everyone downstream**, and nothing in the pipeline between "plausible sentence in a PR body" and
+"stated as established" asks whether it was measured. So the reconciliation rule extends from
+counts to claims: **if an assertion is checkable, check it before writing it down.** The
+`1,864 vs 1,874` arithmetic caught a destroyed file within minutes; two false sentences in merged
+PRs were caught by nothing except someone going back to look.
 
 **And one more instance, with a tell worth naming: structural information inside a success
 message.** A `Write` intended to create a test file overwrote an existing one and destroyed ten
