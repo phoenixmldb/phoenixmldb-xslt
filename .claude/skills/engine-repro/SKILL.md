@@ -36,8 +36,9 @@ Takes an optional source document: `run-docbook.sh path/to/doc.xml`.
 
 ## Why bootstrap is needed
 
-`/repos/phoenixml/docbook/xslTNG` is a **source checkout**, not a release. `src/main/xslt` is
-not runnable — `main.xsl` imports three modules Gradle generates at build time. Each is
+The bootstrap expects a **source checkout** of xslTNG (its `TNG` variable; there may not be one
+on this machine — see the CDN section below, which is usually what you want instead). A source
+checkout's `src/main/xslt` is not runnable — `main.xsl` imports three modules Gradle generates at build time. Each is
 produced by an XSLT transform, so the bootstrap generates them with **our own engine** (no
 Java, Gradle, or network), which doubles as a self-hosting smoke test:
 
