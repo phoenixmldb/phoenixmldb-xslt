@@ -168,6 +168,13 @@ Worth stating plainly: **every engine merge is measured by a tool that is struct
 dependency changes.** Fine for engine work, wrong the moment someone reaches for it to check a
 pin.
 
+**Publish the measured pass count, not the sum of the baseline file.** `conformance-baseline.tsv`
+is a **regression gate**, and a gate is deliberately allowed to sit below the measurement wherever
+a set is pinned to a floor — a gate below the truth costs a missed alarm on one set, a gate above
+it turns `main` red when that set drifts. So the two numbers agree only when nothing is pinned,
+and the published figure comes from a **confirming full run** (`conformance-results/summary.txt`).
+On 2026-09-15 the gap was 2 cases, from one pinned set.
+
 **Before step 2, re-run the external reporter's own cases against the tip you are about to tag.**
 parsers2 re-verified Martin Honnen's three reproductions after five streaming merges had landed —
 they still pass — and made the point that matters: **that check is worth repeating immediately
