@@ -966,12 +966,21 @@ public sealed class XsltTestRunner
         "docbook-003",
         // Large ot.xml (3.5MB, 23K verse elements) streaming test
         "streamable-003",
-        // Computationally expensive and machine-speed-dependent: these completed inside the 10s
-        // cap on one machine and timed out on another, with no code change between the two runs.
-        // A timeout recorded as an ordinary FAILED makes a baseline that flips on a slower runner,
-        // and CI is usually the slower runner. call-template-1003 has already been misread once
-        // that way — BUGS #103 noted a committed log showing it failing while the run at hand
-        // passed, and attributed it to the suite rather than the clock.
+        // Cases that exceeded the 10s cap on a slower host and not on a faster one, with no code
+        // change between. A timeout recorded as an ordinary FAILED makes a baseline that flips on
+        // a slower runner, and CI is usually the slower runner.
+        //
+        // BEING ON THIS LIST IS NOT A CLAIM THAT THE CASE PASSES. Stating per case what was
+        // actually demonstrated, because the earlier version of this comment asserted "passes
+        // given the time" over all six and that was verified for only two:
+        //
+        //   function-0701       timed out; VERIFIED passing at 180s (decl 1025 -> 1026)
+        //   sf-fold-left-021    timed out; VERIFIED passing at 180s (strm1 715 -> 716)
+        //   bug-6301            timed out; passes
+        //   evaluate-047        timed out AND fails on a host where it does not time out —
+        //   next-match-030      the cap was incidental; these are genuine failures that are
+        //                       also slow, and the longer timeout only stops them consuming
+        //                       a slot for 10s before failing.
         "function-0701",
         "sf-fold-left-021",
         "bug-6301",

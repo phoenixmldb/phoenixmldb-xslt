@@ -6209,3 +6209,52 @@ the first two times.
 
 Found by the parsers2 session refusing to accept the timeout explanation for this case after it
 had been accepted for the other five, and asking for the failure text.
+
+**Fourth verdict, 2026-09-16.** On the *other* host, from the `fix/streamed-map-scanner` branch —
+which touches only `StreamingExpressionScanner.cs` and cannot reach `insn/call-template` — 1003
+**passed**, where the same host's A run had it failing. So it now disagrees with itself across
+runs on one host, across hosts, and across two branches that cannot affect it. Four observations,
+three of them contradicting whichever was read first. It was spotted because the branch's only
+apparent "gain" was arithmetically impossible for what it touched — a case-name diff caught what a
+per-set total would have banked as +1.
+
+
+---
+
+### 106. The shape our mistakes take: a claim standing where a check belongs (2026-09-16)
+
+Four defects found in one day, by two sessions, looked unrelated. They are one shape.
+
+| | the claim | what it displaced |
+|---|---|---|
+| #104 | a skip comment describing why si-map's stylesheets were missing | `ls` on the directory — they were not missing |
+| the timeout gate | `timeouts=0` printed by a check whose own error was its passing value | any audit of the gate |
+| `SlowTests` | "these pass given the time", asserted over six cases | measuring; it was true of two |
+| #118's map exemption | a streamed map is exempt from deemed-empty *because it produces nothing* | noticing that si-coco-014 then passed whether the map had six entries or none |
+
+Each is **a statement that reads as verified, occupying the exact spot where someone would
+otherwise verify.** The wrong claim is not the damage. The damage is that the claim is
+load-bearing for the decision not to look: a skip with no comment gets checked, a skip with a
+confident and specific comment does not. A gate that prints nothing gets audited; one that prints
+`timeouts=0` does not. An exemption with a stated rationale is not re-derived when the rationale
+expires.
+
+This is the same family as the hollow passes (#69/#71/#72/#75/#78) and the checks that validate
+what the method guarantees (#97), but sharper about the mechanism: those entries describe a check
+that cannot fail; this one describes **prose that prevents the check from being written**. #89's
+rule — grep this file before reporting a finding as new — is the countermeasure pointed at the
+register. This entry is the same rule pointed at comments.
+
+**What actually caught all four, and neither was a better assumption:**
+
+- **A counterfactual.** Does this test fail without the fix? Five of seven in
+  `ShadowAttributeStaticValueTests` do; the two that do not are labelled guards, not coverage. The
+  same question applied to #118's exemption — does si-coco-014 fail if the map is empty? — would
+  have found that one the day it was written.
+- **A second observer on different hardware.** Six timeouts on one host, zero in ten runs on the
+  other. The one with clean numbers gets no warning and is therefore the one who believes them.
+
+Neither scales to everything. Both work by making a claim answer for itself rather than by
+doubting it harder. When a comment is doing real work — justifying a skip, an exemption, a
+timeout, a floor — the cheap move is to write down what would falsify it, and then spend the two
+minutes.
