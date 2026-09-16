@@ -6407,6 +6407,28 @@ revisited; a probe is believed the moment it prints something. That is also why 
 whoever is furthest into an investigation and least inclined to doubt their own tools.
 (parsers2's observation.)
 
+**A check that reports zero must first demonstrate it can report non-zero.** The tenth instance
+today, and the only one caught *before* it misled anyone — which is the order this whole entry is
+supposed to run in, achieved once in ten.
+
+Schematron scanned their corpus for the typed-variable shape in #133 and got "none". They declined
+to believe it, because the same scan reported no atomic declarations and no counts of anything:
+**a scan reporting zero of everything is indistinguishable from a blind scan.** So they made the
+instrument prove it could see — 33,464 `xsl:variable`/`xsl:param` declarations counted across the
+same files — and only then trusted the zero.
+
+This generalises the `logs=11 timeouts=0` corollary past counters to **any check whose interesting
+answer is an absence**: "no matches", "no diffs", "no regressions", "not present in the corpus".
+Each is indistinguishable from a broken search. The remedy is to make the instrument produce a
+known non-zero on data you control, then read its zero.
+
+And that zero had teeth, which is the part worth carrying: 33,464 declarations with zero `as=`
+attributes means their 950-case corpus **never constructs a typed variable**, so it cannot exercise
+#133's defect at all. A green row there means "no regression" and nothing more. Believed without
+proof, it would have read exactly like validation — a corpus gate incapable of gating the thing it
+was being run for, which is #97 arriving from the data side rather than the assertion side.
+(parsers2 and the schematron session.)
+
 **A rule of its own, because it is the one most likely to ship: never pass `--no-build` in the
 same breath as a build whose exit status you did not check.** A failed build followed by
 `--no-build` gives a perfectly green test run of a binary compiled before the change existed.
