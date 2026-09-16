@@ -19,6 +19,12 @@ ALL_LOCALES=0
 [[ -f "$XSLT_BIN" ]] || { echo "ERROR: engine not built: $XSLT_BIN" >&2
                           echo "  dotnet build $REPO/src/PhoenixmlDb.Xslt.Cli/PhoenixmlDb.Xslt.Cli.csproj -f net10.0" >&2
                           exit 1; }
+[[ -d "$TNG" ]] || { echo "ERROR: no xslTNG source checkout at $TNG" >&2
+                     echo "  Set TNG=/path/to/xslTNG, or skip the bootstrap entirely: to reproduce a" >&2
+                     echo "  field report, fetch the RELEASE Martin ran from the DocBook CDN —" >&2
+                     echo "  https://cdn.docbook.org/release/xsltng/<version>/release/xslt/ — which" >&2
+                     echo "  ships param.xsl and VERSION.xsl pre-generated. See SKILL.md." >&2
+                     exit 1; }
 cd "$TNG"
 xslt() { dotnet "$XSLT_BIN" "$@"; }
 
@@ -54,7 +60,14 @@ print("    no duplicate attributes")
 PY
 
 echo "==> VERSION.xsl"
-VER=$(sed -n 's/^xslTNGversion=//p' gradle.properties)
+# Upstream moved xslTNGversion out of gradle.properties into properties.gradle. A sed that
+# matches nothing looks exactly like one that matched, so try both and FAIL rather than
+# stamping an empty version into VERSION.xsl.
+VER=$(sed -n 's/^xslTNGversion=//p' gradle.properties 2>/dev/null)
+[[ -n "$VER" ]] || VER=$(sed -n "s/^[[:space:]]*xslTNGversion[[:space:]]*=[[:space:]]*['\"]\?\([^'\"]*\)['\"]\?.*/\1/p" properties.gradle 2>/dev/null | head -1)
+[[ -n "$VER" ]] || { echo "ERROR: xslTNGversion found in neither gradle.properties nor properties.gradle" >&2
+                     echo "  (upstream moved it; check both before assuming the checkout is broken)" >&2
+                     exit 1; }
 REF=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 xslt tools/version.xsl tools/version.xsl -o build/xslt/VERSION.xsl -p "version=$VER" -p "gitref=$REF" >/dev/null
 
