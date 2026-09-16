@@ -1096,10 +1096,21 @@ internal sealed partial class DefaultXsltExecutionContext
                 else if (capturedAccumulator is { Count: > 0 } && content.Length == 0)
                 {
                     // The body produced typed items via xsl:sequence (or similar) — preserve
-                    // them rather than serializing through text. For ExactlyOne/ZeroOrOne the
-                    // single item is unwrapped; the downstream type validation handles
-                    // cardinality and coercion.
+                    // them rather than serializing through text.
+                    //
+                    // This used to say the downstream type validation handles cardinality. It does
+                    // not, for an ATOMIC declared type: that path (the !isNodeType branch below)
+                    // checks each item's TYPE and coerces, and never compares the item COUNT with
+                    // the declared occurrence. Only the node branch does. So as="xs:integer" with
+                    // two xsl:sequence items bound both of them and raised nothing. Check here, the
+                    // same way the sibling xsl:variable seam above does.
                     var occ = instruction.As.Occurrence;
+                    if (occ == Occurrence.ExactlyOne && capturedAccumulator.Count != 1)
+                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}"
+                            + $" — the body produced {DescribeSequenceForDiagnostics(capturedAccumulator)}");
+                    if (occ == Occurrence.ZeroOrOne && capturedAccumulator.Count > 1)
+                        throw Error($"XTTE0570: Variable ${instruction.Name.LocalName} value does not match declared type {instruction.As.ItemType} {instruction.As.Occurrence}"
+                            + $" — the body produced {DescribeSequenceForDiagnostics(capturedAccumulator)}");
                     if (occ == Occurrence.ExactlyOne || occ == Occurrence.ZeroOrOne)
                         value = capturedAccumulator.Count == 1 ? capturedAccumulator[0] : capturedAccumulator.ToArray();
                     else

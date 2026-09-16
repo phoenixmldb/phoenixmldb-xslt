@@ -3970,8 +3970,21 @@ public sealed class XsltTransformEngine
                             seqItems[si] = PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(seqItems[si], global.As.ItemType);
                     }
 
-                    // For ExactlyOne/ZeroOrOne: unwrap to single item
+                    // For ExactlyOne/ZeroOrOne: check cardinality, then unwrap to single item.
+                    // The unwrap used to bind null whenever the count was not 1, so a global
+                    // declared as="element()" whose body produced two elements bound the EMPTY
+                    // SEQUENCE — silently. empty() then returned true, xsl:if took the other
+                    // branch and xsl:for-each never ran its body, so the stylesheet produced
+                    // output with a section missing and nothing raised anywhere. Locals have
+                    // carried this check since they were written (see the xsl:variable seam in
+                    // DefaultXsltExecutionContext.Variables); globals never reached it.
                     var occurrence = global.As!.Occurrence;
+                    if (occurrence == Occurrence.ExactlyOne && seqItems.Count != 1)
+                        throw new XsltException($"XTTE0570: Variable ${global.Name.LocalName} value does not match declared type {global.As.ItemType} {global.As.Occurrence}"
+                            + $" — the body produced {DefaultXsltExecutionContext.DescribeSequenceForDiagnostics(seqItems)}");
+                    if (occurrence == Occurrence.ZeroOrOne && seqItems.Count > 1)
+                        throw new XsltException($"XTTE0570: Variable ${global.Name.LocalName} value does not match declared type {global.As.ItemType} {global.As.Occurrence}"
+                            + $" — the body produced {DefaultXsltExecutionContext.DescribeSequenceForDiagnostics(seqItems)}");
                     if (occurrence == Occurrence.ExactlyOne || occurrence == Occurrence.ZeroOrOne)
                         context.GlobalVariables[global.Name] = seqItems.Count == 1 ? seqItems[0] : null;
                     else
@@ -4292,7 +4305,17 @@ public sealed class XsltTransformEngine
                         for (var gi = 0; gi < items.Length; gi++)
                             items[gi] = PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(items[gi], global.As.ItemType);
                     }
+                    // Cardinality, before the unwrap — same rule as the eager pass above and the
+                    // local xsl:variable seam. Without it this branch bound the whole array when
+                    // the count did not match, so a global as="xs:integer" whose body produced two
+                    // items held BOTH of them and the error surfaced far downstream, or not at all.
                     var occ = global.As.Occurrence;
+                    if (occ == Occurrence.ExactlyOne && items.Length != 1)
+                        throw new XsltException($"XTTE0570: Variable ${global.Name.LocalName} value does not match declared type {global.As.ItemType} {global.As.Occurrence}"
+                            + $" — the body produced {DefaultXsltExecutionContext.DescribeSequenceForDiagnostics(items)}");
+                    if (occ == Occurrence.ZeroOrOne && items.Length > 1)
+                        throw new XsltException($"XTTE0570: Variable ${global.Name.LocalName} value does not match declared type {global.As.ItemType} {global.As.Occurrence}"
+                            + $" — the body produced {DefaultXsltExecutionContext.DescribeSequenceForDiagnostics(items)}");
                     context.GlobalVariables[global.Name] =
                         (occ == Occurrence.ExactlyOne || occ == Occurrence.ZeroOrOne)
                             ? (items.Length == 1 ? items[0] : items)
