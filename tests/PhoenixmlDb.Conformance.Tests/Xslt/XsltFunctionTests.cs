@@ -26,6 +26,7 @@ public class XsltFunctionTests : IClassFixture<XsltTestFixture>
     [InlineData("tests/fn/accessor/_accessor-test-set.xml")]
     [InlineData("tests/fn/available-system-properties/_available-system-properties-test-set.xml")]
     [InlineData("tests/fn/base-uri/_base-uri-test-set.xml")]
+    [InlineData("tests/fn/system-property-gen/_system-property-gen-test-set.xml")]
     [InlineData("tests/fn/collection/_collection-test-set.xml")]
     [InlineData("tests/fn/core-function/_core-function-test-set.xml")]
     [InlineData("tests/fn/copy-of/_copy-of-test-set.xml")]

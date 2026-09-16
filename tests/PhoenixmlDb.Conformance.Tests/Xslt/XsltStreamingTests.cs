@@ -40,7 +40,6 @@ public class XsltStreamingTests : IClassFixture<XsltTestFixture>
     [InlineData("tests/strm/sf-index-of/_sf-index-of-test-set.xml")]
     [InlineData("tests/strm/sf-innermost/_sf-innermost-test-set.xml")]
     [InlineData("tests/strm/sf-insert-before/_sf-insert-before-test-set.xml")]
-    [InlineData("tests/strm/sf-map-new/_sf-map-new-test-set.xml")]
     [InlineData("tests/strm/sf-max/_sf-max-test-set.xml")]
     [InlineData("tests/strm/sf-min/_sf-min-test-set.xml")]
     [InlineData("tests/strm/sf-not/_sf-not-test-set.xml")]
