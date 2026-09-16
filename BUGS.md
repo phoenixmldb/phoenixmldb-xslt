@@ -6449,6 +6449,33 @@ fields. A delimiter that can appear in the data is not a delimiter. (parsers2, w
 filed two harness artifacts as engine defects from the same run — an `XPTY0004` raised by their own
 probe calling `string()` on a two-item sequence.)
 
+---
+
+**One roof over all three kinds** (schematron's formulation, and it holds against every instance in
+this entry):
+
+> **Any token a check relies on to be structural — delimiter, prefix, zero, denominator — must be
+> shown not to occur as content, in the same run.**
+
+Checked against each:
+
+| token treated as structural | occurred as content | instance |
+|---|---|---|
+| `\|` as a field separator | `\|` inside a probe's own output | the blast-radius table |
+| `w/` `b/` as path markers | the same prefixes inside file *contents* | the branch-vs-patch comparison |
+| `0` as "absent" | `0` as "the glob matched nothing" | `timeouts: 0`, and the corpus scan |
+| a count as a denominator | a count from a different run or file set | capability proven elsewhere |
+
+The three kinds are then three ways the same confusion lands: the token is misread in **transit**
+(delimiter collision), the token is never **produced** because the plumbing diverted the data
+(`/dev/null`, stale binary, out-of-scope insert), or the token is genuinely absent because the
+**input has no instance** of the thing (the corpus with no `as=` attributes). In each case the check
+reports a structurally valid answer that means something other than what it appears to mean.
+
+Which yields the one-line version of this whole entry, and it is a question rather than a rule:
+**what would this check have printed if the thing it looks for were absent — and is that
+distinguishable from what it just printed?**
+
 **What works, and it is cheap:** make the check fail once on purpose. Break the thing it is
 supposed to catch and confirm it goes red. That is the counterfactual from #106 applied to the
 instrument rather than the claim, and it is the only technique on this list that catches all nine
