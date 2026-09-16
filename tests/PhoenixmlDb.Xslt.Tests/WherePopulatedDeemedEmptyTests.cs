@@ -6,9 +6,10 @@ namespace PhoenixmlDb.Xslt.Tests;
 
 /// <summary>
 /// xsl:where-populated discards every item "deemed empty" (XSLT 3.0 §8.4): childless documents and elements, other nodes
-/// and atomic values with a zero-length string value, and arrays whose members are all deemed empty. Only zero-length
-/// attributes and xs:string values were discarded (W3C coco-003, -012, -103). Maps are exempt until #117: a streamed
-/// xsl:map is still empty when the filter runs. The last tests are guards: populated items and nested content survive.
+/// and atomic values with a zero-length string value, empty maps, and arrays whose members are all deemed empty. Only
+/// zero-length attributes and xs:string values were discarded (W3C coco-003, -012, -013, -103, si-coco-013). The map
+/// rule was exempted while a streamed xsl:map produced nothing; it applies again now that one populates (#117). The
+/// last tests are guards: populated items and nested content survive.
 /// </summary>
 public sealed class WherePopulatedDeemedEmptyTests
 {
@@ -41,7 +42,17 @@ public sealed class WherePopulatedDeemedEmptyTests
                 <out empty="{empty($t)}"/>
                 """)).Should().Be("<out empty=\"true\"/>");
 
-    // Maps are exempt from the rule until #117, so the guard is that a populated map survives.
+    [Fact]
+    public async Task An_empty_map_is_discarded()
+        => (await RunAsync("""
+                <xsl:variable name="m" as="map(*)?">
+                  <xsl:where-populated><xsl:map/></xsl:where-populated>
+                </xsl:variable>
+                <out count="{count($m)}"/>
+                """)).Should().Be("<out count=\"0\"/>");
+
+    // Guard: the rule discards EMPTY maps, not maps. A populated one survives — this is the case that made the
+    // exemption necessary while a streamed xsl:map produced nothing (W3C si-coco-014).
     [Fact]
     public async Task A_populated_map_is_kept()
         => (await RunAsync("""
