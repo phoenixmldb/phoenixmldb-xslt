@@ -6647,6 +6647,28 @@ cap to measured machine speed, or have the gate treat a timeout as *not a measur
 as a failure, which is what it actually is. Until then, "green except some timeouts" will be the
 normal state of a run on a slow host, and that is exactly how a gate stops being believed.
 
+**Measured across hosts, which decides between the options.** The same three cases on
+`mechapaluker` (32 cores, load 0.05): **0 timeouts across 12 sweeps and 4,326 FAILED lines**, with
+the per-set TSV showing all three sets visited every time — `sf-fold-left` 20/20,
+`sx-GeneralComp-gt` 52/52, `si-value-of` 35/39 with four failures, none of them `si-value-of-016`.
+Controls, because a zero without them is worth nothing: the search was proven non-blind
+(`math-3701`, known to fail there, returns 12 hits from the identical glob), and the label was
+proven emittable (19 sites print it). Limits stated by the measurer: ten of the twelve sweeps
+predate the label, so the *label*-based zero covers only the last two — the *name*-based count
+covers all twelve, and a timeout lands in the FAILED list by name in every harness version, which
+is the leg that carries.
+
+So **the cases are not intrinsically slow**; the timeout lands where load puts it. That datum
+survives both load-independent options and is the one it argues against: an allow-list can only
+enumerate what has already timed out *somewhere*, and "somewhere" is a property of a host and a
+moment, not of a case.
+
+Worth recording the near-miss too, because it is this entry's own subject: the measurement was
+almost sent annotated *"zero mentions = ran and passed"*, which the logs cannot support — they
+never name passing cases. Absence from a failure log means "did not fail **or** did not run". The
+per-set TSV, which records every set visited regardless of outcome, is what distinguishes the two.
+A denominator again, in a third costume.
+
 **A rule of its own, because it is the one most likely to ship: never pass `--no-build` in the
 same breath as a build whose exit status you did not check.** A failed build followed by
 `--no-build` gives a perfectly green test run of a binary compiled before the change existed.
