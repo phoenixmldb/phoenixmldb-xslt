@@ -1767,6 +1767,23 @@ public sealed partial class StylesheetParser
             {
                 var isWildcard = token == "*" || token.EndsWith(":*", StringComparison.Ordinal);
 
+                // XSLT 3.0 §3.5.2. Two xsl:expose combinations are static errors in their own right, and both used to
+                // fall through to the blanket XTSE3080 the parser raises later for any abstract component left in a
+                // top-level package (W3C expose-918, -919, -920, -922):
+                //   XTSE3010 — naming an abstract component and giving it some other visibility
+                //   XTSE3025 — a wildcard that would make a matching component abstract
+                // A wildcard matching an already-abstract component keeps its existing behaviour: no W3C case covers
+                // that combination, so it gains no invented error here.
+                void CheckExposeVisibility(Visibility current, QName componentName)
+                {
+                    if (visibility == Visibility.Abstract && isWildcard)
+                        throw new XsltException(
+                            $"XTSE3025: xsl:expose with a wildcard must not give component '{componentName}' visibility=\"abstract\"");
+                    if (current == Visibility.Abstract && visibility != Visibility.Abstract && !isWildcard)
+                        throw new XsltException(
+                            $"XTSE3010: xsl:expose must not change the visibility of the abstract component '{componentName}'");
+                }
+
                 // Determine which component types to process
                 var components = expose.Component == "*"
                     ? new[] { "template", "function", "variable", "attribute-set", "mode" }
@@ -1780,21 +1797,46 @@ public sealed partial class StylesheetParser
                             foreach (var (name, tmpl) in stylesheet.NamedTemplates)
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
+                                {
+                                    CheckExposeVisibility(tmpl.Visibility, name);
                                     stylesheet.NamedTemplates[name] = CloneTemplateWithVisibility(tmpl, visibility);
+                                }
                             }
                             break;
                         case "function":
+                        {
+                            // A function token is an EQName with an optional arity: "f:abstract#0". The arity has to
+                            // come off before the name is matched — with it attached ParseQName fails and the
+                            // local-name fallback compares against "f:abstract#0", so a named function exposure
+                            // matched nothing and silently did nothing at all. xsl:accept splits the same token this
+                            // way (ParseAccept) and so does the component-rule matcher.
+                            var funcToken = token;
+                            var wantedArity = -1;
+                            var hashIdx = token.IndexOf('#', StringComparison.Ordinal);
+                            if (hashIdx >= 0)
+                            {
+                                funcToken = token[..hashIdx];
+                                if (!int.TryParse(token[(hashIdx + 1)..], System.Globalization.NumberStyles.Integer,
+                                        System.Globalization.CultureInfo.InvariantCulture, out wantedArity))
+                                    wantedArity = -1;
+                            }
                             foreach (var (key, func) in stylesheet.Functions)
                             {
-                                if (MatchesExposePattern(key.Name, token, isWildcard, expose.Element))
+                                if (wantedArity >= 0 && key.Arity != wantedArity) continue;
+                                if (MatchesExposePattern(key.Name, funcToken, isWildcard, expose.Element))
+                                {
+                                    CheckExposeVisibility(func.Visibility, key.Name);
                                     stylesheet.Functions[key] = CloneFunctionWithVisibility(func, visibility);
+                                }
                             }
                             break;
+                        }
                         case "variable":
                             for (var i = 0; i < stylesheet.Variables.Count; i++)
                             {
                                 if (MatchesExposePattern(stylesheet.Variables[i].Name, token, isWildcard, expose.Element))
                                 {
+                                    CheckExposeVisibility(stylesheet.Variables[i].Visibility, stylesheet.Variables[i].Name);
                                     var exposedVar = CloneVariableWithVisibility(stylesheet.Variables[i], visibility);
                                     // Record that xsl:expose explicitly set this variable's boundary
                                     // visibility, so the use-package capture treats an exposed
@@ -1811,7 +1853,10 @@ public sealed partial class StylesheetParser
                             foreach (var (name, attrSet) in stylesheet.AttributeSets)
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
+                                {
+                                    CheckExposeVisibility(attrSet.Visibility, name);
                                     stylesheet.AttributeSets[name] = CloneAttributeSetWithVisibility(attrSet, visibility);
+                                }
                             }
                             break;
                         case "mode":
@@ -1819,6 +1864,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
+                                    CheckExposeVisibility(mode.Visibility, name);
                                     stylesheet.Modes[name] = new Ast.XsltMode
                                     {
                                         Name = mode.Name,
