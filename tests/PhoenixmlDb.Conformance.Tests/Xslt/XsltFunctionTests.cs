@@ -26,6 +26,7 @@ public class XsltFunctionTests : IClassFixture<XsltTestFixture>
     [InlineData("tests/fn/accessor/_accessor-test-set.xml")]
     [InlineData("tests/fn/available-system-properties/_available-system-properties-test-set.xml")]
     [InlineData("tests/fn/base-uri/_base-uri-test-set.xml")]
+    [InlineData("tests/fn/system-property-gen/_system-property-gen-test-set.xml")]
     [InlineData("tests/fn/collection/_collection-test-set.xml")]
     [InlineData("tests/fn/core-function/_core-function-test-set.xml")]
     [InlineData("tests/fn/copy-of/_copy-of-test-set.xml")]
@@ -89,7 +90,7 @@ public class XsltFunctionTests : IClassFixture<XsltTestFixture>
             {
                 failed++;
                 if (result.WrongErrorCode) wrongCode++;
-                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}");
+                _output.WriteLine($"FAILED: {testCase.Name}{(result.WrongErrorCode ? "  [wrong-error-code]" : "")}{(result.Error is TimeoutException ? "  [TIMEOUT — machine speed, not a conformance failure]" : "")}");
                 if (result.Error != null)
                 {
                     _output.WriteLine($"  Error: {result.Error.Message}");
