@@ -6584,6 +6584,21 @@ supposed to catch and confirm it goes red. That is the counterfactual from #106 
 instrument rather than the claim, and it is the only technique on this list that catches all nine
 instances above. A check never observed failing has not been tested; it has been run.
 
+**The counterfactual has its own version of this failure, and it is easy to hit.** A reverted tree
+that does not **compile** produces failing tests for the wrong reason: "3 of 10 failed" then means
+"nothing ran", and the counterfactual certifies itself. The model, from #139:
+
+- revert the source **and** any test file the fix's API change touched, together — otherwise the
+  test project will not build against the old signatures
+- **confirm the unfixed tree builds, exit 0**, before reading a single test result
+- state both halves: **3 of 10 inverted** (the ones predicted), and **7 passed unfixed** — the
+  second number matters, because a failure among those would mean something already correct had
+  been broken rather than something broken fixed
+- verify the restore afterwards: marker back, `git status` empty, diff against the commit empty
+
+A counterfactual that reports failures without proving the tree compiled is the same object as a
+green test run of a stale binary — the `--no-build` trap, arriving from the opposite direction.
+
 Corollary for anything printing a count: **state the count even when it is zero**, and assert the
 input was non-empty before trusting it. `timeouts: 0` from an empty glob and `timeouts: 0` from a
 clean run are the same three characters.
