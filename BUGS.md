@@ -6677,3 +6677,58 @@ parsers2 hit it twice in one day and was saved both times only by grepping the b
 matrix ran clean against stale binaries and the results were read as real until the build log was
 checked. The failure is silent on both sides — the build's error scrolls past, and the test run
 has nothing to complain about.
+
+---
+
+### 108. assert-xml cannot see whitespace, and what that does to the published figure (2026-09-16)
+
+**Mechanism, verified in both halves rather than read.** `VerifyXmlAsync` parses both sides with
+`XDocument.Parse` at default `LoadOptions.None`, which discards whitespace-only text at parse time:
+
+```
+XDocument.Parse("<a><x>   </x></a>")                        -> x has 0 child nodes
+XDocument.Parse(..., LoadOptions.PreserveWhitespace)        -> x has 1
+```
+
+That alone is not enough — `DeepEquals` on `<x>   </x>` vs `<x/>` after the default parse is still
+`False`, because one element is `IsEmpty` and the other is not. `NormalizeEmptyElements` supplies
+the second half: it sets `elem.Value = ""` on every element with no nodes, which after the
+discarding parse includes elements that *had* whitespace. Together, whitespace differences are
+invisible to every `assert-xml`.
+
+**Proof it matters:** `strip-space-020` and `-027` report PASSED while the engine emits
+`<abc:x>   </abc:x>` where `<abc:x/>` is required (printed from inside the fixture; the instrument
+was proven non-blind in the same run — 387 comparisons recorded, 5 False / 382 True).
+
+**Scope, and the first figure was wrong by ~8x in the dangerous direction.** Over 4,567 `assert-xml`
+assertions, measured independently by two sessions:
+
+| shape | count | reading |
+|---|---|---|
+| `<x>   </x>`, `<a/> <b/>` — **same line** | **~20** (9-11 sets) | **genuinely unchecked** |
+| `<x>\n  </x>` — true whitespace-only leaf | 19 (both sessions agree exactly) | ambiguous; excluded from the figure |
+| `<a/>\n  <b/>`, `<out>\n  <a/>` — container | ~142-202 | **indentation** |
+
+The initial 189 was dominated by the last row. That row is not a gap: **a comparison sensitive to
+indentation would be wrong**, because no two serializers format identically and it would fail
+constantly for no reason. Counting it as exposure implies a harness change that should never be
+made — which is why an overstatement in that direction is worse than an understatement.
+
+The 19 ambiguous leaves are left *out* of the exposure figure and said so explicitly, rather than
+filed silently under "indentation". They live in `attr/match`, `attr/select`, `expr/expression`,
+`insn/construct-node`, `insn/copy`, `insn/number`, `misc/xml-version` — **`decl/strip-space` is not
+among them**, so the proof above does not depend on resolving them.
+
+**What it does to the published figure:** at most ~20 of the passing cases are unchecked for
+whitespace. That is a caveat worth one line next to the number, not a hole in it. **Do not "fix"
+the harness alone** — making the comparison whitespace-sensitive reclassifies passes and moves the
+baseline, and until the engine's import-precedence gap (#139) lands it would turn
+`strip-space-020/-027` red for the wrong reason.
+
+**Method note, which is the transferable part.** Two independent measurements disagreed (189 vs 23),
+and reconciling them found what neither had alone: the broader count surfaced a bucket the narrower
+one would have excluded silently, and the narrower one explained what that bucket contained — a
+discriminator keying "leaf" off the character after `<`, which counts a parent's leading text and is
+indentation by construction. **Agreeing measurements are worth something; disagreeing measurements
+that get reconciled are worth more.** Both counts are cited in the issue rather than either claimed
+precise to the unit.
