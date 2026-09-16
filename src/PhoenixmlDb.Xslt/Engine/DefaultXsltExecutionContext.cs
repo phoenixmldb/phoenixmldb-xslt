@@ -643,6 +643,30 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _ => PhoenixmlDb.XQuery.Functions.ConcatFunction.XQueryStringValue(item).Length == 0,
     };
 
+    /// <summary>
+    /// Swaps the sequence accumulator, returning the previous one. A body that is evaluated to a
+    /// value of its own must not append into the accumulator of whatever construct happens to be
+    /// mid-evaluation around it.
+    /// </summary>
+    /// <summary>
+    /// Swaps text-as-sequence-items collection, returning the previous setting. Installing an
+    /// accumulator alone would REROUTE text into it, which changes the serialized content that the
+    /// RTF / text() / node() / document-node() binding paths read.
+    /// </summary>
+    internal bool SwapCollectTextAsSequenceItems(bool next)
+    {
+        var previous = _collectTextAsSequenceItems;
+        _collectTextAsSequenceItems = next;
+        return previous;
+    }
+
+    internal List<object?>? SwapSequenceAccumulator(List<object?>? next)
+    {
+        var previous = _sequenceAccumulator;
+        _sequenceAccumulator = next;
+        return previous;
+    }
+
     private void AppendToSeqAccumulator(object? item)
     {
         // Record the `_output` offset only when the item is going into the current

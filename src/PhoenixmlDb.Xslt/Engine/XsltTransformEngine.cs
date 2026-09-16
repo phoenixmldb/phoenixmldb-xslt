@@ -4230,13 +4230,74 @@ public sealed class XsltTransformEngine
         if (global.Content == null)
             return;
                 var savedLen = outputBuilder.Length;
-                await global.Content.ExecuteAsync(context).ConfigureAwait(false);
+                // A global bound from CONTENT is evaluated to its OWN value, so its body must not
+                // append into the accumulator of whatever is mid-evaluation around it. Globals are
+                // bound lazily on first reference, and that reference can occur inside a typed
+                // variable's body — where an accumulator IS active. The global's own
+                // xsl:sequence then appended into that variable's accumulator, so the variable
+                // bound its own item PLUS the global's: `as="xs:anyURI"` came back holding two
+                // items. DocBook xslTNG `vp:chunk-output-base-uri` reaches
+                // `xs:anyURI($chunk-output-base-uri)` exactly so, and the two items surfaced far
+                // downstream as XPTY0004 from flatten-path(). Nulling it restores the same path a
+                // top-level eager binding already takes; the local-variable and function seams
+                // isolate this the same way.
+                // ISOLATION applies to every content-bound global: its body must not append into
+                // the accumulator of whatever is mid-evaluation around it. CAPTURE applies only to
+                // an ATOMIC declared type, because only that case is bound from the body's items —
+                // every other case is bound from the SERIALIZED TEXT, and installing an accumulator
+                // diverts text into it (WriteTextItem accumulates whenever one is present, with no
+                // further gate), silently emptying RTF / text() / node() / document-node() globals.
+                // null is therefore the correct isolation for those: it is exactly what a top-level
+                // eager binding already sees.
+                var wantsItemCapture = global.As != null
+                    && global.As.ItemType is not (ItemType.Text or ItemType.Node
+                        or ItemType.Item or ItemType.Document);
+                var globalAccumulator = wantsItemCapture ? new List<object?>() : null;
+                var savedGlobalAccumulator = context.SwapSequenceAccumulator(globalAccumulator);
+                // Capture xsl:sequence items WITHOUT diverting text: with an accumulator installed,
+                // WriteText routes text into it, and every binding path below that reads the
+                // serialized content (RTF, text(), node(), document-node()) would silently lose it.
+                var savedCollectText = context.SwapCollectTextAsSequenceItems(false);
+                try { await global.Content.ExecuteAsync(context).ConfigureAwait(false); }
+                finally
+                {
+                    context.SwapCollectTextAsSequenceItems(savedCollectText);
+                    context.SwapSequenceAccumulator(savedGlobalAccumulator);
+                }
                 var content = outputBuilder.ToString(savedLen, outputBuilder.Length - savedLen);
                 outputBuilder.Length = savedLen;
                 var globalBaseUri = XsltTransformEngine.UriString(global.BaseUri) ?? stylesheetBaseUri;
                 // XSLT 2.0: variables with content and no 'as' always create a temporary tree
                 if (global.As == null)
                     context.GlobalVariables[global.Name] = new ResultTreeFragment(content, globalBaseUri);
+                // Isolating the accumulator (above) is only half of it: this path binds from the
+                // SERIALIZED TEXT, so typed items the body produced via xsl:sequence would be
+                // dropped — an xs:anyURI("") serializes to nothing and the empty-content guard
+                // below then bound the empty sequence, turning "two items" into "no items".
+                // Consume the body's own items the way the eager pass and the local-variable seam
+                // already do: cast to the declared item type, then unwrap for ExactlyOne/ZeroOrOne.
+                // ATOMIC declared types only. A node-ish type (text()/node()/item()/
+                // document-node()) is bound by the branches below, which REGISTER the node
+                // they build — an accumulator here holds an internal TextNodeItem marker, and
+                // binding that directly gave a value that `except`/`union` refused as "not a
+                // node". Installing an accumulator also reroutes text away from the serialized
+                // content those branches read, so they must keep seeing it.
+                else if (globalAccumulator is { Count: > 0 } && content.Length == 0
+                    && global.As.ItemType is not (ItemType.Text or ItemType.Node
+                        or ItemType.Item or ItemType.Document))
+                {
+                    var items = globalAccumulator.ToArray();
+                    if (global.As.ItemType != ItemType.Item && global.As.ItemType != ItemType.Node)
+                    {
+                        for (var gi = 0; gi < items.Length; gi++)
+                            items[gi] = PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(items[gi], global.As.ItemType);
+                    }
+                    var occ = global.As.Occurrence;
+                    context.GlobalVariables[global.Name] =
+                        (occ == Occurrence.ExactlyOne || occ == Occurrence.ZeroOrOne)
+                            ? (items.Length == 1 ? items[0] : items)
+                            : items;
+                }
                 else if (context._nodeStore != null
                     && global.As.ItemType is ItemType.Text or ItemType.Node
                     && !content.Contains('<', StringComparison.Ordinal))
