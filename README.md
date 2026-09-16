@@ -24,18 +24,10 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,328/10,672 cases (97.1%), 344 failing
+### W3C XSLT 3.0 — 10,310/10,672 cases (96.6%), 362 failing
 
-Measured 2026-09-15 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, as the
-**measured pass count from a confirming full run** — the per-set passes reported in
-`conformance-results/summary.txt`.
-
-> **Not the sum of `scripts/conformance-baseline.tsv`.** That file is a **regression gate, not a
-> pass count**, and is deliberately allowed to sit *below* the measurement wherever a set is
-> pinned to a floor. Today it sums to 10,326: `insn/call-template` measures 39 and is recorded at
-> its standing floor of 37. A gate below the truth costs at most a missed alarm on one set; a gate
-> above it turns `main` red whenever that set drifts. The two figures agree only when nothing is
-> pinned.
+Measured 2026-09-14 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, from the
+committed per-set baseline (`scripts/conformance-baseline.tsv`).
 
 **The denominator grew, and that is the point.** It was 10,630 because the harness never opened
 `decl/expose` — 42 cases of an entire feature area, scoring no information at all rather than
