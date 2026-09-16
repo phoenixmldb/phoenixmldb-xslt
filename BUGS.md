@@ -6304,6 +6304,30 @@ doubting it harder. When a comment is doing real work — justifying a skip, an 
 timeout, a floor — the cheap move is to write down what would falsify it, and then spend the two
 minutes.
 
+**The sharper form, arrived at after the fourth instance: the bound was always stated from ONE KIND
+of evidence.** Not "one probe short" — that describes the remedy, not the mistake. Every time, the
+evidence gathered was several samples of a single kind, and the conclusion ranged over kinds that
+were never sampled:
+
+| claim | sampled | generalised to |
+|---|---|---|
+| "si-map's stylesheets are missing" | a description of the corpus | the corpus |
+| "timeouts=0" | the gate's output | whether the gate works |
+| "these six pass given the time" | two cases | six |
+| "nothing can read a node-keyed map entry" | four **lookup** forms | all access paths — `map:for-each` reads it fine |
+| "+6 and +2 means +8" | two separate measurements | their combination |
+| "#118's exemption is still needed" | the case it was written for | the premise it rested on |
+
+Four of those were checked by more than one sample, which is exactly what made them feel checked.
+Sampling harder inside one kind does not help.
+
+**The practice that does:** enumerate the *kinds* first and probe one of each. For a data structure
+that means keyed access, iteration, serialization, type checks, equality. For a claim about a test
+suite: does it run, does it fail without the fix, does it fail for the stated reason, does it pass
+on other hardware. For an arithmetic claim about two changes: measure the combination, never add.
+One probe per kind beats five probes of one kind, and it is usually cheaper.
+(parsers2's formulation, after retracting the node-keyed-map bound on #124.)
+
 **The maintenance form, for claims that are true when written.** #118's exemption is the one that
 rotted rather than being born wrong, and a counterfactual at authoring time would have passed. What
 that case needs instead: **an exemption must name the condition that retires it, in a form someone
