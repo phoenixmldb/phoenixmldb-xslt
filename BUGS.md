@@ -6472,6 +6472,40 @@ The three kinds are then three ways the same confusion lands: the token is misre
 **input has no instance** of the thing (the corpus with no `as=` attributes). In each case the check
 reports a structurally valid answer that means something other than what it appears to mean.
 
+**A fourth kind, and the most dangerous: the check receives real, correct, well-formed data from
+the WRONG INSTANCE.** Not "never received the data", not "the input has no instance", not "mangled
+in transit" — everything is genuine, and it belongs to a different event.
+
+Two traps from one diagnosis (schematron and parsers2, chasing a RED corpus row on #135):
+
+- **Re-running to diagnose destroys the evidence.** `--no-cache` skips the cache *read* and still
+  does `Directory.Delete(dir, recursive: true)` before recompiling. So the instinctive response to
+  an anomaly — run it again — deletes the artifact that would have explained it. **Capture first,
+  re-run second.** The only copy of the corrupt validator was lost this way.
+- **A capture that fires is not a capture of the right thing.** The preservation hook worked. It
+  reported success and preserved a genuinely corrupt artifact — whose mtime was the *previous
+  day*, an incomplete cache directory from an unrelated failure. The artifact was real, the
+  corruption was real, and the signature matched the hypothesis exactly. It was still the wrong
+  file, and it would have been completely convincing.
+
+That second one has no tell at any level: nothing is malformed, nothing is empty, no count is
+wrong. The only discriminator was a **timestamp nobody would think to print**, and it arrived at
+the last step of a long investigation when everyone wanted an answer — which is when scrutiny is
+lowest and a matching signature is most welcome.
+
+> **Evidence must be shown to belong to the event it is offered as evidence of.**
+
+Same family as the zero rule and the delimiter rule: a structural property — *this artifact is from
+this run* — assumed rather than demonstrated. Print the timestamp, the run id, the commit; a
+provenance field is to an artifact what a denominator is to a count.
+
+**And a note on normalisers, which failed in both directions in one day.** Under-matching fabricated
+differences twice, once in the very pattern written to fix the first. Over-matching silently erased
+85 pure-decimal NEMSIS code values from *both sides* of a comparison — invisible, because deleting
+the same thing from both arms leaves them equal. **Under-match is loud and costs an investigation;
+over-match is silent and costs the finding.** The over-match was caught only because the under-match
+screamed and prompted an audit, which is not a detection method.
+
 Which yields the one-line version of this whole entry, and it is a question rather than a rule:
 **what would this check have printed if the thing it looks for were absent — and is that
 distinguishable from what it just printed?**
