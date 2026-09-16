@@ -4222,7 +4222,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
     public override async ValueTask CreateMapAsync(XsltMap instruction)
     {
-        var map = new OrderedXdmMap(EqualityComparer<object>.Default);
+        // XdmMapKeyComparer, not EqualityComparer<object>.Default — every other map constructor in
+        // the engine (MapConstructorOperator, RecordConstructorOperator, map:entry, map:put) uses
+        // it, and it is what implements op:same-key: untypedAtomic eq string, cross-type numeric,
+        // NaN, duration, anyURI. xsl:map was the sole outlier.
+        //
+        // Cross-type lookups did still work here, via MapKeyHelper, which "trusts a miss only
+        // under XdmMapKeyComparer" and otherwise rescans the whole map with that comparer. So the
+        // wrong comparer cost a linear scan on every miss rather than a wrong answer — a
+        // performance defect hidden behind a correctness fallback.
+        var map = new OrderedXdmMap(PhoenixmlDb.XQuery.Execution.XdmMapKeyComparer.Instance);
         _mapBuildStack.Push(map);
 
         // XTTE3375: Content of xsl:map must produce only map entries.
@@ -4287,6 +4296,36 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         // Evaluate the key (xsl:map-entry key is an XPath expression, not an AVT)
         var keyVal = await EvaluateAsync(instruction.Key).ConfigureAwait(false);
+
+        // ATOMIZE. XSLT 3.0 §11.6: the key is the ATOMIZED value of the key expression, so
+        // key="AUTHOR" is that element's typed value, not the element. Storing the node made the
+        // entry unreachable by ANY key — a string lookup atomizes and cannot match a node, and
+        // passing the same node atomizes it too, so it cannot match either. map:size() and
+        // map:keys() still looked right and map:for-each still returned the value, so every
+        // probe except the lookup said the map was fine. phoenixmldb-xslt#124.
+        //
+        // The same helper the lookup side uses (DynamicFunctionCallOperator), so the two ends
+        // agree by construction rather than by two implementations that happen to concur.
+        keyVal = PhoenixmlDb.XQuery.Execution.QueryExecutionContext.Atomize(keyVal);
+
+        // A map key is a SINGLE atomic item, so a sequence must be unwrapped — and more than one
+        // item is an error rather than a silent first-item pick.
+        //
+        // `object?[]` is the engine's sequence representation; `List<object?>` is an XDM ARRAY and
+        // is a single item, which is why it is not handled here. Testing for the list was this
+        // patch's own first mistake: `key="(1,2)"` sailed past it and produced one key stringifying
+        // as "1 2". Per the contract documented on MaterializeSequence.
+        if (keyVal is object?[] keyItems)
+        {
+            keyVal = keyItems.Length switch
+            {
+                1 => keyItems[0],
+                0 => null,
+                _ => throw Error("XPTY0004: The key of xsl:map-entry must be a single atomic value, "
+                                 + $"but the key expression produced {keyItems.Length} items")
+            };
+        }
+
         object key = keyVal ?? throw Error("XTDE3365: Map entry key must not be empty");
 
         // Evaluate the value
