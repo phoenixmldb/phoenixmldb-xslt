@@ -5703,8 +5703,20 @@ public sealed class XsltTransformEngine
 
     /// <summary>
     /// Strips whitespace-only text nodes from elements matching xsl:strip-space declarations.
-    /// Per XSLT spec: a whitespace text node is removed if its parent element matches
-    /// strip-space and does NOT match preserve-space (preserve takes priority when both match).
+    /// A whitespace text node is removed if its parent element matches strip-space and the
+    /// matching strip declaration is at least as SPECIFIC as any matching preserve declaration
+    /// (XSLT 3.0 §4.4: QName 0, prefix:* -0.25, * -0.5). So an explicit
+    /// <c>strip-space elements="db:article"</c> beats a blanket <c>preserve-space elements="*"</c>,
+    /// and a tie goes to stripping — see the <c>&gt;=</c> below.
+    /// <para>
+    /// The comment this replaces said preserve simply takes priority when both match, which is not
+    /// what the code does and would have the blanket preserve win.
+    /// </para>
+    /// <para>
+    /// LIMITATION: only specificity is considered. §4.4 resolves import precedence FIRST, but
+    /// <c>NameTest</c> (declared in the sibling XQuery project) carries no precedence field, so two
+    /// equally-specific declarations at different import levels cannot be distinguished here.
+    /// </para>
     /// </summary>
     internal static void StripWhitespaceNodes(XdmDocument doc, List<NameTest> stripSpace, List<NameTest> preserveSpace, XdmInMemoryStore store)
     {

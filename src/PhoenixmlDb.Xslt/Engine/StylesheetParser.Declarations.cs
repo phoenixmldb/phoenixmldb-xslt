@@ -756,6 +756,19 @@ public sealed partial class StylesheetParser
         foreach (var imported in stylesheet.Imports)
             CheckInputTypeAnnotationsConflict(stylesheet, imported);
 
+        // XTSE0270 is a conflict between declarations at the SAME import precedence, so it must be
+        // checked before imported declarations are merged in below. This function runs for every
+        // module — imported ones included — so each still gets its own check over its own
+        // declarations and those of the modules it xsl:includes, which share its precedence.
+        //
+        // Checking after the merge treated a principal xsl:strip-space and an imported
+        // xsl:preserve-space naming the same element as a conflict. That combination is legal:
+        // §4.4 resolves it by import precedence, the principal winning. It only became reachable
+        // when the merge below started collecting whitespace declarations across imports at all;
+        // before that, imported declarations never arrived and the check could only ever see one
+        // precedence level.
+        CheckStripSpaceConflicts(stylesheet);
+
         // Merge imported declarations at lower precedence — only at top level.
         // For sub-modules (included/imported), imports are kept separate and
         // transferred to the including module via MergeStylesheet, so the top-level
@@ -791,8 +804,7 @@ public sealed partial class StylesheetParser
         // NOT here in ParseStylesheet, because imported stylesheets may have same-precedence
         // conflicts that are resolved by higher-precedence overrides in the importing stylesheet.
 
-        // Conflicting strip-space/preserve-space is a static error (XTSE0270)
-        CheckStripSpaceConflicts(stylesheet);
+        // (XTSE0270 is checked above, before the import merge — see the note there.)
 
         // Note: ValidateAttributeSetReferences is called from the top-level Parse() method,
         // NOT here in ParseStylesheet, because imported stylesheets may reference attribute sets
