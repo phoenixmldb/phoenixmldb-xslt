@@ -975,9 +975,17 @@ public sealed class XsltTestRunner
         "function-0701",
         "sf-fold-left-021",
         "bug-6301",
-        "call-template-1003",
         "evaluate-047",
-        "next-match-030"
+        "next-match-030",
+        // call-template-1003 is here for a DIFFERENT reason and is not fixed by being here.
+        // It has returned three verdicts on identical code — timeout, pass, and
+        // "XTDE0000: exhausted the execution stack before reaching the recursion-depth limit
+        // (1200)" — the last of those on a run with the extended timeout and no timeouts
+        // anywhere. Its verdict depends on available stack, not elapsed time. The longer
+        // timeout stops it consuming a slot for 10s before failing; it does not make it
+        // deterministic. See BUGS.md #105 — do not read a green result here as the case
+        // working.
+        "call-template-1003"
     ];
 
     /// <summary>

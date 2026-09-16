@@ -6159,3 +6159,53 @@ body) and si-map-005 is the map deemed-empty exemption from #118.
 
 **Rule this earns.** A skip must cite evidence that can be re-run, not a description of the corpus.
 `ls` the directory the comment claims is broken before believing it — including when you wrote it.
+
+---
+
+### 105. OPEN — call-template-1003 gives three different verdicts on identical code (2026-09-16)
+
+**Symptom.** `insn/call-template-1003` ("test tail recursion within a singleton `xsl:for-each`")
+has produced **three** outcomes from the same commit, on two machines:
+
+| where | outcome |
+|---|---|
+| this machine, sweep v2 | `Test 'call-template-1003' timed out after 10s` |
+| this machine, sweep v3 (180s allowed) | **passed** |
+| this machine, verification sweep (180s allowed, zero timeouts) | `XTDE0000: exhausted the execution stack` |
+| parsers2's machine, six saved runs | `XTDE0000`-class failure, never a timeout |
+
+The verification run is the one that settles it, because it had the extended timeout AND recorded
+no timeout anywhere: the case ran to completion and failed.
+
+```
+XTDE0000: The transformation exhausted the execution stack before reaching the
+recursion-depth limit (1200). It may contain unbounded recursion
+```
+
+**So it is not the clock.** The engine ran out of *stack*, and how much stack is available varies
+run to run — thread, runtime state, what ran before it in the same host. A case whose verdict
+depends on that is nondeterministic, and it will be whatever the machine felt like that morning.
+
+**This corrects two earlier readings, one of them today's.** BUGS #103 saw a committed `insn.log`
+with 1002/1003 failing while the run at hand passed, and reached for recursion depth — and was
+closer to right than it was given credit for. I then found the 10s timeout, established it as the
+cause of two *other* sets' drift, and extended it to this case as well. The timeout finding is
+real and stands for `function-0701` and `sf-fold-left-021`, which pass at 180s every time. It is
+the wrong explanation here, and the neatness of one mechanism covering all six cases is exactly
+what made it attractive.
+
+**Why it matters beyond one case.** The message says the stack was exhausted *before* reaching
+the recursion-depth limit of 1200 — so the guard designed to produce a clean diagnostic never
+fires, and the real limit is whatever the host stack happens to allow. `TailCallTemplateTests`
+covers ~70,000-deep tail calls and passes, so tail-call elimination works somewhere; it is not
+reliably applying on this path. That is the thing to investigate — not the timeout, and not the
+1200 limit.
+
+**Consequence for the gate.** `insn/call-template` stays at its floor of 37. Lucas set it,
+#119 deliberately held it, and it now has a better justification than "the set drifts": the set
+contains a case that returns different verdicts for the same code. Do not raise it while that is
+true — a baseline of 39 or 40 is a coin toss, and the floor is what stopped this being noticed
+the first two times.
+
+Found by the parsers2 session refusing to accept the timeout explanation for this case after it
+had been accepted for the other five, and asking for the failure text.
