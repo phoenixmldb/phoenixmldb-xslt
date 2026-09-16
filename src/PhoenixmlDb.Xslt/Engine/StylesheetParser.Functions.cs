@@ -440,6 +440,17 @@ public sealed partial class StylesheetParser
             case FunctionCallExpression fc:
                 return EvaluateStaticFunction(fc, context);
 
+            // `||` parses to StringConcatExpression, NOT BinaryExpression{Operator=Concat}.
+            // Two AST shapes for one operator; this switch handled only the second, so every
+            // static `a || b` fell through to `default:` and was reported unevaluable.
+            case StringConcatExpression sc:
+            {
+                var concat = new System.Text.StringBuilder();
+                foreach (var concatOperand in sc.Operands)
+                    concat.Append(StaticValueToString(EvaluateStaticExpression(concatOperand, context)));
+                return concat.ToString();
+            }
+
             case SequenceExpression seq:
                 var items = new List<object?>();
                 foreach (var item in seq.Items)
