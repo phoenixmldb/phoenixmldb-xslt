@@ -281,6 +281,25 @@ public sealed partial class StylesheetParser
         foreach (var (name, decFmt) in imported.DecimalFormats)
             target.DecimalFormats.TryAdd(name, decFmt);
 
+        // Merge whitespace-control declarations from imports. xsl:import adds the module to
+        // Imports rather than merging it, so an xsl:strip-space reached through an import was
+        // never collected: only the principal module's own declarations, and those of modules it
+        // xsl:includes, ever reached StripWhitespaceNodes. The declaration was silently ignored,
+        // whitespace-only text nodes survived in the source tree, and they then flowed through
+        // built-in templates into output — so the symptom appeared as stray inter-tag whitespace
+        // far from its cause, and constructs testing for emptiness (xsl:where-populated, empty(),
+        // normalize-space()) saw content that should not have been there. DocBook xslTNG reaches
+        // modules/space.xsl exactly this way (docbook.xsl imports main.xsl, which includes
+        // space.xsl), which is why it emitted an empty <div class="db-bfs"> where Saxon emits
+        // none (#130).
+        //
+        // AddRange, not TryAdd like the named declarations above: whitespace tests are unnamed and
+        // cumulative — every declaration stays live, and conflicts are resolved per element at
+        // strip time. Order does not matter either, because StripWhitespaceNodes takes the MAXIMUM
+        // default priority over each list rather than the first or last match.
+        target.StripSpace.AddRange(imported.StripSpace);
+        target.PreserveSpace.AddRange(imported.PreserveSpace);
+
         // Merge accumulators from imports (TryAdd preserves higher-precedence definitions)
         foreach (var (name, acc) in imported.Accumulators)
             target.Accumulators.TryAdd(name, acc);
