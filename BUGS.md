@@ -6493,7 +6493,20 @@ wrong. The only discriminator was a **timestamp nobody would think to print**, a
 the last step of a long investigation when everyone wanted an answer — which is when scrutiny is
 lowest and a matching signature is most welcome.
 
-> **Evidence must be shown to belong to the event it is offered as evidence of.**
+**A fifth variant: the change is correct, and it makes a previously-unreachable interaction
+reachable.** #137 merged imported `xsl:strip-space`/`xsl:preserve-space` declarations that had been
+silently dropped. Correct fix. It also made a long-correct conflict check start comparing
+declarations *across import precedences* — which §4.4 resolves by precedence and is not an error —
+so a legal stylesheet was rejected with a spurious XTSE0270. **The check had been safe because
+imported declarations never arrived, and nothing recorded that dependency.**
+
+It passed five instruments: a byte-identical conformance A/B, six purpose-written tests, a positive
+control on real output, and schematron's full fast gate. **Every one asked "did this change do what
+I intended". None asked "what does this change now make possible".** Those are different questions
+and only the first has an obvious test. The second is answered by looking at what consumes the
+thing you just started producing.
+
+> > **Evidence must be shown to belong to the event it is offered as evidence of.**
 
 Same family as the zero rule and the delimiter rule: a structural property — *this artifact is from
 this run* — assumed rather than demonstrated. Print the timestamp, the run id, the commit; a
@@ -6615,6 +6628,24 @@ have found files on `/` and never proven it could cross onto the mount, and the 
 this one. Demonstrating on a toy file and then trusting the zero on the real corpus is the exact
 loophole. (parsers2 and the schematron session; tightened after the looser form had been
 written down.)
+
+**Totals across a harness change are not comparable, in either direction.** #123 moved the set
+list to 260 and the denominator to 10,672 -> 10,839, adding `fn/system-property-gen`'s 166 failing
+cases alone. The same engine reports **334** failures on the old list and **493** on the new one,
+and the second was nearly written up as a regression against the first. Only a within-run A-vs-B
+diff carries meaning across such a change. The better signal that the harness behaved as described
+was that two *predicted* per-set gains arrived exactly — `si-map` 10->11 and `type/maps` 48->49 from
+the map-key fix — which a total could never have shown.
+
+**And a defect in the timeout work recorded above, found by the labelling it shipped with.** Adding
+six named cases to `SlowTests` does not converge: on the next run the three timeouts were
+`sf-fold-left-016`, `si-value-of-016` and `sx-gc-gt-121` — **all new**, none on the list. A named
+allow-list can only ever cover cases that have already timed out, and under load the timeout lands
+wherever it lands. The labelling change works and made all three identifiable in seconds; the
+`SlowTests` change treats a symptom that moves. A load-independent mechanism is needed — scale the
+cap to measured machine speed, or have the gate treat a timeout as *not a measurement* rather than
+as a failure, which is what it actually is. Until then, "green except some timeouts" will be the
+normal state of a run on a slow host, and that is exactly how a gate stops being believed.
 
 **A rule of its own, because it is the one most likely to ship: never pass `--no-build` in the
 same breath as a build whose exit status you did not check.** A failed build followed by
