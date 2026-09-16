@@ -6400,3 +6400,18 @@ instances above. A check never observed failing has not been tested; it has been
 Corollary for anything printing a count: **state the count even when it is zero**, and assert the
 input was non-empty before trusting it. `timeouts: 0` from an empty glob and `timeouts: 0` from a
 clean run are the same three characters.
+
+**Why these cluster in instrumentation rather than in shipped code.** Instrumentation is written
+once, read never, and trusted immediately. Shipped code is reviewed, exercised by tests, and
+revisited; a probe is believed the moment it prints something. That is also why the cost lands on
+whoever is furthest into an investigation and least inclined to doubt their own tools.
+(parsers2's observation.)
+
+**A rule of its own, because it is the one most likely to ship: never pass `--no-build` in the
+same breath as a build whose exit status you did not check.** A failed build followed by
+`--no-build` gives a perfectly green test run of a binary compiled before the change existed.
+parsers2 hit it twice in one day and was saved both times only by grepping the build output for
+` error ` rather than for success. This session hit it too: after a CS0136 name collision, a repro
+matrix ran clean against stale binaries and the results were read as real until the build log was
+checked. The failure is silent on both sides — the build's error scrolls past, and the test run
+has nothing to complain about.
