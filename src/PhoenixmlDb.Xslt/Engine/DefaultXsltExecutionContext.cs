@@ -129,8 +129,23 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             && declaredType.Occurrence is Occurrence.ZeroOrMore or Occurrence.OneOrMore)
         {
             _collectTextAsSequenceItems = true;
-            _serializingElementDepth = 0;
         }
+
+        // The body is not inside an ELEMENT the caller was serializing, whatever the caller was
+        // doing: a body's value is its own sequence, not a continuation of the caller's element
+        // construction. Only the node-ish multi-item branch above used to reset this, so a body
+        // with an ATOMIC declared type — as="xs:string?" — inherited the caller's depth. Called
+        // with nothing under construction the depth was 0 and all was well; called from inside an
+        // open xsl:copy it was not, and WriteText's accumulator branch (which requires
+        // _serializingElementDepth == 0) was skipped. A non-empty xsl:value-of still survived via
+        // the output buffer, but a ZERO-LENGTH one wrote nothing to either channel, so the body
+        // produced no item and the function returned () where "" was required — XTTE0570 at a
+        // strict as="xs:string" binding, on the SECOND node and never the first.
+        //
+        // This is issue #4 resurfacing: the 2026-03 fix (1a993ce) atomizes the TextNodeItem the
+        // accumulator holds, which in the nested case was never created. Measured against Saxon
+        // 12.10, which returns one item at every depth.
+        _serializingElementDepth = 0;
 
         // The body is not inside an attribute/comment/PI value, whatever the caller was doing.
         _textContentDepth = 0;
