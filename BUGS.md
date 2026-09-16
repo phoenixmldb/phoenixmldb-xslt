@@ -4814,9 +4814,32 @@ Both are **duplicate test-sets whose stylesheet references do not exist beside t
 `sx-PathExpr/` contains `sx-path-001.xsl` while its test-set asks for `sx-treat-901.xsl`. Every
 case fails with *"Could not find file"*.
 
-**They account for 7 of the current 331 failures** — `si-map-007`, `si-map-009`, `si-map-901`,
-`si-map-902`, `si-map-903`, `sx-path-001`, `transform-001`. **All phantom: they measure nothing
-about the engine.**
+**They account for 7 failures** — `si-map-007`, `si-map-009`, `si-map-901`, `si-map-902`,
+`si-map-903`, `sx-path-001`, `transform-001`.
+
+#### SHARPENED 2026-09-15 — the seven are two different things, and only six move
+
+"All phantom" was my wording and it is too coarse. parsers2 checked the baseline file rather than
+inferring, and the rows are:
+
+```
+tests/strm/sf-map-new/_sf-map-new-test-set.xml      0   5
+tests/strm/sx-PathExpr/_sx_PathExpr-test-set.xml    0   1
+```
+
+| | what it is | moves on alignment? |
+|---|---|---|
+| **6 cases** in `sf-map-new` + `sx-PathExpr` | **phantom denominator** — sets the catalog does not list, that we should not be running | **yes** |
+| **2 cases**, `si-map-007` and `-009` | **genuine failures of a real catalog set** (`tests/strm/si-map`), unpassable until the suite files agree | **no** |
+
+So the precise statement is **"6 phantom denominator cases, plus 2 unpassable cases in a real
+set"** — not "the denominator is wrong by 7". Only the six leave the denominator if the alignment
+happens; the two stay and keep failing.
+
+**Effect on the published figure, if the alignment is taken:** 10,328 / 10,672 becomes
+**10,328 / 10,666** — 97.15% → 97.21%. **A percentage move with no case changing behaviour**,
+which is exactly the kind of movement that needs saying out loud in a release note or it reads as
+progress.
 
 #### NARROWED 2026-09-13 — the other direction is a re-derivation of #72
 
