@@ -208,6 +208,19 @@ Four rules, each from a way this was actually got wrong:
   found by chance that it had been inert the whole time — on the same day they were holding
   someone else to BUGS #97, which is precisely "a check that validates what the method already
   guarantees".
+- **Never capture stderr into a value you then test numerically.** The inert gate above failed in
+  a way neither an empty-count nor a missing-binary theory predicts: `2>&1` put the shell's own
+  `bc: command not found` *into* the variable, so `${n:-0}` never took its default — the value was
+  non-empty, it was an error message — and `[ "…command not found" -eq 0 ]` is a bash arithmetic
+  error, which inside `cmd || fail` never reached the failure branch. The check's own error became
+  its passing value.
+
+**These runs are not interchangeable across machines.** The two sessions working on this repo are
+on different hosts (`palukerjr`, `mechapaluker`) with materially different speed: six cases trip
+the 10s cap on the slower one and zero across ten runs on the faster. Any A/B whose arms were
+measured on different hosts is not an A/B. This is also why the gate matters more than it looks —
+whoever is on the faster host will not see the problem at all, and will be the one who believes
+the number.
 
 Related: a set total can hide two cases swapping inside it, one fixed and one broken. When an A/B
 matters, diff the FAILED **case names**, not just the per-set counts — the per-set gate is the
