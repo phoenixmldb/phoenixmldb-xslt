@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-16 21:22 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-17 11:47 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,8 +18,8 @@ Generated 2026-09-16 21:22 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 1 |
-| phoenixmldb-xslt | 10 | 3 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-xslt | 10 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -61,17 +61,11 @@ Generated 2026-09-16 21:22 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [138] BUGS #107: three follow-ups, including a defect in today's timeout fix
 - [128] Let the streaming scanner descend into xsl:map, xsl:map-entry and xsl:where-populated, and retire the map exemption
-- [116] Cut per-evaluation setup in XPath evaluation and call-template
-
-**phoenixmldb-cli**
-
-- [5] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **108** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **109** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
