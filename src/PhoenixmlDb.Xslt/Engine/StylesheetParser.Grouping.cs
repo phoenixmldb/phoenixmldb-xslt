@@ -187,15 +187,13 @@ public sealed partial class StylesheetParser
                 target.Modes.TryAdd(key, mode);
         }
 
-        // Strip/preserve space: merge at LOWER import precedence than the using package's own
-        // declarations. One level below is an approximation — nested xsl:use-package composition is
-        // not modelled, so a package used by a package shares the level of a direct import. Before
-        // #139 these arrived at level 0 and tied with the using package's own declarations, so this
-        // is a strict improvement rather than a complete treatment.
-        foreach (var decl in package.StripSpace)
-            target.StripSpace.Add(decl with { ImportPrecedence = 1 });
-        foreach (var decl in package.PreserveSpace)
-            target.PreserveSpace.Add(decl with { ImportPrecedence = 1 });
+        // Strip/preserve space: merge as-is. The levels are already correct — the xsl:use-package
+        // handler shifts the whole package down by one before calling this, mirroring the relative
+        // shift it applies to template rules, so the package's own declarations arrive at 1 and
+        // anything it imported or itself used arrives at 2 or deeper (#142). Re-stamping an
+        // absolute level here, as #141 did, would flatten that back into a tie.
+        target.StripSpace.AddRange(package.StripSpace);
+        target.PreserveSpace.AddRange(package.PreserveSpace);
 
         // Accumulators: merge all. Accumulators are package-local, so record which names
         // came from the used package — a same-named accumulator declared in the using
