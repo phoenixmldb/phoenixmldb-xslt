@@ -6493,7 +6493,20 @@ wrong. The only discriminator was a **timestamp nobody would think to print**, a
 the last step of a long investigation when everyone wanted an answer — which is when scrutiny is
 lowest and a matching signature is most welcome.
 
-> **Evidence must be shown to belong to the event it is offered as evidence of.**
+**A fifth variant: the change is correct, and it makes a previously-unreachable interaction
+reachable.** #137 merged imported `xsl:strip-space`/`xsl:preserve-space` declarations that had been
+silently dropped. Correct fix. It also made a long-correct conflict check start comparing
+declarations *across import precedences* — which §4.4 resolves by precedence and is not an error —
+so a legal stylesheet was rejected with a spurious XTSE0270. **The check had been safe because
+imported declarations never arrived, and nothing recorded that dependency.**
+
+It passed five instruments: a byte-identical conformance A/B, six purpose-written tests, a positive
+control on real output, and schematron's full fast gate. **Every one asked "did this change do what
+I intended". None asked "what does this change now make possible".** Those are different questions
+and only the first has an obvious test. The second is answered by looking at what consumes the
+thing you just started producing.
+
+> > **Evidence must be shown to belong to the event it is offered as evidence of.**
 
 Same family as the zero rule and the delimiter rule: a structural property — *this artifact is from
 this run* — assumed rather than demonstrated. Print the timestamp, the run id, the commit; a
@@ -6571,6 +6584,29 @@ supposed to catch and confirm it goes red. That is the counterfactual from #106 
 instrument rather than the claim, and it is the only technique on this list that catches all nine
 instances above. A check never observed failing has not been tested; it has been run.
 
+**The counterfactual has its own version of this failure, and it is easy to hit.** A reverted tree
+that does not **compile** produces failing tests for the wrong reason: "3 of 10 failed" then means
+"nothing ran", and the counterfactual certifies itself. The model, from #139:
+
+- revert the source **and** any test file the fix's API change touched, together — otherwise the
+  test project will not build against the old signatures
+- **confirm the unfixed tree builds, exit 0**, before reading a single test result
+- state both halves: **3 of 10 inverted** (the ones predicted), and **7 passed unfixed** — the
+  second number matters, because a failure among those would mean something already correct had
+  been broken rather than something broken fixed
+- verify the restore afterwards: marker back, `git status` empty, diff against the commit empty
+
+A counterfactual that reports failures without proving the tree compiled is the same object as a
+green test run of a stale binary — the `--no-build` trap, arriving from the opposite direction.
+
+**The inverse, and it is worse: a test that asserts the defect.** #137's own test encoded the
+behaviour #139 then had to fix, so the bug was *pinned* by a passing test. This is not a check that
+cannot fail — it fails precisely when the code becomes correct, which turns a fix into an apparent
+regression and creates pressure to revert it. The tell is a test written from observed output
+rather than from the specification: it will always pass on the day it is written. Corrected in
+#141, together with the two justification comments that had explained the wrong behaviour as
+intended.
+
 Corollary for anything printing a count: **state the count even when it is zero**, and assert the
 input was non-empty before trusting it. `timeouts: 0` from an empty glob and `timeouts: 0` from a
 clean run are the same three characters.
@@ -6616,6 +6652,46 @@ this one. Demonstrating on a toy file and then trusting the zero on the real cor
 loophole. (parsers2 and the schematron session; tightened after the looser form had been
 written down.)
 
+**Totals across a harness change are not comparable, in either direction.** #123 moved the set
+list to 260 and the denominator to 10,672 -> 10,839, adding `fn/system-property-gen`'s 166 failing
+cases alone. The same engine reports **334** failures on the old list and **493** on the new one,
+and the second was nearly written up as a regression against the first. Only a within-run A-vs-B
+diff carries meaning across such a change. The better signal that the harness behaved as described
+was that two *predicted* per-set gains arrived exactly — `si-map` 10->11 and `type/maps` 48->49 from
+the map-key fix — which a total could never have shown.
+
+**And a defect in the timeout work recorded above, found by the labelling it shipped with.** Adding
+six named cases to `SlowTests` does not converge: on the next run the three timeouts were
+`sf-fold-left-016`, `si-value-of-016` and `sx-gc-gt-121` — **all new**, none on the list. A named
+allow-list can only ever cover cases that have already timed out, and under load the timeout lands
+wherever it lands. The labelling change works and made all three identifiable in seconds; the
+`SlowTests` change treats a symptom that moves. A load-independent mechanism is needed — scale the
+cap to measured machine speed, or have the gate treat a timeout as *not a measurement* rather than
+as a failure, which is what it actually is. Until then, "green except some timeouts" will be the
+normal state of a run on a slow host, and that is exactly how a gate stops being believed.
+
+**Measured across hosts, which decides between the options.** The same three cases on
+`mechapaluker` (32 cores, load 0.05): **0 timeouts across 12 sweeps and 4,326 FAILED lines**, with
+the per-set TSV showing all three sets visited every time — `sf-fold-left` 20/20,
+`sx-GeneralComp-gt` 52/52, `si-value-of` 35/39 with four failures, none of them `si-value-of-016`.
+Controls, because a zero without them is worth nothing: the search was proven non-blind
+(`math-3701`, known to fail there, returns 12 hits from the identical glob), and the label was
+proven emittable (19 sites print it). Limits stated by the measurer: ten of the twelve sweeps
+predate the label, so the *label*-based zero covers only the last two — the *name*-based count
+covers all twelve, and a timeout lands in the FAILED list by name in every harness version, which
+is the leg that carries.
+
+So **the cases are not intrinsically slow**; the timeout lands where load puts it. That datum
+survives both load-independent options and is the one it argues against: an allow-list can only
+enumerate what has already timed out *somewhere*, and "somewhere" is a property of a host and a
+moment, not of a case.
+
+Worth recording the near-miss too, because it is this entry's own subject: the measurement was
+almost sent annotated *"zero mentions = ran and passed"*, which the logs cannot support — they
+never name passing cases. Absence from a failure log means "did not fail **or** did not run". The
+per-set TSV, which records every set visited regardless of outcome, is what distinguishes the two.
+A denominator again, in a third costume.
+
 **A rule of its own, because it is the one most likely to ship: never pass `--no-build` in the
 same breath as a build whose exit status you did not check.** A failed build followed by
 `--no-build` gives a perfectly green test run of a binary compiled before the change existed.
@@ -6624,3 +6700,108 @@ parsers2 hit it twice in one day and was saved both times only by grepping the b
 matrix ran clean against stale binaries and the results were read as real until the build log was
 checked. The failure is silent on both sides — the build's error scrolls past, and the test run
 has nothing to complain about.
+
+---
+
+### 108. assert-xml cannot see whitespace, and what that does to the published figure (2026-09-16)
+
+**Mechanism, verified in both halves rather than read.** `VerifyXmlAsync` parses both sides with
+`XDocument.Parse` at default `LoadOptions.None`, which discards whitespace-only text at parse time:
+
+```
+XDocument.Parse("<a><x>   </x></a>")                        -> x has 0 child nodes
+XDocument.Parse(..., LoadOptions.PreserveWhitespace)        -> x has 1
+```
+
+That alone is not enough — `DeepEquals` on `<x>   </x>` vs `<x/>` after the default parse is still
+`False`, because one element is `IsEmpty` and the other is not. `NormalizeEmptyElements` supplies
+the second half: it sets `elem.Value = ""` on every element with no nodes, which after the
+discarding parse includes elements that *had* whitespace. Together, whitespace differences are
+invisible to every `assert-xml`.
+
+**Proof it matters:** `strip-space-020` and `-027` report PASSED while the engine emits
+`<abc:x>   </abc:x>` where `<abc:x/>` is required (printed from inside the fixture; the instrument
+was proven non-blind in the same run — 387 comparisons recorded, 5 False / 382 True).
+
+**Scope, and the first figure was wrong by ~8x in the dangerous direction.** Over 4,567 `assert-xml`
+assertions, measured independently by two sessions:
+
+| shape | count | reading |
+|---|---|---|
+| `<x>   </x>`, `<a/> <b/>` — **same line**, inside the root | **~22-24** (11-13 sets) | **genuinely unchecked** |
+| `<x>\n  </x>` — true whitespace-only leaf | 19 (both sessions agree exactly) | ambiguous; excluded from the figure |
+| `<a/>\n  <b/>`, `<out>\n  <a/>` — container | ~142-202 | **indentation** |
+
+The initial 189 was dominated by the last row. That row is not a gap: **a comparison sensitive to
+indentation would be wrong**, because no two serializers format identically and it would fail
+constantly for no reason. Counting it as exposure implies a harness change that should never be
+made — which is why an overstatement in that direction is worse than an understatement.
+
+The 19 ambiguous leaves are left *out* of the exposure figure and said so explicitly, rather than
+filed silently under "indentation". They live in `attr/match`, `attr/select`, `expr/expression`,
+`insn/construct-node`, `insn/copy`, `insn/number`, `misc/xml-version` — **`decl/strip-space` is not
+among them**, so the proof above does not depend on resolving them.
+
+**What it does to the published figure:** at most ~20 of the passing cases are unchecked for
+whitespace. That is a caveat worth one line next to the number, not a hole in it. **Do not "fix"
+the harness alone** — making the comparison whitespace-sensitive reclassifies passes and moves the
+baseline, and until the engine's import-precedence gap (#139) lands it would turn
+`strip-space-020/-027` red for the wrong reason.
+
+**Measured: a whitespace-sensitive comparison cannot be a global setting.** Scratch branch,
+`LoadOptions.PreserveWhitespace` on both parses, both arms on the same commit, `decl` chunk:
+
+    control    1032/1122   90 failed
+    treatment  1019/1122  103 failed        13 newly failing
+
+Of the 13, **7 are false failures from indentation** — `use-package-170`..`-173` and three
+`accumulator` cases, whose actual output is correct and merely pretty-printed — in a chunk whose
+whitespace exposure was estimated near zero. Across eleven chunks that is on the order of a hundred
+false failures bought for ~20 real checks. There is no general discriminator available:
+`<a/>\n  <b/>` is structurally identical whether it is meaningful whitespace or formatting, which is
+presumably why the comparison discards it.
+
+(`NormalizeEmptyElements` turned out not to need disabling: with whitespace preserved the element
+has a node, so `!elem.Nodes().Any()` is false and the normaliser skips it. A caveat that dissolved
+on measurement rather than needing to be wired around.)
+
+**So the proposal is per-set opt-in** — make whitespace-sensitivity a property of the ~9-11 sets
+that genuinely assert it, and leave the global comparison alone. That buys the real checks without
+the false failures and makes the assumption explicit per set instead of implicit everywhere.
+
+**And the same run produced the first conformance-level check of #141.** Under whitespace-sensitive
+comparison on a tree containing that fix, `decl/strip-space` scores **25/27 with the two failures
+being `strip-space-019` and `-022`** — so `strip-space-020` and `-027` *pass*. Established with a
+denominator, not from absence: the log records `Running 27 tests from ...strip-space`. Before #141
+those two emitted `<abc:x>   </abc:x>`, which a whitespace-sensitive comparison rejects. Under the
+normal harness they pass either way, so the suite cannot currently guard that fix — **opting
+`decl/strip-space` in would make the set able to catch a regression of #141**, which is the
+strongest argument for the opt-in.
+
+**Method note, which is the transferable part.** Two independent measurements disagreed (189 vs 23),
+and reconciling them found what neither had alone: the broader count surfaced a bucket the narrower
+one would have excluded silently, and the narrower one explained what that bucket contained — a
+discriminator keying "leaf" off the character after `<`, which counts a parent's leading text and is
+indentation by construction. Disagreeing measurements that get reconciled are worth more than
+agreeing ones.
+
+**And the sharper half, which cost the rule its first clause.** Both sessions independently reported
+the denominator as **4,567 assertions** and treated the match as corroboration. Parsing the catalogs
+as XML instead of pattern-matching them gives:
+
+    total <assert-xml> elements  5,096
+      with file="..."              539   <- expected value in an EXTERNAL FILE
+      with inline content        4,555
+    unparseable catalog files       21
+
+So 4,567 was approximately the *inline* count, and **539 assertions whose expected value lives in a
+separate file were opened by neither of us.** The two measurements agreed because they shared a
+method — a regex over `<assert-xml>…</assert-xml>` — and therefore shared its blind spot. Checking
+those 539 adds only ~2 to the exposure, so the headline survives; the lesson does not.
+
+**Agreement between measurements is worth exactly as much as the independence of their methods.**
+Two people running the same technique on the same data will agree whether or not it is right, and
+the agreement feels like evidence. Vary the *method*, not just the operator: parse where you
+pattern-matched, count where you sampled. (Found here by a third party's passing mention of
+`assert-xml file="…"` — nothing in either measurement could have surfaced it, because the blind
+spot was in what both looked at.)
