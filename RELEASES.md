@@ -16,7 +16,8 @@
 **Minor, but it breaks an API and it changes output.** Both are listed before the fixes, because a
 consumer needs to read those two sections and can skip the rest.
 
-Takes **PhoenixmlDb.XQuery 2.0.0** and **PhoenixmlDb.Core 2.0.0** — unchanged from 2.0.0.
+Takes **PhoenixmlDb.XQuery 2.1.0** and **PhoenixmlDb.Core 2.0.0**. XQuery moves with this
+release; Core runs its own cadence and did not.
 
 ### Breaking — one public API
 
@@ -90,16 +91,35 @@ case the old behaviour was non-conformant.
 the Schematron corpus: the include step **3.81 → 2.70 minutes**, and the full compile
 **5.93 → 4.68 minutes**.
 
-**The XQuery half of that work is not in this release.** `PhoenixmlDb.XQuery` #67 applies the same
-change to the XQuery evaluator and is merged on that engine's `main`, but this release pins
-`PhoenixmlDb.XQuery 2.0.0`, which predates it. It reaches XSLT only when XQuery ships and the pin
-moves — the numbers above are the XSLT half alone.
+**Both halves ship together.** The figures above are the XSLT evaluator alone. `PhoenixmlDb.XQuery`
+2.1.0 (#67) applies the same change to the XQuery evaluator, and this release pins it, so what a
+consumer actually installs is the pair:
+
+| | Total compile | Include step |
+|---|---|---|
+| 2.0.0 | 5.93 min | 3.81 min |
+| XSLT half alone | 4.68 min | 2.70 min |
+| **2.1.0 as shipped** | **3.97 min** | **2.06 min** |
+
+**46% off the include step.** Quoting either half on its own understates it by roughly half, which
+is why the two engines are tagged as one train. All 231 compile-step outputs are byte-identical to
+2.0.0's.
+
+One behaviour change rides along from the XQuery side: `fn:implicit-timezone` is now stable within
+a query and agrees with `fn:current-dateTime`, instead of reading the clock per call. See that
+engine's 2.1.0 notes for its four error-code corrections, which apply to XPath evaluated here.
 
 ### Conformance
 
-**10,347 / 10,839 W3C XSLT 3.0 cases (95.46%)**, measured on this commit, all eleven chunks, zero
-timeouts. Gains against the committed gate and no losses: `decl/expose` +6, `insn/call-template`
-+3, `strm/si-map` +1, `type/maps` +1.
+**10,347 / 10,839 W3C XSLT 3.0 cases (95.46%)**, measured on this commit, all eleven chunks.
+Gains against the committed gate and no losses: `decl/expose` +6, `insn/call-template` +3,
+`strm/si-map` +1, `type/maps` +1.
+
+**Re-measured against the XQuery this release actually pins.** The conformance suite compiles
+XQuery from source, not from the package, so the first run measured an engine pairing that was
+never going to ship. Repeating it against XQuery 2.1.0 gives the same 10,347 / 10,839, case for
+case — the XQuery half changes XSLT conformance by nothing, which is worth stating precisely
+because it is not the same claim as "we did not look".
 
 **The denominator moved, so this figure is not comparable with 2.0.0's** (#123). The harness ran
 two sets the W3C catalog does not declare and skipped cases in one it does; set lists now match at
