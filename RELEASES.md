@@ -11,6 +11,114 @@
 > `README.md` and in the generated `STATUS.md`, each carrying its own measurement date.
 
 
+## 2.1.0 — 2026-09-17
+
+**Minor, but it breaks an API and it changes output.** Both are listed before the fixes, because a
+consumer needs to read those two sections and can skip the rest.
+
+Takes **PhoenixmlDb.XQuery 2.0.0** and **PhoenixmlDb.Core 2.0.0** — unchanged from 2.0.0.
+
+### Breaking — one public API
+
+`XsltStylesheet.StripSpace` and `XsltStylesheet.PreserveSpace` change type:
+
+```csharp
+public List<NameTest> StripSpace              // 2.0.0
+public List<WhitespaceDeclaration> StripSpace // 2.1.0
+```
+
+`WhitespaceDeclaration` is `(NameTest Test, int ImportPrecedence)`. The precedence had nowhere to
+live before, which is the defect below. **Only code that builds or reads the stylesheet AST
+directly is affected** — callers that load a stylesheet and transform with it see no change.
+
+### Breaking — behaviour
+
+These change the output or the errors of stylesheets that previously appeared to work. In every
+case the old behaviour was non-conformant.
+
+- **A typed variable whose body produces the wrong number of items now raises `XTTE0570`, at all
+  four binding seams** (#135). Three of the four were silent before. The worst: a **global**
+  declared with a node type bound the **empty sequence** — so `empty()` was true, `xsl:if` took
+  the other branch, `for-each` never ran its body, and nothing was raised. A stylesheet relying on
+  that will now fail at the binding rather than produce quietly wrong output.
+- **A content-bound global declared with an atomic type no longer leaks its items into the
+  accumulator of the typed variable that first references it** (#132). Globals bind lazily on first
+  reference, and that reference can occur inside another variable's body. Disclosed consequence: a
+  global `as="xs:integer"` whose body yields two items used to bind the single value `"1 2"` and
+  now binds two items. Neither form is conformant — #135 makes it an error.
+- **`xsl:strip-space` and `xsl:preserve-space` in an imported module are now applied** (#137).
+  Previously only the principal module's declarations and those of modules it `xsl:include`d took
+  effect, so whitespace-only text nodes survived into the source tree and flowed into output, and
+  emptiness tests (`xsl:where-populated`, `empty()`, `normalize-space()`) saw content that should
+  not have been there. **DocBook xslTNG output changes**: the empty `<div class="db-bfs">` that
+  Saxon does not emit is gone.
+- **Conflicting whitespace declarations are resolved by import precedence first, then by pattern
+  specificity** (#141), per §4.4. Previously specificity alone decided, so a more specific
+  declaration in an imported module could beat a less specific one in the principal.
+- **`xsl:map-entry` keys are atomized** (#131), per §11.6. The key expression's *node* was stored
+  as the key, which made the entry **unreachable by any key at all** — a string lookup atomizes
+  and cannot match a node, and passing the same node atomizes it too. `map:size()`, `map:keys()`
+  and `map:for-each` all reported the map as correct while every lookup missed. Consequence:
+  `map:for-each` now hands the callback an **atomic value** as `$k` where it previously handed a
+  node, so `name($k)` or `$k/..` inside one will break.
+
+### Fixed
+
+- **A function with an atomic return type no longer returns `()` when the caller has an element
+  open** (#129). This is **issue #4 reopening**, not a new regression: the March fix handled the
+  flat shape, and the nested one — an `as="xs:string?"` body inside an open `xsl:copy` — was never
+  in scope. It fails identically on 1.8.0, 2.0.0 and every build between, so no release regressed.
+
+  **This is what makes SchXslt2 transpilation work at all.** Before it, no `.sch` could be
+  transpiled on any build from 1.8.0 onward, the NEMSIS national rules included. Reported by
+  Martin Honnen.
+- **Martin's second report** — the DocBook xslTNG `XPTY0004` on `$hierarchical-uri` — is fixed by
+  #132 above. Also pre-existing on 2.0.0.
+- **`xsl:expose` raises `XTSE3010` and `XTSE3025`** for invalid visibility changes, and
+  `names="f:abstract#0"` now matches: the arity suffix was being handed to the QName matcher (#127).
+- **Attribute-set state is restored when expanding one fails** (#120).
+- Earlier in this cycle: `xsl:where-populated` discards every item deemed empty rather than only
+  zero-length strings (#118); `xsl:assert/@error-code` is evaluated as an AVT (#115); `XNode` and
+  `XmlNode` parameters bind as navigable XDM nodes (#114); `XTTE0590` for a context item of the
+  wrong type whatever `xsl:context-item/@use` says (#113); `current-dateTime`/`current-date`/
+  `current-time` stay stable per transformation (#111); `XPST0081` for undeclared prefixes in
+  XPath names (#110).
+
+### Performance
+
+**Per-call-site and per-context setup is paid once instead of per evaluation** (#116). Measured on
+the Schematron corpus: the include step **3.81 → 2.70 minutes**, and the full compile
+**5.93 → 4.68 minutes**.
+
+**The XQuery half of that work is not in this release.** `PhoenixmlDb.XQuery` #67 applies the same
+change to the XQuery evaluator and is merged on that engine's `main`, but this release pins
+`PhoenixmlDb.XQuery 2.0.0`, which predates it. It reaches XSLT only when XQuery ships and the pin
+moves — the numbers above are the XSLT half alone.
+
+### Conformance
+
+**10,347 / 10,839 W3C XSLT 3.0 cases (95.46%)**, measured on this commit, all eleven chunks, zero
+timeouts. Gains against the committed gate and no losses: `decl/expose` +6, `insn/call-template`
++3, `strm/si-map` +1, `type/maps` +1.
+
+**The denominator moved, so this figure is not comparable with 2.0.0's** (#123). The harness ran
+two sets the W3C catalog does not declare and skipped cases in one it does; set lists now match at
+**260**. `fn/system-property-gen` contributes **166 cases, none passing** — a real feature gap
+(compile-time XPath evaluation for shadow attributes, BUGS #47) that was previously invisible
+rather than absent. Seven `si-map` skips matched by case name across two catalogs and were hiding
+cases in both; that set now runs 12 rather than 5.
+
+### Known limitations
+
+- **`use-package` whitespace precedence is approximated** one level below the spec, with nested
+  composition unmodelled (#142).
+- **The conformance harness cannot check whitespace-only element content** — `assert-xml` parses
+  at default `LoadOptions`, which discards it. About 22-24 assertions across 11-13 sets are
+  unchecked for whitespace as a result (#140). Making the comparison whitespace-sensitive globally
+  is not the fix: measured, it produces roughly a hundred false failures from indentation.
+- **`insn/call-template-1003` returns different verdicts on identical code**, depending on
+  available stack (BUGS #105). Its set is pinned at a floor rather than its measured value.
+
 ## 2.0.0 — 2026-09-15
 
 **Major because the train is.** `PhoenixmlDb.Core`, `PhoenixmlDb.XQuery` and `PhoenixmlDb.Xslt`
