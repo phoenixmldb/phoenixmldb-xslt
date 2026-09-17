@@ -6748,6 +6748,36 @@ the harness alone** — making the comparison whitespace-sensitive reclassifies 
 baseline, and until the engine's import-precedence gap (#139) lands it would turn
 `strip-space-020/-027` red for the wrong reason.
 
+**Measured: a whitespace-sensitive comparison cannot be a global setting.** Scratch branch,
+`LoadOptions.PreserveWhitespace` on both parses, both arms on the same commit, `decl` chunk:
+
+    control    1032/1122   90 failed
+    treatment  1019/1122  103 failed        13 newly failing
+
+Of the 13, **7 are false failures from indentation** — `use-package-170`..`-173` and three
+`accumulator` cases, whose actual output is correct and merely pretty-printed — in a chunk whose
+whitespace exposure was estimated near zero. Across eleven chunks that is on the order of a hundred
+false failures bought for ~20 real checks. There is no general discriminator available:
+`<a/>\n  <b/>` is structurally identical whether it is meaningful whitespace or formatting, which is
+presumably why the comparison discards it.
+
+(`NormalizeEmptyElements` turned out not to need disabling: with whitespace preserved the element
+has a node, so `!elem.Nodes().Any()` is false and the normaliser skips it. A caveat that dissolved
+on measurement rather than needing to be wired around.)
+
+**So the proposal is per-set opt-in** — make whitespace-sensitivity a property of the ~9-11 sets
+that genuinely assert it, and leave the global comparison alone. That buys the real checks without
+the false failures and makes the assumption explicit per set instead of implicit everywhere.
+
+**And the same run produced the first conformance-level check of #141.** Under whitespace-sensitive
+comparison on a tree containing that fix, `decl/strip-space` scores **25/27 with the two failures
+being `strip-space-019` and `-022`** — so `strip-space-020` and `-027` *pass*. Established with a
+denominator, not from absence: the log records `Running 27 tests from ...strip-space`. Before #141
+those two emitted `<abc:x>   </abc:x>`, which a whitespace-sensitive comparison rejects. Under the
+normal harness they pass either way, so the suite cannot currently guard that fix — **opting
+`decl/strip-space` in would make the set able to catch a regression of #141**, which is the
+strongest argument for the opt-in.
+
 **Method note, which is the transferable part.** Two independent measurements disagreed (189 vs 23),
 and reconciling them found what neither had alone: the broader count surfaced a bucket the narrower
 one would have excluded silently, and the narrower one explained what that bucket contained — a
