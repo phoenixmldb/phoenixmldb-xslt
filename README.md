@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (96.6% W3C conformance — 10,310/10,672 cases, measured 2026-09-14)
+### XSLT 3.0 (95.5% W3C conformance — 10,347/10,839 cases, measured 2026-09-17)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,11 +24,20 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,328/10,672 cases (97.1%), 344 failing
+### W3C XSLT 3.0 — 10,347/10,839 cases (95.46%), 492 failing
 
-Measured 2026-09-15 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, as the
+Measured 2026-09-17 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, as the
 **measured pass count from a confirming full run** — the per-set passes reported in
-`conformance-results/summary.txt`.
+`conformance-results/summary.txt`. Eleven chunks, **zero timeouts**.
+
+> **The percentage fell and the engine improved.** It read 97.1% against a denominator of 10,672
+> on 2026-09-15. The harness ran two sets the W3C catalog does not declare, skipped cases in one it
+> does, and never wired `fn/system-property-gen` at all. With the set list matched to the catalog
+> at 260 sets the denominator is **10,839**, and passes went **up** by 19. The drop is 166 cases
+> that were always failing and were never being counted — see 2.1.0 in `RELEASES.md`.
+>
+> **Figures across that change are not comparable in either direction.** The same engine reports
+> 344 failures on the old set list and 492 on the new one.
 
 > **Not the sum of `scripts/conformance-baseline.tsv`.** That file is a **regression gate, not a
 > pass count**, and is deliberately allowed to sit *below* the measurement wherever a set is
