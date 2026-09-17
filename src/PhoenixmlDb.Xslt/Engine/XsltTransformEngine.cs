@@ -1475,10 +1475,10 @@ public sealed class XsltTransformEngine
         foreach (var acc in _stylesheet.Accumulators.Values)
             foreach (var rule in acc.Rules)
                 TemplateIndex.ResolveNamespacesInPattern(rule.Match, nodeStore.InternNamespace);
-        foreach (var nt in _stylesheet.StripSpace)
-            nt.ResolveNamespace(nodeStore.InternNamespace);
-        foreach (var nt in _stylesheet.PreserveSpace)
-            nt.ResolveNamespace(nodeStore.InternNamespace);
+        foreach (var decl in _stylesheet.StripSpace)
+            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+        foreach (var decl in _stylesheet.PreserveSpace)
+            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
         if (_stylesheet.StripSpace.Count > 0)
             StripWhitespaceNodes(xdmDoc, _stylesheet.StripSpace, _stylesheet.PreserveSpace, nodeStore);
 
@@ -4861,10 +4861,10 @@ public sealed class XsltTransformEngine
         }
 
         // Resolve namespaces in strip-space/preserve-space NameTests
-        foreach (var nt in _stylesheet.StripSpace)
-            nt.ResolveNamespace(nodeStore.InternNamespace);
-        foreach (var nt in _stylesheet.PreserveSpace)
-            nt.ResolveNamespace(nodeStore.InternNamespace);
+        foreach (var decl in _stylesheet.StripSpace)
+            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+        foreach (var decl in _stylesheet.PreserveSpace)
+            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
 
         // Apply xsl:strip-space declarations
         if (_stylesheet.StripSpace.Count > 0)
@@ -4988,10 +4988,10 @@ public sealed class XsltTransformEngine
         }
 
         // Resolve namespaces in strip-space/preserve-space NameTests
-        foreach (var nt in _stylesheet.StripSpace)
-            nt.ResolveNamespace(nodeStore.InternNamespace);
-        foreach (var nt in _stylesheet.PreserveSpace)
-            nt.ResolveNamespace(nodeStore.InternNamespace);
+        foreach (var decl in _stylesheet.StripSpace)
+            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+        foreach (var decl in _stylesheet.PreserveSpace)
+            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
 
         // Create a synthetic document node for the context
         var syntheticDocId = nodeStore.NextId();
@@ -5718,7 +5718,7 @@ public sealed class XsltTransformEngine
     /// equally-specific declarations at different import levels cannot be distinguished here.
     /// </para>
     /// </summary>
-    internal static void StripWhitespaceNodes(XdmDocument doc, List<NameTest> stripSpace, List<NameTest> preserveSpace, XdmInMemoryStore store)
+    internal static void StripWhitespaceNodes(XdmDocument doc, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace, XdmInMemoryStore store)
     {
         StripWhitespaceRecursive(doc, stripSpace, preserveSpace, store);
 
@@ -5735,7 +5735,7 @@ public sealed class XsltTransformEngine
         doc._stringValue = sb.ToString();
     }
 
-    private static void StripWhitespaceRecursive(XdmNode parent, List<NameTest> stripSpace, List<NameTest> preserveSpace, XdmInMemoryStore store)
+    private static void StripWhitespaceRecursive(XdmNode parent, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace, XdmInMemoryStore store)
     {
         var children = parent switch
         {
@@ -5760,38 +5760,26 @@ public sealed class XsltTransformEngine
         // If this is an element, check whether to strip whitespace text children
         if (parent is XdmElement elem)
         {
-            // Find best-matching strip and preserve declarations by priority.
-            // Per XSLT spec: QName=0, prefix:*=-0.25, *=-0.5
-            var bestStripPriority = double.NegativeInfinity;
-            var hasStripMatch = false;
-            foreach (var test in stripSpace)
-            {
-                if (test.Matches(XdmNodeKind.Element, elem.Namespace, elem.LocalName))
-                {
-                    var p = NameTestDefaultPriority(test);
-                    if (p > bestStripPriority)
-                        bestStripPriority = p;
-                    hasStripMatch = true;
-                }
-            }
-            var bestPreservePriority = double.NegativeInfinity;
-            var hasPreserveMatch = false;
-            if (hasStripMatch)
-            {
-                foreach (var test in preserveSpace)
-                {
-                    if (test.Matches(XdmNodeKind.Element, elem.Namespace, elem.LocalName))
-                    {
-                        var p = NameTestDefaultPriority(test);
-                        if (p > bestPreservePriority)
-                            bestPreservePriority = p;
-                        hasPreserveMatch = true;
-                    }
-                }
-            }
-            // Strip wins if it matched and either no preserve matched or strip has higher priority
-            var shouldStrip = hasStripMatch &&
-                (!hasPreserveMatch || bestStripPriority >= bestPreservePriority);
+            // Find the best-matching strip and preserve declarations. XSLT 1.0 §3.4, carried into
+            // 3.0 §4.4, resolves this in two ORDERED steps:
+            //
+            //   "First, any match with lower import precedence than another match is ignored.
+            //    Next, any match with a NameTest that has a lower default priority than the
+            //    default priority of the NameTest of another match is ignored."
+            //
+            // Import precedence DOMINATES default priority. Comparing priority alone — which is
+            // what this did before #139 — inverts every cross-module case: a blanket
+            // preserve-space elements="*" in the principal module must beat an explicit
+            // strip-space elements="db:para" reached through xsl:import, despite being far less
+            // specific. Default priorities are QName=0, prefix:*=-0.25, *=-0.5.
+            var bestStrip = FindBestWhitespaceMatch(stripSpace, elem);
+            var bestPreserve = bestStrip is null ? null : FindBestWhitespaceMatch(preserveSpace, elem);
+
+            // Strip unless a preserve match outranks it. An exact tie (same precedence AND same
+            // priority) still strips, preserving the previous behaviour; a same-precedence
+            // same-name pair is rejected at parse time as XTSE0270 and never reaches here.
+            var shouldStrip = bestStrip is not null
+                && (bestPreserve is null || !OutranksWhitespaceMatch(bestPreserve.Value, bestStrip.Value));
 
             if (shouldStrip && children is List<NodeId> childList)
             {
@@ -5884,6 +5872,35 @@ public sealed class XsltTransformEngine
             return -0.25; // prefix:* — specific namespace, wildcard name
         return -0.5; // * — matches everything
     }
+
+    /// <summary>
+    /// The winning whitespace-control match for an element, or null when none matches:
+    /// highest import precedence first (lowest <c>ImportPrecedence</c> number), then highest
+    /// NameTest default priority.
+    /// </summary>
+    private static (int Precedence, double Priority)? FindBestWhitespaceMatch(
+        List<WhitespaceDeclaration> declarations, XdmElement elem)
+    {
+        (int Precedence, double Priority)? best = null;
+        foreach (var decl in declarations)
+        {
+            if (!decl.Test.Matches(XdmNodeKind.Element, elem.Namespace, elem.LocalName))
+                continue;
+            var candidate = (decl.ImportPrecedence, NameTestDefaultPriority(decl.Test));
+            if (best is null || OutranksWhitespaceMatch(candidate, best.Value))
+                best = candidate;
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// True when <paramref name="a"/> beats <paramref name="b"/> under §4.4: higher import
+    /// precedence (the LOWER number, per <see cref="WhitespaceDeclaration"/>) decides first, and
+    /// only within one precedence level does the higher default priority decide.
+    /// </summary>
+    private static bool OutranksWhitespaceMatch(
+        (int Precedence, double Priority) a, (int Precedence, double Priority) b) =>
+        a.Precedence != b.Precedence ? a.Precedence < b.Precedence : a.Priority > b.Priority;
 
     /// <summary>
     /// Scoped capture of writes to a <see cref="StringBuilder"/> via a length cursor,

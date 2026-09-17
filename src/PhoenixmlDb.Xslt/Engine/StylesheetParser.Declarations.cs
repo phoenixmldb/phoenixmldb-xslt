@@ -496,7 +496,7 @@ public sealed partial class StylesheetParser
                     var stripElements = child.Attribute("elements")?.Value ?? "";
                     foreach (var name in stripElements.Split(' ', StringSplitOptions.RemoveEmptyEntries))
                     {
-                        stylesheet.StripSpace.Add(ParseNameTest(name, child));
+                        stylesheet.StripSpace.Add(new WhitespaceDeclaration(ParseNameTest(name, child), 0));
                     }
                     break;
 
@@ -506,7 +506,7 @@ public sealed partial class StylesheetParser
                     var preserveElements = child.Attribute("elements")?.Value ?? "";
                     foreach (var name in preserveElements.Split(' ', StringSplitOptions.RemoveEmptyEntries))
                     {
-                        stylesheet.PreserveSpace.Add(ParseNameTest(name, child));
+                        stylesheet.PreserveSpace.Add(new WhitespaceDeclaration(ParseNameTest(name, child), 0));
                     }
                     break;
 
@@ -1935,12 +1935,20 @@ public sealed partial class StylesheetParser
         {
             foreach (var preserve in stylesheet.PreserveSpace)
             {
+                // Only declarations at the SAME import precedence can conflict. Across precedences
+                // §4.4 RESOLVES the pair (the higher-precedence one wins) rather than rejecting it.
+                // This check runs before the import merge, so everything here is still at level 0
+                // and the guard is a no-op today; it is written explicitly so that moving the call
+                // below the merge cannot silently reintroduce the spurious XTSE0270 of #137.
+                if (strip.ImportPrecedence != preserve.ImportPrecedence)
+                    continue;
+
                 // Check for conflict: same local name and compatible namespace
-                if (strip.LocalName == preserve.LocalName &&
-                    (strip.NamespaceUri ?? "") == (preserve.NamespaceUri ?? ""))
+                if (strip.Test.LocalName == preserve.Test.LocalName &&
+                    (strip.Test.NamespaceUri ?? "") == (preserve.Test.NamespaceUri ?? ""))
                 {
                     throw new XsltException(
-                        $"XTSE0270: Conflicting strip-space and preserve-space declarations for element '{strip}'");
+                        $"XTSE0270: Conflicting strip-space and preserve-space declarations for element '{strip.Test}'");
                 }
             }
         }
