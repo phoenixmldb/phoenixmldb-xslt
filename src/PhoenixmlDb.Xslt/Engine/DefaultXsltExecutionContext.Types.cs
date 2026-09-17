@@ -178,8 +178,27 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Per XSLT spec, the version attribute is interpreted as a number — values like " 001 ", "+0.5", "-29"
     /// are valid and determine backwards-compatible mode by numeric comparison.
     /// </summary>
-    private bool IsBackwardsCompatible =>
-        ParseVersionNumber(EffectiveVersion) < 2.0m;
+    private bool IsBackwardsCompatible
+    {
+        get
+        {
+            // Read on every XPath evaluation and template call. The effective version string changes only
+            // on entering an instruction with its own version attribute, so the last parse is kept for the
+            // string instance it was made from instead of parsing a decimal each time.
+            var version = EffectiveVersion;
+            if (!_backwardsCompatibleKnown || !ReferenceEquals(version, _backwardsCompatibleVersion))
+            {
+                _backwardsCompatible = ParseVersionNumber(version) < 2.0m;
+                _backwardsCompatibleVersion = version;
+                _backwardsCompatibleKnown = true;
+            }
+            return _backwardsCompatible;
+        }
+    }
+
+    private string? _backwardsCompatibleVersion;
+    private bool _backwardsCompatible;
+    private bool _backwardsCompatibleKnown;
 
 
     /// <summary>
