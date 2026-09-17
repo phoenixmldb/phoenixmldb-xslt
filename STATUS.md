@@ -1,16 +1,16 @@
 # Status
 
-Generated 2026-09-17 11:47 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-17 21:26 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
-| `PhoenixmlDb.XQuery` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
-| `PhoenixmlDb.Xslt` | 2.0.0 | 2.0.0 | current |
+| `PhoenixmlDb.XQuery` | 2.1.0 | ? | **repo is at ?, nuget.org has 2.1.0** |
+| `PhoenixmlDb.Xslt` | 2.1.0 | 2.1.0 | current |
 | `xquery4` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
-| `xslt` | 2.0.0 | 2.0.0 | current |
+| `xslt` | 2.1.0 | 2.1.0 | current |
 
 ## Open work
 
@@ -57,7 +57,7 @@ Generated 2026-09-17 11:47 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
-- [67] Pay per-call-site and per-context setup once instead of per evaluation
+- [73] Take PhoenixmlDb.Xslt 2.1.0 for the CLI train
 
 **phoenixmldb-xslt**
 
