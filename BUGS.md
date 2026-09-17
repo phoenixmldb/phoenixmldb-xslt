@@ -6728,7 +6728,7 @@ assertions, measured independently by two sessions:
 
 | shape | count | reading |
 |---|---|---|
-| `<x>   </x>`, `<a/> <b/>` — **same line** | **~20** (9-11 sets) | **genuinely unchecked** |
+| `<x>   </x>`, `<a/> <b/>` — **same line**, inside the root | **~22-24** (11-13 sets) | **genuinely unchecked** |
 | `<x>\n  </x>` — true whitespace-only leaf | 19 (both sessions agree exactly) | ambiguous; excluded from the figure |
 | `<a/>\n  <b/>`, `<out>\n  <a/>` — container | ~142-202 | **indentation** |
 
@@ -6782,6 +6782,26 @@ strongest argument for the opt-in.
 and reconciling them found what neither had alone: the broader count surfaced a bucket the narrower
 one would have excluded silently, and the narrower one explained what that bucket contained — a
 discriminator keying "leaf" off the character after `<`, which counts a parent's leading text and is
-indentation by construction. **Agreeing measurements are worth something; disagreeing measurements
-that get reconciled are worth more.** Both counts are cited in the issue rather than either claimed
-precise to the unit.
+indentation by construction. Disagreeing measurements that get reconciled are worth more than
+agreeing ones.
+
+**And the sharper half, which cost the rule its first clause.** Both sessions independently reported
+the denominator as **4,567 assertions** and treated the match as corroboration. Parsing the catalogs
+as XML instead of pattern-matching them gives:
+
+    total <assert-xml> elements  5,096
+      with file="..."              539   <- expected value in an EXTERNAL FILE
+      with inline content        4,555
+    unparseable catalog files       21
+
+So 4,567 was approximately the *inline* count, and **539 assertions whose expected value lives in a
+separate file were opened by neither of us.** The two measurements agreed because they shared a
+method — a regex over `<assert-xml>…</assert-xml>` — and therefore shared its blind spot. Checking
+those 539 adds only ~2 to the exposure, so the headline survives; the lesson does not.
+
+**Agreement between measurements is worth exactly as much as the independence of their methods.**
+Two people running the same technique on the same data will agree whether or not it is right, and
+the agreement feels like evidence. Vary the *method*, not just the operator: parse where you
+pattern-matched, count where you sampled. (Found here by a third party's passing mention of
+`assert-xml file="…"` — nothing in either measurement could have surfaced it, because the blind
+spot was in what both looked at.)
