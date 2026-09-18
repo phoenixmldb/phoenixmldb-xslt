@@ -1849,6 +1849,37 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     /// <summary>
+    /// Evaluates a declaration's contained sequence constructor in TEMPORARY OUTPUT STATE.
+    /// </summary>
+    /// <remarks>
+    /// XSLT 3.0 §24.2 lists the constructs that impose it exactly: "xsl:variable, xsl:param,
+    /// xsl:with-param, xsl:function, xsl:key, xsl:sort, xsl:accumulator-rule, and xsl:merge-key
+    /// always evaluate the instructions in their contained sequence constructor in temporary
+    /// output state". Two of the eight did not — xsl:sort and xsl:key — so an xsl:result-document
+    /// inside a sort key or a key's use-expression was not rejected. It ran, wrote a final result
+    /// tree per sorted item or per keyed node, and the SECOND one then reported XTDE1490
+    /// ("two result trees with the same URI") — a true statement about a situation that should
+    /// never have been reached (W3C result-document-1137, -1141).
+    ///
+    /// Only the CONTAINED SEQUENCE CONSTRUCTOR is covered, not a select attribute: a select
+    /// expression writes nothing to the output, so it has no output state to set.
+    /// </remarks>
+    internal async ValueTask<object?> EvaluateSequenceConstructorInTemporaryOutputStateAsync(
+        XsltSequenceConstructor content)
+    {
+        _temporaryOutputDepth++;
+        try
+        {
+            return await EvaluateSequenceConstructorAsync(content).ConfigureAwait(false);
+        }
+        finally
+        {
+            _temporaryOutputDepth--;
+        }
+    }
+
+
+    /// <summary>
     /// Evaluates a sequence constructor and returns its result value.
     /// Used for sort key evaluation where the sort key is defined by content.
     /// Captures both typed values (via xsl:sequence / _sequenceAccumulator) and text output.

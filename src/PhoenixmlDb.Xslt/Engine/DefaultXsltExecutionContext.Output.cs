@@ -968,7 +968,9 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         // XTDE1480: Cannot use result-document in temporary output state (e.g., inside a variable)
         if (_temporaryOutputDepth > 0)
-            throw Error("XTDE1480: It is a dynamic error to evaluate xsl:result-document in temporary output state (e.g., within a variable or parameter)");
+            throw Error("XTDE1480: It is a dynamic error to evaluate xsl:result-document in temporary output state "
+                + "(within the contained sequence constructor of xsl:variable, xsl:param, xsl:with-param, xsl:function, "
+                + "xsl:key, xsl:sort, xsl:accumulator-rule or xsl:merge-key)");
 
         // XTDE1460: Validate format attribute and find matching output declaration.
         // A NAMED xsl:output is LOCAL to its declaring package (XSLT 3.0 §3.6.7): when the
