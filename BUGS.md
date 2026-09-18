@@ -1461,6 +1461,37 @@ faster than the one it was written on.
 is not flakiness — flaky tests fail intermittently. These fail *reliably*, on the wrong hardware,
 which reads as a real defect and costs a diagnosis every time.
 
+### Update 2026-09-18 — the rewrite moved the failure to the other end of the range
+
+`StreamingCancellationTests` has since been rewritten, and the description above no longer matches
+the code. There is no "still running after 3 s" assertion left; all four tests now assert **upper**
+bounds:
+
+```csharp
+cts.CancelAfter(TimeSpan.FromMilliseconds(500));
+sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));   // over 400,000 iterations
+```
+
+That fixes the fast-box failure this entry was filed for — and introduces the mirror image.
+`StreamedTransform_TokenCancelledMidRun_ThrowsBeforeCompletion` now fails on a box that is too
+**slow**, or merely busy. Observed twice on `palukerjr` (8 cores, load average 10 from concurrent
+builds), both times inside the full suite, both times passing **4/4** when re-run alone on the same
+checkout. It passes on `mechapaluker` and on CI, so the same commit yields a different unit result
+on two machines.
+
+The proxy was never the direction. It is that **elapsed wall-clock stands in for "cancellation was
+observed"**, and any bound on a proxy has two ends: assert a floor and fast hardware fails, assert a
+ceiling and slow or loaded hardware fails. Flipping the inequality moves which machines are wrong,
+not whether the assertion measures the property.
+
+What would actually test the property: assert that the transform stopped **before consuming all
+400,000 items** — a count the streamed path can report — rather than before a clock reading. That
+holds on any hardware, because it is the thing cancellation is supposed to do.
+
+**Cost while it stands:** every full unit run on the slower host reports 1 failure. A suite that is
+reliably red for a known non-reason is a suite whose red is no longer information — which is how a
+genuine regression gets waved through as "that one always fails".
+
 Owned by the parsers2 session, to be fixed alongside the QT3 per-set baseline and the
 `insn/call-template` re-baseline.
 
