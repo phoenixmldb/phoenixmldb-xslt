@@ -594,7 +594,7 @@ tests/strm/si-iterate/_si-iterate-test-set.xml	35	35
 tests/strm/si-LRE/_si-lre-test-set.xml	69	69
 tests/strm/si-map/_si-map-test-set.xml	10	12
 tests/strm/si-merge/_si-merge-test-set.xml	7	7
-tests/strm/si-message/_si-message-test-set.xml	11	11
+tests/strm/si-message/_si-message-test-set.xml	10	11
 tests/strm/si-next-match/_si-next-match-test-set.xml	0	1
 tests/strm/si-on-empty/_si-on-empty-test-set.xml	33	33
 tests/strm/si-on-non-empty/_si-on-non-empty-test-set.xml	42	42
