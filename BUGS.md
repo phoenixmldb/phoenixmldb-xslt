@@ -1488,9 +1488,33 @@ What would actually test the property: assert that the transform stopped **befor
 400,000 items** — a count the streamed path can report — rather than before a clock reading. That
 holds on any hardware, because it is the thing cancellation is supposed to do.
 
-**Cost while it stands:** every full unit run on the slower host reports 1 failure. A suite that is
+**Cost while it stood:** every full unit run on the slower host reported a failure. A suite that is
 reliably red for a known non-reason is a suite whose red is no longer information — which is how a
 genuine regression gets waved through as "that one always fails".
+
+**RESOLVED in #161.** The tests now count items processed — via a `MessageListener` on an
+`xsl:message` in the same `for-each` body whose cancellation is under test — and cancellation is
+triggered by that count rather than by a timer. No wall-clock assertion remains in the file, so host
+speed cannot affect the result structurally rather than merely empirically.
+
+Verified by constructing the failure rather than waiting for it, because the first control run
+**passed**: the defect is a property of the host *under load*, not of the host. Ten CPU spinners,
+same box, same suite:
+
+| arm | load | result |
+|---|---|---|
+| `main` idle | 2.69 | PASS 1934/1935 |
+| `main` loaded | 21.20 | **FAIL 2** — both `StreamingCancellationTests` |
+| #161 loaded | 19.77–22.74 | PASS 1934/1935 |
+
+Two notes worth keeping. At higher load the loaded control failed **two** tests rather than the one
+previously observed — a wall-clock proxy loses more assertions as the margin shrinks, so the count
+of affected tests is itself load-dependent and not a fixed property. And the fix's own first draft
+**passed while measuring nothing**: it read the item count from a return value that is never
+assigned, because the method throws on cancellation, so the count was 0 and `0 < quarter` held. The
+lower-bound assertion — at least `CancelAfterItems` processed — is the only thing that caught it,
+which is why it is marked non-redundant in the file. This entry's shape, one level down, inside its
+own fix.
 
 Owned by the parsers2 session, to be fixed alongside the QT3 per-set baseline and the
 `insn/call-template` re-baseline.
