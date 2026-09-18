@@ -6904,3 +6904,89 @@ go wrong because nothing is looking.
 
 **Measured** (phoenixmldb-xslt#157): 10,361 -> 10,374 of 10,839, 13 newly passing, 0 newly failing,
 no set lower. `decl/expose` 21 -> 34 of 42.
+
+### 110. A check that cannot PASS — the mirror of #107, and it hides in the operand (2026-09-18)
+
+#107 is about checks that cannot fail. This is the same defect with the sign flipped, and it is
+better camouflaged: a check that can only report failure looks like vigilance.
+
+Two instances in one evening, each found by the other session, each shipped by the person who had
+just corrected it in the other's work.
+
+**1. A probe drawn from the commit subject rather than the diff.** Verifying that PR #160's BUGS.md
+amendment had landed:
+
+```
+git show origin/main:BUGS.md | grep -c "host-speed assertion flipped"   ->  0
+```
+
+The phrase is the PR **title**. It is not in the file body. The merge commit `d820a9d` was in
+`origin/main` and content probes returned 1 each. That grep returns 0 forever, merged or not — it
+carries no information in either direction. Both of us ran it; one of us reached the right
+conclusion anyway, because the conclusion happened to be independently true.
+
+**2. `merge-base --is-ancestor` with the wrong operand, on a squash-merging repo.** Proposed as the
+fix for instance 1, adopted on the proposer's word, and wrong:
+
+```
+mergeCommit = 944ffaa   pr-head = 086a3c5      (#162, verified MERGED)
+is-ancestor <mergeCommit> origin/main  ->  IN MAIN
+is-ancestor <pr-head>     origin/main  ->  NOT IN MAIN
+```
+
+A squash creates a new commit, so the branch head is never an ancestor of `main` even on a perfect
+merge. The **pr-head** form reports every merged PR as dropped and cannot distinguish a real drop
+from a normal squash. The **mergeCommit** form is sound. *The check was fine; the operand was the
+bug* — which matters, because the first retraction was "drop `merge-base`", and an over-broad
+retraction destroys a good check.
+
+**What replaced it — three legs, each cheap, each failing closed:**
+
+```
+gh pr view N --json state,mergeCommit    MERGED + a mergeCommit   GitHub's account of what it did
+is-ancestor <mergeCommit> origin/main    still reachable          catches a later force-push
+grep <token from the DIFF> in the file   the change is really there
+```
+
+Ask GitHub, which knows what it *did*, rather than git, which only sees the resulting graph. Never
+take the probe token from a commit subject.
+
+**The motivating failure, worth recording on its own.** Six PRs merged in one loop with
+`--delete-branch`. #157 was stacked on #155's head; deleting that branch **closed the dependent PR
+rather than retargeting it**, dropping +13 W3C cases. Every visible indicator was healthy — six
+green merges, `main` advanced, no failed check, no conflict, no error. The work was simply absent.
+The stack was known and written down an hour earlier; the loop did not distinguish it.
+
+**Before a merge wave:** `gh pr list --json number,baseRefName` and refuse `--delete-branch` on any
+branch another PR is based on.
+
+**The property both instances share:** understanding a failure mode in someone else's work does not
+inoculate you against it in your own an hour later, because the recognition attaches to their
+example rather than to the shape.
+
+### 111. Stale artifacts: four kinds in three days, one rule (2026-09-18)
+
+Four times in three days, a measurement was taken from an artifact that was real, internally
+consistent, and belonged to a **different run**. Different artifact kind every time, so pattern-
+matching on the last one does not help.
+
+| # | artifact | what it produced |
+|---|---|---|
+| 1 | a leftover `conformance-results/summary.txt` from an earlier run | a phantom "+12 gains" against the wrong baseline |
+| 2 | two on-disk conformance baselines predating #149 | a regression reported that did not exist |
+| 3 | a wait loop keyed to "newest run on `main`" | a deploy reported successful from a run that **predated the merge** |
+| 4 | a stale **local** git ref (`dc9904c`) while the pushed head was `086a3c5` | nearly measured a pre-rebase tree and reported it as someone else's PR |
+
+Instance 3 is the sharpest, because it *looks like waiting*: the loop asked for the most recent run,
+that run was already complete, and it exited instantly with an answer about a different commit.
+
+Instance 4 was the closest call — it would have produced a plausible number, attributed to a named
+branch, with nothing visibly wrong.
+
+**The rule:** key the lookup to the thing being verified — the commit SHA, the run that wrote the
+file, the remote ref — **never to what is locally present or most recent.** Before measuring someone
+else's branch: `git fetch && git rev-parse origin/<branch>`, never the local ref of the same name.
+
+**Corollary for wait loops:** they must fail closed when nothing matches yet. "No run for `<sha>`"
+has to block, not fall through to the newest run, or the bug is rebuilt with extra steps.
+
