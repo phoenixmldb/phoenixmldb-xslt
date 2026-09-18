@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-18 11:22 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-18 20:57 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-09-18 11:22 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 0 |
-| phoenixmldb-xslt | 7 | 3 |
+| phoenixmldb-xslt | 8 | 8 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -42,6 +42,7 @@ Generated 2026-09-18 11:22 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
 - [148] A streamed xsl:message loses the items produced by xsl:for-each in its content
 - [147] Streamable XSLT 3.0 with non motionless group-adjacent should be rejected by streamability analysis but is executed to give the strange error " XTDE1071: current-grouping-key() called when there is no current grouping key"
 - [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
@@ -54,9 +55,14 @@ Generated 2026-09-18 11:22 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [161] test: assert cancellation stopped the work, not that the machine was fast enough
+- [160] BUGS: the cancellation test's host-speed assertion flipped direction
+- [159] fix: the runner never set a base output URI — +5 W3C cases, 0 lost
+- [158] fix: xsl:sort and xsl:key did not set temporary output state — +2 W3C cases, 0 lost
+- [157] fix: xsl:expose selected nothing, silently — +13 W3C cases, 0 lost
+- [155] fix: three error sites named a neighbouring code — +12 W3C cases, 0 lost
 - [154] regex-group() returns the empty sequence inside a pattern
 - [153] Opt decl/strip-space into whitespace-sensitive comparison
-- [152] Give the streamed group-adjacent path the XTTE1100 check its non-streamed twin has (#147)
 
 **phoenixmldb-cli**
 
