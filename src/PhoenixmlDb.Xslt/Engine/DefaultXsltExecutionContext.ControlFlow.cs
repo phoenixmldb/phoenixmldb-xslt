@@ -923,15 +923,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 try
                 {
                     var key = await EvaluateAsync(instruction.GroupAdjacent).ConfigureAwait(false);
-                    // XTTE1100: group-adjacent expression must return a single atomic value (unless composite="yes")
-                    if (!instruction.Composite)
-                    {
-                        if (key == null || (key is object[] keyArr && keyArr.Length == 0)
-                            || (key is IEnumerable<object?> keySeq && !keySeq.Any()))
-                            throw Error("XTTE1100: The group-adjacent expression must return a single atomic value; it returned an empty sequence");
-                        if (key is object[] multiArr && multiArr.Length > 1)
-                            throw Error("XTTE1100: The group-adjacent expression must return a single atomic value; it returned a sequence of " + multiArr.Length + " items");
-                    }
+                    CheckGroupingKeyCardinality(key, instruction.Composite, "group-adjacent");
                     var keyStr = GroupingKeyString(key);
                     if (groupList.Count == 0 || adjacentComparer.Compare(keyStr, currentKeyStr!) != 0)
                     {
@@ -1470,6 +1462,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     PopContextItem();
                 }
+                CheckGroupingKeyCardinality(key, instruction.Composite, "group-adjacent");
                 if (firstItem)
                 {
                     currentKey = key;
