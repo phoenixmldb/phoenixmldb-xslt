@@ -471,7 +471,11 @@ public sealed class XsltTestFixture : IAsyncLifetime
         // guard the #141 import-precedence fix, which it currently cannot do in either direction),
         // whitespace, on-empty, si-on-empty, namespace-alias, select, collection, document,
         // namespace.
-        // config.WhitespaceSensitiveTestSets.Add("strip-space");
+        // decl/strip-space opts in first: it is the set whose cases assert whitespace stripping
+        // itself, and until now it could not detect the #141 import-precedence fix in either
+        // direction — strip-space-020/-027 passed whether the engine resolved precedence correctly
+        // or not, because the comparison discarded the whitespace they turn on.
+        config.WhitespaceSensitiveTestSets.Add("strip-space");
 
         // Skip tests requiring non-BMP (Osmanya) digit formatting — unsupported
         config.SkipTests.Add("format-date-008");
