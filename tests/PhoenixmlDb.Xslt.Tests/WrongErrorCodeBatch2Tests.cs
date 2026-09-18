@@ -158,6 +158,23 @@ public sealed class WrongErrorCodeBatch2Tests
         => AssertCodeAsync(ExposeAbstract(""), "XTSE3025", "XTSE3080");
 
     /// <summary>
+    /// A mode is the one component kind where this was not a wrong code but no code: the blanket
+    /// XTSE3080 that caught the others covers templates, functions, variables and attribute-sets
+    /// but not modes, so exposing a mode as abstract was accepted silently (W3C expose-921, which
+    /// was failing as "expected an error, got a result" rather than as a wrong code).
+    /// </summary>
+    [Fact]
+    public Task Expose_MakingAModeAbstract_IsXTSE3025()
+        => AssertCodeAsync("""
+            <xsl:package name="urn:p" package-version="1.0.0" version="3.0"
+                         xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:mode name="m1"/>
+              <xsl:template name="xsl:initial-template" visibility="public"><ok/></xsl:template>
+              <xsl:expose visibility="abstract" component="mode" names="m1"/>
+            </xsl:package>
+            """, "XTSE3025", "XTSE3080");
+
+    /// <summary>
     /// Guard: a wildcard stays XTSE3025 whatever the declaration says. XTSE3010 requires the
     /// component to be "listed explicitly by name", so the explicit-visibility branch above
     /// must not reach a wildcard exposure (W3C expose-919/920/922).
