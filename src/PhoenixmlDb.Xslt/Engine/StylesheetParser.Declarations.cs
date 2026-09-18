@@ -694,6 +694,22 @@ public sealed partial class StylesheetParser
                     break;
 
                 case "expose":
+                    // §3.6.3.1 fixes the value space of @component:
+                    //   component = "template" | "function" | "attribute-set" | "variable" | "mode"
+                    // plus "*" (erratum, see W3C expose-914, which exercises it). Anything else was
+                    // collected and then quietly matched no branch of the switch in
+                    // ApplyExposeDeclarations, so xsl:expose component="accumulator" — a real
+                    // component kind, but not one this declaration can select — did nothing at all
+                    // instead of being rejected (W3C expose-906, -907).
+                    {
+                        var exposeComponent = child.Attribute("component")?.Value;
+                        if (exposeComponent is not (null or "template" or "function" or "attribute-set"
+                            or "variable" or "mode" or "*"))
+                            throw new XsltException(
+                                $"XTSE0020: Invalid value '{exposeComponent}' for the component attribute of "
+                                + "xsl:expose; must be one of template, function, attribute-set, variable, mode or *",
+                                GetSourceLocation(child));
+                    }
                     // Collect expose declarations — applied after all components are parsed
                     stylesheet.ExposeDeclarations.Add(new ExposeDeclaration
                     {
@@ -1785,7 +1801,7 @@ public sealed partial class StylesheetParser
     /// Per XSLT 3.0 §3.6.3, expose changes the visibility of the package's own components
     /// based on component type and name pattern matching.
     /// </summary>
-    private void ApplyExposeDeclarations(XsltStylesheet stylesheet)
+    private static void ApplyExposeDeclarations(XsltStylesheet stylesheet)
     {
         foreach (var expose in stylesheet.ExposeDeclarations)
         {
@@ -1795,7 +1811,30 @@ public sealed partial class StylesheetParser
 
             foreach (var token in nameTokens)
             {
-                var isWildcard = token == "*" || token.EndsWith(":*", StringComparison.Ordinal);
+                // §3.6.3.1 names four wildcard forms, not two: "*", and "a wildcard match that
+                // specifies either the namespace part of the component name or the local part of
+                // the name (for example, prefix:* or *:local or Q{uri}*)". Only "*" and "prefix:*"
+                // were recognised, so "*:local" counted as an explicit name — which decides both
+                // the XTSE3020 check below and, via CheckExposeVisibility, XTSE3010 vs XTSE3025.
+                var isWildcard = token == "*"
+                    || token.EndsWith(":*", StringComparison.Ordinal)
+                    || token.StartsWith("*:", StringComparison.Ordinal);
+
+                // §3.6.3.1: each token is "either a NameTest or a NamedFunctionRef". The #-prefixed
+                // pseudo-names that xsl:mode and xsl:template accept (#unnamed, #default, #all) are
+                // neither, so they are not merely unmatched — they are an invalid attribute value.
+                // Without this they would fall to the XTSE3020 check below and report "matches no
+                // component", which is true but is not the error (W3C expose-904, -915).
+                if (token.StartsWith('#'))
+                    throw new XsltException(
+                        $"XTSE0020: '{token}' is not a valid token in the names attribute of xsl:expose; "
+                        + "a token must be a NameTest or a NamedFunctionRef");
+
+                // §3.6.3.1 [ERR XTSE3020]: "It is a static error if a token in the names attribute of
+                // xsl:expose, other than a wildcard, matches no component in the containing package."
+                // Tracked across every component kind the declaration selects, because component="*"
+                // selects five of them and matching any one is a match.
+                var tokenMatchedSomething = false;
 
                 // XSLT 3.0 §3.5.2. Three xsl:expose combinations are static errors in their own right, and all used
                 // to fall through to the blanket XTSE3080 the parser raises later for any abstract component left in
@@ -1843,6 +1882,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
+                                    tokenMatchedSomething = true;
                                     CheckExposeVisibility(tmpl.Visibility, name, tmpl.VisibilityAttr);
                                     stylesheet.NamedTemplates[name] = CloneTemplateWithVisibility(tmpl, visibility);
                                 }
@@ -1870,6 +1910,7 @@ public sealed partial class StylesheetParser
                                 if (wantedArity >= 0 && key.Arity != wantedArity) continue;
                                 if (MatchesExposePattern(key.Name, funcToken, isWildcard, expose.Element))
                                 {
+                                    tokenMatchedSomething = true;
                                     CheckExposeVisibility(func.Visibility, key.Name, func.VisibilityAttr);
                                     stylesheet.Functions[key] = CloneFunctionWithVisibility(func, visibility);
                                 }
@@ -1881,6 +1922,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(stylesheet.Variables[i].Name, token, isWildcard, expose.Element))
                                 {
+                                    tokenMatchedSomething = true;
                                     CheckExposeVisibility(stylesheet.Variables[i].Visibility, stylesheet.Variables[i].Name, stylesheet.Variables[i].VisibilityAttr);
                                     var exposedVar = CloneVariableWithVisibility(stylesheet.Variables[i], visibility);
                                     // Record that xsl:expose explicitly set this variable's boundary
@@ -1899,6 +1941,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
+                                    tokenMatchedSomething = true;
                                     CheckExposeVisibility(attrSet.Visibility, name, attrSet.VisibilityAttr);
                                     stylesheet.AttributeSets[name] = CloneAttributeSetWithVisibility(attrSet, visibility);
                                 }
@@ -1909,6 +1952,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
+                                    tokenMatchedSomething = true;
                                     CheckExposeVisibility(mode.Visibility, name, mode.VisibilityAttr);
                                     stylesheet.Modes[name] = new Ast.XsltMode
                                     {
@@ -1951,9 +1995,38 @@ public sealed partial class StylesheetParser
                                     }
                                 }
                             }
+
+                            // An implicit mode (declared-modes="false", so never in stylesheet.Modes)
+                            // is still a component of the package, so a token naming one has matched
+                            // something. Counted separately from the block above, which runs only for
+                            // visibility="private" and would otherwise make the XTSE3020 check below
+                            // depend on the visibility being exposed.
+                            if (!tokenMatchedSomething)
+                            {
+                                foreach (var rule in stylesheet.Templates)
+                                {
+                                    foreach (var modeRef in rule.Modes)
+                                    {
+                                        if (modeRef.Equals(TemplateIndex.DefaultModeSentinel)
+                                            || modeRef.Equals(TemplateIndex.AllModeSentinel))
+                                            continue;
+                                        if (MatchesExposePattern(modeRef, token, isWildcard, expose.Element))
+                                        {
+                                            tokenMatchedSomething = true;
+                                            break;
+                                        }
+                                    }
+                                    if (tokenMatchedSomething) break;
+                                }
+                            }
                             break;
                     }
                 }
+
+                if (!isWildcard && !tokenMatchedSomething)
+                    throw new XsltException(
+                        $"XTSE3020: the token '{token}' in the names attribute of xsl:expose matches no "
+                        + $"{(expose.Component == "*" ? "component" : expose.Component)} in the containing package");
             }
         }
     }
