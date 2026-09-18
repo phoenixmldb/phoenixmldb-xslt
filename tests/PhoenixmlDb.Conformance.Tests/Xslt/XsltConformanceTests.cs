@@ -457,6 +457,22 @@ public sealed class XsltTestFixture : IAsyncLifetime
         // requires actual schema validation runtime — skip for now
         config.SkipTestSets.Add("import-schema");
 
+        // Whitespace-sensitive test-sets (#140). EMPTY ON PURPOSE: this list is the opt-in, and
+        // adding a name here changes what that set checks, so each addition is its own measured
+        // change rather than a flag flip across the corpus.
+        //
+        // The default comparison discards whitespace-only text, so a set not named here does not
+        // check whitespace at all. Roughly 20 assertions across these candidates assert it
+        // deliberately; the rest of the corpus's whitespace is pretty-printing, which the
+        // comparison ignores on purpose — enabling it globally produced 13 false failures in the
+        // decl chunk alone, every one an artifact of indentation or a prolog newline.
+        //
+        // Candidates, in the order worth enabling them: strip-space (it is what would let the set
+        // guard the #141 import-precedence fix, which it currently cannot do in either direction),
+        // whitespace, on-empty, si-on-empty, namespace-alias, select, collection, document,
+        // namespace.
+        // config.WhitespaceSensitiveTestSets.Add("strip-space");
+
         // Skip tests requiring non-BMP (Osmanya) digit formatting — unsupported
         config.SkipTests.Add("format-date-008");
         // Skip tests requiring Greek traditional/alphabetic numbering — unsupported
