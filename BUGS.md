@@ -6805,3 +6805,47 @@ the agreement feels like evidence. Vary the *method*, not just the operator: par
 pattern-matched, count where you sampled. (Found here by a third party's passing mention of
 `assert-xml file="…"` — nothing in either measurement could have surfaced it, because the blind
 spot was in what both looked at.)
+
+---
+
+### 109. A check whose result is discarded hides the bug in whatever computed it (2026-09-18)
+
+`xsl:expose` had two defects, and neither was visible while the other stood.
+
+1. A token in `@names` that matched no component **did nothing**, silently, instead of raising
+   XTSE3020.
+2. `MatchesExposePattern` understood two of the four token forms §3.6.3.1 defines — `*` and
+   `prefix:*` — and not `*:local` or any `Q{uri}…` form, which therefore matched nothing.
+
+Defect 2 had **no symptom**, and could not have one, *because of defect 1*: a token that matched
+nothing was ignored, so a matcher that wrongly found nothing produced the same observable behaviour
+as one that correctly found nothing. The bug was in the value of an expression whose value was
+thrown away.
+
+Adding the XTSE3020 check surfaced it instantly and unmistakably — every package using `*:a2`
+started reporting "matches no attribute-set" — but only *after* the first fix was written. Looking
+for defect 2 first would have found nothing to look at.
+
+> **A discarded result cannot be wrong.** When a computation feeds nothing that is observed, no test
+> of the observable behaviour constrains it, and it is free to drift. The way in is not to test
+> harder; it is to make the result matter, and then read what falls out.
+
+**This is the counterpart to #107** ("a check that cannot fail is worse than no check"). There the
+check existed and could not fail. Here the check did not exist, and its absence made a *different*
+piece of code unfalsifiable. Both are the same failure of the same kind: a place where nothing can
+go wrong because nothing is looking.
+
+**Two practical corollaries.**
+
+- **When adding a check to a code path that previously ignored its own result, expect the first run
+  to fail loudly and do not assume the new check is wrong.** The spurious-looking XTSE3020s on
+  `*:a2` were the correct output of a new check reading a long-broken matcher. The instinct to
+  narrow the new check to make the noise stop would have preserved the actual bug.
+- **The asymmetric pair (#40) is where to look first.** `AcceptTokenMatches` — the same rule for
+  `xsl:accept` — had handled every form all along. The fix was to delete the weaker twin and
+  delegate, not to write the missing cases a third time. That is the third instance this week:
+  `BindParamAsync`'s siblings in #15, `json-to-xml`'s `liberal` option beside `validate`/`escape` in
+  #155, and this.
+
+**Measured** (phoenixmldb-xslt#157): 10,361 -> 10,374 of 10,839, 13 newly passing, 0 newly failing,
+no set lower. `decl/expose` 21 -> 34 of 42.
