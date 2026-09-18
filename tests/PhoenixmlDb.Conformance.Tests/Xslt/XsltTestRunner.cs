@@ -1170,7 +1170,8 @@ public sealed class XsltTestRunner
 
             // Verify assertions (pass secondary results for assert-result-document, and the
             // warnings the transform reported for assert-warning)
-            result.Passed = await VerifyAssertionsAsync(testCase.Assertions, output, cts.Token, secondaryResults, warnings);
+            result.Passed = await VerifyAssertionsAsync(testCase.Assertions, output, cts.Token, secondaryResults, warnings,
+                _config.WhitespaceSensitiveTestSets.Contains(testCase.TestSet));
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -1194,11 +1195,12 @@ public sealed class XsltTestRunner
         string? actualResult,
         CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null,
-        IReadOnlyList<string>? warnings = null)
+        IReadOnlyList<string>? warnings = null,
+        bool whitespaceSensitive = false)
     {
         foreach (var assertion in assertions)
         {
-            if (!await VerifyAssertionAsync(assertion, actualResult, ct, secondaryResults, warnings))
+            if (!await VerifyAssertionAsync(assertion, actualResult, ct, secondaryResults, warnings, whitespaceSensitive))
             {
                 return false;
             }
@@ -1211,11 +1213,12 @@ public sealed class XsltTestRunner
         string? actualResult,
         CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null,
-        IReadOnlyList<string>? warnings = null)
+        IReadOnlyList<string>? warnings = null,
+        bool whitespaceSensitive = false)
     {
         return assertion.Type switch
         {
-            "assert-xml" => await VerifyXmlAsync(assertion, actualResult, ct),
+            "assert-xml" => await VerifyXmlAsync(assertion, actualResult, ct, whitespaceSensitive),
             "assert-string-value" => VerifyStringValue(assertion, actualResult),
             "assert-serialization" => await VerifySerializationAsync(assertion, actualResult, ct),
             "assert-result-document" => await VerifyResultDocumentAsync(assertion, actualResult, ct, secondaryResults),
@@ -1225,8 +1228,8 @@ public sealed class XsltTestRunner
             "assert-deep-eq" => VerifyDeepEq(assertion, actualResult),
             "assert-message" => true, // Message assertions require special handling
             "error" => false, // Expected error, but we got a result
-            "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings),
-            "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings),
+            "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive),
+            "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive),
 
             // <assert> is an XPath predicate over the result tree, and the single most common
             // assertion in the whole corpus — 11024 occurrences. It was unimplemented, so the
@@ -1235,7 +1238,8 @@ public sealed class XsltTestRunner
 
             // <not> negates its single child.
             "not" => assertion.Children.Count == 1
-                && !await VerifyAssertionAsync(assertion.Children[0], actualResult, ct, secondaryResults, warnings),
+                && !await VerifyAssertionAsync(assertion.Children[0], actualResult, ct, secondaryResults, warnings,
+                    whitespaceSensitive),
 
             "assert-empty" => string.IsNullOrWhiteSpace(actualResult),
 
@@ -1427,22 +1431,24 @@ public sealed class XsltTestRunner
     }
 
     private async Task<bool> AllOfAsync(List<XsltAssertion> assertions, string? result, CancellationToken ct,
-        IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null)
+        IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null,
+        bool whitespaceSensitive = false)
     {
         foreach (var a in assertions)
         {
-            if (!await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings))
+            if (!await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive))
                 return false;
         }
         return true;
     }
 
     private async Task<bool> AnyOfAsync(List<XsltAssertion> assertions, string? result, CancellationToken ct,
-        IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null)
+        IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null,
+        bool whitespaceSensitive = false)
     {
         foreach (var a in assertions)
         {
-            if (await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings))
+            if (await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive))
                 return true;
         }
         return false;
@@ -1605,7 +1611,8 @@ public sealed class XsltTestRunner
         };
     }
 
-    private async Task<bool> VerifyXmlAsync(XsltAssertion assertion, string? actualResult, CancellationToken ct)
+    private async Task<bool> VerifyXmlAsync(XsltAssertion assertion, string? actualResult, CancellationToken ct,
+        bool whitespaceSensitive = false)
     {
         if (actualResult == null) return false;
 
@@ -1623,8 +1630,12 @@ public sealed class XsltTestRunner
             var actualParseable = WrapForParsing(actualResult.Trim());
             var expectedParseable = WrapForParsing(expectedXml.Trim());
 
-            var actualDoc = XDocument.Parse(actualParseable);
-            var expectedDoc = XDocument.Parse(expectedParseable);
+            // Whitespace-only text is discarded at parse time unless PreserveWhitespace is asked
+            // for, which is why the default comparison cannot see it at all (#140). Opted-in sets
+            // keep it; everything else parses exactly as before.
+            var options = whitespaceSensitive ? LoadOptions.PreserveWhitespace : LoadOptions.None;
+            var actualDoc = XDocument.Parse(actualParseable, options);
+            var expectedDoc = XDocument.Parse(expectedParseable, options);
 
             // Strip XML declarations — XNode.DeepEquals considers them, but
             // the presence/absence of <?xml?> is not semantically significant
@@ -1664,12 +1675,22 @@ public sealed class XsltTestRunner
                 NormalizeNamespacePrefixes(expectedDoc);
             }
 
+            // Compare the ROOT ELEMENTS when whitespace matters, not the documents. Preserving
+            // whitespace also preserves it OUTSIDE the root: an expected value read from a .out
+            // file typically starts "<?xml ...?>\n", and that newline becomes a document-level text
+            // node the actual output has no counterpart for. Comparing documents would then fail
+            // every such case on the prolog alone while checking nothing — measured on
+            // namespace-alias-1901, where DeepEquals over the documents is false and over the roots
+            // is true, with the element trees identical.
+            XNode? actualCmp = whitespaceSensitive ? actualDoc.Root : actualDoc;
+            XNode? expectedCmp = whitespaceSensitive ? expectedDoc.Root : expectedDoc;
+
             return assertion.Compare switch
             {
-                "XML" => XNode.DeepEquals(actualDoc, expectedDoc),
+                "XML" => XNode.DeepEquals(actualCmp, expectedCmp),
                 "Text" => actualDoc.ToString() == expectedDoc.ToString(),
                 "Fragment" => CompareFragments(actualDoc, expectedDoc),
-                _ => XNode.DeepEquals(actualDoc, expectedDoc)
+                _ => XNode.DeepEquals(actualCmp, expectedCmp)
             };
         }
         catch
@@ -2212,6 +2233,23 @@ public sealed class XsltConfiguration
 
     /// <summary>Skip entire test sets by name.</summary>
     public HashSet<string> SkipTestSets { get; } = [];
+
+    /// <summary>
+    /// Test-sets whose &lt;assert-xml&gt; comparison is whitespace-SENSITIVE, by test-set name
+    /// (the catalog's <c>name</c> attribute, e.g. "strip-space").
+    /// </summary>
+    /// <remarks>
+    /// The default comparison parses both sides with <c>LoadOptions.None</c>, which discards
+    /// whitespace-only text nodes, so whitespace differences are invisible (#140). That is correct
+    /// for the corpus at large: most expected values are pretty-printed, and a comparison sensitive
+    /// to indentation would fail against any serializer that formats differently — measured at 13
+    /// false failures in the <c>decl</c> chunk alone, every one an artifact.
+    ///
+    /// Only a handful of sets assert whitespace deliberately. Naming them here turns the check on
+    /// where it means something and leaves the rest alone, so the assumption is explicit per set
+    /// rather than implicit everywhere. An empty set reproduces the historical behaviour exactly.
+    /// </remarks>
+    public HashSet<string> WhitespaceSensitiveTestSets { get; } = [];
 
     /// <summary>Features supported by the processor.</summary>
     public HashSet<string> SupportedFeatures { get; } =
