@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-17 21:26 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-18 11:22 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -9,7 +9,7 @@ Generated 2026-09-17 21:26 UTC by `scripts/status.sh`. Do not edit by hand.
 | `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
 | `PhoenixmlDb.XQuery` | 2.1.0 | ? | **repo is at ?, nuget.org has 2.1.0** |
 | `PhoenixmlDb.Xslt` | 2.1.0 | 2.1.0 | current |
-| `xquery4` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
+| `xquery4` | 2.1.0 | ? | **repo is at ?, nuget.org has 2.1.0** |
 | `xslt` | 2.1.0 | 2.1.0 | current |
 
 ## Open work
@@ -17,9 +17,9 @@ Generated 2026-09-17 21:26 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 8 | 1 |
-| phoenixmldb-xslt | 10 | 1 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-xquery | 8 | 0 |
+| phoenixmldb-xslt | 7 | 3 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -42,26 +42,25 @@ Generated 2026-09-17 21:26 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [142] xsl:use-package whitespace declarations get an approximate import precedence (nested composition unmodelled)
+- [148] A streamed xsl:message loses the items produced by xsl:for-each in its content
+- [147] Streamable XSLT 3.0 with non motionless group-adjacent should be rejected by streamability analysis but is executed to give the strange error " XTDE1071: current-grouping-key() called when there is no current grouping key"
 - [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
-- [122] Shadow attributes used a hand-rolled string matcher where use-when has a real AST evaluator (superseded)
-- [117] A streamed xsl:map produces nothing: the subscription scanner never descends into its body
-- [100] xslt30 runner passes every assert-message unchecked — 9 cases fail when messages are captured
 - [96] Xslt 1.8.0 regresses three streaming conformance sets that passed on 1.6.10 (attr/streamable below floor, stream-211, sx-gc-eq-801)
 - [95] Any predicate in a match pattern is quadratic — not just chained ones (#10 is a special case)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
-- [10] Chained predicates in a match pattern make the whole transform quadratic (169x)
 - [7] 16 xslt30-test cases regress between 1.6.10 and 1.6.15 (try, analyze-string, match, base-uri)
 
 ### Open PRs
 
-**phoenixmldb-xquery**
-
-- [73] Take PhoenixmlDb.Xslt 2.1.0 for the CLI train
-
 **phoenixmldb-xslt**
 
-- [128] Let the streaming scanner descend into xsl:map, xsl:map-entry and xsl:where-populated, and retire the map exemption
+- [154] regex-group() returns the empty sequence inside a pattern
+- [153] Opt decl/strip-space into whitespace-sensitive comparison
+- [152] Give the streamed group-adjacent path the XTTE1100 check its non-streamed twin has (#147)
+
+**phoenixmldb-cli**
+
+- [6] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
@@ -96,7 +95,7 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10336/10839 (95.36%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 10335/10839 (95.35%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 29532/31379 (94.11%)** across 428 test-sets,
