@@ -546,7 +546,26 @@ internal sealed partial class DefaultXsltExecutionContext
         // XSLT 3.0 allows patterns to match atomic values (e.g., ".[. instance of xs:string]")
         // Let the pattern decide if it can match the item type
         using var mc = AcquireMatchContext();
-        return pattern.Matches(item, mc.Value);
+
+        // The captured substrings of an enclosing xsl:analyze-string are NOT in scope inside a
+        // pattern: regex-group() there returns the empty sequence. The groups live in a context
+        // variable that a predicate can read straight through, so a pattern evaluated inside a
+        // matching substring saw the outer captures — W3C analyze-string-076 puts regex-group()
+        // in @group-starting-with and asserts it sees nothing. Same shadowing the function-call
+        // path already does for regex-group()/current-group()/current-grouping-key().
+        var regexGroups = new QName(NamespaceId.None, "regex-groups");
+        var hadGroups = TryGetVariable(regexGroups, out var savedGroups) && savedGroups != null;
+        if (hadGroups)
+            SetVariable(regexGroups, null);
+        try
+        {
+            return pattern.Matches(item, mc.Value);
+        }
+        finally
+        {
+            if (hadGroups)
+                SetVariable(regexGroups, savedGroups);
+        }
     }
 
 
