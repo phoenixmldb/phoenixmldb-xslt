@@ -119,17 +119,29 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Split out from <see cref="CheckGroupingKeyCardinality"/> so each test stands alone;
     /// as one <c>||</c> chain the analyser reads the arms as unreachable (CA1508).
     /// <para>
-    /// <c>object?[]</c> is the sequence representation and is tested first. A
-    /// <c>List&lt;object?&gt;</c> is an XDM ARRAY — a single item, not a sequence — and an
-    /// empty one must not be mistaken for an empty sequence, which is why the
-    /// <see cref="IEnumerable{T}"/> arm is reached only by types that are neither.
+    /// <c>object?[]</c> is the sequence representation and is tested first.
+    /// <para>
+    /// A <c>List&lt;object?&gt;</c> is an XDM ARRAY, which is a single ITEM — but the grouping
+    /// key is ATOMIZED before the cardinality rule applies (XSLT 3.0 §19.2), and
+    /// <c>data([])</c> is <c>()</c>. So an empty array key is an empty sequence by the time
+    /// this rule bites, and XTTE1100 is right. An earlier revision of this method carved
+    /// arrays out as "one item, never empty", which was true at the item level and wrong
+    /// here — it regressed the buffered executor, which had raised XTTE1100 for <c>[]</c>
+    /// all along via its looser <see cref="IEnumerable{T}"/> test.
+    /// </para>
+    /// <para>
+    /// NOT handled, in either executor, before or after this change: a NON-empty array such
+    /// as <c>[1,2]</c> atomizes to <c>(1,2)</c> and should also raise XTTE1100. Both accept
+    /// it. That gap is pre-existing and deliberately left alone here rather than fixed
+    /// alongside a divergence repair — do not read this method as complete.
+    /// </para>
     /// </para>
     /// </remarks>
     private static bool IsEmptyGroupingKey(object? key)
     {
         if (key is null) return true;
         if (key is object?[] seq) return seq.Length == 0;
-        if (key is List<object?>) return false;
+        if (key is List<object?> array) return array.Count == 0;
         if (key is IEnumerable<object?> lazy) return !lazy.Any();
         return false;
     }

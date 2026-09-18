@@ -186,6 +186,43 @@ public class ForEachGroupEmptyKeyTests
         result.Should().Contain("n=\"2\"", $"actual:\n{result}");
     }
 
+    // An EMPTY ARRAY key. `data([])` is `()` (XSLT 3.0 §19.2 atomizes the grouping
+    // key before the cardinality rule applies), so `[]` is an empty sequence by the
+    // time XTTE1100 bites — even though an array is a single ITEM.
+    //
+    // The buffered executor raised this correctly all along, via a loose
+    // IEnumerable test. A first revision of the shared helper carved arrays out as
+    // "one item, never empty", which silently removed that. Caught in review
+    // (parsers2 on #152); this test is why it cannot be removed again by accident.
+    private static string AdjacentEmptyArrayKeyStylesheet(bool streamable) => $$"""
+        <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
+            exclude-result-prefixes="#all">
+            <xsl:mode on-no-match="deep-skip" streamable="{{(streamable ? "yes" : "no")}}"/>
+            <xsl:template match="root">
+                <out>
+                    <xsl:for-each-group select="*" group-adjacent="[]">
+                        <g/>
+                    </xsl:for-each-group>
+                </out>
+            </xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ForEachGroup_GroupAdjacent_EmptyArrayKey_RaisesXTTE1100(bool streamable)
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(AdjacentEmptyArrayKeyStylesheet(streamable));
+
+        Func<Task> act = () => transformer.TransformAsync(AdjacentInput);
+
+        (await act.Should().ThrowAsync<Exception>(
+                "data([]) is the empty sequence, so an empty array key is XTTE1100"))
+            .Which.Message.Should().Contain("XTTE1100");
+    }
+
     private const string AdjacentInput = """
         <root>
             <head>h1</head>
