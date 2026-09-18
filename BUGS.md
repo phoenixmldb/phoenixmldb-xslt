@@ -1461,6 +1461,61 @@ faster than the one it was written on.
 is not flakiness — flaky tests fail intermittently. These fail *reliably*, on the wrong hardware,
 which reads as a real defect and costs a diagnosis every time.
 
+### Update 2026-09-18 — the rewrite moved the failure to the other end of the range
+
+`StreamingCancellationTests` has since been rewritten, and the description above no longer matches
+the code. There is no "still running after 3 s" assertion left; all four tests now assert **upper**
+bounds:
+
+```csharp
+cts.CancelAfter(TimeSpan.FromMilliseconds(500));
+sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));   // over 400,000 iterations
+```
+
+That fixes the fast-box failure this entry was filed for — and introduces the mirror image.
+`StreamedTransform_TokenCancelledMidRun_ThrowsBeforeCompletion` now fails on a box that is too
+**slow**, or merely busy. Observed twice on `palukerjr` (8 cores, load average 10 from concurrent
+builds), both times inside the full suite, both times passing **4/4** when re-run alone on the same
+checkout. It passes on `mechapaluker` and on CI, so the same commit yields a different unit result
+on two machines.
+
+The proxy was never the direction. It is that **elapsed wall-clock stands in for "cancellation was
+observed"**, and any bound on a proxy has two ends: assert a floor and fast hardware fails, assert a
+ceiling and slow or loaded hardware fails. Flipping the inequality moves which machines are wrong,
+not whether the assertion measures the property.
+
+What would actually test the property: assert that the transform stopped **before consuming all
+400,000 items** — a count the streamed path can report — rather than before a clock reading. That
+holds on any hardware, because it is the thing cancellation is supposed to do.
+
+**Cost while it stood:** every full unit run on the slower host reported a failure. A suite that is
+reliably red for a known non-reason is a suite whose red is no longer information — which is how a
+genuine regression gets waved through as "that one always fails".
+
+**RESOLVED in #161.** The tests now count items processed — via a `MessageListener` on an
+`xsl:message` in the same `for-each` body whose cancellation is under test — and cancellation is
+triggered by that count rather than by a timer. No wall-clock assertion remains in the file, so host
+speed cannot affect the result structurally rather than merely empirically.
+
+Verified by constructing the failure rather than waiting for it, because the first control run
+**passed**: the defect is a property of the host *under load*, not of the host. Ten CPU spinners,
+same box, same suite:
+
+| arm | load | result |
+|---|---|---|
+| `main` idle | 2.69 | PASS 1934/1935 |
+| `main` loaded | 21.20 | **FAIL 2** — both `StreamingCancellationTests` |
+| #161 loaded | 19.77–22.74 | PASS 1934/1935 |
+
+Two notes worth keeping. At higher load the loaded control failed **two** tests rather than the one
+previously observed — a wall-clock proxy loses more assertions as the margin shrinks, so the count
+of affected tests is itself load-dependent and not a fixed property. And the fix's own first draft
+**passed while measuring nothing**: it read the item count from a return value that is never
+assigned, because the method throws on cancellation, so the count was 0 and `0 < quarter` held. The
+lower-bound assertion — at least `CancelAfterItems` processed — is the only thing that caught it,
+which is why it is marked non-redundant in the file. This entry's shape, one level down, inside its
+own fix.
+
 Owned by the parsers2 session, to be fixed alongside the QT3 per-set baseline and the
 `insn/call-template` re-baseline.
 
