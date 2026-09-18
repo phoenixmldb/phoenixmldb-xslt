@@ -29,37 +29,22 @@ public sealed partial class StylesheetParser
     }
 
 
-    private bool MatchesExposePattern(QName name, string pattern, bool isWildcard, System.Xml.Linq.XElement? element)
+    /// <summary>
+    /// Tests whether a component QName matches a token in <c>xsl:expose/@names</c>.
+    /// </summary>
+    /// <remarks>
+    /// This is the twin of <see cref="AcceptTokenMatches"/>, which does the same job for
+    /// <c>xsl:accept/@names</c> over the same token grammar (§3.6.3.1: "a NameTest or a
+    /// NamedFunctionRef"). Only one of the pair was complete: this one understood <c>*</c> and
+    /// <c>prefix:*</c> and nothing else, so <c>*:local</c> and every <c>Q{uri}…</c> form fell
+    /// through to an exact-name comparison against the raw token text and matched nothing — with
+    /// no symptom, because an xsl:expose token that matched nothing did nothing. Delegating makes
+    /// the two forms of the same rule one implementation.
+    /// </remarks>
+    private static bool MatchesExposePattern(QName name, string pattern, bool isWildcard, System.Xml.Linq.XElement? element)
     {
         if (pattern == "*") return true;
-        if (isWildcard && pattern.EndsWith(":*", StringComparison.Ordinal))
-        {
-            // Match by namespace prefix: "p:*" matches all names in the p: namespace
-            var prefix = pattern[..^2];
-            // Resolve the prefix to a namespace URI
-            var nsUri = element?.GetNamespaceOfPrefix(prefix)?.NamespaceName;
-            if (nsUri != null)
-            {
-                var nsId = ResolveNamespaceUri(nsUri);
-                return name.Namespace == nsId;
-            }
-            return name.Prefix == prefix;
-        }
-        // Exact name match
-        if (element != null)
-        {
-            _nsContext = element;
-            try
-            {
-                var patternQName = ParseQName(pattern, element);
-                return name.Equals(patternQName) || name.LocalName == patternQName.LocalName;
-            }
-            catch (XsltException)
-            {
-                return name.LocalName == pattern;
-            }
-            finally { _nsContext = null; }
-        }
+        if (element != null) return AcceptTokenMatches(name, pattern, element);
         return name.LocalName == pattern;
     }
 
