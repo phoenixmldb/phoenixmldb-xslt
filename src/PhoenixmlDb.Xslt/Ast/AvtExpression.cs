@@ -64,11 +64,23 @@ public sealed class AvtExpression : AvtPart
     /// </summary>
     private static string StringifySequence(object?[] items)
     {
-        // Fast path: no TextNodeItems → simple space join
+        // A text node counts whether it is still the internal TextNodeItem marker or a
+        // materialized XdmText. Matching only the marker meant a function that returned real text
+        // nodes took the fast path and had its text SPACE-JOINED: `f:create()` yielding text
+        // "end" then "A" stringified as "end A" instead of "endA" (W3C seqtor-029/-034/-035).
+        static bool IsTextNode(object? item) => item is TextNodeItem or XdmText;
+        static string TextValue(object? item) => item switch
+        {
+            TextNodeItem tni => tni.Value,
+            XdmText xt => xt.Value,
+            _ => "",
+        };
+
+        // Fast path: no text nodes → simple space join
         bool hasTextNodeItems = false;
         foreach (var item in items)
         {
-            if (item is TextNodeItem)
+            if (IsTextNode(item))
             {
                 hasTextNodeItems = true;
                 break;
@@ -84,10 +96,10 @@ public sealed class AvtExpression : AvtPart
 
         foreach (var item in items)
         {
-            if (item is TextNodeItem tni)
+            if (IsTextNode(item))
             {
                 textRun ??= new System.Text.StringBuilder();
-                textRun.Append(tni.Value);
+                textRun.Append(TextValue(item));
             }
             else
             {
