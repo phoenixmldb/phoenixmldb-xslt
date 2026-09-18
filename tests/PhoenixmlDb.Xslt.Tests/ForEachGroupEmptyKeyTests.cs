@@ -194,13 +194,13 @@ public class ForEachGroupEmptyKeyTests
     // IEnumerable test. A first revision of the shared helper carved arrays out as
     // "one item, never empty", which silently removed that. Caught in review
     // (parsers2 on #152); this test is why it cannot be removed again by accident.
-    private static string AdjacentEmptyArrayKeyStylesheet(bool streamable) => $$"""
+    private static string AdjacentKeyStylesheet(bool streamable, string key) => $$"""
         <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
             exclude-result-prefixes="#all">
             <xsl:mode on-no-match="deep-skip" streamable="{{(streamable ? "yes" : "no")}}"/>
             <xsl:template match="root">
                 <out>
-                    <xsl:for-each-group select="*" group-adjacent="[]">
+                    <xsl:for-each-group select="*" group-adjacent="{{key}}">
                         <g/>
                     </xsl:for-each-group>
                 </out>
@@ -208,18 +208,24 @@ public class ForEachGroupEmptyKeyTests
         </xsl:stylesheet>
         """;
 
+    // Both array constructors, because both atomize to () and only the square form
+    // was covered when this was written. The reviewer probed `array{}` by hand and
+    // found it correct; a behaviour verified once by hand and never committed is
+    // the gap this closes.
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ForEachGroup_GroupAdjacent_EmptyArrayKey_RaisesXTTE1100(bool streamable)
+    [InlineData(false, "[]")]
+    [InlineData(true, "[]")]
+    [InlineData(false, "array{}")]
+    [InlineData(true, "array{}")]
+    public async Task ForEachGroup_GroupAdjacent_EmptyArrayKey_RaisesXTTE1100(bool streamable, string key)
     {
         var transformer = new XsltTransformer();
-        await transformer.LoadStylesheetAsync(AdjacentEmptyArrayKeyStylesheet(streamable));
+        await transformer.LoadStylesheetAsync(AdjacentKeyStylesheet(streamable, key));
 
         Func<Task> act = () => transformer.TransformAsync(AdjacentInput);
 
         (await act.Should().ThrowAsync<Exception>(
-                "data([]) is the empty sequence, so an empty array key is XTTE1100"))
+                $"data({key}) is the empty sequence, so an empty array key is XTTE1100"))
             .Which.Message.Should().Contain("XTTE1100");
     }
 
