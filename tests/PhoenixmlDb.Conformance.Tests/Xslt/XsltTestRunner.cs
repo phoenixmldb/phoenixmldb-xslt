@@ -791,7 +791,7 @@ public sealed class XsltTestRunner
             }
 
             // Handle nested assertions
-            if (localName is "all-of" or "any-of" or "not" or "assert-result-document")
+            if (localName is "all-of" or "any-of" or "not" or "assert-result-document" or "assert-message")
             {
                 assertion.Children = ParseAssertions(child, ns, basePath);
             }
@@ -1033,6 +1033,7 @@ public sealed class XsltTestRunner
 
             // Execute transformation with timeout protection
             var warnings = new List<string>();
+            var messages = new List<string>();
             var transformTask = Task.Run(async () =>
             {
                 // The W3C corpus is trusted local data and 12 of its stylesheets carry a
@@ -1043,6 +1044,9 @@ public sealed class XsltTestRunner
                 // xsl:mode warning-on-no-match reports through this channel. Without collecting
                 // it, every assert-warning failed for want of anywhere to look.
                 transformer.WarningListener = w => { lock (warnings) warnings.Add(w); };
+                // xsl:message output, for assert-message. The transformer DISCARDS messages when no
+                // listener is set, so nothing was ever available to check against.
+                transformer.MessageListener = (m, _) => { lock (messages) messages.Add(m); };
                 Uri? baseUri = testCase.Environment.StylesheetPath != null
                     ? new Uri(Path.GetFullPath(testCase.Environment.StylesheetPath))
                     : null;
@@ -1171,7 +1175,7 @@ public sealed class XsltTestRunner
             // Verify assertions (pass secondary results for assert-result-document, and the
             // warnings the transform reported for assert-warning)
             result.Passed = await VerifyAssertionsAsync(testCase.Assertions, output, cts.Token, secondaryResults, warnings,
-                _config.WhitespaceSensitiveTestSets.Contains(testCase.TestSet));
+                _config.WhitespaceSensitiveTestSets.Contains(testCase.TestSet), messages);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -1196,11 +1200,13 @@ public sealed class XsltTestRunner
         CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null,
         IReadOnlyList<string>? warnings = null,
-        bool whitespaceSensitive = false)
+        bool whitespaceSensitive = false,
+        IReadOnlyList<string>? messages = null)
     {
         foreach (var assertion in assertions)
         {
-            if (!await VerifyAssertionAsync(assertion, actualResult, ct, secondaryResults, warnings, whitespaceSensitive))
+            if (!await VerifyAssertionAsync(assertion, actualResult, ct, secondaryResults, warnings, whitespaceSensitive,
+                    messages))
             {
                 return false;
             }
@@ -1214,7 +1220,8 @@ public sealed class XsltTestRunner
         CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null,
         IReadOnlyList<string>? warnings = null,
-        bool whitespaceSensitive = false)
+        bool whitespaceSensitive = false,
+        IReadOnlyList<string>? messages = null)
     {
         return assertion.Type switch
         {
@@ -1226,10 +1233,10 @@ public sealed class XsltTestRunner
             "assert-count" => VerifyCount(assertion, actualResult),
             "assert-type" => VerifyType(assertion, actualResult),
             "assert-deep-eq" => VerifyDeepEq(assertion, actualResult),
-            "assert-message" => true, // Message assertions require special handling
+            "assert-message" => await VerifyMessageAsync(assertion, secondaryResults, warnings, messages, ct),
             "error" => false, // Expected error, but we got a result
-            "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive),
-            "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive),
+            "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive, messages),
+            "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive, messages),
 
             // <assert> is an XPath predicate over the result tree, and the single most common
             // assertion in the whole corpus — 11024 occurrences. It was unimplemented, so the
@@ -1239,7 +1246,7 @@ public sealed class XsltTestRunner
             // <not> negates its single child.
             "not" => assertion.Children.Count == 1
                 && !await VerifyAssertionAsync(assertion.Children[0], actualResult, ct, secondaryResults, warnings,
-                    whitespaceSensitive),
+                    whitespaceSensitive, messages),
 
             "assert-empty" => string.IsNullOrWhiteSpace(actualResult),
 
@@ -1432,11 +1439,11 @@ public sealed class XsltTestRunner
 
     private async Task<bool> AllOfAsync(List<XsltAssertion> assertions, string? result, CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null,
-        bool whitespaceSensitive = false)
+        bool whitespaceSensitive = false, IReadOnlyList<string>? messages = null)
     {
         foreach (var a in assertions)
         {
-            if (!await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive))
+            if (!await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive, messages))
                 return false;
         }
         return true;
@@ -1444,11 +1451,11 @@ public sealed class XsltTestRunner
 
     private async Task<bool> AnyOfAsync(List<XsltAssertion> assertions, string? result, CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null,
-        bool whitespaceSensitive = false)
+        bool whitespaceSensitive = false, IReadOnlyList<string>? messages = null)
     {
         foreach (var a in assertions)
         {
-            if (await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive))
+            if (await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive, messages))
                 return true;
         }
         return false;
@@ -1493,8 +1500,104 @@ public sealed class XsltTestRunner
     /// 11024 assertions returning an unconditional true — is strictly worse, because it cannot
     /// fail at all.
     /// </remarks>
+    /// <summary>
+    /// &lt;assert-message&gt;: SOME message the transform emitted, considered as a document,
+    /// satisfies the contained assertion (xslt30-test admin/catalog-schema.xsd). Extra messages are
+    /// allowed, so each captured message is tried in turn.
+    /// </summary>
+    /// <remarks>
+    /// This returned true unconditionally and the runner never set MessageListener, so 89
+    /// assertions across 49 cases were not checked at all. A transform that terminates
+    /// (xsl:message terminate="yes") never reaches assertion checking; those cases are still judged
+    /// by their expected-error assertion.
+    /// </remarks>
+    private async Task<bool> VerifyMessageAsync(XsltAssertion assertion,
+        IReadOnlyDictionary<string, string>? secondaryResults, IReadOnlyList<string>? warnings,
+        IReadOnlyList<string>? messages, CancellationToken ct)
+    {
+        if (assertion.Children.Count != 1 || messages is null) return false;
+        string[] snapshot;
+        lock (messages) snapshot = [.. messages];
+        foreach (var message in snapshot)
+        {
+            if (await MessageAssertionAsync(assertion.Children[0], message, secondaryResults, warnings, ct)
+                    .ConfigureAwait(false))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Evaluates one assertion against a single message. Separate from the result-tree path because
+    /// a message is parsed as a FRAGMENT: its children sit at the top level of a document node.
+    /// </summary>
+    private async Task<bool> MessageAssertionAsync(XsltAssertion assertion, string message,
+        IReadOnlyDictionary<string, string>? secondaryResults, IReadOnlyList<string>? warnings,
+        CancellationToken ct)
+    {
+        switch (assertion.Type)
+        {
+            case "all-of":
+                foreach (var child in assertion.Children)
+                    if (!await MessageAssertionAsync(child, message, secondaryResults, warnings, ct).ConfigureAwait(false))
+                        return false;
+                return assertion.Children.Count > 0;
+            case "any-of":
+                foreach (var child in assertion.Children)
+                    if (await MessageAssertionAsync(child, message, secondaryResults, warnings, ct).ConfigureAwait(false))
+                        return true;
+                return false;
+            case "not":
+                return assertion.Children.Count == 1
+                    && !await MessageAssertionAsync(assertion.Children[0], message, secondaryResults, warnings, ct)
+                        .ConfigureAwait(false);
+            case "assert":
+                return await VerifyXPathAssertAsync(assertion, message, ct, asFragment: true).ConfigureAwait(false);
+            case "assert-string-value":
+                // The STRING VALUE of the message considered as a document, not its serialized
+                // form: version-017's second message is <b id="3"/>Another message, whose string
+                // value is "Another message". Comparing the markup fails a message that is right.
+                return VerifyStringValue(assertion, await MessageStringValueAsync(message, ct).ConfigureAwait(false));
+            // Everything else behaves exactly as it does against a result tree, so it goes to the
+            // main dispatcher rather than being re-enumerated here. Enumerating them is what broke
+            // avt-0701, whose assert-message contains an <assert-eq>: a narrower switch failed a
+            // case the general path judges correctly. The dispatcher's own default already FAILS
+            // unknown kinds, so nothing is silently passed by delegating.
+            default:
+                return await VerifyAssertionAsync(assertion, message, ct, secondaryResults, warnings)
+                    .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// The string value of a message considered as a document: concatenated descendant text, with
+    /// markup removed. Falls back to the raw text when the message is not parseable as a fragment,
+    /// which is the common case of a plain-text message.
+    /// </summary>
+    private async Task<string> MessageStringValueAsync(string message, CancellationToken ct)
+    {
+        if (!message.Contains('<', StringComparison.Ordinal)) return message;
+        try
+        {
+            var store = new PhoenixmlDb.XQuery.XdmDocumentStore();
+            var engine = new PhoenixmlDb.XQuery.Execution.QueryEngine(nodeProvider: store, documentResolver: store);
+            var compiled = engine.Compile("declare variable $raw external; string(parse-xml-fragment($raw))");
+            if (!compiled.Success) return message;
+            var ctx = engine.CreateContext(cancellationToken: ct);
+            ctx.SetExternalVariable("raw", message);
+            await foreach (var item in compiled.ExecutionPlan!.ExecuteAsync(ctx).ConfigureAwait(false))
+                return item?.ToString() ?? "";
+            return message;
+        }
+        catch (System.Xml.XmlException) { return message; }
+        catch (PhoenixmlDb.XQuery.Parser.XQueryParseException) { return message; }
+        catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException) { return message; }
+        catch (InvalidOperationException) { return message; }
+        catch (NotSupportedException) { return message; }
+    }
+
     private async Task<bool> VerifyXPathAssertAsync(
-        XsltAssertion assertion, string? actualResult, CancellationToken ct)
+        XsltAssertion assertion, string? actualResult, CancellationToken ct, bool asFragment = false)
     {
         if (actualResult is null || string.IsNullOrWhiteSpace(assertion.Value)) return false;
 
@@ -1544,6 +1647,28 @@ public sealed class XsltTestRunner
                 }
                 if (built == null) return false;
                 doc = built;
+            }
+            else if (asFragment)
+            {
+                // An xsl:message is a DOCUMENT NODE whose children are the message content
+                // (xslt30-test admin/catalog-schema.xsd: "some message, considered as a document").
+                // Its children need not form a well-formed XML document: message-0410's message is
+                // a lone comment and message-0312's is two sibling elements, both legal XDM
+                // documents that LoadFromString rejects. fn:parse-xml-fragment builds exactly that
+                // document and keeps the children at the top level, so /comment() and /smart
+                // address them without the step-shift a wrapper element would introduce.
+                var frag = engine.Compile("declare variable $raw external; parse-xml-fragment($raw)");
+                if (!frag.Success) return false;
+                var fragCtx = engine.CreateContext(cancellationToken: ct);
+                fragCtx.SetExternalVariable("raw", text);
+                object? builtFrag = null;
+                await foreach (var item in frag.ExecutionPlan!.ExecuteAsync(fragCtx).ConfigureAwait(false))
+                {
+                    builtFrag = item;
+                    break;
+                }
+                if (builtFrag == null) return false;
+                doc = builtFrag;
             }
             else
             {
