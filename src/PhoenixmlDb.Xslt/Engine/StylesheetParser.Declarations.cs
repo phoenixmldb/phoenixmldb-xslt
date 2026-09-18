@@ -937,6 +937,24 @@ public sealed partial class StylesheetParser
         foreach (var t in packageStylesheet.Templates)
             t.ImportPrecedence -= 1;
 
+        // Whitespace-control declarations need the same relative shift, for the same reason and in
+        // the opposite direction: WhitespaceDeclaration numbers precedence with the principal at 0
+        // and LOWER winning (as xsl:output does), where XsltTemplate has HIGHER winning. Shifting
+        // what the package already holds — its own declarations at 0, and anything it imported or
+        // itself used at 1, 2, … — keeps those distinctions when they arrive here, so a package
+        // used by a package sits below one used directly.
+        //
+        // #141 stamped every used-package declaration with the absolute level 1 instead, which
+        // flattened that structure: a nested package tied with a direct one, and the tie was then
+        // broken by NameTest specificity, which §4.4 only consults WITHIN one precedence level
+        // (#142).
+        for (var i = 0; i < packageStylesheet.StripSpace.Count; i++)
+            packageStylesheet.StripSpace[i] = packageStylesheet.StripSpace[i] with
+            { ImportPrecedence = packageStylesheet.StripSpace[i].ImportPrecedence + 1 };
+        for (var i = 0; i < packageStylesheet.PreserveSpace.Count; i++)
+            packageStylesheet.PreserveSpace[i] = packageStylesheet.PreserveSpace[i] with
+            { ImportPrecedence = packageStylesheet.PreserveSpace[i].ImportPrecedence + 1 };
+
         // First pass: apply overrides and collect overridden component names
         var overriddenTemplateNames = new HashSet<QName>();
         var overriddenFunctionKeys = new HashSet<(QName, int)>();
