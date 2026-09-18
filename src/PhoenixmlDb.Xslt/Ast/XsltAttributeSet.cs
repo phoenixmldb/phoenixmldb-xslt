@@ -13,6 +13,10 @@ public sealed class XsltAttributeSet
     public List<QName> UseAttributeSets { get; init; } = new();
     public required List<XsltAttribute> Attributes { get; init; }
     public Visibility Visibility { get; init; } = Visibility.Private;
+    /// <summary>Raw visibility attribute value (null when absent). The other component
+    /// kinds all carry this; xsl:expose needs it to tell a declared visibility from the
+    /// implicit default, which is the axis XTSE3010 and XTSE3025 divide on.</summary>
+    public string? VisibilityAttr { get; init; }
     public bool Streamable { get; init; }
     /// <summary>
     /// True when declared visibility="abstract" and never overridden with a concrete

@@ -195,6 +195,7 @@ public sealed partial class StylesheetParser
             UseAttributeSets = useAttributeSets,
             Attributes = attributes,
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
+            VisibilityAttr = element.Attribute("visibility")?.Value,
             IsAbstract = element.Attribute("visibility")?.Value == "abstract",
             Streamable = streamable,
             BaseUri = ResolveEffectiveBaseUri(element)
