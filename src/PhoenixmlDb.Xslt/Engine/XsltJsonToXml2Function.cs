@@ -52,15 +52,18 @@ internal sealed class XsltJsonToXml2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
         var options = arguments[1];
         if (options is IDictionary<object, object?> map)
         {
-            // liberal option: must be xs:boolean
+            // liberal option: must be xs:boolean. A wrongly-typed option VALUE is a type error
+            // (XPTY0004), which is what 'validate' and 'escape' below already raise; 'liberal'
+            // alone reported FOJS0001, the JSON *syntax* error, and so failed W3C
+            // json-to-xml-error-020/021 and error-3260a.
             if (map.TryGetValue("liberal", out var liberalVal))
             {
                 if (liberalVal is bool lb)
                     liberal = lb;
                 else if (liberalVal is null || liberalVal is object?[] arr && arr.Length == 0)
-                    throw new XsltException("FOJS0001: Option 'liberal' must be a boolean value, got empty sequence");
+                    throw new XsltException("XPTY0004: Option 'liberal' must be a boolean value, got empty sequence");
                 else
-                    throw new XsltException("FOJS0001: Option 'liberal' must be a boolean value");
+                    throw new XsltException("XPTY0004: Option 'liberal' must be a boolean value");
             }
 
             // validate option: must be xs:boolean

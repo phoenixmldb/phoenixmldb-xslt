@@ -1797,14 +1797,25 @@ public sealed partial class StylesheetParser
             {
                 var isWildcard = token == "*" || token.EndsWith(":*", StringComparison.Ordinal);
 
-                // XSLT 3.0 §3.5.2. Two xsl:expose combinations are static errors in their own right, and both used to
-                // fall through to the blanket XTSE3080 the parser raises later for any abstract component left in a
-                // top-level package (W3C expose-918, -919, -920, -922):
-                //   XTSE3010 — naming an abstract component and giving it some other visibility
+                // XSLT 3.0 §3.5.2. Three xsl:expose combinations are static errors in their own right, and all used
+                // to fall through to the blanket XTSE3080 the parser raises later for any abstract component left in
+                // a top-level package (W3C expose-918, -919, -920, -922, and -912a/b/c, -916, -917):
                 //   XTSE3025 — a wildcard that would make a matching component abstract
+                //   XTSE3010 — naming an abstract component and giving it some other visibility
+                //   XTSE3010/XTSE3025 — naming a NON-abstract component and making it abstract
+                //
+                // The last pair is split on whether the DECLARATION carried an explicit visibility attribute, not on
+                // anything about the xsl:expose. XTSE3010 is worded "the explicit exposed visibility of a component
+                // is inconsistent with its declared visibility … This error occurs only when the component
+                // declaration has an explicit visibility attribute, and the component is also listed explicitly by
+                // name" — so an implicitly-private declaration cannot produce it, and falls to XTSE3025 instead.
+                // That is exactly what separates expose-912b (all three p:f1 declared visibility="private" →
+                // XTSE3010) from expose-912c (the same package with the attributes removed → XTSE3025), and
+                // expose-917 (visibility="public" → XTSE3010) from expose-916 (no attribute → XTSE3025).
+                //
                 // A wildcard matching an already-abstract component keeps its existing behaviour: no W3C case covers
                 // that combination, so it gains no invented error here.
-                void CheckExposeVisibility(Visibility current, QName componentName)
+                void CheckExposeVisibility(Visibility current, QName componentName, string? declaredVisibilityAttr)
                 {
                     if (visibility == Visibility.Abstract && isWildcard)
                         throw new XsltException(
@@ -1812,6 +1823,10 @@ public sealed partial class StylesheetParser
                     if (current == Visibility.Abstract && visibility != Visibility.Abstract && !isWildcard)
                         throw new XsltException(
                             $"XTSE3010: xsl:expose must not change the visibility of the abstract component '{componentName}'");
+                    if (visibility == Visibility.Abstract && current != Visibility.Abstract && !isWildcard)
+                        throw new XsltException(declaredVisibilityAttr != null
+                            ? $"XTSE3010: xsl:expose visibility=\"abstract\" is inconsistent with the declared visibility=\"{declaredVisibilityAttr}\" of component '{componentName}'"
+                            : $"XTSE3025: xsl:expose must not give component '{componentName}' visibility=\"abstract\"; only its declaration can");
                 }
 
                 // Determine which component types to process
@@ -1828,7 +1843,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
-                                    CheckExposeVisibility(tmpl.Visibility, name);
+                                    CheckExposeVisibility(tmpl.Visibility, name, tmpl.VisibilityAttr);
                                     stylesheet.NamedTemplates[name] = CloneTemplateWithVisibility(tmpl, visibility);
                                 }
                             }
@@ -1855,7 +1870,7 @@ public sealed partial class StylesheetParser
                                 if (wantedArity >= 0 && key.Arity != wantedArity) continue;
                                 if (MatchesExposePattern(key.Name, funcToken, isWildcard, expose.Element))
                                 {
-                                    CheckExposeVisibility(func.Visibility, key.Name);
+                                    CheckExposeVisibility(func.Visibility, key.Name, func.VisibilityAttr);
                                     stylesheet.Functions[key] = CloneFunctionWithVisibility(func, visibility);
                                 }
                             }
@@ -1866,7 +1881,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(stylesheet.Variables[i].Name, token, isWildcard, expose.Element))
                                 {
-                                    CheckExposeVisibility(stylesheet.Variables[i].Visibility, stylesheet.Variables[i].Name);
+                                    CheckExposeVisibility(stylesheet.Variables[i].Visibility, stylesheet.Variables[i].Name, stylesheet.Variables[i].VisibilityAttr);
                                     var exposedVar = CloneVariableWithVisibility(stylesheet.Variables[i], visibility);
                                     // Record that xsl:expose explicitly set this variable's boundary
                                     // visibility, so the use-package capture treats an exposed
@@ -1884,7 +1899,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
-                                    CheckExposeVisibility(attrSet.Visibility, name);
+                                    CheckExposeVisibility(attrSet.Visibility, name, attrSet.VisibilityAttr);
                                     stylesheet.AttributeSets[name] = CloneAttributeSetWithVisibility(attrSet, visibility);
                                 }
                             }
@@ -1894,7 +1909,7 @@ public sealed partial class StylesheetParser
                             {
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
-                                    CheckExposeVisibility(mode.Visibility, name);
+                                    CheckExposeVisibility(mode.Visibility, name, mode.VisibilityAttr);
                                     stylesheet.Modes[name] = new Ast.XsltMode
                                     {
                                         Name = mode.Name,
