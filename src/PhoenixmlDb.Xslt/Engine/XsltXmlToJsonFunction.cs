@@ -504,7 +504,9 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
 
     /// <summary>
     /// Like AppendEscapedJsonString but validates that escape sequences are valid JSON.
-    /// Throws FOJS0006 for invalid escape sequences.
+    /// Throws FOJS0007 for invalid escape sequences: FOJS0006 is "invalid XML
+    /// representation of JSON", while a bad escape inside an escaped="true" string
+    /// (or escaped-key="true" key) has its own code (W3C xml-to-json-C017/C018/C024).
     /// </summary>
     internal static void AppendValidatedEscapedJsonString(string text, System.Text.StringBuilder sb)
     {
@@ -514,7 +516,7 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             if (c == '\\')
             {
                 if (i + 1 >= text.Length)
-                    throw new XsltException("FOJS0006: Incomplete escape sequence at end of string");
+                    throw new XsltException("FOJS0007: Incomplete escape sequence at end of string");
                 var next = text[i + 1];
                 switch (next)
                 {
@@ -532,18 +534,18 @@ internal sealed class XsltXmlToJsonFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                         continue;
                     case 'u':
                         if (i + 5 >= text.Length)
-                            throw new XsltException("FOJS0006: Incomplete \\u escape sequence");
+                            throw new XsltException("FOJS0007: Incomplete \\u escape sequence");
                         // Validate hex digits
                         for (int j = i + 2; j < i + 6; j++)
                         {
                             if (!IsHexDigit(text[j]))
-                                throw new XsltException($"FOJS0006: Invalid \\u escape sequence: '{text.Substring(i, 6)}'");
+                                throw new XsltException($"FOJS0007: Invalid \\u escape sequence: '{text.Substring(i, 6)}'");
                         }
                         sb.Append(text, i, 6);
                         i += 5;
                         continue;
                     default:
-                        throw new XsltException($"FOJS0006: Invalid escape sequence '\\{next}'");
+                        throw new XsltException($"FOJS0007: Invalid escape sequence '\\{next}'");
                 }
             }
 

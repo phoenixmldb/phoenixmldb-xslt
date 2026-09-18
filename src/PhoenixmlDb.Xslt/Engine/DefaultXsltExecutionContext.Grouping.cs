@@ -1002,7 +1002,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
                     else if (sort.Content != null)
                     {
-                        raw = await EvaluateSequenceConstructorAsync(sort.Content).ConfigureAwait(false);
+                        raw = await EvaluateSequenceConstructorInTemporaryOutputStateAsync(sort.Content).ConfigureAwait(false);
                     }
                     else
                     {

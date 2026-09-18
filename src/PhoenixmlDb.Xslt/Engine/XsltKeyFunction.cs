@@ -469,7 +469,7 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             if (keyDef.Use != null)
                 result = await _context.EvaluateAsync(keyDef.Use).ConfigureAwait(false);
             else if (keyDef.UseContent != null)
-                result = await _context.EvaluateSequenceConstructorAsync(keyDef.UseContent).ConfigureAwait(false);
+                result = await _context.EvaluateSequenceConstructorInTemporaryOutputStateAsync(keyDef.UseContent).ConfigureAwait(false);
             else
                 return values;
 
