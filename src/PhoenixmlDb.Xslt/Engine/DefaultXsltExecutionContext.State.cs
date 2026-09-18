@@ -716,6 +716,9 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>The destination URI fn:current-output-uri() should report, or null if absent.</summary>
     internal Uri? CurrentOutputUri => _currentOutputUri;
 
+    /// <summary>True while evaluating in temporary output state, where the current output URI is absent.</summary>
+    internal bool InTemporaryOutputState => _temporaryOutputDepth > 0;
+
     // Active output declaration for current result-document (used for cdata-section-elements)
     private XsltOutput? _activeResultDocumentOutput;
 
