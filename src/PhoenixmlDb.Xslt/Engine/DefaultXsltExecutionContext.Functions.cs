@@ -2466,6 +2466,38 @@ internal sealed partial class DefaultXsltExecutionContext
                 funcResult = textOutput.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(textOutput) : StripXmlMarkup(textOutput);
             }
 
+            // Any TextNodeItem still in the result is a TEXT NODE the caller will navigate, so
+            // make it a real one. It cannot be done earlier: while the body is running, the
+            // marker is what tells the assembly above that a text item in the accumulator is
+            // the same text already written to the output buffer, and materializing it first
+            // made that text come out twice (xsl:text A + B returned AB, A, B). By here the
+            // assembly has chosen its channel and the marker has no job left.
+            //
+            // The block near the top of this method handles a declared Text/Node return type;
+            // this catches the rest, which is mostly as="item()*" — and item() is the DEFAULT,
+            // so it was the common case that leaked. Left unmaterialized, the value answers
+            // `instance of text()` but has no identity, parent or store: any axis step raised
+            // XPTY0020 (naming the internal type to the author), and root() and path() came
+            // back empty. Atomic return types are excluded — the branches above have already
+            // coerced those, and a string there must stay a string.
+            if (_nodeStore != null && (func.As == null || !IsAtomicReturnType(func.As.ItemType)))
+            {
+                if (funcResult is Xdm.TextNodeItem tniSingle
+                    && MaterializeTextNodeItem(tniSingle) is { } singleText)
+                {
+                    funcResult = singleText;
+                }
+                else if (funcResult is object?[] resultSeq)
+                {
+                    for (var i = 0; i < resultSeq.Length; i++)
+                    {
+                        if (resultSeq[i] is Xdm.TextNodeItem tniSeq
+                            && MaterializeTextNodeItem(tniSeq) is { } seqText)
+                            resultSeq[i] = seqText;
+                    }
+                }
+            }
+
             // If the function's return type is a typed function type, wrap returned
             // function items in coercion wrappers (XSLT 3.0 §5.4.11)
             if (funcResult != null && func.As != null
