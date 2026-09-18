@@ -82,6 +82,71 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// XTTE1100: a <c>group-by</c>/<c>group-adjacent</c> key must be a single atomic value
+    /// unless <c>composite="yes"</c>.
+    /// <para>
+    /// Shared by the buffered and streamed executors deliberately. The streamed path had no
+    /// cardinality check at all, so an empty key flowed on and surfaced later as
+    /// <c>XTDE1071: current-grouping-key() called when there is no current grouping key</c> —
+    /// an error naming the wrong thing, reported against a stylesheet whose real fault was
+    /// here (phoenixmldb/phoenixmldb-xslt#147). Copying the check into the second executor
+    /// would have fixed that instance and set up the next divergence; one method both call
+    /// cannot drift.
+    /// </para>
+    /// </summary>
+    private void CheckGroupingKeyCardinality(object? key, bool composite, string clause)
+    {
+        if (composite) return;
+
+        if (IsEmptyGroupingKey(key))
+        {
+            throw Error($"XTTE1100: The {clause} expression must return a single atomic value; "
+                        + "it returned an empty sequence");
+        }
+
+        if (key is object?[] { Length: > 1 } many)
+        {
+            throw Error($"XTTE1100: The {clause} expression must return a single atomic value; "
+                        + $"it returned a sequence of {many.Length} items");
+        }
+    }
+
+    /// <summary>
+    /// True when a grouping key evaluated to the empty sequence.
+    /// </summary>
+    /// <remarks>
+    /// Split out from <see cref="CheckGroupingKeyCardinality"/> so each test stands alone;
+    /// as one <c>||</c> chain the analyser reads the arms as unreachable (CA1508).
+    /// <para>
+    /// <c>object?[]</c> is the sequence representation and is tested first.
+    /// <para>
+    /// A <c>List&lt;object?&gt;</c> is an XDM ARRAY, which is a single ITEM — but the grouping
+    /// key is ATOMIZED before the cardinality rule applies (XSLT 3.0 §19.2), and
+    /// <c>data([])</c> is <c>()</c>. So an empty array key is an empty sequence by the time
+    /// this rule bites, and XTTE1100 is right. An earlier revision of this method carved
+    /// arrays out as "one item, never empty", which was true at the item level and wrong
+    /// here — it regressed the buffered executor, which had raised XTTE1100 for <c>[]</c>
+    /// all along via its looser <see cref="IEnumerable{T}"/> test.
+    /// </para>
+    /// <para>
+    /// NOT handled, in either executor, before or after this change: a NON-empty array such
+    /// as <c>[1,2]</c> atomizes to <c>(1,2)</c> and should also raise XTTE1100. Both accept
+    /// it. That gap is pre-existing and deliberately left alone here rather than fixed
+    /// alongside a divergence repair — do not read this method as complete.
+    /// </para>
+    /// </para>
+    /// </remarks>
+    private static bool IsEmptyGroupingKey(object? key)
+    {
+        if (key is null) return true;
+        if (key is object?[] seq) return seq.Length == 0;
+        if (key is List<object?> array) return array.Count == 0;
+        if (key is IEnumerable<object?> lazy) return !lazy.Any();
+        return false;
+    }
+
+
     private static bool GroupAdjacentKeysEqual(object? a, object? b)
     {
         if (a == null && b == null) return true;
