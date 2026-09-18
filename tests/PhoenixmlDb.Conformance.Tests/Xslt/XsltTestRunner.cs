@@ -429,6 +429,12 @@ public sealed class XsltTestRunner
                 }
             }
 
+            // <output file="…"/> names where the principal result goes, and so the base output URI. file="" is the
+            // test-set directory itself (current-output-uri-014 asserts the URI contains the test's location), and
+            // file="#absent" means there is no base output URI (current-output-uri-013, -015).
+            if (testElem.Element(ns + "output")?.Attribute("file")?.Value is { } outputFile && outputFile != "#absent")
+                test.Environment.BaseOutputPath = Path.Combine(basePath, outputFile);
+
             // Parse parameters from <test> element (W3C format: <param name="x" select="val"/>)
             foreach (var param in testElem.Elements(ns + "param"))
             {
@@ -807,6 +813,7 @@ public sealed class XsltTestRunner
         var clone = new XsltEnvironment
         {
             StylesheetPath = env.StylesheetPath,
+            BaseOutputPath = env.BaseOutputPath,
             PrincipalSource = env.PrincipalSource,
             PrincipalSourceContent = env.PrincipalSourceContent,
             PrincipalSourceBaseUri = env.PrincipalSourceBaseUri,
@@ -843,6 +850,8 @@ public sealed class XsltTestRunner
     {
         if (source.StylesheetPath != null)
             target.StylesheetPath = source.StylesheetPath;
+        if (source.BaseOutputPath != null)
+            target.BaseOutputPath = source.BaseOutputPath;
         if (source.PrincipalSource != null)
             target.PrincipalSource = source.PrincipalSource;
         if (source.PrincipalSourceContent != null)
@@ -1069,6 +1078,9 @@ public sealed class XsltTestRunner
                 };
                 await transformer.LoadStylesheetAsync(stylesheetContent, baseUri, staticParams, packageCatalog,
                     versionResolution);
+                // Nothing is written there: result documents are collected in SecondaryResultDocuments.
+                if (testCase.Environment.BaseOutputPath is { } baseOutputPath)
+                    transformer.SetBaseOutputUri(new Uri(Path.GetFullPath(baseOutputPath)));
 
                 // Set parameters (evaluate select expressions to get typed values)
                 foreach (var (name, selectExpr) in testCase.Environment.Parameters)
@@ -2488,6 +2500,13 @@ public sealed class XsltTestCase
 public sealed class XsltEnvironment
 {
     public string? StylesheetPath { get; set; }
+    /// <summary>
+    /// The corpus's <c>&lt;output file="…"/&gt;</c>: where the principal result would be written, which makes it
+    /// the base output URI (XSLT 3.0 §2.3). It is what <c>fn:current-output-uri()</c> reports and what a relative
+    /// <c>xsl:result-document/@href</c> resolves against. The runner parsed past the element and never set it, so
+    /// every current-output-uri case saw the empty sequence.
+    /// </summary>
+    public string? BaseOutputPath { get; set; }
     public string? PrincipalSource { get; set; }
     public string? PrincipalSourceContent { get; set; }
     public Uri? PrincipalSourceBaseUri { get; set; }
