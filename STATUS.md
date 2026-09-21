@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-20 20:52 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-21 12:55 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -19,7 +19,7 @@ Generated 2026-09-20 20:52 UTC by `scripts/status.sh`. Do not edit by hand.
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 0 |
 | phoenixmldb-xslt | 8 | 1 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -56,10 +56,6 @@ Generated 2026-09-20 20:52 UTC by `scripts/status.sh`. Do not edit by hand.
 **phoenixmldb-xslt**
 
 - [153] Opt decl/strip-space into whitespace-sensitive comparison
-
-**phoenixmldb-cli**
-
-- [6] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
