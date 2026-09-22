@@ -395,7 +395,6 @@ public sealed class XqtsTestFixture : IAsyncLifetime
         {
             XQueryVersion = "3.1",
             SupportsHigherOrderFunctions = true,
-            SupportsSchemaValidation = true
         };
 
         // Skip known unsupported tests
