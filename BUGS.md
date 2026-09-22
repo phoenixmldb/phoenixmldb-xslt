@@ -7050,3 +7050,60 @@ exactly how a real regression gets laundered, so the precondition was proved rat
 Every lost pass is matched by a case that left the suite, and **zero** cases went from passing to
 failing. That is the only condition under which `CONFORMANCE_UPDATE_BASELINE=1` is honest.
 
+
+---
+
+### 113. Static declarations came into scope in the wrong order — four defects, one path (2026-09-22)
+
+`fn/system-property-gen` scores 0/166 and #47 attributes that to an absent feature: compile-time
+XPath evaluation with inline function items. That is true, and it is not the first thing that goes
+wrong. Instrumenting the real stylesheet rather than reasoning about it showed the very first
+failures are not "cannot evaluate this expression" but **`Variable $ns-scope is not defined`** —
+a static parameter declared at line 93 of the principal module, not in scope for a module included
+at line 101. Four separate defects in `ResolveShadowAttributes`/`CollectStaticDeclarations`, each
+producing that same symptom:
+
+1. **Every `xsl:import`/`xsl:include` was swept before the principal module's own declarations.**
+   So a param declared *above* an `xsl:include` was collected *after* the module that reads it.
+   XSLT 3.0 §3.9 orders static declarations by declaration order, with an included module's
+   declarations taking effect at the point of inclusion.
+
+2. **The sweep looked exactly one level deep.** A module included by an included module
+   contributed nothing, however it was ordered.
+
+3. **Externally supplied static params were merged in AFTER every declaration was evaluated.** A
+   supplied value outranks the declared default, so `<xsl:variable name="ns-normal"
+   select="$ns-scope = 'normal'"/>` was computed from the default while the shadow attributes
+   around it resolved against the supplied value — two halves of one stylesheet disagreeing about
+   one parameter.
+
+4. **Collection read only the `select` attribute.** A static variable whose expression arrives
+   through the shadow attribute `_select` was registered nowhere, so the next declaration to
+   reference it failed. `system-property-100-data.xsl` chains six of these.
+
+And a fifth, found while fixing the fourth: `ResolveShadowValue` treated **any** expression
+beginning with `$` as a bare variable name, so `{$wrap($d:args)}` was looked up as a static
+variable literally called `wrap($d:args)`. Nothing is called that, so the whole shadow attribute
+was reported unresolvable — indistinguishable from a genuinely unknown variable, which is why it
+survived #47's four fixes to the same file.
+
+**Import is not include, and treating them alike breaks one or the other.** The first version of
+the fix put both in declaration order and lost W3C `attr/static/static-022`, which imports a module
+declaring `$p` as 1 from one that declares it as 3 — with the `xsl:import` written *between* two
+uses — and requires 3 to win. An imported module has LOWER import precedence, so its declarations
+must lose to the importing module's whatever their relative position; an included module has the
+SAME precedence and takes effect where it is written. Imports are now hoisted, includes are not.
+That case is pinned by a guard test which passes before the change as well, because its job is to
+fail if anyone unifies the two paths again.
+
+**Conformance effect: none. Measured, not assumed.** Same-checkout A/B over all 11 XSLT chunks:
+457 failures before, 457 after, no per-set differences. `system-property-gen` stays at 168 failing
+in both arms. The first A/B — before the import/include split — reported `LOST ['static-022']`,
+which is what establishes that the two arms are distinguishable and that "no difference" here is a
+measurement rather than a mis-run.
+
+So this is a correctness fix the suite does not currently reward. It matters because it is the
+**first** blocker in that set, not the last: with all five defects fixed the errors move on from
+"variable not defined" to the genuine feature gap #47 names — dynamic invocation of static function
+items at compile time. Eight regression tests in `StaticDeclarationScopeOrderTests`; five of them
+fail on unfixed source, and the remaining three are guards that must pass on both.

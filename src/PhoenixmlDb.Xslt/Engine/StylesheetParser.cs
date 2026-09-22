@@ -3121,55 +3121,48 @@ public sealed partial class StylesheetParser
         // XPST0008. Leaking the pre-pass values made it resolve, and the error disappeared.
         var preExistingStaticKeys = new HashSet<QName>(_staticVariables.Keys);
 
-        // Also collect from imported stylesheets (process xsl:import/xsl:include first)
         var baseUri = root.BaseUri;
         Uri? baseUriObj = explicitBaseUri;
         if (baseUriObj == null && !string.IsNullOrEmpty(baseUri))
             Uri.TryCreate(baseUri, UriKind.Absolute, out baseUriObj);
-        if (baseUriObj != null)
-        {
-            foreach (var child in root.Elements())
-            {
-                if (child.Name == XsltNs + "import" || child.Name == XsltNs + "include")
-                {
-                    var href = child.Attribute("href")?.Value;
-                    if (href == null) continue;
-                    try
-                    {
-                        var resolvedUri = new Uri(baseUriObj, href);
-                        if (resolvedUri.IsFile && File.Exists(resolvedUri.LocalPath))
-                        {
-                            var importedDoc = XDocument.Load(resolvedUri.LocalPath, LoadOptions.SetBaseUri | LoadOptions.SetLineInfo);
-                            if (importedDoc.Root != null)
-                                CollectStaticDeclarations(importedDoc.Root, staticParams);
-                        }
-                    }
-                    catch (Exception ex) when (ex is IOException or XmlException or UriFormatException or UnauthorizedAccessException or FileNotFoundException)
-                    {
-                        // If import fails here, skip — it will be handled properly during parsing
-                    }
-                }
-            }
-        }
 
-        CollectStaticDeclarations(root, staticParams, checkConsistency: true);
-
-        // External static params override defaults (higher precedence)
+        // EXTERNAL static params are seeded BEFORE any declaration is evaluated. A supplied value
+        // overrides the declaration's default (XSLT 3.0 sec 3.9), so every later declaration that
+        // references the param must see the SUPPLIED value. Applying them afterwards, as this used
+        // to, let `<xsl:variable name="ns-normal" select="$ns-scope = 'normal'"/>` be computed from
+        // the default while the shadow attributes were resolved against the supplied one.
+        var externallySupplied = new HashSet<string>(StringComparer.Ordinal);
         if (externalStaticParams != null)
         {
             foreach (var (name, value) in externalStaticParams)
             {
                 var val = value.Trim();
-                if (val.StartsWith('\'') && val.EndsWith('\''))
-                    staticParams[name] = val[1..^1].Replace("''", "'", StringComparison.Ordinal);
-                else if (val.StartsWith('"') && val.EndsWith('"'))
-                    staticParams[name] = val[1..^1].Replace("\"\"", "\"", StringComparison.Ordinal);
+                object? typed;
+                if (val.StartsWith('\'') && val.EndsWith('\'') && val.Length >= 2)
+                    typed = val[1..^1].Replace("''", "'", StringComparison.Ordinal);
+                else if (val.StartsWith('"') && val.EndsWith('"') && val.Length >= 2)
+                    typed = val[1..^1].Replace("\"\"", "\"", StringComparison.Ordinal);
                 else if (val is "true()" or "false()")
-                    staticParams[name] = val == "true()" ? "yes" : "no";
+                    typed = val == "true()";
                 else
-                    staticParams[name] = val;
+                    typed = val;
+
+                staticParams[name] = typed is bool eb ? (eb ? "yes" : "no") : StaticValueToString(typed);
+                externallySupplied.Add(name);
+                if (TryParseStaticName(root, name, out var externalKey))
+                    _staticVariables[externalKey] = typed;
             }
         }
+
+        // Declarations are collected in DECLARATION ORDER, with an included module's declarations
+        // taking effect at the point of its xsl:include/xsl:import. Sweeping every include first —
+        // as this used to — put the principal module's own params AFTER the included modules that
+        // reference them, so `fn/system-property-gen` failed its whole set with "Variable $ns-scope
+        // is not defined" on declarations that are perfectly well ordered in the source.
+        var visitedModules = new HashSet<string>(StringComparer.Ordinal);
+        if (baseUriObj != null) visitedModules.Add(baseUriObj.AbsoluteUri);
+        CollectStaticDeclarationsInScopeOrder(root, staticParams, baseUriObj, visitedModules,
+                                              checkConsistency: true, externallySupplied);
 
         // Walk all elements and resolve shadow attributes
         // (even with no static params, shadow attributes need validation for XPST0017)
@@ -3184,12 +3177,67 @@ public sealed partial class StylesheetParser
     /// <summary>
     /// Collects static param and variable declarations from a stylesheet root element.
     /// </summary>
-    private void CollectStaticDeclarations(XElement root, Dictionary<string, string> staticParams, bool checkConsistency = false)
+    private void CollectStaticDeclarationsInScopeOrder(
+        XElement root,
+        Dictionary<string, string> staticParams,
+        Uri? baseUriObj,
+        HashSet<string> visitedModules,
+        bool checkConsistency,
+        HashSet<string> externallySupplied)
     {
         // Track names seen in THIS module for same-precedence consistency check
         HashSet<string>? seenInModule = checkConsistency ? new() : null;
+
+        void CollectModule(XElement moduleRef)
+        {
+            if (baseUriObj == null) return;
+            var href = moduleRef.Attribute("href")?.Value;
+            if (href == null) return;
+            try
+            {
+                var resolvedUri = new Uri(baseUriObj, href);
+                if (!resolvedUri.IsFile || !File.Exists(resolvedUri.LocalPath)) return;
+                // A module already pulled in contributes its declarations once. The guard is also
+                // what stops a cyclic include from recursing forever now that this walk descends
+                // instead of scanning one level.
+                if (!visitedModules.Add(resolvedUri.AbsoluteUri)) return;
+                var importedDoc = XDocument.Load(resolvedUri.LocalPath, LoadOptions.SetBaseUri | LoadOptions.SetLineInfo);
+                if (importedDoc.Root != null)
+                    CollectStaticDeclarationsInScopeOrder(importedDoc.Root, staticParams, resolvedUri,
+                                                          visitedModules, checkConsistency: false, externallySupplied);
+            }
+            catch (Exception ex) when (ex is IOException or XmlException or UriFormatException or UnauthorizedAccessException or FileNotFoundException)
+            {
+                // If the module cannot be read here, skip — parsing proper reports it properly.
+            }
+        }
+
+        // IMPORT and INCLUDE are not the same thing here, and treating them alike breaks one or
+        // the other whichever way you pick.
+        //
+        // An IMPORTED module has LOWER import precedence, so its declarations must never override
+        // the importing module's — whatever their relative position in the file. Collecting them
+        // first puts them where the later declarations of this module can overwrite them.
+        // W3C attr/static static-022 imports a module declaring `$p` as 1 from one that declares
+        // it as 3, with the xsl:import written BETWEEN two uses, and requires 3 to win.
+        //
+        // An INCLUDED module has the SAME precedence and its declarations take effect AT THE
+        // POINT OF INCLUSION, so those are walked in document order below.
+        foreach (var child in root.Elements())
+            if (child.Name == XsltNs + "import")
+                CollectModule(child);
+
         foreach (var child in root.Elements())
         {
+            if (child.Name == XsltNs + "import")
+                continue;
+
+            if (child.Name == XsltNs + "include")
+            {
+                CollectModule(child);
+                continue;
+            }
+
             if (child.Name != XsltNs + "param" && child.Name != XsltNs + "variable")
                 continue;
 
@@ -3213,6 +3261,33 @@ public sealed partial class StylesheetParser
             if (nameAttr == null) continue;
 
             var selectAttr = child.Attribute("select")?.Value;
+
+            // A static variable may carry its expression in the SHADOW attribute `_select` instead
+            // (XSLT 3.0 sec 3.6.2). Reading only `select` left such a declaration registered
+            // nowhere, so the next declaration to reference it failed with "Variable $x is not
+            // defined" — `fn/system-property-gen` chains six of these. The shadow value is resolved
+            // against the static params in scope AT THIS POINT, which is what declaration order
+            // means for a shadow attribute.
+            if (selectAttr == null)
+            {
+                var shadowSelect = child.Attribute("_select");
+                if (shadowSelect != null)
+                {
+                    try
+                    {
+                        var resolvedSelect = ResolveShadowValue(shadowSelect.Value, staticParams, out var shadowComplete, child);
+                        // An incomplete resolution dropped an expression it could not evaluate, so
+                        // the text is not the expression the stylesheet asked for. Registering it
+                        // would put a WRONG value in scope, which is worse than no value at all.
+                        if (shadowComplete) selectAttr = resolvedSelect;
+                    }
+                    catch (XsltException)
+                    {
+                        // Not resolvable yet — leave the declaration unregistered, exactly as before.
+                    }
+                }
+            }
+
             string? resolvedValue = null;
             if (selectAttr != null)
             {
@@ -3255,10 +3330,17 @@ public sealed partial class StylesheetParser
                     // Registering only the computed ones left `$prefix` (select="''") invisible to
                     // the evaluator, so the next declaration that referenced it failed XPST0008 and
                     // silently produced nothing.
-                    if (TryParseStaticName(child, nameAttr, out var typedKey) && !_staticVariables.ContainsKey(typedKey))
+                    if (!externallySupplied.Contains(nameAttr)
+                        && TryParseStaticName(child, nameAttr, out var typedKey)
+                        && !_staticVariables.ContainsKey(typedKey))
                         _staticVariables[typedKey] = typedValue;
                 }
             }
+
+            // A value supplied from outside outranks every declared default, so the default is
+            // evaluated (it still has to be well-formed, and XTSE3450 still applies) but never
+            // written back over the supplied value.
+            var supplied = externallySupplied.Contains(nameAttr);
 
             if (staticParams.TryGetValue(nameAttr, out var existing))
             {
@@ -3266,14 +3348,14 @@ public sealed partial class StylesheetParser
                 if (seenInModule != null && seenInModule.Contains(nameAttr) && resolvedValue != null && existing != resolvedValue)
                     throw new XsltException($"XTSE3450: Static variable '{nameAttr}' has value '{resolvedValue}' which is inconsistent with the value '{existing}' at the same import precedence");
                 // Higher precedence wins — override
-                if (resolvedValue != null)
+                if (resolvedValue != null && !supplied)
                     staticParams[nameAttr] = resolvedValue;
                 seenInModule?.Add(nameAttr);
                 continue;
             }
 
             seenInModule?.Add(nameAttr);
-            if (resolvedValue != null)
+            if (resolvedValue != null && !supplied)
                 staticParams[nameAttr] = resolvedValue;
         }
     }
@@ -3446,9 +3528,13 @@ public sealed partial class StylesheetParser
                     {
                         // {} → empty expression, produces empty string
                     }
-                    else if (expr.StartsWith('$'))
+                    else if (expr.StartsWith('$') && IsBareVariableReference(expr[1..]))
                     {
-                        // {$name} → variable reference
+                        // {$name} → variable reference. The name test is what keeps this branch
+                        // from swallowing every expression that merely BEGINS with `$`:
+                        // `{$wrap($d:args)}` was being looked up as a static variable literally
+                        // named `wrap($d:args)`, found nothing, and reported the whole shadow
+                        // attribute unresolvable.
                         var paramName = expr[1..];
                         if (staticParams.TryGetValue(paramName, out var paramValue))
                             result.Append(paramValue);
@@ -3497,6 +3583,28 @@ public sealed partial class StylesheetParser
         return result.ToString();
     }
 
+
+    /// <summary>
+    /// True when <paramref name="name"/> is a bare variable name — an NCName, optionally prefixed —
+    /// and not an expression that happens to start with one.
+    /// </summary>
+    private static bool IsBareVariableReference(string name)
+    {
+        if (name.Length == 0) return false;
+        var colon = name.IndexOf(':', StringComparison.Ordinal);
+        if (colon >= 0)
+            return IsNcName(name[..colon]) && IsNcName(name[(colon + 1)..]);
+        return IsNcName(name);
+
+        static bool IsNcName(string part)
+        {
+            if (part.Length == 0) return false;
+            if (!char.IsLetter(part[0]) && part[0] != '_') return false;
+            foreach (var c in part)
+                if (!char.IsLetterOrDigit(c) && c != '_' && c != '-' && c != '.') return false;
+            return true;
+        }
+    }
 
     /// <summary>
     /// Finds the closing '}' brace, skipping braces inside string literals.
