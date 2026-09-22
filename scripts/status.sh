@@ -105,6 +105,38 @@ if [ -f scripts/conformance-baseline.tsv ]; then
     say "- **W3C QT3 baseline — $qp/$qt ($(awk -v p=$qp -v t=$qt 'BEGIN{printf "%.2f", 100*p/t}')%)** across $qn test-sets,"
     say "  same file, same ratchet."
   fi
+
+  # A conformance percentage can move for two completely different reasons: the engine got
+  # better, or cases stopped being counted. #165 removed 318 cases the harness had declared
+  # itself unable to run, which RAISED the published figure 0.78 points with no engine change
+  # at all. This file regenerates twice a day with nobody watching, so a denominator move
+  # would otherwise surface here as an apparent gain.
+  #
+  # So compare the baseline's totals against the file's PREVIOUS revision and say when the
+  # denominator moved. If the history is not deep enough to answer, say THAT — a silent skip
+  # here would be a check that cannot fire, which is the shape BUGS.md #110 catalogues.
+  prev_rev=$(git log -2 --format=%H -- scripts/conformance-baseline.tsv 2>/dev/null | sed -n 2p)
+  if [ -z "$prev_rev" ]; then
+    if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+      say "- **Denominator movement: not checked** — shallow clone, no previous revision of the"
+      say "  baseline to compare against. This is a gap in the report, not a statement that"
+      say "  nothing moved."
+    fi
+  else
+    read -r pxt pqt <<<"$(git show "$prev_rev:scripts/conformance-baseline.tsv" 2>/dev/null \
+      | awk -F'\t' '$1 ~ /^tests\// {x+=$3} $1 !~ /^tests\// {q+=$3} END{print x+0, q+0}')"
+    moved=""
+    [ "${pxt:-0}" -gt 0 ] && [ "${pxt:-0}" -ne "${xt:-0}" ] && moved="XSLT $pxt -> $xt"
+    if [ "${pqt:-0}" -gt 0 ] && [ "${pqt:-0}" -ne "${qt:-0}" ]; then
+      [ -n "$moved" ] && moved="$moved; "
+      moved="${moved}QT3 $pqt -> $qt"
+    fi
+    if [ -n "$moved" ]; then
+      say "- **The denominator moved since the previous baseline revision: $moved.** A percentage"
+      say "  change across this revision is partly or wholly cases entering or leaving the count,"
+      say "  NOT necessarily the engine. Compare pass counts, not percentages, across this line."
+    fi
+  fi
 else
   say "- **No baseline file.** Not a claim of 0%; the file is missing."
 fi
