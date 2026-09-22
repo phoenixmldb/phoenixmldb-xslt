@@ -886,6 +886,39 @@ internal static class StreamabilityChecker
         /// Checks if a select expression navigates to element nodes (child/descendant steps),
         /// meaning the loop iterates over streaming nodes rather than atomic values.
         /// </summary>
+        /// <summary>
+        /// True when a grouping-key expression can return a node whose atomization is NOT
+        /// motionless — in practice an element, whose typed value is built from its descendants.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately NOT reusing <see cref="SelectNavigatesElements"/>: that one asks whether an
+        /// expression NAVIGATES to elements and answers over ANY step, which is the wrong question
+        /// here. What matters is the LAST step, because that is what the expression returns —
+        /// <c>Line/@id</c> navigates elements and returns an attribute, and an attribute key is
+        /// motionless and common. The two helpers also disagree about <c>Axis.Self</c> depending on
+        /// whether the parser produced a bare step or a one-step path, which is exactly the trap
+        /// this avoids by testing both shapes the same way.
+        /// </remarks>
+        private static bool KeyExpressionReturnsElements(XQueryExpression expr) => expr switch
+        {
+            PathExpression path when path.Steps.Count > 0 => StepReturnsElements(path.Steps[^1]),
+            StepExpression step => StepReturnsElements(step),
+            // A bare context item in a streamed grouping IS the current element, so atomizing it
+            // needs its descendants.
+            ContextItemExpression => true,
+            // Everything else — a function call, a comparison, arithmetic, a literal — produces
+            // an atomic value. fn:boolean/fn:string/fn:name consume the node without atomizing it.
+            _ => false,
+        };
+
+        /// <summary>
+        /// True when a step yields element (or text/comment/PI) nodes rather than attributes.
+        /// Attribute and namespace nodes are available from the start tag, so atomizing one is
+        /// motionless; every other node kind reached by a step is not.
+        /// </summary>
+        private static bool StepReturnsElements(StepExpression step)
+            => step.Axis is not (Axis.Attribute or Axis.Namespace);
+
         private static bool SelectNavigatesElements(XQueryExpression expr)
         {
             // Path expressions with child/descendant/self steps navigate elements
@@ -1080,6 +1113,29 @@ internal static class StreamabilityChecker
             if (!selectIsGrounded && insn.GroupAdjacent != null && ContainsDownwardNavigation(insn.GroupAdjacent))
             {
                 NonStreamableReason = "xsl:for-each-group group-adjacent expression navigates into children (not motionless) — not streamable";
+                return null;
+            }
+
+            // A grouping key is ATOMIZED, and atomizing an ELEMENT requires that element's
+            // descendants — so a key expression that RETURNS elements is consuming even when it
+            // navigates nowhere. `group-adjacent="self::Line"` is the case: Axis.Self, so the
+            // downward-navigation rule above never sees it (reported by Martin Honnen, #147).
+            //
+            // The rule is about what the expression RETURNS, not what it touches, and that
+            // distinction is the whole of it:
+            //   self::Line          -> an element      -> atomizing needs descendants -> reject
+            //   boolean(self::Line) -> xs:boolean      -> fn:boolean does not atomize -> allow
+            //   @id                 -> an attribute    -> available from the start tag -> allow
+            // A rule phrased over "returns nodes" would reject the third, and attribute keys are
+            // ordinary in streamed grouping.
+            if (!selectIsGrounded && insn.GroupBy != null && KeyExpressionReturnsElements(insn.GroupBy))
+            {
+                NonStreamableReason = "xsl:for-each-group group-by expression returns nodes whose atomization is not motionless — not streamable";
+                return null;
+            }
+            if (!selectIsGrounded && insn.GroupAdjacent != null && KeyExpressionReturnsElements(insn.GroupAdjacent))
+            {
+                NonStreamableReason = "xsl:for-each-group group-adjacent expression returns nodes whose atomization is not motionless — not streamable";
                 return null;
             }
 
