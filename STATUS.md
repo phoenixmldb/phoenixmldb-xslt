@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-22 11:45 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-22 21:23 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-09-22 11:45 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 0 |
-| phoenixmldb-xslt | 8 | 1 |
+| phoenixmldb-xslt | 7 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -42,7 +42,6 @@ Generated 2026-09-22 11:45 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [163] QT3 harness claims schemaValidation support it never implemented — the source `validation` attribute is not read
 - [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
 - [148] A streamed xsl:message loses the items produced by xsl:for-each in its content
 - [147] Streamable XSLT 3.0 with non motionless group-adjacent should be rejected by streamability analysis but is executed to give the strange error " XTDE1071: current-grouping-key() called when there is no current grouping key"
@@ -53,17 +52,13 @@ Generated 2026-09-22 11:45 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-xslt**
-
-- [153] Opt decl/strip-space into whitespace-sensitive comparison
-
 **phoenixmldb-cli**
 
 - [7] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **112** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **113** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -97,8 +92,11 @@ Figures are only as good as their provenance, so each carries how and when it wa
 - **W3C XSLT 3.0 — 10335/10839 (95.35%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 29532/31379 (94.11%)** across 428 test-sets,
+- **W3C QT3 baseline — 29742/31061 (95.75%)** across 428 test-sets,
   same file, same ratchet.
+- **The denominator moved since the previous baseline revision: QT3 31379 -> 31061.** A percentage
+  change across this revision is partly or wholly cases entering or leaving the count,
+  NOT necessarily the engine. Compare pass counts, not percentages, across this line.
 - **W3C QT3 / XQuery — figure not readable** from
   `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
 
