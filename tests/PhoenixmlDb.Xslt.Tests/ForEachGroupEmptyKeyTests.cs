@@ -117,9 +117,19 @@ public class ForEachGroupEmptyKeyTests
     // key`, naming something that was not the problem. The buffered executor had
     // raised XTTE1100 correctly all along.
     //
-    // The [Theory] over `streamable` is the point of this fixture: the two
-    // executors must agree, and an assertion that only runs against one of them
-    // is what let the pair drift apart in the first place.
+    // The [Theory] over `streamable` is the point of this fixture. It originally
+    // asserted that the two executors AGREE on XTTE1100, and that held until the
+    // static half of #147 landed: `group-adjacent="self::item"` returns an
+    // element, atomizing an element is not motionless, so under streamable="yes"
+    // the stylesheet is now rejected by streamability analysis (XTSE3430) and
+    // the streamed executor never runs.
+    //
+    // So the two arms deliberately expect DIFFERENT errors now, and that is the
+    // fix rather than a drift: XTTE1100 is the correct runtime answer where the
+    // expression is legal, XTSE3430 the correct static answer where it is not.
+    // Martin's report says Saxon rejects it statically too. The row is kept
+    // rather than dropped because the non-streamable arm still pins the
+    // cardinality check #152 added.
     private static string AdjacentEmptyKeyStylesheet(bool streamable) => $$"""
         <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
             exclude-result-prefixes="#all">
@@ -140,17 +150,23 @@ public class ForEachGroupEmptyKeyTests
     public async Task ForEachGroup_GroupAdjacent_EmptyKey_RaisesXTTE1100(bool streamable)
     {
         var transformer = new XsltTransformer();
-        await transformer.LoadStylesheetAsync(AdjacentEmptyKeyStylesheet(streamable));
 
-        Func<Task> act = () => transformer.TransformAsync(AdjacentInput);
+        // Under streamable=yes the rejection happens at LOAD time, so the throw has to be
+        // allowed to come from either call.
+        Func<Task> act = async () =>
+        {
+            await transformer.LoadStylesheetAsync(AdjacentEmptyKeyStylesheet(streamable));
+            await transformer.TransformAsync(AdjacentInput);
+        };
 
         (await act.Should().ThrowAsync<Exception>(
-                "an empty group-adjacent key is XTTE1100 in both executors"))
-            .Which.Message.Should().Contain("XTTE1100",
+                "an element-valued group-adjacent key is an error either way"))
+            .Which.Message.Should().Contain(
+                streamable ? "XTSE3430" : "XTTE1100",
                 streamable
-                    ? "the streamed executor reported XTDE1071 before #147 — the wrong error, "
-                      + "because it had no cardinality check to reach"
-                    : "the buffered executor has always reported this correctly");
+                    ? "under streamable=yes the stylesheet is rejected statically — atomizing an "
+                      + "element is not motionless — so the runtime cardinality check is never reached"
+                    : "the buffered executor reports the cardinality error at runtime, as it always has");
     }
 
     // `boolean(self::item)` is what the reporter MEANT to write. It yields a real

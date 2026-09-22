@@ -7107,3 +7107,67 @@ So this is a correctness fix the suite does not currently reward. It matters bec
 "variable not defined" to the genuine feature gap #47 names — dynamic invocation of static function
 items at compile time. Eight regression tests in `StaticDeclarationScopeOrderTests`; five of them
 fail on unfixed source, and the remaining three are guards that must pass on both.
+
+---
+
+### 114. A grouping key is ATOMIZED, so returning an element is consuming even with no navigation (2026-09-22)
+
+Martin Honnen (#147) wrote `group-adjacent="self::Line"` under `streamable="yes"` where he meant
+`boolean(self::Line)`. Saxon rejects the stylesheet. We accepted it and ran it, then failed with
+`XTDE1071: current-grouping-key() called when there is no current grouping key` — an error naming
+something that was not the problem. #152 fixed the runtime half; this is the static half.
+
+**Why it slipped through.** `StreamabilityChecker.VisitForEachGroup` already had a motionless rule
+for `group-adjacent`, and it was doing its job:
+
+```csharp
+if (!selectIsGrounded && insn.GroupAdjacent != null && ContainsDownwardNavigation(insn.GroupAdjacent))
+```
+
+`ContainsDownwardNavigation` fires on `Axis.Child`, `Axis.Descendant`, `Axis.DescendantOrSelf`.
+**`self::Line` is `Axis.Self`.** The rule was aimed at `PRICE/text()` and never at this shape.
+
+**The rule is about what the expression RETURNS, not what it touches.** That distinction is the
+whole of it, because the grouping key is atomized:
+
+| key | returns | atomizing it |
+|---|---|---|
+| `self::Line` | an element | needs the element's descendants — **consuming** |
+| `boolean(self::Line)` | `xs:boolean` | `fn:boolean` consumes the node without atomizing — motionless |
+| `@id` | an attribute | available from the start tag — motionless |
+
+A rule phrased over "returns nodes" rather than "returns elements" would reject the third, and
+attribute keys are ordinary in streamed grouping.
+
+**`SelectNavigatesElements` was NOT reused, though it sits twenty lines away and looks close
+enough.** It asks whether an expression *navigates* to elements and answers over ANY step, which is
+the wrong question: `Line/@id` navigates elements and returns an attribute. Only the LAST step says
+what the expression returns. It also treats `Axis.Self` as element-navigating in its `PathExpression`
+branch and not in its `StepExpression` branch, so reusing it would have made the answer depend on
+whether the parser happened to produce a bare step or a one-step path for the same source text —
+the asymmetric-pair shape (#53) again, and invisible until a stylesheet crossed the boundary.
+
+**Conformance effect: none, and this one had to be measured because the rule REJECTS stylesheets we
+previously accepted.** Same-checkout A/B over all 11 chunks: 457 failures before, 457 after, no
+per-set differences. Proof of sight rather than an absence: all three streaming chunks produced
+logs in both arms — strm1 716/724, strm2 721/756, strm3 883/894, identical either side — so 2,374
+streaming cases exercised the changed path and none moved.
+
+**A test that passed on unfixed source for the wrong reason.** The first version asserted only "an
+exception whose message mentions group-adjacent", and it passed against `origin/main` — because
+unfixed source runs the stylesheet and raises `XTTE1100: The group-adjacent expression must return
+a single atomic value; it returned an empty sequence`, which mentions group-adjacent. The assertion
+could not tell a static rejection from a runtime failure. Asserting the ERROR CODE (`XTSE3430`)
+is what made it invert. Worth stating generally: when a fix changes *when* an error is raised, an
+assertion on message text will usually still pass on the old code, because the old code raises
+something about the same construct.
+
+The `group-by` half is worse on unfixed source and is a separate test for that reason: it produces
+**no error at all** — silently wrong groups.
+
+**One existing assertion was deliberately changed, not deleted.**
+`ForEachGroupEmptyKeyTests.ForEachGroup_GroupAdjacent_EmptyKey_RaisesXTTE1100` was written for #152
+and asserted that both executors agree on `XTTE1100`. They no longer do, correctly: under
+`streamable="yes"` the stylesheet is now rejected before the streamed executor runs. The theory row
+is kept with a per-arm expectation — `XTSE3430` streamed, `XTTE1100` buffered — because the
+non-streamable arm still pins the cardinality check #152 added.
