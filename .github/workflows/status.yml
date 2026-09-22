@@ -30,6 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # status.sh compares the conformance baseline against its PREVIOUS revision to
+          # report when the denominator moved. The default depth-1 clone has no previous
+          # revision, so that check would silently never fire — which is worse than absent,
+          # because the report would look complete.
+          fetch-depth: 0
 
       - name: Regenerate
         env:
