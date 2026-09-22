@@ -251,11 +251,40 @@ public sealed class XqtsTestRunner
             }
         }
 
+        // SET-LEVEL dependencies apply to every case in the file, and were not read at all:
+        // ParseTestCase collects `<dependency>` children of `<test-case>` only. A whole test-set
+        // that declares a feature this engine lacks therefore RAN, case by case, failing with
+        // errors that name something other than the missing capability —
+        // prod/AxisStep.static-typing is 0/15 that way. The catalog's own mechanism for saying
+        // "skip these unless you implement X" was being ignored for 234 cases across 32 sets
+        // (schemaValidation 108, fn-load-xquery-module 83, staticTyping 43).
+        //
+        // Only direct children of <test-set> count: Descendants would sweep up every case's own
+        // dependencies and apply each to all of them.
+        var setLevelDependencies = new List<XqtsDependency>();
+        foreach (var dep in doc.Root?.Elements(ns + "dependency") ?? Enumerable.Empty<XElement>())
+        {
+            var type = dep.Attribute("type")?.Value;
+            var value = dep.Attribute("value")?.Value;
+            if (type != null && value != null)
+            {
+                setLevelDependencies.Add(new XqtsDependency
+                {
+                    Type = type,
+                    Value = value,
+                    Satisfied = dep.Attribute("satisfied")?.Value != "false"
+                });
+            }
+        }
+
         // Parse test cases
         foreach (var testCase in doc.Descendants(ns + "test-case"))
         {
             var test = ParseTestCase(testCase, ns, testSetName, environments, Path.GetDirectoryName(testSetPath)!);
-            if (test != null && ShouldRunTest(test))
+            if (test == null) continue;
+            foreach (var dep in setLevelDependencies)
+                test.Dependencies.Add(dep);
+            if (ShouldRunTest(test))
             {
                 testCases.Add(test);
             }
@@ -1476,17 +1505,37 @@ public sealed class XqtsTestRunner
 public sealed class XqtsConfiguration
 {
     public string XQueryVersion { get; init; } = "3.1";
-    public bool SupportsSchemaValidation { get; init; } = true;
     public bool SupportsHigherOrderFunctions { get; init; } = true;
-    public bool SupportsStaticTyping { get; init; } = false;
     public HashSet<string> SkipTests { get; } = new();
+
+    /// <summary>
+    /// Features this processor claims. Declaring one makes every case that depends on it RUN;
+    /// omitting one makes those cases report "not applicable". An entry here is therefore a claim
+    /// about the engine, and a false entry does not merely mis-score — it produces failures whose
+    /// error messages point somewhere other than the missing capability.
+    /// </summary>
+    /// <remarks>
+    /// Two entries removed because nothing implements them (audited 2026-09-22):
+    ///
+    /// <list type="bullet">
+    /// <item><c>schemaValidation</c> — a QT3 source may carry <c>validation="strict"</c>, requiring
+    /// its document be schema-validated before the query sees it. Nothing here reads that attribute;
+    /// the document loads untyped regardless.</item>
+    /// <item><c>staticTyping</c> — the optional Static Typing Feature, whose cases assert XPST0005
+    /// when an expression's static type is provably empty. <c>XPST0005</c> appears nowhere in either
+    /// engine. <c>XqtsConfiguration</c> ALREADY declared <c>SupportsStaticTyping = false</c> — a
+    /// property nothing read, contradicted by this set, which is what is actually consulted.</item>
+    /// </list>
+    ///
+    /// <c>schemaImport</c> stays: genuinely implemented (46 of 50 corpus schemas compile through
+    /// XsdSchemaProvider), merely partial — schema-defined types work as cast targets but not yet as
+    /// sequence types, which the engine reports in those words.
+    /// </remarks>
     public HashSet<string> SupportedFeatures { get; } = new()
     {
         "higherOrderFunctions",
         "moduleImport",
         "schemaImport",
-        "schemaValidation",
-        "staticTyping",
         "serialization",
         "infoset-dtd",
         "xpath-1.0-compatibility",

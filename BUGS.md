@@ -6990,3 +6990,63 @@ else's branch: `git fetch && git rev-parse origin/<branch>`, never the local ref
 **Corollary for wait loops:** they must fail closed when nothing matches yet. "No run for `<sha>`"
 has to block, not fall through to the newest run, or the bug is rebuilt with extra steps.
 
+---
+
+### 112. The harness ran cases it had declared itself unable to run — and fixing it RAISES the published figure by 0.78 points (2026-09-22)
+
+Three defects in how the QT3 harness decides what to run. All the same fail-open shape, all found by
+auditing capability claims after #163 rather than by any test going red.
+
+| # | defect | evidence |
+|---|---|---|
+| 1 | `schemaValidation` declared, never implemented | zero code reads a source's `validation` attribute |
+| 2 | `staticTyping` declared, never implemented | `XPST0005` appears **nowhere** in either engine |
+| 3 | set-level `<dependency>` never read **at all** | the parse loop is inside `ParseTestCase`, reading `<test-case>` children only |
+
+**Defect 2 is the sharpest.** `XqtsConfiguration` already carried
+`public bool SupportsStaticTyping { get; init; } = false;` — read by **nothing**, zero call sites —
+while `SupportedFeatures` said the opposite and was the set actually consulted. The harness had
+contradicted itself since the feature list was written, and the dead property was the half telling
+the truth.
+
+**Defect 3 is the largest.** 234 cases across 32 test-sets ran in defiance of their own set's
+declared requirements (`schemaValidation` 108, `fn-load-xquery-module` 83, `staticTyping` 43).
+`prod/AxisStep.static-typing` sat at **0/15** — fifteen cases failing with errors about axes,
+because the one mechanism the catalog provides for saying "skip these unless you implement X" was
+being ignored.
+
+## The number, and why this entry exists
+
+    before   29803/31379 = 94.98%
+    after    29742/31061 = 95.75%      +0.78 points, ZERO engine change
+
+    318 cases stop running
+      257 were FAILING  -> never applicable, correctly gone
+       61 were PASSING  -> credit we were taking for cases whose prerequisites we do not meet
+
+**The honest fix and the flattering fix are the same edit.** Nothing about the engine improved; the
+figure rose because 257 failures left the denominator. A reader seeing 94.98 → 95.75 in STATUS.md —
+which is generated from `conformance-baseline.tsv` twice a day, with no human in the loop — would
+reasonably conclude the engine got better. It did not.
+
+> **A conformance percentage is only comparable against itself when the denominator is fixed.** Any
+> change to what the harness runs must state the before/after case counts, not just the percentage,
+> and must say which direction the denominator moved. This is [[#111]]'s stale-artifact rule applied
+> to the denominator instead of to a file.
+
+Sits beside **#57** (published figures describing a build that does not ship) and **#28** (a harness
+that scored an expected-error case as passing on any exception). Three entries now saying the same
+thing: *the measurement has been wrong more often, and more flatteringly, than the engine has.*
+
+## Re-baselining was legitimate here, and the check that makes it so
+
+The per-set gate failed, correctly — 13 sets lost passing cases. Re-baselining past a red gate is
+exactly how a real regression gets laundered, so the precondition was proved rather than assumed:
+
+    sets whose PASSED count dropped              : 13
+      explained entirely by cases that STOPPED RUNNING : 13
+      NOT explained (a case started failing)     : 0
+
+Every lost pass is matched by a case that left the suite, and **zero** cases went from passing to
+failing. That is the only condition under which `CONFORMANCE_UPDATE_BASELINE=1` is honest.
+
