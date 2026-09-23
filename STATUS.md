@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-22 21:23 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-23 11:44 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,9 +17,9 @@ Generated 2026-09-22 21:23 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 8 | 0 |
-| phoenixmldb-xslt | 7 | 0 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-xquery | 9 | 1 |
+| phoenixmldb-xslt | 6 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -31,6 +31,7 @@ Generated 2026-09-22 21:23 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
+- [75] xquery CLI prints a .NET type name for a function item — its ResultSerializer is a second implementation missing the rule
 - [71] phx:score returns 0 for every node, including one contains text has just matched
 - [70] phx:is-stop-word is false for every stop word and true for any letterless input
 - [49] QT3 runner's assert-type passes any type it doesn't list — 17 engine type defects hidden, 11 correct results failed
@@ -44,7 +45,6 @@ Generated 2026-09-22 21:23 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
 - [148] A streamed xsl:message loses the items produced by xsl:for-each in its content
-- [147] Streamable XSLT 3.0 with non motionless group-adjacent should be rejected by streamability analysis but is executed to give the strange error " XTDE1071: current-grouping-key() called when there is no current grouping key"
 - [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
 - [96] Xslt 1.8.0 regresses three streaming conformance sets that passed on 1.6.10 (attr/streamable below floor, stream-211, sx-gc-eq-801)
 - [95] Any predicate in a match pattern is quadratic — not just chained ones (#10 is a special case)
@@ -52,13 +52,17 @@ Generated 2026-09-22 21:23 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-cli**
+**phoenixmldb-xquery**
 
-- [7] build: Bump the phoenixmldb-engines group with 2 updates
+- [76] fix(cli): serialize a function item instead of printing its .NET type name
+
+**phoenixmldb-xslt**
+
+- [169] Only compute position()/last() context when a predicate can observe it (#95)
 
 ## Defect register
 
-`BUGS.md`: **113** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **115** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
