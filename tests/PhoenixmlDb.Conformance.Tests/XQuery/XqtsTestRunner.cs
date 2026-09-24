@@ -911,6 +911,23 @@ public sealed class XqtsTestRunner
                 // for tests like parse-json("{}") deep-eq map{}.
                 return await VerifyXPathAssertAsync(
                     result, $"deep-equal($result, ({assertion.Value}))", ct).ConfigureAwait(false);
+            case "assert-type":
+                // Ask the ENGINE whether the result has the type, rather than approximating the
+                // XQuery type system with .NET type tests. VerifyType knew 25 atomic names and ended
+                // `_ => true // Unknown type, assume pass`, so 520 of the corpus's 1,033 assert-type
+                // assertions — array(*) 121, map(*) 89, xs:dateTime 38 — passed whatever the result
+                // was. It also judged by .NET type, so xs:anyURI, xs:NCName and xs:language all meant
+                // `result is string`: wrong in BOTH directions.
+                //
+                // NOT engine-first-with-legacy-fallback. That shape is monotonic where the fallback
+                // only rescues; here the legacy rescue IS the defect.
+                //
+                // This repo carries its own copy of this runner, 217 lines drifted from the one in
+                // phoenixmldb-xquery, and BOTH had this same fail-open while publishing DIFFERENT QT3
+                // figures. Fixing one would have made two disagreeing numbers disagree for a new
+                // reason, so the change is applied to both.
+                return await VerifyXPathAssertAsync(
+                    result, $"$result instance of {assertion.Value}", ct).ConfigureAwait(false);
             case "all-of":
                 foreach (var c in assertion.Children)
                     if (!await VerifyAssertionAsync(testCase, c, result, ct).ConfigureAwait(false)) return false;
@@ -1034,7 +1051,6 @@ public sealed class XqtsTestRunner
                 || (result is List<object?> emptyList && emptyList.Count == 0)
                 || (result is ICollection<object> c && c.Count == 0),
             "assert-string-value" => SerializeStringValue(result) == assertion.Value,
-            "assert-type" => VerifyType(result, assertion.Value),
             "assert-count" => VerifyCount(result, assertion.Value),
             "assert-xml" => VerifyXmlEqual(result, assertion.Value),
             "assert-permutation" => VerifyPermutation(result, assertion.Value),
@@ -1388,28 +1404,6 @@ public sealed class XqtsTestRunner
         catch (NotSupportedException) { return assertion.Code is null; }
     }
 
-    private bool VerifyType(object? result, string? expectedType)
-    {
-        result = UnwrapSingle(result);
-        if (expectedType == null) return true;
-        // Simplified type checking - integer subtypes all map to long in our engine
-        return expectedType switch
-        {
-            "xs:integer" or "xs:int" or "xs:long" or "xs:short" or "xs:byte"
-                or "xs:unsignedLong" or "xs:unsignedInt" or "xs:unsignedShort" or "xs:unsignedByte"
-                or "xs:positiveInteger" or "xs:nonNegativeInteger"
-                or "xs:negativeInteger" or "xs:nonPositiveInteger"
-                => result is int or long,
-            "xs:decimal" => result is decimal or int or long,
-            "xs:double" => result is double,
-            "xs:float" => result is float,
-            "xs:string" or "xs:anyURI" or "xs:untypedAtomic" or "xs:normalizedString"
-                or "xs:NCName" or "xs:Name" or "xs:NMTOKEN" or "xs:language"
-                => result is string,
-            "xs:boolean" => result is bool,
-            _ => true // Unknown type, assume pass
-        };
-    }
 
     private bool VerifyCount(object? result, string? expectedCount)
     {
