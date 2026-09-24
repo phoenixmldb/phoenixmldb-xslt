@@ -1,13 +1,13 @@
 # Status
 
-Generated 2026-09-24 11:53 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-24 21:34 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
-| `PhoenixmlDb.XQuery` | 2.1.0 | ? | **repo is at ?, nuget.org has 2.1.0** |
+| `PhoenixmlDb.XQuery` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
 | `PhoenixmlDb.Xslt` | 2.1.0 | 2.1.0 | current |
 | `xquery4` | 2.1.0 | ? | **repo is at ?, nuget.org has 2.1.0** |
 | `xslt` | 2.1.0 | 2.1.0 | current |
@@ -17,8 +17,8 @@ Generated 2026-09-24 11:53 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 8 | 2 |
-| phoenixmldb-xslt | 5 | 1 |
+| phoenixmldb-xquery | 8 | 0 |
+| phoenixmldb-xslt | 5 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -49,15 +49,6 @@ Generated 2026-09-24 11:53 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-xquery**
-
-- [78] Release: XQuery 2.2.0
-- [77] Ask the engine for assert-type instead of approximating it (#49)
-
-**phoenixmldb-xslt**
-
-- [170] Ask the engine for assert-type instead of approximating it (#49)
 
 **phoenixmldb-cli**
 
