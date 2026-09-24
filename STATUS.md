@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-23 21:33 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-24 11:53 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,9 +17,9 @@ Generated 2026-09-23 21:33 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 9 | 1 |
-| phoenixmldb-xslt | 6 | 1 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-xquery | 8 | 2 |
+| phoenixmldb-xslt | 5 | 1 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -31,7 +31,6 @@ Generated 2026-09-23 21:33 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
-- [75] xquery CLI prints a .NET type name for a function item — its ResultSerializer is a second implementation missing the rule
 - [71] phx:score returns 0 for every node, including one contains text has just matched
 - [70] phx:is-stop-word is false for every stop word and true for any letterless input
 - [49] QT3 runner's assert-type passes any type it doesn't list — 17 engine type defects hidden, 11 correct results failed
@@ -47,18 +46,22 @@ Generated 2026-09-23 21:33 UTC by `scripts/status.sh`. Do not edit by hand.
 - [148] A streamed xsl:message loses the items produced by xsl:for-each in its content
 - [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
 - [96] Xslt 1.8.0 regresses three streaming conformance sets that passed on 1.6.10 (attr/streamable below floor, stream-211, sx-gc-eq-801)
-- [95] Any predicate in a match pattern is quadratic — not just chained ones (#10 is a special case)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
 
 **phoenixmldb-xquery**
 
-- [76] fix(cli): serialize a function item instead of printing its .NET type name
+- [78] Release: XQuery 2.2.0
+- [77] Ask the engine for assert-type instead of approximating it (#49)
 
 **phoenixmldb-xslt**
 
-- [169] Only compute position()/last() context when a predicate can observe it (#95)
+- [170] Ask the engine for assert-type instead of approximating it (#49)
+
+**phoenixmldb-cli**
+
+- [8] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
