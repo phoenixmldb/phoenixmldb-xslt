@@ -340,7 +340,13 @@ public sealed class PathPattern : XsltPattern
         var position = context.Position;
         var size = context.Last;
 
-        if (position == 0 && size == 0 && context.PositionComputer != null)
+        // Only pay for position/size when a predicate can actually observe them. Computing it
+        // scans every sibling matching the node test, so doing it unconditionally made ANY
+        // predicated pattern O(n²) in sibling count — `w:p[@zzz]` cost the same as a predicate
+        // walking every descendant twice, because neither cost was the predicate (#95).
+        // NeedsPositionContext errs towards true: it proves a predicate CANNOT be positional
+        // rather than proving it is, so an unrecognised shape keeps the old behaviour.
+        if (position == 0 && size == 0 && context.PositionComputer != null && step.NeedsPositionContext)
         {
             (position, size) = context.PositionComputer(node, step.NodeTest, context.DescendantPositionAncestor);
         }

@@ -26,4 +26,17 @@ public sealed class PatternStep
     /// See W3C match-233.
     /// </summary>
     public bool IsRootFunction { get; init; }
+
+    /// <summary>
+    /// True when any predicate on this step could observe <c>position()</c> or <c>last()</c>.
+    /// </summary>
+    /// <remarks>
+    /// Establishing that context scans every sibling matching <see cref="NodeTest"/>, which is
+    /// what made a predicated match pattern O(n²) (#95). The answer is static, so it is computed
+    /// once on first use and cached here rather than per candidate node.
+    /// </remarks>
+    internal bool NeedsPositionContext =>
+        _needsPositionContext ??= PredicatePositionAnalysis.NeedsPositionContext(Predicates);
+
+    private bool? _needsPositionContext;
 }

@@ -1006,12 +1006,11 @@ internal static class StreamabilityChecker
             return false;
         }
 
+        // Delegates to the single implementation in PredicatePositionAnalysis. This used to be
+        // a private copy of the same walk; two implementations of one rule is how one of a pair
+        // ends up missing a case its twin has.
         private static bool ContainsPositionOrLast(XQueryExpression expr)
-        {
-            var checker = new PositionLastDetector();
-            checker.Walk(expr);
-            return checker.Found;
-        }
+            => PhoenixmlDb.Xslt.Ast.PredicatePositionAnalysis.ContainsPositionOrLast(expr);
 
         /// <summary>
         /// Checks if a for-each body consumes the context item — i.e., accesses
@@ -3446,25 +3445,6 @@ internal static class StreamabilityChecker
         }
     }
 
-    /// <summary>
-    /// Detects position() or last() function calls in an expression.
-    /// </summary>
-    private sealed class PositionLastDetector : XQueryExpressionWalker
-    {
-        public bool Found { get; private set; }
-
-        public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
-        {
-            if (Found) return null;
-            if (expr.Name.LocalName is "position" or "last" && expr.Arguments.Count == 0)
-            {
-                Found = true;
-                return null;
-            }
-            foreach (var arg in expr.Arguments) Walk(arg);
-            return null;
-        }
-    }
 
     /// <summary>
     /// Walks a for-each body (XSLT instructions) and checks if any SINGLE expression
