@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-25 11:56 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-25 21:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -8,9 +8,9 @@ Generated 2026-09-25 11:56 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
 | `PhoenixmlDb.XQuery` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
-| `PhoenixmlDb.Xslt` | 2.1.0 | 2.1.0 | current |
-| `xquery4` | 2.1.0 | ? | **repo is at ?, nuget.org has 2.1.0** |
-| `xslt` | 2.1.0 | 2.1.0 | current |
+| `PhoenixmlDb.Xslt` | 2.2.0 | 2.2.0 | current |
+| `xquery4` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
+| `xslt` | 2.2.0 | 2.2.0 | current |
 
 ## Open work
 
