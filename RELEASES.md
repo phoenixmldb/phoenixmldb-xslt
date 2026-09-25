@@ -1,5 +1,54 @@
 # Release History
 
+## 2.2.0 — 2026-09-25
+
+Takes **PhoenixmlDb.XQuery 2.2.0** and **PhoenixmlDb.Core 2.0.0**.
+
+XQuery moves with this release and the order matters: that package carries `xs:IDREFS`,
+`xs:NMTOKENS` and `xs:ENTITIES` as cast targets (+63 QT3 cases). Had this shipped against the
+2.1.0 pin, none of those would have reached anyone installing `PhoenixmlDb.Xslt`.
+
+### Fixed
+
+- **`xsl:expose` selected nothing, silently.** Component names, the value space and the missing
+  token forms (#162). **+13 W3C cases.**
+- **Three error sites named a neighbouring code** (#155). **+12 W3C cases.**
+- **A streamed `group-adjacent` key that returns elements is now rejected** as `XTSE3430`, and a
+  streamed `group-adjacent` with an empty key reports `XTTE1100` like its buffered twin rather
+  than a misleading `XTDE1071` (#168, #152). Both halves of Martin Honnen's #147.
+- **`xsl:sort` and `xsl:key` did not set temporary output state**, so `xsl:result-document`
+  inside a sort key ran instead of raising `XTDE1480` (#158).
+- **The runner never set a base output URI**, so every `current-output-uri()` case saw `()` (#159).
+- **`regex-group()` returned the empty sequence inside a pattern** (#154).
+- **A text node returned by `xsl:function` was not a real node** — axis steps raised `XPTY0020`
+  naming an internal type (#151).
+- **Static declarations now come into scope in declaration order** (#167).
+- **The streaming scanner descends into `xsl:map` and `xsl:map-entry`** (#128).
+- **`xsl:use-package` whitespace declarations have a relative import precedence** (#145).
+
+### Performance
+
+**A match pattern carrying any predicate was O(n²) in sibling count** (#169). The predicate's
+content was irrelevant — `w:p[@zzz]` cost the same as one walking every descendant twice, because
+the cost was establishing `position()`/`last()` context for a predicate that cannot observe it.
+Measured on the issue's own repro: **12.6× faster at n=4000**, and a predicate now costs 3% over
+having none rather than 250%.
+
+### Conformance
+
+**W3C XSLT 3.0: 10,384 / 10,839 (95.80%)**, up 37 passes from 2.1.0's 10,347.
+
+The denominator is unchanged, so this is the engine doing more rather than cases leaving the
+count. Measured on this commit against the **published** `PhoenixmlDb.XQuery 2.2.0` package — not
+sibling source — so it describes the artifact being released.
+
+### Known limitations
+
+- A streamed `xsl:message` loses items produced by `xsl:for-each` in its content (#148). The
+  obvious fix makes it worse: the message loses its constants too.
+- Three streaming sets remain below their 1.6.10 scores (#96). Not a regression — those cases
+  passed by not streaming at all until `streamable="true"` began actually streaming.
+
 > **Correction (2026-09-04).** Every W3C XSLT conformance figure recorded in this file before
 > this date is overstated. Tests expecting a specific error code were scored as passes whenever
 > the transform threw anything at all, because both conformance runners read the expected code

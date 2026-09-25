@@ -13,6 +13,19 @@
 # one thing, ship another. Locking the train is what makes the tested and shipped engine the
 # same engine.
 #
+# THE REPO'S OWN <Version> MUST MOVE WITH THE PIN, and the build error if it does not names
+# neither of them. src/PhoenixmlDb.XQuery is a SYMLINK into phoenixmldb-xquery, but it sits
+# inside THIS repo's tree, so it inherits THIS repo's Directory.Build.props and builds stamped
+# with THIS repo's <Version>. Bump the pin to 2.2.0 while <Version> still says 2.1.0 and the
+# conformance project compiles a project-built XQuery 2.1.0.0 alongside the package's 2.2.0.0:
+#
+#   CSC : error CS1704: An assembly with the same simple name 'PhoenixmlDb.XQuery'
+#         has already been imported.
+#
+# It points at a NuGet cache path and suggests removing a reference. The actual fix is to bump
+# <Version> in Directory.Build.props, which a release does anyway — so this only bites someone
+# moving the pin on its own.
+#
 # Mark a pin with "check-pins: train-locked" in the comment above it to opt in. Packages on
 # their own cadence (Core) are deliberately not locked; scripts/check-pins.sh still stops those
 # from falling behind what is published.
