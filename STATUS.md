@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-25 21:38 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-26 11:30 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-09-25 21:38 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 0 |
-| phoenixmldb-xslt | 5 | 0 |
+| phoenixmldb-xslt | 6 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -42,6 +42,7 @@ Generated 2026-09-25 21:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [173] fn:transform with option source-location doesn't give the right result
 - [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
 - [148] A streamed xsl:message loses the items produced by xsl:for-each in its content
 - [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
