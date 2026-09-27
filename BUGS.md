@@ -5378,6 +5378,24 @@ worth doing wherever a cheap wrong answer and a correct one are indistinguishabl
 | other | `accumulator-003s/005s` duplication, `stream-211` + `sx-gc-eq-801` dropped content |
 | **reclassified (#94)** | **`doe-0802` and `streamable-064` share a root cause** — no `StreamingPlanner.Plan` for the shape, so the construct falls to the text-only sink. Filed apart under *double-escaping* and *tunnel parameters* until a `Debug.Assert` grouped them by cause. |
 
+
+#### RESOLVED 2026-09-27 — +1 W3C case (streamable-135), 0 lost
+
+Built as this entry said it had to be: a genuine one-event lookahead that every consumer respects —
+by putting it in the reader rather than in the consumers. `PeekableXmlReader` wraps the live
+streamed reader; asked "does this start tag have children?", it snapshots the start tag, reads
+ahead (past whitespace that `xsl:strip-space` would remove), answers, and REPLAYS the start tag and
+anything it read before handing the live reader back. None of the ~30 places that read from the
+reader changed. Without a peek it is a pure pass-through: a 1M-element streamed identity measured
+1,481 ms median on main and 1,399 ms with the wrapper — below the noise.
+
+The warning above was acted on: `StreamedHasChildrenTests` includes `<a></a>`, which main and the
+`!IsEmptyElement` shortcut answer in opposite wrong ways from each other on the other cases.
+
+Also found while here: the zero-argument `has-children()` — the form match patterns use — had its
+own copy of the logic in `XsltHasChildren0Function`, so a fix to the one-argument form alone
+changed nothing. Both now call one implementation.
+
 ### 93. OPEN — the buffered subtree has no ancestors, and the missing parent is load-bearing (2026-09-13)
 
 `streamable-137/138/139`. A fix was built, **measured at +2**, and **reverted** — it trades

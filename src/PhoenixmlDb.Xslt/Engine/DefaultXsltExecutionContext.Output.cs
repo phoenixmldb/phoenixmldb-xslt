@@ -1693,7 +1693,10 @@ internal sealed partial class DefaultXsltExecutionContext
                     Async = true,
                     MaxCharactersFromEntities = 1_000_000
                 };
-                using var xmlReader = XmlReader.Create(fileStream, readerSettings, resolvedUri.AbsoluteUri);
+                using var rawReader = XmlReader.Create(fileStream, readerSettings, resolvedUri.AbsoluteUri);
+                // Wrapped so fn:has-children() can look one event ahead invisibly (BUGS #92). A
+                // pure pass-through until something asks.
+                using var xmlReader = new PeekableXmlReader(rawReader);
 
                 var streamNodeStore = _nodeStore ?? new XdmInMemoryStore();
                 _templateIndex.ResolvePatternNamespaces(streamNodeStore.InternNamespace);

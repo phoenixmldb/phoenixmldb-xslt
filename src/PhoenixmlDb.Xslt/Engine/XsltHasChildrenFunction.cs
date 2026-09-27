@@ -40,12 +40,22 @@ internal sealed class XsltHasChildrenFunction : PhoenixmlDb.XQuery.Ast.XQueryFun
         if (node is null)
             return ValueTask.FromResult<object?>(false);
 
-        var hasChildren = node switch
-        {
-            XdmDocument doc => doc.Children.Count > 0,
-            XdmElement elem => elem.Children.Count > 0,
-            _ => false
-        };
-        return ValueTask.FromResult<object?>(hasChildren);
+        return ValueTask.FromResult<object?>(Answer(node, _context));
     }
+
+    /// <summary>
+    /// The one implementation, shared with <see cref="XsltHasChildren0Function"/>. The two arities
+    /// each carried their own copy, which is how a streaming fix to one of them missed the form
+    /// match patterns actually use — <c>*[has-children()]</c> is the zero-argument call.
+    /// </summary>
+    internal static bool Answer(object? node, DefaultXsltExecutionContext context) => node switch
+    {
+        XdmDocument doc => doc.Children.Count > 0,
+        XdmElement elem when elem.Children.Count > 0 => true,
+        // A streamed element is shallow — its children have not been read — so Children is empty
+        // whatever the source holds, and this always answered false (BUGS #92, streamable-135).
+        // Ask the live reader to look one event ahead instead.
+        XdmElement elem => context.TryStreamedHasChildren(elem) ?? false,
+        _ => false
+    };
 }

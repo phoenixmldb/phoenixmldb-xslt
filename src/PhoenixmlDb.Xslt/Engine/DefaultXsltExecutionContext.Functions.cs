@@ -328,6 +328,27 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     internal async ValueTask<bool> MatchAndExecuteStreamingNodeAsync(XdmNode node, QName? mode, int position)
     {
+        // Record the start tag being dispatched, so fn:has-children() in the match pattern or the
+        // body can look ahead for this element — and only this one (BUGS #92).
+        var savedStartTag = _streamedStartTag;
+        _streamedStartTag = node is Xdm.Nodes.XdmElement
+            && !_streamingDispatchElementMaterialized
+            && _activeStreamingReader is PeekableXmlReader peekable
+            && peekable.NodeType == System.Xml.XmlNodeType.Element
+                ? (node.Id, peekable.Position)
+                : null;
+        try
+        {
+            return await MatchAndExecuteStreamingNodeCoreAsync(node, mode, position).ConfigureAwait(false);
+        }
+        finally
+        {
+            _streamedStartTag = savedStartTag;
+        }
+    }
+
+    private async ValueTask<bool> MatchAndExecuteStreamingNodeCoreAsync(XdmNode node, QName? mode, int position)
+    {
         // last=0 signals "unknown in streaming mode". The StreamabilityChecker rejects
         // last() in streamable templates, so this value should never be accessed.
         PushContextItem(node, position, 0);
