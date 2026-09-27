@@ -351,6 +351,17 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     internal Dictionary<NodeId, NodeId>? _bufferedSubtreeOrigin;
 
+    /// <summary>
+    /// True when <paramref name="node"/> is the root of a subtree materialised from the live
+    /// stream. Such a root is linked to its streamed parent so the ancestor axis works, but it is
+    /// still the TOP of its own tree for the purposes of finding which tree a node belongs to —
+    /// the accumulator machinery computes accumulator-after() over the buffered subtree, and
+    /// walking on into the streamed ancestors lands on a tree where nothing was computed
+    /// (XTDE3362, BUGS #93).
+    /// </summary>
+    internal bool IsBufferedSubtreeRoot(XdmNode node)
+        => _bufferedSubtreeOrigin?.ContainsKey(node.Id) == true;
+
 
     private int _textOutputModeDepth; // >0 when inside method="text" result-document; text from xsl:sequence/value-of gets sentinel-escaped to protect from StripXmlMarkup
 
