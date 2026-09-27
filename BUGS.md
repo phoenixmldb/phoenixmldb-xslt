@@ -7245,3 +7245,69 @@ inner transform raised `XTDE0040` and the assertion was satisfied by an unrelate
 #107's shape (*a check that cannot fail*) reproduced by someone who had read #107. The repair is to
 assert on the mechanism — the message must name the file that could not be read, a string that can
 only appear once a fetch is genuinely attempted. Baseline went 6 failures → 7 on that change alone.
+
+---
+
+### 116. We ship a Windows CLI and have never run it on Windows (2026-09-27)
+
+Martin Honnen, by email, asked a cosmetic question: `xslt --trace` on PowerShell 7.6.6 prints
+`[match] Line ␦ match="Line"` and he wondered what the `␦` was meant to be. It is `→` (U+2192),
+emitted at `DefaultXsltExecutionContext.Templates.cs:347`. His diagnosis — via Copilot, which he
+flagged as unverified — was right: **no CLI in this workspace sets `Console.OutputEncoding`**, so
+on Windows it stays at `GetConsoleOutputCP()`, typically 1252 or 437, and U+2192 is in neither.
+
+Filed as xslt#179 and xquery#80.
+
+#### The reported symptom was the harmless one
+
+The **transformation result** goes to stdout through the same writer — `Program.cs:366`
+(`Console.Write(result)`) and `:286` for the streamed path; the xquery CLI serializes straight to
+`Console.Out` at its `Program.cs:211`. Redirection inherits the console encoding. So on a Windows
+console:
+
+```
+xslt sheet.xsl input.xml > out.xml
+```
+
+wrote a file whose bytes were code-page encoded while its XML declaration announced UTF-8. Every
+non-ASCII character in the output — accented Latin, CJK, anything — silently replaced. It
+presents as mojibake at whatever reads the file next, which points nowhere near this CLI.
+
+`-o` was never affected: `File.WriteAllTextAsync` defaults to UTF-8. Nor was stdin: both CLIs
+wrap `Console.OpenStandardInput()` in a `StreamReader`, which defaults to UTF-8 and never
+consults `Console.InputEncoding`.
+
+So a user asking "what is this square supposed to be" was standing next to a data-corruption bug,
+and the question that found it was about a glyph.
+
+#### The reason it reached a user instead of CI
+
+**Every workflow in this repo is `ubuntu-latest`.** There is no Windows runner, and .NET on Unix
+hardcodes UTF-8 for console output irrespective of locale — verified 2026-09-27, `LC_ALL=C`
+does not reproduce it, the bytes stay `e2 86 92`.
+
+That makes this whole defect class structurally invisible to us. **Martin is our Windows CI.**
+Every Windows-specific fault reaches us only when he happens to look at one.
+
+#### No regression test was added, on purpose
+
+A test for this, run on Linux, passes identically with and without the fix. That is #107's shape
+— a check that cannot fail — and adding one would convert "untested" into "apparently covered,"
+which is worse. This entry is the record instead.
+
+The real countermeasure is a `windows-latest` job in the matrix. It is not free: it would likely
+surface a backlog of pre-existing path-separator and line-ending failures, which is a decision
+about how much red to take on at once rather than a thing to bolt on while fixing a bug. Flagged
+for Lucas, not actioned.
+
+#### The fix, and the one trap in it
+
+`Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)` at startup in
+both CLIs, guarded against `IOException` and `PlatformNotSupportedException` — failing to set a
+console encoding must never fail a transform.
+
+**Not `Encoding.UTF8`.** The static carries a BOM preamble. .NET's console writer wraps the
+encoding in an internal `ConsoleEncoding` that suppresses it, so `Encoding.UTF8` happens to be
+safe today — but a BOM in front of piped XML is not a thing to leave depending on framework
+internals staying as they are. Verified after the change that piped output still begins
+`3c 6f 75 74 3e` and not `ef bb bf`.
