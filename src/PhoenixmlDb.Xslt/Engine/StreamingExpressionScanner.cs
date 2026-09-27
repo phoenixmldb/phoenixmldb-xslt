@@ -307,6 +307,39 @@ internal sealed class StreamingExpressionScanner
                     ScanInstructions(mapEntry.Content);
                 break;
 
+            // xsl:message captures its content into the message text exactly as a variable
+            // captures its content into the binding, so it is scanned the same way: as WRAPPED
+            // construction, making a streamable for-each inside it InlineDriven. The default arm
+            // never descended here at all (XsltMessage is not a sequence constructor), so the
+            // for-each was never registered and ran against the synthetic empty document — the
+            // streamed items vanished while constants in the same message survived (#148).
+            //
+            // Registering it as a BARE subscription is worse, and was tried: the forward pass then
+            // dispatches the body before MessageAsync has created its output buffer, and the
+            // content body is skipped afterwards, so the whole message comes out empty. Wrapped,
+            // the body executes linearly, MessageAsync buffers its content, and the for-each hands
+            // off to the live reader at its lexical position inside that buffer.
+            //
+            // Absorption for the same reason as the variable arm: the message is a captured value,
+            // so atomics keep their separators (W3C si-message-002 expects
+            // "-15.00 -5.00 -2.33 -248.05 101 102"). Content is always evaluated, so unlike
+            // xsl:on-empty there is no risk of dispatching for content that is then discarded.
+            case XsltMessage message:
+            {
+                var savedMsgUsage = _ambientUsage;
+                _ambientUsage = Usage.Absorption;
+                if (message.Select != null)
+                    ScanExpression(message.Select);
+                if (message.Content != null)
+                {
+                    _constructionDepth++;
+                    ScanInstructions(message.Content);
+                    _constructionDepth--;
+                }
+                _ambientUsage = savedMsgUsage;
+                break;
+            }
+
             // Skip xsl:apply-templates and xsl:iterate — handled by existing streaming
             case XsltApplyTemplates:
             case XsltIterate:
