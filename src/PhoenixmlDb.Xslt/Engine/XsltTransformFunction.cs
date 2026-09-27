@@ -60,6 +60,12 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         var initialFunctionQName = GetQNameOption(options, "initial-function");
         var functionParamsRaw = GetOption(options, "function-params");
         var sourceNode = GetOption(options, "source-node");
+        // source-location: the principal input given as a URI rather than a node. Standard in
+        // XPath 4.0 and supported by Saxon well before that. XsltTransformProvider — the
+        // query-side twin of this function — has read it since it was added; this
+        // implementation never did, so the option was dropped without complaint and the input
+        // fell through to the literal "<empty/>" below (Martin Honnen xslt#173).
+        var sourceLocation = GetStringOption(options, "source-location");
         var initialMatchSelection = GetOption(options, "initial-match-selection");
         // fn:transform's global-context-item option (XSLT 3.0 / the fn:transform spec): the item
         // to serve as the global context item. It was not read at all, so a caller supplying it
@@ -78,6 +84,12 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // identity.
         var staticParamsMap = GetOption(options, "static-params") as IDictionary<object, object?>;
 
+        // The caller's static base URI, resolved once: stylesheet-location and
+        // source-location are both relative-URI options and must resolve identically.
+        string? staticBase = context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qec
+            ? qec.StaticBaseUri
+            : null;
+
         // Load the stylesheet
         string stylesheetXml;
         Uri? baseUri = null;
@@ -86,9 +98,6 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         {
             // Resolve relative URI against static base URI
             var resolvedUri = stylesheetLocation;
-            string? staticBase = null;
-            if (context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qec)
-                staticBase = qec.StaticBaseUri;
             if (staticBase != null && !Uri.TryCreate(resolvedUri, UriKind.Absolute, out _))
             {
                 if (Uri.TryCreate(staticBase, UriKind.Absolute, out var sbu))
@@ -210,8 +219,29 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         if (sourceNode is object?[] srcArr && srcArr.Length == 1)
             sourceNode = srcArr[0];
 
+        // The principal input, decided in ONE place. The two delivery branches below each
+        // used to choose between SerializeXdmNodeToXml(sourceNode) and a literal "<empty/>"
+        // at their own call sites — four independent decisions, none of which knew about
+        // source-location. Resolving it here is what makes it structurally impossible for a
+        // source option to be honoured on one delivery format and dropped on another.
+        //
+        // Precedence: source-node beats source-location when both are supplied. That is
+        // Saxon's behaviour and what XsltTransformProvider already documented; the spec is
+        // silent on it.
+        string? principalInputXml = null;
+        Uri? resolvedSourceUri = null;
+        if (sourceNode is Xdm.Nodes.XdmNode principalSourceNode)
+        {
+            principalInputXml = _context.SerializeXdmNodeToXml(principalSourceNode);
+        }
+        else if (sourceLocation != null)
+        {
+            (principalInputXml, resolvedSourceUri) =
+                await LoadSourceFromLocationAsync(sourceLocation, staticBase).ConfigureAwait(false);
+        }
+
         // Build transform options
-        var hasSource = sourceNode is Xdm.Nodes.XdmNode;
+        var hasSource = principalInputXml != null;
         object? initialModeSelectValue = null;
         if (initialMatchSelection != null && !hasSource && !initialTemplate.HasValue)
             initialModeSelectValue = initialMatchSelection;
@@ -356,10 +386,15 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // over the in-engine fn:transform result) hit FORG0002 in resolve-uri(@fileref, base-uri(.)).
         // DocBook's fp:run-transforms calls transform() from *inside* an XSLT stylesheet, so it
         // runs through this in-engine path — not XsltTransformProvider.
-        // Precedence: base-output-uri option → source node's base → caller's static base.
+        // Precedence: base-output-uri option → source node's base → the URI source-location
+        // was fetched from → caller's static base.
         string? resultBaseUri = GetStringOption(options, "base-output-uri");
         if (resultBaseUri == null && sourceNode is Xdm.Nodes.XdmNode srcBaseNode)
             resultBaseUri = PhoenixmlDb.XQuery.Functions.BaseUriFunction.ComputeBaseUri(srcBaseNode, _context._nodeStore);
+        // source-location is specified to set the result tree's base from the URI the input
+        // was fetched from, which is the one behavioural difference from doc() + source-node.
+        if (resultBaseUri == null && resolvedSourceUri != null)
+            resultBaseUri = resolvedSourceUri.AbsoluteUri;
         if (resultBaseUri == null && context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qecBase)
             resultBaseUri = qecBase.StaticBaseUri;
 
@@ -369,16 +404,12 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         if (isRaw)
         {
             // Raw delivery: get XDM values directly (preserves function items, maps, etc.)
-            object? rawResult;
-            if (sourceNode is Xdm.Nodes.XdmNode srcNode)
-            {
-                var rawSrcXml = _context.SerializeXdmNodeToXml(srcNode);
-                rawResult = await engine.TransformRawAsync(rawSrcXml, transformOptions).ConfigureAwait(false);
-            }
-            else
-            {
-                rawResult = await engine.TransformRawAsync("<empty/>", transformOptions).ConfigureAwait(false);
-            }
+            // "<empty/>" is the no-principal-input placeholder, reached only when neither
+            // source-node nor source-location was supplied. It used to be reached whenever
+            // source-node was absent, which silently discarded source-location.
+            var rawResult = await engine
+                .TransformRawAsync(principalInputXml ?? "<empty/>", transformOptions)
+                .ConfigureAwait(false);
             // Re-anchor into the CALLER's store, exactly as XsltTransformProvider does for
             // XQuery callers. Without this the CrossStoreNodeRef wrapper leaked out as an
             // atomic value and the result was not a node at all.
@@ -407,20 +438,12 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         }
         else
         {
-            string result;
-            if (sourceNode is Xdm.Nodes.XdmNode srcNode)
-            {
-                // Serialize the source node to XML so the inner engine can parse and
-                // register it in its own node store. Passing the outer node store directly
-                // doesn't work because the inner engine needs its own independent store
-                // for nodes it creates during transformation.
-                var srcXml = _context.SerializeXdmNodeToXml(srcNode);
-                result = await engine.TransformAsync(srcXml, transformOptions).ConfigureAwait(false);
-            }
-            else
-            {
-                result = await engine.TransformAsync("<empty/>", transformOptions).ConfigureAwait(false);
-            }
+            // principalInputXml is already serialized: the inner engine parses it into its
+            // OWN node store, which it needs for the nodes it creates during the transform,
+            // so the outer store cannot simply be handed over.
+            var result = await engine
+                .TransformAsync(principalInputXml ?? "<empty/>", transformOptions)
+                .ConfigureAwait(false);
 
             if (string.Equals(deliveryFormat, "serialized", StringComparison.Ordinal))
             {
@@ -467,6 +490,51 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         }
 
         return resultMap;
+    }
+
+    /// <summary>
+    /// Fetches the principal input named by <c>source-location</c>, resolving a relative URI
+    /// against the caller's static base exactly as the <c>stylesheet-location</c> branch does.
+    /// </summary>
+    /// <returns>The document text, and the absolute URI it came from when there was one.</returns>
+    private async ValueTask<(string Xml, Uri? Resolved)> LoadSourceFromLocationAsync(
+        string sourceLocation, string? staticBase)
+    {
+        Uri? resolved = null;
+        if (Uri.TryCreate(sourceLocation, UriKind.Absolute, out var absolute))
+            resolved = absolute;
+        else if (staticBase != null && Uri.TryCreate(staticBase, UriKind.Absolute, out var basedOn))
+            resolved = new Uri(basedOn, sourceLocation);
+
+        if (resolved == null)
+        {
+            // A relative path with no static base to resolve against — read it as a file path.
+            var text = await System.IO.File
+                .ReadAllTextAsync(System.IO.Path.GetFullPath(sourceLocation)).ConfigureAwait(false);
+            return (text, null);
+        }
+
+        if (resolved.IsFile)
+            return (await System.IO.File.ReadAllTextAsync(resolved.LocalPath).ConfigureAwait(false), resolved);
+
+        if (resolved.Scheme == Uri.UriSchemeHttp || resolved.Scheme == Uri.UriSchemeHttps)
+        {
+            // Preload cache first, then fetch — the same order as stylesheet-location above, and
+            // as the provider-side twin of this option. On Blazor WebAssembly there is no
+            // synchronous HTTP, so a pre-fetched resource is the only way through.
+            var preloaded = _context._options.PreloadedResources;
+            if (preloaded != null && preloaded.TryGet(resolved, out var cached))
+                return (cached, resolved);
+            if (OperatingSystem.IsBrowser())
+                throw new XsltException(
+                    $"FOXT0001: Cannot fetch source-location '{resolved}' on Blazor WebAssembly: "
+                    + "synchronous HTTP I/O is not supported. Pre-fetch the document and pass it "
+                    + "through PreloadedResources, or supply it as source-node.");
+            return (await HttpResourceLoader.GetStringAsync(resolved).ConfigureAwait(false), resolved);
+        }
+
+        throw new XsltException(
+            $"FOXT0001: source-location: unsupported URI scheme '{resolved.Scheme}' in '{resolved}'");
     }
 
     private static object? ParseResultAsDocument(string xml, XdmInMemoryStore? store = null, string? resultBaseUri = null)
