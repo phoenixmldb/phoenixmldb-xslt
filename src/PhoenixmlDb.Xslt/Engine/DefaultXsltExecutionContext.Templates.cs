@@ -59,7 +59,11 @@ internal sealed partial class DefaultXsltExecutionContext
             && (select == null || IsDocumentLevelStridingSelect(select)))
         {
             var ci = ContextItem;
-            if (ci is XdmDocument)
+            // The STREAMED document only. Any other document — a doc() result being processed in
+            // another mode, whose built-in rule recurses with a select-less apply-templates —
+            // used to satisfy this too and hand the live reader over, consuming the whole stream
+            // in the wrong mode (streamable-065).
+            if (IsActiveStreamedDocument(ci))
             {
                 var proc = _activeStreamingProcessor;
                 var rdr = _activeStreamingReader;
@@ -121,7 +125,7 @@ internal sealed partial class DefaultXsltExecutionContext
         //
         // The element form requires the subtree NOT to be materialised: once it has been read
         // into memory the reader is past it, and the ordinary in-memory path is correct.
-        var stridingFromDocument = _activeStreamingProcessor != null && ContextItem is XdmDocument;
+        var stridingFromDocument = _activeStreamingProcessor != null && IsActiveStreamedDocument(ContextItem);
         var stridingFromElement = _isStreamingExecution
             && ContextItem is Xdm.Nodes.XdmElement
             && !_streamingDispatchElementMaterialized;
@@ -656,7 +660,10 @@ internal sealed partial class DefaultXsltExecutionContext
                 // concatenated descendant text). The correct route is StreamingPlanner.Plan's
                 // stream/buffer dispatch (wired in Task 1.2). This arm being reached for such a
                 // construct means the dispatch was bypassed.
-                if (OwningConstructIsGuaranteedStreamable())
+                // Not when the streaming loop dispatched this node: the loop processes the
+                // children itself, which IS this rule, so no structure is collapsing. The guard's
+                // deep-copy fallback there skipped every template below the element.
+                if (!_builtInFromStreamingLoop && OwningConstructIsGuaranteedStreamable())
                 {
                     System.Diagnostics.Debug.Assert(false,
                         "#143 Task 1.3 invariant: a guaranteed-streamable construct (" +

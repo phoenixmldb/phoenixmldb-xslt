@@ -5552,6 +5552,19 @@ minutes."* Which is the useful general observation — **a real finding and an o
 are indistinguishable at the moment of discovery**, and the only thing that separates them is
 running the follow-up you would otherwise have written as a recommendation.
 
+
+#### RESOLVED 2026-09-27 — three defects, +3 W3C cases (streamable-064/065/066), 0 lost
+
+The assert's pairing was right, and the cause was the assert's own safety net. When an element
+with no matching template reached the text-only-copy sink under a guaranteed-streamable current
+template, the Release fallback **deep-copied** it — skipping every template beneath it. The
+streaming loop was about to process those children anyway; that is the built-in rule. So the
+guard no longer fires for a node the loop dispatched. Fixing that exposed two more: a template
+doing `value-of select="."` read its shallow streamed element (the scanner builds no watcher for
+a bare `.`, so nothing buffered it), and the document-level interception accepted **any**
+document as the streamed one, so a `doc()` processed in another mode took over the live reader.
+Regression tests in `StreamedTemplateDispatchTests`; all four fail on the unfixed source.
+
 ### 97. A 222-line workaround for a downcast past an interface that already existed (2026-09-14)
 
 `Engine/XsltSerializeFunction.cs` overrode `fn:serialize` entirely, because XQuery's serializer

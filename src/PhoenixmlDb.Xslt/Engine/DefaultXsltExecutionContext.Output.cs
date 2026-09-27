@@ -1749,6 +1749,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 var savedStreamingProcessor = _activeStreamingProcessor;
                 var savedStreamingReader = _activeStreamingReader;
                 var savedStreamingCt = _activeStreamingCancellationToken;
+                var savedStreamingDocument = _activeStreamingDocument;
+                _activeStreamingDocument = syntheticDoc;
                 _activeStreamingProcessor = processor;
                 _activeStreamingReader = xmlReader;
                 _activeStreamingCancellationToken = _options.CancellationToken;
@@ -1822,6 +1824,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     _activeStreamingProcessor = savedStreamingProcessor;
                     _activeStreamingReader = savedStreamingReader;
                     _activeStreamingCancellationToken = savedStreamingCt;
+                    _activeStreamingDocument = savedStreamingDocument;
                     _activeStreamWatchers = savedWatchers;
                     PopContextItem();
                     streamNodeStore.Remove(syntheticDocId);

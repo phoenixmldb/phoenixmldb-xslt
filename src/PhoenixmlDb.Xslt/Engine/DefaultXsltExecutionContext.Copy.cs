@@ -759,7 +759,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // streamed document node, reader unpositioned); every other shape falls through to
         // the normal evaluate-and-serialize path below.
         if (_activeStreamingReader != null && _nodeStore != null
-            && ContextItem is XdmDocument
+            && IsActiveStreamedDocument(ContextItem)
             && (IsConsumingChildSelect(instruction.Select) || IsSelfContextSelect(instruction.Select))
             && await TryStreamingCopyOfDocumentChildrenAsync(instruction.CopyNamespaces ?? true).ConfigureAwait(false))
             return;
