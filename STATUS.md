@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-27 12:09 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-27 21:24 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-09-27 12:09 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 0 |
-| phoenixmldb-xslt | 5 | 0 |
+| phoenixmldb-xslt | 4 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -43,12 +43,15 @@ Generated 2026-09-27 12:09 UTC by `scripts/status.sh`. Do not edit by hand.
 **phoenixmldb-xslt**
 
 - [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
-- [148] A streamed xsl:message loses the items produced by xsl:for-each in its content
 - [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
 - [96] Xslt 1.8.0 regresses three streaming conformance sets that passed on 1.6.10 (attr/streamable below floor, stream-211, sx-gc-eq-801)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-xslt**
+
+- [177] fix(streaming): a buffered matched subtree keeps its ancestors
 
 **phoenixmldb-cli**
 
