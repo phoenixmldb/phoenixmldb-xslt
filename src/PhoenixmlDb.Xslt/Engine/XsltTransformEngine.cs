@@ -4961,6 +4961,11 @@ public sealed class XsltTransformEngine
     {
         options ??= new XsltTransformOptions();
 
+        // Wrapped so fn:has-children() can look one event ahead invisibly (BUGS #92). Not
+        // disposed here: the caller owns the underlying reader, and the wrapper holds nothing.
+        if (inputReader is not PeekableXmlReader)
+            inputReader = new PeekableXmlReader(inputReader);
+
         // Streaming is invoked with an XML source document, so mark it as present.
         // This ensures xsl:global-context-item use="required" validation passes
         // and use="absent" correctly rejects the invocation.
@@ -5775,14 +5780,7 @@ public sealed class XsltTransformEngine
             // preserve-space elements="*" in the principal module must beat an explicit
             // strip-space elements="db:para" reached through xsl:import, despite being far less
             // specific. Default priorities are QName=0, prefix:*=-0.25, *=-0.5.
-            var bestStrip = FindBestWhitespaceMatch(stripSpace, elem);
-            var bestPreserve = bestStrip is null ? null : FindBestWhitespaceMatch(preserveSpace, elem);
-
-            // Strip unless a preserve match outranks it. An exact tie (same precedence AND same
-            // priority) still strips, preserving the previous behaviour; a same-precedence
-            // same-name pair is rejected at parse time as XTSE0270 and never reaches here.
-            var shouldStrip = bestStrip is not null
-                && (bestPreserve is null || !OutranksWhitespaceMatch(bestPreserve.Value, bestStrip.Value));
+            var shouldStrip = ShouldStripWhitespaceIn(elem, stripSpace, preserveSpace);
 
             if (shouldStrip && children is List<NodeId> childList)
             {
@@ -5798,6 +5796,24 @@ public sealed class XsltTransformEngine
                     RecomputeStringValueLocal(elem, store);
             }
         }
+    }
+
+    /// <summary>
+    /// Whether whitespace-only text children of <paramref name="elem"/> are stripped by the
+    /// stylesheet's xsl:strip-space / xsl:preserve-space declarations. Shared by the tree path and
+    /// the streaming has-children() lookahead, so the two cannot disagree about what a child is.
+    /// </summary>
+    internal static bool ShouldStripWhitespaceIn(
+        XdmElement elem, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace)
+    {
+        var bestStrip = FindBestWhitespaceMatch(stripSpace, elem);
+        var bestPreserve = bestStrip is null ? null : FindBestWhitespaceMatch(preserveSpace, elem);
+
+        // Strip unless a preserve match outranks it. An exact tie (same precedence AND same
+        // priority) still strips, preserving the previous behaviour; a same-precedence
+        // same-name pair is rejected at parse time as XTSE0270 and never reaches here.
+        return bestStrip is not null
+            && (bestPreserve is null || !OutranksWhitespaceMatch(bestPreserve.Value, bestStrip.Value));
     }
 
     /// <summary>

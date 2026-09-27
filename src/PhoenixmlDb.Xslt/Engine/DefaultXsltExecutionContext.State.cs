@@ -423,6 +423,39 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     internal XdmDocument? _activeStreamingDocument;
 
+    /// <summary>
+    /// The streamed element whose start tag is being dispatched to template matching, and the
+    /// reader position at that moment. fn:has-children() may peek only for THIS element and only
+    /// while the reader has not moved on (BUGS #92).
+    /// </summary>
+    internal (NodeId Id, long Position)? _streamedStartTag;
+
+    private bool _whitespaceTestsResolved;
+
+    /// <summary>
+    /// fn:has-children() for a shallow streamed element, answered by looking one event ahead; null
+    /// when this element is not the one whose start tag the live reader is on.
+    /// </summary>
+    internal bool? TryStreamedHasChildren(Xdm.Nodes.XdmElement elem)
+    {
+        if (_activeStreamingReader is not PeekableXmlReader reader
+            || _streamedStartTag is not { } tag || tag.Id != elem.Id)
+            return null;
+
+        var strip = false;
+        if (_stylesheet.StripSpace.Count > 0 && _nodeStore != null)
+        {
+            if (!_whitespaceTestsResolved)
+            {
+                foreach (var decl in _stylesheet.StripSpace) decl.Test.ResolveNamespace(_nodeStore.InternNamespace);
+                foreach (var decl in _stylesheet.PreserveSpace) decl.Test.ResolveNamespace(_nodeStore.InternNamespace);
+                _whitespaceTestsResolved = true;
+            }
+            strip = XsltTransformEngine.ShouldStripWhitespaceIn(elem, _stylesheet.StripSpace, _stylesheet.PreserveSpace);
+        }
+        return reader.PeekHasChildren(tag.Position, strip);
+    }
+
     /// <summary>True when <paramref name="item"/> is the document currently being streamed.</summary>
     internal bool IsActiveStreamedDocument(object? item)
         => item is XdmDocument doc && (_activeStreamingDocument is null || ReferenceEquals(doc, _activeStreamingDocument));

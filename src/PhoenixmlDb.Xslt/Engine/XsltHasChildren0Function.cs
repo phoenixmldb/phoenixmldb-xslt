@@ -34,13 +34,7 @@ internal sealed class XsltHasChildren0Function : PhoenixmlDb.XQuery.Ast.XQueryFu
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         var node = context.ContextItem ?? _context.ContextItem;
-        var hasChildren = node switch
-        {
-            XdmDocument doc => doc.Children.Count > 0,
-            XdmElement elem => elem.Children.Count > 0,
-            _ => false
-        };
-        return ValueTask.FromResult<object?>(hasChildren);
+        return ValueTask.FromResult<object?>(XsltHasChildrenFunction.Answer(node, _context));
     }
 }
 
