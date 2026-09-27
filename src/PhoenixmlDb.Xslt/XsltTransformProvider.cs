@@ -304,13 +304,26 @@ public sealed class XsltTransformProvider : ITransformProvider
             }
             else if (resolved.Scheme == Uri.UriSchemeHttp || resolved.Scheme == Uri.UriSchemeHttps)
             {
-                if (OperatingSystem.IsBrowser())
+                // Preload cache first, then fetch — the same order the stylesheet-location branch
+                // above uses. This branch went straight to the fetch, so on Blazor WebAssembly an
+                // HTTP source-location was unusable even when the host HAD preloaded the document:
+                // the identical gap that the stylesheet-location branch was fixed for (Martin
+                // Honnen, DocBook xslTNG WASM), left open one option over.
+                if (PreloadedResources is { } preloadedSource && preloadedSource.TryGet(resolved, out var cachedSource))
+                {
+                    inputXml = cachedSource;
+                }
+                else if (OperatingSystem.IsBrowser())
                 {
                     throw new XQueryException("FOXT0001",
-                        $"Cannot fetch source from '{resolved}' on Blazor WebAssembly: " +
-                        "synchronous HTTP I/O is not supported. Pre-fetch and pass via source-node instead.");
+                        $"Cannot fetch source-location '{resolved}' on Blazor WebAssembly: " +
+                        "synchronous HTTP I/O is not supported. Pre-fetch the document and pass it " +
+                        "through PreloadedResources, or supply it as source-node.");
                 }
-                inputXml = await Engine.HttpResourceLoader.GetStringAsync(resolved).ConfigureAwait(false);
+                else
+                {
+                    inputXml = await Engine.HttpResourceLoader.GetStringAsync(resolved).ConfigureAwait(false);
+                }
             }
             else
             {
@@ -353,7 +366,18 @@ public sealed class XsltTransformProvider : ITransformProvider
             // inner-store NodeIds don't resolve outside (Martin Honnen: subtrees came
             // back as <root/> instead of <root>text</root>, path() walked stale Parent
             // chains, and multi-hop env:evaluate lost child navigation entirely).
-            resultMap["output"] = ReanchorCrossStoreResult(rawValue, nodeStore as INodeBuilder);
+            var reanchored = ReanchorCrossStoreResult(rawValue, nodeStore as INodeBuilder);
+            // The facade hands back serialized markup when the inner template constructed its
+            // result rather than returning a typed value. Under raw delivery that markup IS
+            // the caller's result, so passing the string through would make ?output a string
+            // and any copy-of emit escaped markup. Parse it back into the CALLER's store,
+            // unwrapped — raw delivers the nodes themselves, not a document node wrapping
+            // them; that is what delivery-format='document' is for. Text carrying no markup
+            // stays a string: there is no node to recover and the string is the result.
+            // Engine/XsltTransformFunction has done this on the stylesheet side all along.
+            if (reanchored is string rawText && rawText.Contains('<', StringComparison.Ordinal))
+                reanchored = await ParseRawResultToXdmAsync(rawText, nodeStore).ConfigureAwait(false) ?? reanchored;
+            resultMap["output"] = reanchored;
         }
         else
         {
@@ -613,6 +637,52 @@ public sealed class XsltTransformProvider : ITransformProvider
     /// Parses a result XML string back to an XDM document node using the context's node store,
     /// or returns the string if the node store doesn't support building or the XML is malformed.
     /// </summary>
+    /// <summary>
+    /// Parses a raw-delivery result into the caller's store and UNWRAPS it: raw delivery hands
+    /// back the nodes the transform produced, not a document node around them.
+    /// </summary>
+    /// <returns>The single node, an <c>object?[]</c> of nodes, or null when the text will not parse.</returns>
+    private static async ValueTask<object?> ParseRawResultToXdmAsync(string xml, INodeStore? nodeStore)
+    {
+        // A serialized result document opens with an XML declaration. It is legal there and
+        // illegal inside the wrapper this parse needs, so it has to come off first — the same
+        // trap that made the stylesheet-side parse fail and return markup as a string.
+        var declarationEnd = xml.StartsWith("<?xml", StringComparison.Ordinal)
+            ? xml.IndexOf("?>", StringComparison.Ordinal)
+            : -1;
+        if (declarationEnd >= 0)
+            xml = xml[(declarationEnd + 2)..].TrimStart();
+
+        var parsed = await ParseResultToXdmAsync($"<_wrap_>{xml}</_wrap_>", nodeStore, null).ConfigureAwait(false);
+        if (parsed is not XdmDocument wrapperDoc
+            || !wrapperDoc.DocumentElement.HasValue
+            || nodeStore is null)
+            return null;
+
+        if (nodeStore.GetNode(wrapperDoc.DocumentElement.Value) is not XdmElement wrapper)
+            return null;
+
+        // Children travel as NodeIds and are resolved through the store — the navigation idiom
+        // this file already uses; INodeStore exposes no GetChildren.
+        var children = new List<object?>(wrapper.Children.Count);
+        foreach (var childId in wrapper.Children)
+        {
+            if (nodeStore.GetNode(childId) is not { } child)
+                continue;
+            // Detach from the throwaway wrapper so the caller sees parentless nodes, exactly as a
+            // raw result produced in its own store would be.
+            child.Parent = null;
+            children.Add(child);
+        }
+
+        return children.Count switch
+        {
+            0 => null,
+            1 => children[0],
+            _ => children.ToArray(),
+        };
+    }
+
     private static async ValueTask<object?> ParseResultToXdmAsync(string xml, INodeStore? nodeStore, string? resultBaseUri)
     {
         if (string.IsNullOrWhiteSpace(xml))

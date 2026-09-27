@@ -899,13 +899,26 @@ public sealed class XsltTransformer
     ///
     /// Used by <c>fn:transform()</c> with <c>delivery-format='raw'</c> from XQuery,
     /// where the caller wants to consume the typed result directly rather than as
-    /// XML markup. Currently only honored when the transformation is invoked via
-    /// <see cref="SetInitialFunction"/> (the only case where there's a single
-    /// well-defined return value); template-based invocations still serialize.
+    /// XML markup.
     /// </summary>
     /// <returns>
     /// The raw XDM value: a single item, an <c>object?[]</c> for sequences, or
     /// <c>null</c> for the empty sequence.
+    /// <para>
+    /// A transformation whose result was CONSTRUCTED rather than returned — a literal result
+    /// element, <c>xsl:element</c>, most stylesheets — has no typed value to hand back, because
+    /// those nodes are written to the output buffer and never reach the sequence collector. For
+    /// that case this returns the serialized markup as a <see cref="string"/> and the caller
+    /// re-parses it, which is the same tiering
+    /// <c>XsltTransformEngine.TransformRawAsync</c> uses.
+    /// </para>
+    /// <para>
+    /// This used to be documented as honoured only for <see cref="SetInitialFunction"/>
+    /// invocations, and it returned <c>null</c> for everything else — silently, so
+    /// <c>fn:transform</c> from a query produced an empty <c>?output</c> and exit code 0 for
+    /// every node-constructing stylesheet (Martin Honnen xslt#173). The limitation was real, but
+    /// describing it in the contract is not the same as it being correct.
+    /// </para>
     /// </returns>
     public async Task<object?> TransformToValueAsync(string? inputXml, CancellationToken ct = default)
     {
@@ -916,12 +929,27 @@ public sealed class XsltTransformer
         var options = BuildTransformOptions(hasSource: inputXml != null, rawBox: rawBox, ct: ct);
 
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
-        // Engine still produces a serialized output buffer alongside the raw value;
-        // we discard the buffer and return the raw value directly.
-        _ = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
+        var serialized = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
 
         SecondaryResultDocuments = engine.SecondaryResultDocuments;
-        return rawBox.Value;
+        if (rawBox.Value != null)
+            return rawBox.Value;
+
+        // Nothing was boxed, so fall back to the serialized buffer — which this method used to
+        // discard outright, returning null.
+        //
+        // A template whose body CONSTRUCTS nodes (a literal result element, xsl:element, …)
+        // writes them to the output buffer rather than to the sequence collector, so there is
+        // no typed value to box and never was one. Returning null for that case meant
+        // fn:transform with delivery-format='raw' from a query yielded an empty ?output and
+        // exit code 0 — silently, for every node-constructing stylesheet, which is most of
+        // them (Martin Honnen xslt#173).
+        //
+        // Returning the markup as a string is the contract XsltTransformEngine.TransformRawAsync
+        // already uses for this tier; the caller re-parses it into its own store. This method
+        // had only the typed tier, which is why the stylesheet-side path handled constructed
+        // nodes and the query-side path did not.
+        return !string.IsNullOrEmpty(serialized) ? serialized : null;
     }
 
     /// <summary>

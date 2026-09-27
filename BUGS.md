@@ -7171,3 +7171,77 @@ and asserted that both executors agree on `XTTE1100`. They no longer do, correct
 `streamable="yes"` the stylesheet is now rejected before the streamed executor runs. The theory row
 is kept with a per-arm expectation — `XTSE3430` streamed, `XTTE1100` buffered — because the
 non-streamable arm still pins the cardinality check #152 added.
+
+---
+
+### 115. Both twins had drifted, in opposite directions — and "grep for the twin" does not catch that (2026-09-27)
+
+Martin Honnen, xslt#173. `fn:transform` with `source-location` returned a result computed from no
+input. Reported once, it was two independent defects, one in each of the two `fn:transform`
+implementations, **pointing opposite ways**:
+
+| host | implementation | defect |
+|---|---|---|
+| stylesheet | `Engine/XsltTransformFunction.cs` | never read `source-location`; the principal input fell through to a literal `"<empty/>"` |
+| query | `XsltTransformProvider.cs` → `XsltFacade.TransformToValueAsync` | dropped the RESULT under `delivery-format='raw'` whenever the inner template constructed nodes |
+
+Each host already had the fix the other lacked. Reproduce both against 2.2.0 — same input, same
+inner stylesheet, one option changed at a time:
+
+```
+xslt  loc.xsl -it "xsl:initial-template"   # source-location  → <out/>                    WRONG
+xslt  node.xsl -it "xsl:initial-template"  # source-node      → <out><g n="2"/><g n="2"/></out>
+xquery -f loc-raw.xq                       # raw              → (no output, exit 0)       WRONG
+xquery -f loc-doc.xq                       # document         → <out><g n="2"/>…</out>
+```
+
+The second one is the one worth remembering: **no output and exit code 0.** Nothing in the run
+says a result was discarded.
+
+#### Why the standing countermeasure was not enough
+
+This register already names the two `fn:transform` implementations as the canonical instance of
+the dominant defect shape — *one of a pair had a fix its twin lacked* — and prescribes: when you
+fix one, grep for the other in the same commit.
+
+That countermeasure assumes **one twin is right**. Here neither was. Grepping the twin would have
+shown the two differ; it could not say which behaviour was correct, and following the better-looking
+one would have fixed one host and left the other. I made exactly that error on the thread: I read
+`source-location` in the provider, told Martin the query route therefore worked, and was corrected
+by his second report. The provider does read the option — and drops the result two steps later.
+
+The stronger check is not a grep, it is **a test that runs the same input through both hosts and
+asserts they agree**. `TransformSourceLocationTests.BothHosts_AgreeOn_TheSameTransform` does that.
+Neither defect could have survived it, and it does not need anyone to know which twin is right —
+only that a disagreement is a bug. Prefer it over the grep wherever the same job is done twice.
+
+#### Three further things this turned up
+
+**The corpus cannot catch this.** `grep -r source-location xslt30-test/tests/` returns **zero**
+hits (checked 2026-09-27). It is a Saxon extension under XPath 3.1 and only standard in 4.0, so
+the 3.0 corpus never exercises it. A green conformance run says nothing here — the new unit tests
+are the only coverage that exists.
+
+**Four decision points, none of which knew about the option.** Both delivery branches chose
+between `SerializeXdmNodeToXml(sourceNode)` and the literal `"<empty/>"` at their own call sites.
+The fix resolves the principal input **once**, before the branch, so `hasSource` follows from it —
+which is what makes it structurally impossible for a source option to be honoured under one
+delivery format and dropped under another. The duplicated decision was the reason the option could
+be missing here while present in the twin.
+
+**The same gap sat one option over, in the file I was fixing.** `XsltTransformProvider`'s
+`stylesheet-location` branch consults `PreloadedResources` before fetching — added for Martin's
+DocBook-on-Blazor regression — and its `source-location` branch, thirty lines down, did not. On
+Blazor WebAssembly an HTTP `source-location` was unusable even when the host had preloaded the
+document. Fixed in the same commit. Worth noting how it was found: by writing a comment in the new
+code that pointed at the asymmetry rather than closing it. **A comment describing a divergence is
+a bug report you have filed against yourself and marked resolved.**
+
+#### A test of mine that passed against the defect it was written for
+
+`Xslt_SourceLocation_ThatCannotBeRead_Reports` first asserted only `ThrowAsync<Exception>()`. It
+went **green before the fix**: with the option unread there was no source document at all, so the
+inner transform raised `XTDE0040` and the assertion was satisfied by an unrelated error. This is
+#107's shape (*a check that cannot fail*) reproduced by someone who had read #107. The repair is to
+assert on the mechanism — the message must name the file that could not be read, a string that can
+only appear once a fetch is genuinely attempted. Baseline went 6 failures → 7 on that change alone.
