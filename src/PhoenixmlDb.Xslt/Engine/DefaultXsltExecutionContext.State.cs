@@ -403,6 +403,19 @@ internal sealed partial class DefaultXsltExecutionContext
 
     internal XmlReader? _activeStreamingReader;
 
+    /// <summary>
+    /// The document node standing in for the document being streamed — the context item pushed
+    /// alongside <see cref="_activeStreamingProcessor"/>. The streaming interceptions must fire
+    /// for THIS document only: testing <c>ContextItem is XdmDocument</c> let any other document
+    /// in scope (a <c>doc()</c> result processed in another mode) take over the live reader and
+    /// consume the whole stream (streamable-065 came out as an empty &lt;out/&gt;).
+    /// </summary>
+    internal XdmDocument? _activeStreamingDocument;
+
+    /// <summary>True when <paramref name="item"/> is the document currently being streamed.</summary>
+    internal bool IsActiveStreamedDocument(object? item)
+        => item is XdmDocument doc && (_activeStreamingDocument is null || ReferenceEquals(doc, _activeStreamingDocument));
+
     internal CancellationToken _activeStreamingCancellationToken;
 
     internal IReadOnlyList<StreamWatcher>? _activeStreamWatchers;
@@ -447,6 +460,15 @@ internal sealed partial class DefaultXsltExecutionContext
     /// EndElement event was consumed by ReadSubtree and won't arrive separately).
     /// </summary>
     internal bool _streamingSubtreeBufferConsumed;
+
+    /// <summary>
+    /// True while a built-in template rule is running for an UNMATCHED node that the streaming
+    /// processor's own loop dispatched. The loop reads that node's children next and offers each
+    /// to template matching, so the element's built-in text-only-copy rule — "process the
+    /// children" — is already being carried out, and the #143 guard must not treat reaching the
+    /// sink as a structure collapse.
+    /// </summary>
+    internal bool _builtInFromStreamingLoop;
 
 
     /// <summary>

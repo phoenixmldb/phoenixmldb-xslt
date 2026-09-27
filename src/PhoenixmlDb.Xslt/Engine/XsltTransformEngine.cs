@@ -5140,6 +5140,8 @@ public sealed class XsltTransformEngine
             var savedDocReader = context._activeStreamingReader;
             var savedDocCt = context._activeStreamingCancellationToken;
             var savedDocWatchers = context._activeStreamWatchers;
+            var savedDocDocument = context._activeStreamingDocument;
+            context._activeStreamingDocument = syntheticDoc;
             context._activeStreamingProcessor = docProcessor;
             context._activeStreamingReader = inputReader;
             context._activeStreamingCancellationToken = options.CancellationToken;
@@ -5196,6 +5198,7 @@ public sealed class XsltTransformEngine
                 context._activeStreamingReader = savedDocReader;
                 context._activeStreamingCancellationToken = savedDocCt;
                 context._activeStreamWatchers = savedDocWatchers;
+                context._activeStreamingDocument = savedDocDocument;
                 context.PopContextItem();
             }
 

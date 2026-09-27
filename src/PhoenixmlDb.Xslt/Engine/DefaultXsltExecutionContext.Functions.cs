@@ -525,7 +525,24 @@ internal sealed partial class DefaultXsltExecutionContext
                 // built-in shallow-copy rule passes them to matched attribute/child templates
                 // (si-apply-templates-008: w/@id rule receives prefix/suffix). Per spec the
                 // built-in rules forward all caller params unchanged.
-                await ApplyBuiltInTemplateAsync(node, mode, _streamingForwardedParams).ConfigureAwait(false);
+                //
+                // The streaming loop that dispatched this node reads its children next and offers
+                // each one to matching, so the element's built-in text-only-copy rule is carried
+                // out by the loop itself. Flag that for the #143 guard, which otherwise sees a
+                // guaranteed-streamable current template, concludes the structure is about to
+                // collapse, and DEEP-COPIES the subtree — skipping every template below it
+                // (streamable-064: the whole source copied verbatim, no v template ever fired).
+                var savedFromLoop = _builtInFromStreamingLoop;
+                _builtInFromStreamingLoop = _activeStreamingReader != null
+                    && !_streamingDispatchElementMaterialized;
+                try
+                {
+                    await ApplyBuiltInTemplateAsync(node, mode, _streamingForwardedParams).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _builtInFromStreamingLoop = savedFromLoop;
+                }
             }
         }
         finally

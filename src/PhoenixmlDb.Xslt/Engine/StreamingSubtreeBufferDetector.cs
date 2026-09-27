@@ -54,8 +54,15 @@ internal static class StreamingSubtreeBufferDetector
                 if (v.Content != null && RequiresSubtreeBuffer(v.Content)) return true;
                 return false;
 
+            // value-of select="." atomizes the matched element itself, which needs its whole
+            // subtree. Child paths (select="title") are handled without a buffer — the scanner
+            // builds a watcher and the body is deferred to the end tag — but the scanner builds no
+            // watcher for a bare context item, so nothing deferred it and value-of read the
+            // SHALLOW streamed element: an empty string, or a throw under StrictStringValue
+            // (streamable-064/065/066: every <v> came out with no text).
             case XsltValueOf vo:
-                return vo.Select != null && ExpressionUsesSnapshot(vo.Select);
+                return vo.Select != null
+                    && (ExpressionUsesSnapshot(vo.Select) || IsContextItem(vo.Select));
 
             case XsltSequence s:
                 if (s.Select != null && ExpressionUsesSnapshot(s.Select)) return true;
@@ -1253,6 +1260,14 @@ internal static class StreamingSubtreeBufferDetector
     /// and external variable refs read from already-materialized trees and
     /// don't need buffering.
     /// </summary>
+    /// <summary>True for <c>.</c>, including a parenthesised <c>(.)</c>.</summary>
+    private static bool IsContextItem(XQueryExpression expr) => expr switch
+    {
+        ContextItemExpression => true,
+        SequenceExpression { Items.Count: 1 } seq => IsContextItem(seq.Items[0]),
+        _ => false,
+    };
+
     private static bool TouchesMatchedSubtree(XQueryExpression expr)
     {
         switch (expr)
