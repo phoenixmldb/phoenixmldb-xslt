@@ -1461,6 +1461,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (!ReferenceEquals(bufferedRoot, element))
             {
                 (_bufferedSubtreeOrigin ??= new Dictionary<NodeId, NodeId>())[bufferedRoot.Id] = element.Id;
+                // Give the copy the streamed element's ancestors. It was materialised DETACHED,
+                // so its ancestor axis stopped at itself and ../@id read nothing (stream-211,
+                // streamable-137/138/139). The other two drivers — the processor's forward pass
+                // and the striding descent — already link ancestors; this one did not. The
+                // tree-finding walks treat it as a root regardless, so accumulator-after() still
+                // computes over the buffered subtree.
+                bufferedRoot.Parent = element.Parent;
                 // ReadSubtree consumed the descendants, so the forward pass will never fire their
                 // accumulator rules. Replay them into the pass's own running values, so the
                 // accumulator carries past this match instead of resuming where the match began.
@@ -3186,9 +3193,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (node is not XdmNode xdmNode || _nodeStore == null)
             return null;
 
-        // Walk up parent chain to find the document root
+        // Walk up parent chain to find the document root. A buffered subtree's root is the top
+        // of its own tree here, even though it now has a parent (see IsBufferedSubtreeRoot).
         var current = xdmNode;
-        while (current.Parent.HasValue && current.Parent.Value != NodeId.None)
+        while (!IsBufferedSubtreeRoot(current) && current.Parent.HasValue && current.Parent.Value != NodeId.None)
         {
             var parent = _nodeStore.GetNode(current.Parent.Value);
             if (parent is XdmDocument parentDoc)

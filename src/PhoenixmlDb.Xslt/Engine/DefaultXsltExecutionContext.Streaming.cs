@@ -899,7 +899,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             // Walk up to the root of the orphan's subtree
             var root = orphanNode;
-            while (root.Parent.HasValue && root.Parent.Value != NodeId.None)
+            while (!IsBufferedSubtreeRoot(root) && root.Parent.HasValue && root.Parent.Value != NodeId.None)
             {
                 var parent = _nodeStore.GetNode(root.Parent.Value);
                 if (parent is XdmDocument parentDoc)

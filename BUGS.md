@@ -5449,6 +5449,16 @@ The body was selecting the route. That belongs with the instrument-first materia
 three readings of the code produced three wrong hypotheses, and one instrumented run produced the
 right one — the fourth time this session that instrumenting beat reading.
 
+
+#### RESOLVED 2026-09-27 — +3 W3C cases (stream-211, streamable-138/139), 0 lost
+
+Done the way this entry said it had to be: the buffered root now gets its streamed parent
+(`bufferedRoot.Parent = element.Parent`), and the two walks that find a node's tree —
+`FindDocumentForNode` and the orphan walk in `EnsureAccumulatorsComputedAsync` — stop at a buffered
+root. So the ancestor axis sees the real ancestors, while "which tree is this?" answers exactly what
+it answered before, and `AccumulatorAfter_CountsTheSubtree` still passes. `streamable-137` is not
+among the gains and has a separate cause. Regression tests in `BufferedSubtreeAncestorTests`.
+
 ### 94. The engine contains a purpose-built diagnostic for this class of defect, and no run exercises it (2026-09-13)
 
 Found by parsers2. **The codebase already held a detector for exactly the failure mode we spent
