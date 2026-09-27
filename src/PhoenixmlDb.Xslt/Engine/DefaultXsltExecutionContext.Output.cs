@@ -1694,9 +1694,10 @@ internal sealed partial class DefaultXsltExecutionContext
                     MaxCharactersFromEntities = 1_000_000
                 };
                 using var rawReader = XmlReader.Create(fileStream, readerSettings, resolvedUri.AbsoluteUri);
-                // Wrapped so fn:has-children() can look one event ahead invisibly (BUGS #92). A
-                // pure pass-through until something asks.
-                using var xmlReader = new PeekableXmlReader(rawReader);
+                // Wrapped so fn:has-children() can look one event ahead invisibly (BUGS #92), and
+                // so whitespace that xsl:strip-space removes never reaches any consumer of the
+                // stream. A pure pass-through when neither applies.
+                using var xmlReader = new PeekableXmlReader(rawReader, BuildStreamingWhitespaceStripper());
 
                 var streamNodeStore = _nodeStore ?? new XdmInMemoryStore();
                 _templateIndex.ResolvePatternNamespaces(streamNodeStore.InternNamespace);

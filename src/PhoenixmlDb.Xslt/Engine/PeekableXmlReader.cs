@@ -17,9 +17,15 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </para>
 /// <para>
 /// So the lookahead lives here instead. <see cref="PeekHasChildren"/> snapshots the start tag,
-/// reads ahead, and then REPLAYS the start tag — and any whitespace it read past — before handing
-/// the live reader back. Until then every member answers from the snapshot, so the peek is
-/// invisible. Without a peek, every member is a straight pass-through.
+/// reads ahead, and then REPLAYS the start tag before handing the live reader back. Until then
+/// every member answers from the snapshot, so the peek is invisible. Without a peek, every member
+/// is a straight pass-through.
+/// </para>
+/// <para>
+/// It also applies xsl:strip-space, for the same reason: streamed input used to ignore it entirely,
+/// because the tree path strips while building a document and the streaming path builds none. A
+/// whitespace-only text node whose parent's whitespace is stripped is simply never surfaced, so
+/// every consumer of the stream sees the stripped document without any of them changing.
 /// </para>
 /// </remarks>
 internal sealed class PeekableXmlReader : XmlReader, IXmlLineInfo, IXmlNamespaceResolver
@@ -41,7 +47,16 @@ internal sealed class PeekableXmlReader : XmlReader, IXmlLineInfo, IXmlNamespace
     private long _peekedPosition = -1;
     private bool _peekedAnswer;
 
-    public PeekableXmlReader(XmlReader inner) => _inner = inner;
+    // xsl:strip-space by element name, and one entry per open element: does it strip whitespace?
+    // Null when the stylesheet strips nothing, in which case nothing is tracked.
+    private readonly Func<string, string, bool>? _stripsWhitespace;
+    private readonly List<bool> _openElementStrips = new();
+
+    public PeekableXmlReader(XmlReader inner, Func<string, string, bool>? stripsWhitespace = null)
+    {
+        _inner = inner;
+        _stripsWhitespace = stripsWhitespace;
+    }
 
     /// <summary>Advances whenever the presented node changes; see <see cref="PeekHasChildren"/>.</summary>
     public long Position => _position;
@@ -57,11 +72,11 @@ internal sealed class PeekableXmlReader : XmlReader, IXmlLineInfo, IXmlNamespace
 
     /// <summary>
     /// Whether the element whose (non-empty) start tag is presented has at least one child. Reads
-    /// ahead past whitespace-only text when <paramref name="whitespaceIsStripped"/> — xsl:strip-space
-    /// removes those nodes from the tree, so they are not children — and replays everything it read.
+    /// one event ahead — whitespace xsl:strip-space removes is already filtered, so it is not a
+    /// child — and replays the start tag.
     /// </summary>
     /// <returns><c>null</c> when the reader is not on a start tag at <paramref name="expectedPosition"/>.</returns>
-    public bool? PeekHasChildren(long expectedPosition, bool whitespaceIsStripped)
+    public bool? PeekHasChildren(long expectedPosition)
     {
         if (_peekedPosition == expectedPosition)
             return _peekedAnswer;
@@ -71,27 +86,66 @@ internal sealed class PeekableXmlReader : XmlReader, IXmlLineInfo, IXmlNamespace
         if (_inner.IsEmptyElement)
             return false;
 
-        var start = Capture(_inner);
-        var replay = new List<Snapshot> { start };
         // Snapshot BEFORE advancing: once the inner reader has moved, the start tag is gone.
-        while (_inner.Read())
-        {
-            if (whitespaceIsStripped && _inner.NodeType == XmlNodeType.Whitespace)
-            {
-                replay.Add(Capture(_inner));
-                continue;
-            }
-            break;
-        }
+        var start = Capture(_inner);
+        AdvanceInner();
         var hasChildren = !(_inner.NodeType == XmlNodeType.EndElement && _inner.Depth == start.Depth);
 
-        _replay = replay;
+        _replay = new List<Snapshot> { start };
         _replayIndex = 0;
         _attrIndex = -1;
         _onAttrValue = false;
         _peekedPosition = expectedPosition;
         _peekedAnswer = hasChildren;
         return hasChildren;
+    }
+
+    // ---- the filtered advance -----------------------------------------------------------------
+
+    /// <summary>
+    /// Moves the inner reader to the next node that is in the tree: whitespace-only text inside an
+    /// element whose whitespace is stripped is skipped. Tracks open elements as it goes.
+    /// </summary>
+    private bool AdvanceInner()
+    {
+        while (_inner.Read())
+        {
+            if (!ArriveAndKeep()) continue;
+            return true;
+        }
+        return false;
+    }
+
+    private async Task<bool> AdvanceInnerAsync()
+    {
+        while (await _inner.ReadAsync().ConfigureAwait(false))
+        {
+            if (!ArriveAndKeep()) continue;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Records the node the inner reader just landed on; false when it is stripped.</summary>
+    private bool ArriveAndKeep()
+    {
+        if (_stripsWhitespace is null)
+            return true;
+        switch (_inner.NodeType)
+        {
+            case XmlNodeType.Element when !_inner.IsEmptyElement:
+                _openElementStrips.Add(_stripsWhitespace(_inner.LocalName, _inner.NamespaceURI));
+                return true;
+            case XmlNodeType.EndElement:
+                if (_openElementStrips.Count > 0) _openElementStrips.RemoveAt(_openElementStrips.Count - 1);
+                return true;
+            case XmlNodeType.Whitespace:
+                // Only XmlNodeType.Whitespace: under xml:space="preserve" the reader reports
+                // SignificantWhitespace, which xsl:strip-space must not touch.
+                return !(_openElementStrips.Count > 0 && _openElementStrips[^1]);
+            default:
+                return true;
+        }
     }
 
     private static Snapshot Capture(XmlReader r)
@@ -120,7 +174,7 @@ internal sealed class PeekableXmlReader : XmlReader, IXmlLineInfo, IXmlNamespace
     {
         _position++;
         if (_replay is null)
-            return _inner.Read();
+            return AdvanceInner();
         AdvanceReplay();
         return true;   // either the next replayed node, or the live node the inner reader is on
     }
@@ -129,7 +183,7 @@ internal sealed class PeekableXmlReader : XmlReader, IXmlLineInfo, IXmlNamespace
     {
         _position++;
         if (_replay is null)
-            return _inner.ReadAsync();
+            return AdvanceInnerAsync();
         AdvanceReplay();
         return Task.FromResult(true);
     }
@@ -144,11 +198,24 @@ internal sealed class PeekableXmlReader : XmlReader, IXmlLineInfo, IXmlNamespace
 
     public override void Skip()
     {
-        if (_replay is null) { _position++; _inner.Skip(); return; }
+        if (_replay is null)
+        {
+            _position++;
+            var skippingOpenElement = _inner.NodeType == XmlNodeType.Element && !_inner.IsEmptyElement;
+            _inner.Skip();
+            // The skipped element was recorded as open when the reader landed on it, and Skip()
+            // consumed its end tag without our seeing it.
+            if (skippingOpenElement && _stripsWhitespace is not null && _openElementStrips.Count > 0)
+                _openElementStrips.RemoveAt(_openElementStrips.Count - 1);
+            if (!_inner.EOF && !ArriveAndKeep())
+                AdvanceInner();
+            return;
+        }
         var snap = Current!;
         if (snap.NodeType != XmlNodeType.Element) { Read(); return; }
         // Skip the whole replayed element: drop the replay and move the inner reader past the end
-        // tag that matches the snapshot's depth.
+        // tag that matches the snapshot's depth. Nested elements are skipped whole, so they were
+        // never recorded as open; the replayed element itself was, and is closed here.
         _position++;
         _replay = null;
         _attrIndex = -1;
@@ -160,14 +227,21 @@ internal sealed class PeekableXmlReader : XmlReader, IXmlLineInfo, IXmlNamespace
             else if (!_inner.Read())
                 return;
         }
-        _inner.Read();
+        if (_stripsWhitespace is not null && _openElementStrips.Count > 0)
+            _openElementStrips.RemoveAt(_openElementStrips.Count - 1);
+        AdvanceInner();
     }
 
-    public override Task SkipAsync()
+    public override async Task SkipAsync()
     {
-        if (_replay is null) { _position++; return _inner.SkipAsync(); }
-        Skip();
-        return Task.CompletedTask;
+        if (_replay is not null) { Skip(); return; }
+        _position++;
+        var skippingOpenElement = _inner.NodeType == XmlNodeType.Element && !_inner.IsEmptyElement;
+        await _inner.SkipAsync().ConfigureAwait(false);
+        if (skippingOpenElement && _stripsWhitespace is not null && _openElementStrips.Count > 0)
+            _openElementStrips.RemoveAt(_openElementStrips.Count - 1);
+        if (!_inner.EOF && !ArriveAndKeep())
+            await AdvanceInnerAsync().ConfigureAwait(false);
     }
 
     // ---- the presented node -------------------------------------------------------------------
