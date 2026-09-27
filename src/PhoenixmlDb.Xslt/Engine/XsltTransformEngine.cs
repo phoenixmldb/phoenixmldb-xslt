@@ -4961,11 +4961,6 @@ public sealed class XsltTransformEngine
     {
         options ??= new XsltTransformOptions();
 
-        // Wrapped so fn:has-children() can look one event ahead invisibly (BUGS #92). Not
-        // disposed here: the caller owns the underlying reader, and the wrapper holds nothing.
-        if (inputReader is not PeekableXmlReader)
-            inputReader = new PeekableXmlReader(inputReader);
-
         // Streaming is invoked with an XML source document, so mark it as present.
         // This ensures xsl:global-context-item use="required" validation passes
         // and use="absent" correctly rejects the invocation.
@@ -5033,6 +5028,12 @@ public sealed class XsltTransformEngine
             options,
             nodeStore);
         context.Owner = this;
+
+        // Wrapped so fn:has-children() can look one event ahead invisibly (BUGS #92), and so
+        // whitespace that xsl:strip-space removes never reaches any consumer of the stream. Not
+        // disposed here: the caller owns the underlying reader, and the wrapper holds nothing.
+        if (inputReader is not PeekableXmlReader)
+            inputReader = new PeekableXmlReader(inputReader, context.BuildStreamingWhitespaceStripper());
 
         // Attach the optional external sink BEFORE global initialization and the streaming
         // pass so DrainStreamingOutputAsync at every event boundary flushes incrementally
@@ -5728,7 +5729,7 @@ public sealed class XsltTransformEngine
     /// </summary>
     internal static void StripWhitespaceNodes(XdmDocument doc, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace, XdmInMemoryStore store)
     {
-        StripWhitespaceRecursive(doc, stripSpace, preserveSpace, store);
+        StripWhitespaceRecursive(doc, stripSpace, preserveSpace, store, underXmlSpacePreserve: false);
 
         // Recompute document string value once after all stripping is complete
         var sb = new StringBuilder();
@@ -5743,8 +5744,26 @@ public sealed class XsltTransformEngine
         doc._stringValue = sb.ToString();
     }
 
-    private static void StripWhitespaceRecursive(XdmNode parent, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace, XdmInMemoryStore store)
+    private static void StripWhitespaceRecursive(XdmNode parent, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace, XdmInMemoryStore store, bool underXmlSpacePreserve)
     {
+        // xml:space is inherited: the nearest ancestor-or-self carrying it decides (XSLT 3.0 §4.3 —
+        // whitespace under xml:space="preserve" is not stripped, whatever xsl:strip-space says;
+        // xml:space="default" switches stripping back on below it). This path ignored xml:space
+        // entirely and stripped such whitespace anyway. The streaming path, which gets whitespace
+        // from an XmlReader that reports it as SignificantWhitespace there, kept it — the two
+        // disagreed, and the streamed one was right.
+        if (parent is XdmElement spaced)
+        {
+            foreach (var attr in store.GetAttributes(spaced))
+            {
+                if (attr.Namespace == NamespaceId.Xml && attr.LocalName == "space")
+                {
+                    underXmlSpacePreserve = attr.Value == "preserve";
+                    break;
+                }
+            }
+        }
+
         var children = parent switch
         {
             XdmDocument d => d.Children,
@@ -5761,7 +5780,7 @@ public sealed class XsltTransformEngine
             var childNode = store.GetNode(childId);
             if (childNode is XdmElement or XdmDocument)
             {
-                StripWhitespaceRecursive(childNode, stripSpace, preserveSpace, store);
+                StripWhitespaceRecursive(childNode, stripSpace, preserveSpace, store, underXmlSpacePreserve);
             }
         }
 
@@ -5780,7 +5799,7 @@ public sealed class XsltTransformEngine
             // preserve-space elements="*" in the principal module must beat an explicit
             // strip-space elements="db:para" reached through xsl:import, despite being far less
             // specific. Default priorities are QName=0, prefix:*=-0.25, *=-0.5.
-            var shouldStrip = ShouldStripWhitespaceIn(elem, stripSpace, preserveSpace);
+            var shouldStrip = !underXmlSpacePreserve && ShouldStripWhitespaceIn(elem, stripSpace, preserveSpace);
 
             if (shouldStrip && children is List<NodeId> childList)
             {
@@ -5805,9 +5824,14 @@ public sealed class XsltTransformEngine
     /// </summary>
     internal static bool ShouldStripWhitespaceIn(
         XdmElement elem, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace)
+        => ShouldStripWhitespaceIn(elem.Namespace, elem.LocalName, stripSpace, preserveSpace);
+
+    /// <summary>Name-keyed form, for the streaming reader, which has a name but no element node.</summary>
+    internal static bool ShouldStripWhitespaceIn(
+        NamespaceId ns, string localName, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace)
     {
-        var bestStrip = FindBestWhitespaceMatch(stripSpace, elem);
-        var bestPreserve = bestStrip is null ? null : FindBestWhitespaceMatch(preserveSpace, elem);
+        var bestStrip = FindBestWhitespaceMatch(stripSpace, ns, localName);
+        var bestPreserve = bestStrip is null ? null : FindBestWhitespaceMatch(preserveSpace, ns, localName);
 
         // Strip unless a preserve match outranks it. An exact tie (same precedence AND same
         // priority) still strips, preserving the previous behaviour; a same-precedence
@@ -5898,12 +5922,12 @@ public sealed class XsltTransformEngine
     /// NameTest default priority.
     /// </summary>
     private static (int Precedence, double Priority)? FindBestWhitespaceMatch(
-        List<WhitespaceDeclaration> declarations, XdmElement elem)
+        List<WhitespaceDeclaration> declarations, NamespaceId ns, string localName)
     {
         (int Precedence, double Priority)? best = null;
         foreach (var decl in declarations)
         {
-            if (!decl.Test.Matches(XdmNodeKind.Element, elem.Namespace, elem.LocalName))
+            if (!decl.Test.Matches(XdmNodeKind.Element, ns, localName))
                 continue;
             var candidate = (decl.ImportPrecedence, NameTestDefaultPriority(decl.Test));
             if (best is null || OutranksWhitespaceMatch(candidate, best.Value))

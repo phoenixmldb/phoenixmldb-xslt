@@ -430,30 +430,49 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     internal (NodeId Id, long Position)? _streamedStartTag;
 
-    private bool _whitespaceTestsResolved;
-
     /// <summary>
     /// fn:has-children() for a shallow streamed element, answered by looking one event ahead; null
-    /// when this element is not the one whose start tag the live reader is on.
+    /// when this element is not the one whose start tag the live reader is on. Whitespace that
+    /// xsl:strip-space removes is already filtered out by the reader, so it is not counted.
     /// </summary>
     internal bool? TryStreamedHasChildren(Xdm.Nodes.XdmElement elem)
     {
         if (_activeStreamingReader is not PeekableXmlReader reader
             || _streamedStartTag is not { } tag || tag.Id != elem.Id)
             return null;
+        return reader.PeekHasChildren(tag.Position);
+    }
 
-        var strip = false;
-        if (_stylesheet.StripSpace.Count > 0 && _nodeStore != null)
+    /// <summary>
+    /// The xsl:strip-space decision for the streaming reader, by element name; null when the
+    /// stylesheet strips nothing, so the reader stays a pure pass-through.
+    /// </summary>
+    /// <remarks>
+    /// Streamed input ignored xsl:strip-space entirely: the tree path strips when it builds the
+    /// document, and the streaming path builds no document. So the same stylesheet gave
+    /// &lt;r&gt;&lt;a&gt;x&lt;/a&gt;&lt;/r&gt; unstreamed and kept every whitespace node streamed. Filtering in the reader
+    /// covers every consumer at once — the processor loop, the subtree materialiser, streamed
+    /// apply-templates and copy-of — instead of one site at a time.
+    /// </remarks>
+    internal Func<string, string, bool>? BuildStreamingWhitespaceStripper()
+    {
+        if (_stylesheet.StripSpace.Count == 0 || _nodeStore is null)
+            return null;
+        var store = _nodeStore;
+        foreach (var decl in _stylesheet.StripSpace) decl.Test.ResolveNamespace(store.InternNamespace);
+        foreach (var decl in _stylesheet.PreserveSpace) decl.Test.ResolveNamespace(store.InternNamespace);
+        var cache = new Dictionary<(string, string), bool>();
+        var strip = _stylesheet.StripSpace;
+        var preserve = _stylesheet.PreserveSpace;
+        return (localName, namespaceUri) =>
         {
-            if (!_whitespaceTestsResolved)
-            {
-                foreach (var decl in _stylesheet.StripSpace) decl.Test.ResolveNamespace(_nodeStore.InternNamespace);
-                foreach (var decl in _stylesheet.PreserveSpace) decl.Test.ResolveNamespace(_nodeStore.InternNamespace);
-                _whitespaceTestsResolved = true;
-            }
-            strip = XsltTransformEngine.ShouldStripWhitespaceIn(elem, _stylesheet.StripSpace, _stylesheet.PreserveSpace);
-        }
-        return reader.PeekHasChildren(tag.Position, strip);
+            if (cache.TryGetValue((localName, namespaceUri), out var known))
+                return known;
+            var ns = string.IsNullOrEmpty(namespaceUri) ? NamespaceId.None : store.InternNamespace(namespaceUri);
+            var result = XsltTransformEngine.ShouldStripWhitespaceIn(ns, localName, strip, preserve);
+            cache[(localName, namespaceUri)] = result;
+            return result;
+        };
     }
 
     /// <summary>True when <paramref name="item"/> is the document currently being streamed.</summary>
