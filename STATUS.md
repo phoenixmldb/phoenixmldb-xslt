@@ -1,16 +1,16 @@
 # Status
 
-Generated 2026-09-27 21:24 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-28 14:04 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
-| `PhoenixmlDb.XQuery` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
-| `PhoenixmlDb.Xslt` | 2.2.0 | 2.2.0 | current |
+| `PhoenixmlDb.XQuery` | 2.3.0 | ? | **repo is at ?, nuget.org has 2.3.0** |
+| `PhoenixmlDb.Xslt` | 2.2.0 | 2.3.0 | **repo is at 2.3.0, nuget.org has 2.2.0** |
 | `xquery4` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
-| `xslt` | 2.2.0 | 2.2.0 | current |
+| `xslt` | 2.2.0 | 2.3.0 | **repo is at 2.3.0, nuget.org has 2.2.0** |
 
 ## Open work
 
@@ -18,7 +18,7 @@ Generated 2026-09-27 21:24 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 0 |
-| phoenixmldb-xslt | 4 | 1 |
+| phoenixmldb-xslt | 3 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -44,22 +44,17 @@ Generated 2026-09-27 21:24 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
 - [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
-- [96] Xslt 1.8.0 regresses three streaming conformance sets that passed on 1.6.10 (attr/streamable below floor, stream-211, sx-gc-eq-801)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
 
-**phoenixmldb-xslt**
-
-- [177] fix(streaming): a buffered matched subtree keeps its ancestors
-
 **phoenixmldb-cli**
 
-- [9] build: Bump the phoenixmldb-engines group with 2 updates
+- [10] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
-`BUGS.md`: **116** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **117** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -103,6 +98,10 @@ Figures are only as good as their provenance, so each carries how and when it wa
 
 ## Blocked
 
+- **PhoenixmlDb.Xslt 2.3.0 is tagged, built and tested, but not published.** The
+  publish step fails NuGet trusted-publishing login with HTTP 401. This repo pushes TWO
+  package ids — `PhoenixmlDb.Xslt` and `xslt` — and a policy for one does not cover the
+  other. Needs a nuget.org owner.
 - **`PhoenixmlDb.Xslt.Cli` / `PhoenixmlDb.XQuery.Cli` are at 1.4.10** while the
   library line is 1.7.x. These are a second, older CLI distribution from `phoenixmldb-cli`,
   separate from the `xslt`/`xquery4` tools the engine repos ship.
