@@ -2318,6 +2318,15 @@ internal sealed partial class DefaultXsltExecutionContext
                     ValidateValueMatchesType(value, param.As, "XPTY0004",
                         $"Value of parameter ${param.Name.LocalName} in function {func.Name.LocalName}");
                 }
+                else if (param.As?.ItemType == ItemType.String)
+                {
+                    // xs:string is not in the strict set above, so it got no conversion at all —
+                    // and URI promotion is part of the conversion rules: an xs:anyURI argument to
+                    // an as="xs:string" parameter must arrive as an xs:string (W3C function-1015).
+                    value = value is object?[] items
+                        ? Array.ConvertAll(items, item => item is Xdm.XsAnyUri u ? u.Value : item)
+                        : value is Xdm.XsAnyUri single ? single.Value : value;
+                }
                 else if (param.As != null && param.As.ItemType == ItemType.Function
                     && param.As.FunctionParameterTypes != null)
                 {
