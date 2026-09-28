@@ -1142,6 +1142,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var brokeOut = false;
         var position = 0;
+        var childTest = StreamedChildTest(instruction.Select);
         try
         {
             while (await reader.ReadAsync().ConfigureAwait(false))
@@ -1153,6 +1154,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     break;
                 }
                 if (reader.NodeType != System.Xml.XmlNodeType.Element) continue;
+                // Only the children the select names (sx-gc-eq-801: select="ProteinEntry" was
+                // handed a <Database> first, and its xsl:break ended the iteration).
+                if (!StreamedChildMatches(childTest, reader))
+                {
+                    if (!reader.IsEmptyElement)
+                        await SkipStreamingSubtreeAsync(reader, reader.Depth, ct).ConfigureAwait(false);
+                    continue;
+                }
 
                 var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
                 position++;
