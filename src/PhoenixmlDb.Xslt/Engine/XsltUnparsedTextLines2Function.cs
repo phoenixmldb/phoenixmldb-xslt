@@ -57,14 +57,14 @@ internal sealed class XsltUnparsedTextLines2Function : PhoenixmlDb.XQuery.Ast.XQ
 
         try
         {
-            var policyText = _context.ResolveUnparsedTextViaPolicy(href, encodingName);
+            var policyText = _context.ResolveUnparsedTextViaPolicy(UnparsedTextHelper.Absolute(href, _context), encodingName);
             if (policyText != null)
             {
                 UnparsedTextHelper.ValidateTextContent(policyText);
                 return UnparsedTextHelper.SplitLines(policyText);
             }
 
-            var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
+            var filePath = UnparsedTextHelper.ResolveFilePath(href, UnparsedTextHelper.StaticBase(_context));
             if (filePath != null)
             {
                 var text = await System.IO.File.ReadAllTextAsync(filePath, encoding).ConfigureAwait(false);
@@ -72,10 +72,11 @@ internal sealed class XsltUnparsedTextLines2Function : PhoenixmlDb.XQuery.Ast.XQ
                 return UnparsedTextHelper.SplitLines(text);
             }
         }
-        catch (IOException)
+        catch (IOException ex)
         {
-            // Return empty for inaccessible resources
+            throw UnparsedTextHelper.CannotRetrieve(href, ex);
         }
-        return null;
+        // Not found (or not a readable file): FOUT1170, never the empty sequence.
+        throw UnparsedTextHelper.CannotRetrieve(href);
     }
 }

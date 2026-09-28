@@ -23,21 +23,59 @@ internal static class UnparsedTextHelper
 {
     internal static string? ResolveFilePath(string href, Uri? baseUri)
     {
-        if (Uri.TryCreate(href, UriKind.Absolute, out var absUri) && absUri.IsFile)
-            return absUri.LocalPath;
+        // An EXISTING file or null — for an absolute URI too. Returning the path unchecked made
+        // unparsed-text-available answer true for any absolute file URI.
+        if (Uri.TryCreate(href, UriKind.Absolute, out var absUri))
+            return absUri.IsFile && System.IO.File.Exists(absUri.LocalPath) ? absUri.LocalPath : null;
 
         if (baseUri != null)
         {
+            // A relative URI resolves against the base and nothing else. It used to fall back to
+            // the process's CURRENT DIRECTORY when not found there, which could quietly read an
+            // unrelated file of the same name.
             var resolved = new Uri(baseUri, href);
-            if (resolved.IsFile && System.IO.File.Exists(resolved.LocalPath))
-                return resolved.LocalPath;
+            return resolved.IsFile && System.IO.File.Exists(resolved.LocalPath) ? resolved.LocalPath : null;
         }
 
-        if (System.IO.File.Exists(href))
-            return href;
-
-        return null;
+        // No base URI at all (a stylesheet loaded from a string): the current directory is the
+        // only reference point there is.
+        return System.IO.File.Exists(href) ? href : null;
     }
+
+    /// <summary>
+    /// The base a relative URI resolves against: the static base URI of the MODULE making the
+    /// call — what static-base-uri() reports — not the principal stylesheet's.
+    /// </summary>
+    /// <remarks>
+    /// All six unparsed-text functions used the principal stylesheet's base, so
+    /// unparsed-text('VERSION') in an included module read the VERSION file next to the MAIN
+    /// stylesheet (xslt#195: XSpec 4.1 moved its version lookup into src/common/ beside VERSION,
+    /// and printed "XSpec v"). static-base-uri() in the same module was already right.
+    /// </remarks>
+    internal static Uri? StaticBase(DefaultXsltExecutionContext context)
+        => context.StaticBaseUri is { } s && Uri.TryCreate(s, UriKind.Absolute, out var u)
+            ? u
+            : context._stylesheet.BaseUri;
+
+    /// <summary>
+    /// <paramref name="href"/> made absolute against <see cref="StaticBase"/>, so the resource
+    /// policy checks and a custom resolver see the resource actually being read rather than a bare
+    /// relative name.
+    /// </summary>
+    internal static string Absolute(string href, DefaultXsltExecutionContext context)
+    {
+        if (Uri.TryCreate(href, UriKind.Absolute, out var abs))
+            return abs.AbsoluteUri;
+        return StaticBase(context) is { } b ? new Uri(b, href).AbsoluteUri : href;
+    }
+
+    /// <summary>
+    /// FOUT1170: the resource cannot be retrieved. The reading functions returned the empty
+    /// sequence instead, so a missing file became "" and hid whatever made it go missing
+    /// (xslt#195: it hid the wrong base URI above).
+    /// </summary>
+    internal static XsltException CannotRetrieve(string href, Exception? cause = null)
+        => new($"FOUT1170: Cannot retrieve the resource '{href}'" + (cause is null ? "" : $": {cause.Message}"));
 
     /// <summary>
     /// Checks that text does not contain characters forbidden in XML (NUL U+0000).
