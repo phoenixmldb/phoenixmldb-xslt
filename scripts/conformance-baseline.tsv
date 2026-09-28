@@ -327,7 +327,7 @@ prod/prod-BoundarySpaceDecl	28	28
 prod/prod-CastableExpr	915	953
 prod/prod-CastExpr	2717	2764
 prod/prod-CastExpr.derived	123	159
-prod/prod-CastExpr.schema	52	130
+prod/prod-CastExpr.schema	49	130
 prod/prod-Comment	45	45
 prod/prod-CompAttrConstructor	126	132
 prod/prod-CompCommentConstructor	27	28
