@@ -340,6 +340,52 @@ internal sealed partial class DefaultXsltExecutionContext
     /// implementation. Conservative: only matches the common cases (null = default
     /// children, single child-axis step, child step wrapped in a PathExpression).
     /// </summary>
+    /// <summary>
+    /// The node test of a select that <see cref="IsConsumingChildSelect"/> accepted; null for a
+    /// select-less apply-templates, which means child::node().
+    /// </summary>
+    private static PhoenixmlDb.XQuery.Ast.NodeTest? StreamedChildTest(XQueryExpression? select) => select switch
+    {
+        PhoenixmlDb.XQuery.Ast.StepExpression step => step.NodeTest,
+        PhoenixmlDb.XQuery.Ast.PathExpression { Steps.Count: 1 } path
+            when path.Steps[0] is PhoenixmlDb.XQuery.Ast.StepExpression only => only.NodeTest,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Whether the node the streamed reader is on is selected by a child step with this test.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IsConsumingChildSelect"/> admits ANY single child step — a name, *, node(),
+    /// text() — and the streamed consumers then ignored which. So iterate select="ProteinEntry"
+    /// visited every child element: the first was &lt;Database&gt;, its test was false, xsl:break
+    /// ended the iteration, and W3C sx-gc-eq-801 produced nothing.
+    /// </remarks>
+    private static bool StreamedChildMatches(PhoenixmlDb.XQuery.Ast.NodeTest? test, System.Xml.XmlReader reader)
+    {
+        if (test is null)
+            return true;
+        var kind = reader.NodeType switch
+        {
+            System.Xml.XmlNodeType.Element => XdmNodeKind.Element,
+            System.Xml.XmlNodeType.Text or System.Xml.XmlNodeType.CDATA
+                or System.Xml.XmlNodeType.Whitespace or System.Xml.XmlNodeType.SignificantWhitespace => XdmNodeKind.Text,
+            System.Xml.XmlNodeType.Comment => XdmNodeKind.Comment,
+            System.Xml.XmlNodeType.ProcessingInstruction => XdmNodeKind.ProcessingInstruction,
+            _ => XdmNodeKind.None,
+        };
+        return test switch
+        {
+            // A name test selects elements only (the principal node kind of the child axis).
+            PhoenixmlDb.XQuery.Ast.NameTest name => kind == XdmNodeKind.Element && StridingNameTestMatchesReader(name, reader),
+            PhoenixmlDb.XQuery.Ast.KindTest { Kind: XdmNodeKind.None } => true,   // node()
+            PhoenixmlDb.XQuery.Ast.KindTest k when k.Kind != kind => false,
+            PhoenixmlDb.XQuery.Ast.KindTest { Name: { } elementName } when kind == XdmNodeKind.Element
+                => StridingNameTestMatchesReader(elementName, reader),
+            _ => true,
+        };
+    }
+
     private static bool IsConsumingChildSelect(XQueryExpression? select)
     {
         if (select == null) return true; // null select = default children

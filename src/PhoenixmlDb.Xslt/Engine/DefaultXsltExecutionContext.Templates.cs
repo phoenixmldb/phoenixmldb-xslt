@@ -169,7 +169,7 @@ internal sealed partial class DefaultXsltExecutionContext
             && !_streamingDispatchElementMaterialized
             && IsConsumingChildSelect(select))
         {
-            await ApplyTemplatesStreamingAsync(mode, withParams).ConfigureAwait(false);
+            await ApplyTemplatesStreamingAsync(select, mode, withParams).ConfigureAwait(false);
             return;
         }
 
@@ -1744,8 +1744,11 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <see cref="_streamingDeferReadOnNextIteration"/> so the streaming processor's
     /// outer loop can process the EndElement itself (close any deferred parent tag).
     /// </summary>
-    private async ValueTask ApplyTemplatesStreamingAsync(QName? mode, List<XsltWithParam> withParams)
+    private async ValueTask ApplyTemplatesStreamingAsync(XQueryExpression? select, QName? mode, List<XsltWithParam> withParams)
     {
+        // Which children the select names. This driver used to receive no select at all, so
+        // apply-templates select="foo" processed every child.
+        var childTest = StreamedChildTest(select);
         var reader = _activeStreamingReader!;
         var ct = _activeStreamingCancellationToken;
         var parentDepth = reader.Depth;
@@ -1772,6 +1775,13 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 _streamingDeferReadOnNextIteration = true;
                 break;
+            }
+
+            if (!StreamedChildMatches(childTest, reader))
+            {
+                if (reader.NodeType == System.Xml.XmlNodeType.Element && !reader.IsEmptyElement)
+                    await SkipStreamingSubtreeAsync(reader, reader.Depth, ct).ConfigureAwait(false);
+                continue;
             }
 
             switch (reader.NodeType)
