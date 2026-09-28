@@ -711,8 +711,25 @@ internal sealed class StreamingXmlProcessor
                         }
                         else
                         {
+                            var positionBeforeDispatch = reader is PeekableXmlReader beforeReader ? beforeReader.Position : -1;
                             wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
                                 .ConfigureAwait(false);
+
+                            // A matched template that never read into this element's children did
+                            // not ask for them, so the loop must not process them (#180). Only an
+                            // EMPTY body used to suppress; `<xsl:template match="a"><A/></xsl:template>`
+                            // streamed as <A/><b/> — the built-in rule ran on children nobody had
+                            // requested. A body that consumed them moved the reader; one that left
+                            // them to the loop on purpose (xsl:copy's deferred close) did not, and
+                            // is handled by the same rule: its tag stays open and is closed at
+                            // the element's end, with nothing inside it, exactly as unstreamed.
+                            if (!wasSuppressed && !isEmptyElement
+                                && _context._lastDispatchRanTemplateBodyLive
+                                && !_context._streamingSubtreeBufferConsumed
+                                && !_context._streamingDeferReadOnNextIteration
+                                && reader is PeekableXmlReader afterReader
+                                && afterReader.Position == positionBeforeDispatch)
+                                wasSuppressed = true;
                         }
 
                         // Subtree-buffer fallback: MatchAndExecute consumed the entire

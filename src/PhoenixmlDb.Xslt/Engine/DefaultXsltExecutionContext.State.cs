@@ -431,6 +431,13 @@ internal sealed partial class DefaultXsltExecutionContext
     internal (NodeId Id, long Position)? _streamedStartTag;
 
     /// <summary>
+    /// Set by the streaming dispatch when a MATCHED template's body ran live against the element
+    /// (not buffered, not deferred, not a built-in rule). The loop uses it to decide whether the
+    /// element's children were left unrequested (#180).
+    /// </summary>
+    internal bool _lastDispatchRanTemplateBodyLive;
+
+    /// <summary>
     /// fn:has-children() for a shallow streamed element, answered by looking one event ahead; null
     /// when this element is not the one whose start tag the live reader is on. Whitespace that
     /// xsl:strip-space removes is already filtered out by the reader, so it is not counted.
