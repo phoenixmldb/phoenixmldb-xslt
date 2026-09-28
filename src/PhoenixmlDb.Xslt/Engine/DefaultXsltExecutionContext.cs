@@ -4975,8 +4975,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             string s => s.Length > 0,
             Xdm.XsUntypedAtomic ua => ua.Value.Length > 0,
             Xdm.XsAnyUri uri => uri.Value.Length > 0,
+            // xs:string's subtypes (xs:NCName, xs:language, …): a non-empty value is true. Missing
+            // here raised FORG0006 once prefix-from-QName returned the xs:NCName the spec
+            // requires (xslt#191).
+            Xdm.XsTypedString ts => ts.Value.Length > 0,
             int i => i != 0,
             long l => l != 0,
+            // The XQuery engine's copy of this switch had these; this one did not, so
+            // `test="xs:short(1)"` or `test="xs:float(1)"` raised FORG0006 here too.
+            Xdm.XsTypedInteger ti => ti.Value != 0,
+            float f => f != 0 && !float.IsNaN(f),
             double d => d != 0 && !double.IsNaN(d),
             decimal m => m != 0,
             System.Numerics.BigInteger bi => !bi.IsZero,
