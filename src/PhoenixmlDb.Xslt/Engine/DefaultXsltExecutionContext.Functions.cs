@@ -330,6 +330,7 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         // Record the start tag being dispatched, so fn:has-children() in the match pattern or the
         // body can look ahead for this element — and only this one (BUGS #92).
+        _lastDispatchRanTemplateBodyLive = false;
         var savedStartTag = _streamedStartTag;
         _streamedStartTag = node is Xdm.Nodes.XdmElement
             && !_streamingDispatchElementMaterialized
@@ -437,6 +438,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // processor can skip child events.
                 var isSuppression = template.Body.Instructions.Count == 0
                     && node is Xdm.Nodes.XdmElement;
+                _lastDispatchRanTemplateBodyLive = true;
 
                 var savedTemplate = _currentTemplate;
                 var savedMode = _currentMode;
