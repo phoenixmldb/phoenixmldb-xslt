@@ -1751,6 +1751,12 @@ internal sealed partial class DefaultXsltExecutionContext
         var parentDepth = reader.Depth;
         var position = 0;
 
+        // <a/> has no children and no end tag to stop at. Reading on consumed the element's
+        // following siblings as its children (#181: <r><a/><a><b/></a></r> nested the second a
+        // inside the first). Nothing to do; the loop's self-closing branch handles the rest.
+        if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.IsEmptyElement)
+            return;
+
         // Forward these with-params into the streamed dispatch. Each node this loop
         // dispatches (and any built-in shallow-copy recursion underneath it) binds
         // this ambient set (si-apply-templates-008/009). Restored on exit.
@@ -1797,6 +1803,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // Two drivers, one of them implementing the rule — the same shape as the
                     // ancestor chain, and in the same pair of files.
                     var deferredBefore = _streamingDeferredExecutions.Count;
+                    var openBeforeDispatch = _streamingOpenElements.Count;
                     try
                     {
                         await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
@@ -1816,7 +1823,9 @@ internal sealed partial class DefaultXsltExecutionContext
                     // After the template runs, the deferred-close stack may contain the
                     // element's open tag (if shallow-copy / xsl:copy was used). Close it
                     // now, since we already consumed the element's full subtree.
-                    if (_streamingOpenElements.Count > 0)
+                    // Only if THIS dispatch opened it: a child whose template built a complete
+                    // result opened nothing, and popping closed the enclosing element (#181).
+                    if (_streamingOpenElements.Count > openBeforeDispatch)
                     {
                         var qn = _streamingOpenElements.Pop();
                         WriteStreamingEndTag(qn);

@@ -743,6 +743,12 @@ internal sealed class StreamingXmlProcessor
                             break;
                         }
 
+                        // Close a tag at this element's end only if its dispatch opened one. Both
+                        // close sites below popped whenever the stack was non-empty, so an element
+                        // whose template built a complete result closed its PARENT's tag instead:
+                        // <r><a></a><c/></r> streamed as <r><A/></r><c/> (#181).
+                        current.LeftTagOpen = _context._streamingOpenElements.Count > openElementsBeforeMatch;
+
                         if (!isEmptyElement)
                         {
                             ancestorStack.Push(current);
@@ -769,7 +775,7 @@ internal sealed class StreamingXmlProcessor
                                 await FireWatchersEndElement(current.LocalName).ConfigureAwait(false);
                             }
 
-                            if (_context._streamingOpenElements.Count > 0)
+                            if (current.LeftTagOpen && _context._streamingOpenElements.Count > 0)
                             {
                                 var qname = _context._streamingOpenElements.Pop();
                                 _context.WriteStreamingEndTag(qname);
@@ -856,7 +862,8 @@ internal sealed class StreamingXmlProcessor
 
                             // Write the deferred closing tag for elements opened by shallow-copy.
                             // Skip this for suppressed elements — they never wrote an open tag.
-                            if (!wasSuppressedElement && !insideSuppressed && _context._streamingOpenElements.Count > 0)
+                            if (!insideSuppressed && closingContext.LeftTagOpen
+                                && _context._streamingOpenElements.Count > 0)
                             {
                                 var qname = _context._streamingOpenElements.Pop();
                                 _context.WriteStreamingEndTag(qname);
@@ -2718,6 +2725,7 @@ internal sealed class StreamingXmlProcessor
         ctx.NodeKind = default;
         ctx.NodeId = default;
         ctx.Depth = 0;
+        ctx.LeftTagOpen = false;
         _nodeContextPool.Push(ctx);
     }
 
