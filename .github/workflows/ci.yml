@@ -157,12 +157,9 @@ jobs:
             10.0.x
           dotnet-quality: 'preview'
 
-      # ONE test is excluded, on Windows only: #197. A 100-deep recursive template exhausts the
-      # 1 MB Windows thread stack under .NET 8. That's a real engine defect, found by this job
-      # on its first run, not flakiness. Remove the filter with its fix.
       - name: Test
         run: |
-          dotnet test tests/PhoenixmlDb.Xslt.Tests -c Release --filter "FullyQualifiedName!=PhoenixmlDb.Xslt.Tests.TailCallTemplateTests.TemplateWithAs_StillCorrect"
+          dotnet test tests/PhoenixmlDb.Xslt.Tests -c Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet test tests/PhoenixmlDb.Xslt.LanguageServer.Tests -c Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

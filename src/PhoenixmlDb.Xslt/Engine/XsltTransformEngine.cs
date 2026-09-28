@@ -168,7 +168,10 @@ public sealed class XsltTransformEngine
     public Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options = null)
         => TransformAsync(source, options, null);
 
-    internal async Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
+    internal Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
+        => LargeStack.Run(() => TransformOnCurrentStackAsync(source, options, nodeStore));
+
+    private async Task<string> TransformOnCurrentStackAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
     {
         ArgumentNullException.ThrowIfNull(source);
         options ??= new XsltTransformOptions();
@@ -958,7 +961,10 @@ public sealed class XsltTransformEngine
     /// serialized output. Used by fn:transform with delivery-format='raw'.
     /// Function items, maps, and atomic values are preserved as-is.
     /// </summary>
-    internal async Task<object?> TransformRawAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
+    internal Task<object?> TransformRawAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
+        => LargeStack.Run(() => TransformRawOnCurrentStackAsync(source, options, nodeStore));
+
+    private async Task<object?> TransformRawOnCurrentStackAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
     {
         ArgumentNullException.ThrowIfNull(source);
         options ??= new XsltTransformOptions();
@@ -1317,7 +1323,13 @@ public sealed class XsltTransformEngine
     /// inputs (Martin Honnen 2026-05-21 JSON-chaining repro: lookup on
     /// XdmDocument because the map was replaced with a synthetic <c>&lt;empty/&gt;</c>).
     /// </summary>
-    internal async Task<object?> TransformRawWithInitialContextItemAsync(
+    internal Task<object?> TransformRawWithInitialContextItemAsync(
+        object initialContextItem,
+        XsltTransformOptions? options,
+        XdmInMemoryStore nodeStore)
+        => LargeStack.Run(() => TransformRawWithInitialContextItemOnCurrentStackAsync(initialContextItem, options, nodeStore));
+
+    private async Task<object?> TransformRawWithInitialContextItemOnCurrentStackAsync(
         object initialContextItem,
         XsltTransformOptions? options,
         XdmInMemoryStore nodeStore)
@@ -1452,7 +1464,10 @@ public sealed class XsltTransformEngine
         return FinalizeOutput(serialized, rawOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
     }
 
-    internal async Task<object?> TransformRawAsync(string xmlSource, XsltTransformOptions? options = null)
+    internal Task<object?> TransformRawAsync(string xmlSource, XsltTransformOptions? options = null)
+        => LargeStack.Run(() => TransformRawOnCurrentStackAsync(xmlSource, options));
+
+    private async Task<object?> TransformRawOnCurrentStackAsync(string xmlSource, XsltTransformOptions? options)
     {
         ArgumentNullException.ThrowIfNull(xmlSource);
         if (xmlSource.Length > 0 && xmlSource[0] == '\uFEFF')
@@ -4754,7 +4769,10 @@ public sealed class XsltTransformEngine
     /// Transforms an XML string using the stylesheet.
     /// </summary>
 
-    public async Task<string> TransformAsync(string xmlSource, XsltTransformOptions? options = null)
+    public Task<string> TransformAsync(string xmlSource, XsltTransformOptions? options = null)
+        => LargeStack.Run(() => TransformOnCurrentStackAsync(xmlSource, options));
+
+    private async Task<string> TransformOnCurrentStackAsync(string xmlSource, XsltTransformOptions? options)
     {
         ArgumentNullException.ThrowIfNull(xmlSource);
         // Strip leading BOM character (U+FEFF) — XmlDocument.LoadXml rejects it
@@ -4914,7 +4932,10 @@ public sealed class XsltTransformEngine
     /// requires the full output buffer and is NOT applied on this path — the raw
     /// per-event serialized output is what reaches the caller's writer.
     /// </remarks>
-    public async Task TransformAsync(XmlReader input, TextWriter output, XsltTransformOptions? options = null)
+    public Task TransformAsync(XmlReader input, TextWriter output, XsltTransformOptions? options = null)
+        => LargeStack.Run(() => TransformOnCurrentStackAsync(input, output, options));
+
+    private async Task TransformOnCurrentStackAsync(XmlReader input, TextWriter output, XsltTransformOptions? options)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(output);
