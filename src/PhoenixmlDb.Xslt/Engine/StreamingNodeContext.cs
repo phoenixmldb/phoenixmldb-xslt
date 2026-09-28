@@ -46,6 +46,13 @@ internal sealed class StreamingNodeContext
     public int Position { get; set; } = 1;
 
     /// <summary>
+    /// Whether dispatching this element left an output tag open (built-in shallow-copy or
+    /// xsl:copy), for the loop to close at the element's end. A template that builds its own
+    /// complete result opens nothing, and closing a tag for it closed an ANCESTOR's (#181).
+    /// </summary>
+    public bool LeftTagOpen { get; set; }
+
+    /// <summary>
     /// Materialized XdmAttribute instances stashed here so the processor's cleanup path
     /// can return them to its pool. Populated by <c>MaterializeElement</c>, drained in
     /// <c>CleanupStreamingNode</c>. Null until materialization runs.
