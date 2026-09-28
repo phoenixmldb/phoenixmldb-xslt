@@ -52,10 +52,10 @@ internal sealed class XsltUnparsedTextAvailable2Function : PhoenixmlDb.XQuery.As
 
         try
         {
-            if (!_context.IsUnparsedTextAvailableViaPolicy(href))
+            if (!_context.IsUnparsedTextAvailableViaPolicy(UnparsedTextHelper.Absolute(href, _context)))
                 return ValueTask.FromResult<object?>(false);
 
-            var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
+            var filePath = UnparsedTextHelper.ResolveFilePath(href, UnparsedTextHelper.StaticBase(_context));
             return ValueTask.FromResult<object?>(filePath != null);
         }
         catch (IOException)

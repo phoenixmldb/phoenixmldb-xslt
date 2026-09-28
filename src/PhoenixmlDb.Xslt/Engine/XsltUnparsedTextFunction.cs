@@ -40,14 +40,14 @@ internal sealed class XsltUnparsedTextFunction : PhoenixmlDb.XQuery.Ast.XQueryFu
         try
         {
             // Check policy and try custom resolver first
-            var policyText = _context.ResolveUnparsedTextViaPolicy(href, null);
+            var policyText = _context.ResolveUnparsedTextViaPolicy(UnparsedTextHelper.Absolute(href, _context), null);
             if (policyText != null)
             {
                 UnparsedTextHelper.ValidateTextContent(policyText);
                 return policyText;
             }
 
-            var filePath = UnparsedTextHelper.ResolveFilePath(href, _context._stylesheet.BaseUri);
+            var filePath = UnparsedTextHelper.ResolveFilePath(href, UnparsedTextHelper.StaticBase(_context));
             if (filePath != null)
             {
                 var text = await UnparsedTextHelper.ReadWithEncodingDetectionAsync(filePath).ConfigureAwait(false);
@@ -55,10 +55,11 @@ internal sealed class XsltUnparsedTextFunction : PhoenixmlDb.XQuery.Ast.XQueryFu
                 return text;
             }
         }
-        catch (IOException)
+        catch (IOException ex)
         {
-            // unparsed-text returns error for inaccessible resources
+            throw UnparsedTextHelper.CannotRetrieve(href, ex);
         }
-        return null;
+        // Not found (or not a readable file): FOUT1170, never the empty sequence.
+        throw UnparsedTextHelper.CannotRetrieve(href);
     }
 }
