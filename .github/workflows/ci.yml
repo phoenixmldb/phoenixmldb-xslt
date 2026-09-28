@@ -137,6 +137,68 @@ jobs:
           dotnet test tests/PhoenixmlDb.Xslt.Tests -c Release
           dotnet test tests/PhoenixmlDb.Xslt.LanguageServer.Tests -c Release
 
+  # Windows. Every other job here is ubuntu-latest, and we ship a Windows CLI: until this job
+  # existed, Windows-only defects reached us only through Martin Honnen. #179 is the example.
+  # The CLI wrote stdout in the console's legacy code page, which corrupted non-ASCII
+  # transformation output on redirect. .NET on Unix always writes UTF-8, so no Linux job
+  # could ever see it.
+  #
+  # Not yet a `publish` dependency. It is added first to measure what Windows shows; see the
+  # PR that introduced it.
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+          dotnet-quality: 'preview'
+
+      - name: Test
+        run: |
+          dotnet test tests/PhoenixmlDb.Xslt.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test tests/PhoenixmlDb.Xslt.LanguageServer.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # #179 on the platform where it happens. Redirect through cmd, not PowerShell:
+      # PowerShell's `>` decodes and re-encodes the child's output, which would hide the raw
+      # bytes this is checking.
+      #
+      # The published pre-fix 2.2.0 runs alongside as a control. If it ALSO writes UTF-8 on
+      # this runner, the runner's default code page masks the bug, and a pass here would prove
+      # nothing. The step says so instead of passing quietly: a check that cannot fail is
+      # worse than none (BUGS #107).
+      - name: CLI writes UTF-8 on Windows (#179)
+        run: |
+          dotnet build src/PhoenixmlDb.Xslt.Cli -c Release -f net10.0 --nologo -v q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $d = Join-Path $env:RUNNER_TEMP enc; New-Item -ItemType Directory -Force $d | Out-Null
+          Set-Content -Encoding utf8NoBOM "$d\t.xsl" '<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"><xsl:output method="text"/><xsl:template match="/">Stra&#223;en &#8594; ok</xsl:template></xsl:stylesheet>'
+          Set-Content -Encoding utf8NoBOM "$d\in.xml" '<in/>'
+          $want = [byte[]](0x53,0x74,0x72,0x61,0xC3,0x9F,0x65,0x6E,0x20,0xE2,0x86,0x92,0x20,0x6F,0x6B)
+          function Bytes($exe, $out) {
+            cmd /c "`"$exe`" `"$d\t.xsl`" `"$d\in.xml`" < NUL > `"$out`" 2> `"$out.err`""
+            $b = [IO.File]::ReadAllBytes($out)
+            ($b | Select-Object -First $want.Length | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
+          }
+          $wantHex = ($want | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
+          $cand = Bytes "src\PhoenixmlDb.Xslt.Cli\bin\Release\net10.0\xslt.exe" "$d\cand.txt"
+          dotnet tool install --tool-path "$d\old" xslt --version 2.2.0 | Out-Null
+          $old  = Bytes "$d\old\xslt.exe" "$d\old.txt"
+          Write-Host "expected (UTF-8): $wantHex"
+          Write-Host "candidate:        $cand"
+          Write-Host "2.2.0 (pre-fix):  $old"
+          if ($cand -ne $wantHex) { Write-Host "::error::CLI output is not UTF-8 on Windows (#179)"; exit 1 }
+          if ($old -eq $wantHex) {
+            Write-Host "::warning::The pre-fix 2.2.0 also wrote UTF-8 on this runner, so its default code page masks #179 and this check proves nothing here."
+          } else {
+            Write-Host "Discriminating: the pre-fix CLI produced different bytes on this runner, so the pass means the fix works."
+          }
+
   publish:
     needs: [build, test]
     if: startsWith(github.ref, 'refs/tags/v')
