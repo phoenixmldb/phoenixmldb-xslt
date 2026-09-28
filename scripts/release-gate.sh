@@ -159,8 +159,10 @@ out, cases, base, cand, accept = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv
 MASKS = [
     (re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?'), 'DATETIME'),
     # generate-id(): Saxon-style d12e3, and this engine's hash form (d22be8d8), which differs on
-    # every compile and so between two runs of the SAME version.
-    (re.compile(r'\b(d\d+e\d+|d[0-9a-f]{6,}|R_[A-Za-z0-9]+|id[A-Za-z0-9_-]{6,}|N[0-9A-F]{6,})\b'), 'GENID'),
+    # every compile and so between two runs of the SAME version. Hash ids drop leading zeros,
+    # so they can be as short as d + 3 hex (d0c711 came out as dc711c); require a digit so
+    # English words spelt from a-f (deface, decade) are not masked.
+    (re.compile(r'\b(d\d+e\d+|d(?=[0-9a-f]*[0-9])[0-9a-f]{3,}|R_[A-Za-z0-9]+|id[A-Za-z0-9_-]{6,}|N[0-9A-F]{6,})\b'), 'GENID'),
     (re.compile(r'PhoenixmlDb (XSLT|XQuery)[^<\n"]*?\d+\.\d+\.\d+[^<\n"]*'), 'ENGINEVERSION'),
     (re.compile(r'\b' + re.escape(base) + r'\b'), 'VER'),
 ]

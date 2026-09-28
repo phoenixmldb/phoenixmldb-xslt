@@ -1,5 +1,30 @@
 # Release History
 
+## 2.4.1 — 2026-09-28
+
+Takes **PhoenixmlDb.XQuery 2.4.1**. A patch for a regression in 2.4.0 that **broke XSpec
+compilation** (#191, reported by Martin Honnen two hours after 2.4.0 shipped).
+
+### Fixed
+
+- **A string subtype had no effective boolean value** (#191, #192, and xquery#89).
+  `if (xs:NCName('a'))` raised `FORG0006` instead of returning true. The hole predates 2.4.0, but
+  it became reachable when 2.4.0 correctly made `prefix-from-QName` return `xs:NCName`. XSpec's
+  compiler tests a prefix in an `if`, so every XSpec suite stopped compiling. Both engines had
+  their own copy of the gap: XSLT evaluates `xsl:if` and `xsl:when` tests itself. That copy was
+  also missing float and typed-integer cases, so `test="xs:float(1)"` or `test="xs:short(1)"`
+  raised `FORG0006` in XSLT only. Both are fixed.
+- From XQuery 2.4.1: string-subtype **map keys**, **`fn:translate`** and **`fn:collation-key`**.
+
+### Verified
+
+The release gate (`scripts/release-gate.sh`), new with this release, compiles XSpec's tutorial
+suites, runs Martin Honnen's repros and runs a sample of DocBook xslTNG's own test documents, on
+the previous release and on this candidate. Pointed at 2.2.0 → 2.4.0, it flags all 13 XSpec
+suites as broken. On this release, with 2.4.0 as baseline, the gate passed: **all 13 XSpec suites that 2.4.0 broke
+compile again**, with 0 regressions and 0 output differences across the rest of the 99 cases.
+The compiled tutorial is identical to 2.2.0's apart from one generated id.
+
 ## 2.4.0 — 2026-09-28
 
 Takes **PhoenixmlDb.XQuery 2.4.0** and **PhoenixmlDb.Core 2.0.0**. There is no Xslt 2.3.0; the
