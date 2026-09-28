@@ -143,8 +143,8 @@ jobs:
   # transformation output on redirect. .NET on Unix always writes UTF-8, so no Linux job
   # could ever see it.
   #
-  # Not yet a `publish` dependency. It is added first to measure what Windows shows; see the
-  # PR that introduced it.
+  # A `publish` dependency: a red Windows run stops a tag reaching nuget.org, the same as Linux.
+  # Made so once the first measurement was clean and its one finding (#197) was fixed.
   test-windows:
     runs-on: windows-latest
     steps:
@@ -203,7 +203,7 @@ jobs:
           }
 
   publish:
-    needs: [build, test]
+    needs: [build, test, test-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
