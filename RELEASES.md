@@ -1,5 +1,57 @@
 # Release History
 
+## 2.4.0 — 2026-09-28
+
+Takes **PhoenixmlDb.XQuery 2.4.0** and **PhoenixmlDb.Core 2.0.0**. There is no Xslt 2.3.0; the
+engines went from 2.2.0 straight to 2.4.0 to keep the lockstep train together.
+
+XQuery 2.4.0 brings deliberate behaviour changes that reach stylesheets too: `fn:namespace-uri`
+returns `xs:anyURI`, and `fn:distinct-values` treats an `xs:anyURI` and an equal `xs:string` as
+one value. See XQuery's own 2.4.0 notes. This release carries the matching fix: a stylesheet
+function parameter declared `xs:string` now accepts an `xs:anyURI` by promotion (#188). Without
+it, passing `namespace-uri()` to such a function failed.
+
+### Fixed — streaming
+
+- **A streamed `xsl:message` lost the items of an `xsl:for-each` in its content** (#175, #148).
+- **Templates below an unmatched element did not fire, or could not read their own text** (#176).
+- **A buffered matched subtree lost its ancestors** (#177).
+- **`has-children()` always answered false** (#178).
+- **`xsl:strip-space` was not applied to streamed input, and `xml:space` was ignored** (#183).
+- **An element whose template builds its own complete result could close its parent's output
+  tag early**, whether written `<a></a>` or `<a/>` (#184, #181).
+- **A streamed element's children were processed even when its template never asked for them**
+  (#185, #180).
+- **`sx-gc-eq-801`**, the last open case of #96 (#186). That closes #96: the three streaming
+  sets that fell below their 1.6.10 scores are all back.
+
+### Fixed — `fn:transform` (Martin Honnen, #173)
+
+Two defects, one in each of the two `fn:transform` implementations:
+
+- **From XSLT, `source-location` was never read**, so the transform ran against an empty
+  document. It is now honoured, `source-node` still takes precedence when both are given, and a
+  relative location resolves against the stylesheet's base URI.
+- **From XQuery, `delivery-format='raw'` returned nothing** whenever the inner template
+  constructed nodes, with exit code 0. It now returns them.
+
+### Fixed — CLI
+
+**On Windows, `xslt` wrote stdout in the console's legacy code page** (#179, #182). No CLI set
+`Console.OutputEncoding`. The visible symptom was `␦` in `--trace` output where `→` belongs. The
+serious one was `xslt sheet.xsl in.xml > out.xml` writing code-page bytes under a UTF-8
+declaration, which silently corrupted non-ASCII output. Output is now UTF-8 with no BOM. Our CI is
+Linux-only and cannot reproduce this, so confirmation comes from Windows users.
+
+### Conformance
+
+**W3C XSLT 3.0: 10,397 / 10,839 (95.92%)**, up 13 from 2.2.0's 10,384 on the same denominator.
+Measured with the XQuery source identical to the 2.4.0 library.
+
+The per-set ratchet in `scripts/conformance-baseline.tsv` is raised to this measurement (+62
+across 22 sets). It hadn't been raised since before 2.2.0, so most of that is earlier work that
+was never recorded, not this release. The xqts rows were not re-measured and are unchanged.
+
 ## 2.2.0 — 2026-09-25
 
 Takes **PhoenixmlDb.XQuery 2.2.0** and **PhoenixmlDb.Core 2.0.0**.

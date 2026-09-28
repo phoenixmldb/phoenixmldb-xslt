@@ -1,49 +1,39 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
 
-attr       7s  fixture Successful (18 tests) | 1085/1117 cases 97.1%, 32 failed
-decl       6s  fixture Successful (19 tests) | 1022/1122 cases 91.1%, 100 failed
-type       3s  fixture Successful (9 tests) | 755/766 cases 98.6%, 11 failed
-sandp      1s  fixture Successful (25 tests)
-fn         6s  fixture Successful (35 tests) | 1082/1131 cases 95.7%, 49 failed
-strm1     28s  fixture Successful (37 tests) | 716/729 cases 98.2%, 13 failed
-strm2     22s  fixture Successful (26 tests) | 715/749 cases 95.5%, 34 failed
-strm3     24s  fixture Successful (27 tests) | 883/895 cases 98.7%, 12 failed
-expr       3s  fixture Successful (14 tests) | 637/648 cases 98.3%, 11 failed
-misc      16s  fixture Successful (22 tests) | 1885/1921 cases 98.1%, 36 failed
-insn       9s  fixture Successful (27 tests) | 1548/1594 cases 97.1%, 46 failed
-xqts      79s  fixture Successful (438 tests) | 29731/31379 cases 94.7%, 1648 failed
+attr      58s  fixture Successful (18 tests) | 1092/1117 cases 97.8%, 25 failed
+decl      51s  fixture Successful (20 tests) | 1051/1122 cases 93.7%, 71 failed
+type      38s  fixture Successful (9 tests) | 758/766 cases 99.0%, 8 failed
+sandp     16s  fixture Successful (25 tests)
+fn        55s  fixture Successful (36 tests) | 1092/1297 cases 84.2%, 205 failed
+strm1    312s  fixture Successful (36 tests) | 716/724 cases 98.9%, 8 failed
+strm2    242s  fixture Successful (26 tests) | 722/756 cases 95.5%, 34 failed
+strm3    268s  fixture Successful (26 tests) | 884/894 cases 98.9%, 10 failed
+expr      30s  fixture Successful (14 tests) | 640/648 cases 98.8%, 8 failed
+misc     144s  fixture Successful (22 tests) | 1888/1921 cases 98.3%, 33 failed
+insn      91s  fixture Successful (27 tests) | 1554/1594 cases 97.5%, 40 failed
 per-set GAINS:
-  app/app-FunctxFn: 495 -> 498  (+3)
-  app/app-FunctxFunctx: 611 -> 618  (+7)
-  app/app-spec-examples: 611 -> 618  (+7)
-  fn/fn-in-scope-prefixes: 45 -> 51  (+6)
-  fn/fn-namespace-uri: 26 -> 33  (+7)
-  fn/fn-namespace-uri-for-prefix: 28 -> 29  (+1)
-  fn/fn-node-name: 42 -> 43  (+1)
-  fn/fn-serialize: 155 -> 157  (+2)
-  op/op-intersect: 73 -> 75  (+2)
-  op/op-union: 79 -> 81  (+2)
-  prod/prod-AxisStep: 317 -> 319  (+2)
-  prod/prod-CompNamespaceConstructor: 28 -> 32  (+4)
-  prod/prod-CopyNamespacesDecl: 31 -> 34  (+3)
-  prod/prod-DefaultNamespaceDecl: 54 -> 57  (+3)
-  prod/prod-DirAttributeList: 127 -> 130  (+3)
-  prod/prod-DirectConstructor: 77 -> 79  (+2)
-  prod/prod-DirElemConstructor: 66 -> 69  (+3)
-  prod/prod-DirElemContent: 121 -> 124  (+3)
-  prod/prod-DirElemContent.namespace: 90 -> 114  (+24)
-  prod/prod-EQName: 43 -> 47  (+4)
-  prod/prod-MapConstructor: 38 -> 42  (+4)
-  prod/prod-NamespaceDecl: 27 -> 43  (+16)
-  prod/prod-NameTest: 113 -> 120  (+7)
-  prod/prod-OptionDecl.serialization: 34 -> 36  (+2)
-  ser/method-adaptive: 78 -> 89  (+11)
-  ser/method-html: 49 -> 64  (+15)
-  ser/method-json: 61 -> 65  (+4)
-  ser/method-text: 15 -> 18  (+3)
-  ser/method-xhtml: 27 -> 49  (+22)
-  ser/method-xml: 9 -> 35  (+26)
-  tests/insn/call-template/_call-template-test-set.xml: 37 -> 39  (+2)
+  tests/attr/streamable/_streamable-test-set.xml: 57 -> 63  (+6)
+  tests/decl/accept/_accept-test-set.xml: 46 -> 47  (+1)
+  tests/decl/expose/_expose-test-set.xml: 9 -> 32  (+23)
+  tests/decl/strip-space/_strip-space-test-set.xml: 25 -> 26  (+1)
+  tests/expr/castable/_castable-test-set.xml: 4 -> 7  (+3)
+  tests/fn/current-output-uri/_current-output-uri-test-set.xml: 11 -> 16  (+5)
+  tests/fn/json-to-xml/_json-to-xml-test-set.xml: 45 -> 47  (+2)
+  tests/fn/xml-to-json/_xml-to-json-test-set.xml: 147 -> 150  (+3)
+  tests/insn/analyze-string/_analyze-string-test-set.xml: 52 -> 53  (+1)
+  tests/insn/call-template/_call-template-test-set.xml: 37 -> 40  (+3)
+  tests/insn/result-document/_result-document-test-set.xml: 137 -> 139  (+2)
+  tests/insn/source-document/_source-document-test-set.xml: 36 -> 37  (+1)
+  tests/insn/where-populated/_where-populated-test-set.xml: 25 -> 26  (+1)
+  tests/misc/error/_error-test-set.xml: 497 -> 499  (+2)
+  tests/misc/seqtor/_seqtor-test-set.xml: 71 -> 72  (+1)
+  tests/strm/si-map/_si-map-test-set.xml: 10 -> 11  (+1)
+  tests/strm/si-message/_si-message-test-set.xml: 10 -> 11  (+1)
+  tests/strm/si-where-populated/_si-where-populated-test-set.xml: 19 -> 20  (+1)
+  tests/strm/sx-GeneralComp-eq/_sx-GeneralComp-eq-test-set.xml: 52 -> 53  (+1)
+  tests/type/boolean/_boolean-test-set.xml: 111 -> 112  (+1)
+  tests/type/maps/_maps-test-set.xml: 48 -> 49  (+1)
+  tests/type/string/_string-test-set.xml: 135 -> 136  (+1)
 
-12 chunk(s) in 3m24s — logs in /tmp/claude-1000/xslt-wt-raise/conformance-results
+11 chunk(s) in 21m46s — logs in /repos/phoenixml/phoenixmldb-xslt/conformance-results
