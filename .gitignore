@@ -22,3 +22,4 @@ tests/PhoenixmlDb.Conformance.Tests/TestData/qt3tests/
 # file inside an excluded DIRECTORY, so the contents must be excluded rather than the dir.
 conformance-results/*
 !conformance-results/summary.txt
+release-gate-results/
