@@ -184,7 +184,10 @@ jobs:
           Set-Content -Encoding utf8NoBOM "$d\in.xml" '<in/>'
           $want = [byte[]](0x53,0x74,0x72,0x61,0xC3,0x9F,0x65,0x6E,0x20,0xE2,0x86,0x92,0x20,0x6F,0x6B)
           function Bytes($exe, $out) {
-            cmd /c "`"$exe`" `"$d\t.xsl`" `"$d\in.xml`" < NUL > `"$out`" 2> `"$out.err`""
+            # chcp 1252 gives the console the legacy code page Martin's PowerShell has. The runner's
+            # default is already UTF-8, and the first run of this check showed the pre-fix build
+            # "passing" under it: the check could not tell fixed from broken.
+            cmd /c "chcp 1252 >NUL & `"$exe`" `"$d\t.xsl`" `"$d\in.xml`" < NUL > `"$out`" 2> `"$out.err`""
             $b = [IO.File]::ReadAllBytes($out)
             ($b | Select-Object -First $want.Length | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
           }
@@ -197,7 +200,7 @@ jobs:
           Write-Host "2.2.0 (pre-fix):  $old"
           if ($cand -ne $wantHex) { Write-Host "::error::CLI output is not UTF-8 on Windows (#179)"; exit 1 }
           if ($old -eq $wantHex) {
-            Write-Host "::warning::The pre-fix 2.2.0 also wrote UTF-8 on this runner, so its default code page masks #179 and this check proves nothing here."
+            Write-Host "::error::The pre-fix 2.2.0 also wrote UTF-8 even under chcp 1252, so this check cannot tell fixed from broken. Fix the check before trusting it."; exit 1
           } else {
             Write-Host "Discriminating: the pre-fix CLI produced different bytes on this runner, so the pass means the fix works."
           }
