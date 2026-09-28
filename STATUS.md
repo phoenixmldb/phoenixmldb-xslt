@@ -1,16 +1,16 @@
 # Status
 
-Generated 2026-09-28 14:04 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-28 23:19 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
-| `PhoenixmlDb.XQuery` | 2.3.0 | ? | **repo is at ?, nuget.org has 2.3.0** |
-| `PhoenixmlDb.Xslt` | 2.2.0 | 2.3.0 | **repo is at 2.3.0, nuget.org has 2.2.0** |
-| `xquery4` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
-| `xslt` | 2.2.0 | 2.3.0 | **repo is at 2.3.0, nuget.org has 2.2.0** |
+| `PhoenixmlDb.XQuery` | 2.4.1 | ? | **repo is at ?, nuget.org has 2.4.1** |
+| `PhoenixmlDb.Xslt` | 2.4.1 | 2.4.1 | current |
+| `xquery4` | 2.4.1 | ? | **repo is at ?, nuget.org has 2.4.1** |
+| `xslt` | 2.4.1 | 2.4.1 | current |
 
 ## Open work
 
@@ -18,7 +18,7 @@ Generated 2026-09-28 14:04 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 8 | 0 |
-| phoenixmldb-xslt | 3 | 0 |
+| phoenixmldb-xslt | 5 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -42,11 +42,17 @@ Generated 2026-09-28 14:04 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [199] Recursion-depth limit (1200) counts element construction too: template + LRE recursion stops at ~600 levels
+- [197] Windows/.NET 8: a 100-deep recursive template exhausts the stack (limit claims 1200)
 - [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
 - [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-xslt**
+
+- [196] ci: unit suites and a CLI encoding check on windows-latest
 
 **phoenixmldb-cli**
 
@@ -85,23 +91,16 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10335/10839 (95.35%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 10397/10839 (95.92%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 29742/31061 (95.75%)** across 428 test-sets,
+- **W3C QT3 baseline — 29739/31061 (95.74%)** across 428 test-sets,
   same file, same ratchet.
-- **The denominator moved since the previous baseline revision: QT3 31379 -> 31061.** A percentage
-  change across this revision is partly or wholly cases entering or leaving the count,
-  NOT necessarily the engine. Compare pass counts, not percentages, across this line.
 - **W3C QT3 / XQuery — figure not readable** from
   `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
 
 ## Blocked
 
-- **PhoenixmlDb.Xslt 2.3.0 is tagged, built and tested, but not published.** The
-  publish step fails NuGet trusted-publishing login with HTTP 401. This repo pushes TWO
-  package ids — `PhoenixmlDb.Xslt` and `xslt` — and a policy for one does not cover the
-  other. Needs a nuget.org owner.
 - **`PhoenixmlDb.Xslt.Cli` / `PhoenixmlDb.XQuery.Cli` are at 1.4.10** while the
   library line is 1.7.x. These are a second, older CLI distribution from `phoenixmldb-cli`,
   separate from the `xslt`/`xquery4` tools the engine repos ship.
