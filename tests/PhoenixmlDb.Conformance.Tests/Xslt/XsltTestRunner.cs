@@ -1768,67 +1768,86 @@ public sealed class XsltTestRunner
             var expectedParseable = WrapForParsing(expectedXml.Trim());
 
             // Whitespace-only text is discarded at parse time unless PreserveWhitespace is asked
-            // for, which is why the default comparison cannot see it at all (#140). Opted-in sets
-            // keep it; everything else parses exactly as before.
-            var options = whitespaceSensitive ? LoadOptions.PreserveWhitespace : LoadOptions.None;
-            var actualDoc = XDocument.Parse(actualParseable, options);
-            var expectedDoc = XDocument.Parse(expectedParseable, options);
-
-            // Strip XML declarations — XNode.DeepEquals considers them, but
-            // the presence/absence of <?xml?> is not semantically significant
-            actualDoc.Declaration = null;
-            expectedDoc.Declaration = null;
-
-            // Normalize empty elements: XNode.DeepEquals distinguishes <e/> from <e></e>
-            // but they are semantically identical XML.
-            NormalizeEmptyElements(actualDoc);
-            NormalizeEmptyElements(expectedDoc);
-
-            // Strip unused namespace declarations that engines may propagate differently
-            StripUnusedNamespaces(actualDoc);
-            StripUnusedNamespaces(expectedDoc);
-
-            // Hoist namespace declarations to the root element so that
-            // placement differences (xmlns on parent vs child) don't cause false failures.
-            // In XML, namespace declarations are inherited, so this is semantically equivalent.
-            HoistNamespaceDeclarations(actualDoc);
-            HoistNamespaceDeclarations(expectedDoc);
-
-            // Normalize namespace declaration order (alphabetical by prefix)
-            // XNode.DeepEquals is order-sensitive for attributes/namespaces
-            NormalizeNamespaceOrder(actualDoc);
-            NormalizeNamespaceOrder(expectedDoc);
-
-            // Normalize attribute order (alphabetical by expanded name)
-            // XML attributes are unordered, but XNode.DeepEquals compares in order
-            NormalizeAttributeOrder(actualDoc);
-            NormalizeAttributeOrder(expectedDoc);
-
-            // When ignore-prefixes is set, normalize namespace prefixes so that
-            // <j:map xmlns:j="ns"> compares equal to <map xmlns="ns">
-            if (assertion.IgnorePrefixes)
+            // for, so a comparison that parses without it cannot see whitespace at all: an engine
+            // emitting <x>   </x> where <x/> is expected passed (#140). Every comparison now keeps
+            // it. Same-line whitespace-only text (<x>   </x>, <a/> <b/>) is almost always a
+            // deliberate assertion and is compared; opted-in sets compare all of it.
+            //
+            // A line break in whitespace-only text is layout, but whose layout depends on the case:
+            // copied content (the same on both sides), the serializer's indentation (actual only),
+            // or the test author's wrapping (expected only). The comparison passes under either
+            // reading: SYMMETRIC — a line-broken space in mixed content is one space on both sides
+            // (copy-0401 copies the source's line breaks); or ASYMMETRIC — the actual side's line
+            // breaks are indentation (position-1801's HTML output indents inside mixed content).
+            // A genuine stray same-line space fails both (square-array-002).
+            bool CompareWith(bool symmetric)
             {
-                NormalizeNamespacePrefixes(actualDoc);
-                NormalizeNamespacePrefixes(expectedDoc);
+                var actualDoc = XDocument.Parse(actualParseable, LoadOptions.PreserveWhitespace);
+                var expectedDoc = XDocument.Parse(expectedParseable, LoadOptions.PreserveWhitespace);
+                if (!whitespaceSensitive)
+                {
+                    DropIndentationWhitespace(actualDoc, collapseInMixedContent: symmetric);
+                    DropIndentationWhitespace(expectedDoc, collapseInMixedContent: true);
+                }
+
+                // Strip XML declarations — XNode.DeepEquals considers them, but
+                // the presence/absence of <?xml?> is not semantically significant
+                actualDoc.Declaration = null;
+                expectedDoc.Declaration = null;
+
+                // Normalize empty elements: XNode.DeepEquals distinguishes <e/> from <e></e>
+                // but they are semantically identical XML.
+                NormalizeEmptyElements(actualDoc);
+                NormalizeEmptyElements(expectedDoc);
+
+                // Strip unused namespace declarations that engines may propagate differently
+                StripUnusedNamespaces(actualDoc);
+                StripUnusedNamespaces(expectedDoc);
+
+                // Hoist namespace declarations to the root element so that
+                // placement differences (xmlns on parent vs child) don't cause false failures.
+                // In XML, namespace declarations are inherited, so this is semantically equivalent.
+                HoistNamespaceDeclarations(actualDoc);
+                HoistNamespaceDeclarations(expectedDoc);
+
+                // Normalize namespace declaration order (alphabetical by prefix)
+                // XNode.DeepEquals is order-sensitive for attributes/namespaces
+                NormalizeNamespaceOrder(actualDoc);
+                NormalizeNamespaceOrder(expectedDoc);
+
+                // Normalize attribute order (alphabetical by expanded name)
+                // XML attributes are unordered, but XNode.DeepEquals compares in order
+                NormalizeAttributeOrder(actualDoc);
+                NormalizeAttributeOrder(expectedDoc);
+
+                // When ignore-prefixes is set, normalize namespace prefixes so that
+                // <j:map xmlns:j="ns"> compares equal to <map xmlns="ns">
+                if (assertion.IgnorePrefixes)
+                {
+                    NormalizeNamespacePrefixes(actualDoc);
+                    NormalizeNamespacePrefixes(expectedDoc);
+                }
+
+                // Compare the ROOT ELEMENTS when whitespace matters, not the documents. Preserving
+                // whitespace also preserves it OUTSIDE the root: an expected value read from a .out
+                // file typically starts "<?xml ...?>\n", and that newline becomes a document-level text
+                // node the actual output has no counterpart for. Comparing documents would then fail
+                // every such case on the prolog alone while checking nothing — measured on
+                // namespace-alias-1901, where DeepEquals over the documents is false and over the roots
+                // is true, with the element trees identical.
+                XNode? actualCmp = actualDoc.Root;
+                XNode? expectedCmp = expectedDoc.Root;
+
+                return assertion.Compare switch
+                {
+                    "XML" => XNode.DeepEquals(actualCmp, expectedCmp),
+                    "Text" => actualDoc.ToString() == expectedDoc.ToString(),
+                    "Fragment" => CompareFragments(actualDoc, expectedDoc),
+                    _ => XNode.DeepEquals(actualCmp, expectedCmp)
+                };
             }
 
-            // Compare the ROOT ELEMENTS when whitespace matters, not the documents. Preserving
-            // whitespace also preserves it OUTSIDE the root: an expected value read from a .out
-            // file typically starts "<?xml ...?>\n", and that newline becomes a document-level text
-            // node the actual output has no counterpart for. Comparing documents would then fail
-            // every such case on the prolog alone while checking nothing — measured on
-            // namespace-alias-1901, where DeepEquals over the documents is false and over the roots
-            // is true, with the element trees identical.
-            XNode? actualCmp = whitespaceSensitive ? actualDoc.Root : actualDoc;
-            XNode? expectedCmp = whitespaceSensitive ? expectedDoc.Root : expectedDoc;
-
-            return assertion.Compare switch
-            {
-                "XML" => XNode.DeepEquals(actualCmp, expectedCmp),
-                "Text" => actualDoc.ToString() == expectedDoc.ToString(),
-                "Fragment" => CompareFragments(actualDoc, expectedDoc),
-                _ => XNode.DeepEquals(actualCmp, expectedCmp)
-            };
+            return CompareWith(symmetric: true) || (!whitespaceSensitive && CompareWith(symmetric: false));
         }
         catch
         {
@@ -1944,6 +1963,29 @@ public sealed class XsltTestRunner
                 }
                 // If root has a DIFFERENT value for the same prefix, leave it in place
             }
+        }
+    }
+
+    /// <summary>
+    /// Normalizes line-broken whitespace-only text, which is layout rather than an assertion
+    /// (#140): removed in element-only content (indentation) and, when
+    /// <paramref name="collapseInMixedContent"/>, collapsed to one space in mixed content, where it
+    /// stands for a significant space that was wrapped. Same-line whitespace-only text is kept and
+    /// compared.
+    /// </summary>
+    private static void DropIndentationWhitespace(XDocument doc, bool collapseInMixedContent)
+    {
+        foreach (var text in doc.DescendantNodes().OfType<XText>()
+                     .Where(t => t is not XCData && string.IsNullOrWhiteSpace(t.Value)
+                                 && (t.Value.Contains('\n') || t.Value.Contains('\r')))
+                     .ToList())
+        {
+            var mixed = collapseInMixedContent
+                && text.Parent?.Nodes().OfType<XText>().Any(t => !string.IsNullOrWhiteSpace(t.Value)) == true;
+            if (mixed)
+                text.Value = " ";
+            else
+                text.Remove();
         }
     }
 

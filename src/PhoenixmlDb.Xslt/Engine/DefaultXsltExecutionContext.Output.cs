@@ -879,6 +879,20 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private void SerializeSequenceItems(System.Collections.IList items)
     {
+        // A nested sequence or array is not an item: flatten it before classifying. A nested
+        // object?[] used to count as ONE atomic item, so a streamed copy-of(($grounded, $streamed))
+        // wrote " " between its two runs of elements (W3C sf-copy-of-008, sf-snapshot-0308;
+        // found once the harness stopped discarding whitespace-only text, #140).
+        var nested = false;
+        foreach (var item in items)
+            if (item is object?[] or List<object?>) { nested = true; break; }
+        if (nested)
+        {
+            var flat = new List<object?>(items.Count);
+            FlattenArrayMembers(items.Cast<object?>(), flat);
+            items = flat;
+        }
+
         // Top-level item-separator mode: every item (node or atomic) is separated uniformly, so
         // delegate the separator to the per-item SerializeResult branches (which call
         // TryWriteTopLevelItemSeparator) rather than applying the atomic-only local rule here.
@@ -929,6 +943,17 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private void SerializeCopyOfItems(object?[] items, bool copyNamespaces)
     {
+        // Arrays are flattened (XSLT 3.0 §5.7.2) BEFORE items are classified. An array used to fall
+        // into the atomic branch below and be serialized as one value, so its member sequences were
+        // written with a separator between them: xsl:copy-of select="[$elements, $more]" put a
+        // " " text node between two runs of elements (W3C square-array-002 and siblings, found once
+        // the harness stopped discarding whitespace-only text, #140).
+        if (Array.Exists(items, i => i is List<object?> or object?[]))
+        {
+            var flat = new List<object?>(items.Length);
+            FlattenArrayMembers(items, flat);
+            items = flat.ToArray();
+        }
         var lastWasAtomic = _lastResultWasAtomic;
         var useSeparator = _attributeContentDepth == 0;
         foreach (var item in items)
