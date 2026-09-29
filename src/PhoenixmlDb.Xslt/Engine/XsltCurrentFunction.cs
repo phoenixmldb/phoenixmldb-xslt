@@ -34,8 +34,6 @@ internal sealed class XsltCurrentFunction : PhoenixmlDb.XQuery.Ast.XQueryFunctio
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        if (context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qec && qec.InsideXslEvaluate)
-            throw new XsltException("XTDE3160: The function current() is not available within xsl:evaluate");
         // current() returns the "outer" XSLT context item, not the inner XPath context
         var item = _context.CurrentItem;
         // XTDE1360: current() called when context item is absent (e.g., inside xsl:function)

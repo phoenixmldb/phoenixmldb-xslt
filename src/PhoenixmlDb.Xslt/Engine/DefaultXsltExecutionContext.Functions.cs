@@ -1749,6 +1749,15 @@ internal sealed partial class DefaultXsltExecutionContext
         // Resolve namespace prefixes in the parsed expression using the determined bindings
         ResolveExpressionNamespacesRuntime(parsedExpr, nsBindings, xpathDefaultNs);
 
+        // XTDE3160 is about the TARGET EXPRESSION: it may not name current(), current-output-uri()
+        // or system-property() (XSLT 3.0 §20.4). A function item for one of them obtained outside
+        // and passed in with xsl:with-param is fine. The check used to fire at invocation, inside
+        // the functions themselves, so the passed-in item raised too (W3C system-property-101d..109f).
+        var unavailable = new EvaluateUnavailableFunctionFinder();
+        unavailable.Walk(parsedExpr);
+        if (unavailable.Found is { } fn)
+            throw new XsltException($"XTDE3160: The function {fn}() is not available within xsl:evaluate", instruction.Location);
+
         // Evaluate context-item if specified
         object? contextItem = null;
         if (instruction.ContextItem != null)
@@ -2692,4 +2701,28 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+
+    private sealed class EvaluateUnavailableFunctionFinder : XQueryExpressionWalker
+    {
+        internal string? Found { get; private set; }
+
+        private void Check(QName name)
+        {
+            if ((name.Namespace == NamespaceId.None || name.Namespace == NamespaceId.Fn)
+                && name.LocalName is "current" or "current-output-uri" or "system-property")
+                Found ??= name.LocalName;
+        }
+
+        public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
+        {
+            Check(expr.Name);
+            return base.VisitFunctionCallExpression(expr);
+        }
+
+        public override object? VisitNamedFunctionRef(NamedFunctionRef expr)
+        {
+            Check(expr.Name);
+            return base.VisitNamedFunctionRef(expr);
+        }
+    }
 }

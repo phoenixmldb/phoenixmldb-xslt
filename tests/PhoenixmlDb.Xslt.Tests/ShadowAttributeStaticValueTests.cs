@@ -162,19 +162,64 @@ public sealed class ShadowAttributeStaticValueTests : IDisposable
     /// produced, naming neither the attribute nor the expression. All 166 cases in the W3C
     /// fn/system-property-gen set fail exactly that way.
     /// </summary>
+    /// <remarks>
+    /// The example was an inline function call until xslt#156 made those evaluable; a static
+    /// expression has no context item, so one that needs it stays unevaluable.
+    /// </remarks>
     [Fact]
     public async Task An_unevaluable_shadow_expression_reports_its_own_cause()
     {
         var act = async () => await RunAsync("""
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-              <xsl:variable name="fn" static="yes" select="function($x) { $x }"/>
-              <xsl:variable name="v" static="yes" _select="{$fn('a')}"/>
+              <xsl:variable name="v" static="yes" _select="{name(.)}"/>
               <xsl:template name="main"><out a="{$v}"/></xsl:template>
             </xsl:stylesheet>
             """);
 
         var ex = await act.Should().ThrowAsync<XsltException>();
         ex.WithMessage("*_select*", "the message must name the attribute that failed");
-        ex.WithMessage("*$fn('a')*", "and the sub-expression it could not evaluate");
+        ex.WithMessage("*name(.)*", "and the sub-expression it could not evaluate");
+    }
+
+    /// <summary>
+    /// Static expressions are evaluated by the engine's runtime evaluator when the hand-written
+    /// one cannot: inline function items and calls to them, partial application, the simple map
+    /// operator, doc() with a predicated path, and static variables that hold function items
+    /// (xslt#156, W3C fn/system-property-gen).
+    /// </summary>
+    [Theory]
+    [InlineData("""<xsl:variable name="p" static="yes" select="function($x) { '(' || $x || ')' }"/> <xsl:variable name="v" static="yes" select="$p('a')"/>""", "(a)")]
+    [InlineData("""<xsl:variable name="e" static="yes" select="replace(?, 'a', 'b')"/> <xsl:variable name="v" static="yes" select="$e('aa')"/>""", "bb")]
+    [InlineData("""<xsl:variable name="v" static="yes" select="string-join(('x', 'y') ! upper-case(.), '-')"/>""", "X-Y")]
+    [InlineData("""<xsl:variable name="d" static="yes" select="parse-xml('&lt;r&gt;&lt;i k=&quot;1&quot;&gt;one&lt;/i&gt;&lt;i k=&quot;2&quot;&gt;two&lt;/i&gt;&lt;/r&gt;')"/> <xsl:variable name="v" static="yes" select="string($d/r/i[@k = '2'])"/>""", "two")]
+    [InlineData("""<xsl:variable name="p" static="yes" select="function($x) { '(' || $x || ')' }"/> <xsl:variable name="w" static="yes" select="function($x) { $p(string-join($x ! $p(.), ',')) }"/> <xsl:variable name="v" static="yes" _select="'{$w(('a', 'b'))}'"/>""", "((a),(b))")]
+    public async Task Static_expressions_beyond_the_hand_written_evaluator_evaluate(string declarations, string expected)
+    {
+        var result = await RunAsync($$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              {{declarations}}
+              <xsl:template name="main"><out use-when="$v = '{{expected}}'" a="{$v}"/></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        result.Should().Contain($"a=\"{expected}\"", "the value is available at run time")
+            .And.Contain("<out", "and to use-when at compile time");
+    }
+
+    /// <summary>
+    /// A static expression may not call a function that needs dynamic XSLT context (XPST0017,
+    /// W3C current-output-uri-901). The runtime evaluator implements them all, so the fallback
+    /// must refuse them by name.
+    /// </summary>
+    [Fact]
+    public async Task A_runtime_only_function_is_not_available_statically()
+    {
+        var act = async () => await RunAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template name="main"><xsl:result-document _href="{string-join(('a') ! current-output-uri())}"><out/></xsl:result-document></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        (await act.Should().ThrowAsync<XsltException>()).WithMessage("*XPST0017*");
     }
 }

@@ -30,8 +30,6 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        if (context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qec && qec.InsideXslEvaluate)
-            throw new XsltException("XTDE3160: The function system-property() is not available within xsl:evaluate");
         var name = arguments[0]?.ToString() ?? "";
         // XTDE1390: Validate name is a valid QName
         XsltFunctionValidation.ValidateQNameArgument(name, "XTDE1390", "system-property");

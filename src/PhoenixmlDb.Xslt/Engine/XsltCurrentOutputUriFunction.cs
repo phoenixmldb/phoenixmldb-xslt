@@ -31,8 +31,6 @@ internal sealed class XsltCurrentOutputUriFunction(DefaultXsltExecutionContext c
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         var qec = context as PhoenixmlDb.XQuery.Execution.QueryExecutionContext;
-        if (qec is { InsideXslEvaluate: true })
-            throw new XsltException("XTDE3160: The function current-output-uri() is not available within xsl:evaluate");
         // Per XSLT 3.0 §20.3.7: the current-output-uri property is absent unless a destination
         // URI is known, and when absent this returns the empty sequence. It is NOT absent whenever
         // the host told us where the principal result goes (the CLI's -o), nor inside an
