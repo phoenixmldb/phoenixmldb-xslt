@@ -1544,11 +1544,35 @@ public sealed partial class StylesheetParser
     /// Resolves the effective base URI for an element by walking up xml:base attributes
     /// per the XML Base specification (RFC 2396/3986).
     /// </summary>
+    /// <summary>
+    /// The base URI of the external entity <paramref name="element"/> was expanded from, or null
+    /// when it is document content; <paramref name="entityRoot"/> is the outermost element of that
+    /// entity's content.
+    /// </summary>
+    private static Uri? EntityBaseUri(XElement element, out XElement? entityRoot)
+    {
+        entityRoot = null;
+        var documentBase = element.Document?.BaseUri;
+        if (string.IsNullOrEmpty(element.BaseUri) || string.IsNullOrEmpty(documentBase)
+            || element.BaseUri == documentBase)
+            return null;
+        entityRoot = element;
+        while (entityRoot.Parent is { } parent && parent.BaseUri == element.BaseUri)
+            entityRoot = parent;
+        return Uri.TryCreate(element.BaseUri, UriKind.Absolute, out var uri) ? uri : null;
+    }
+
     private Uri? ResolveEffectiveBaseUri(XElement element)
     {
+        // Content expanded from an external entity has that entity's base URI, which XLinq
+        // records (LoadOptions.SetBaseUri) wherever it differs from the document's. Such an
+        // element's base starts there, and xml:base outside the entity does not apply to it
+        // (W3C use-when-0136: static-base-uri() declared inside dir/use-when-0136.ent).
+        var entityBase = EntityBaseUri(element, out var entityRoot);
+
         // Collect xml:base attributes from the element and its ancestors (innermost first)
         var xmlBaseAttrs = new List<string>();
-        for (XElement? el = element; el != null; el = el.Parent)
+        for (XElement? el = element; el != null; el = el == entityRoot ? null : el.Parent)
         {
             var xmlBase = el.Attribute(XNamespace.Xml + "base");
             if (xmlBase != null)
@@ -1556,10 +1580,10 @@ public sealed partial class StylesheetParser
         }
 
         if (xmlBaseAttrs.Count == 0)
-            return _baseUri;
+            return entityBase ?? _baseUri;
 
-        // Start from the stylesheet base URI, then apply xml:base values from outermost to innermost
-        Uri? result = _baseUri;
+        // Start from the stylesheet (or entity) base URI, then apply xml:base values from outermost to innermost
+        Uri? result = entityBase ?? _baseUri;
         for (int i = xmlBaseAttrs.Count - 1; i >= 0; i--)
         {
             var xmlBase = xmlBaseAttrs[i];
@@ -3738,6 +3762,16 @@ public sealed partial class StylesheetParser
 
     // ── use-when static evaluation ──────────────────────────────────────
 
+    private static bool IncludeByUseWhen(object? value, bool hasPrefixedUseWhen, XElement element)
+    {
+        var include = CoerceToBoolean(value);
+        // XTSE0090: If the element is included and has xsl:use-when (prefixed), raise error
+        if (include && hasPrefixedUseWhen)
+            throw new XsltException("XTSE0090: Attribute 'xsl:use-when' in the XSLT namespace is not permitted on an XSLT element (use unprefixed 'use-when' instead)",
+                GetSourceLocation(element));
+        return include;
+    }
+
     /// <summary>
     /// Checks whether an element should be included based on its use-when attribute.
     /// XSLT elements use <c>use-when="expr"</c>; literal result elements use <c>xsl:use-when="expr"</c>.
@@ -3766,26 +3800,25 @@ public sealed partial class StylesheetParser
         if (useWhenExpr == null)
             return true;
 
+        XQueryExpression? expr = null;
         try
         {
             System.Xml.Linq.XObject useWhenOrigin =
                 element.Attribute("use-when")
                 ?? (System.Xml.Linq.XObject?)element.Attribute(XsltNs + "use-when")
                 ?? element;
-            var expr = ParseXPathWithContext(useWhenExpr, useWhenOrigin);
+            expr = ParseXPathWithContext(useWhenExpr, useWhenOrigin);
             ResolveExpressionNamespaces(expr, element);
-            var result = EvaluateStaticExpression(expr, element);
-            var include = CoerceToBoolean(result);
-            // XTSE0090: If the element is included and has xsl:use-when (prefixed), raise error
-            if (include && hasPrefixedUseWhen)
-                throw new XsltException("XTSE0090: Attribute 'xsl:use-when' in the XSLT namespace is not permitted on an XSLT element (use unprefixed 'use-when' instead)",
-                    GetSourceLocation(element));
-            return include;
+            return IncludeByUseWhen(EvaluateStaticExpression(expr, element), hasPrefixedUseWhen, element);
         }
         catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException)
         {
-            // If we can't evaluate the use-when expression, include the element
-            // (it will fail later with a proper error if the expression is actually needed)
+            // A shape the hand-written evaluator does not implement (castable, instance of, …):
+            // the runtime evaluator implements them all, as it does for static variables (#156).
+            // Including the element regardless made use-when="not(X castable as T)" true.
+            if (expr != null && TryEvaluateStaticViaRuntime(expr, element, out var value))
+                return IncludeByUseWhen(value, hasPrefixedUseWhen, element);
+            // Unevaluable either way: include it, and let a real use of it raise the error.
             return true;
         }
         catch (XsltException)
