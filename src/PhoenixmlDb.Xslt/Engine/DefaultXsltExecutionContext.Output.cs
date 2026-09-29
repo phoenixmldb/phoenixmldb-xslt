@@ -1636,11 +1636,81 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// A streamable xsl:source-document whose body is just <c>apply-templates select="."</c>
+    /// hands the whole stream to the document-node template. That template's body is what drives
+    /// the stream — typically a crawling apply-templates such as <c>outermost(.//book)</c> — but
+    /// the stream is set up from the source-document's OWN body, which the scanner found no crawl
+    /// in, so the dispatched template body ran against the empty synthetic document and produced
+    /// nothing (W3C si-apply-imports-068/-069/-070, si-next-match-067). Stream the document
+    /// template's body in its place, with the tunnel parameters the apply-templates passes bound.
+    /// Only when the template declares no parameters of its own, and its body uses no
+    /// template-relative instruction (apply-imports, next-match), which would otherwise see the
+    /// caller as the current template.
+    /// </summary>
+    private async ValueTask<bool> TryStreamDocumentTemplateBodyAsync(XsltSourceDocument instruction)
+    {
+        if (!instruction.Streamable
+            || instruction.Content is not { Instructions.Count: 1 } content
+            || content.Instructions[0] is not XsltApplyTemplates
+            {
+                Select: PhoenixmlDb.XQuery.Ast.ContextItemExpression, Mode: null, UseCurrentMode: false, Sorts.Count: 0,
+            } applyTemplates
+            || applyTemplates.WithParams.Exists(p => !p.Tunnel))
+            return false;
+
+        var probe = new XdmDocument { Id = new NodeId(999_998), Document = new DocumentId(0), Children = [] };
+        XsltTemplate? documentTemplate;
+        using (var mc = AcquireMatchContext())
+            documentTemplate = _templateIndex.FindMatchingTemplate(probe, null, mc.Value);
+        if (documentTemplate?.Body is not { } body || documentTemplate.Parameters.Count > 0
+            || BodyUsesTemplateRelativeInstruction(body))
+            return false;
+
+        // Tunnel values are evaluated in the caller's scope, then visible to everything the
+        // document template's body invokes.
+        var tunnel = new List<(QName Name, object? Value)>();
+        foreach (var p in applyTemplates.WithParams)
+            tunnel.Add((p.Name, await EvaluateWithParamAsync(p).ConfigureAwait(false)));
+        PushScope();
+        try
+        {
+            InheritTunnelParameters();
+            foreach (var (name, value) in tunnel)
+                _scopes.Peek().TunnelParameters[name] = value;
+            await SourceDocumentAsync(new XsltSourceDocument
+            {
+                Href = instruction.Href,
+                Streamable = true,
+                Validation = instruction.Validation,
+                Content = body,
+                BaseUri = instruction.BaseUri,
+                UseAccumulators = instruction.UseAccumulators,
+                Location = instruction.Location,
+                Version = instruction.Version,
+                DefaultCollation = instruction.DefaultCollation,
+                StaticBaseUri = instruction.StaticBaseUri,
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            PopScope();
+        }
+        return true;
+
+        static bool BodyUsesTemplateRelativeInstruction(XsltSequenceConstructor sc)
+            => sc.Instructions.Any(i => i is XsltApplyImports or XsltNextMatch
+                || (i is XsltSequenceConstructor nested && BodyUsesTemplateRelativeInstruction(nested)));
+    }
+
     public override async ValueTask SourceDocumentAsync(XsltSourceDocument instruction)
     {
         // Deferred XTSE3430 streamability error — throw at runtime instead of parse time
         if (instruction.StreamabilityError != null)
             throw new XsltException(instruction.StreamabilityError, instruction.Location);
+
+        if (await TryStreamDocumentTemplateBodyAsync(instruction).ConfigureAwait(false))
+            return;
 
         // Evaluate the href AVT to get the URI string
         var href = await EvaluateAvtAsync(instruction.Href).ConfigureAwait(false);
