@@ -335,6 +335,7 @@ public sealed partial class StylesheetParser
                                     GetSourceLocation(child));
                         }
                         stylesheet.NamedTemplates[template.Name.Value] = template;
+                        stylesheet.LocalComponentSymbols.Add(("T", template.Name.Value, 0));
                     }
                     break;
 
@@ -864,12 +865,7 @@ public sealed partial class StylesheetParser
             {
                 if (stylesheet.UsedComponentSymbols.Contains(sym))
                 {
-                    var kindName = sym.Kind switch
-                    {
-                        "F" => "function",
-                        "M" => "mode",
-                        _ => "variable"
-                    };
+                    var kindName = KindDisplayName(sym.Kind);
                     throw new XsltException(
                         $"XTSE3050: The {kindName} '{sym.Name.LocalName}' has the same name as a public component of a used package and is declared outside xsl:override");
                 }
@@ -1170,6 +1166,18 @@ public sealed partial class StylesheetParser
         {
             if (ExplicitlyExposed(mode.VisibilityAttr))
                 stylesheet.UsedComponentSymbols.Add(("M", modeKey, 0));
+        }
+        // Named templates too (override-t-008/-009): redeclaring a used package's public
+        // template outside xsl:override is XTSE3050 like any other component, and was silently
+        // taken as the using package's own template. Exposure is the EFFECTIVE one: at the used
+        // package's boundary (xsl:expose applied) and after this use-package's xsl:accept. A
+        // template's VisibilityAttr is not it — xsl:expose rewrites it, so an explicitly private
+        // template under expose names="*" read as public (accept-001).
+        foreach (var (templateName, usedTemplate) in packageStylesheet.NamedTemplates)
+        {
+            if (boundaryExposedTemplates.Contains(templateName)
+                && usedTemplate.Visibility is Ast.Visibility.Public or Ast.Visibility.Final)
+                stylesheet.UsedComponentSymbols.Add(("T", templateName, 0));
         }
 
         // Merge visible (public/final) components into the consuming stylesheet at lower precedence
@@ -1854,7 +1862,14 @@ public sealed partial class StylesheetParser
                 //
                 // A wildcard matching an already-abstract component keeps its existing behaviour: no W3C case covers
                 // that combination, so it gains no invented error here.
-                void CheckExposeVisibility(Visibility current, QName componentName, string? declaredVisibilityAttr)
+                // Whether this xsl:expose sets the component's visibility. XSLT 3.0 §3.5.2.5: xsl:expose
+                // DEFINES the visibility of a component declared without a visibility attribute, and can
+                // only REDUCE it where the attribute is present, per the "Relationship of Exposed Visibility
+                // to Potential Visibility" table. A combination the table does not permit is XTSE3010 when
+                // the component is named explicitly; matched by a wildcard it is no error, and the declared
+                // visibility stands. A wildcard used to raise an explicitly private template to public
+                // (accept-A's main under expose names="*" visibility="public").
+                bool ExposeApplies(Visibility current, QName componentName, string? declaredVisibilityAttr)
                 {
                     if (visibility == Visibility.Abstract && isWildcard)
                         throw new XsltException(
@@ -1866,6 +1881,30 @@ public sealed partial class StylesheetParser
                         throw new XsltException(declaredVisibilityAttr != null
                             ? $"XTSE3010: xsl:expose visibility=\"abstract\" is inconsistent with the declared visibility=\"{declaredVisibilityAttr}\" of component '{componentName}'"
                             : $"XTSE3025: xsl:expose must not give component '{componentName}' visibility=\"abstract\"; only its declaration can");
+                    var declared = declaredVisibilityAttr switch
+                    {
+                        "public" => Visibility.Public,
+                        "private" => Visibility.Private,
+                        "final" => Visibility.Final,
+                        "abstract" => Visibility.Abstract,
+                        _ => (Visibility?)null,
+                    };
+                    if (declared is not { } d)
+                        return true;
+                    var permitted = (visibility, d) switch
+                    {
+                        (Visibility.Public, Visibility.Public) => true,
+                        (Visibility.Private, Visibility.Public or Visibility.Private or Visibility.Final) => true,
+                        (Visibility.Final, Visibility.Public or Visibility.Final) => true,
+                        (Visibility.Abstract, Visibility.Abstract) => true,
+                        _ => false,
+                    };
+                    if (permitted)
+                        return true;
+                    if (!isWildcard)
+                        throw new XsltException(
+                            $"XTSE3010: xsl:expose visibility=\"{expose.Element?.Attribute("visibility")?.Value}\" is inconsistent with the declared visibility=\"{declaredVisibilityAttr}\" of component '{componentName}'");
+                    return false;
                 }
 
                 // Determine which component types to process
@@ -1883,7 +1922,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    CheckExposeVisibility(tmpl.Visibility, name, tmpl.VisibilityAttr);
+                                    if (!ExposeApplies(tmpl.Visibility, name, tmpl.VisibilityAttr)) continue;
                                     stylesheet.NamedTemplates[name] = CloneTemplateWithVisibility(tmpl, visibility);
                                 }
                             }
@@ -1911,7 +1950,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(key.Name, funcToken, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    CheckExposeVisibility(func.Visibility, key.Name, func.VisibilityAttr);
+                                    if (!ExposeApplies(func.Visibility, key.Name, func.VisibilityAttr)) continue;
                                     stylesheet.Functions[key] = CloneFunctionWithVisibility(func, visibility);
                                 }
                             }
@@ -1923,7 +1962,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(stylesheet.Variables[i].Name, token, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    CheckExposeVisibility(stylesheet.Variables[i].Visibility, stylesheet.Variables[i].Name, stylesheet.Variables[i].VisibilityAttr);
+                                    if (!ExposeApplies(stylesheet.Variables[i].Visibility, stylesheet.Variables[i].Name, stylesheet.Variables[i].VisibilityAttr)) continue;
                                     var exposedVar = CloneVariableWithVisibility(stylesheet.Variables[i], visibility);
                                     // Record that xsl:expose explicitly set this variable's boundary
                                     // visibility, so the use-package capture treats an exposed
@@ -1942,7 +1981,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    CheckExposeVisibility(attrSet.Visibility, name, attrSet.VisibilityAttr);
+                                    if (!ExposeApplies(attrSet.Visibility, name, attrSet.VisibilityAttr)) continue;
                                     stylesheet.AttributeSets[name] = CloneAttributeSetWithVisibility(attrSet, visibility);
                                 }
                             }
@@ -1953,7 +1992,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    CheckExposeVisibility(mode.Visibility, name, mode.VisibilityAttr);
+                                    if (!ExposeApplies(mode.Visibility, name, mode.VisibilityAttr)) continue;
                                     stylesheet.Modes[name] = new Ast.XsltMode
                                     {
                                         Name = mode.Name,
