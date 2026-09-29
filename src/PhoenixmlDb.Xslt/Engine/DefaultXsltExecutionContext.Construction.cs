@@ -38,22 +38,14 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
-    public override async ValueTask CreateElementAsync(XsltElement instruction)
-    {
-        if (_recursionDepth >= MaxRecursionDepth)
-            throw RecursionLimitExceeded("xsl:element");
-        _recursionDepth++;
-        try
-        {
-            await RunInstructionWithValidationAsync(
-                instruction.Validation, "xsl:element", instruction.Location,
-                () => CreateElementCoreAsync(instruction)).ConfigureAwait(false);
-        }
-        finally
-        {
-            _recursionDepth--;
-        }
-    }
+    // Element construction does not count toward MaxRecursionDepth (xslt#199). It used to, so a
+    // recursion that wrapped each level in an element spent two units per level and stopped at
+    // ~600. Nesting deeper than the stylesheet's own markup only arises through a template or
+    // function call, which is counted, and the native stack is probed in CheckResourceLimits.
+    public override ValueTask CreateElementAsync(XsltElement instruction)
+        => RunInstructionWithValidationAsync(
+            instruction.Validation, "xsl:element", instruction.Location,
+            () => CreateElementCoreAsync(instruction));
 
 
     private async ValueTask CreateElementCoreAsync(XsltElement instruction)
@@ -1214,20 +1206,9 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
-    public override async ValueTask CreateLiteralElementAsync(XsltLiteralResultElement instruction)
-    {
-        if (_recursionDepth >= MaxRecursionDepth)
-            throw RecursionLimitExceeded("A literal result element");
-        _recursionDepth++;
-        try
-        {
-            await CreateLiteralElementCoreAsync(instruction).ConfigureAwait(false);
-        }
-        finally
-        {
-            _recursionDepth--;
-        }
-    }
+    // Not counted toward MaxRecursionDepth; see CreateElementAsync (xslt#199).
+    public override ValueTask CreateLiteralElementAsync(XsltLiteralResultElement instruction)
+        => CreateLiteralElementCoreAsync(instruction);
 
 
     private async ValueTask CreateLiteralElementCoreAsync(XsltLiteralResultElement instruction)
