@@ -901,6 +901,13 @@ internal sealed class StreamingXmlProcessor
                     // drops indentation (Martin Honnen 2026-05-18).
                     case XmlNodeType.Whitespace:
                     {
+                        // Outside the root element a well-formed document can hold only whitespace,
+                        // and that whitespace is not a node in the XDM: a document node's children
+                        // are its element, comments and PIs. Dispatching it let the built-in text
+                        // rule add a "\n" to whatever the stream was building — a typed variable
+                        // over apply-templates got a string before the root's result (si-fork-812).
+                        if (ancestorStack.Count == 0)
+                            break;
                         var textValue = reader.Value;
 
                         // Text nodes in streaming: create temporary text node, match templates.
