@@ -5383,6 +5383,16 @@ public sealed class XsltTransformEngine
                 case Ast.XsltForEach fe when ContentContainsApplyTemplatesStreaming(fe.Body):
                 case Ast.XsltResultDocument rd when ContentContainsApplyTemplatesStreaming(rd.Content):
                 case Ast.XsltSequenceConstructor nested when ContentContainsApplyTemplatesStreaming(nested):
+                // A local variable, xsl:element and xsl:where-populated contain a sequence
+                // constructor too. A match="/" body of <xsl:variable><xsl:apply-templates/>
+                // </xsl:variable> was not recognised as driving the stream, so it ran against the
+                // empty synthetic document: the variable held nothing, whatever the templates
+                // returned (si-fork-812, where the matched template builds maps).
+                case Ast.XsltVariableInstruction v when v.Content != null && ContentContainsApplyTemplatesStreaming(v.Content):
+                case Ast.XsltElement el when ContentContainsApplyTemplatesStreaming(el.Content):
+                case Ast.XsltWherePopulated wp when ContentContainsApplyTemplatesStreaming(wp.Content):
+                    return true;
+                case Ast.XsltFork fk when fk.Sequences.Exists(ContentContainsApplyTemplatesStreaming):
                     return true;
                 case Ast.XsltIf i when ContentContainsApplyTemplatesStreaming(i.Then):
                     return true;
