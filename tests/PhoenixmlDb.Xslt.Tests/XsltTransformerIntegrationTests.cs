@@ -715,8 +715,12 @@ public class XsltTransformerIntegrationTests
         result.Should().Contain("<result>3.0</result>");
     }
 
+    /// <summary>
+    /// An XSLT 3.0 processor reports xpath-version "3.0" or "3.1" (XSLT 3.0 §20.4.3). It reported
+    /// "4.0" because the engine implements XPath 4.0 functions (W3C system-property-108*).
+    /// </summary>
     [Fact]
-    public async Task SystemProperty_xpath_version_returns_4_0()
+    public async Task SystemProperty_xpath_version_returns_3_1()
     {
         var transformer = new XsltTransformer();
         await transformer.LoadStylesheetAsync("""
@@ -729,7 +733,33 @@ public class XsltTransformerIntegrationTests
 
         var result = await transformer.TransformAsync("<input/>");
 
-        result.Should().Contain("<result>4.0</result>");
+        result.Should().Contain("<result>3.1</result>");
+    }
+
+    /// <summary>
+    /// system-property() gives the same answer at compile time (use-when, static variables) and
+    /// at run time. The parser carried its own copies of the table, and product-version was
+    /// "1.0" statically but the assembly version dynamically.
+    /// </summary>
+    [Theory]
+    [InlineData("xsl:product-version")]
+    [InlineData("xsl:xpath-version")]
+    [InlineData("xsl:version")]
+    public async Task SystemProperty_is_the_same_statically_and_dynamically(string property)
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync($$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <!-- A shadow attribute bakes the COMPILE-TIME value into the select text; a static
+                   variable's select would be evaluated again at run time and prove nothing. -->
+              <xsl:variable name="static" _select="'{system-property(&quot;{{property}}&quot;)}'"/>
+              <xsl:template match="/">
+                <result><xsl:value-of select="$static = system-property('{{property}}')"/></result>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        (await transformer.TransformAsync("<input/>")).Should().Contain("<result>true</result>");
     }
 
     #endregion

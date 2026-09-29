@@ -63,24 +63,38 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
         var xsltNs = "http://www.w3.org/1999/XSL/Transform";
         if (namespaceUri != xsltNs)
             return ValueTask.FromResult<object?>("");
-        var result = name switch
-        {
-            "version" => "3.0",
-            "vendor" => "PhoenixmlDb",
-            "vendor-url" => "https://endpointsystems.com",
-            "product-name" => "PhoenixmlDb XSLT",
-            "product-version" => typeof(XsltTransformEngine).Assembly.GetName().Version?.ToString(3) ?? "1.0",
-            "is-schema-aware" => "no",
-            "supports-serialization" => "yes",
-            "supports-backwards-compatibility" => "yes",
-            "supports-namespace-axis" => "yes",
-            "supports-streaming" => "yes",
-            "supports-dynamic-evaluation" => "yes",
-            "supports-higher-order-functions" => "yes",
-            "xpath-version" => "4.0",
-            "xsd-version" => "1.1",
-            _ => ""
-        };
+        var result = PropertyValue(name);
         return ValueTask.FromResult<object?>(result);
     }
+
+    /// <summary>
+    /// The value of an XSLT-namespace system property, by local name. The one table: the parser's
+    /// compile-time evaluators used to carry their own copies, which disagreed with this one
+    /// (product-version was "1.0" statically and the assembly version at run time), and the W3C
+    /// system-property tests require the static and dynamic answers to match.
+    /// </summary>
+    /// <remarks>
+    /// xpath-version is "3.1": an XSLT 3.0 processor reports "3.0" or "3.1" (XSLT 3.0 §20.4.3),
+    /// and xsl:version here is "3.0". It was "4.0" because the engine implements XPath 4.0
+    /// functions, but that is not a value an XSLT 3.0 processor may report
+    /// (W3C system-property-108*).
+    /// </remarks>
+    internal static string PropertyValue(string localName) => localName switch
+    {
+        "version" => "3.0",
+        "vendor" => "PhoenixmlDb",
+        "vendor-url" => "https://endpointsystems.com",
+        "product-name" => "PhoenixmlDb XSLT",
+        "product-version" => typeof(XsltTransformEngine).Assembly.GetName().Version?.ToString(3) ?? "1.0",
+        "is-schema-aware" => "no",
+        "supports-serialization" => "yes",
+        "supports-backwards-compatibility" => "yes",
+        "supports-namespace-axis" => "yes",
+        "supports-streaming" => "yes",
+        "supports-dynamic-evaluation" => "yes",
+        "supports-higher-order-functions" => "yes",
+        "xpath-version" => "3.1",
+        "xsd-version" => "1.1",
+        _ => ""
+    };
 }
