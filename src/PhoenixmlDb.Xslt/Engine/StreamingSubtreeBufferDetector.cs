@@ -303,14 +303,14 @@ internal static class StreamingSubtreeBufferDetector
                             || SelectReferencesContextAccumulator(vo.Select)));
 
             case XsltCopyOf cof:
-                return SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select)
+                return SelectHasPositionalPredicateOnInputPath(cof.Select) || SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select)
                     || SelectNavigatesViaClimbingAxis(cof.Select)
                     || SelectCopiesWholeContextItem(cof.Select)
                     || SelectReferencesContextAccumulator(cof.Select);
 
             case XsltSequence sq:
                 return sq.Select != null
-                    && (SelectAbsorbsInput(sq.Select) || SelectNavigatesViaUnstreamableOperator(sq.Select)
+                    && (SelectHasPositionalPredicateOnInputPath(sq.Select) || SelectAbsorbsInput(sq.Select) || SelectNavigatesViaUnstreamableOperator(sq.Select)
                         || SelectNavigatesViaClimbingAxis(sq.Select)
                         || SelectCopiesWholeContextItem(sq.Select)
                         || SelectReferencesContextAccumulator(sq.Select));
@@ -322,7 +322,7 @@ internal static class StreamingSubtreeBufferDetector
             // an attribute(*)* variable raised XTTE0570). (#143)
             case XsltVariableInstruction var:
                 return (var.Select != null
-                        && (SelectAbsorbsInput(var.Select) || SelectNavigatesViaUnstreamableOperator(var.Select)
+                        && (SelectHasPositionalPredicateOnInputPath(var.Select) || SelectAbsorbsInput(var.Select) || SelectNavigatesViaUnstreamableOperator(var.Select)
                             || SelectNavigatesViaClimbingAxis(var.Select)
                             || SelectCopiesWholeContextItem(var.Select)
                             || SelectReferencesContextAccumulator(var.Select)))
@@ -582,6 +582,62 @@ internal static class StreamingSubtreeBufferDetector
     /// <c>/*/transaction</c>, <c>outermost(.//gml:posList)</c>, <c>descendant::x</c>) cannot
     /// be satisfied at the document level and forces whole-input buffering.
     /// </summary>
+    /// <summary>
+    /// True when an input-navigating path carries a POSITIONAL predicate on one of its steps: a
+    /// numeric literal (<c>chap[2]</c>) or a predicate that uses <c>position()</c> or
+    /// <c>last()</c>. The document-level watcher dispatch matches steps by name and ignores such
+    /// predicates, so <c>copy-of(/doc/chap[2])</c> delivered every chap and
+    /// <c>/doc/chap[2]/@*</c> delivered nothing (W3C accumulator-048s/-049s). Materialise the
+    /// input instead. A path over a variable is grounded and unaffected.
+    /// </summary>
+    internal static bool SelectHasPositionalPredicateOnInputPath(XQueryExpression? expr)
+    {
+        if (expr == null || !NavigatesInput(expr)) return false;
+        var finder = new PositionalPredicateFinder();
+        finder.Walk(expr);
+        return finder.Found;
+    }
+
+    private sealed class PositionalPredicateFinder : XQueryExpressionWalker
+    {
+        internal bool Found { get; private set; }
+
+        private void Check(IReadOnlyList<XQueryExpression> predicates)
+        {
+            foreach (var p in predicates)
+            {
+                if (p is IntegerLiteral or DecimalLiteral or DoubleLiteral) { Found = true; return; }
+                var uses = new PositionFunctionFinder();
+                uses.Walk(p);
+                if (uses.Found) { Found = true; return; }
+            }
+        }
+
+        public override object? VisitStepExpression(StepExpression expr)
+        {
+            Check(expr.Predicates);
+            return base.VisitStepExpression(expr);
+        }
+
+        public override object? VisitFilterExpression(FilterExpression expr)
+        {
+            Check(expr.Predicates);
+            return base.VisitFilterExpression(expr);
+        }
+    }
+
+    private sealed class PositionFunctionFinder : XQueryExpressionWalker
+    {
+        internal bool Found { get; private set; }
+
+        public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
+        {
+            if (expr.Arguments.Count == 0 && expr.Name.LocalName is "position" or "last")
+                Found = true;
+            return base.VisitFunctionCallExpression(expr);
+        }
+    }
+
     internal static bool NavigatesInput(XQueryExpression expr)
     {
         switch (expr)
