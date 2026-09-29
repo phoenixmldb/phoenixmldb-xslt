@@ -54,6 +54,44 @@ public sealed class RecursionStackTests
         (await RunAsync(1150)).Should().Be(Expected(1150));
     }
 
+    /// <summary>
+    /// Wrapping each level in an element does not halve the limit (xslt#199): element construction
+    /// used to count toward the recursion depth, so this shape stopped at ~600 levels.
+    /// </summary>
+    [Theory]
+    [InlineData("""<xsl:template name="r"><xsl:param name="n"/><xsl:if test="$n gt 0"><x><xsl:call-template name="r"><xsl:with-param name="n" select="$n - 1"/></xsl:call-template></x></xsl:if></xsl:template>""",
+                """<xsl:call-template name="r"><xsl:with-param name="n" select="1100"/></xsl:call-template>""")]
+    [InlineData("""<xsl:template match="*" mode="r"><xsl:param name="n"/><xsl:if test="$n gt 0"><xsl:element name="x"><xsl:apply-templates select="." mode="r"><xsl:with-param name="n" select="$n - 1"/></xsl:apply-templates></xsl:element></xsl:if></xsl:template>""",
+                """<xsl:apply-templates select="parse-xml('&lt;a/&gt;')/*" mode="r"><xsl:with-param name="n" select="1100"/></xsl:apply-templates>""")]
+    public async Task RecursionThatBuildsAnElementPerLevel_ReachesTheLimit(string templates, string call)
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync($$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              {{templates}}
+              <xsl:template match="/"><xsl:variable name="t">{{call}}</xsl:variable><xsl:value-of select="'built'"/></xsl:template>
+            </xsl:stylesheet>
+            """);
+        // The tree is built but not navigated: XPath navigation has its own depth limit (1000).
+        (await t.TransformAsync("<doc/>")).Trim().Should().Be("built");
+    }
+
+    /// <summary>Unbounded recursion still stops with XTDE0000 rather than running away.</summary>
+    [Fact]
+    public async Task UnboundedRecursionThroughAnElement_StillRaisesXTDE0000()
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/"><xsl:call-template name="r"/></xsl:template>
+              <xsl:template name="r"><x><xsl:call-template name="r"/></x></xsl:template>
+            </xsl:stylesheet>
+            """);
+        var act = async () => await t.TransformAsync("<doc/>");
+        (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("XTDE0000");
+    }
+
     [Fact]
     public void CallerOnASmallStack_StillRecursesDeeply()
     {
