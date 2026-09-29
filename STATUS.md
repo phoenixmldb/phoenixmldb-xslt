@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-28 23:19 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-29 13:00 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,8 +17,8 @@ Generated 2026-09-28 23:19 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 8 | 0 |
-| phoenixmldb-xslt | 5 | 1 |
+| phoenixmldb-xquery | 1 | 2 |
+| phoenixmldb-xslt | 2 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -31,32 +31,27 @@ Generated 2026-09-28 23:19 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
-- [71] phx:score returns 0 for every node, including one contains text has just matched
-- [70] phx:is-stop-word is false for every stop word and true for any letterless input
-- [49] QT3 runner's assert-type passes any type it doesn't list — 17 engine type defects hidden, 11 correct results failed
-- [40] XsdSchemaProvider.Validate validates an element's string value, not its markup
-- [30] contains text: phrase matching ignores term positions, so a phrase matches across a stop-word gap
-- [29] FullTextAnalysisOptions.Default performs no stemming despite Stemming=true
-- [18] Unbound external functions silently return () — and a host cannot bind one
-- [5] Atomizing fn:collection() nodes yields '' while fn:string() on the same nodes returns the text
+- [105] parse-xml'd <z xmlns=""/> under a default namespace serializes as <z/>: the round trip moves z into the parent's namespace
 
 **phoenixmldb-xslt**
 
-- [199] Recursion-depth limit (1200) counts element construction too: template + LRE recursion stops at ~600 levels
-- [197] Windows/.NET 8: a 100-deep recursive template exhausts the stack (limit claims 1200)
 - [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
-- [140] assert-xml comparisons are blind to whitespace-only element content (~20 assertions, 9 sets)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
 
+**phoenixmldb-xquery**
+
+- [113] fix: validate sees its operand's namespaces, returns an element, and lax checks what it assesses
+- [111] fix: a named reference to accumulator-before/after binds the focus
+
 **phoenixmldb-xslt**
 
-- [196] ci: unit suites and a CLI encoding check on windows-latest
+- [211] fix: json output writes xs:decimal in canonical form
 
 **phoenixmldb-cli**
 
-- [10] build: Bump the phoenixmldb-engines group with 2 updates
+- [11] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
