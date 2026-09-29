@@ -248,24 +248,7 @@ public sealed partial class StylesheetParser
                 var propName = argVal;
                 if (propName.Contains(':', StringComparison.Ordinal))
                     propName = propName[(propName.IndexOf(':', StringComparison.Ordinal) + 1)..];
-                return propName switch
-                {
-                    "version" => "3.0",
-                    "vendor" => "PhoenixmlDb",
-                    "vendor-url" => "https://endpointsystems.com",
-                    "product-name" => "PhoenixmlDb XSLT",
-                    "product-version" => "1.0",
-                    "is-schema-aware" => "no",
-                    "supports-serialization" => "yes",
-                    "supports-backwards-compatibility" => "yes",
-                    "supports-namespace-axis" => "yes",
-                    "supports-streaming" => "yes",
-                    "supports-dynamic-evaluation" => "yes",
-                    "supports-higher-order-functions" => "yes",
-                    "xpath-version" => "4.0",
-                    "xsd-version" => "1.1",
-                    _ => ""
-                };
+                return XsltSystemPropertyFunction.PropertyValue(propName);
             }
         }
 
@@ -810,24 +793,7 @@ public sealed partial class StylesheetParser
                 return "";
         }
 
-        return localName switch
-        {
-            "version" => "3.0",
-            "vendor" => "PhoenixmlDb",
-            "vendor-url" => "https://endpointsystems.com",
-            "product-name" => "PhoenixmlDb XSLT",
-            "product-version" => "1.0",
-            "is-schema-aware" => "no",
-            "supports-serialization" => "yes",
-            "supports-backwards-compatibility" => "yes",
-            "supports-namespace-axis" => "yes",
-            "supports-streaming" => "yes",
-            "supports-dynamic-evaluation" => "yes",
-            "supports-higher-order-functions" => "yes",
-            "xpath-version" => "4.0",
-            "xsd-version" => "1.1",
-            _ => ""
-        };
+        return XsltSystemPropertyFunction.PropertyValue(localName);
     }
 
 
