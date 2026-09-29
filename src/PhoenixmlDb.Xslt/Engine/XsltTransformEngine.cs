@@ -1742,7 +1742,9 @@ public sealed class XsltTransformEngine
                     return "null"; // JSON doesn't support NaN/Infinity
                 return DefaultXsltExecutionContext.FormatDouble(d);
             case decimal m:
-                return m.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // A number serializes as its xs:string cast (Serialization 3.1 §10): .NET decimal
+                // keeps the scale it was parsed with, so xs:decimal('15.00') must print 15.
+                return PhoenixmlDb.XQuery.Functions.ConcatFunction.FormatDecimalXPath(m);
             case float f:
                 if (float.IsNaN(f) || float.IsInfinity(f))
                     return "null";
