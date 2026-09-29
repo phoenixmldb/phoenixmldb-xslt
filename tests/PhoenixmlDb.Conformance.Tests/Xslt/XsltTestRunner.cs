@@ -177,6 +177,23 @@ public sealed class XsltTestRunner
         return testCases;
     }
 
+    /// <summary>
+    /// The compile-time form of a static param's select: an XPath string literal is unquoted and
+    /// unescaped ('' → ', "" → "); anything else is passed through as written.
+    /// </summary>
+    private static string StaticParamValue(string select)
+    {
+        var val = select.Trim();
+        if ((val.StartsWith('\'') && val.EndsWith('\'')) || (val.StartsWith('"') && val.EndsWith('"')))
+        {
+            var inner = val[1..^1];
+            return val[0] == '\''
+                ? inner.Replace("''", "'", StringComparison.Ordinal)
+                : inner.Replace("\"\"", "\"", StringComparison.Ordinal);
+        }
+        return val;
+    }
+
     private XsltEnvironment ParseEnvironment(XElement elem, XNamespace ns, string basePath, Uri? testSetUri = null)
     {
         var env = new XsltEnvironment();
@@ -276,6 +293,13 @@ public sealed class XsltTestRunner
             if (name != null && select != null)
             {
                 env.Parameters[name] = select;
+                // A static param declared on the ENVIRONMENT is as static as one on the test.
+                // Only test-level static params reached the compiler, so an environment's
+                // STREAMABLE=false() was ignored and every case using it compiled with the
+                // stylesheet's own default — the non-stream-* variants ran streamed
+                // (non-stream-007/-008), and 26 environments in 8 test sets were affected.
+                if (param.Attribute("static")?.Value is "yes" or "true")
+                    env.StaticParameters[name] = StaticParamValue(select);
             }
         }
 
@@ -446,18 +470,7 @@ public sealed class XsltTestRunner
                     if (isStatic)
                     {
                         // Static params are passed at compile time for shadow attribute resolution
-                        var val = paramSelect.Trim();
-                        if ((val.StartsWith('\'') && val.EndsWith('\'')) || (val.StartsWith('"') && val.EndsWith('"')))
-                        {
-                            var inner = val[1..^1];
-                            // Unescape XPath string literal escaping: '' → ' or "" → "
-                            inner = val[0] == '\''
-                                ? inner.Replace("''", "'", StringComparison.Ordinal)
-                                : inner.Replace("\"\"", "\"", StringComparison.Ordinal);
-                            test.Environment.StaticParameters[paramName] = inner;
-                        }
-                        else
-                            test.Environment.StaticParameters[paramName] = val;
+                        test.Environment.StaticParameters[paramName] = StaticParamValue(paramSelect);
                     }
                     // Also pass as runtime param (to satisfy required params and runtime references)
                     // If the test specifies an as="xs:type", wrap the select expression to cast the value
