@@ -7352,3 +7352,24 @@ encoding in an internal `ConsoleEncoding` that suppresses it, so `Encoding.UTF8`
 safe today — but a BOM in front of piped XML is not a thing to leave depending on framework
 internals staying as they are. Verified after the change that piped output still begins
 `3c 6f 75 74 3e` and not `ef bb bf`.
+
+### 117. `system-property-999gen` cannot pass as the suite ships it — recorded, not fixed (2026-09-29)
+
+**Status: not a processor defect. Recorded for #13's "fixed or recorded with a reason".**
+
+`fn/system-property-gen` is commented out of the W3C `catalog.xml` (line 97); we run it anyway, on
+purpose (entry above: *"Do not decide `system-property-gen` for the number"*). Its 999gen case runs
+the generator and checks its output. Every assertion but the last passes. Checked by running
+`_generate-property-tests.xsl` and counting: 165 test-cases, 15 per property, 45 version params.
+
+The last assertion requires every generated name to exist in
+`doc('_system-property-test-set.xml')`, a resource the case declares relative to its own directory.
+**No such file exists in `tests/fn/system-property-gen/`.** The file of that name in
+`tests/fn/system-property/` is a different set of 27 hand-written cases (001–021…), which contains
+none of the generated `system-property-1NNx` names. So no processor can satisfy it from this
+checkout. It was written for a layout in which the generated set *is* that file.
+
+Of `system-property-gen`'s 166 cases, #203 and #204 fixed 143. The 22 `system-property-10[1-9][df]` cases are on
+`fix/system-property-creation-namespaces`, re-measured on 2026-09-29 against current main:
++22, no losses. It lands at the release train. system-property-021 (the hand-written set) is
+fixed by #212. That leaves this one.
