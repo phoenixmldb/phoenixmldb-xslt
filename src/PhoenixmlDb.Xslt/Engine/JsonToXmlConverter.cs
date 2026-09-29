@@ -21,7 +21,16 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </summary>
 internal static class JsonToXmlConverter
 {
-    private static readonly NamespaceId FnNs = NamespaceId.Fn;
+    private const string FnNamespaceUri = "http://www.w3.org/2005/xpath-functions";
+
+    // The functions namespace's id IN THIS STORE. It was the predeclared NamespaceId.Fn, stamped on
+    // every element — but template patterns resolve their names through the store's intern table,
+    // and a store that had already interned this URI (pattern resolution does, at transform start)
+    // holds it under another id. So match="fn:null" never matched a json-to-xml element, while
+    // `instance of element(fn:null)`, which compares URIs, said it should: the W3C XSLT
+    // implementation of xml-to-json fell through to its catch-all template and terminated
+    // (xml-to-json-A2-*, -B2-*, once the harness passed their environment's static param).
+    private static NamespaceId FnNsOf(XdmInMemoryStore store) => store.InternNamespace(FnNamespaceUri, NamespaceId.Fn);
 
     public static XdmDocument Convert(string json, XdmInMemoryStore store, bool liberal = false, string duplicates = "use-first", bool escape = false)
     {
@@ -63,7 +72,7 @@ internal static class JsonToXmlConverter
         };
     }
 
-    private static readonly IReadOnlyList<NamespaceBinding> FnNsDecl = new[] { new NamespaceBinding("", FnNs) };
+    private static NamespaceBinding[] FnNsDeclOf(XdmInMemoryStore store) => new[] { new NamespaceBinding("", FnNsOf(store)) };
 
     private static XdmElement ConvertObject(System.Text.Json.JsonElement je, string? key, XdmInMemoryStore store, string duplicates, bool isRoot = false, bool escape = false)
     {
@@ -95,12 +104,12 @@ internal static class JsonToXmlConverter
             StringValueResolver = store.StringValueResolver,
             Id = elemId,
             Document = default,
-            Namespace = FnNs,
+            Namespace = FnNsOf(store),
             LocalName = "map",
             Prefix = null,
             Attributes = attrs,
             Children = children,
-            NamespaceDeclarations = isRoot ? FnNsDecl : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
+            NamespaceDeclarations = isRoot ? FnNsDeclOf(store) : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
         };
         store.Register(elem);
         return elem;
@@ -127,12 +136,12 @@ internal static class JsonToXmlConverter
             StringValueResolver = store.StringValueResolver,
             Id = elemId,
             Document = default,
-            Namespace = FnNs,
+            Namespace = FnNsOf(store),
             LocalName = "array",
             Prefix = null,
             Attributes = attrs,
             Children = children,
-            NamespaceDeclarations = isRoot ? FnNsDecl : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
+            NamespaceDeclarations = isRoot ? FnNsDeclOf(store) : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
         };
         store.Register(elem);
         return elem;
@@ -183,12 +192,12 @@ internal static class JsonToXmlConverter
             StringValueResolver = store.StringValueResolver,
             Id = elemId,
             Document = default,
-            Namespace = FnNs,
+            Namespace = FnNsOf(store),
             LocalName = localName,
             Prefix = null,
             Attributes = attrs,
             Children = new[] { textId },
-            NamespaceDeclarations = isRoot ? FnNsDecl : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty,
+            NamespaceDeclarations = isRoot ? FnNsDeclOf(store) : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty,
             _stringValue = textValue
         };
         store.Register(elem);
@@ -208,12 +217,12 @@ internal static class JsonToXmlConverter
             StringValueResolver = store.StringValueResolver,
             Id = elemId,
             Document = default,
-            Namespace = FnNs,
+            Namespace = FnNsOf(store),
             LocalName = "null",
             Prefix = null,
             Attributes = attrs,
             Children = System.Collections.Immutable.ImmutableArray<NodeId>.Empty,
-            NamespaceDeclarations = isRoot ? FnNsDecl : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
+            NamespaceDeclarations = isRoot ? FnNsDeclOf(store) : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
         };
         store.Register(elem);
         return elem;
@@ -242,7 +251,7 @@ internal static class JsonToXmlConverter
 
     private static void EnsureFnNamespace(XdmInMemoryStore store)
     {
-        store.RegisterKnownNamespace(FnNs, "http://www.w3.org/2005/xpath-functions");
+        FnNsOf(store);
     }
 }
 
