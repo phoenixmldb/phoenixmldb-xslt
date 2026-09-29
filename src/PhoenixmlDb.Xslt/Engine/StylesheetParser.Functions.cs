@@ -376,12 +376,17 @@ public sealed partial class StylesheetParser
         }
         catch (XsltException ex) when (ex.ErrorCode == "XPST0008")
         {
-            // Forward reference to undeclared static variable — must be a real error
+            // Forward reference to undeclared static variable — must be a real error, unless the
+            // runtime evaluator can resolve what the hand-written one could not (xslt#156).
+            if (TryEvaluateStaticViaRuntime(expr, context, out var value))
+                return value;
             throw;
         }
         catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException or ArgumentException or XsltException)
         {
-            return null;
+            // Shapes the hand-written evaluator does not implement; the runtime evaluator
+            // implements them all (xslt#156). Null, as before, when that fails too.
+            return TryEvaluateStaticViaRuntime(expr, context, out var value) ? value : null;
         }
     }
 

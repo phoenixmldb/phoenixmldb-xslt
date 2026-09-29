@@ -3449,25 +3449,35 @@ public sealed partial class StylesheetParser
     private bool TryEvaluateStaticSelect(string exprText, XElement context, System.Xml.Linq.XObject? origin, out object? value)
     {
         value = null;
+        XQueryExpression expr;
         try
         {
-            var expr = ParseXPathWithContext(exprText, origin ?? context);
+            expr = ParseXPathWithContext(exprText, origin ?? context);
             ResolveExpressionNamespaces(expr, context);
             value = EvaluateStaticExpression(expr, context);
             return true;
         }
         catch (XsltException)
         {
-            // Not statically evaluable here (no context item, undeclared static variable, a
-            // function not available statically). The caller must NOT substitute source text.
-            return false;
+            // The hand-written evaluator rejects every path expression as needing a context item,
+            // including doc(...)/x and $v/x, which need none. The runtime evaluator below has an
+            // absent focus, so a path that really needs one still fails there (XPDY0002).
         }
         catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException or NotSupportedException)
         {
-            // Shapes the static evaluator does not implement (inline function items, argument
-            // placeholders). Same contract: report failure rather than fabricate a value.
+            // Shapes the hand-written evaluator does not implement (inline function items,
+            // argument placeholders, !, let, doc() paths): hand them to the runtime evaluator.
+        }
+
+        try
+        {
+            expr = ParseXPathWithContext(exprText, origin ?? context);
+        }
+        catch (XsltException)
+        {
             return false;
         }
+        return TryEvaluateStaticViaRuntime(expr, context, out value);
     }
 
     /// <summary>
@@ -3538,6 +3548,11 @@ public sealed partial class StylesheetParser
                         var paramName = expr[1..];
                         if (staticParams.TryGetValue(paramName, out var paramValue))
                             result.Append(paramValue);
+                        // The string table is keyed by the name as written, so a static variable
+                        // declared in another module, or under another prefix, is not in it; the
+                        // evaluator resolves the name as a QName (xslt#156).
+                        else if (contextElement != null && TryEvaluateStaticSelect(expr, contextElement, null, out var varValue))
+                            result.Append(StaticValueToString(varValue));
                         else
                         {
                             // Appending nothing AND reporting success let an unknown static
