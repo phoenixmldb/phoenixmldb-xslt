@@ -48,7 +48,7 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
         // error code depends on the tree: for the principal source document, the initial
         // mode governs which accumulators were evaluated, so an excluded accumulator is
         // XTDE3362 (§18.2); on any other tree the general XTDE3340 applies.
-        if (!_context.IsAccumulatorApplicable(accName))
+        if (!_context.IsAccumulatorApplicable(accName, node))
         {
             if (_context.IsPrincipalSourceNode(node))
                 throw new XsltException($"XTDE3362: Accumulator '{name}' is not applicable to the principal source tree (not listed in use-accumulators for the initial mode)");

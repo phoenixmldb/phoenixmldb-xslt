@@ -870,6 +870,15 @@ internal sealed partial class DefaultXsltExecutionContext
     // Principal source document ID for accumulator applicability checks (§18.2.2)
     private DocumentId? _principalSourceDocId;
 
+    // The principal source document's node id. DocumentId does not identify a tree: documents
+    // parsed separately (xsl:source-document, doc()) can carry the same one, so the node id is
+    // what tells the principal tree apart.
+    private NodeId? _principalSourceDocNodeId;
+
+    // The initial mode, as the key xsl:mode declarations are stored under. It alone decides
+    // which accumulators apply to the principal source tree (§18.2.2).
+    private QName _initialModeKey = new(NamespaceId.None, "");
+
 
     /// <summary>
     /// Counts instructions that ALWAYS produce a text node, even a zero-length one — today just
@@ -933,7 +942,22 @@ internal sealed partial class DefaultXsltExecutionContext
             // When HasSourceDocument is false, the source is a synthetic <empty/> placeholder
             // and should not trigger XTDE3362 accumulator applicability checks.
             if (options.HasSourceDocument)
+            {
                 _principalSourceDocId = sourceDoc.Document;
+                // §18.2.2's initial-mode rule covers the tree of the initial match selection,
+                // which exists only when the transform starts by applying templates. Started by
+                // a named template or a function, the source is just the global context item
+                // and keeps the general rule (W3C mode-1511..1514).
+                if (options.InitialTemplate == null && options.InitialFunction == null)
+                    _principalSourceDocNodeId = sourceDoc.Id;
+            }
+        }
+        {
+            var initialMode = options.InitialMode ?? stylesheet.DefaultMode;
+            if (initialMode is { } m && m.LocalName is "#default")
+                initialMode = stylesheet.DefaultMode;
+            if (initialMode is { } im && im.LocalName is not ("#unnamed" or "#default" or ""))
+                _initialModeKey = im;
         }
 
         // Build function library: standard XPath/XQuery functions + XSLT user-defined functions
