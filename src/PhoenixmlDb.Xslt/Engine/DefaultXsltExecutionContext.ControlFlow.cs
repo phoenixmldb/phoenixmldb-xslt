@@ -858,6 +858,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // Currently dispatches group-starting-with, group-ending-with and group-adjacent.
         // group-by is excluded: see the note in ForEachGroupStreamingAsync's group-by branch.
         if (_isStreamingExecution && _activeStreamingReader != null
+            && StreamingSubtreeBufferDetector.StreamedGroupingModelsSelect(instruction.Select)
             && (instruction.GroupStartingWith != null
                 || instruction.GroupEndingWith != null
                 || instruction.GroupAdjacent != null))
