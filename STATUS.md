@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-29 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-09-30 12:42 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -19,7 +19,7 @@ Generated 2026-09-29 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 1 | 0 |
 | phoenixmldb-xslt | 2 | 0 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -39,10 +39,6 @@ Generated 2026-09-29 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-cli**
-
-- [11] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
