@@ -899,13 +899,17 @@ internal static class StreamabilityChecker
         /// whether the parser produced a bare step or a one-step path, which is exactly the trap
         /// this avoids by testing both shapes the same way.
         /// </remarks>
-        private static bool KeyExpressionReturnsElements(XQueryExpression expr) => expr switch
+        /// <param name="expr">The group-by or group-adjacent expression.</param>
+        /// <param name="attributePopulation">The grouping population is attribute nodes
+        /// (select="transaction/@date"): then the context item, and a self:: step, are attributes
+        /// too, and atomizing one is motionless (W3C si-group-024/025 were rejected).</param>
+        private static bool KeyExpressionReturnsElements(XQueryExpression expr, bool attributePopulation) => expr switch
         {
-            PathExpression path when path.Steps.Count > 0 => StepReturnsElements(path.Steps[^1]),
-            StepExpression step => StepReturnsElements(step),
-            // A bare context item in a streamed grouping IS the current element, so atomizing it
-            // needs its descendants.
-            ContextItemExpression => true,
+            PathExpression path when path.Steps.Count > 0 => StepReturnsElements(path.Steps[^1], attributePopulation),
+            StepExpression step => StepReturnsElements(step, attributePopulation),
+            // A bare context item in a streamed grouping IS the current item: an element, whose
+            // atomization needs its descendants, unless the population is attributes.
+            ContextItemExpression => !attributePopulation,
             // Everything else — a function call, a comparison, arithmetic, a literal — produces
             // an atomic value. fn:boolean/fn:string/fn:name consume the node without atomizing it.
             _ => false,
@@ -916,8 +920,24 @@ internal static class StreamabilityChecker
         /// Attribute and namespace nodes are available from the start tag, so atomizing one is
         /// motionless; every other node kind reached by a step is not.
         /// </summary>
-        private static bool StepReturnsElements(StepExpression step)
-            => step.Axis is not (Axis.Attribute or Axis.Namespace);
+        private static bool StepReturnsElements(StepExpression step, bool attributePopulation = false)
+            => step.Axis is not (Axis.Attribute or Axis.Namespace)
+               && !(attributePopulation && step.Axis == Axis.Self);
+
+        /// <summary>
+        /// True when the select expression's items are leaf nodes (attributes, namespaces, text,
+        /// comments, processing instructions), whose atomization needs nothing beyond the node.
+        /// </summary>
+        private static bool SelectReturnsAttributes(XQueryExpression? select) => select switch
+        {
+            PathExpression path when path.Steps.Count > 0 => IsLeafStep(path.Steps[^1]),
+            StepExpression step => IsLeafStep(step),
+            _ => false,
+        };
+
+        private static bool IsLeafStep(StepExpression step) =>
+            step.Axis is Axis.Attribute or Axis.Namespace
+            || step.NodeTest is KindTest { Kind: XdmNodeKind.Text or XdmNodeKind.Comment or XdmNodeKind.ProcessingInstruction };
 
         private static bool SelectNavigatesElements(XQueryExpression expr)
         {
@@ -1127,12 +1147,13 @@ internal static class StreamabilityChecker
             //   @id                 -> an attribute    -> available from the start tag -> allow
             // A rule phrased over "returns nodes" would reject the third, and attribute keys are
             // ordinary in streamed grouping.
-            if (!selectIsGrounded && insn.GroupBy != null && KeyExpressionReturnsElements(insn.GroupBy))
+            var attributePopulation = SelectReturnsAttributes(insn.Select);
+            if (!selectIsGrounded && insn.GroupBy != null && KeyExpressionReturnsElements(insn.GroupBy, attributePopulation))
             {
                 NonStreamableReason = "xsl:for-each-group group-by expression returns nodes whose atomization is not motionless — not streamable";
                 return null;
             }
-            if (!selectIsGrounded && insn.GroupAdjacent != null && KeyExpressionReturnsElements(insn.GroupAdjacent))
+            if (!selectIsGrounded && insn.GroupAdjacent != null && KeyExpressionReturnsElements(insn.GroupAdjacent, attributePopulation))
             {
                 NonStreamableReason = "xsl:for-each-group group-adjacent expression returns nodes whose atomization is not motionless — not streamable";
                 return null;

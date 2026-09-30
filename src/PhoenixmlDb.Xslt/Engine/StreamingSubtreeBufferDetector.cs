@@ -21,6 +21,36 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </remarks>
 internal static class StreamingSubtreeBufferDetector
 {
+    /// <summary>
+    /// Whether ForEachGroupStreamingAsync can serve <paramref name="select"/>: its population is
+    /// the context element's child elements (<c>transaction</c>, <c>*</c>, or a single child
+    /// step followed by a grounding call such as <c>record/copy-of()</c>). A leaf population
+    /// (<c>transaction/@date</c>, <c>ITEM/PRICE/text()</c>) or a path through more than one
+    /// child step is not: the streamed loop walked the children and grouped the wrong nodes
+    /// (W3C si-group-024 produced date="01234567").
+    /// </summary>
+    internal static bool StreamedGroupingModelsSelect(XQueryExpression? select)
+    {
+        var steps = select switch
+        {
+            PathExpression path => path.Steps,
+            StepExpression step => (IReadOnlyList<StepExpression>)[step],
+            _ => null,
+        };
+        if (steps is null)
+            return true;
+        var childElementSteps = 0;
+        foreach (var step in steps)
+        {
+            if (step.Axis is Axis.Attribute or Axis.Namespace
+                || step.NodeTest is KindTest { Kind: XdmNodeKind.Text or XdmNodeKind.Comment or XdmNodeKind.ProcessingInstruction })
+                return false;
+            if (step.Axis == Axis.Child && step.NodeTest is NameTest or KindTest { Kind: XdmNodeKind.Element })
+                childElementSteps++;
+        }
+        return childElementSteps <= 1;
+    }
+
     // Compile-time-stable AST nodes — same body reference recurs across every
     // element match. Cache the scan so we pay it once per body, not per element.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<XsltSequenceConstructor, object> _cache = new();
@@ -95,6 +125,10 @@ internal static class StreamingSubtreeBufferDetector
                 // group-by is in play and the select expression navigates the
                 // matched subtree (bare ., relative downward path, or copy-of()).
                 if (feg.GroupBy != null && TouchesMatchedSubtree(feg.Select)) return true;
+                // The streamed dispatch models a population of the matched element's CHILD
+                // elements only. Any other select (attributes, text nodes, a deeper path) is
+                // evaluated by the buffered path, which needs the subtree.
+                if (!StreamedGroupingModelsSelect(feg.Select)) return true;
                 if (ExpressionUsesSnapshot(feg.Select)) return true;
                 return RequiresSubtreeBuffer(feg.Body);
 
