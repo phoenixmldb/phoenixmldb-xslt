@@ -94,7 +94,14 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         string stylesheetXml;
         Uri? baseUri = null;
 
-        if (stylesheetLocation != null)
+        if (stylesheetLocation != null && _context.Policy is { } locationPolicy)
+        {
+            // Under a resource policy the nested stylesheet is an import: resolved, authorised,
+            // and read from the URI the policy allowed (redirects re-authorised).
+            (stylesheetXml, baseUri) = await ReadAuthorizedAsync(stylesheetLocation, staticBase,
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet, locationPolicy).ConfigureAwait(false);
+        }
+        else if (stylesheetLocation != null)
         {
             // Resolve relative URI against static base URI
             var resolvedUri = stylesheetLocation;
@@ -192,12 +199,18 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // only catalog is the CALLING stylesheet's, which has none, so xsl:use-package in the
         // transformed stylesheet raised XTDE3052. See VendorOptionPackages — the XQuery-side
         // provider reads the same option through the same helper.
-        var catalog2 = PhoenixmlDb.Xslt.VendorOptionPackages.BuildCatalog(
-                           options, n => _context.SerializeXdmNodeToXml(n), baseUri)
+        // Under a resource policy a catalog named by the stylesheet's own vendor options is not
+        // honoured: it would let the stylesheet choose files to load. The host's catalog stays.
+        var catalog2 = (_context.Policy is null
+                           ? PhoenixmlDb.Xslt.VendorOptionPackages.BuildCatalog(
+                               options, n => _context.SerializeXdmNodeToXml(n), baseUri)
+                           : null)
                        ?? _context._stylesheet.PackageCatalog;
+        // The nested stylesheet is parsed under the caller's policy (its imports, includes and
+        // compile-time document reads are checked), and runs under it (transformOptions below).
         var parser = catalog2 != null
-            ? new StylesheetParser(exprParser, catalog2) { PreloadedResources = _context._options.PreloadedResources }
-            : new StylesheetParser(exprParser) { PreloadedResources = _context._options.PreloadedResources };
+            ? new StylesheetParser(exprParser, catalog2) { PreloadedResources = _context._options.PreloadedResources, ResourcePolicy = _context.Policy }
+            : new StylesheetParser(exprParser) { PreloadedResources = _context._options.PreloadedResources, ResourcePolicy = _context.Policy };
         Dictionary<string, string>? externalStaticParams = null;
         if (staticParamsMap != null)
         {
@@ -375,6 +388,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             // wanted. XsltTransformProvider, the XQuery-side twin of this function, has always
             // set the equivalent flag; this one did not.
             ReturnRawXdm = isRaw,
+            ResourcePolicy = _context.Policy,
         };
 
         // Create engine and run transformation
@@ -500,6 +514,13 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     private async ValueTask<(string Xml, Uri? Resolved)> LoadSourceFromLocationAsync(
         string sourceLocation, string? staticBase)
     {
+        if (_context.Policy is { } policy)
+        {
+            var (xml, uri) = await ReadAuthorizedAsync(sourceLocation, staticBase,
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, policy).ConfigureAwait(false);
+            return (xml, uri);
+        }
+
         Uri? resolved = null;
         if (Uri.TryCreate(sourceLocation, UriKind.Absolute, out var absolute))
             resolved = absolute;
@@ -535,6 +556,40 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
 
         throw new XsltException(
             $"FOXT0001: source-location: unsupported URI scheme '{resolved.Scheme}' in '{resolved}'");
+    }
+
+    /// <summary>
+    /// Reads <paramref name="location"/> under <paramref name="policy"/>: resolved against the
+    /// static base, authorised for <paramref name="access"/>, and read from the authorised URI
+    /// (a file at its canonical path; HTTP with every redirect re-authorised). FOXT0001 if refused.
+    /// </summary>
+    private async ValueTask<(string Xml, Uri Uri)> ReadAuthorizedAsync(string location, string? staticBase,
+        PhoenixmlDb.XQuery.Security.ResourceAccessKind access, PhoenixmlDb.XQuery.Security.ResourcePolicy policy)
+    {
+        var baseUri = staticBase != null && Uri.TryCreate(staticBase, UriKind.Absolute, out var b) ? b : _context._stylesheet.BaseUri;
+        Uri authorized;
+        try
+        {
+            authorized = policy.Authorize(location, access, baseUri);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw new XsltException($"FOXT0001: {e.Message}");
+        }
+        if (authorized.IsFile)
+            return (await System.IO.File.ReadAllTextAsync(authorized.LocalPath).ConfigureAwait(false), authorized);
+        if (authorized.Scheme == Uri.UriSchemeHttp || authorized.Scheme == Uri.UriSchemeHttps)
+        {
+            if (_context._options.PreloadedResources is { } preloaded && preloaded.TryGet(authorized, out var cached))
+                return (cached, authorized);
+            if (OperatingSystem.IsBrowser())
+                throw new XsltException($"FOXT0001: Cannot fetch '{authorized}' on Blazor WebAssembly: pre-fetch it through PreloadedResources.");
+            var text = access == PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet
+                ? await HttpResourceLoader.GetStringAsync(authorized, policy).ConfigureAwait(false)
+                : await HttpDocumentLoader.GetStringAsync(authorized, policy).ConfigureAwait(false);
+            return (text, authorized);
+        }
+        throw new XsltException($"FOXT0001: Cannot read '{location}': unsupported URI scheme '{authorized.Scheme}'");
     }
 
     private static object? ParseResultAsDocument(string xml, XdmInMemoryStore? store = null, string? resultBaseUri = null)

@@ -1702,6 +1702,11 @@ internal sealed partial class DefaultXsltExecutionContext
 
     public override async ValueTask EvaluateInstructionAsync(XsltEvaluate instruction)
     {
+        // A resource policy may disable dynamic evaluation (ServerDefault does): evaluating
+        // xsl:evaluate is then XTDE3175 (XSLT 3.0 §10.4.1). It used to run regardless.
+        if (Policy is { AllowXslEvaluate: false })
+            throw Error("XTDE3175: xsl:evaluate is disabled by the resource policy");
+
         // xsl:evaluate: dynamically evaluate an XPath expression string
         // The xpath attribute is an XPath expression that produces the string to evaluate
         var xpathResult = await EvaluateAsync(instruction.Xpath).ConfigureAwait(false);

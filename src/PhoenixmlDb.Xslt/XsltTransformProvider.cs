@@ -20,7 +20,7 @@ public sealed class XsltTransformProvider : ITransformProvider
     /// Optional pre-fetched contents for URIs that <c>stylesheet-location</c> would otherwise
     /// need to fetch over HTTP synchronously. Required on Blazor WebAssembly which cannot
     /// block the calling thread for sync HTTP — without this, fn:transform from XQuery hits
-    /// <see cref="Engine.HttpResourceLoader.GetStringAsync"/> and throws FOXT0001.
+    /// <see cref="Engine.HttpResourceLoader.GetStringAsync(Uri, CancellationToken)"/> and throws FOXT0001.
     /// </summary>
     /// <remarks>
     /// Mirrors the engine-internal fn:transform path (XsltTransformer.cs:28485-28505) which
@@ -79,8 +79,16 @@ public sealed class XsltTransformProvider : ITransformProvider
         // Determine stylesheet XML
         string stylesheetXml;
         Uri? baseUri = null;
+        // The calling query's resource policy governs the whole nested transformation: the
+        // stylesheet and source locations, and everything the stylesheet reads.
+        var policy = context.ResourcePolicy;
 
-        if (stylesheetLocation != null)
+        if (stylesheetLocation != null && policy != null)
+        {
+            (stylesheetXml, baseUri) = await ReadAuthorizedAsync(stylesheetLocation, context.StaticBaseUri,
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet, policy).ConfigureAwait(false);
+        }
+        else if (stylesheetLocation != null)
         {
             // Resolve relative URI against static base URI
             var resolvedUri = stylesheetLocation;
@@ -169,9 +177,12 @@ public sealed class XsltTransformProvider : ITransformProvider
         }
 
         // Create transformer and load stylesheet
-        var transformer = new XsltTransformer();
-        var packageCatalog = VendorOptionPackages.BuildCatalog(options,
-            node => SerializeNode(node, nodeStore), baseUri);
+        var transformer = new XsltTransformer { ResourcePolicy = policy };
+        // Under a policy, a package catalog named by the caller's vendor options is not honoured:
+        // it would choose files to load outside the policy.
+        var packageCatalog = policy is null
+            ? VendorOptionPackages.BuildCatalog(options, node => SerializeNode(node, nodeStore), baseUri)
+            : null;
         await transformer.LoadStylesheetAsync(stylesheetXml, baseUri, staticParams, packageCatalog).ConfigureAwait(false);
 
         // Set initial template / mode / function
@@ -278,6 +289,11 @@ public sealed class XsltTransformProvider : ITransformProvider
         if (sourceNode is XdmNode srcNode)
         {
             inputXml = SerializeNode(srcNode, nodeStore);
+        }
+        else if (sourceLocation != null && policy != null)
+        {
+            (inputXml, resolvedSourceUri) = await ReadAuthorizedAsync(sourceLocation, context.StaticBaseUri,
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, policy).ConfigureAwait(false);
         }
         else if (sourceLocation != null)
         {
@@ -642,6 +658,40 @@ public sealed class XsltTransformProvider : ITransformProvider
     /// back the nodes the transform produced, not a document node around them.
     /// </summary>
     /// <returns>The single node, an <c>object?[]</c> of nodes, or null when the text will not parse.</returns>
+    /// <summary>
+    /// Reads <paramref name="location"/> under <paramref name="policy"/>: resolved against the
+    /// caller's static base, authorised for <paramref name="access"/>, and read from the
+    /// authorised URI (HTTP redirects re-authorised). FOXT0001 if refused.
+    /// </summary>
+    private async ValueTask<(string Xml, Uri Uri)> ReadAuthorizedAsync(string location, string? staticBase,
+        PhoenixmlDb.XQuery.Security.ResourceAccessKind access, PhoenixmlDb.XQuery.Security.ResourcePolicy policy)
+    {
+        var baseUri = staticBase != null && Uri.TryCreate(staticBase, UriKind.Absolute, out var b) ? b : null;
+        Uri authorized;
+        try
+        {
+            authorized = policy.Authorize(location, access, baseUri);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw new XQueryException("FOXT0001", e.Message);
+        }
+        if (authorized.IsFile)
+            return (await File.ReadAllTextAsync(authorized.LocalPath).ConfigureAwait(false), authorized);
+        if (authorized.Scheme == Uri.UriSchemeHttp || authorized.Scheme == Uri.UriSchemeHttps)
+        {
+            if (PreloadedResources is { } preloaded && preloaded.TryGet(authorized, out var cached))
+                return (cached, authorized);
+            if (OperatingSystem.IsBrowser())
+                throw new XQueryException("FOXT0001", $"Cannot fetch '{authorized}' on Blazor WebAssembly: pre-fetch it through PreloadedResources.");
+            var text = access == PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet
+                ? await Engine.HttpResourceLoader.GetStringAsync(authorized, policy).ConfigureAwait(false)
+                : await Engine.HttpDocumentLoader.GetStringAsync(authorized, policy).ConfigureAwait(false);
+            return (text, authorized);
+        }
+        throw new XQueryException("FOXT0001", $"Cannot read '{location}': unsupported URI scheme '{authorized.Scheme}'");
+    }
+
     private static async ValueTask<object?> ParseRawResultToXdmAsync(string xml, INodeStore? nodeStore)
     {
         // A serialized result document opens with an XML declaration. It is legal there and

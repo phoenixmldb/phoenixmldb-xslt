@@ -928,7 +928,8 @@ internal sealed partial class DefaultXsltExecutionContext
         _maxOutputSize = options.MaxOutputSize;
         _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore)
         {
-            PreloadedResources = options.PreloadedResources
+            PreloadedResources = options.PreloadedResources,
+            Policy = options.ResourcePolicy,
         };
         if (options.Collections != null)
             _documentResolver.SetCollections(options.Collections);

@@ -56,6 +56,14 @@ internal sealed class XsltStreamAvailableFunction : PhoenixmlDb.XQuery.Ast.XQuer
                 filePath = uri;
             }
 
+            // Under a resource policy only an authorised file is examined, at its canonical path;
+            // a refused one is simply not available (no existence answer).
+            if (_context.Policy is { } policy)
+            {
+                var authorized = policy.TryAuthorize(uri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, _context._stylesheet.BaseUri);
+                filePath = authorized is { IsFile: true } ? authorized.LocalPath : null;
+            }
+
             if (filePath == null || !System.IO.File.Exists(filePath))
                 return false;
 

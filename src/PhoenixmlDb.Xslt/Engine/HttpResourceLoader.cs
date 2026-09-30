@@ -13,7 +13,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// performs the fetch.
 /// </para>
 /// <para>
-/// The parser is synchronous, so this exposes a sync-blocking <see cref="GetStringSync"/>
+/// The parser is synchronous, so this exposes a sync-blocking <see cref="GetStringSync(Uri)"/>
 /// that runs the async <see cref="HttpClient"/> call to completion. Stylesheet imports
 /// are infrequent (compile-time only) and modest in size, so blocking the calling thread
 /// here is acceptable.
@@ -32,69 +32,32 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </remarks>
 internal static class HttpResourceLoader
 {
-    private static readonly HttpClient _client = CreateClient();
+    // Fetches go through the engine's shared client, which follows redirects by hand so a
+    // resource policy can re-authorise every hop (an allowed origin must not be able to send
+    // the fetch to another host or port). With no policy, redirects are followed as before.
 
-    private static HttpClient CreateClient()
-    {
-        var c = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(30),
-        };
-        c.DefaultRequestHeaders.UserAgent.ParseAdd("PhoenixmlDb.Xslt");
-        return c;
-    }
+    /// <summary>Fetches a stylesheet module synchronously (the sync import path).</summary>
+    public static string GetStringSync(Uri uri) => GetStringSync(uri, policy: null);
 
     /// <summary>
-    /// Fetches the resource at <paramref name="uri"/> as a string. Blocks the calling
-    /// thread until the request completes.
+    /// As <see cref="GetStringSync(Uri)"/>, re-authorising every redirect target for import
+    /// access under <paramref name="policy"/>. The caller authorises <paramref name="uri"/>.
     /// </summary>
-    /// <exception cref="System.IO.IOException">Thrown when the request fails (network
-    /// error, non-success status, timeout). Wrapping in <c>IOException</c> lets the
-    /// existing parser <c>catch (IOException)</c> path produce the standard
-    /// <c>XTSE0165</c> error.</exception>
-    public static string GetStringSync(Uri uri)
+    public static string GetStringSync(Uri uri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy)
     {
         if (OperatingSystem.IsBrowser())
             throw PreloadedResources.CreateBrowserCacheMissException(uri, "imported stylesheet");
-        try
-        {
-            using var response = _client.GetAsync(uri).GetAwaiter().GetResult();
-            response.EnsureSuccessStatusCode();
-            return response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-        }
-        catch (HttpRequestException ex)
-        {
-            throw new System.IO.IOException($"HTTP request for '{uri}' failed: {ex.Message}", ex);
-        }
-        catch (TaskCanceledException ex)
-        {
-            throw new System.IO.IOException($"HTTP request for '{uri}' timed out: {ex.Message}", ex);
-        }
+        return GetStringAsync(uri, policy).GetAwaiter().GetResult();
     }
 
+    public static Task<string> GetStringAsync(Uri uri, CancellationToken ct = default) => GetStringAsync(uri, null, ct);
+
     /// <summary>
-    /// Async sibling of <see cref="GetStringSync"/>. Used by the async pre-walker
-    /// in <c>LoadStylesheetAsync</c> to populate <see cref="PreloadedResources"/>
-    /// before invoking the synchronous parser, so WASM hosts never hit the
-    /// sync-over-async wait path that throws "Cannot wait on monitors".
+    /// Fetches a stylesheet module, re-authorising every redirect target for import access
+    /// under <paramref name="policy"/>. The caller authorises <paramref name="uri"/>.
     /// </summary>
-    public static async Task<string> GetStringAsync(Uri uri, CancellationToken ct = default)
-    {
-        try
-        {
-            using var response = await _client.GetAsync(uri, ct).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        }
-        catch (HttpRequestException ex)
-        {
-            throw new System.IO.IOException($"HTTP request for '{uri}' failed: {ex.Message}", ex);
-        }
-        catch (TaskCanceledException ex)
-        {
-            throw new System.IO.IOException($"HTTP request for '{uri}' timed out: {ex.Message}", ex);
-        }
-    }
+    public static Task<string> GetStringAsync(Uri uri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy, CancellationToken ct = default)
+        => HttpFetch.GetStringAsync(uri, policy, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet, ct);
 }
 
 /// <summary>
@@ -109,44 +72,37 @@ internal static class HttpResourceLoader
 /// </remarks>
 internal static class HttpDocumentLoader
 {
-    private static readonly HttpClient _client = CreateClient();
-
-    private static HttpClient CreateClient()
-    {
-        var c = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(30),
-        };
-        c.DefaultRequestHeaders.UserAgent.ParseAdd("PhoenixmlDb.Xslt");
-        return c;
-    }
+    public static Stream OpenRead(Uri uri) => OpenRead(uri, policy: null);
 
     /// <summary>
-    /// Opens a streaming read of <paramref name="uri"/>. The caller disposes the stream.
+    /// Opens a document, re-authorising every redirect target for read access under
+    /// <paramref name="policy"/>. The caller authorises <paramref name="uri"/>.
     /// </summary>
-    public static Stream OpenRead(Uri uri)
+    public static Stream OpenRead(Uri uri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy)
     {
         if (OperatingSystem.IsBrowser())
             throw PreloadedResources.CreateBrowserCacheMissException(uri, "document");
-        var response = _client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
-        response.EnsureSuccessStatusCode();
-        return response.Content.ReadAsStreamAsync().GetAwaiter().GetResult();
+        return PhoenixmlDb.XQuery.HttpDocumentClient.OpenRead(uri, HttpFetch.RedirectCheck(policy, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument));
     }
 
-    /// <summary>
-    /// Async sibling of <see cref="OpenRead"/>. Used by the LoadStylesheetAsync
-    /// pre-walker to populate <see cref="PreloadedResources"/> with documents
-    /// referenced via static <c>doc('uri-literal')</c> / <c>document('uri-literal')</c>
-    /// calls — same pattern as the xsl:import preloader, fetched as a string
-    /// (the runtime's fn:doc cache stores text and re-parses on read).
-    /// </summary>
-    public static async Task<string> GetStringAsync(Uri uri, CancellationToken ct = default)
+    public static Task<string> GetStringAsync(Uri uri, CancellationToken ct = default) => GetStringAsync(uri, null, ct);
+
+    /// <summary>Fetches a document as text, re-authorising every redirect for read access.</summary>
+    public static Task<string> GetStringAsync(Uri uri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy, CancellationToken ct = default)
+        => HttpFetch.GetStringAsync(uri, policy, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, ct);
+}
+
+internal static class HttpFetch
+{
+    internal static Func<Uri, bool>? RedirectCheck(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy, PhoenixmlDb.XQuery.Security.ResourceAccessKind access)
+        => policy is null ? null : target => policy.IsAllowed(target, access);
+
+    internal static async Task<string> GetStringAsync(Uri uri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
+        PhoenixmlDb.XQuery.Security.ResourceAccessKind access, CancellationToken ct)
     {
         try
         {
-            using var response = await _client.GetAsync(uri, ct).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return await PhoenixmlDb.XQuery.HttpDocumentClient.GetStringAsync(uri, RedirectCheck(policy, access), ct).ConfigureAwait(false);
         }
         catch (HttpRequestException ex)
         {

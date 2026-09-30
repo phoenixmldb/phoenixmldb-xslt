@@ -37,7 +37,7 @@ public sealed partial class StylesheetParser
                 MaxCharactersFromEntities = 1_000_000,
             };
             if (settings.DtdProcessing == System.Xml.DtdProcessing.Parse)
-                settings.XmlResolver = new System.Xml.XmlUrlResolver();
+                settings.XmlResolver = EntityResolver();
             using var reader = System.Xml.XmlReader.Create(new System.IO.StringReader(xml), settings, baseUri.AbsoluteUri);
             doc = XDocument.Load(reader, LoadOptions.SetLineInfo | LoadOptions.SetBaseUri | LoadOptions.PreserveWhitespace);
         }
@@ -176,7 +176,7 @@ public sealed partial class StylesheetParser
 
         var isHttp = resolvedUri != null && (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps);
 
-        if (!isHttp && (resolvedPath == null || !File.Exists(resolvedPath)))
+        if (!isHttp && (resolvedPath == null || !ModuleExists(resolvedPath)))
         {
             // Try as relative path from base URI directory
             if (effectiveBase?.IsFile == true)
@@ -189,7 +189,7 @@ public sealed partial class StylesheetParser
             }
         }
 
-        if (!isHttp && (resolvedPath == null || !File.Exists(resolvedPath)))
+        if (!isHttp && (resolvedPath == null || !ModuleExists(resolvedPath)))
             throw new XsltException($"XTSE0165: Cannot find stylesheet module '{href}'",
                 GetSourceLocation(element));
 
@@ -217,7 +217,9 @@ public sealed partial class StylesheetParser
                     $"XTSE0165: Resource policy denied import access to '{href}'",
                     GetSourceLocation(element));
 
-            policyResolvedXml = ResourcePolicy.ResourceResolver?.ResolveStylesheetModule(href, _baseUri);
+            // The resolver sees the base the href is actually resolved against (xml:base or the
+            // including module), so what it checks is what would otherwise be fetched.
+            policyResolvedXml = ResourcePolicy.ResourceResolver?.ResolveStylesheetModule(href, effectiveBase ?? _baseUri);
         }
 
         try
@@ -245,11 +247,14 @@ public sealed partial class StylesheetParser
                 }
                 else
                 {
-                    xml = HttpResourceLoader.GetStringSync(resolvedUri!);
+                    xml = HttpResourceLoader.GetStringSync(resolvedUri!, ResourcePolicy);
                 }
             }
             else
-                xml = File.ReadAllText(resolvedPath!);
+                // Under a policy, read the canonical path the check judged (links resolved).
+                xml = File.ReadAllText(ResourcePolicy != null
+                    ? PhoenixmlDb.XQuery.Security.ResourcePolicy.CanonicalPath(resolvedPath!)
+                    : resolvedPath!);
             var savedBaseUri = _baseUri;
             var savedDefaultMode = _currentDefaultMode;
             _baseUri = isHttp ? resolvedUri! : new Uri(recursionKey);
@@ -264,7 +269,7 @@ public sealed partial class StylesheetParser
                 MaxCharactersFromEntities = 1_000_000,
             };
             if (importSettings.DtdProcessing == System.Xml.DtdProcessing.Parse)
-                importSettings.XmlResolver = new System.Xml.XmlUrlResolver();
+                importSettings.XmlResolver = EntityResolver();
             using var importReader = System.Xml.XmlReader.Create(new System.IO.StringReader(xml), importSettings, _baseUri.AbsoluteUri);
             var doc = XDocument.Load(importReader, LoadOptions.SetLineInfo | LoadOptions.SetBaseUri | LoadOptions.PreserveWhitespace);
             // For embedded stylesheets, find the element with matching id (§3.11.2)
@@ -382,11 +387,19 @@ public sealed partial class StylesheetParser
                 $"XTSE0010: Cannot resolve serialization parameter document '{href}' without a base URI",
                 GetSourceLocation(outputElement));
 
-        if (ResourcePolicy != null &&
-            !ResourcePolicy.IsAllowed(resolved, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument))
-            throw new XsltException(
-                $"XTSE0010: Resource policy denied access to serialization parameter document '{href}'",
-                GetSourceLocation(outputElement));
+        if (ResourcePolicy != null)
+        {
+            try
+            {
+                resolved = ResourcePolicy.Authorize(resolved.AbsoluteUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument);
+            }
+            catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+            {
+                throw new XsltException(
+                    $"XTSE0010: Resource policy denied access to serialization parameter document '{href}'",
+                    GetSourceLocation(outputElement));
+            }
+        }
 
         string xml;
         try
@@ -400,7 +413,7 @@ public sealed partial class StylesheetParser
                         $"XTSE0010: Cannot fetch serialization parameter document '{href}' on Blazor WebAssembly synchronously.",
                         GetSourceLocation(outputElement));
                 else
-                    xml = HttpResourceLoader.GetStringSync(resolved);
+                    xml = HttpResourceLoader.GetStringSync(resolved, ResourcePolicy);
             }
             else
             {

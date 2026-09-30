@@ -20,15 +20,32 @@ internal static class HttpImportPreloader
 {
     private static readonly XNamespace XsltNs = "http://www.w3.org/1999/XSL/Transform";
 
-    public static async Task PreloadHttpImportsAsync(
+    public static Task PreloadHttpImportsAsync(
         string rootStylesheetXml,
         Uri? rootBaseUri,
         PreloadedResources resources,
         CancellationToken ct = default)
+        => PreloadHttpImportsAsync(rootStylesheetXml, rootBaseUri, resources, policy: null, ct);
+
+    /// <summary>
+    /// As above, fetching only URLs <paramref name="policy"/> allows (imports and transform
+    /// stylesheet locations for import access, doc()/document() for read access), with every
+    /// redirect re-authorised. Loading a stylesheet must not itself make requests the policy
+    /// forbids: the pre-fetch runs before any runtime check could refuse them.
+    /// </summary>
+    public static async Task PreloadHttpImportsAsync(
+        string rootStylesheetXml,
+        Uri? rootBaseUri,
+        PreloadedResources resources,
+        PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
+        CancellationToken ct = default)
     {
         var visited = new HashSet<string>(StringComparer.Ordinal);
-        await WalkAsync(rootStylesheetXml, rootBaseUri, resources, visited, ct).ConfigureAwait(false);
+        await WalkAsync(rootStylesheetXml, rootBaseUri, resources, visited, policy, ct).ConfigureAwait(false);
     }
+
+    private static bool Allowed(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy, Uri uri, PhoenixmlDb.XQuery.Security.ResourceAccessKind access)
+        => policy is null || policy.IsAllowed(uri, access);
 
     // Matches doc('http(s)://...') or document('http(s)://...') — single or double quoted —
     // in any XPath attribute value. Permissive (also catches text content) but the URL
@@ -53,7 +70,7 @@ internal static class HttpImportPreloader
     /// Walks the stylesheet XML and returns every HTTP(S) URL the preloader would consider
     /// fetching: <c>xsl:import</c>/<c>xsl:include</c> hrefs, <c>doc()</c>/<c>document()</c>
     /// literal URIs, and <c>fn:transform(map{'stylesheet-location':'...'})</c> URIs.
-    /// Used by tests; the runtime preloader uses <see cref="PreloadHttpImportsAsync"/> which
+    /// Used by tests; the runtime preloader uses <see cref="PreloadHttpImportsAsync(string, Uri?, PreloadedResources, CancellationToken)"/> which
     /// also fetches.
     /// </summary>
     internal static HashSet<Uri> DiscoverHttpUrls(string rootStylesheetXml, Uri? rootBaseUri)
@@ -105,6 +122,7 @@ internal static class HttpImportPreloader
         Uri? baseUri,
         PreloadedResources resources,
         HashSet<string> visited,
+        PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
         CancellationToken ct)
     {
         XDocument doc;
@@ -127,14 +145,15 @@ internal static class HttpImportPreloader
             var key = resolved.AbsoluteUri;
             if (!visited.Add(key)) continue;
             if (resources.TryGet(resolved, out _)) continue;
+            if (!Allowed(policy, resolved, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) continue;
 
             string content;
-            try { content = await HttpResourceLoader.GetStringAsync(resolved, ct).ConfigureAwait(false); }
-            catch (System.IO.IOException) { continue; } // Best effort — parser will report the canonical error.
+            try { content = await HttpResourceLoader.GetStringAsync(resolved, policy, ct).ConfigureAwait(false); }
+            catch (Exception e) when (e is System.IO.IOException or PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException) { continue; } // Best effort — parser will report the canonical error.
 
             resources.Add(resolved, content);
             // Recurse: the imported module may itself import more modules.
-            await WalkAsync(content, resolved, resources, visited, ct).ConfigureAwait(false);
+            await WalkAsync(content, resolved, resources, visited, policy, ct).ConfigureAwait(false);
         }
 
         // doc('http://...') / document('http://...') — runtime fn:doc HTTP path.
@@ -149,13 +168,14 @@ internal static class HttpImportPreloader
             if (!Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var docUri)) continue;
             if (!visited.Add(docUri.AbsoluteUri)) continue;
             if (resources.TryGet(docUri, out _)) continue;
+            if (!Allowed(policy, docUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument)) continue;
 
             try
             {
-                var docContent = await HttpDocumentLoader.GetStringAsync(docUri, ct).ConfigureAwait(false);
+                var docContent = await HttpDocumentLoader.GetStringAsync(docUri, policy, ct).ConfigureAwait(false);
                 resources.Add(docUri, docContent);
             }
-            catch (System.IO.IOException) { /* runtime will surface the FODC0002 error */ }
+            catch (Exception e) when (e is System.IO.IOException or PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException) { /* runtime will surface the FODC0002 error */ }
         }
 
         // fn:transform(map{'stylesheet-location':'http://...'}) — DocBook xslTNG dispatches
@@ -169,13 +189,14 @@ internal static class HttpImportPreloader
             if (!Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var xslUri)) continue;
             if (!visited.Add(xslUri.AbsoluteUri)) continue;
             if (resources.TryGet(xslUri, out _)) continue;
+            if (!Allowed(policy, xslUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) continue;
 
             string xslContent;
-            try { xslContent = await HttpResourceLoader.GetStringAsync(xslUri, ct).ConfigureAwait(false); }
-            catch (System.IO.IOException) { continue; }
+            try { xslContent = await HttpResourceLoader.GetStringAsync(xslUri, policy, ct).ConfigureAwait(false); }
+            catch (Exception e) when (e is System.IO.IOException or PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException) { continue; }
 
             resources.Add(xslUri, xslContent);
-            await WalkAsync(xslContent, xslUri, resources, visited, ct).ConfigureAwait(false);
+            await WalkAsync(xslContent, xslUri, resources, visited, policy, ct).ConfigureAwait(false);
         }
     }
 }

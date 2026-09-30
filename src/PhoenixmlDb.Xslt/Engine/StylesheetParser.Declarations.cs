@@ -748,10 +748,21 @@ public sealed partial class StylesheetParser
                         // optional per the schema; missing namespace = no-namespace schema.
                         _hasImportSchema = true;
                         var nsAttr = child.Attribute("namespace")?.Value ?? "";
-                        var locAttr = child.Attribute("schema-location")?.Value;
-                        var locations = !string.IsNullOrWhiteSpace(locAttr)
-                            ? locAttr.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries)
-                            : Array.Empty<string>();
+                        // schema-location is ONE URI (xs:anyURI; XSLT 3.0 §3.14), resolved here
+                        // against the declaring element's effective base: its module's location
+                        // and any xml:base. Splitting it on whitespace tried each token as a
+                        // separate location, and resolving later against the PRINCIPAL module's
+                        // base read a different file than the one named (a relative hint in an
+                        // imported module, or with no base at all, the process's CWD).
+                        var locAttr = child.Attribute("schema-location")?.Value?.Trim();
+                        var locations = Array.Empty<string>();
+                        if (!string.IsNullOrEmpty(locAttr))
+                        {
+                            var declBase = ResolveEffectiveBaseUri(child) ?? _baseUri;
+                            locations = [declBase != null && Uri.TryCreate(declBase, locAttr, out var absoluteLoc)
+                                ? absoluteLoc.AbsoluteUri
+                                : locAttr];
+                        }
                         // The xmlns:* declarations on the element provide the prefix binding
                         // for any prefixed schema-element/attribute references later. Capture
                         // the prefix that maps to this namespace, if any.

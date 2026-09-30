@@ -29,9 +29,15 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
 
     /// <summary>
     /// Pre-fetched contents for URIs the host already loaded asynchronously. Consulted
-    /// before <see cref="HttpDocumentLoader.OpenRead"/>; required on Blazor WebAssembly.
+    /// before <see cref="HttpDocumentLoader.OpenRead(Uri)"/>; required on Blazor WebAssembly.
     /// </summary>
     internal PreloadedResources? PreloadedResources { get; set; }
+
+    /// <summary>
+    /// The transformation's resource policy. The enforcing wrapper in front of this resolver
+    /// authorises each URI; this is used to re-authorise HTTP redirects.
+    /// </summary>
+    internal PhoenixmlDb.XQuery.Security.ResourcePolicy? Policy { get; set; }
 
     /// <summary>Set of absolute URIs that have been read via doc()/document() during this transformation.</summary>
     internal IReadOnlyCollection<string> ReadDocumentUris => _cache.Keys;
@@ -245,7 +251,7 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
                 }
                 else
                 {
-                    using var stream = HttpDocumentLoader.OpenRead(resolvedUri);
+                    using var stream = HttpDocumentLoader.OpenRead(resolvedUri, Policy);
                     using var reader = new System.IO.StreamReader(stream);
                     xmlContent = reader.ReadToEnd();
                 }

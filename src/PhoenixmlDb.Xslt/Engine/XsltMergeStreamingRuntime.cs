@@ -327,6 +327,21 @@ internal sealed partial class DefaultXsltExecutionContext
         private XmlReader OpenReader(string uri)
         {
             var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = false };
+            if (_ctx.Policy is { } policy)
+            {
+                // Under a resource policy: resolve, authorise, and read only what was authorised.
+                var baseUri = _ctx.StaticBaseUri is { } sb && Uri.TryCreate(sb, UriKind.Absolute, out var b) ? b : null;
+                var target = PhoenixmlDb.XQuery.Security.ResourcePolicy.Resolve(uri, baseUri)
+                    ?? throw new XsltException($"FODC0002: Invalid merge source URI '{uri}'");
+                var authorized = _ctx.AuthorizeResource(target, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "FODC0002");
+                _ctx.ApplyEntityPolicy(settings);
+                settings.CloseInput = true;
+                if (authorized.IsFile)
+                    return XmlReader.Create(System.IO.File.OpenRead(authorized.LocalPath), settings, authorized.AbsoluteUri);
+                if (authorized.Scheme is "http" or "https")
+                    return XmlReader.Create(HttpDocumentLoader.OpenRead(authorized, policy), settings, authorized.AbsoluteUri);
+                throw new XsltException($"FODC0002: Cannot read merge source '{uri}': unsupported URI scheme '{authorized.Scheme}'");
+            }
             // Resolve relative URIs against the stylesheet's static base URI.
             if (!Uri.TryCreate(uri, UriKind.Absolute, out var absUri))
             {
