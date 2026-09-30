@@ -718,13 +718,15 @@ internal sealed partial class DefaultXsltExecutionContext
     /// applicable to any document, not just the principal source document.
     /// </summary>
     /// <summary>
-    /// Checks if the given accumulator is applicable in the current mode per §6.5.
-    /// Returns true if the mode has use-accumulators="#all" or includes the accumulator name.
-    /// Returns true if the mode has no explicit use-accumulators attribute (unspecified = all applicable).
-    /// Returns false if the mode has use-accumulators="" (empty = none).
+    /// Checks if the given accumulator is applicable to <paramref name="node"/>'s tree.
+    /// For the principal source tree the initial mode decides, once for the whole tree
+    /// (§18.2.2): see <see cref="IsApplicableToPrincipalTree"/>. For any other tree the
+    /// current mode's use-accumulators is consulted, and absence means applicable.
     /// </summary>
-    internal bool IsAccumulatorApplicable(QName accumulatorName)
+    internal bool IsAccumulatorApplicable(QName accumulatorName, object? node = null)
     {
+        if (node != null && IsPrincipalSourceNode(node))
+            return IsApplicableToPrincipalTree(accumulatorName);
         var modeKey = _currentMode ?? new QName(NamespaceId.None, "");
         if (_stylesheet.Modes.TryGetValue(modeKey, out var modeDecl))
         {
@@ -751,9 +753,14 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     internal bool IsPrincipalSourceNode(object? node)
     {
-        if (!_principalSourceDocId.HasValue) return false;
-        var docId = FindDocumentIdForInput(node);
-        return docId.HasValue && docId.Value == _principalSourceDocId.Value;
+        if (!_principalSourceDocNodeId.HasValue) return false;
+        var doc = node switch
+        {
+            XdmDocument d => d,
+            XdmNode n => FindDocumentForNode(n),
+            _ => null,
+        };
+        return doc != null && doc.Id == _principalSourceDocNodeId.Value;
     }
 
 
@@ -763,22 +770,23 @@ internal sealed partial class DefaultXsltExecutionContext
     /// the initial mode's xsl:mode includes them in use-accumulators.
     /// Without any xsl:mode declaration, no accumulators are applicable.
     /// </summary>
-    private bool IsAccumulatorApplicableForCopy(QName accumulatorName)
+    private bool IsAccumulatorApplicableForCopy(QName accumulatorName) =>
+        IsApplicableToPrincipalTree(accumulatorName);
+
+    /// <summary>
+    /// Whether an accumulator is applicable to the principal source tree. XSLT 3.0 §18.2.2:
+    /// "the accumulators that are applicable are those determined by the xsl:mode declaration
+    /// of the initial mode. This means that in the absence of an xsl:mode declaration, no
+    /// accumulators are applicable." A declaration without use-accumulators lists none either.
+    /// The initial mode fixes this for the whole tree; the mode current at the call does not
+    /// matter. This returned true for any mode without the attribute, so accumulator-before on
+    /// the source document worked where Saxon raises XTDE3362 (xslt#213, Martin Honnen).
+    /// </summary>
+    private bool IsApplicableToPrincipalTree(QName accumulatorName)
     {
-        var modeKey = _currentMode ?? new QName(NamespaceId.None, "");
-        if (_stylesheet.Modes.TryGetValue(modeKey, out var modeDecl))
-        {
-            if (modeDecl.UseAccumulatorsAttr != null)
-            {
-                if (modeDecl.UseAllAccumulators)
-                    return true;
-                return modeDecl.UseAccumulatorNames.Any(n => n == accumulatorName);
-            }
-            // xsl:mode exists but no use-accumulators → default is #all
-            return true;
-        }
-        // No xsl:mode declaration for this mode → no accumulators applicable (§18.2.2 #5)
-        return false;
+        if (!_stylesheet.Modes.TryGetValue(_initialModeKey, out var modeDecl) || modeDecl.UseAccumulatorsAttr == null)
+            return false;
+        return modeDecl.UseAllAccumulators || modeDecl.UseAccumulatorNames.Any(n => n == accumulatorName);
     }
 
 
