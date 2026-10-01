@@ -18,6 +18,13 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// again from zero. The reservation is address space, not memory: pages are committed only as
 /// the recursion reaches them.
 /// </para>
+/// <para>
+/// Where a thread cannot be started, the transformation runs inline on the caller's stack, with
+/// the default depth headroom. That covers browser WebAssembly and WASI, which have no threads
+/// (every transform threw PlatformNotSupportedException in Blazor WebAssembly in 2.5.1, xslt#237),
+/// and a Start() that fails for another reason, such as a stack reservation the process cannot
+/// make.
+/// </para>
 /// </remarks>
 internal static class LargeStack
 {
@@ -27,6 +34,14 @@ internal static class LargeStack
     [ThreadStatic]
     private static bool t_onLargeStack;
 
+    // Test seams, scoped to the calling async flow so parallel tests cannot see each other's.
+    // ForceInline simulates a platform without threads; StartOverride replaces Thread.Start().
+    internal static readonly AsyncLocal<bool> ForceInline = new();
+    internal static readonly AsyncLocal<Action<Thread>?> StartOverride = new();
+
+    private static bool CanStartThreads
+        => !ForceInline.Value && !OperatingSystem.IsBrowser() && !OperatingSystem.IsWasi();
+
     internal static Task Run(Func<Task> body)
         => Run(async () => { await body().ConfigureAwait(false); return true; });
 
@@ -34,7 +49,7 @@ internal static class LargeStack
     {
         // Nested transformations (fn:transform, xsl:evaluate re-entering the engine) are
         // already on a large stack; another thread would only add a hop.
-        if (t_onLargeStack)
+        if (t_onLargeStack || !CanStartThreads)
             return body();
 
         Task<T>? task = null;
@@ -57,7 +72,18 @@ internal static class LargeStack
             IsBackground = true,
             Name = "PhoenixmlDb.Xslt transform",
         };
-        thread.Start();
+        try
+        {
+            if (StartOverride.Value is { } start)
+                start(thread);
+            else
+                thread.Start();
+        }
+        catch (Exception ex) when (ex is PlatformNotSupportedException or ThreadStartException or OutOfMemoryException)
+        {
+            // No thread could be started: run on the caller's stack rather than fail (xslt#237).
+            return body();
+        }
         thread.Join();
         if (startFailure != null)
             return Task.FromException<T>(startFailure);
