@@ -160,6 +160,116 @@ internal static class StreamabilityChecker
                 "XTSE3430: The body of this template in a streamable mode reads accumulator-after() of a node other than the one being processed, whose post-descent value is not yet known",
                 location);
         }
+
+        // accumulator-after() of the node being processed needs its whole subtree. Evaluated
+        // before the template descends, the call itself is the one consumption of the subtree,
+        // so a later descent would read it a second time (W3C accumulator-059: the value is
+        // written into a <p> before <xsl:apply-templates/>). Several such calls in one start
+        // tag's attributes, whose evaluation order is not defined, are not streamable either
+        // (accumulator-009 vs -008, which uses xsl:attribute instructions in sequence).
+        var phase = new AccumulatorAfterPhaseDetector();
+        phase.Walk(body);
+        if (phase.Reason != null)
+        {
+            throw new XsltException(
+                $"XTSE3430: The body of this template in a streamable mode is not guaranteed streamable: {phase.Reason}",
+                location);
+        }
+    }
+
+    /// <summary>
+    /// Walks a streamable template body in evaluation order, tracking whether the subtree has
+    /// been consumed yet, to find accumulator-after() calls in the pre-descent phase that a
+    /// later descent contradicts.
+    /// </summary>
+    private sealed class AccumulatorAfterPhaseDetector : XsltInstructionWalker
+    {
+        private bool _descended;              // some instruction has read the subtree
+        private bool _consumedByAccumulator;  // ... and it was an accumulator-after() call
+        public string? Reason { get; private set; }
+
+        private static int CountAccumulatorAfter(XQueryExpression? expr)
+        {
+            if (expr == null) return 0;
+            var counter = new AccumulatorAfterCounter();
+            counter.Walk(expr);
+            return counter.Count;
+        }
+
+        private void Expression(XQueryExpression? expr)
+        {
+            if (expr == null || Reason != null) return;
+            // Within ONE expression there is no defined order between an accumulator-after()
+            // call and a descent (select="accumulator-after('n'), count(.//x)"), so the descent
+            // is taken first and the call as post-descent. Only the instruction sequence, and
+            // several calls in one start tag, decide pre-descent.
+            if (NavigatesDownward(expr))
+                Descend();
+            if (CountAccumulatorAfter(expr) > 0 && !_descended)
+            {
+                _descended = true;
+                _consumedByAccumulator = true;
+            }
+        }
+
+        private void Descend()
+        {
+            if (_consumedByAccumulator)
+                Reason = "accumulator-after() is evaluated before the template descends into the node's children, which then reads them a second time";
+            _descended = true;
+        }
+
+        public override object? VisitLiteralResultElement(XsltLiteralResultElement insn)
+        {
+            if (Reason != null) return null;
+            var calls = 0;
+            foreach (var avt in insn.Attributes.Values)
+                foreach (var part in avt.Parts)
+                    if (part is AvtExpression e)
+                        calls += CountAccumulatorAfter(e.Expression);
+            if (calls > 1 && !_descended)
+            {
+                Reason = "several accumulator-after() calls in one start tag's attributes are evaluated before the descent, in no defined order";
+                return null;
+            }
+            foreach (var avt in insn.Attributes.Values)
+                foreach (var part in avt.Parts)
+                    if (part is AvtExpression e)
+                        Expression(e.Expression);
+            Walk(insn.Content);
+            return null;
+        }
+
+        public override object? VisitApplyTemplates(XsltApplyTemplates insn)
+        {
+            if (Reason != null) return null;
+            if (insn.Select == null)
+                Descend();
+            else
+                Expression(insn.Select);
+            return null;
+        }
+
+        public override object? VisitValueOf(XsltValueOf insn) { Expression(insn.Select); if (insn.Content != null) Walk(insn.Content); return null; }
+        public override object? VisitSequence(XsltSequence insn) { Expression(insn.Select); return null; }
+        public override object? VisitCopyOf(XsltCopyOf insn) { Expression(insn.Select); return null; }
+        public override object? VisitAttribute(XsltAttribute insn) { Expression(insn.Select); if (insn.Content != null) Walk(insn.Content); return null; }
+        public override object? VisitIf(XsltIf insn) { Expression(insn.Test); Walk(insn.Then); return null; }
+        public override object? VisitForEach(XsltForEach insn) { Expression(insn.Select); return null; }
+        public override object? VisitCopy(XsltCopy insn) { Expression(insn.Select); if (insn.Content != null) Walk(insn.Content); return null; }
+        public override object? VisitElement(XsltElement insn) { Walk(insn.Content); return null; }
+    }
+
+    private sealed class AccumulatorAfterCounter : XQueryExpressionWalker
+    {
+        public int Count { get; private set; }
+
+        public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
+        {
+            if (expr.Name.LocalName == "accumulator-after")
+                Count++;
+            return base.VisitFunctionCallExpression(expr);
+        }
     }
 
 
