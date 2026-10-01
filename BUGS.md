@@ -7373,3 +7373,35 @@ Of `system-property-gen`'s 166 cases, #203 and #204 fixed 143. The 22 `system-pr
 `fix/system-property-creation-namespaces`, re-measured on 2026-09-29 against current main:
 +22, no losses. It lands at the release train. system-property-021 (the hand-written set) is
 fixed by #212. That leaves this one.
+
+### 118. Five cases expect one implementation-dependent order of distinct trees — recorded, not fixed (2026-10-01)
+
+**Status: not a processor defect. Recorded for #13's "fixed or recorded with a reason".**
+
+XDM 3.1 §2.4 (document order): the relative order of nodes in *distinct trees* is stable but
+implementation-dependent. Five streaming cases bake in one particular choice, that nodes of the
+streamed source document come before nodes of a tree the stylesheet constructed:
+
+| case | expression | expected | ours |
+|---|---|---|---|
+| sx-union-012 | `(/BOOKLIST/BOOKS/ITEM/PRICE union $insertion)[position() mod 2 = 0]` | `6.58 4.95 16.47 B` | `B 6.58 4.95 16.47` |
+| sx-union-017 | same union shape, boolean per item | source items first | `$insertion` first |
+| sx-union-022 | `... union $insertion` | source text first | `<a>A</a><b>B</b>` first |
+| sx-union-035 | `//PRICE/ancestor-or-self::*/@* union $insertion` | `MHK\|...\|P\|A\|B` | `A\|B\|MHK\|...` |
+| si-fork-118 | group-by over `($extra, /BOOKLIST/BOOKS/ITEM)`, value of `current-group()/TITLE` | `The Big Over Easy\|Ulysses` | `Ulysses\|The Big Over Easy` |
+
+`$insertion` (two parentless elements) and `$extra` (an `ITEM` holding *Ulysses*, which is not in
+`books.xml`) are global variables of constructed nodes. The union and the `/TITLE` path sort into
+document order across two trees, and our order is stable and conformant: XSLT's in-memory store
+orders by node allocation, and these globals are built before the streamed nodes are materialized.
+Saxon's answer follows from evaluating such globals lazily, at first use, inside the union,
+which numbers their tree after the stream's.
+
+**Why not change it.** Matching it means a cross-tree ordering rule for all of XSLT, either
+"parsed before constructed" (XQuery's `TreeOrdinalAllocator` already has that rule) or lazy
+global evaluation. Either one reorders every cross-tree result in the engine to win five cases
+the spec leaves open. If it is done, it should be done for its own reasons, measured on its own
+A/B, not to chase these. Checked on 2026-10-01 against main 247: for sx-union-012, -022, -035 and
+si-fork-118 the logged output holds exactly the expected items in the other order. sx-union-017
+prints one boolean per item, so its log cannot show that; it has the same union shape and is
+included on that basis.
