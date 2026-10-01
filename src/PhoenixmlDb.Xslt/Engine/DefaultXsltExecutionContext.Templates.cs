@@ -442,6 +442,12 @@ internal sealed partial class DefaultXsltExecutionContext
                     _currentTemplate = template;
                     _currentMode = mode;
 
+                    // XSLT 3.0 §14.2: a template rule invoked by apply-templates sees neither the
+                    // caller's current group nor its grouping key — current-group() raises
+                    // XTDE1061 and current-grouping-key() XTDE1071 there (W3C si-fork-115 got the
+                    // caller's key). Shadowed in the callee's scope, restored when it pops.
+                    SuppressGroupingFocus();
+
                     // If use="absent" or optional type mismatch, push absent focus
                     if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
                         PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
