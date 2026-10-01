@@ -46,7 +46,8 @@ internal sealed class XsltTypeAvailableFunction : PhoenixmlDb.XQuery.Ast.XQueryF
             "integer" or "long" or "int" or "short" or "byte" or
             "nonNegativeInteger" or "positiveInteger" or "nonPositiveInteger" or "negativeInteger" or
             "unsignedLong" or "unsignedInt" or "unsignedShort" or "unsignedByte" or
-            "date" or "time" or "dateTime" or "duration" or
+            // dateTimeStamp is the XSD 1.1 built-in (W3C type-available-0151a).
+            "date" or "time" or "dateTime" or "dateTimeStamp" or "duration" or
             "dayTimeDuration" or "yearMonthDuration" or
             "anyURI" or "QName" or "NOTATION" or "hexBinary" or "base64Binary" or
             "normalizedString" or "token" or "language" or "NMTOKEN" or "Name" or "NCName" or

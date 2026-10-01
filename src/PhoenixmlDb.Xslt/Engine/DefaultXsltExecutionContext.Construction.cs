@@ -839,17 +839,10 @@ internal sealed partial class DefaultXsltExecutionContext
         // XTDE0905: The namespace URI must be valid and not the xmlns namespace
         if (string.Equals(uri, "http://www.w3.org/2000/xmlns/", StringComparison.Ordinal))
             throw Error("XTDE0905: The namespace URI 'http://www.w3.org/2000/xmlns/' is not allowed");
-        // XTDE0905: Namespace URI must be a valid xs:anyURI. Use Uri.TryCreate(Absolute)
-        // which is permissive (accepts IRI chars like | and "). For relative URIs, accept
-        // anything that doesn't have multiple # delimiters (only one fragment allowed).
-        if (!string.IsNullOrWhiteSpace(uri)
-            && !Uri.TryCreate(uri, UriKind.Absolute, out _))
-        {
-            // Check for multiple # characters (invalid fragment syntax)
-            var firstHash = uri.IndexOf('#', StringComparison.Ordinal);
-            if (firstHash >= 0 && uri.AsSpan(firstHash + 1).Contains('#'))
-                throw Error($"XTDE0905: The namespace URI '{uri}' is not a valid URI");
-        }
+        // XTDE0905 also covers a value not in the lexical space of xs:anyURI, but this is an
+        // XSD 1.1 processor, and in XSD 1.1 that space is every string, so nothing else is
+        // rejected (W3C error-0905b; XSLT bug 30180). The check for more than one '#' was the
+        // XSD 1.0 rule.
 
         // XTDE0420: Cannot add namespace to a document node
         if (_documentNodeDepth > 0 && !_attributeCollecting)
