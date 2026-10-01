@@ -930,10 +930,14 @@ internal sealed partial class DefaultXsltExecutionContext
         // diagnostic rewrapping below is deliberately NOT applied here, because these messages
         // already carry their own position and rewrapping them would change text that other
         // tests match on.
-        catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException)
+        catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException rte)
         {
             if (expr.Location is not null)
                 _lastExpressionErrorLocation = expr.Location;
+            // A duplicate key in a map constructor is XQDY0137 in XPath; in XSLT it is reported
+            // as XTDE3365, the code xsl:map uses (W3C sx-MapExpr-007, si-map-007, si-fork-814).
+            if (rte.ErrorCode == "XQDY0137")
+                throw new PhoenixmlDb.XQuery.Execution.XQueryRuntimeException("XTDE3365", rte.Message, rte);
             throw;
         }
         catch (PhoenixmlDb.XQuery.Functions.XQueryException xqe) when (string.IsNullOrEmpty(xqe.Module))

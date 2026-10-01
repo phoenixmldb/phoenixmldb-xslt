@@ -3754,6 +3754,25 @@ internal static class StreamabilityChecker
     {
         public int Count { get; private set; }
 
+        // current-group()/@x reads only attributes of the group's items, which arrive with each
+        // start tag: a motionless use, not a traversal of the group. Only consuming uses count
+        // (W3C si-fork-814 reads @pop and @name and is streamable; si-fork-951's
+        // count(current-group()) and avg(current-group()/PRICE) are two traversals and are not).
+        public override object? VisitPathExpression(PathExpression expr)
+        {
+            if (expr.InitialExpression is FunctionCallExpression { Arguments.Count: 0 } call
+                && call.Name.LocalName == "current-group"
+                && expr.Steps.Count > 0
+                && expr.Steps.All(step => step.Axis == Axis.Attribute))
+            {
+                foreach (var step in expr.Steps)
+                    foreach (var predicate in step.Predicates)
+                        Walk(predicate);
+                return null;
+            }
+            return base.VisitPathExpression(expr);
+        }
+
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
             if (expr.Name.LocalName == "current-group" && expr.Arguments.Count == 0)
