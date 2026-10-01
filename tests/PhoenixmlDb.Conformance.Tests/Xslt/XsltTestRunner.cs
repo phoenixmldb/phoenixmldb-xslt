@@ -1697,7 +1697,18 @@ public sealed class XsltTestRunner
             }
             else
             {
-                doc = store.LoadFromString(toParse, "urn:xslt-result");
+                try
+                {
+                    doc = store.LoadFromString(toParse, "urn:xslt-result");
+                }
+                catch (System.Xml.XmlException) when (HtmlAsXml(toParse) is { } xhtml)
+                {
+                    // HTML-method output (unclosed <meta>, <br>, ...) is not XML, but it is the
+                    // serialization of an ordinary result tree the assertions address (W3C
+                    // si-fork-119's result documents, si-fork-803/804). Closing the void
+                    // elements recovers that tree; the assertions are unchanged.
+                    doc = store.LoadFromString(xhtml, "urn:xslt-result");
+                }
             }
 
             // Parse with NormalizeLineEndings OFF, then compile the AST. QueryEngine.Compile(string)
@@ -2176,6 +2187,22 @@ public sealed class XsltTestRunner
 
         // Verify child assertions against the secondary document content
         return await VerifyAssertionsAsync(assertion.Children, secondaryContent, ct, secondaryResults);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex HtmlVoidElement = new(
+        @"<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b((?:[^>""']|""[^""]*""|'[^']*')*?)\s*(?<!/)>",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// HTML-method serialization as XML: each HTML void element closed, a DOCTYPE dropped. Null
+    /// unless the text is HTML (an html root element). Only used when the XML parse failed.
+    /// </summary>
+    internal static string? HtmlAsXml(string text)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(text, @"^\s*(<!DOCTYPE[^>]*>\s*)?<html\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return null;
+        var withoutDoctype = System.Text.RegularExpressions.Regex.Replace(text, @"^\s*<!DOCTYPE[^>]*>", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return HtmlVoidElement.Replace(withoutDoctype, "<$1$2/>");
     }
 
     private static bool CompareFragments(XDocument actual, XDocument expected)
