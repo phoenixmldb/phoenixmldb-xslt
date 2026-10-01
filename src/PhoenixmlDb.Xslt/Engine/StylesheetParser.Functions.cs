@@ -897,29 +897,6 @@ public sealed partial class StylesheetParser
 
 
     private static bool EvaluateTypeAvailable(string name, XElement context)
-    {
-        // Strip prefix
-        var localName = name;
-        if (name.Contains(':', StringComparison.Ordinal))
-        {
-            var parts = name.Split(':');
-            localName = parts[1];
-        }
-
-        // Basic XSD types are always available
-        return localName is
-            "string" or "boolean" or "decimal" or "float" or "double" or
-            "integer" or "long" or "int" or "short" or "byte" or
-            "nonNegativeInteger" or "positiveInteger" or "nonPositiveInteger" or "negativeInteger" or
-            "unsignedLong" or "unsignedInt" or "unsignedShort" or "unsignedByte" or
-            "duration" or "dateTime" or "date" or "time" or
-            "yearMonthDuration" or "dayTimeDuration" or
-            "gYearMonth" or "gYear" or "gMonthDay" or "gDay" or "gMonth" or
-            "hexBinary" or "base64Binary" or
-            "anyURI" or "QName" or "NOTATION" or "normalizedString" or "token" or
-            "language" or "NMTOKEN" or "Name" or "NCName" or "ID" or "IDREF" or "ENTITY" or
-            "untypedAtomic" or "anyAtomicType" or "anySimpleType" or "anyType" or
-            "numeric";
-    }
+        => XsltTypeAvailableFunction.IsBuiltInType(name, prefix => context.GetNamespaceOfPrefix(prefix)?.NamespaceName);
 
 }
