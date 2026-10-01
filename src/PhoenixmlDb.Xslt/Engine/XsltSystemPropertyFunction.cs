@@ -21,6 +21,23 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </summary>
 internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
+    // The in-scope namespaces where a function item for this function was created (system-property#1,
+    // system-property(?), function-lookup). A prefixed argument resolves against them, so an item
+    // made in the stylesheet still resolves 'xsl:version' when invoked inside xsl:evaluate, whose
+    // expression may bind 'xsl' differently or not at all (W3C system-property-101d and siblings).
+    // Null for the registered function: a direct call resolves against the calling expression.
+    private readonly IReadOnlyDictionary<string, string>? _creationBindings;
+
+    public XsltSystemPropertyFunction() { }
+
+    private XsltSystemPropertyFunction(IReadOnlyDictionary<string, string> creationBindings)
+        => _creationBindings = creationBindings;
+
+    public override PhoenixmlDb.XQuery.Ast.XQueryFunction BindCreationContext(PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+        => context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext { PrefixNamespaceBindings: { } bindings }
+            ? new XsltSystemPropertyFunction(new Dictionary<string, string>(bindings, StringComparer.Ordinal))
+            : this;
+
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "system-property");
     public override XdmSequenceType ReturnType => XdmSequenceType.String;
     public override IReadOnlyList<FunctionParameterDef> Parameters =>
@@ -48,7 +65,8 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
         {
             var parts = name.Split(':');
             var prefix = parts[0];
-            var bindings = (context as PhoenixmlDb.XQuery.Execution.QueryExecutionContext)?.PrefixNamespaceBindings;
+            var bindings = _creationBindings
+                ?? (context as PhoenixmlDb.XQuery.Execution.QueryExecutionContext)?.PrefixNamespaceBindings;
             if (bindings != null)
             {
                 // XTDE1390: Verify prefix is declared in scope

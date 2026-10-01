@@ -20,10 +20,25 @@ internal sealed class XsltElementAvailableFunction : PhoenixmlDb.XQuery.Ast.XQue
 {
     private readonly HashSet<string> _extensionNamespaces;
 
+    // As for system-property(): a function item resolves a prefixed argument against the
+    // namespaces in scope where the item was created, not where it is invoked.
+    private readonly IReadOnlyDictionary<string, string>? _creationBindings;
+
     public XsltElementAvailableFunction(HashSet<string> extensionNamespaces)
     {
         _extensionNamespaces = extensionNamespaces;
     }
+
+    private XsltElementAvailableFunction(HashSet<string> extensionNamespaces, IReadOnlyDictionary<string, string> creationBindings)
+    {
+        _extensionNamespaces = extensionNamespaces;
+        _creationBindings = creationBindings;
+    }
+
+    public override PhoenixmlDb.XQuery.Ast.XQueryFunction BindCreationContext(PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+        => context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext { PrefixNamespaceBindings: { } bindings }
+            ? new XsltElementAvailableFunction(_extensionNamespaces, new Dictionary<string, string>(bindings, StringComparer.Ordinal))
+            : this;
 
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "element-available");
     public override XdmSequenceType ReturnType => XdmSequenceType.Boolean;
@@ -53,9 +68,9 @@ internal sealed class XsltElementAvailableFunction : PhoenixmlDb.XQuery.Ast.XQue
             var prefix = parts[0];
             name = parts[1];
             // Resolve the prefix to a namespace URI
-            if (context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qec
-                && qec.PrefixNamespaceBindings != null
-                && qec.PrefixNamespaceBindings.TryGetValue(prefix, out var resolvedNs))
+            var bindings = _creationBindings
+                ?? (context as PhoenixmlDb.XQuery.Execution.QueryExecutionContext)?.PrefixNamespaceBindings;
+            if (bindings != null && bindings.TryGetValue(prefix, out var resolvedNs))
             {
                 namespaceUri = resolvedNs;
             }
