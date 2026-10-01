@@ -1715,6 +1715,26 @@ internal sealed partial class DefaultXsltExecutionContext
 
     public override async ValueTask SourceDocumentAsync(XsltSourceDocument instruction)
     {
+        // A streamable xsl:source-document is a declared-streamable construct: invocations made
+        // within it clear the current group and grouping key (XSLT 3.0 §14.2.1/§14.2.2).
+        if (!instruction.Streamable)
+        {
+            await SourceDocumentCoreAsync(instruction).ConfigureAwait(false);
+            return;
+        }
+        _streamableConstructDepth++;
+        try
+        {
+            await SourceDocumentCoreAsync(instruction).ConfigureAwait(false);
+        }
+        finally
+        {
+            _streamableConstructDepth--;
+        }
+    }
+
+    private async ValueTask SourceDocumentCoreAsync(XsltSourceDocument instruction)
+    {
         // Deferred XTSE3430 streamability error — throw at runtime instead of parse time
         if (instruction.StreamabilityError != null)
             throw new XsltException(instruction.StreamabilityError, instruction.Location);
