@@ -112,6 +112,36 @@ run_arm change "$@"
 
 python3 - "$OUT/base" "$OUT/change" <<'PY'
 import glob, os, re, sys
+
+# FAIL CLOSED. An arm whose build failed, or whose chunk crashed, writes no FAILED lines, and
+# comparing it would report every base failure as WON. That happened: a change that did not
+# compile against the pinned packages was reported as +258. Both arms must have run every chunk
+# to completion, over the same number of cases, before any difference means anything.
+def chunk_totals(d):
+    totals = {}
+    for line in open(d + '.out', errors='replace'):
+        m = re.match(r'^(\S+)\s+\d+s\s+.*\|\s*\d+/(\d+) cases', line)
+        if m:
+            totals[m.group(1)] = int(m.group(2))
+    return totals
+arms = {name: chunk_totals(path) for name, path in (('base', sys.argv[1]), ('change', sys.argv[2]))}
+problems = []
+for name, path in (('base', sys.argv[1]), ('change', sys.argv[2])):
+    if 'build failed' in open(path + '.out', errors='replace').read():
+        problems.append(f'{name}: build failed (see {path}/build.log)')
+    if not arms[name]:
+        problems.append(f'{name}: no completed chunk')
+if arms['base'] and arms['change'] and arms['base'].keys() != arms['change'].keys():
+    problems.append(f"chunks differ: base {sorted(arms['base'])} vs change {sorted(arms['change'])}")
+for chunk in sorted(set(arms['base']) & set(arms['change'])):
+    if arms['base'][chunk] != arms['change'][chunk]:
+        problems.append(f"{chunk}: base ran {arms['base'][chunk]} cases, change {arms['change'][chunk]}")
+if problems:
+    print('A/B ABORT: the arms are not comparable')
+    for problem in problems:
+        print('  ' + problem)
+    sys.exit(2)
+
 def failures(d):
     out = {}
     for f in glob.glob(os.path.join(d, '*.log')):
