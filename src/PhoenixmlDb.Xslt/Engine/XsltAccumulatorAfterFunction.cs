@@ -40,8 +40,21 @@ internal sealed class XsltAccumulatorAfterFunction : PhoenixmlDb.XQuery.Ast.XQue
         // Use XQuery context item (from path step) if available, fall back to XSLT context item.
         // The XQuery context is preferred because in path expressions like $v/w/accumulator-after('x'),
         // the XSLT context is the template match node, not the path step's current node.
-        var node = XQueryFocus.ItemOrNull(context) ?? _context.ContextItem
-            ?? throw new XsltException("XTDE3340: accumulator-after() called with no context item");
+        // With no context item this is XTDE3350, not the bare XPDY0002 the focus read raises:
+        // e.g. accumulator-after#1 held in a global parameter, whose captured focus is absent (W3C
+        // accumulator-061). The error still propagates from the focus read itself, which
+        // XQueryFocus documents as load bearing; only its code changes.
+        object? node;
+        try
+        {
+            node = XQueryFocus.ItemOrNull(context) ?? _context.ContextItem;
+        }
+        catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException e) when (e.ErrorCode == "XPDY0002")
+        {
+            throw new XsltException("XTDE3350: accumulator-after() called with no context item");
+        }
+        if (node is null || ReferenceEquals(node, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
+            throw new XsltException("XTDE3350: accumulator-after() called with no context item");
         node = XsltFunctionValidation.RequireAccumulatorContextNode(node, "accumulator-after");
 
         // Check if the accumulator is applicable in the current mode. When it is not, the
