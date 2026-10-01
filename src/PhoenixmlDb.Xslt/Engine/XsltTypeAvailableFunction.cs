@@ -33,28 +33,55 @@ internal sealed class XsltTypeAvailableFunction : PhoenixmlDb.XQuery.Ast.XQueryF
         var name = arguments[0]?.ToString() ?? "";
         // XTDE1428: Validate name is a valid EQName
         XsltFunctionValidation.ValidateQNameArgument(name, "XTDE1428", "type-available");
-        // Strip prefix
-        if (name.Contains(':', StringComparison.Ordinal))
+        var bindings = (context as PhoenixmlDb.XQuery.Execution.QueryExecutionContext)?.PrefixNamespaceBindings;
+        var available = IsBuiltInType(name, prefix => bindings is not null && bindings.TryGetValue(prefix, out var uri) ? uri : null);
+        return ValueTask.FromResult<object?>(available);
+    }
+
+    private const string XsdNamespace = "http://www.w3.org/2001/XMLSchema";
+
+    /// <summary>
+    /// Whether a type name (lexical QName or EQName) names a built-in type this processor knows.
+    /// Shared by the run-time function and the parser's static evaluation, which kept separate
+    /// tables that had drifted. A prefixed name is resolved with <paramref name="resolvePrefix"/>;
+    /// an unknown prefix, or one bound to another namespace, is not an XSD type. An unprefixed name
+    /// is matched by local name, as before.
+    /// </summary>
+    /// <remarks>
+    /// Splitting on ':' cut an EQName at "Q{http:", so type-available('Q{…XMLSchema}date') was
+    /// false (W3C type-available-0151a, which also needs the XSD 1.1 xs:dateTimeStamp).
+    /// </remarks>
+    internal static bool IsBuiltInType(string name, Func<string, string?> resolvePrefix)
+    {
+        string local;
+        if (name.StartsWith("Q{", StringComparison.Ordinal))
         {
-            var parts = name.Split(':');
-            name = parts[1];
+            var close = name.IndexOf('}', StringComparison.Ordinal);
+            if (close < 0 || name[2..close] != XsdNamespace)
+                return false;
+            local = name[(close + 1)..];
         }
-        // Common XSD types
-        var available = name switch
+        else if (name.IndexOf(':', StringComparison.Ordinal) is var colon and > 0)
         {
+            var uri = resolvePrefix(name[..colon]);
+            if (uri is not null && uri != XsdNamespace)
+                return false;
+            local = name[(colon + 1)..];
+        }
+        else
+            local = name;
+        return local is
             "string" or "boolean" or "decimal" or "float" or "double" or
             "integer" or "long" or "int" or "short" or "byte" or
             "nonNegativeInteger" or "positiveInteger" or "nonPositiveInteger" or "negativeInteger" or
             "unsignedLong" or "unsignedInt" or "unsignedShort" or "unsignedByte" or
-            "date" or "time" or "dateTime" or "duration" or
+            "date" or "time" or "dateTime" or "dateTimeStamp" or "duration" or
             "dayTimeDuration" or "yearMonthDuration" or
             "anyURI" or "QName" or "NOTATION" or "hexBinary" or "base64Binary" or
             "normalizedString" or "token" or "language" or "NMTOKEN" or "Name" or "NCName" or
             "gYearMonth" or "gYear" or "gMonthDay" or "gDay" or "gMonth" or
             "untyped" or "untypedAtomic" or "anyAtomicType" or "anySimpleType" or "anyType" or
-            "IDREF" or "IDREFS" or "ENTITY" or "ENTITIES" or "NMTOKENS" or "ID" => true,
-            _ => false
-        };
-        return ValueTask.FromResult<object?>(available);
+            "numeric" or
+            "IDREF" or "IDREFS" or "ENTITY" or "ENTITIES" or "NMTOKENS" or "ID";
     }
 }

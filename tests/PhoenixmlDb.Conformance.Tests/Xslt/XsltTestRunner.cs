@@ -2483,7 +2483,11 @@ public sealed class XsltConfiguration
         "enable_assertions",
         "disabling_output_escaping",
         "dynamic_evaluation",
-        "XPath_3.1"
+        "XPath_3.1",
+        // The processor is XSD 1.1: regexes follow XSD 1.1 syntax and system-property
+        // ('xsl:xsd-version') reports 1.1. Without this the cases for processors WITHOUT XSD 1.1
+        // ran and failed (regex-syntax-0056/0086/0102: "[^a-d-b-c]" is an error in XSD 1.0 only).
+        "XSD_1.1"
     ];
 
     /// <summary>
