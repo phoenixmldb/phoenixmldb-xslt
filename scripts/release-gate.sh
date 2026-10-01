@@ -140,7 +140,12 @@ run_one() {
   id="${f[0]}"; kind="${f[1]}"; wd="${f[2]}"; local args=("${f[@]:3}")
   local dir="$OUT/runs/$arm/${id//\//__}"; mkdir -p "$dir"
   [ -n "$tool" ] || { echo "SKIP" > "$dir/rc"; return; }
-  ( cd "$wd" && timeout 300 "$tool" "${args[@]}" </dev/null >"$dir/out" 2>"$dir/err"; echo $? > "$dir/rc" )
+  # A repro that writes files (xsl:result-document) must not write into the corpus: the three
+  # arms run at once in the same folder, and leftovers change later runs. xslt#213's repro left
+  # chapter-*.xml behind, and the next run picked chapter-1.xml as the input. Each martin case
+  # runs in its own copy of its folder; the folders are small.
+  if [[ "$id" == martin/* ]]; then cp -a "$wd" "$dir/wd" && wd="$dir/wd"; fi
+  ( cd "$wd" &&timeout 300 "$tool" "${args[@]}" </dev/null >"$dir/out" 2>"$dir/err"; echo $? > "$dir/rc" )
 }
 export -f run_one; export OUT
 for arm in cand base base2; do
