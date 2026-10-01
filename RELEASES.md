@@ -1,5 +1,75 @@
 # Release History
 
+## 2.5.1 — 2026-10-01
+
+Takes **PhoenixmlDb.XQuery 2.5.1** and **PhoenixmlDb.Core 2.0.0**. There is no Xslt 2.5.0: the
+Xslt version follows the XQuery it is built on, and XQuery needed a 2.5.1 patch, found by this
+release's own testing, before Xslt could ship.
+
+### Security: `ResourcePolicy` is enforced on every read, fetch and evaluation (GHSA-86rg-wxgp-9p5j)
+
+`XsltTransformer.ResourcePolicy`, `ServerDefault` included, was not enforced on several paths. It
+is now enforced on all of them, through the PhoenixmlDb.XQuery check
+(`ResourcePolicy.Authorize`), and the reader opens the URI it returns.
+
+What is checked now:
+
+- **Reads:**
+  - `xsl:source-document` (streamed or not) and the `unparsed-text` family, rooted paths
+    included.
+  - `fn:transform`, both the XSLT function and the XQuery-side provider. The stylesheet location
+    needs import access and the source location read access, and the nested transformation runs
+    under the caller's policy.
+  - `xsl:import`/`xsl:include`, `xsl:import-schema` and everything a schema includes,
+    `xsl:merge` sources, and parameter documents.
+  - `json-doc` and `load-xquery-module`, through PhoenixmlDb.XQuery 2.5.x.
+- **Load time:**
+  - The stylesheet pre-fetch checks every URL before fetching, so loading a stylesheet makes no
+    request the policy forbids.
+  - Static expressions (`use-when`, `xsl:use-when`, static variables and parameters, shadow
+    attributes) are evaluated under the policy while the stylesheet loads.
+- **Evaluation:** `xsl:evaluate` honours `AllowXslEvaluate` and raises `XTDE3175` when it is off.
+- **HTTP:** redirects are re-authorised at every hop.
+- **Availability:** `unparsed-text-available`, `doc-available` and `stream-available` return false
+  for refused resources, and a refused import reads as "not found", so neither reveals whether a
+  file exists.
+
+**With no policy configured, nothing changes.** Hosts that run untrusted stylesheets should
+upgrade. Hosts that filter stylesheet text should account for shadow attributes (`_href`,
+`_schema-location`), which replace the real attribute when the stylesheet is compiled.
+
+### Fixed
+
+- **Streaming:**
+  - Grouping over attribute and text nodes (#216).
+  - Streamability of calls to and bodies of streamable functions (#217).
+  - Attribute-only uses of `current-group()` (#220).
+  - `accumulator-after()` before the template descends is `XTSE3430` (#225).
+  - A streamable accumulator's initial value must not navigate the input (#222).
+- **Grouping focus:** within a declared-streamable construct, an invocation clears the current
+  group and grouping key; elsewhere they are kept, as in XSLT 2.0 (XSLT 3.0 §14.2; #219, #229).
+- **Accumulators:** `accumulator-before`/`-after` with no context item is `XTDE3350` (#224).
+- **`system-property()` and `element-available()`** resolve prefixes in the scope where the
+  function item was created.
+- **Error codes:**
+  - A duplicate key in a map constructor is `XTDE3365`.
+  - A map or function item in the principal result is the serialization error `SENR0001` (#226).
+- **Packages:**
+  - A used package's private global no longer clashes with a same-named global (#227).
+  - `xsl:expose` validates its names (`XTSE0020`, `XTSE3020`; #228).
+- **`xsl:import-schema`:** a location is one URI, resolved against its own module.
+- **Schemas referencing `xml:id`** import reliably on every runtime (through XQuery 2.5.1).
+
+### Behaviour changes
+
+- An accumulator not applicable to the principal source tree is `XTDE3362` (#213).
+- The `unparsed-text` family resolves against the calling module and raises `FOUT1170` (#195).
+
+### Conformance
+
+W3C XSLT 3.0: **275 failing at the start of this cycle → 216 at 2.5.1.** Five cases that expect
+one implementation-dependent order of distinct trees are recorded in BUGS.md #118, not changed.
+
 ## 2.4.1 — 2026-09-28
 
 Takes **PhoenixmlDb.XQuery 2.4.1**. A patch for a regression in 2.4.0 that **broke XSpec
