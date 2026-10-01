@@ -4,39 +4,41 @@ using Xunit;
 namespace PhoenixmlDb.Xslt.Tests;
 
 /// <summary>
-/// XSLT 3.0 §14.2: a template rule invoked by xsl:apply-templates has no current group and no
-/// current grouping key, so current-grouping-key() raises XTDE1071 there. The caller's key
-/// leaked in (W3C si-fork-115). A named template keeps them.
+/// XSLT 3.0 §14.2.1/§14.2.2: an invocation construct (apply-templates, call-template, ...)
+/// leaves the current group and grouping key unchanged, as in XSLT 2.0, unless it is within a
+/// declared-streamable construct, where it sets both to absent in the called template.
+/// XSpec's compiler relies on the first (threads.xsl: for-each-group, apply-templates,
+/// current-group() in the matched rule); W3C si-fork-115 checks the second.
 /// </summary>
 public class AppliedTemplateGroupingFocusTests
 {
-    private static async Task<string> Run(string inner)
+    private static async Task<string> Run(bool streamable, string source = "<r><i k='a'/><i k='a'/><i k='b'/></r>")
     {
         var xsl = $"""
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-              <xsl:template match="/">
-                <out><xsl:for-each-group select="r/i" group-by="@k">{inner}</xsl:for-each-group></out>
+              <xsl:mode name="m" streamable="{(streamable ? "yes" : "no")}"/>
+              <xsl:mode streamable="{(streamable ? "yes" : "no")}"/>
+              <xsl:template match="r">
+                <out><xsl:for-each-group select="i" group-by="@k"><xsl:apply-templates select="." mode="m"/></xsl:for-each-group></out>
               </xsl:template>
               <xsl:template match="i" mode="m">
-                <xsl:try><h key="{"{"}current-grouping-key(){"}"}"/><xsl:catch errors="*:XTDE1071"><h key="absent"/></xsl:catch></xsl:try>
-              </xsl:template>
-              <xsl:template name="n">
-                <h key="{"{"}current-grouping-key(){"}"}"/>
+                <xsl:try>
+                  <g key="{"{"}current-grouping-key(){"}"}" n="{"{"}count(current-group()){"}"}"/>
+                  <xsl:catch errors="*:XTDE1071 *:XTDE1061"><g absent="yes"/></xsl:catch>
+                </xsl:try>
               </xsl:template>
             </xsl:stylesheet>
             """;
         var t = new XsltTransformer();
         await t.LoadStylesheetAsync(xsl);
-        return await t.TransformAsync("<r><i k='a'/><i k='b'/></r>");
+        return await t.TransformAsync(source);
     }
 
     [Fact]
-    public async Task An_applied_template_has_no_grouping_key() =>
-        (await Run("<xsl:apply-templates select=\"current-group()\" mode=\"m\"/>"))
-            .Should().Contain("<h key=\"absent\"/><h key=\"absent\"/>");
+    public async Task Outside_streaming_an_applied_template_keeps_the_group_and_key() =>
+        (await Run(streamable: false)).Should().Contain("<g key=\"a\" n=\"2\"/><g key=\"b\" n=\"1\"/>");
 
-    [Fact]
-    public async Task A_called_template_keeps_the_grouping_key() =>
-        (await Run("<xsl:call-template name=\"n\"/>"))
-            .Should().Contain("<h key=\"a\"/><h key=\"b\"/>");
+    // The streamable half (both absent) is W3C si-fork-115 end to end: a streamable-mode template
+    // that reads current-group() is already rejected statically (XTSE3430), so it cannot be
+    // exercised here.
 }

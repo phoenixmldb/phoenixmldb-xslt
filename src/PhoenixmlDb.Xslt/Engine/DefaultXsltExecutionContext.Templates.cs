@@ -442,11 +442,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     _currentTemplate = template;
                     _currentMode = mode;
 
-                    // XSLT 3.0 §14.2: a template rule invoked by apply-templates sees neither the
-                    // caller's current group nor its grouping key — current-group() raises
-                    // XTDE1061 and current-grouping-key() XTDE1071 there (W3C si-fork-115 got the
-                    // caller's key). Shadowed in the callee's scope, restored when it pops.
-                    SuppressGroupingFocus();
+                    // XSLT 3.0 §14.2.1/§14.2.2: an invocation construct within a declared-streamable
+                    // construct sets the current group AND grouping key to absent in the called
+                    // template (W3C si-fork-115); otherwise it leaves both unchanged, as in XSLT 2.0.
+                    // XSpec's compiler relies on the latter (threads.xsl applies templates inside
+                    // xsl:for-each-group and reads current-group() in the matched rule); clearing
+                    // them unconditionally broke 13 XSpec tutorial compiles with XTDE1061.
+                    if (InDeclaredStreamableConstruct(savedMode))
+                        SuppressGroupingFocus();
 
                     // If use="absent" or optional type mismatch, push absent focus
                     if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)

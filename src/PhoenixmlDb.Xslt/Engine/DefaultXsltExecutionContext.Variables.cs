@@ -280,6 +280,23 @@ internal sealed partial class DefaultXsltExecutionContext
     /// when that scope pops. Only called on the context-absent invocation path — a normal
     /// call-template retains the focus and correctly keeps the current group visible.
     /// </summary>
+    // Depth of streamable xsl:source-document bodies being evaluated (see SourceDocumentAsync).
+    private int _streamableConstructDepth;
+
+    /// <summary>
+    /// Whether an invocation made now is within a declared-streamable construct (XSLT 3.0
+    /// §14.2.1): a streamable xsl:source-document, or a template rule of a streamable mode
+    /// (<paramref name="invokingMode"/> is the mode of the rule making the call). Evaluated at
+    /// run time; the spec's notion is lexical, which this approximates.
+    /// </summary>
+    private bool InDeclaredStreamableConstruct(QName? invokingMode)
+    {
+        if (_streamableConstructDepth > 0 || _isStreamingExecution)
+            return true;
+        var modeName = invokingMode ?? new QName(default, "");
+        return _stylesheet.Modes.TryGetValue(modeName, out var mode) && mode.Streamable;
+    }
+
     private void SuppressGroupingFocus()
     {
         SetVariable(new QName(NamespaceId.None, "current-group"), null);
