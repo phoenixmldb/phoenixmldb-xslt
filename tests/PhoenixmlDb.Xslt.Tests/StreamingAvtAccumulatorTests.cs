@@ -37,12 +37,15 @@ public sealed class StreamingAvtAccumulatorTests
         return (streamed ? await t.TransformAsync(new StringReader(Source)) : await t.TransformAsync(Source)).Trim();
     }
 
-    private const string AvtBody = """<result count="{accumulator-after('count')}" total="{accumulator-after('total')}"/>""";
+    // ONE accumulator-after() in the start tag: several there are not guaranteed-streamable, since
+    // the attributes are evaluated before the descent in no defined order (W3C accumulator-009s).
+    // The second value is read post-descent, in the content.
+    private const string AvtBody = """<result count="{accumulator-after('count')}"><xsl:value-of select="accumulator-after('total')"/></result>""";
     private const string ValueOfBody = """<result><xsl:value-of select="accumulator-after('count')"/>|<xsl:value-of select="accumulator-after('total')"/></result>""";
 
     [Fact]
     public async Task AnAccumulatorInAnAvt_SeesTheWholeStream()
-        => (await RunAsync(AvtBody, streamed: true)).Should().Be("""<result count="3" total="42"/>""",
+        => (await RunAsync(AvtBody, streamed: true)).Should().Be("""<result count="3">42</result>""",
             "the streamed run reported the accumulators' initial values");
 
     /// <summary>
@@ -52,7 +55,7 @@ public sealed class StreamingAvtAccumulatorTests
     /// </summary>
     [Fact]
     public async Task AnAccumulatorInAnAvt_SeesTheWholeTree_Unstreamed()
-        => (await RunAsync(AvtBody, streamed: false)).Should().Be("""<result count="3" total="42"/>""");
+        => (await RunAsync(AvtBody, streamed: false)).Should().Be("""<result count="3">42</result>""");
 
     /// <summary>The same calls in an xsl:value-of were already routed correctly.</summary>
     [Fact]
