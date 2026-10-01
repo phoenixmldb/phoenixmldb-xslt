@@ -206,7 +206,7 @@ public sealed class XsltTransformer
     /// <see cref="PhoenixmlDb.XQuery.XsdSchemaProvider"/> with no schemas loaded;
     /// any <c>xsl:import-schema</c> declarations encountered while loading a
     /// stylesheet are routed to this provider via
-    /// <see cref="PhoenixmlDb.XQuery.ISchemaProvider.ImportSchema"/>.
+    /// <see cref="PhoenixmlDb.XQuery.ISchemaProvider.ImportSchema(string, System.Collections.Generic.IReadOnlyList{string}?)"/>.
     /// </summary>
     /// <remarks>
     /// Replace with a custom <see cref="PhoenixmlDb.XQuery.ISchemaProvider"/> implementation
