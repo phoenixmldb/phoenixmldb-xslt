@@ -772,11 +772,21 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private void SerializeResult(object result)
     {
-        // XTDE0450: Maps and function items cannot be serialized as element/document content
+        // A map or function item inside a constructed element or temporary tree is a tree
+        // construction error, XTDE0450. At the top level of the principal result it is not
+        // part of any tree: it reaches the serializer, whose sequence normalization cannot
+        // represent it with the xml/html/xhtml/text methods, so it is SENR0001 (W3C
+        // output-0710/0711/0712: "the intended serialization error, rather than a tree
+        // construction error").
+        var atTopLevel = _outputNsScopes.Count == 0 && _temporaryOutputDepth == 0;
         if (result is IDictionary<object, object?>)
-            throw Error("XTDE0450: An item in a sequence used as the content of an element or document node is a map");
+            throw Error(atTopLevel
+                ? "SENR0001: A map in the principal result cannot be serialized by this output method"
+                : "XTDE0450: An item in a sequence used as the content of an element or document node is a map");
         if (result is PhoenixmlDb.XQuery.Ast.XQueryFunction)
-            throw Error("XTDE0450: An item in a sequence used as the content of an element or document node is a function item");
+            throw Error(atTopLevel
+                ? "SENR0001: A function item in the principal result cannot be serialized by this output method"
+                : "XTDE0450: An item in a sequence used as the content of an element or document node is a function item");
         // XSLT 3.0 §5.7.2: Arrays in content sequences are flattened — members extracted recursively
         if (result is List<object?> arrayList)
         {
