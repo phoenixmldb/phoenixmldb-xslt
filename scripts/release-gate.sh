@@ -29,7 +29,9 @@
 #   options: --docbook N|all (every-Nth sample of xslTNG's 661 test docs; default 12)
 #            --jobs N (default nproc)   --out DIR   --accept ID (repeatable)
 #
-# Corpora (override with env): MARTIN_DIR, XSPEC_DIR, TNG_DIR.
+# Corpora (override with env): MARTIN_DIR, XSPEC_DIR, TNG_DIR. Plus one runtime case,
+# wasm/transform: a transform on the browser-wasm runtime under Node (scripts/wasm-probe; needs
+# node, not the wasm workload).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -156,6 +158,48 @@ for arm in cand base base2; do
   done < "$CASES" | xargs -0 -n3 -P "$JOBS" bash -c 'run_one "$0" "$1" "$2"'
   echo "  $arm done"
 done
+
+# ── WebAssembly ───────────────────────────────────────────────────────────────────────────
+# 2.5.1 started every transform on a dedicated Thread (#197's large stack), and browser-wasm
+# cannot start threads: every XSLT call in a Blazor WebAssembly app failed (xslt#237), and
+# nothing here ran on that runtime. scripts/wasm-probe builds a browser-wasm app around one
+# transform and runs it under Node, so no browser and no wasm workload are needed. It lands in
+# runs/<arm>/wasm__transform like any other case: a candidate that fails where the baseline
+# ran is REGRESSED.
+WASM_ID="wasm/transform"
+wasm_arm() { # arm, then msbuild property selecting the engine
+  local arm="$1" prop="$2" dir="$OUT/runs/$1/wasm__transform" src="$OUT/wasm/$1"
+  mkdir -p "$dir" "$OUT/wasm"; rm -rf "$src"; cp -a "$ROOT/scripts/wasm-probe" "$src"
+  if ! dotnet publish "$src/WasmProbe.csproj" -c Release "$prop" --nologo -v q -o "$src/pub" \
+       >"$dir/build.log" 2>&1; then
+    { echo "probe build failed:"; tail -20 "$dir/build.log"; } > "$dir/err"; echo 3 > "$dir/rc"; return
+  fi
+  cp "$src/main.mjs" "$src/pub/wwwroot/"
+  ( cd "$src/pub/wwwroot" && timeout 300 node main.mjs >"$dir/out" 2>"$dir/err"; echo $? > "$dir/rc" )
+}
+if command -v node >/dev/null 2>&1; then
+  printf '%s\twasm\t-\n' "$WASM_ID" >> "$CASES"
+  wasm_arm base "-p:XsltVersion=$BASE"
+  # The baseline is a published release that is known to run. If its probe does not, the gate
+  # itself is broken, and continuing would file the case under NONDET, which does not block:
+  # the first version of this step reported GATE PASSED with neither probe built.
+  if [ "$(cat "$OUT/runs/base/wasm__transform/rc")" != 0 ]; then
+    echo "release gate: the wasm probe failed on the BASELINE $BASE; fix the gate before trusting it:" >&2
+    cat "$OUT/runs/base/wasm__transform/err" >&2; exit 2
+  fi
+  mkdir -p "$OUT/runs/base2/wasm__transform"   # rerun the base build for the NONDET check
+  ( cd "$OUT/wasm/base/pub/wwwroot" 2>/dev/null && timeout 300 node main.mjs \
+      >"$OUT/runs/base2/wasm__transform/out" 2>"$OUT/runs/base2/wasm__transform/err"
+    echo $? > "$OUT/runs/base2/wasm__transform/rc" ) || echo 3 > "$OUT/runs/base2/wasm__transform/rc"
+  if [ "$CAND_LOCAL" = 1 ]; then
+    wasm_arm cand "-p:XsltProject=$ROOT/src/PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj"
+  else
+    wasm_arm cand "-p:XsltVersion=$CAND"
+  fi
+  echo "  wasm done"
+else
+  echo "  wasm SKIPPED: node not found (the browser-wasm case needs Node to run)" >&2
+fi
 
 # ── Compare ───────────────────────────────────────────────────────────────────────────────
 python3 - "$OUT" "$CASES" "$BASE" "$CAND_LABEL" "${ACCEPT[@]+"${ACCEPT[@]}"}" <<'PY'
