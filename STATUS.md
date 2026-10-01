@@ -1,16 +1,16 @@
 # Status
 
-Generated 2026-10-01 13:25 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-01 22:44 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
-| `PhoenixmlDb.XQuery` | 2.4.1 | ? | **repo is at ?, nuget.org has 2.4.1** |
-| `PhoenixmlDb.Xslt` | 2.4.1 | 2.4.1 | current |
-| `xquery4` | 2.4.1 | ? | **repo is at ?, nuget.org has 2.4.1** |
-| `xslt` | 2.4.1 | 2.4.1 | current |
+| `PhoenixmlDb.XQuery` | 2.5.1 | ? | **repo is at ?, nuget.org has 2.5.1** |
+| `PhoenixmlDb.Xslt` | 2.5.1 | 2.5.1 | current |
+| `xquery4` | 2.5.1 | ? | **repo is at ?, nuget.org has 2.5.1** |
+| `xslt` | 2.5.1 | 2.5.1 | current |
 
 ## Open work
 
@@ -18,7 +18,7 @@ Generated 2026-10-01 13:25 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 1 | 0 |
-| phoenixmldb-xslt | 2 | 0 |
+| phoenixmldb-xslt | 1 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -35,7 +35,6 @@ Generated 2026-10-01 13:25 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [156] fn/system-property-gen is 0/166 — compile-time XPath evaluation stops at inline function items, doc() and paths
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
@@ -46,7 +45,7 @@ Generated 2026-10-01 13:25 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Defect register
 
-`BUGS.md`: **119** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **121** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
