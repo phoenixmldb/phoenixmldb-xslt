@@ -1598,7 +1598,9 @@ public sealed class XqtsConfiguration
         {
             "spec" => SpecApplies(dep.Value) == dep.Satisfied,
             "feature" => SupportedFeatures.Contains(dep.Value ?? "") == dep.Satisfied,
-            "xsd-version" => dep.Satisfied,
+            // XSD 1.1 processor: run a case only if its xsd-version list includes 1.1. Mirrors the
+            // QT3 runner in phoenixmldb-xquery (#139), which ran both halves of every 1.0/1.1 pair.
+            "xsd-version" => (dep.Value ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("1.1") == dep.Satisfied,
             // The processor is XML 1.0 Fifth Edition (System.Xml). Answering `dep.Satisfied` here
             // said "yes" to every xml-version dependency, so XML 1.1-only cases ran against an
             // XML 1.0 processor and counted as failures (e.g. K2-Serialization-7/8, which need
