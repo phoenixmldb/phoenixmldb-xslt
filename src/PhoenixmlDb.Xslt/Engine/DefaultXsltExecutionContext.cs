@@ -865,7 +865,48 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (_policyResolver == null)
             return null; // No policy — fall through to default
 
-        return _policyResolver.ResolveText(href, encoding);
+        try
+        {
+            return _policyResolver.ResolveText(href, encoding);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+        {
+            // Refused: fall through to the file path, which the policy refuses too, and the
+            // caller reports FOUT1170 as for any resource that cannot be retrieved.
+            return null;
+        }
+    }
+
+    /// <summary>The resource policy this transformation runs under, or null.</summary>
+    internal PhoenixmlDb.XQuery.Security.ResourcePolicy? Policy => _options?.ResourcePolicy;
+
+    /// <summary>
+    /// Authorises <paramref name="resolved"/> under the transformation's resource policy and
+    /// returns the URI to read (a file at its canonical path); unchanged when there is no
+    /// policy. A refusal is the dynamic error <paramref name="errorCode"/>.
+    /// </summary>
+    internal Uri AuthorizeResource(Uri resolved, PhoenixmlDb.XQuery.Security.ResourceAccessKind access, string errorCode)
+    {
+        if (Policy is not { } policy)
+            return resolved;
+        try
+        {
+            return policy.Authorize(resolved.IsAbsoluteUri ? resolved.AbsoluteUri : resolved.OriginalString, access, _stylesheet.BaseUri);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw Error($"{errorCode}: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Under a resource policy, an XML reader resolves external entities and DTDs only when the
+    /// policy allows DTD processing, and then only from locations it allows.
+    /// </summary>
+    internal void ApplyEntityPolicy(System.Xml.XmlReaderSettings settings)
+    {
+        if (Policy is { } policy)
+            settings.XmlResolver = policy.AllowDtdProcessing ? new PhoenixmlDb.XQuery.Security.PolicyXmlResolver(policy) : null;
     }
 
 

@@ -508,9 +508,7 @@ internal sealed partial class DefaultXsltExecutionContext
         else
             throw Error($"XTDE0010: Cannot resolve result-document parameter document '{href}' without a base URI");
 
-        if (_options?.ResourcePolicy is { } policy &&
-            !policy.IsAllowed(resolvedUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument))
-            throw Error($"XTDE0010: Resource policy denied access to result-document parameter document '{href}'");
+        resolvedUri = AuthorizeResource(resolvedUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "XTDE0010");
 
         string xml;
         try
@@ -523,7 +521,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     throw Error($"XTDE0010: Cannot fetch result-document parameter document '{href}' on Blazor WebAssembly synchronously.");
                 else
                 {
-                    using var stream = HttpDocumentLoader.OpenRead(resolvedUri);
+                    using var stream = HttpDocumentLoader.OpenRead(resolvedUri, Policy);
                     using var reader = new System.IO.StreamReader(stream);
                     xml = reader.ReadToEnd();
                 }

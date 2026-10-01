@@ -363,7 +363,7 @@ public sealed class XsltTransformer
         // Skip when the host hasn't asked for HTTP imports (no http(s) refs present →
         // walker is cheap; trivially-malformed XML is swallowed and surfaces via the parser).
         var effectivePreload = PreloadedResources ?? new PreloadedResources();
-        await HttpImportPreloader.PreloadHttpImportsAsync(stylesheetXml, baseUri, effectivePreload).ConfigureAwait(false);
+        await HttpImportPreloader.PreloadHttpImportsAsync(stylesheetXml, baseUri, effectivePreload, ResourcePolicy).ConfigureAwait(false);
 
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
@@ -429,9 +429,25 @@ public sealed class XsltTransformer
             if (string.IsNullOrEmpty(import.TargetNamespace) && import.SchemaLocations.Count == 0)
                 continue;
             var resolved = ResolveLocations(import.SchemaLocations, baseUri);
+            if (ResourcePolicy is { } policy && resolved is { Count: > 0 })
+            {
+                // Each location must be one the policy allows importing from; the provider then
+                // checks every document the schema itself includes or imports.
+                var allowed = new List<string>(resolved.Count);
+                foreach (var location in resolved)
+                {
+                    if (policy.TryAuthorize(location, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet, baseUri) is { } ok)
+                        allowed.Add(ok.AbsoluteUri);
+                }
+                if (allowed.Count == 0)
+                    throw new XsltException(
+                        $"XTSE0220: xsl:import-schema for namespace '{import.TargetNamespace}': no schema location is allowed by the resource policy",
+                        import.Location);
+                resolved = allowed;
+            }
             try
             {
-                SchemaProvider.ImportSchema(import.TargetNamespace, resolved);
+                SchemaProvider.ImportSchema(import.TargetNamespace, resolved, ResourcePolicy);
             }
             catch (PhoenixmlDb.XQuery.SchemaException ex)
             {

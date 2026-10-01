@@ -47,7 +47,7 @@ internal sealed class XsltUnparsedTextFunction : PhoenixmlDb.XQuery.Ast.XQueryFu
                 return policyText;
             }
 
-            var filePath = UnparsedTextHelper.ResolveFilePath(href, UnparsedTextHelper.StaticBase(_context));
+            var filePath = UnparsedTextHelper.ResolveFilePath(href, UnparsedTextHelper.StaticBase(_context), _context.Policy);
             if (filePath != null)
             {
                 var text = await UnparsedTextHelper.ReadWithEncodingDetectionAsync(filePath).ConfigureAwait(false);

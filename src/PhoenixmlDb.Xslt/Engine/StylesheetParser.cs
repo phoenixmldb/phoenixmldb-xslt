@@ -32,10 +32,39 @@ public sealed partial class StylesheetParser
     /// </summary>
     internal PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; init; }
 
+    // A stylesheet module on disk, as far as this parser may know: under a resource policy a
+    // module the policy refuses to import reads as not found, so an import attempt cannot be
+    // used to learn whether a file outside the policy exists.
+    private bool ModuleExists(string path)
+    {
+        if (ResourcePolicy != null)
+        {
+            try
+            {
+                if (!ResourcePolicy.IsAllowed(new Uri(Path.GetFullPath(path)), PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet))
+                    return false;
+            }
+            catch (Exception e) when (e is ArgumentException or UriFormatException or NotSupportedException or PathTooLongException)
+            {
+                return false;
+            }
+        }
+        return File.Exists(path);
+    }
+
+    // The resolver for external entities and DTDs in a stylesheet (only with AllowDtdProcessing):
+    // under a resource policy, only where it allows DTD processing and only from allowed locations.
+    private System.Xml.XmlResolver? EntityResolver() => ResourcePolicy switch
+    {
+        null => new System.Xml.XmlUrlResolver(),
+        { AllowDtdProcessing: true } policy => new PhoenixmlDb.XQuery.Security.PolicyXmlResolver(policy),
+        _ => null,
+    };
+
 
     /// <summary>
     /// Optional pre-fetched HTTP imports / includes. Consulted before the parser falls
-    /// back to <see cref="HttpResourceLoader.GetStringSync"/>, so callers running on a
+    /// back to <see cref="HttpResourceLoader.GetStringSync(Uri)"/>, so callers running on a
     /// runtime that cannot block (Blazor WebAssembly) can pre-fetch async and pass the
     /// content through. See <see cref="PreloadedResources"/> for usage.
     /// </summary>

@@ -21,6 +21,19 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </summary>
 internal static class UnparsedTextHelper
 {
+    internal static string? ResolveFilePath(string href, Uri? baseUri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy)
+    {
+        // Under a resource policy the file read is the one the policy authorised: rooted paths
+        // count as file: URIs, relative ones resolve as below, links are resolved. A refused or
+        // missing file is "not available" either way — no existence answer for denied paths.
+        if (policy != null)
+        {
+            var authorized = policy.TryAuthorize(href, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadText, baseUri);
+            return authorized is { IsFile: true } && System.IO.File.Exists(authorized.LocalPath) ? authorized.LocalPath : null;
+        }
+        return ResolveFilePath(href, baseUri);
+    }
+
     internal static string? ResolveFilePath(string href, Uri? baseUri)
     {
         // An EXISTING file or null — for an absolute URI too. Returning the path unchecked made

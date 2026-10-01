@@ -1794,6 +1794,10 @@ internal sealed partial class DefaultXsltExecutionContext
             throw Error($"FODC0005: Invalid URI '{href}': {ex.Message}");
         }
 
+        // The resource policy judges the document before either load path touches it, and both
+        // read the URI it authorised (a file at its canonical path).
+        resolvedUri = AuthorizeResource(resolvedUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "FODC0002");
+
         // If streamable="yes", use XmlReader-based streaming instead of full tree loading.
         // Exception: content that cannot be driven off the live reader at the document
         // level (notably xsl:fork / xsl:for-each-group with group-by, which has no
@@ -1818,6 +1822,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     Async = true,
                     MaxCharactersFromEntities = 1_000_000
                 };
+                ApplyEntityPolicy(readerSettings);
                 using var rawReader = XmlReader.Create(fileStream, readerSettings, resolvedUri.AbsoluteUri);
                 // Wrapped so fn:has-children() can look one event ahead invisibly (BUGS #92), and
                 // so whitespace that xsl:strip-space removes never reaches any consumer of the
