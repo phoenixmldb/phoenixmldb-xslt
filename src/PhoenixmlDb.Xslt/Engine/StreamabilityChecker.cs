@@ -2051,12 +2051,25 @@ internal static class StreamabilityChecker
 
         public override object? VisitChoose(XsltChoose insn)
         {
+            // Exactly one branch runs, so the branches are alternatives: the choose consumes the
+            // parameter as often as its tests (each may be evaluated) plus its MOST consuming
+            // branch, not the sum of all branches. Summing rejected the spec's own
+            // xml-to-json package, whose two branches each apply-templates to $input once
+            // (W3C use-package-150..152).
             foreach (var when in insn.When)
-            {
                 CheckExpression(when.Test, isReturnPosition: false);
-                Walk(when.Body);
+            var afterTests = _totalConsumingRefCount;
+            var worst = afterTests;
+            var branches = insn.When.Select(w => w.Body).ToList();
+            if (insn.Otherwise != null)
+                branches.Add(insn.Otherwise);
+            foreach (var branch in branches)
+            {
+                _totalConsumingRefCount = afterTests;
+                Walk(branch);
+                worst = Math.Max(worst, _totalConsumingRefCount);
             }
-            if (insn.Otherwise != null) Walk(insn.Otherwise);
+            _totalConsumingRefCount = worst;
             return null;
         }
     }
@@ -2229,6 +2242,22 @@ internal static class StreamabilityChecker
                                 return null;
                             }
                         }
+                    }
+
+                    // Only an absorbing function consumes its streamed argument's content. For the
+                    // other declared categories (inspection, filter, ascent, shallow- and
+                    // deep-descent) the first argument's usage is inspection or transmission
+                    // (XSLT 3.0 §19.8.5), so a '.' passed there does not read the context item's
+                    // string value (W3C function-5007/5013: [sf:ascent(.)/local-name() = 'doc']).
+                    if (func.Streamability is not ("absorbing" or "unclassified") && expr.Arguments.Count > 0)
+                    {
+                        var oldMotionless = _inMotionlessFunctionArg;
+                        _inMotionlessFunctionArg = true;
+                        Walk(expr.Arguments[0]);
+                        _inMotionlessFunctionArg = oldMotionless;
+                        for (int i = 1; i < expr.Arguments.Count; i++)
+                            Walk(expr.Arguments[i]);
+                        return null;
                     }
                 }
             }
@@ -2718,6 +2747,7 @@ internal static class StreamabilityChecker
         private readonly string _streamability;
         private readonly HashSet<string> _paramNames;
         private readonly string? _firstParamName;
+        private readonly int _arity;
         private readonly QName? _functionName;
         public string? Reason { get; private set; }
 
@@ -2742,6 +2772,7 @@ internal static class StreamabilityChecker
             foreach (var p in parameters)
                 _paramNames.Add(p.Name.LocalName);
             _firstParamName = parameters.Count > 0 ? parameters[0].Name.LocalName : null;
+            _arity = parameters.Count;
             _functionName = functionName;
         }
 
@@ -2847,9 +2878,13 @@ internal static class StreamabilityChecker
             // Recursive self-call detection: if the function calls itself with an argument
             // derived from the first parameter (e.g., f:count($input/*)), this compounds
             // consuming — each recursive level does an additional sweep of the streaming node.
+            // A call to the same name with a different arity is a different function — the
+            // spec's xml-to-json package has j:xml-to-json#1 call #2 with the same input, a
+            // single absorption (W3C use-package-150..152 were rejected).
             if (_functionName != null && _streamability == "absorbing"
                 && expr.Name.LocalName == _functionName.Value.LocalName
-                && expr.Name.Namespace == _functionName.Value.Namespace)
+                && expr.Name.Namespace == _functionName.Value.Namespace
+                && expr.Arguments.Count == _arity)
             {
                 // Check if any argument derives from the first parameter
                 foreach (var arg in expr.Arguments)
