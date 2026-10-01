@@ -28,14 +28,22 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
     // Null for the registered function: a direct call resolves against the calling expression.
     private readonly IReadOnlyDictionary<string, string>? _creationBindings;
 
-    public XsltSystemPropertyFunction() { }
+    // True when the transformation's resource policy disables xsl:evaluate ("dynamically disabled",
+    // XSLT 3.0 §27.6): supports-dynamic-evaluation is then "no" at run time.
+    private readonly Func<bool>? _dynamicEvaluationDisabled;
 
-    private XsltSystemPropertyFunction(IReadOnlyDictionary<string, string> creationBindings)
-        => _creationBindings = creationBindings;
+    public XsltSystemPropertyFunction(Func<bool>? dynamicEvaluationDisabled = null)
+        => _dynamicEvaluationDisabled = dynamicEvaluationDisabled;
+
+    private XsltSystemPropertyFunction(IReadOnlyDictionary<string, string> creationBindings, Func<bool>? dynamicEvaluationDisabled)
+    {
+        _creationBindings = creationBindings;
+        _dynamicEvaluationDisabled = dynamicEvaluationDisabled;
+    }
 
     public override PhoenixmlDb.XQuery.Ast.XQueryFunction BindCreationContext(PhoenixmlDb.XQuery.Ast.ExecutionContext context)
         => context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext { PrefixNamespaceBindings: { } bindings }
-            ? new XsltSystemPropertyFunction(new Dictionary<string, string>(bindings, StringComparer.Ordinal))
+            ? new XsltSystemPropertyFunction(new Dictionary<string, string>(bindings, StringComparer.Ordinal), _dynamicEvaluationDisabled)
             : this;
 
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "system-property");
@@ -81,7 +89,9 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
         var xsltNs = "http://www.w3.org/1999/XSL/Transform";
         if (namespaceUri != xsltNs)
             return ValueTask.FromResult<object?>("");
-        var result = PropertyValue(name);
+        var result = name == "supports-dynamic-evaluation" && _dynamicEvaluationDisabled?.Invoke() == true
+            ? "no"
+            : PropertyValue(name);
         return ValueTask.FromResult<object?>(result);
     }
 

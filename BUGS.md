@@ -7405,3 +7405,21 @@ A/B, not to chase these. Checked on 2026-10-01 against main 247: for sx-union-01
 si-fork-118 the logged output holds exactly the expected items in the other order. sx-union-017
 prints one boolean per item, so its log cannot show that; it has the same union shape and is
 included on that basis.
+
+### 119. A static variable sees the run-time answer for dynamic evaluation — recorded, not fixed (2026-10-01)
+
+When a resource policy turns `xsl:evaluate` off, XSLT 3.0 §27.6 calls the feature *dynamically
+disabled*. Outside static expressions, `system-property('xsl:supports-dynamic-evaluation')` then
+reports "no" and `element-available('xsl:evaluate')` false; inside them it still reports "yes" and
+true. `use-when` gets this right, because the parser decides it.
+
+A static variable or parameter does not. The parser evaluates its `select` at compile time, but the
+run time evaluates it again as an ordinary global, on several paths (dependency-ordered
+initialisation, lazy and pending globals), and the second evaluation sees the run-time answer. So
+`<xsl:variable name="p" static="yes" select="system-property('xsl:supports-dynamic-evaluation')"/>`
+holds "no" under a policy that disables `xsl:evaluate`.
+
+The right fix is for the run time to use the value the parser already computed for a static global,
+not to recompute it. That also avoids evaluating a static expression twice. It is not done, because
+it touches every global-initialisation path for one property that a stylesheet rarely captures in a
+static variable. The test `Static_expressions_still_report_dynamic_evaluation` covers `use-when` only.

@@ -881,6 +881,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     internal PhoenixmlDb.XQuery.Security.ResourcePolicy? Policy => _options?.ResourcePolicy;
 
     /// <summary>
+    /// Whether the resource policy turns xsl:evaluate off for this transformation: "dynamically
+    /// disabled" in XSLT 3.0 §27.6. Outside static expressions, system-property
+    /// ('xsl:supports-dynamic-evaluation') then reports "no" and element-available('xsl:evaluate')
+    /// false. Static expressions are evaluated by the parser, which still reports the feature.
+    /// </summary>
+    internal bool DynamicEvaluationDisabled => Policy is { AllowXslEvaluate: false };
+
+    /// <summary>
     /// Authorises <paramref name="resolved"/> under the transformation's resource policy and
     /// returns the URI to read (a file at its canonical path); unchanged when there is no
     /// policy. A refusal is the dynamic error <paramref name="errorCode"/>.
@@ -986,8 +994,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         lib.Register(new XsltCurrentMergeKeyFunction(this));
         lib.Register(new XsltRegexGroupFunction(this));
         lib.Register(new XsltFunctionAvailableFunction(lib));
-        lib.Register(new XsltElementAvailableFunction(_stylesheet.ExtensionElementPrefixes));
-        lib.Register(new XsltSystemPropertyFunction());
+        lib.Register(new XsltElementAvailableFunction(_stylesheet.ExtensionElementPrefixes, () => DynamicEvaluationDisabled));
+        lib.Register(new XsltSystemPropertyFunction(() => DynamicEvaluationDisabled));
         lib.Register(new XsltAvailableSystemPropertiesFunction());
         lib.Register(new XsltTypeAvailableFunction());
         lib.Register(new XsltUnparsedTextFunction(this));
