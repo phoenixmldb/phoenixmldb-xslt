@@ -94,7 +94,10 @@ internal static class JsonToXmlConverter
                 // use-first: skip subsequent occurrences
                 continue;
             }
-            var child = ConvertValue(prop.Value, prop.Name, store, duplicates, escape: escape);
+            var effectiveKey = escape ? EscapeSpecialCharacters(prop.Name) : ReplaceXmlInvalidCharacters(prop.Name);
+            var child = ConvertValue(prop.Value, effectiveKey, store, duplicates, escape: escape);
+            if (escape && effectiveKey.Contains('\\', StringComparison.Ordinal))
+                AddAttribute(child.Id, NamespaceId.None, "escaped-key", "true", child.Attributes as List<NodeId> ?? new List<NodeId>(), store);
             child.Parent = elemId;
             children.Add(child.Id);
         }
@@ -148,25 +151,86 @@ internal static class JsonToXmlConverter
     }
 
     /// <summary>
-    /// Creates a fn:string element, adding escaped="true" attribute when the escape option is set
-    /// and the JSON string contains backslash escape sequences.
+    /// Creates a fn:string element (F&amp;O 3.1 §17.5.3). With escape=false, a character that is not
+    /// valid in XML becomes U+FFFD. With escape=true, every "special" character is written as a JSON
+    /// escape sequence whether or not the input escaped it, and escaped="true" marks a value that
+    /// then contains one.
     /// </summary>
+    /// <remarks>
+    /// The interpreted value used to be written as-is: a JSON "\u0000" put a raw NUL into the tree,
+    /// so the serialized result was not XML (W3C json-to-xml-error-015, error-3250a), and with
+    /// escape=true a form feed came out unescaped (json-to-xml-escape-005/006).
+    /// </remarks>
     private static XdmElement CreateStringElement(System.Text.Json.JsonElement je, string? key, XdmInMemoryStore store, bool isRoot, bool escape)
     {
         var interpreted = je.GetString() ?? "";
         if (!escape)
-            return CreateSimpleElement("string", interpreted, key, store, isRoot);
+            return CreateSimpleElement("string", ReplaceXmlInvalidCharacters(interpreted), key, store, isRoot);
 
-        // When escape=true, check if the raw JSON string contains escape sequences
-        var raw = je.GetRawText(); // includes surrounding quotes
-        var hasEscapes = raw.Length > 2 && raw.AsSpan(1, raw.Length - 2).Contains('\\');
-        var elem = CreateSimpleElement("string", interpreted, key, store, isRoot);
-        if (hasEscapes)
-        {
-            // Add escaped="true" attribute per XSLT 3.0 §22.1.2
+        var escaped = EscapeSpecialCharacters(interpreted);
+        var elem = CreateSimpleElement("string", escaped, key, store, isRoot);
+        if (escaped.Contains('\\', StringComparison.Ordinal))
             AddAttribute(elem.Id, NamespaceId.None, "escaped", "true", elem.Attributes as List<NodeId> ?? new List<NodeId>(), store);
-        }
         return elem;
+    }
+
+    // Valid XML 1.0 characters: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF].
+    // A surrogate is valid only as half of a pair; the caller checks pairing.
+    private static bool IsXmlInvalid(char c)
+        => c < 0x20 ? c is not ('\t' or '\n' or '\r') : c is '\uFFFE' or '\uFFFF';
+
+    private static bool IsUnpairedSurrogate(string s, int i)
+        => char.IsHighSurrogate(s[i]) ? i + 1 >= s.Length || !char.IsLowSurrogate(s[i + 1])
+         : char.IsLowSurrogate(s[i]) && (i == 0 || !char.IsHighSurrogate(s[i - 1]));
+
+    /// <summary>escape=false: characters not valid in XML become U+FFFD.</summary>
+    private static string ReplaceXmlInvalidCharacters(string s)
+    {
+        StringBuilder? sb = null;
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (IsXmlInvalid(s[i]) || IsUnpairedSurrogate(s, i))
+            {
+                sb ??= new StringBuilder(s, 0, i, s.Length);
+                sb.Append('\uFFFD');
+            }
+            else
+                sb?.Append(s[i]);
+        }
+        return sb?.ToString() ?? s;
+    }
+
+    /// <summary>
+    /// escape=true: the backslash, the controls x00-x1F and x7F-x9F, and characters not valid in
+    /// XML are written as JSON escapes, two-character where one exists (\f) and \uXXXX otherwise.
+    /// </summary>
+    private static string EscapeSpecialCharacters(string s)
+    {
+        StringBuilder? sb = null;
+        for (var i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            string? esc = c switch
+            {
+                '\\' => "\\\\",
+                '\b' => "\\b",
+                '\f' => "\\f",
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                _ when c < 0x20 || (c >= 0x7F && c <= 0x9F) || IsXmlInvalid(c) || IsUnpairedSurrogate(s, i)
+                    => "\\u" + ((int)c).ToString("X4", CultureInfo.InvariantCulture),
+                _ => null,
+            };
+            if (esc != null)
+            {
+                sb ??= new StringBuilder(s, 0, i, s.Length + 8);
+                sb.Append(esc);
+            }
+            else
+                sb?.Append(c);
+        }
+        return sb?.ToString() ?? s;
     }
 
     private static XdmElement CreateSimpleElement(string localName, string textValue, string? key, XdmInMemoryStore store, bool isRoot = false)
