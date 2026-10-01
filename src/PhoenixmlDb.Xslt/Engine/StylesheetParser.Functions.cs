@@ -822,26 +822,7 @@ public sealed partial class StylesheetParser
         if (namespaceUri != null && namespaceUri != "http://www.w3.org/1999/XSL/Transform")
             return false;
 
-        return localName is
-            "apply-templates" or "call-template" or "choose" or "copy" or "copy-of" or
-            "element" or "attribute" or "text" or "value-of" or "variable" or "param" or
-            "if" or "for-each" or "for-each-group" or "sort" or "message" or "number" or
-            "comment" or "processing-instruction" or "sequence" or "iterate" or
-            "try" or "catch" or "next-match" or "apply-imports" or "result-document" or
-            "analyze-string" or "matching-substring" or "non-matching-substring" or
-            "where-populated" or "on-empty" or "on-non-empty" or "fallback" or
-            "namespace" or "output" or "strip-space" or "preserve-space" or
-            "stylesheet" or "transform" or "template" or "function" or
-            "import" or "include" or "import-schema" or "decimal-format" or
-            "character-map" or "output-character" or "key" or
-            "document" or "source-document" or "with-param" or
-            "when" or "otherwise" or "break" or "next-iteration" or
-            "accumulator" or "accumulator-rule" or
-            "context-item" or "global-context-item" or
-            "map" or "map-entry" or "array" or "assert" or
-            "merge" or "merge-source" or "merge-action" or "merge-key" or
-            "fork" or "accept" or "expose" or "override" or "use-package" or
-            "attribute-set" or "perform-sort";
+        return XsltElementAvailableFunction.IsXsltElement(localName);
     }
 
 

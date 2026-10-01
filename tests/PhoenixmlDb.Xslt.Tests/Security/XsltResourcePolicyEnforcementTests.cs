@@ -144,6 +144,28 @@ public sealed class XsltResourcePolicyEnforcementTests : IDisposable
     }
 
     [Fact]
+    public async Task Disabled_xsl_evaluate_is_reported_as_dynamically_disabled()
+    {
+        // XSLT 3.0 §27.6: outside static expressions, the feature reports itself unavailable,
+        // and an xsl:fallback child runs instead of raising XTDE3175.
+        var xsl = Stylesheet(
+            "<xsl:value-of select=\"system-property('xsl:supports-dynamic-evaluation'), element-available('xsl:evaluate')\"/>" +
+            "|<xsl:evaluate xpath=\"'1+1'\"><xsl:fallback>FALLBACK</xsl:fallback></xsl:evaluate>");
+        (await Run(ResourcePolicy.ServerDefault, xsl)).Should().Contain("<out>no false|FALLBACK</out>");
+        (await Run(ResourcePolicy.Unrestricted, xsl)).Should().Contain("<out>yes true|2</out>");
+    }
+
+    [Fact]
+    public async Task Static_expressions_still_report_dynamic_evaluation()
+    {
+        // In a static expression a dynamically disabled feature still reads as available (§27.6).
+        // Static variables are not covered yet: their value is recomputed at run time (BUGS.md #119).
+        var xsl = Stylesheet(
+            "<xsl:value-of use-when=\"system-property('xsl:supports-dynamic-evaluation') = 'yes' and element-available('xsl:evaluate')\" select=\"'USE-WHEN'\"/>");
+        (await Run(ResourcePolicy.ServerDefault, xsl)).Should().Contain("<out>USE-WHEN</out>");
+    }
+
+    [Fact]
     public async Task Xsl_import_needs_import_access_not_read_access()
     {
         var xsl = "<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>" +
