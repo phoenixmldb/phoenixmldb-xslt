@@ -7423,3 +7423,18 @@ The right fix is for the run time to use the value the parser already computed f
 not to recompute it. That also avoids evaluating a static expression twice. It is not done, because
 it touches every global-initialisation path for one property that a stylesheet rarely captures in a
 static variable. The test `Static_expressions_still_report_dynamic_evaluation` covers `use-when` only.
+
+### 120. Two json-to-xml converters, each with fixes the other lacks — recorded, not unified (2026-10-01)
+
+xslt has its own `JsonToXmlConverter` (Engine/JsonToXmlConverter.cs) beside PhoenixmlDb.XQuery's.
+The xslt copy lacked the XQuery copy's handling of characters XML cannot hold, so it wrote a raw
+NUL into the tree and didn't re-escape special characters under `escape: true`. That is now ported
+(W3C json-to-xml-escape-005/006, json-to-xml-error-015, error-3250a). It still ignores the
+`fallback` option, which the XQuery copy implements.
+
+Using the XQuery functions directly was measured and rejected for now. It wins the same four cases,
+but the XQuery copy lacks fixes the xslt copy has: it doesn't compute a document's string value,
+which xslt's node store requires (`xsl:value-of` over the result throws), and its option-type errors
+don't carry XPTY0004 (error-3245a, two unit tests). It is the drift of #115 in both directions.
+Unifying means bringing the XQuery converter up to the xslt copy (string values, error codes), then
+deleting the xslt one, which needs an XQuery release in between.
