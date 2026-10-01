@@ -2858,12 +2858,20 @@ public sealed partial class StylesheetParser
             }
         }
 
+        var initialValue = ParseExpr(RequiredAttribute(element, "initial-value").Value);
+        // The initial value of a streamable accumulator is computed before the stream starts,
+        // so like its rules it must be motionless: initial-value="//x" reads the input
+        // (W3C accumulator-019s).
+        if (isStreamable && StreamabilityChecker.NavigatesDownward(initialValue))
+            throw new XsltException("XTSE3430: Accumulator initial-value is not motionless: a streamable accumulator's initial value must not navigate the input document",
+                GetSourceLocation(element));
+
         return new XsltAccumulator
         {
             Name = name,
             SourceName = RequiredAttribute(element, "name").Value,
             As = declaredType,
-            InitialValue = ParseExpr(RequiredAttribute(element, "initial-value").Value),
+            InitialValue = initialValue,
             Rules = rules,
             Streamable = isStreamable
         };
