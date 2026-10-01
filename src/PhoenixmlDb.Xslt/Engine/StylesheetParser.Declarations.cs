@@ -730,6 +730,7 @@ public sealed partial class StylesheetParser
                                 + "xsl:expose; must be one of template, function, attribute-set, variable, mode or *",
                                 GetSourceLocation(child));
                     }
+                    ValidateExposeNames(child);
                     // Collect expose declarations — applied after all components are parsed
                     stylesheet.ExposeDeclarations.Add(new ExposeDeclaration
                     {
@@ -786,7 +787,10 @@ public sealed partial class StylesheetParser
 
         // Apply xsl:expose declarations — changes visibility of the package's own components
         if (stylesheet.ExposeDeclarations.Count > 0)
+        {
             ApplyExposeDeclarations(stylesheet);
+            ValidateExposedFunctionArities(stylesheet);
+        }
 
         // XTSE0265: Check for conflicting input-type-annotations across all modules
         foreach (var imported in stylesheet.Imports)
@@ -1828,6 +1832,58 @@ public sealed partial class StylesheetParser
     /// Per XSLT 3.0 §3.6.3, expose changes the visibility of the package's own components
     /// based on component type and name pattern matching.
     /// </summary>
+    /// <summary>
+    /// Static checks on xsl:expose/@names (XSLT 3.0 §3.6.3.1): a prefix in a name or a prefixed
+    /// wildcard must be in scope (XTSE0020, W3C expose-927), and when the component is a function
+    /// a non-wildcard name must carry its arity, name#N (XTSE3020, erratum E36, expose-926).
+    /// </summary>
+    private static void ValidateExposeNames(XElement expose)
+    {
+        var names = expose.Attribute("names")?.Value;
+        if (string.IsNullOrWhiteSpace(names))
+            return;
+        foreach (var token in names.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (token == "*" || token.StartsWith("Q{", StringComparison.Ordinal))
+                continue;
+            var hash = token.IndexOf('#', StringComparison.Ordinal);
+            var name = hash >= 0 ? token[..hash] : token;
+            var colon = name.IndexOf(':', StringComparison.Ordinal);
+            if (colon > 0)
+            {
+                var prefix = name[..colon];
+                if (prefix != "*" && expose.GetNamespaceOfPrefix(prefix) is null)
+                    throw new XsltException(
+                        $"XTSE0020: The prefix '{prefix}' in xsl:expose names=\"{token}\" is not declared",
+                        GetSourceLocation(expose));
+            }
+        }
+    }
+
+    /// <summary>
+    /// XTSE3020 (erratum E36, W3C expose-926): with component="function" a non-wildcard name must
+    /// carry its arity. Checked after the other xsl:expose rules, whose errors the corpus expects
+    /// to win when a declaration breaks several (expose-904..913 share a fixture with an
+    /// arity-less function name).
+    /// </summary>
+    private static void ValidateExposedFunctionArities(XsltStylesheet stylesheet)
+    {
+        foreach (var expose in stylesheet.ExposeDeclarations)
+        {
+            if (expose.Component != "function" || string.IsNullOrWhiteSpace(expose.Names))
+                continue;
+            foreach (var token in expose.Names.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var isWildcard = token == "*" || token.EndsWith(":*", StringComparison.Ordinal)
+                    || token.StartsWith("*:", StringComparison.Ordinal) || token.EndsWith("}*", StringComparison.Ordinal);
+                if (!isWildcard && !token.Contains('#', StringComparison.Ordinal))
+                    throw new XsltException(
+                        $"XTSE3020: xsl:expose component=\"function\" names '{token}' without an arity; write {token}#N",
+                        expose.Element is { } exposeElement ? GetSourceLocation(exposeElement) : null);
+            }
+        }
+    }
+
     private static void ApplyExposeDeclarations(XsltStylesheet stylesheet)
     {
         foreach (var expose in stylesheet.ExposeDeclarations)

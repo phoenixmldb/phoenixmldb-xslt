@@ -71,7 +71,9 @@ public sealed class ExposeNameValidationTests
     /// </summary>
     [Theory]
     [InlineData("""<xsl:expose visibility="public" component="mode" names="*"/>""")]
-    [InlineData("""<xsl:expose visibility="public" component="variable" names="nosuchprefix:*"/>""")]
+    // A namespace wildcard on a DECLARED prefix that matches nothing. (An undeclared prefix is a
+    // different error, XTSE0020 — W3C expose-927.)
+    [InlineData("""<xsl:expose visibility="public" component="variable" names="xsl:*"/>""")]
     [InlineData("""<xsl:expose visibility="public" component="variable" names="*:nosuchlocal"/>""")]
     public Task Expose_WithAWildcardThatMatchesNothing_IsNotAnError(string expose)
         => AssertLoadsAsync(Package(expose));
