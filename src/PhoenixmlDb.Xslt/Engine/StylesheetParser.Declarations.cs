@@ -341,9 +341,28 @@ public sealed partial class StylesheetParser
 
                 case "variable":
                     var variable = ParseVariable(child);
+                    // A private (or hidden) global of a USED package is not visible here, so it
+                    // cannot clash with a declaration of the same name in this package (W3C
+                    // expose-008/009). As for named templates merged from a package, the local
+                    // declaration takes the name.
+                    // (A merged package variable carries PackageStylesheet; it is exposed only when
+                    // recorded in UsedComponentSymbols, and redeclaring an exposed one stays an error.)
+                    // The displaced global becomes a package-local shadow, as in a diamond
+                    // (use-package-175/176): the used package's own components still resolve
+                    // their value, and references from here resolve this declaration.
+                    foreach (var displaced in stylesheet.Variables.Where(v => v.Name.Equals(variable.Name)
+                                 && v.PackageStylesheet != null
+                                 && !stylesheet.UsedComponentSymbols.Contains(("V", variable.Name, 0))).ToList())
+                    {
+                        stylesheet.Variables.Remove(displaced);
+                        stylesheet.PackageLocalShadowVariables.Add(displaced);
+                        if (stylesheet.PackagePrivateGlobals.TryGetValue(variable.Name, out var owner)
+                            && ReferenceEquals(owner, displaced.PackageStylesheet))
+                            stylesheet.PackagePrivateGlobals.Remove(variable.Name);
+                    }
                     if (stylesheet.Variables.Any(v => v.Name.Equals(variable.Name)) ||
                         stylesheet.Parameters.Any(p => p.Name.Equals(variable.Name)))
-                        throw new XsltException($"XTSE0630: Duplicate global variable '{variable.Name.LocalName}'",
+                        throw new XsltException($"XTSE0630: Duplicate global variable '{variable.Name.LocalName}' DBG[{string.Join(";", stylesheet.Variables.Where(v => v.Name.Equals(variable.Name)).Select(v => v.ProvidedByPackage + "/" + v.Visibility + "/" + v.VisibilityAttr + "/pkg=" + (v.PackageStylesheet != null) + "/orig=" + (v.OriginalVariable != null)))}]",
                             GetSourceLocation(child));
                     stylesheet.Variables.Add(variable);
                     stylesheet.LocalComponentSymbols.Add(("V", variable.Name, 0));
