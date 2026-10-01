@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-09-30 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-01 13:25 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -19,7 +19,7 @@ Generated 2026-09-30 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 1 | 0 |
 | phoenixmldb-xslt | 2 | 0 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -40,9 +40,13 @@ Generated 2026-09-30 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
+**phoenixmldb-cli**
+
+- [12] build: Bump the phoenixmldb-engines group with 2 updates
+
 ## Defect register
 
-`BUGS.md`: **118** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **119** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
