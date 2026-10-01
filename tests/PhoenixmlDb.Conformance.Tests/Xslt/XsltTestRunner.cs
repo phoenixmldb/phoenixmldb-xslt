@@ -2145,6 +2145,24 @@ public sealed class XsltTestRunner
         return normalizedActual == normalizedExpected;
     }
 
+    /// <summary>
+    /// The secondary result document an assert-result-document names. The engine stores absolute
+    /// or relative hrefs, so a key matches the URI exactly or as its last path segments; an exact
+    /// key wins. A bare string suffix matched "MMP.xml" for uri="P.xml", so the P.xml assertions
+    /// ran against the wrong document (W3C si-fork-103 failed a correct result).
+    /// </summary>
+    internal static string? FindResultDocument(IReadOnlyDictionary<string, string> results, string uri)
+    {
+        if (results.TryGetValue(uri, out var exact))
+            return exact;
+        foreach (var kvp in results)
+        {
+            if (kvp.Key.EndsWith("/" + uri, StringComparison.OrdinalIgnoreCase))
+                return kvp.Value;
+        }
+        return null;
+    }
+
     private async Task<bool> VerifyResultDocumentAsync(
         XsltAssertion assertion, string? actualResult, CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null)
@@ -2152,20 +2170,7 @@ public sealed class XsltTestRunner
         if (assertion.Uri == null || secondaryResults == null)
             return false;
 
-        // Look up the secondary result document by href URI
-        string? secondaryContent = null;
-        foreach (var kvp in secondaryResults)
-        {
-            // Match by URI suffix — the engine stores absolute or relative hrefs
-            if (kvp.Key == assertion.Uri ||
-                kvp.Key.EndsWith("/" + assertion.Uri, StringComparison.OrdinalIgnoreCase) ||
-                kvp.Key.EndsWith(assertion.Uri, StringComparison.OrdinalIgnoreCase))
-            {
-                secondaryContent = kvp.Value;
-                break;
-            }
-        }
-
+        var secondaryContent = FindResultDocument(secondaryResults, assertion.Uri);
         if (secondaryContent == null)
             return false;
 
