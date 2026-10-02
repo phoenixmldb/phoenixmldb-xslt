@@ -202,6 +202,14 @@ public sealed class XsltTransformer
     public PreloadedResources? PreloadedResources { get; set; }
 
     /// <summary>
+    /// XQuery library modules for <c>fn:load-xquery-module</c>, by module namespace URI: the
+    /// module files to load when a call names that namespace without location hints. Like a
+    /// query's own module map, these are the host's choice and are not checked against
+    /// <see cref="ResourcePolicy"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>>? XQueryModules { get; set; }
+
+    /// <summary>
     /// Schema provider for schema-aware processing. Defaults to a fresh
     /// <see cref="PhoenixmlDb.XQuery.XsdSchemaProvider"/> with no schemas loaded;
     /// any <c>xsl:import-schema</c> declarations encountered while loading a
@@ -365,10 +373,11 @@ public sealed class XsltTransformer
         var effectivePreload = PreloadedResources ?? new PreloadedResources();
         await HttpImportPreloader.PreloadHttpImportsAsync(stylesheetXml, baseUri, effectivePreload, ResourcePolicy).ConfigureAwait(false);
 
+        var xqueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal);
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution }
-            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution };
+            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules }
+            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules };
         _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
         ResolveSchemaImports(_stylesheet, baseUri);
         // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
@@ -1273,6 +1282,7 @@ public sealed class XsltTransformer
             WarningListener = WarningListener,
             ResourcePolicy = ResourcePolicy,
             PreloadedResources = PreloadedResources,
+            XQueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal),
             ReturnRawXdm = rawBox != null,
             RawResult = rawBox ?? new RawResultBox(),
         };

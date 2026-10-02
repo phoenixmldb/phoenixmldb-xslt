@@ -236,6 +236,12 @@ public sealed class XsltTransformOptions
     public PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; init; }
 
     /// <summary>
+    /// Module namespace URI → module files, for <c>fn:load-xquery-module</c> calls without location
+    /// hints. Passed to the XQuery engine as its module map (<c>ExternalModules</c>).
+    /// </summary>
+    public IReadOnlyDictionary<string, List<string>>? XQueryModules { get; init; }
+
+    /// <summary>
     /// Optional pre-fetched contents for URIs that <c>fn:doc()</c> / <c>document()</c> would
     /// otherwise need to fetch over HTTP synchronously. Required on Blazor WebAssembly,
     /// which cannot block the calling thread; ignored on runtimes that can. See
