@@ -116,6 +116,7 @@ internal sealed class XsltDocument2Function : PhoenixmlDb.XQuery.Ast.XQueryFunct
         {
             fragment = uri[(hashIdx + 1)..];
             uri = uri[..hashIdx];
+            XsltDocumentFunction.RequireShorthandPointer(fragment);
         }
 
         // Resolve against the base node's document URI

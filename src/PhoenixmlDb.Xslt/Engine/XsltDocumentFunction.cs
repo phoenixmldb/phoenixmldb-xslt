@@ -75,6 +75,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             {
                 fragment = uri[(hashIdx + 1)..];
                 uri = uri[..hashIdx];
+                RequireShorthandPointer(fragment);
             }
 
             RequireBaseUriForNodeArgument(item, nodeBaseUri, uri);
@@ -126,6 +127,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
         {
             fragment = uri[(hashIdx + 1)..];
             uri = uri[..hashIdx];
+            RequireShorthandPointer(fragment);
         }
 
         RequireBaseUriForNodeArgument(arg, nodeBaseUri, uri);
@@ -237,5 +239,25 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             }
         }
         return uri;
+    }
+
+    /// <summary>
+    /// A fragment identifier on an XML resource is an XPointer shorthand pointer, an NCName naming
+    /// an element by ID. Anything else does not conform to the media type's fragment rules, which
+    /// is XTDE1160 (XSLT 3.0 §20.1). It was taken as an ID that matched nothing, so document()
+    /// returned the empty sequence silently (W3C error-1160a: '#123456789'). Checked before the
+    /// resource is fetched.
+    /// </summary>
+    internal static void RequireShorthandPointer(string fragment)
+    {
+        try
+        {
+            System.Xml.XmlConvert.VerifyNCName(fragment);
+        }
+        catch (Exception ex) when (ex is System.Xml.XmlException or ArgumentException)
+        {
+            throw new XsltException(
+                $"XTDE1160: The fragment identifier '#{fragment}' is not a shorthand pointer (an NCName), so it does not conform to the fragment rules for XML");
+        }
     }
 }
