@@ -1561,7 +1561,8 @@ internal sealed partial class DefaultXsltExecutionContext
                     SuppressIndentation = matchedOutput?.SuppressIndentation ?? _stylesheet.Outputs.FirstOrDefault()?.SuppressIndentation,
                 };
                 secondaryContent = Owner!.FinalizeOutput(
-                    secondaryContent, rdOutputDecl, effectiveCharMaps, XsltTransformEngine.FinalizeKind.ResultDocument);
+                    secondaryContent, rdOutputDecl, effectiveCharMaps, XsltTransformEngine.FinalizeKind.ResultDocument,
+                    AllowedOutputMethods);
 
                 if (MaxResultDocuments > 0 && _secondaryResultDocuments.Count >= MaxResultDocuments)
                     throw Error($"XTDE1490: Maximum number of secondary result documents ({MaxResultDocuments}) exceeded. " +

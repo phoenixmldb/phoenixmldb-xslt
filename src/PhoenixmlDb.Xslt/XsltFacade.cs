@@ -191,6 +191,26 @@ public sealed class XsltTransformer
     public PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; set; }
 
     /// <summary>
+    /// The serialization methods a transformation may deliver results in, or <c>null</c> (the
+    /// default) for any; see <see cref="XsltTransformOptions.AllowedOutputMethods"/>. Enforced
+    /// against the method each result is actually serialized with, so it also covers the
+    /// default-method rule and a run-time <c>method</c> on <c>xsl:result-document</c>.
+    /// </summary>
+    public IReadOnlySet<OutputMethod>? AllowedOutputMethods { get; set; }
+
+    /// <summary>
+    /// The loaded stylesheet's <c>xsl:output</c> declarations, named and unnamed, including those
+    /// of imported and included modules (merged by import precedence). Empty before
+    /// <c>LoadStylesheetAsync</c>. Declarations in packages brought in by <c>xsl:use-package</c>
+    /// are not listed: they apply only to <c>xsl:result-document</c> within that package, and
+    /// <see cref="AllowedOutputMethods"/> still governs them.
+    /// </summary>
+    public IReadOnlyList<XsltOutputDeclaration> OutputDeclarations =>
+        _stylesheet is null
+            ? []
+            : _stylesheet.Outputs.Select(o => new XsltOutputDeclaration(o.Name, o.Method, o.EffectiveMethod)).ToList();
+
+    /// <summary>
     /// Pre-fetched contents for URIs that <c>xsl:import</c> / <c>xsl:include</c> /
     /// <c>fn:doc()</c> would otherwise need to fetch over HTTP synchronously.
     /// Required on Blazor WebAssembly, which cannot block the calling thread; ignored
@@ -1281,6 +1301,7 @@ public sealed class XsltTransformer
             MessageListenerWithLocation = MessageListenerWithLocation,
             WarningListener = WarningListener,
             ResourcePolicy = ResourcePolicy,
+            AllowedOutputMethods = AllowedOutputMethods,
             PreloadedResources = PreloadedResources,
             XQueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal),
             ReturnRawXdm = rawBox != null,
