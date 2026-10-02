@@ -102,7 +102,8 @@ public sealed class VendorOptionPackagesTests : IDisposable
         var cfg = new Uri(Path.Combine(_dir, "config.xml")).AbsoluteUri;
         var act = async () => await Run(
             $"map {{ QName('http://example.com/other-vendor','configuration') : doc('{cfg}') }}");
-        (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("XTDE3052",
+        // An unresolvable xsl:use-package is the static error XTSE3000 (it was reported as XTDE3052).
+        (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("XTSE3000",
             "a foreign vendor's option must be ignored, leaving the package genuinely unresolved");
     }
 
