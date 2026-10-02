@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <!-- Release-gate probe: runs Martin Honnen's PhoenixmlWorkbench examples on the browser-wasm
+       runtime under Node, the way his Blazor worker runs them. Built by scripts/release-gate.sh
+       in a scratch copy, with ExamplesDir pointing at the workbench's wwwroot/examples and
+       CasesFile listing the cases; the engine is a published package (XsltVersion/XQueryVersion)
+       or this repo's source (XsltProject). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(ExamplesDir)/**/*" LogicalName="ex/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="$(CasesFile)" LogicalName="cases.tsv" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(XsltProject)' == ''">
+    <PackageReference Include="PhoenixmlDb.Xslt" Version="$(XsltVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(XsltProject)' != ''">
+    <ProjectReference Include="$(XsltProject)" SetTargetFramework="TargetFramework=net10.0" />
+  </ItemGroup>
+</Project>

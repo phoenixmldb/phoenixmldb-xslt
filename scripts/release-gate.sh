@@ -26,6 +26,10 @@
 # Usage:
 #   scripts/release-gate.sh --base 2.4.0 --cand-local            # candidate = this tree's CLI
 #   scripts/release-gate.sh --base 2.4.0 --cand 2.4.1            # candidate = a published tool
+#   scripts/release-gate.sh --base 2.5.1 --cand-dev              # candidate = this tree built against
+#        the SIBLING checkouts (../phoenixmldb-xquery, ../phoenixmldb-core) in dev mode. Use it before
+#        a release: main depends on unreleased XQuery source, so --cand-local (which builds against the
+#        pinned packages, as a release tag does) cannot compile it. The label records the sibling SHAs.
 #   options: --docbook N|all (every-Nth sample of xslTNG's 661 test docs; default 12)
 #            --jobs N (default nproc)   --out DIR   --accept ID (repeatable)
 #
@@ -40,12 +44,13 @@ MARTIN_DIR="${MARTIN_DIR:-$WS/martin}"
 XSPEC_DIR="${XSPEC_DIR:-$WS/xspec}"
 TNG_DIR="${TNG_DIR:-$WS/docbook/xslTNG}"
 
-BASE="" CAND="" CAND_LOCAL=0 DOCBOOK=12 JOBS="$(nproc)" OUT="" ACCEPT=()
+BASE="" CAND="" CAND_LOCAL=0 CAND_DEV=0 DOCBOOK=12 JOBS="$(nproc)" OUT="" ACCEPT=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) BASE="$2"; shift 2 ;;
     --cand) CAND="$2"; shift 2 ;;
     --cand-local) CAND_LOCAL=1; shift ;;
+    --cand-dev) CAND_LOCAL=1; CAND_DEV=1; shift ;;
     --docbook) DOCBOOK="$2"; shift 2 ;;
     --jobs) JOBS="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
@@ -71,11 +76,19 @@ install_tool xquery4 "$BASE" "$OUT/tools/base" 2>/dev/null || true
 BX="$OUT/tools/base/xslt"; BQ="$OUT/tools/base/xquery"
 if [ "$CAND_LOCAL" = 1 ]; then
   echo "building candidate CLI from $ROOT ..."
+  if [ "$CAND_DEV" = 1 ]; then
+    for sib in phoenixmldb-xquery phoenixmldb-core; do
+      [ -d "$WS/$sib/.git" ] || { echo "--cand-dev needs $WS/$sib checked out" >&2; exit 2; }
+      git -C "$WS/$sib" diff --quiet HEAD -- || echo "WARNING: $sib has uncommitted changes; this reading is not reproducible from SHAs" >&2
+    done
+    export PHOENIXML_DEV=1   # inherited by every candidate build below; the base arms use packages
+  fi
   dotnet build "$ROOT/src/PhoenixmlDb.Xslt.Cli/PhoenixmlDb.Xslt.Cli.csproj" -c Release -f net10.0 \
     --nologo -v q >"$OUT/cand-build.log" 2>&1 || { echo "candidate build failed, see $OUT/cand-build.log" >&2; exit 2; }
   CX="$ROOT/src/PhoenixmlDb.Xslt.Cli/bin/Release/net10.0/xslt"
   CQ=""   # the xquery CLI lives in phoenixmldb-xquery; .xq cases run only with --cand <version>
   CAND_LABEL="local $(git -C "$ROOT" rev-parse --short HEAD)"
+  [ "$CAND_DEV" = 1 ] && CAND_LABEL="$CAND_LABEL (dev: xquery $(git -C "$WS/phoenixmldb-xquery" rev-parse --short HEAD), core $(git -C "$WS/phoenixmldb-core" rev-parse --short HEAD))"
 else
   install_tool xslt "$CAND" "$OUT/tools/cand"
   install_tool xquery4 "$CAND" "$OUT/tools/cand" 2>/dev/null || true
@@ -199,6 +212,91 @@ if command -v node >/dev/null 2>&1; then
   echo "  wasm done"
 else
   echo "  wasm SKIPPED: node not found (the browser-wasm case needs Node to run)" >&2
+fi
+
+# ── Martin's workbench ────────────────────────────────────────────────────────────────────
+# Martin Honnen's PhoenixmlWorkbench (github.com/martin-honnen/PhoenixmlWorkbench, cloned into
+# MARTIN_DIR/PhoenixmlWorkbench) runs XSLT, SchXslt2 Schematron and DocBook xslTNG in Blazor
+# WebAssembly. It is where #237 surfaced. Two kinds of case:
+#   wb/build      his app, built against the engine (an API break shows here before he finds it)
+#   wb/<example>  each of his examples run on the browser-wasm runtime under Node, the way his
+#                 worker runs it (scripts/workbench-probe), A/B like every other case.
+# The example list is read from his app each run (workbench-probe/cases.py), so new examples are
+# covered without editing this script.
+WB="$MARTIN_DIR/PhoenixmlWorkbench/PhoenixmlWorkbench"
+XQ_PIN=$(grep -oP '(?<=Include="PhoenixmlDb.XQuery" Version=")[^"]+' "$ROOT/Directory.Packages.props" | head -1)
+wb_build_arm() { # arm, then "pkg <version>" or "src"
+  local arm="$1" mode="$2" ver="${3:-}" dir="$OUT/runs/$1/wb__build" src="$OUT/wbbuild/$1"
+  mkdir -p "$dir"; rm -rf "$src"; mkdir -p "$src"; cp -a "$WB" "$src/"
+  echo '<Project />' > "$src/Directory.Build.props"; echo '<Project />' > "$src/Directory.Packages.props"
+  local proj="$src/PhoenixmlWorkbench/PhoenixmlWorkbench.csproj"
+  if [ "$mode" = pkg ]; then
+    sed -i -E "s#(Include=\"PhoenixmlDb\.(Xslt|XQuery)\" Version=\")[^\"]+#\1$ver#" "$proj"
+  else
+    if [ "$CAND_DEV" = 1 ]; then
+      # Dev mode points the engine at the XQuery SOURCE; his own direct XQuery reference must follow,
+      # or two PhoenixmlDb.XQuery assemblies meet in one compilation (CS1704).
+      sed -i -E "s#<PackageReference Include=\"PhoenixmlDb\.XQuery\"[^/]*/>#<ProjectReference Include=\"$WS/phoenixmldb-xquery/src/PhoenixmlDb.XQuery/PhoenixmlDb.XQuery.csproj\" SetTargetFramework=\"TargetFramework=net10.0\" />#" "$proj"
+    else
+      sed -i -E "s#(Include=\"PhoenixmlDb\.XQuery\" Version=\")[^\"]+#\1$XQ_PIN#" "$proj"
+    fi
+    sed -i -E "s#<PackageReference Include=\"PhoenixmlDb\.Xslt\"[^/]*/>#<ProjectReference Include=\"$ROOT/src/PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj\" SetTargetFramework=\"TargetFramework=net10.0\" />#" "$proj"
+  fi
+  dotnet build "$proj" -c Release --nologo -v q >"$dir/build.log" 2>&1; echo $? > "$dir/rc"
+  : > "$dir/out"; grep -E ' error ' "$dir/build.log" | sort -u | head -20 > "$dir/err"
+}
+wb_probe_arm() { # arm, then msbuild property selecting the engine; writes runs/<arm>/wb__<id>
+  local arm="$1" prop="$2" src="$OUT/wbprobe/$1"
+  rm -rf "$src"; mkdir -p "$OUT/wbprobe"; cp -a "$ROOT/scripts/workbench-probe" "$src"
+  if ! dotnet publish "$src/WorkbenchProbe.csproj" -c Release "$prop" -p:ExamplesDir="$WB/wwwroot/examples" \
+       -p:CasesFile="$OUT/wb-cases.tsv" --nologo -v q -o "$src/pub" >"$src/build.log" 2>&1; then
+    echo "probe build failed"; return 1
+  fi
+  cp "$src/main.mjs" "$src/pub/wwwroot/"
+  wb_probe_run "$arm" "$src"
+}
+wb_probe_run() { # arm, built probe dir: runs it and splits its JSON lines into case dirs
+  ( cd "$2/pub/wwwroot" && timeout 1800 node main.mjs >"$2/results.jsonl" 2>"$2/node.err" )
+  python3 - "$2/results.jsonl" "$OUT/runs/$1" "$OUT/wb-cases.tsv" <<'PY'
+import json, os, sys
+res, runs, cases = sys.argv[1], sys.argv[2], sys.argv[3]
+got = {}
+for line in open(res, encoding='utf-8', errors='replace'):
+    try: d = json.loads(line); got[d['id']] = d
+    except Exception: pass
+for line in open(cases, encoding='utf-8'):
+    cid = line.rstrip('\n').split('\t')[1]
+    d = os.path.join(runs, 'wb__' + cid.replace('/', '__')); os.makedirs(d, exist_ok=True)
+    r = got.get(cid, {'rc': 3, 'out': '', 'err': 'no result from the probe (it crashed or timed out)'})
+    open(os.path.join(d, 'out'), 'w', encoding='utf-8').write(r['out'])
+    open(os.path.join(d, 'err'), 'w', encoding='utf-8').write(r['err'])
+    open(os.path.join(d, 'rc'), 'w').write(str(r['rc']))
+PY
+}
+if [ -d "$WB" ] && command -v node >/dev/null 2>&1; then
+  python3 "$ROOT/scripts/workbench-probe/cases.py" "$WB" > "$OUT/wb-cases.tsv"
+  printf '%s\twb\t-\n' "wb/build" >> "$CASES"
+  cut -f2 "$OUT/wb-cases.tsv" | while read -r id; do printf '%s\twb\t-\n' "wb/$id" >> "$CASES"; done
+  # Note the case ids carry the wb/ prefix in cases.tsv; run dirs are wb__<id>.
+  wb_build_arm base pkg "$BASE"; cp -a "$OUT/runs/base/wb__build" "$OUT/runs/base2/wb__build"
+  # As with the wasm probe: the baseline is published and known to run, so a probe that will not
+  # build or run there means the gate is broken, and that must not pass as NONDET.
+  wb_probe_arm base "-p:XsltVersion=$BASE" || { echo "release gate: the workbench probe failed to build on the BASELINE $BASE" >&2; tail -20 "$OUT/wbprobe/base/build.log" >&2; exit 2; }
+  if ! grep -q '"rc":0' "$OUT/wbprobe/base/results.jsonl"; then
+    echo "release gate: the workbench probe ran no example on the BASELINE $BASE; fix the gate before trusting it" >&2
+    tail -5 "$OUT/wbprobe/base/node.err" >&2; exit 2
+  fi
+  wb_probe_run base2 "$OUT/wbprobe/base"
+  if [ "$CAND_LOCAL" = 1 ]; then
+    wb_build_arm cand src
+    wb_probe_arm cand "-p:XsltProject=$ROOT/src/PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj" || true
+  else
+    wb_build_arm cand pkg "$CAND"
+    wb_probe_arm cand "-p:XsltVersion=$CAND" || true
+  fi
+  echo "  workbench done ($(wc -l < "$OUT/wb-cases.tsv") examples)"
+else
+  echo "  workbench SKIPPED: $WB not cloned, or node not found" >&2
 fi
 
 # ── Compare ───────────────────────────────────────────────────────────────────────────────
