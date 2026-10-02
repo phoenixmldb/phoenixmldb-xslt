@@ -169,6 +169,16 @@ public sealed class XsltTransformOptions
     public int MaxOutputSize { get; init; } = 50 * 1024 * 1024;
 
     /// <summary>
+    /// The serialization methods the transformation may deliver results in, or <c>null</c> for
+    /// any. Checked for every serialized result (the principal result and each
+    /// <c>xsl:result-document</c>) against the method actually used, after the default-method
+    /// rule (an <c>html</c> document element selects html) and a run-time <c>method</c> on
+    /// <c>xsl:result-document</c> have been applied. A result in any other method fails the
+    /// transformation with SEPM0016 before it is delivered.
+    /// </summary>
+    public IReadOnlySet<OutputMethod>? AllowedOutputMethods { get; init; }
+
+    /// <summary>
     /// XPath expression to evaluate against the source document to determine the initial context node.
     /// When null, the document root is used. Example: "/doc" selects the document element named "doc".
     /// </summary>

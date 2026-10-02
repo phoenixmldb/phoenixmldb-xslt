@@ -676,6 +676,9 @@ internal sealed partial class DefaultXsltExecutionContext
     // Cooperative cancellation and output size guard
     private readonly CancellationToken _ct;
 
+    /// <summary>See <see cref="XsltTransformOptions.AllowedOutputMethods"/>.</summary>
+    internal IReadOnlySet<OutputMethod>? AllowedOutputMethods { get; }
+
     private readonly int _maxOutputSize;
 
 
@@ -925,6 +928,7 @@ internal sealed partial class DefaultXsltExecutionContext
         _nodeStore = nodeStore;
         _schemaProvider = schemaProvider;
         _ct = options.CancellationToken;
+        AllowedOutputMethods = options.AllowedOutputMethods;
         _maxOutputSize = options.MaxOutputSize;
         _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore)
         {

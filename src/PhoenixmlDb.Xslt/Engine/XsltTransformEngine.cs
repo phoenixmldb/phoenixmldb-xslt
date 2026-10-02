@@ -473,7 +473,7 @@ public sealed class XsltTransformEngine
         // Apply output method post-processing
         // When result-document claimed primary output with a named format, use that declaration
         var outputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-        return FinalizeOutput(output, outputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
+        return FinalizeOutput(output, outputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary, context.AllowedOutputMethods);
     }
 
     /// <summary>
@@ -723,7 +723,21 @@ public sealed class XsltTransformEngine
     }
 
 
-    internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind)
+    /// <summary>The serialization method's name as the specifications spell it (e.g. "xhtml").</summary>
+    private static string MethodName(OutputMethod method) => method switch
+    {
+        OutputMethod.Xml => "xml",
+        OutputMethod.Html => "html",
+        OutputMethod.Xhtml => "xhtml",
+        OutputMethod.Text => "text",
+        OutputMethod.Json => "json",
+        OutputMethod.Adaptive => "adaptive",
+        OutputMethod.Csv => "csv",
+        _ => method.ToString(),
+    };
+
+    internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind,
+        IReadOnlySet<OutputMethod>? allowedMethods = null)
     {
         RequireSupportedHtmlVersion(outputDecl);
         // Default output method (Serialization 4.0 §Default Output Method): when no method was
@@ -745,6 +759,18 @@ public sealed class XsltTransformEngine
         {
             outputDecl = outputDecl?.CloneWithMethod(defaultedMethod)
                 ?? new XsltOutput { Method = defaultedMethod };
+        }
+
+        // The host's allow-list is checked here, on the method this result is actually
+        // serialized with: every delivery path (principal, result-document, streamed) ends here,
+        // after the default-method rule above and any run-time result-document method.
+        if (allowedMethods != null)
+        {
+            var method = outputDecl?.EffectiveMethod ?? OutputMethod.Xml;
+            if (!allowedMethods.Contains(method))
+                throw new XsltException(
+                    $"SEPM0016: The {MethodName(method)} output method is not permitted for this transformation " +
+                    "(XsltTransformOptions.AllowedOutputMethods)");
         }
 
         // A document (root) element in a namespace other than XHTML is "foreign" to the XHTML
@@ -1436,7 +1462,7 @@ public sealed class XsltTransformEngine
                     // normalization / sentinel restore apply. FinalizeOutput only runs the
                     // indentation step for XML/HTML/XHTML methods, so already-emitted JSON is
                     // not re-indented or corrupted.
-                    return FinalizeOutput(jsonOut, jsonOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
+                    return FinalizeOutput(jsonOut, jsonOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary, context.AllowedOutputMethods);
                 }
             }
 
@@ -1461,7 +1487,7 @@ public sealed class XsltTransformEngine
         // initial context item ignored xsl:output indent="yes", character maps, normalization,
         // etc. (Martin Honnen 2026-06-12).
         var rawOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-        return FinalizeOutput(serialized, rawOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary);
+        return FinalizeOutput(serialized, rawOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary, context.AllowedOutputMethods);
     }
 
     internal Task<object?> TransformRawAsync(string xmlSource, XsltTransformOptions? options = null)
@@ -5247,7 +5273,7 @@ public sealed class XsltTransformEngine
 
             var docOutput = outputBuilder.ToString();
             var docOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-            docOutput = FinalizeOutput(docOutput, docOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered);
+            docOutput = FinalizeOutput(docOutput, docOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered, context.AllowedOutputMethods);
             outputBuilder.Clear();
             outputBuilder.Append(docOutput);
             return;
@@ -5287,7 +5313,7 @@ public sealed class XsltTransformEngine
         // step for XML/HTML/XHTML methods, so JSON already serialized via FinalizeJsonOutput above
         // is not re-indented or corrupted.
         var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-        output = FinalizeOutput(output, streamOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered);
+        output = FinalizeOutput(output, streamOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered, context.AllowedOutputMethods);
 
         // Replace the builder's contents with the post-processed output so the calling
         // wrapper sees the same string the original method returned.
