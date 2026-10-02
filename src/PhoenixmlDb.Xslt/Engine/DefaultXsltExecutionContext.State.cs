@@ -622,6 +622,54 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private const int MaxRecursionDepth = 1200;
 
+    // Synchronous waits on async work in progress on THIS thread's stack (a lazy variable's value,
+    // a key or pattern predicate evaluated from synchronous code). EnsureStackAsync never yields
+    // inside one: the waiter would block on an unfinished task, which a single-threaded runtime
+    // cannot do. Per thread, because the question is what lies below on the current stack.
+    [ThreadStatic]
+    private static int t_syncWaitDepth;
+
+    private static T RunSync<T>(Func<ValueTask<T>> work)
+    {
+        t_syncWaitDepth++;
+        try { return work().AsTask().GetAwaiter().GetResult(); }
+        finally { t_syncWaitDepth--; }
+    }
+
+    private static void RunSync(Func<ValueTask> work)
+    {
+        t_syncWaitDepth++;
+        try { work().AsTask().GetAwaiter().GetResult(); }
+        finally { t_syncWaitDepth--; }
+    }
+
+    private static void RunSync(Func<Task> work)
+    {
+        t_syncWaitDepth++;
+        try { work().GetAwaiter().GetResult(); }
+        finally { t_syncWaitDepth--; }
+    }
+
+    /// <summary>
+    /// At the start of a recursion level (a stylesheet function call, call-template,
+    /// apply-templates): when the native stack is running out and the transformation runs inline
+    /// on a runtime without a large-stack thread (browser-wasm), yield instead. The rest of the
+    /// recursion then resumes from the event loop on a fresh stack, and the suspended levels wait
+    /// on the heap. Elsewhere, or inside a synchronous wait, nothing changes: CheckResourceLimits
+    /// still reports a real shortage as XTDE0000.
+    /// </summary>
+    private static ValueTask EnsureStackAsync()
+    {
+        if (t_syncWaitDepth > 0 || !LargeStack.CanYieldForStack
+            || System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return default;
+        return YieldForStackAsync();
+    }
+
+#pragma warning disable CA2007 // Task.Yield's awaitable has no ConfigureAwait; resuming anywhere is the point
+    private static async ValueTask YieldForStackAsync() => await Task.Yield();
+#pragma warning restore CA2007
+
     /// <summary>
     /// The scope pushed by the call-template frame whose body is executing directly and can take a tail call,
     /// or null. A tail call is accepted only while that exact scope is on top of the stack, so a call-template

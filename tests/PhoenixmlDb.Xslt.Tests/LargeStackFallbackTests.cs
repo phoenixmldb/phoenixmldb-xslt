@@ -45,4 +45,48 @@ public sealed class LargeStackFallbackTests
         LargeStack.StartOverride.Value = _ => throw new PlatformNotSupportedException("no threads");
         (await RunAsync()).Should().Be("ok:2");
     }
+
+    // Martin Honnen's workbench example (memo-function-fibonacci1.xsl). Recursion 600 deep needs
+    // far more than a small stack holds. On browser-wasm, which runs inline with no large-stack
+    // thread, it failed with XTDE0000 from n=150 on. Running inline, a recursion level that finds
+    // the stack low now yields, and the event loop (here, the thread pool) resumes it on a
+    // fresh stack.
+    private const string MemoFibonacci = """
+        <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:f="http://example.com/functions"
+            exclude-result-prefixes="#all">
+          <xsl:output method="text"/>
+          <xsl:function name="f:fib" as="xs:integer" cache="yes">
+            <xsl:param name="num" as="xs:integer"/>
+            <xsl:sequence select="if ($num = 0) then 0 else if ($num = 1) then 1 else f:fib($num - 2) + f:fib($num - 1)"/>
+          </xsl:function>
+          <xsl:template match="/"><xsl:value-of select="f:fib(xs:integer(/*))"/></xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    [Fact]
+    public void Deep_recursion_running_inline_on_a_small_stack_yields_instead_of_exhausting_it()
+    {
+        string? result = null;
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            LargeStack.ForceInline.Value = true;
+            LargeStack.StartOverride.Value = _ => throw new InvalidOperationException("a thread was started");
+            try
+            {
+                var t = new XsltTransformer();
+                t.LoadStylesheetAsync(MemoFibonacci).GetAwaiter().GetResult();
+                result = t.TransformAsync("<data>600</data>").GetAwaiter().GetResult().Trim();
+            }
+#pragma warning disable CA1031 // reported on the test thread below
+            catch (Exception ex) { failure = ex; }
+#pragma warning restore CA1031
+        }, 512 * 1024);
+        thread.Start();
+        thread.Join();
+
+        failure.Should().BeNull();
+        result.Should().Be("110433070572952242346432246767718285942590237357555606380008891875277701705731473925618404421867819924194229142447517901959200");
+    }
 }
