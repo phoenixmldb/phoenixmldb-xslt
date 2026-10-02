@@ -11,6 +11,10 @@ permissions:
   contents: read
 
 env:
+  # Build/test against the sibling engines' SOURCE on every PR and push (scripts/clone-siblings.sh
+  # puts them next to this checkout; Directory.Build.targets swaps the package references for them).
+  # Only the release train, a v* tag, builds against the pinned packages it will ship with.
+  PHOENIXML_DEV: ${{ startsWith(github.ref, 'refs/tags/v') && '0' || '1' }}
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_NOLOGO: true
@@ -22,6 +26,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Sibling engines from source
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: ./scripts/clone-siblings.sh phoenixmldb-core phoenixmldb-xquery
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -40,7 +49,9 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION (ref ${GITHUB_REF_NAME}, type ${GITHUB_REF_TYPE})"
 
+      # Pins matter only to the release train: between releases the build uses the siblings' source.
       - name: Engine pins are not stale
+        if: startsWith(github.ref, 'refs/tags/v')
         run: ./scripts/check-pins.sh
 
       - name: Restore
@@ -127,6 +138,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Sibling engines from source
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: ./scripts/clone-siblings.sh phoenixmldb-core phoenixmldb-xquery
+
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
@@ -149,6 +165,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Sibling engines from source
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: ./scripts/clone-siblings.sh phoenixmldb-core phoenixmldb-xquery
 
       - uses: actions/setup-dotnet@v6
         with:

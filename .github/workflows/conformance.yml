@@ -21,6 +21,8 @@ permissions:
   contents: read
 
 env:
+  # Source dependencies except on the release train (see ci.yml).
+  PHOENIXML_DEV: ${{ startsWith(github.ref, 'refs/tags/v') && '0' || '1' }}
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_NOLOGO: true
@@ -38,6 +40,11 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
+
+      - name: Sibling engines from source
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: ./scripts/clone-siblings.sh phoenixmldb-core phoenixmldb-xquery
 
       - uses: actions/setup-dotnet@v6
         with:
