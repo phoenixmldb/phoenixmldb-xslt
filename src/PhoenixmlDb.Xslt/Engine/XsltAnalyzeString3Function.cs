@@ -34,6 +34,6 @@ internal sealed class XsltAnalyzeString3Function : PhoenixmlDb.XQuery.Ast.XQuery
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        return XsltAnalyzeStringFunction.AnalyzeStringCore(arguments[0], arguments[1]?.ToString() ?? "", arguments[2]?.ToString() ?? "");
+        return XsltAnalyzeStringFunction.AnalyzeStringCore(arguments[0], arguments[1]?.ToString() ?? "", arguments[2]?.ToString() ?? "", context);
     }
 }

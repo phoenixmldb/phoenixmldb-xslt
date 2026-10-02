@@ -35,10 +35,24 @@ internal sealed class XsltAnalyzeStringFunction : PhoenixmlDb.XQuery.Ast.XQueryF
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        return AnalyzeStringCore(arguments[0], arguments[1]?.ToString() ?? "", "");
+        return AnalyzeStringCore(arguments[0], arguments[1]?.ToString() ?? "", "", context);
     }
 
-    internal static ValueTask<object?> AnalyzeStringCore(object? inputArg, string pattern, string flags)
+    internal static ValueTask<object?> AnalyzeStringCore(
+        object? inputArg, string pattern, string flags, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+    {
+        try
+        {
+            return Analyze(inputArg, pattern, flags, context);
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
+        {
+            throw PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.MatchTimedOut(context, ex);
+        }
+    }
+
+    private static ValueTask<object?> Analyze(
+        object? inputArg, string pattern, string flags, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         var input = inputArg?.ToString() ?? "";
 
@@ -83,7 +97,8 @@ internal sealed class XsltAnalyzeStringFunction : PhoenixmlDb.XQuery.Ast.XQueryF
         System.Text.RegularExpressions.Regex regex;
         try
         {
-            regex = new System.Text.RegularExpressions.Regex(netPattern, regexOptions);
+            regex = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.CreateRegex(
+                netPattern, regexOptions, PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.MatchTimeoutOf(context));
         }
         catch (System.ArgumentException ex)
         {
