@@ -454,14 +454,16 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Propagate tunnel parameters from parent scopes into this scope.
                 InheritTunnelParameters();
                 // Register forwarded tunnel params in this scope's tunnel table.
-                foreach (var param in forwardedParams.Where(p => p.Tunnel))
+                foreach (var param in forwardedParams)
                 {
+                    if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                     _scopes.Peek().TunnelParameters[param.Name] = value;
                 }
                 // Bind forwarded non-tunnel params to matching template params.
-                foreach (var param in forwardedParams.Where(p => !p.Tunnel))
+                foreach (var param in forwardedParams)
                 {
+                    if (param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var templateParam = template.Parameters.FirstOrDefault(tp =>
                         tp.Name.Equals(param.Name) && !tp.Tunnel);
                     if (templateParam != null)
