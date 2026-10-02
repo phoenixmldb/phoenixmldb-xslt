@@ -305,4 +305,29 @@ public sealed class OverrideStaticErrorTests : IDisposable
         var result = await RunMainAsync(principal, Catalog(("urn:base-acc", basePath)));
         result.Should().Contain("<out/>");
     }
+
+    /// <summary>
+    /// A top-level declaration homonymous with a child of xsl:override is XTSE3055, the more
+    /// specific code, even though it also collides with the used package's component (XTSE3050).
+    /// </summary>
+    [Fact]
+    public async Task A_declaration_homonymous_with_an_overriding_one_is_XTSE3055()
+    {
+        var pkg = WritePackage("p.xsl", """
+            <xsl:package name="urn:p" package-version="1.0.0" version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template name="t" visibility="public"><x/></xsl:template>
+            </xsl:package>
+            """);
+        var xsl = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:use-package name="urn:p" package-version="1.0.0">
+                <xsl:override><xsl:template name="t" visibility="public"><y/></xsl:template></xsl:override>
+              </xsl:use-package>
+              <xsl:template name="t" visibility="public"><z/></xsl:template>
+              <xsl:template name="main"><out/></xsl:template>
+            </xsl:stylesheet>
+            """;
+        var act = () => RunMainAsync(xsl, Catalog(("urn:p", pkg)));
+        (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("XTSE3055");
+    }
 }
