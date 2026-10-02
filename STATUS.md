@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-02 12:43 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-02 22:18 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-10-02 12:43 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 1 | 0 |
-| phoenixmldb-xslt | 1 | 1 |
+| phoenixmldb-xslt | 1 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -38,10 +38,6 @@ Generated 2026-10-02 12:43 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-xslt**
-
-- [261] perf: apply-templates allocates nothing per call it doesn't need (-35% allocation)
 
 **phoenixmldb-cli**
 
