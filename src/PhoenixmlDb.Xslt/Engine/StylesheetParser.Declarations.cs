@@ -961,7 +961,7 @@ public sealed partial class StylesheetParser
 
         // Resolve the package file from the catalog
         if (_packageCatalog == null || !_packageCatalog.TryGetValue(packageName, out var packageEntries))
-            throw new XsltException($"XTDE3052: Package '{packageName}' not found",
+            throw new XsltException($"XTSE3000: Package '{packageName}' not found",
                 GetSourceLocation(element));
 
         // Version matching
@@ -1237,13 +1237,13 @@ public sealed partial class StylesheetParser
         SourceLocation? location)
     {
         if (entries.Count == 0)
-            throw new XsltException($"XTDE3052: Package '{packageName}' has no available versions", location);
+            throw new XsltException($"XTSE3000: Package '{packageName}' has no available versions", location);
 
         var selected = SelectMatchingPackage(entries, requestedVersion, VersionResolution);
         if (selected != null)
             return selected;
 
-        throw new XsltException($"XTDE3052: No matching version for package '{packageName}' " +
+        throw new XsltException($"XTSE3000: No matching version for package '{packageName}' " +
             $"(requested '{requestedVersion}')", location);
     }
 
