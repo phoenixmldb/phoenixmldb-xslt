@@ -641,6 +641,7 @@ internal sealed partial class DefaultXsltExecutionContext
             mergeGroupPosition++;
             var items = taggedItems.Select(t => t.Item).ToList();
             PushScope();
+            _mergeGroupBound = true;
             SetVariable(new QName(NamespaceId.None, "current-merge-group"), items);
             // Set merge key — stringify for current-merge-key() function
             var mergeKeyValue = key.Count == 1

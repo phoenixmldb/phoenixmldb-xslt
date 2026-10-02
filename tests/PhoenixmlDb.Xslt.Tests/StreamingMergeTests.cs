@@ -187,4 +187,32 @@ public class StreamingMergeTests
         r.Should().Contain("key=\"1\" count=\"1\"", $"actual={r}");
         r.Should().Contain("key=\"3\" count=\"1\"", $"actual={r}");
     }
+
+    // XTDE3480: a template applied from inside xsl:merge-action has no current merge group.
+    // apply-templates clears the merge group only once a merge has bound one, so this is the
+    // case where the clear must still happen: without it the rule would see the outer group.
+    [Fact]
+    public async Task Current_merge_group_in_template_applied_from_merge_action_is_XTDE3480()
+    {
+        var act = () => Run("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+                <xsl:template match="/root">
+                    <out>
+                        <xsl:merge>
+                            <xsl:merge-source select="a/item">
+                                <xsl:merge-key select="@n" data-type="number"/>
+                            </xsl:merge-source>
+                            <xsl:merge-action>
+                                <xsl:apply-templates select="current-merge-group()" mode="m"/>
+                            </xsl:merge-action>
+                        </xsl:merge>
+                    </out>
+                </xsl:template>
+                <xsl:template match="item" mode="m">
+                    <g n="{count(current-merge-group())}"/>
+                </xsl:template>
+            </xsl:stylesheet>
+            """, "<root><a><item n=\"1\"/><item n=\"2\"/></a></root>");
+        (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("XTDE3480");
+    }
 }
