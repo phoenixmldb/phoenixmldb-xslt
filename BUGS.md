@@ -587,6 +587,14 @@ synthetic root deliberately — the corpus writes absolute paths (`/out/a[3]/@at
 wrapper shifts all 11024 of them by a step to rescue 7. Needs fragment parsing that keeps
 children at the top level of a document node.
 
+**Same root, other shape (2026-10-02): `method="text"`.** W3C si-value-of-102 serializes with
+`<xsl:output method="text"/>` and asserts `/out/row[1] = "a1,b1,default"` against the result TREE.
+The values are right (the text is `a1,b1,defaulta2,b2,c2a3,b3,c3`), but the harness asserts on
+the serialized string, which a text method has stripped of the `<out>`/`<row>` structure. The
+faithful fix is to judge XPath assertions against the result tree (`TransformToValueAsync`) rather
+than the serialization, unless the case says `serialize="yes"`. That changes how every
+text-output case is judged, so it was not done for one case.
+
 ### 9. `assert-posture-and-sweep`, `assert-warning` fail rather than skip
 919 and 6 occurrences. The runner cannot reach streamability analysis or collect warnings,
 so it cannot judge these either way. They FAIL, because a check you cannot perform is not a
