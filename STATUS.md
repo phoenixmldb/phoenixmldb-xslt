@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-01 22:44 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-02 12:43 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-10-01 22:44 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 1 | 0 |
-| phoenixmldb-xslt | 1 | 0 |
+| phoenixmldb-xslt | 1 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -39,9 +39,13 @@ Generated 2026-10-01 22:44 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
+**phoenixmldb-xslt**
+
+- [261] perf: apply-templates allocates nothing per call it doesn't need (-35% allocation)
+
 **phoenixmldb-cli**
 
-- [12] build: Bump the phoenixmldb-engines group with 2 updates
+- [13] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
@@ -79,8 +83,11 @@ Figures are only as good as their provenance, so each carries how and when it wa
 - **W3C XSLT 3.0 — 10397/10839 (95.92%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 29739/31061 (95.74%)** across 428 test-sets,
+- **W3C QT3 baseline — 29736/31056 (95.75%)** across 428 test-sets,
   same file, same ratchet.
+- **The denominator moved since the previous baseline revision: QT3 31061 -> 31056.** A percentage
+  change across this revision is partly or wholly cases entering or leaving the count,
+  NOT necessarily the engine. Compare pass counts, not percentages, across this line.
 - **W3C QT3 / XQuery — figure not readable** from
   `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
 
