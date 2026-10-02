@@ -672,6 +672,15 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Not when the streaming loop dispatched this node: the loop processes the
                 // children itself, which IS this rule, so no structure is collapsing. The guard's
                 // deep-copy fallback there skipped every template below the element.
+                // An element this driver fully MATERIALISED (ApplyTemplatesStreamingAsync) is in
+                // memory, children included, so the built-in rule simply recurses into them: no
+                // structure collapses, and deep-copying it skipped every template below it (an
+                // unmatched child came out as <b>2</b> instead of "2").
+                if (_streamingDispatchElementMaterialized && node is XdmElement)
+                {
+                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                    break;
+                }
                 if (!_builtInFromStreamingLoop && OwningConstructIsGuaranteedStreamable())
                 {
                     System.Diagnostics.Debug.Assert(false,
@@ -1758,6 +1767,12 @@ internal sealed partial class DefaultXsltExecutionContext
         // Which children the select names. This driver used to receive no select at all, so
         // apply-templates select="foo" processed every child.
         var childTest = StreamedChildTest(select);
+        // The children's parent: the streamed element whose template is applying templates.
+        // Each child below is materialised DETACHED, so without this its ancestor axis was empty
+        // and a pattern with a parent step (match="doc/*", *[parent::doc]) never matched; the
+        // child then fell to the built-in rule (W3C doe-0802). The striding driver links its
+        // ancestors (LinkStridingAncestors) and the forward pass links its own; this one didn't.
+        var streamedParent = ContextItem as Xdm.Nodes.XdmNode;
         var reader = _activeStreamingReader!;
         var ct = _activeStreamingCancellationToken;
         var parentDepth = reader.Depth;
@@ -1798,6 +1813,14 @@ internal sealed partial class DefaultXsltExecutionContext
                 case System.Xml.XmlNodeType.Element:
                 {
                     var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                    if (streamedParent != null)
+                    {
+                        elem.Parent = streamedParent.Id;
+                        // Linked for the ancestor axis, but still the top of its own tree for the
+                        // accumulator machinery, which computes over the materialised subtree; the
+                        // streamed ancestors above it hold nothing (BUGS #93; W3C accumulator-080s).
+                        (_bufferedSubtreeOrigin ??= new Dictionary<NodeId, NodeId>())[elem.Id] = elem.Id;
+                    }
                     position++;
                     // Fire matching template (or default rule) inline, same path the main
                     // streaming processor uses. Pop any deferred element close on the way
