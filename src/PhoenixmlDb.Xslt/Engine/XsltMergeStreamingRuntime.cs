@@ -112,6 +112,7 @@ internal sealed partial class DefaultXsltExecutionContext
             PushScope();
             try
             {
+                _mergeGroupBound = true;
                 SetVariable(new QName(NamespaceId.None, "current-merge-group"), items);
                 var mergeKeyValue = bestKey!.Count == 1
                     ? (object)StringValueOf(bestKey[0])

@@ -1323,8 +1323,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
 
+    // Set once any xsl:merge binds a merge group. Until then no scope can hold one, so clearing
+    // them has nothing to shadow; apply-templates clears at every node it visits, and the two
+    // dictionary writes were a measurable share of a Schematron validator's per-node cost.
+    private bool _mergeGroupBound;
+
     private void ClearMergeGroupContext()
     {
+        if (!_mergeGroupBound)
+            return;
         SetVariable(new QName(NamespaceId.None, "current-merge-group"), null);
         SetVariable(new QName(NamespaceId.None, "current-merge-key"), null);
     }
