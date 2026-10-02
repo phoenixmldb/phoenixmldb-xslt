@@ -913,6 +913,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     internal bool DynamicEvaluationDisabled => Policy is { AllowXslEvaluate: false };
 
+    /// <summary>Whether the host declared a collection under this URI, even an empty one.</summary>
+    internal bool HasDeclaredCollection(string uri) => _documentResolver.HasCollection(uri);
+
     /// <summary>
     /// Authorises <paramref name="resolved"/> under the transformation's resource policy and
     /// returns the URI to read (a file at its canonical path); unchanged when there is no
@@ -1021,6 +1024,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         lib.Register(new XsltFunctionAvailableFunction(lib));
         lib.Register(new XsltElementAvailableFunction(_stylesheet.ExtensionElementPrefixes, () => DynamicEvaluationDisabled));
         lib.Register(new XsltSystemPropertyFunction(() => DynamicEvaluationDisabled));
+        lib.Register(new XsltCollection0Function(this));
         lib.Register(new XsltAvailableSystemPropertiesFunction());
         lib.Register(new XsltTypeAvailableFunction());
         lib.Register(new XsltUnparsedTextFunction(this));

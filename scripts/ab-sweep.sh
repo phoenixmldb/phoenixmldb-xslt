@@ -106,6 +106,10 @@ if [ "${AB_WORKTREE:-0}" != "1" ]; then
   trap 'git checkout -q HEAD -- src tests' EXIT
 fi
 git checkout -q "$BASE" -- src tests
+# `checkout BASE -- paths` restores BASE's files but leaves the ones HEAD ADDED, so a change that
+# adds a source file left it in the base arm, which then failed to build (or, worse, built with
+# part of the change). Remove them; `checkout HEAD` below restores them.
+git diff --name-only --diff-filter=A "$BASE" HEAD -- src tests | while IFS= read -r f; do rm -f -- "$f"; done
 run_arm base "$@"
 git checkout -q HEAD -- src tests
 run_arm change "$@"
