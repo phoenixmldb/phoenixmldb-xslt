@@ -205,6 +205,35 @@ internal static class SnapshotHelper
             }
         }
 
+        // An attribute or namespace target is not a child: the parent's copy already carries it
+        // (ancestors are copied with their attributes and namespaces), so return THAT node and
+        // give the parent no children. Copying the target again and linking it as a child gave
+        // the parent copy a stray child, so the snapshot's root differed from the spec's
+        // reference implementation for every attribute and namespace node (W3C snapshot-0102a,
+        // visible once root() read the right focus).
+        if (node is XdmAttribute targetAttr && previousCopy is XdmElement attrOwner)
+        {
+            foreach (var attrId in attrOwner.Attributes)
+            {
+                if (store.GetNode(attrId) is XdmAttribute copied
+                    && copied.LocalName == targetAttr.LocalName && copied.Namespace == targetAttr.Namespace)
+                    return copied;
+            }
+        }
+        if (node is XdmNamespace targetNs && previousCopy is XdmElement nsOwner)
+        {
+            var nsCopy = new XdmNamespace
+            {
+                Id = store.NextId(),
+                Document = docId,
+                Parent = nsOwner.Id,
+                Prefix = targetNs.Prefix,
+                Uri = targetNs.Uri,
+            };
+            store.Register(nsCopy);
+            return nsCopy;
+        }
+
         // Deep-copy the target node and attach it to the last ancestor copy
         var targetCopy = DeepCopyNode(node, previousCopyId, docId, store, nodeMapping);
 
