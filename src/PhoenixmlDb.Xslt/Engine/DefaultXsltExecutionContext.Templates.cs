@@ -285,8 +285,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 // NOTE: We only store in TunnelParameters here, NOT as variables.
                 // Variables are bound later based on each template param's tunnel flag.
                 InheritTunnelParameters();
-                foreach (var param in withParams.Where(p => p.Tunnel))
+                foreach (var param in withParams)
                 {
+                    if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var value = preEvaluatedParams[param.Name];
                     _scopes.Peek().TunnelParameters[param.Name] = value;
                 }
@@ -355,8 +356,9 @@ internal sealed partial class DefaultXsltExecutionContext
                     var makeContextAbsent = EnforceContextItemConstraint(template);
 
                     // Bind non-tunnel parameters (only to non-tunnel template params)
-                    foreach (var param in withParams.Where(p => !p.Tunnel))
+                    foreach (var param in withParams)
                     {
+                        if (param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                         var templateParam = template.Parameters.FirstOrDefault(tp =>
                             tp.Name.Equals(param.Name) && !tp.Tunnel);
 
@@ -1549,15 +1551,17 @@ internal sealed partial class DefaultXsltExecutionContext
                 InheritTunnelParameters();
 
                 // Store explicit tunnel with-params
-                foreach (var param in withParams.Where(p => p.Tunnel))
+                foreach (var param in withParams)
                 {
+                    if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                     _scopes.Peek().TunnelParameters[param.Name] = value;
                 }
 
                 // Bind non-tunnel with-params to non-tunnel template params
-                foreach (var param in withParams.Where(p => !p.Tunnel))
+                foreach (var param in withParams)
                 {
+                    if (param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var tp = importedTemplate.Parameters.FirstOrDefault(t =>
                         t.Name.Equals(param.Name) && !t.Tunnel);
                     if (tp != null)
@@ -1654,15 +1658,17 @@ internal sealed partial class DefaultXsltExecutionContext
                 InheritTunnelParameters();
 
                 // Store explicit tunnel with-params
-                foreach (var param in withParams.Where(p => p.Tunnel))
+                foreach (var param in withParams)
                 {
+                    if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                     _scopes.Peek().TunnelParameters[param.Name] = value;
                 }
 
                 // Bind non-tunnel with-params to non-tunnel template params
-                foreach (var param in withParams.Where(p => !p.Tunnel))
+                foreach (var param in withParams)
                 {
+                    if (param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var tp = nextTemplate.Parameters.FirstOrDefault(t =>
                         t.Name.Equals(param.Name) && !t.Tunnel);
                     if (tp != null)

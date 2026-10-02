@@ -1395,15 +1395,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Propagate tunnel parameters from parent scopes
         InheritTunnelParameters();
-        foreach (var param in withParams.Where(p => p.Tunnel))
+        foreach (var param in withParams)
         {
+            if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
             var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
             _scopes.Peek().TunnelParameters[param.Name] = value;
         }
 
         // Bind template parameters
-        foreach (var param in withParams.Where(p => !p.Tunnel))
+        foreach (var param in withParams)
         {
+            if (param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
             var templateParam = template.Parameters.FirstOrDefault(tp =>
                 tp.Name.Equals(param.Name) && !tp.Tunnel);
             if (templateParam != null)
@@ -1574,13 +1576,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         // silently lost its params (si-apply-templates-005 tunnel $a).
         var forwardedParams = _streamingForwardedParams;
         InheritTunnelParameters();
-        foreach (var param in forwardedParams.Where(p => p.Tunnel))
+        foreach (var param in forwardedParams)
         {
+            if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
             var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
             _scopes.Peek().TunnelParameters[param.Name] = value;
         }
-        foreach (var param in forwardedParams.Where(p => !p.Tunnel))
+        foreach (var param in forwardedParams)
         {
+            if (param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
             var templateParam = template.Parameters.FirstOrDefault(tp =>
                 tp.Name.Equals(param.Name) && !tp.Tunnel);
             if (templateParam != null)
