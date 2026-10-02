@@ -291,319 +291,343 @@ internal sealed partial class DefaultXsltExecutionContext
         var lastTemplateResultWasAtomic = false; // Track for space-separating adjacent atomic values
         foreach (var node in expandedNodes)
         {
-            CheckResourceLimits();
             position++;
-            PushContextItem(node, position, expandedNodes.Count);
-            PushCurrentItem(node); // For XSLT current() function
-            PushScope();
-            // Lexical scope: the matched template does not see the applying template's local variables (with-params were pre-evaluated above).
-            _scopes.Peek().IsVariableBarrier = true;
+            lastTemplateResultWasAtomic = await ApplyTemplatesToNodeAsync(
+                node, position, expandedNodes.Count, mode, withParams, preEvaluatedParams,
+                lastTemplateResultWasAtomic).ConfigureAwait(false);
+        }
+    }
 
-            // XTDE3480: Clear merge-group context — not available in applied templates
-            ClearMergeGroupContext();
+    /// <summary>
+    /// One node of an apply-templates: find its rule (unless <paramref name="matched"/> already
+    /// names it) and run it, or the built-in rule, with the node as the focus. Returns whether the
+    /// result ended with an atomic value, which the caller threads to the next node so adjacent
+    /// atomic results are space-separated.
+    /// </summary>
+    private async ValueTask<bool> ApplyTemplatesToNodeAsync(
+        object node,
+        int position,
+        int last,
+        QName? mode,
+        List<XsltWithParam> withParams,
+        Dictionary<QName, object?>? preEvaluatedParams,
+        bool lastTemplateResultWasAtomic,
+        XsltTemplate? matched = null)
+    {
 
-            try
+        CheckResourceLimits();
+        PushContextItem(node, position, last);
+        PushCurrentItem(node); // For XSLT current() function
+        PushScope();
+        // Lexical scope: the matched template does not see the applying template's local variables (with-params were pre-evaluated above).
+        _scopes.Peek().IsVariableBarrier = true;
+
+        // XTDE3480: Clear merge-group context — not available in applied templates
+        ClearMergeGroupContext();
+
+        try
+        {
+            // Propagate tunnel parameters: first inherit from parent scopes,
+            // then override with explicitly provided tunnel params.
+            // NOTE: We only store in TunnelParameters here, NOT as variables.
+            // Variables are bound later based on each template param's tunnel flag.
+            InheritTunnelParameters();
+            foreach (var param in withParams)
             {
-                // Propagate tunnel parameters: first inherit from parent scopes,
-                // then override with explicitly provided tunnel params.
-                // NOTE: We only store in TunnelParameters here, NOT as variables.
-                // Variables are bound later based on each template param's tunnel flag.
-                InheritTunnelParameters();
-                foreach (var param in withParams)
-                {
-                    if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
-                    var value = preEvaluatedParams![param.Name];
-                    _scopes.Peek().TunnelParameters[param.Name] = value;
-                }
+                if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
+                var value = preEvaluatedParams![param.Name];
+                _scopes.Peek().TunnelParameters[param.Name] = value;
+            }
 
-                // Find matching template
-                XsltTemplate? template;
+            // Find matching template
+            XsltTemplate? template = matched;
+            if (template == null)
                 using (var mc = AcquireMatchContext())
                     template = _templateIndex.FindMatchingTemplate(node, mode, mc.Value);
 
-                // XTDE0540: Check on-multiple-match="fail"
-                if (template != null)
+            // XTDE0540: Check on-multiple-match="fail"
+            if (template != null)
+            {
+                var modeKey = mode ?? new QName(NamespaceId.None, "");
+                if (_stylesheet.Modes.TryGetValue(modeKey, out var modeDecl2) &&
+                    modeDecl2.OnMultipleMatch == OnMultipleMatchBehavior.Fail)
                 {
-                    var modeKey = mode ?? new QName(NamespaceId.None, "");
-                    if (_stylesheet.Modes.TryGetValue(modeKey, out var modeDecl2) &&
-                        modeDecl2.OnMultipleMatch == OnMultipleMatchBehavior.Fail)
+                    // Check if there's another matching template at the same priority.
+                    // Skip union siblings: matching two branches of a union pattern
+                    // doesn't count as multiple match (spec bug 30402).
+                    XsltTemplate? next;
+                    using (var mc = AcquireMatchContext())
+                        next = _templateIndex.FindMatchingTemplate(node, mode, mc.Value, template);
+                    while (next != null
+                        && template.UnionGroupId != null
+                        && next.UnionGroupId == template.UnionGroupId
+                        && TemplateIndex.SameConflictRank(next, template))
                     {
-                        // Check if there's another matching template at the same priority.
-                        // Skip union siblings: matching two branches of a union pattern
-                        // doesn't count as multiple match (spec bug 30402).
-                        XsltTemplate? next;
-                        using (var mc = AcquireMatchContext())
-                            next = _templateIndex.FindMatchingTemplate(node, mode, mc.Value, template);
-                        while (next != null
-                            && template.UnionGroupId != null
-                            && next.UnionGroupId == template.UnionGroupId
-                            && TemplateIndex.SameConflictRank(next, template))
+                        using var mc2 = AcquireMatchContext();
+                        next = _templateIndex.FindMatchingTemplate(node, mode, mc2.Value, next);
+                    }
+                    if (next != null && TemplateIndex.SameConflictRank(next, template))
+                    {
+                        // Name the node, the mode, and BOTH rules. "Multiple template rules
+                        // match the node" states only that a conflict exists — which the
+                        // author can already tell from the error code. Which node, and which
+                        // two rules, is the entire diagnosis.
+                        static string Describe(XsltTemplate t) =>
+                            (t.Name != null ? $"name='{t.Name.Value.LocalName}'"
+                                            : $"match=\"{DescribePattern(t.Match)}\"")
+                            + $" (priority {TemplateIndex.EffectivePriority(t).ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+                            + $", precedence {TemplateIndex.EffectivePrecedence(t)})";
+                        throw Error(
+                            $"XTDE0540: Multiple template rules match {DescribeNodeForDiagnostics(node)}"
+                            + $" in mode {(modeKey.LocalName.Length > 0 ? "'" + modeKey.PrefixedName + "'" : "#unnamed")}"
+                            + $" with on-multiple-match='fail' — {Describe(template)} and {Describe(next)}"
+                            + " have the same priority");
+                    }
+                }
+            }
+
+            if (template != null)
+            {
+                // Trace: template match
+                if (_options?.TraceListener != null)
+                {
+                    var nodeDesc = DescribeTraceNode(node);
+                    var templateDesc = template.Name.HasValue
+                        ? $"name=\"{template.Name.Value.LocalName}\""
+                        : $"match=\"{template.Match}\"";
+                    var modeDesc = mode.HasValue ? $" mode=\"{mode.Value.LocalName}\"" : "";
+                    var priorityDesc = template.Priority.HasValue ? $" priority={template.Priority.Value}" : "";
+                    _options.TraceListener(_templateDepth, "match", $"{nodeDesc} → {templateDesc}{modeDesc}{priorityDesc}");
+                }
+
+                // Enforce xsl:context-item constraints
+                var makeContextAbsent = EnforceContextItemConstraint(template);
+
+                // Bind non-tunnel parameters (only to non-tunnel template params)
+                foreach (var param in withParams)
+                {
+                    if (param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
+                    var templateParam = template.Parameters.FirstOrDefault(tp =>
+                        tp.Name.Equals(param.Name) && !tp.Tunnel);
+
+                    if (templateParam != null)
+                    {
+                        var value = preEvaluatedParams![param.Name];
+                        if (templateParam.As != null)
                         {
-                            using var mc2 = AcquireMatchContext();
-                            next = _templateIndex.FindMatchingTemplate(node, mode, mc2.Value, next);
+                            value = CoerceToType(value, templateParam.As);
+                            ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
+                                $"Parameter ${param.Name.LocalName}");
                         }
-                        if (next != null && TemplateIndex.SameConflictRank(next, template))
-                        {
-                            // Name the node, the mode, and BOTH rules. "Multiple template rules
-                            // match the node" states only that a conflict exists — which the
-                            // author can already tell from the error code. Which node, and which
-                            // two rules, is the entire diagnosis.
-                            static string Describe(XsltTemplate t) =>
-                                (t.Name != null ? $"name='{t.Name.Value.LocalName}'"
-                                                : $"match=\"{DescribePattern(t.Match)}\"")
-                                + $" (priority {TemplateIndex.EffectivePriority(t).ToString(System.Globalization.CultureInfo.InvariantCulture)}"
-                                + $", precedence {TemplateIndex.EffectivePrecedence(t)})";
-                            throw Error(
-                                $"XTDE0540: Multiple template rules match {DescribeNodeForDiagnostics(node)}"
-                                + $" in mode {(modeKey.LocalName.Length > 0 ? "'" + modeKey.PrefixedName + "'" : "#unnamed")}"
-                                + $" with on-multiple-match='fail' — {Describe(template)} and {Describe(next)}"
-                                + " have the same priority");
-                        }
+                        SetVariable(param.Name, value);
                     }
                 }
 
-                if (template != null)
+                // Bind template parameters with defaults
+                foreach (var param in template.Parameters)
                 {
-                    // Trace: template match
-                    if (_options?.TraceListener != null)
+                    if (!_scopes.Peek().Variables.ContainsKey(param.Name))
                     {
-                        var nodeDesc = DescribeTraceNode(node);
-                        var templateDesc = template.Name.HasValue
-                            ? $"name=\"{template.Name.Value.LocalName}\""
-                            : $"match=\"{template.Match}\"";
-                        var modeDesc = mode.HasValue ? $" mode=\"{mode.Value.LocalName}\"" : "";
-                        var priorityDesc = template.Priority.HasValue ? $" priority={template.Priority.Value}" : "";
-                        _options.TraceListener(_templateDepth, "match", $"{nodeDesc} → {templateDesc}{modeDesc}{priorityDesc}");
-                    }
-
-                    // Enforce xsl:context-item constraints
-                    var makeContextAbsent = EnforceContextItemConstraint(template);
-
-                    // Bind non-tunnel parameters (only to non-tunnel template params)
-                    foreach (var param in withParams)
-                    {
-                        if (param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
-                        var templateParam = template.Parameters.FirstOrDefault(tp =>
-                            tp.Name.Equals(param.Name) && !tp.Tunnel);
-
-                        if (templateParam != null)
+                        // For tunnel params not yet bound, check the tunnel param stack
+                        if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
                         {
-                            var value = preEvaluatedParams![param.Name];
-                            if (templateParam.As != null)
+                            if (param.As != null)
                             {
-                                value = CoerceToType(value, templateParam.As);
-                                ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
+                                tunnelValue = CoerceToType(tunnelValue, param.As);
+                                ValidateValueMatchesType(tunnelValue, param.As, "XTTE0590",
                                     $"Parameter ${param.Name.LocalName}");
+                            }
+                            SetVariable(param.Name, tunnelValue);
+                        }
+                        else if (param.Required)
+                        {
+                            throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied");
+                        }
+                        else if (param.Select != null)
+                        {
+                            var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                            if (param.As != null)
+                            {
+                                value = CoerceToType(value, param.As);
+                                ValidateValueMatchesType(value, param.As, "XTTE0600",
+                                    $"Parameter ${param.Name.LocalName} default value");
                             }
                             SetVariable(param.Name, value);
                         }
-                    }
-
-                    // Bind template parameters with defaults
-                    foreach (var param in template.Parameters)
-                    {
-                        if (!_scopes.Peek().Variables.ContainsKey(param.Name))
+                        else if (param.Content != null)
                         {
-                            // For tunnel params not yet bound, check the tunnel param stack
-                            if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
+                            // Route through the accumulator-isolating helper so xsl:sequence
+                            // inside the default body preserves typed items (nodes, maps, …)
+                            // instead of being serialized to text and re-wrapped as untyped
+                            // atomic. Same shape as the with-param fix for #19.
+                            var value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
+                            if (param.As != null)
                             {
-                                if (param.As != null)
-                                {
-                                    tunnelValue = CoerceToType(tunnelValue, param.As);
-                                    ValidateValueMatchesType(tunnelValue, param.As, "XTTE0590",
-                                        $"Parameter ${param.Name.LocalName}");
-                                }
-                                SetVariable(param.Name, tunnelValue);
+                                value = CoerceToType(value, param.As);
+                                ValidateValueMatchesType(value, param.As, "XTTE0600",
+                                    $"Parameter ${param.Name.LocalName} default value");
                             }
-                            else if (param.Required)
-                            {
-                                throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied");
-                            }
-                            else if (param.Select != null)
-                            {
-                                var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
-                                if (param.As != null)
-                                {
-                                    value = CoerceToType(value, param.As);
-                                    ValidateValueMatchesType(value, param.As, "XTTE0600",
-                                        $"Parameter ${param.Name.LocalName} default value");
-                                }
-                                SetVariable(param.Name, value);
-                            }
-                            else if (param.Content != null)
-                            {
-                                // Route through the accumulator-isolating helper so xsl:sequence
-                                // inside the default body preserves typed items (nodes, maps, …)
-                                // instead of being serialized to text and re-wrapped as untyped
-                                // atomic. Same shape as the with-param fix for #19.
-                                var value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
-                                if (param.As != null)
-                                {
-                                    value = CoerceToType(value, param.As);
-                                    ValidateValueMatchesType(value, param.As, "XTTE0600",
-                                        $"Parameter ${param.Name.LocalName} default value");
-                                }
-                                SetVariable(param.Name, value);
-                            }
-                            else
-                            {
-                                // No select, no content: default is empty sequence.
-                                // Per XSLT 3.0 spec, if 'as' requires a non-empty value
-                                // and the type is a strict atomic type where empty sequence is not valid,
-                                // the parameter is effectively required — raise XTDE0700.
-                                if (param.As != null && param.As.Occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore
-                                    && IsStrictAtomicType(param.As.ItemType))
-                                    throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
-                                else if (param.As != null && param.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
-                                    SetVariable(param.Name, null);
-                                else
-                                    SetVariable(param.Name, "");
-                            }
-                        }
-                    }
-
-                    // Track current template for next-match
-                    var savedTemplate = _currentTemplate;
-                    var savedMode = _currentMode;
-                    _currentTemplate = template;
-                    _currentMode = mode;
-
-                    // XSLT 3.0 §14.2.1/§14.2.2: an invocation construct within a declared-streamable
-                    // construct sets the current group AND grouping key to absent in the called
-                    // template (W3C si-fork-115); otherwise it leaves both unchanged, as in XSLT 2.0.
-                    // XSpec's compiler relies on the latter (threads.xsl applies templates inside
-                    // xsl:for-each-group and reads current-group() in the matched rule); clearing
-                    // them unconditionally broke 13 XSpec tutorial compiles with XTDE1061.
-                    if (InDeclaredStreamableConstruct(savedMode))
-                        SuppressGroupingFocus();
-
-                    // If use="absent" or optional type mismatch, push absent focus
-                    if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
-                        PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
-
-                    // Push template-level version, collation, and static base URI for scoping
-                    if (template.Version != null)
-                        _effectiveVersionStack.Push(template.Version);
-                    if (template.DefaultCollation != null)
-                        _defaultCollationStack.Push(template.DefaultCollation);
-                    if (template.BaseUri != null)
-                        _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
-                    _templateDepth++;
-                    try
-                    {
-
-                        // Execute template body, capturing output for type checking if 'as' is declared
-                        if (template.As != null)
-                        {
-                            var savedAccum = _sequenceAccumulator;
-                            var savedCapture = _currentAsBodyCapture;
-                            var savedLen = _output.Length;
-                            var bodyAccum = new List<object?>();
-                            _sequenceAccumulator = bodyAccum;
-                            _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen, AttrDepthAtStart = _collectedAttributesStack.Count };
-                            var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
-                            await template.Body.ExecuteAsync(this).ConfigureAwait(false);
-                            var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
-                            var bodyCapture = _currentAsBodyCapture;
-                            _currentAsBodyCapture = savedCapture;
-
-                            // Reassemble in document order using recorded offsets — without
-                            // this, a template body that writes an LRE before an xsl:sequence
-                            // emits items in the wrong order at the parent constructor.
-                            var resultItems = AssembleAsBodyResultItems(bodyOutput, bodyCapture.Accumulator, bodyCapture.Positions, bodyCapture.ConsumedTo);
-
-                            // Track whether results are only from body serialization
-                            // (no sequence accumulator items). When true, emit bodyOutput
-                            // directly to preserve exact namespace declarations (e.g. xmlns=""
-                            // from inherit-namespaces="no") and disable-output-escaping text
-                            // that would be lost by XDM re-serialization round-trip.
-                            bool canEmitBodyDirectly = bodyCapture.Accumulator.Count == 0
-                                && !string.IsNullOrEmpty(bodyOutput);
-
-                            _sequenceAccumulator = savedAccum;
-
-                            // XTTE0505: Validate template return value against 'as' type
-                            ValidateTemplateReturnType(template, resultItems);
-
-                            // If an outer sequence accumulator is active (e.g., raw delivery
-                            // from fn:transform), propagate items there instead of serializing
-                            if (_sequenceAccumulator != null && resultItems.Count > 0)
-                            {
-                                foreach (var item in resultItems)
-                                    AppendToSeqAccumulator(item);
-                                var lastItem = resultItems[^1];
-                                lastTemplateResultWasAtomic = lastItem is not (XdmNode or ResultTreeFragment);
-                            }
-                            // Re-serialize validated items to output
-                            // Adjacent atomic values from consecutive template invocations
-                            // are space-separated per XSLT spec section 5.7.2
-                            else if (resultItems.Count > 0)
-                            {
-                                var firstItem = resultItems[0];
-                                bool firstIsAtomic = firstItem is not (XdmNode or ResultTreeFragment);
-                                if (firstIsAtomic && lastTemplateResultWasAtomic && _textContentDepth == 0)
-                                {
-                                    _sink.RawText(" ");
-                                    // Reset so SerializeSequenceItems doesn't add a duplicate separator
-                                    _lastResultWasAtomic = false;
-                                }
-                                if (canEmitBodyDirectly)
-                                {
-                                    // Append bodyOutput directly to preserve DOE text,
-                                    // xmlns="" undeclarations, and other serialization details
-                                    // that would be lost by XDM round-trip re-serialization.
-                                    _sink.RawText(bodyOutput);
-                                    _lastResultWasAtomic = false;
-                                }
-                                else
-                                {
-                                    SerializeSequenceItems(resultItems);
-                                }
-                                var lastItem = resultItems[^1];
-                                lastTemplateResultWasAtomic = lastItem is not (XdmNode or ResultTreeFragment);
-                            }
+                            SetVariable(param.Name, value);
                         }
                         else
                         {
-                            await template.Body.ExecuteAsync(this).ConfigureAwait(false);
-                            lastTemplateResultWasAtomic = false;
+                            // No select, no content: default is empty sequence.
+                            // Per XSLT 3.0 spec, if 'as' requires a non-empty value
+                            // and the type is a strict atomic type where empty sequence is not valid,
+                            // the parameter is effectively required — raise XTDE0700.
+                            if (param.As != null && param.As.Occurrence is Occurrence.ExactlyOne or Occurrence.OneOrMore
+                                && IsStrictAtomicType(param.As.ItemType))
+                                throw Error($"XTDE0700: Required parameter ${param.Name.LocalName} not supplied (type {param.As.ItemType} requires a value)");
+                            else if (param.As != null && param.As.Occurrence is Occurrence.ZeroOrOne or Occurrence.ZeroOrMore)
+                                SetVariable(param.Name, null);
+                            else
+                                SetVariable(param.Name, "");
                         }
-
                     }
-                    finally
-                    {
-                        _templateDepth--;
-                        if (template.BaseUri != null)
-                            _staticBaseUriStack.Pop();
-                        if (template.DefaultCollation != null)
-                            _defaultCollationStack.Pop();
-                        if (template.Version != null)
-                            _effectiveVersionStack.Pop();
-                    }
-
-                    // Pop absent context if pushed
-                    if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
-                        PopContextItem();
-
-                    _currentTemplate = savedTemplate;
-                    _currentMode = savedMode;
                 }
-                else
+
+                // Track current template for next-match
+                var savedTemplate = _currentTemplate;
+                var savedMode = _currentMode;
+                _currentTemplate = template;
+                _currentMode = mode;
+
+                // XSLT 3.0 §14.2.1/§14.2.2: an invocation construct within a declared-streamable
+                // construct sets the current group AND grouping key to absent in the called
+                // template (W3C si-fork-115); otherwise it leaves both unchanged, as in XSLT 2.0.
+                // XSpec's compiler relies on the latter (threads.xsl applies templates inside
+                // xsl:for-each-group and reads current-group() in the matched rule); clearing
+                // them unconditionally broke 13 XSpec tutorial compiles with XTDE1061.
+                if (InDeclaredStreamableConstruct(savedMode))
+                    SuppressGroupingFocus();
+
+                // If use="absent" or optional type mismatch, push absent focus
+                if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
+                    PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+
+                // Push template-level version, collation, and static base URI for scoping
+                if (template.Version != null)
+                    _effectiveVersionStack.Push(template.Version);
+                if (template.DefaultCollation != null)
+                    _defaultCollationStack.Push(template.DefaultCollation);
+                if (template.BaseUri != null)
+                    _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
+                _templateDepth++;
+                try
                 {
-                    // Built-in template rules
-                    if (_options?.TraceListener != null)
-                        _options.TraceListener(_templateDepth, "built-in", DescribeTraceNode(node));
-                    ReportNoMatchWarning(node, mode);
-                    await ApplyBuiltInTemplateAsync(node, mode, withParams).ConfigureAwait(false);
+
+                    // Execute template body, capturing output for type checking if 'as' is declared
+                    if (template.As != null)
+                    {
+                        var savedAccum = _sequenceAccumulator;
+                        var savedCapture = _currentAsBodyCapture;
+                        var savedLen = _output.Length;
+                        var bodyAccum = new List<object?>();
+                        _sequenceAccumulator = bodyAccum;
+                        _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen, AttrDepthAtStart = _collectedAttributesStack.Count };
+                        var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
+                        await template.Body.ExecuteAsync(this).ConfigureAwait(false);
+                        var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
+                        var bodyCapture = _currentAsBodyCapture;
+                        _currentAsBodyCapture = savedCapture;
+
+                        // Reassemble in document order using recorded offsets — without
+                        // this, a template body that writes an LRE before an xsl:sequence
+                        // emits items in the wrong order at the parent constructor.
+                        var resultItems = AssembleAsBodyResultItems(bodyOutput, bodyCapture.Accumulator, bodyCapture.Positions, bodyCapture.ConsumedTo);
+
+                        // Track whether results are only from body serialization
+                        // (no sequence accumulator items). When true, emit bodyOutput
+                        // directly to preserve exact namespace declarations (e.g. xmlns=""
+                        // from inherit-namespaces="no") and disable-output-escaping text
+                        // that would be lost by XDM re-serialization round-trip.
+                        bool canEmitBodyDirectly = bodyCapture.Accumulator.Count == 0
+                            && !string.IsNullOrEmpty(bodyOutput);
+
+                        _sequenceAccumulator = savedAccum;
+
+                        // XTTE0505: Validate template return value against 'as' type
+                        ValidateTemplateReturnType(template, resultItems);
+
+                        // If an outer sequence accumulator is active (e.g., raw delivery
+                        // from fn:transform), propagate items there instead of serializing
+                        if (_sequenceAccumulator != null && resultItems.Count > 0)
+                        {
+                            foreach (var item in resultItems)
+                                AppendToSeqAccumulator(item);
+                            var lastItem = resultItems[^1];
+                            lastTemplateResultWasAtomic = lastItem is not (XdmNode or ResultTreeFragment);
+                        }
+                        // Re-serialize validated items to output
+                        // Adjacent atomic values from consecutive template invocations
+                        // are space-separated per XSLT spec section 5.7.2
+                        else if (resultItems.Count > 0)
+                        {
+                            var firstItem = resultItems[0];
+                            bool firstIsAtomic = firstItem is not (XdmNode or ResultTreeFragment);
+                            if (firstIsAtomic && lastTemplateResultWasAtomic && _textContentDepth == 0)
+                            {
+                                _sink.RawText(" ");
+                                // Reset so SerializeSequenceItems doesn't add a duplicate separator
+                                _lastResultWasAtomic = false;
+                            }
+                            if (canEmitBodyDirectly)
+                            {
+                                // Append bodyOutput directly to preserve DOE text,
+                                // xmlns="" undeclarations, and other serialization details
+                                // that would be lost by XDM round-trip re-serialization.
+                                _sink.RawText(bodyOutput);
+                                _lastResultWasAtomic = false;
+                            }
+                            else
+                            {
+                                SerializeSequenceItems(resultItems);
+                            }
+                            var lastItem = resultItems[^1];
+                            lastTemplateResultWasAtomic = lastItem is not (XdmNode or ResultTreeFragment);
+                        }
+                    }
+                    else
+                    {
+                        await template.Body.ExecuteAsync(this).ConfigureAwait(false);
+                        lastTemplateResultWasAtomic = false;
+                    }
+
                 }
+                finally
+                {
+                    _templateDepth--;
+                    if (template.BaseUri != null)
+                        _staticBaseUriStack.Pop();
+                    if (template.DefaultCollation != null)
+                        _defaultCollationStack.Pop();
+                    if (template.Version != null)
+                        _effectiveVersionStack.Pop();
+                }
+
+                // Pop absent context if pushed
+                if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
+                    PopContextItem();
+
+                _currentTemplate = savedTemplate;
+                _currentMode = savedMode;
             }
-            finally
+            else
             {
-                PopScope();
-                PopCurrentItem();
-                PopContextItem();
+                // Built-in template rules
+                if (_options?.TraceListener != null)
+                    _options.TraceListener(_templateDepth, "built-in", DescribeTraceNode(node));
+                ReportNoMatchWarning(node, mode);
+                await ApplyBuiltInTemplateAsync(node, mode, withParams).ConfigureAwait(false);
             }
         }
+        finally
+        {
+            PopScope();
+            PopCurrentItem();
+            PopContextItem();
+        }
+        return lastTemplateResultWasAtomic;
     }
 
 
@@ -682,6 +706,98 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// Whether the text-only-copy built-in rule can process an element's children through
+    /// <see cref="ApplyBuiltInChildrenAsync"/> instead of a full apply-templates per child.
+    /// That route skips, for each child no rule matches, the per-node scope, tunnel inheritance,
+    /// merge-group clear, mode-table lookups and four nested async calls. None of them is
+    /// observable for an unmatched child, whose built-in rule only writes text or recurses. Every
+    /// state those steps react to is excluded here: with-params (the built-in rule passes them on),
+    /// streaming, a typed mode, a trace listener, and a mode whose no-match behaviour is not
+    /// text-only-copy (the recursion reuses one mode throughout).
+    /// </summary>
+    private bool CanApplyBuiltInChildrenDirectly(QName? mode, List<XsltWithParam> withParams) =>
+        withParams.Count == 0
+        && _nodeStore != null
+        && !_isStreamingExecution
+        && _activeStreamingProcessor == null
+        && _activeStreamingReader == null
+        && !_streamingDispatchElementMaterialized
+        && _options?.TraceListener == null
+        && !IsTypedMode(mode)
+        && GetOnNoMatchBehavior(mode) == OnNoMatchBehavior.TextOnlyCopy;
+
+    /// <summary>
+    /// The text-only-copy built-in rule applied to <paramref name="parent"/>'s children, as
+    /// <c>apply-templates</c> with no select would, with the per-node work done only for
+    /// children a rule matches. A matched child runs through <see cref="ApplyTemplatesToNodeAsync"/>
+    /// with the same position, size and focus as the general path gives it; an unmatched element
+    /// recurses here; unmatched text is written; unmatched comments and processing instructions
+    /// produce nothing. The outermost call pushes one variable-barrier scope (as the general path
+    /// does per node) so pattern predicates see the same variables.
+    /// </summary>
+    private async ValueTask ApplyBuiltInChildrenAsync(XdmNode parent, QName? mode, bool pushBarrier)
+    {
+        CheckResourceLimits();
+        if (_recursionDepth >= MaxRecursionDepth)
+            throw RecursionLimitExceeded("xsl:apply-templates");
+        _recursionDepth++;
+        if (pushBarrier)
+        {
+            PushScope();
+            _scopes.Peek().IsVariableBarrier = true;
+            ClearMergeGroupContext();
+        }
+        try
+        {
+            var children = new List<object>();
+            foreach (var child in _nodeStore!.GetChildren(parent))
+                children.Add(child);
+            var last = children.Count;
+            var lastTemplateResultWasAtomic = false;
+            for (var i = 0; i < last; i++)
+            {
+                var node = children[i];
+                CheckResourceLimits();
+                XsltTemplate? template;
+                PushContextItem(node, i + 1, last);
+                PushCurrentItem(node);
+                try
+                {
+                    using var mc = AcquireMatchContext();
+                    template = _templateIndex.FindMatchingTemplate(node, mode, mc.Value);
+                }
+                finally
+                {
+                    PopCurrentItem();
+                    PopContextItem();
+                }
+
+                if (template != null || node is not (XdmElement or XdmText or XdmComment or XdmProcessingInstruction))
+                {
+                    // A matched child, or a kind this route doesn't handle: the general per-node path.
+                    lastTemplateResultWasAtomic = await ApplyTemplatesToNodeAsync(
+                        node, i + 1, last, mode, [], null, lastTemplateResultWasAtomic, template)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
+                ReportNoMatchWarning(node, mode);
+                if (node is XdmElement element)
+                    await ApplyBuiltInChildrenAsync(element, mode, pushBarrier: false).ConfigureAwait(false);
+                else if (node is XdmText text)
+                    WriteText(text.Value, false);
+                // An unmatched comment or processing instruction produces nothing.
+            }
+        }
+        finally
+        {
+            if (pushBarrier)
+                PopScope();
+            _recursionDepth--;
+        }
+    }
+
     private async ValueTask ApplyBuiltInTextOnlyCopyAsync(object node, QName? mode, List<XsltWithParam> withParams)
     {
         switch (node)
@@ -724,7 +840,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 // In streaming mode, child recursion is handled by the streaming loop —
                 // the built-in template only needs to handle the current node.
                 if (!_isStreamingExecution)
-                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                {
+                    if (CanApplyBuiltInChildrenDirectly(mode, withParams))
+                        await ApplyBuiltInChildrenAsync((XdmNode)node, mode, pushBarrier: true).ConfigureAwait(false);
+                    else
+                        await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                }
                 break;
             case XdmText text:
                 WriteText(text.Value, false);
