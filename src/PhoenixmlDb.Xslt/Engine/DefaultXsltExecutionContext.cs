@@ -2798,16 +2798,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>
     /// Checks whether a copy-of result contains attribute nodes that need accumulator handling.
     /// </summary>
+    /// <remarks>
+    /// Namespace nodes too: serialized into the buffer they became the text " xmlns:p=&quot;…&quot;"
+    /// when no element was open to receive them, so a copied parentless namespace node in a
+    /// node()-typed variable read back as a text node (W3C snapshot-0103/0103a).
+    /// </remarks>
     private static bool ShouldAccumulate(object? result)
     {
-        if (result is XdmAttribute or XdmDocument)
+        if (result is XdmAttribute or XdmDocument or XdmNamespace)
             return true;
         if (result is object?[] arr)
-            return arr.Length > 0 && arr[0] is XdmAttribute or XdmDocument;
+            return arr.Length > 0 && arr[0] is XdmAttribute or XdmDocument or XdmNamespace;
         if (result is IEnumerable<object> seq && result is not string)
         {
             foreach (var item in seq)
-                return item is XdmAttribute or XdmDocument; // check first item only
+                return item is XdmAttribute or XdmDocument or XdmNamespace; // check first item only
         }
         return false;
     }
