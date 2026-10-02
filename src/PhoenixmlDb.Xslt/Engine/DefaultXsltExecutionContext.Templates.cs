@@ -175,7 +175,20 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Get nodes to process
         IEnumerable<object> nodes;
-        if (select != null)
+        if (select != null && !_isStreamingExecution && ContextItem is XdmNode selectFrom
+            && ChildKindSelect.Of(select) is { } childKinds && _nodeStore != null)
+        {
+            // A union of plain child steps tested by kind only, the ISO Schematron skeleton's
+            // `*|comment()|processing-instruction()`: the context node's children of those kinds,
+            // read directly. Evaluating it as XPath built an execution context and a union for each
+            // of ~400,000 evaluations per EMS payload.
+            var children = new List<object>();
+            foreach (var child in _nodeStore.GetChildren(selectFrom))
+                if (childKinds.Admits(child.NodeKind))
+                    children.Add(child);
+            nodes = children;
+        }
+        else if (select != null)
         {
             var result = await EvaluateAsync(select).ConfigureAwait(false);
             nodes = result switch
@@ -1907,4 +1920,60 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+
+    /// <summary>
+    /// A select that is a union of predicate-free child steps whose tests depend only on node kind
+    /// (<c>*</c>, <c>comment()</c>, <c>processing-instruction()</c>, <c>text()</c>, <c>node()</c>,
+    /// <c>element()</c>). Name tests are not taken: they need the namespace resolution the XPath
+    /// path does. Decided once per expression.
+    /// </summary>
+    private sealed class ChildKindSelect
+    {
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<XQueryExpression, ChildKindSelect?> s_cache = new();
+        private bool _elements, _texts, _comments, _pis;
+
+        public static ChildKindSelect? Of(XQueryExpression select)
+            => s_cache.GetValue(select, static e => { var k = new ChildKindSelect(); return k.Collect(e) ? k : null; });
+
+        public bool Admits(XdmNodeKind kind) => kind switch
+        {
+            XdmNodeKind.Element => _elements,
+            XdmNodeKind.Text => _texts,
+            XdmNodeKind.Comment => _comments,
+            XdmNodeKind.ProcessingInstruction => _pis,
+            _ => false,
+        };
+
+        private bool Collect(XQueryExpression e) => e switch
+        {
+            BinaryExpression { Operator: BinaryOperator.Union } b => Collect(b.Left) && Collect(b.Right),
+            PathExpression { IsAbsolute: false, InitialExpression: null, Steps.Count: 1 } p => Step(p.Steps[0]),
+            StepExpression step => Step(step),
+            _ => false,
+        };
+
+        private bool Step(StepExpression step)
+        {
+            if (step.Axis != Axis.Child || step.Predicates.Count > 0)
+                return false;
+            switch (step.NodeTest)
+            {
+                // `*` with no prefix matches an element in any namespace; the parser leaves its
+                // namespace null (or "*"). A prefixed `p:*` names one namespace and is not taken.
+                case NameTest { IsLocalNameWildcard: true, Prefix: null, NamespaceUri: null or "*" }:
+                case KindTest { Kind: XdmNodeKind.Element, Name: null, TypeName: null }:
+                    _elements = true; return true;
+                case KindTest { Kind: XdmNodeKind.Comment }:
+                    _comments = true; return true;
+                case KindTest { Kind: XdmNodeKind.ProcessingInstruction, Name: null }:
+                    _pis = true; return true;
+                case KindTest { Kind: XdmNodeKind.Text }:
+                    _texts = true; return true;
+                case KindTest { Kind: XdmNodeKind.None }:
+                    _elements = _texts = _comments = _pis = true; return true;
+                default:
+                    return false;
+            }
+        }
+    }
 }
