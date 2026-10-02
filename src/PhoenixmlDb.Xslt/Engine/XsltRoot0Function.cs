@@ -36,7 +36,11 @@ internal sealed class XsltRoot0Function : PhoenixmlDb.XQuery.Ast.XQueryFunction
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        var contextItem = _context.ContextItem;
+        // The XPath context item first: inside a path step (`$snap/root()`) it is the step's node,
+        // not the XSLT current node. Reading only the XSLT context returned the root of the node
+        // the template was processing, so `snapshot(...)/root()` was the ORIGINAL document
+        // (W3C snapshot-0112). Same pattern as generate-id#0.
+        var contextItem = XQueryFocus.ItemOrNull(context) ?? _context.ContextItem;
         if (contextItem is not XdmNode node)
             return ValueTask.FromResult<object?>(null);
         if (_rootFunc != null)
