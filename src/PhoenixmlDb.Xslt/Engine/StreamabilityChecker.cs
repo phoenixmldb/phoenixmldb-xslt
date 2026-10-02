@@ -81,6 +81,18 @@ internal static class StreamabilityChecker
                 location);
         }
 
+        // The accumulator-after() phase rule applies to a streamed document as to a streamable
+        // template: a call evaluated before the body consumes the input is itself a consumption
+        // of it, so a later consuming instruction reads the input twice (W3C error-3420a).
+        var phase = new AccumulatorAfterPhaseDetector();
+        phase.Walk(body);
+        if (phase.Reason != null)
+        {
+            throw new XsltException(
+                $"XTSE3430: The body of xsl:source-document is not guaranteed streamable: {phase.Reason}",
+                location);
+        }
+
         // Check if a variable captures the streaming context item and is used
         // with child/descendant navigation inside a loop (for-each/iterate).
         if (HasStreamingVariableNavigatedInLoop(body))
@@ -252,7 +264,17 @@ internal static class StreamabilityChecker
 
         public override object? VisitValueOf(XsltValueOf insn) { Expression(insn.Select); if (insn.Content != null) Walk(insn.Content); return null; }
         public override object? VisitSequence(XsltSequence insn) { Expression(insn.Select); return null; }
-        public override object? VisitCopyOf(XsltCopyOf insn) { Expression(insn.Select); return null; }
+        // copy-of select="." reads the whole subtree as surely as a downward path does, though no
+        // downward step appears in it (W3C error-3420a: accumulator-after() then copy-of of the
+        // context item).
+        public override object? VisitCopyOf(XsltCopyOf insn)
+        {
+            if (insn.Select is ContextItemExpression && Reason == null)
+                Descend();
+            else
+                Expression(insn.Select);
+            return null;
+        }
         public override object? VisitAttribute(XsltAttribute insn) { Expression(insn.Select); if (insn.Content != null) Walk(insn.Content); return null; }
         public override object? VisitIf(XsltIf insn) { Expression(insn.Test); Walk(insn.Then); return null; }
         public override object? VisitForEach(XsltForEach insn) { Expression(insn.Select); return null; }
