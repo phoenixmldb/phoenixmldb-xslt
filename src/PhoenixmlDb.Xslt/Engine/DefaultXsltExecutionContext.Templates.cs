@@ -214,7 +214,12 @@ internal sealed partial class DefaultXsltExecutionContext
             if (ci != null && ci is not XdmNode && ci is not ResultTreeFragment
                 && !ReferenceEquals(ci, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
                 throw Error("XTTE0510: Context item for xsl:apply-templates must be a node");
-            nodes = GetChildren(ci);
+            // Read straight into a list: the built-in rule recurses through here at every node.
+            var kids = new List<object>();
+            if (ci is XdmNode parentNode && _nodeStore != null)
+                foreach (var child in _nodeStore.GetChildren(parentNode))
+                    kids.Add(child);
+            nodes = kids;
         }
 
         // Apply sorts if specified
@@ -223,11 +228,16 @@ internal sealed partial class DefaultXsltExecutionContext
             nodes = await SortNodesAsync(nodes, sorts).ConfigureAwait(false);
         }
 
-        var nodeList = nodes.ToList();
+        // One list, reused when nothing needs expanding (the usual case): this runs for every node
+        // the built-in rule visits, and copying twice per visit showed in the allocation profile.
+        var nodeList = nodes as List<object> ?? nodes.ToList();
+        var needsExpansion = false;
+        foreach (var item in nodeList)
+            if (item is ResultTreeFragment or Xdm.TextNodeItem) { needsExpansion = true; break; }
 
         // Expand any ResultTreeFragments to their XDM document nodes
-        var expandedNodes = new List<object>();
-        foreach (var item in nodeList)
+        var expandedNodes = needsExpansion ? new List<object>() : nodeList;
+        foreach (var item in needsExpansion ? nodeList : [])
         {
             if (item is ResultTreeFragment rtf)
             {
@@ -270,10 +280,11 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         // Pre-evaluate with-param values in the CALLING context (before the per-node loop changes context)
-        var preEvaluatedParams = new Dictionary<QName, object?>();
+        // Only read inside loops over withParams, so none is needed when there are none.
+        var preEvaluatedParams = withParams.Count > 0 ? new Dictionary<QName, object?>() : null;
         foreach (var param in withParams)
         {
-            preEvaluatedParams[param.Name] = await EvaluateWithParamAsync(param).ConfigureAwait(false);
+            preEvaluatedParams![param.Name] = await EvaluateWithParamAsync(param).ConfigureAwait(false);
         }
 
         var position = 0;
@@ -301,7 +312,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 foreach (var param in withParams)
                 {
                     if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
-                    var value = preEvaluatedParams[param.Name];
+                    var value = preEvaluatedParams![param.Name];
                     _scopes.Peek().TunnelParameters[param.Name] = value;
                 }
 
@@ -377,7 +388,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
                         if (templateParam != null)
                         {
-                            var value = preEvaluatedParams[param.Name];
+                            var value = preEvaluatedParams![param.Name];
                             if (templateParam.As != null)
                             {
                                 value = CoerceToType(value, templateParam.As);
