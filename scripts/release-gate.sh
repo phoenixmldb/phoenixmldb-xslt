@@ -179,14 +179,45 @@ done
 # transform and runs it under Node, so no browser and no wasm workload are needed. It lands in
 # runs/<arm>/wasm__transform like any other case: a candidate that fails where the baseline
 # ran is REGRESSED.
+# Probe builds compile an engine into a scratch app under $OUT, which sits inside this repo, so
+# its Directory.Build.targets applies. With dev mode on (--cand-dev exports PHOENIXML_DEV=1, or a
+# workspace .phoenixml-dev marker) it swapped a BASELINE probe's PhoenixmlDb.Xslt package for this
+# tree's source: the baseline then WAS the candidate, and every probe case compared the candidate
+# with itself and classified SAME (found when 2.4.1 "passed" a deep recursion it cannot pass).
+# probe_engine_prop builds a package arm with dev mode forced off; assert_probe_engine then reads
+# what restore actually resolved and stops the gate unless it matches the arm.
+probe_engine_prop() { # msbuild property selecting the engine -> the full property list for it
+  case "$1" in -p:XsltVersion=*) printf '%s\n' "$1" "-p:PhoenixmlDev=false" ;; *) printf '%s\n' "$1" ;; esac
+}
+assert_probe_engine() { # project dir, msbuild property selecting the engine, label
+  python3 - "$1/obj/project.assets.json" "$2" "$3" <<'PY'
+import json, sys
+assets, prop, label = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    libs = json.load(open(assets, encoding='utf-8'))['libraries']
+except Exception as e:
+    sys.exit(f"release gate: {label}: cannot read {assets}: {e}")
+hits = {k: v.get('type') for k, v in libs.items() if k.split('/')[0] == 'PhoenixmlDb.Xslt'}
+if prop.startswith('-p:XsltVersion='):
+    want = f"PhoenixmlDb.Xslt/{prop.split('=', 1)[1]}"
+    ok = hits.get(want) == 'package'
+else:
+    ok = len(hits) == 1 and next(iter(hits.values())) == 'project'
+print(f"  {label}: PhoenixmlDb.Xslt resolved as {hits}")
+if not ok:
+    sys.exit(f"release gate: {label} built the wrong engine for {prop}: {hits}")
+PY
+}
 WASM_ID="wasm/transform"
 wasm_arm() { # arm, then msbuild property selecting the engine
   local arm="$1" prop="$2" dir="$OUT/runs/$1/wasm__transform" src="$OUT/wasm/$1"
   mkdir -p "$dir" "$OUT/wasm"; rm -rf "$src"; cp -a "$ROOT/scripts/wasm-probe" "$src"
-  if ! dotnet publish "$src/WasmProbe.csproj" -c Release "$prop" --nologo -v q -o "$src/pub" \
+  local props; mapfile -t props < <(probe_engine_prop "$prop")
+  if ! dotnet publish "$src/WasmProbe.csproj" -c Release "${props[@]}" --nologo -v q -o "$src/pub" \
        >"$dir/build.log" 2>&1; then
     { echo "probe build failed:"; tail -20 "$dir/build.log"; } > "$dir/err"; echo 3 > "$dir/rc"; return
   fi
+  assert_probe_engine "$src" "$prop" "wasm probe ($arm)" || exit 2
   cp "$src/main.mjs" "$src/pub/wwwroot/"
   ( cd "$src/pub/wwwroot" && timeout 300 node main.mjs >"$dir/out" 2>"$dir/err"; echo $? > "$dir/rc" )
 }
@@ -242,16 +273,25 @@ wb_build_arm() { # arm, then "pkg <version>" or "src"
     fi
     sed -i -E "s#<PackageReference Include=\"PhoenixmlDb\.Xslt\"[^/]*/>#<ProjectReference Include=\"$ROOT/src/PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj\" SetTargetFramework=\"TargetFramework=net10.0\" />#" "$proj"
   fi
-  dotnet build "$proj" -c Release --nologo -v q >"$dir/build.log" 2>&1; echo $? > "$dir/rc"
+  local eprop; [ "$mode" = pkg ] && eprop="-p:XsltVersion=$ver" || eprop="-p:XsltProject=$ROOT"
+  local props; mapfile -t props < <(probe_engine_prop "$eprop")
+  # Only PhoenixmlDev=false reaches the build: XsltVersion is a stand-in for "package arm" here,
+  # since the versions are already written into his project file above.
+  dotnet build "$proj" -c Release "${props[@]:1}" --nologo -v q >"$dir/build.log" 2>&1; echo $? > "$dir/rc"
   : > "$dir/out"; grep -E ' error ' "$dir/build.log" | sort -u | head -20 > "$dir/err"
+  if [ "$(cat "$dir/rc")" = 0 ]; then
+    assert_probe_engine "$(dirname "$proj")" "$eprop" "workbench app build ($arm)" || exit 2
+  fi
 }
 wb_probe_arm() { # arm, then msbuild property selecting the engine; writes runs/<arm>/wb__<id>
   local arm="$1" prop="$2" src="$OUT/wbprobe/$1"
   rm -rf "$src"; mkdir -p "$OUT/wbprobe"; cp -a "$ROOT/scripts/workbench-probe" "$src"
-  if ! dotnet publish "$src/WorkbenchProbe.csproj" -c Release "$prop" -p:ExamplesDir="$WB/wwwroot/examples" \
+  local props; mapfile -t props < <(probe_engine_prop "$prop")
+  if ! dotnet publish "$src/WorkbenchProbe.csproj" -c Release "${props[@]}" -p:ExamplesDir="$WB/wwwroot/examples" \
        -p:CasesFile="$OUT/wb-cases.tsv" --nologo -v q -o "$src/pub" >"$src/build.log" 2>&1; then
     echo "probe build failed"; return 1
   fi
+  assert_probe_engine "$src" "$prop" "workbench probe ($arm)" || exit 2
   cp "$src/main.mjs" "$src/pub/wwwroot/"
   wb_probe_run "$arm" "$src"
 }
