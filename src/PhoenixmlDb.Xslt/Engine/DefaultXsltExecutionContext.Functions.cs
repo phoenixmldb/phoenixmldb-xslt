@@ -920,6 +920,11 @@ internal sealed partial class DefaultXsltExecutionContext
         var results = new List<object?>();
         try
         {
+            // Without an async iterator per operator when the whole plan allows it: a compiled
+            // Schematron validator evaluates many small expressions per node, and the iterators were
+            // the largest allocation source. Same result shape as below, same error handling.
+            if (PhoenixmlDb.XQuery.Execution.PhysicalOperator.CanEvaluateSync(plan.Root))
+                return plan.Root.EvaluateSync(execContext);
             await foreach (var item in plan.Root.ExecuteAsync(execContext).ConfigureAwait(false))
             {
                 results.Add(item);
