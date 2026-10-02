@@ -1178,6 +1178,17 @@ internal sealed partial class DefaultXsltExecutionContext
                 Parent = NodeId.None
             };
         }
+        if (item is XdmNamespace ns)
+        {
+            return new XdmNamespace
+            {
+                Document = DocumentId.None,
+                Prefix = ns.Prefix,
+                Uri = ns.Uri,
+                Id = _nodeStore?.NextId() ?? NodeId.None,
+                Parent = NodeId.None
+            };
+        }
         // Deep-copy document nodes so copies have fresh node identity
         // (needed for union deduplication to work correctly)
         if (item is XdmDocument doc && _nodeStore != null)
