@@ -1109,7 +1109,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // Handle lazy evaluation: if the value is a LazyValue, evaluate it now
                 if (value is LazyValue lazy)
                 {
-                    var evaluated = lazy.GetValueAsync().AsTask().GetAwaiter().GetResult();
+                    var evaluated = RunSync(() => lazy.GetValueAsync());
                     // Cache the evaluated value for future accesses
                     vars[name] = evaluated;
                     return evaluated;
@@ -1149,7 +1149,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // Handle lazy evaluation for globals too (though they're typically not lazy)
             if (globalValue is LazyValue lazyGlobal)
             {
-                var evaluated = lazyGlobal.GetValueAsync().AsTask().GetAwaiter().GetResult();
+                var evaluated = RunSync(() => lazyGlobal.GetValueAsync());
                 GlobalVariables[name] = evaluated;
                 return evaluated;
             }
@@ -1180,7 +1180,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             if (pendingGlobal != null)
             {
-                XsltTransformEngine.InitializePendingGlobalAsync(this, pendingGlobal, _output).GetAwaiter().GetResult();
+                RunSync(() => XsltTransformEngine.InitializePendingGlobalAsync(this, pendingGlobal, _output));
                 if (GlobalVariables.TryGetValue(pendingGlobal.Name, out var lazyInitValue))
                     return lazyInitValue;
             }
@@ -1231,7 +1231,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 {
                     if (value is LazyValue lazy)
                     {
-                        var evaluated = lazy.GetValueAsync().AsTask().GetAwaiter().GetResult();
+                        var evaluated = RunSync(() => lazy.GetValueAsync());
                         scope.Variables[varName] = evaluated;
                         found = evaluated;
                         return true;
@@ -1251,7 +1251,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 if (value is LazyValue lazyGlobal)
                 {
-                    var evaluated = lazyGlobal.GetValueAsync().AsTask().GetAwaiter().GetResult();
+                    var evaluated = RunSync(() => lazyGlobal.GetValueAsync());
                     GlobalVariables[varName] = evaluated;
                     found = evaluated;
                     return true;
@@ -5313,7 +5313,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return value switch
         {
             null => "",
-            LazyValue lazy => StringValueOf(lazy.GetValueAsync().AsTask().GetAwaiter().GetResult()),
+            LazyValue lazy => StringValueOf(RunSync(() => lazy.GetValueAsync())),
             XdmNode node => node.StringValue,
             ResultTreeFragment rtf => StripXmlMarkup(rtf.XmlContent),
             Xdm.TextNodeItem tni => tni.Value,

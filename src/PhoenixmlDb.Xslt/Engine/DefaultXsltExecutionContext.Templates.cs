@@ -25,6 +25,7 @@ internal sealed partial class DefaultXsltExecutionContext
         List<XsltSort> sorts,
         List<XsltWithParam> withParams)
     {
+        await EnsureStackAsync().ConfigureAwait(false);
         CheckResourceLimits();
         if (_recursionDepth >= MaxRecursionDepth)
             throw RecursionLimitExceeded("xsl:apply-templates");
@@ -738,6 +739,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private async ValueTask ApplyBuiltInChildrenAsync(XdmNode parent, QName? mode, bool pushBarrier)
     {
+        await EnsureStackAsync().ConfigureAwait(false);
         CheckResourceLimits();
         if (_recursionDepth >= MaxRecursionDepth)
             throw RecursionLimitExceeded("xsl:apply-templates");
@@ -1284,6 +1286,7 @@ internal sealed partial class DefaultXsltExecutionContext
         if (_options?.TraceListener != null)
             _options.TraceListener(_templateDepth, "call-template", name.LocalName);
 
+        await EnsureStackAsync().ConfigureAwait(false);
         CheckResourceLimits();
         if (_recursionDepth >= MaxRecursionDepth)
             throw RecursionLimitExceeded("xsl:call-template");

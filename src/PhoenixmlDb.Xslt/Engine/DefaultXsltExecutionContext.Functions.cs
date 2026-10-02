@@ -1419,7 +1419,7 @@ internal sealed partial class DefaultXsltExecutionContext
         PushCurrentItem(matchedNode ?? stepNode);
         try
         {
-            var result = EvaluateAsync(predicate).AsTask().GetAwaiter().GetResult();
+            var result = RunSync(() => EvaluateAsync(predicate));
 
             // XPath numeric predicates: if the predicate evaluates to a number,
             // the predicate is true if and only if that number equals the context position
@@ -1466,12 +1466,12 @@ internal sealed partial class DefaultXsltExecutionContext
         try
         {
             // Evaluate the value expression
-            var value = EvaluateAsync(valueExpr).AsTask().GetAwaiter().GetResult();
+            var value = RunSync(() => EvaluateAsync(valueExpr));
 
             // Get the key function and invoke it
             var keyFunc = new XsltKeyFunction(this);
             var args = new List<object?> { keyName, value };
-            var result = keyFunc.InvokeAsync(args, null!).AsTask().GetAwaiter().GetResult();
+            var result = RunSync(() => keyFunc.InvokeAsync(args, null!));
 
             // Check if node is in the result set
             if (result is object[] arr)
@@ -1512,7 +1512,7 @@ internal sealed partial class DefaultXsltExecutionContext
         try
         {
             // Evaluate the value expression
-            var value = EvaluateAsync(valueExpr).AsTask().GetAwaiter().GetResult();
+            var value = RunSync(() => EvaluateAsync(valueExpr));
 
             // Find the document for the node being matched — id() searches within that document
             XdmDocument? doc = null;
@@ -2280,6 +2280,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 return cachedResult;
         }
 
+        await EnsureStackAsync().ConfigureAwait(false);
         _recursionDepth++;
         if (_recursionDepth > MaxRecursionDepth)
             throw Error($"XTDE0000: Maximum recursion depth ({MaxRecursionDepth}) exceeded in function '{func.Name.LocalName}'");

@@ -39,6 +39,15 @@ internal static class LargeStack
     internal static readonly AsyncLocal<bool> ForceInline = new();
     internal static readonly AsyncLocal<Action<Thread>?> StartOverride = new();
 
+    /// <summary>
+    /// Whether a transformation that runs inline, with no large-stack thread, may yield to unwind
+    /// its stack: on browser-wasm (the event loop resumes it on a fresh stack), or under
+    /// <see cref="ForceInline"/> in tests. Not on WASI, whose single-threaded scheduling is not
+    /// relied on.
+    /// </summary>
+    internal static bool CanYieldForStack
+        => !t_onLargeStack && (OperatingSystem.IsBrowser() || ForceInline.Value);
+
     private static bool CanStartThreads
         => !ForceInline.Value && !OperatingSystem.IsBrowser() && !OperatingSystem.IsWasi();
 

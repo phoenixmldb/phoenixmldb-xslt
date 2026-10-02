@@ -346,7 +346,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 if (value is LazyValue lazy)
                 {
-                    value = lazy.GetValueAsync().AsTask().GetAwaiter().GetResult();
+                    value = RunSync(() => lazy.GetValueAsync());
                     vars[name] = value;
                 }
                 return true;
@@ -360,7 +360,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             if (value is LazyValue lazyGlobal)
             {
-                value = lazyGlobal.GetValueAsync().AsTask().GetAwaiter().GetResult();
+                value = RunSync(() => lazyGlobal.GetValueAsync());
                 GlobalVariables[name] = value;
             }
             return true;
@@ -2585,7 +2585,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // whitespace string instead of the element.
         if (instruction.Select != null)
         {
-            var result = EvaluateAsync(instruction.Select).AsTask().GetAwaiter().GetResult();
+            var result = RunSync(() => EvaluateAsync(instruction.Select));
             if (result != null)
             {
                 if (_sequenceAccumulator != null)
@@ -2615,7 +2615,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         else if (instruction.Content != null)
         {
-            instruction.Content.ExecuteAsync(this).AsTask().GetAwaiter().GetResult();
+            RunSync(() => instruction.Content.ExecuteAsync(this));
         }
         throw new BreakException();
     }
