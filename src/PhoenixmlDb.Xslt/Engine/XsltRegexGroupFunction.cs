@@ -19,7 +19,18 @@ namespace PhoenixmlDb.Xslt.Engine;
 internal sealed class XsltRegexGroupFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
     private readonly DefaultXsltExecutionContext _context;
+    // A function item for regex-group (regex-group#1, function-lookup): the current captured
+    // substrings are cleared in its context, so every call returns "" (XSLT 3.0 §5.3.4). It
+    // returned the groups of whatever xsl:analyze-string was active at the call (W3C regex-090/091).
+    private readonly bool _isFunctionItem;
     public XsltRegexGroupFunction(DefaultXsltExecutionContext context) => _context = context;
+    private XsltRegexGroupFunction(DefaultXsltExecutionContext context, bool isFunctionItem)
+    {
+        _context = context;
+        _isFunctionItem = isFunctionItem;
+    }
+    public override PhoenixmlDb.XQuery.Ast.XQueryFunction BindCreationContext(PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+        => new XsltRegexGroupFunction(_context, isFunctionItem: true);
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "regex-group");
     public override XdmSequenceType ReturnType => XdmSequenceType.String;
     public override IReadOnlyList<FunctionParameterDef> Parameters =>
@@ -29,7 +40,7 @@ internal sealed class XsltRegexGroupFunction : PhoenixmlDb.XQuery.Ast.XQueryFunc
     {
         var groupNum = Convert.ToInt32(arguments[0], System.Globalization.CultureInfo.InvariantCulture);
         // Per XSLT spec, regex-group() returns empty string when called outside xsl:analyze-string
-        if (_context.TryGetVariable(new QName(NamespaceId.None, "regex-groups"), out var groups) &&
+        if (!_isFunctionItem && _context.TryGetVariable(new QName(NamespaceId.None, "regex-groups"), out var groups) &&
             groups is System.Text.RegularExpressions.Match match)
         {
             if (groupNum >= 0 && groupNum < match.Groups.Count)
