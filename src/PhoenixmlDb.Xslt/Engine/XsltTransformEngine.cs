@@ -2739,7 +2739,11 @@ public sealed class XsltTransformEngine
                 Indent = true,
                 IndentChars = "  ",
                 OmitXmlDeclaration = true, // We handle the declaration separately
-                NewLineHandling = NewLineHandling.Replace
+                NewLineHandling = NewLineHandling.Replace,
+                // NewLineChars defaults to Environment.NewLine, so indent="yes" wrote CRLF on
+                // Windows and LF elsewhere: the same transform gave different bytes per OS. The
+                // serializer's newline is LF everywhere, as the rest of the output already is.
+                NewLineChars = "\n",
             };
             using var sw = new System.IO.StringWriter();
             using (var xw = XmlWriter.Create(sw, settings))
