@@ -87,6 +87,17 @@ public sealed partial class StylesheetParser
     /// </summary>
     private readonly HashSet<QName> _packageMergedTemplateNames = new();
 
+    // Symbolic names of every overriding declaration (a child of xsl:override) across all
+    // xsl:use-package elements, for XTSE3055. The per-use-package set stays separate: it scopes
+    // the cross-package XTSE3050 exception to the use-package that does the overriding.
+    private readonly HashSet<(string, QName, int)> _overridingSymbols = new();
+
+    private bool AddOverridingSymbol(HashSet<(string, QName, int)> perUsePackage, (string, QName, int) symbol)
+    {
+        _overridingSymbols.Add(symbol);
+        return perUsePackage.Add(symbol);
+    }
+
 
     /// <summary>
     /// Set to true when parsing an imported module (xsl:import).

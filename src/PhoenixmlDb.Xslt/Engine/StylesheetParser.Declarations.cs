@@ -897,6 +897,13 @@ public sealed partial class StylesheetParser
         {
             foreach (var sym in stylesheet.LocalComponentSymbols)
             {
+                // XTSE3055 first: a declaration homonymous with an OVERRIDING declaration (a child
+                // of xsl:override) is that error, regardless of import precedence (XSLT 3.0
+                // §3.5.3.1). It is also XTSE3050 when the override targets a used component, and
+                // the more specific code is the one expected (W3C error-3055a).
+                if (_overridingSymbols.Contains(sym))
+                    throw new XsltException(
+                        $"XTSE3055: The {KindDisplayName(sym.Kind)} '{sym.Name.LocalName}' is homonymous with a declaration in xsl:override");
                 if (stylesheet.UsedComponentSymbols.Contains(sym))
                 {
                     var kindName = KindDisplayName(sym.Kind);
@@ -1025,22 +1032,22 @@ public sealed partial class StylesheetParser
                     {
                         case "template":
                             overriddenTemplateNames.Add(overQName);
-                            overriddenSymbols.Add(("T", overQName, 0));
+                            AddOverridingSymbol(overriddenSymbols, ("T", overQName, 0));
                             break;
                         case "function":
                             var arity = overChild.Elements(XsltNs + "param").Count();
                             overriddenFunctionKeys.Add((overQName, arity));
-                            overriddenSymbols.Add(("F", overQName, arity));
+                            AddOverridingSymbol(overriddenSymbols, ("F", overQName, arity));
                             break;
                         case "variable":
                         case "param":
-                            overriddenSymbols.Add(("V", overQName, 0));
+                            AddOverridingSymbol(overriddenSymbols, ("V", overQName, 0));
                             break;
                         case "attribute-set":
-                            overriddenSymbols.Add(("A", overQName, 0));
+                            AddOverridingSymbol(overriddenSymbols, ("A", overQName, 0));
                             break;
                         case "mode":
-                            overriddenSymbols.Add(("M", overQName, 0));
+                            AddOverridingSymbol(overriddenSymbols, ("M", overQName, 0));
                             break;
                     }
                 }
