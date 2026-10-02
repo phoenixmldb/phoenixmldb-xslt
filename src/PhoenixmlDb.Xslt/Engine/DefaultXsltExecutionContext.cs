@@ -776,7 +776,32 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
         }
 
+        // A chunk with no markup is serialized TEXT, so its entity references are escapes, not
+        // content: "<" was serialized as "&lt;", and adding the chunk as-is made the text "&lt;".
+        // A template with as="text()" returning "<" into a variable built a 4-character text
+        // node (W3C doe-0183/0186, where d-o-e is ignored in the temporary tree).
+        if (!chunk.Contains('<', StringComparison.Ordinal) && chunk.Contains('&', StringComparison.Ordinal))
+        {
+            result.Add(DecodeSerializedText(chunk));
+            return;
+        }
         result.Add(chunk);
+    }
+
+    /// <summary>Decodes the character and entity references of serialized XML text.</summary>
+    private static string DecodeSerializedText(string text)
+    {
+        try
+        {
+            using var reader = System.Xml.XmlReader.Create(new StringReader("<t>" + text + "</t>"),
+                new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Prohibit, CheckCharacters = false });
+            reader.MoveToContent();
+            return reader.ReadElementContentAsString();
+        }
+        catch (System.Xml.XmlException)
+        {
+            return text; // not well-formed (e.g. a bare '&' from disable-output-escaping): keep it
+        }
     }
 
 
