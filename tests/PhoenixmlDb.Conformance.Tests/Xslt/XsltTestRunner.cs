@@ -285,6 +285,17 @@ public sealed class XsltTestRunner
             env.Collections[collUri] = sources;
         }
 
+        // XQuery library modules (<resource media-type="application/xquery">): the module file for
+        // a namespace that fn:load-xquery-module names without location hints. Other resource
+        // types are not registered.
+        foreach (var res in elem.Elements(ns + "resource"))
+        {
+            var uri = res.Attribute("uri")?.Value;
+            var file = res.Attribute("file")?.Value;
+            if (uri != null && file != null && res.Attribute("media-type")?.Value == "application/xquery")
+                env.XQueryModules[uri] = [Path.Combine(basePath, file)];
+        }
+
         // Parse parameters
         foreach (var param in elem.Elements(ns + "param"))
         {
@@ -853,6 +864,8 @@ public sealed class XsltTestRunner
             clone.InitialFunctionArgs.Add(arg);
         foreach (var kv in env.Collections)
             clone.Collections[kv.Key] = new List<string>(kv.Value);
+        foreach (var kv in env.XQueryModules)
+            clone.XQueryModules[kv.Key] = new List<string>(kv.Value);
         foreach (var kv in env.Packages)
             clone.Packages[kv.Key] = new List<(string?, string)>(kv.Value);
 
@@ -899,6 +912,8 @@ public sealed class XsltTestRunner
             target.StaticParameters[kv.Key] = kv.Value;
         foreach (var kv in source.Collections)
             target.Collections[kv.Key] = new List<string>(kv.Value);
+        foreach (var kv in source.XQueryModules)
+            target.XQueryModules[kv.Key] = new List<string>(kv.Value);
         foreach (var kv in source.Packages)
         {
             if (target.Packages.TryGetValue(kv.Key, out var existing))
@@ -1063,6 +1078,10 @@ public sealed class XsltTestRunner
                 // DTDs unless asked — the right default for arbitrary input, wrong for a
                 // conformance run, which must parse what the suite actually ships.
                 var transformer = new XsltTransformer { AllowDtdProcessing = true };
+                // Before loading: a static variable may call load-xquery-module (load-xquery-module-004).
+                if (testCase.Environment.XQueryModules.Count > 0)
+                    transformer.XQueryModules = testCase.Environment.XQueryModules
+                        .ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value);
                 // xsl:mode warning-on-no-match reports through this channel. Without collecting
                 // it, every assert-warning failed for want of anywhere to look.
                 transformer.WarningListener = w => { lock (warnings) warnings.Add(w); };
@@ -2628,6 +2647,8 @@ public sealed class XsltEnvironment
     public string? InitialModeSelect { get; set; }
     public List<InitialTemplateParam> InitialTemplateParams { get; } = [];
     public Dictionary<string, List<string>> Collections { get; } = [];
+    /// <summary>XQuery module namespace → module files, from &lt;resource media-type="application/xquery"&gt;.</summary>
+    public Dictionary<string, List<string>> XQueryModules { get; } = [];
     /// <summary>
     /// Package catalog: maps package name URI → list of (version, file path) pairs.
     /// Built from &lt;package&gt; elements in test environments.

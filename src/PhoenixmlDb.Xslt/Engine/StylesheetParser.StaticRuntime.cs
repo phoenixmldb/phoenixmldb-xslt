@@ -42,7 +42,7 @@ public sealed partial class StylesheetParser
         // Static expressions run while the stylesheet LOADS, so they obey the same resource
         // policy as the transformation: a use-when or static variable reading a file otherwise
         // leaked it before any runtime check (e.g. use-when="contains(unparsed-text(...), ...)").
-        _staticRuntime ??= new StaticRuntime(ResourcePolicy);
+        _staticRuntime ??= new StaticRuntime(ResourcePolicy, XQueryModules);
         var runtime = _staticRuntime.For(baseUri);
         // A prefixed function name (xpath:available-system-properties#0) is resolved against the
         // stylesheet's namespace table at run time; give the shell the declaring element's.
@@ -86,7 +86,8 @@ public sealed partial class StylesheetParser
     private StaticRuntime? _staticRuntime;
 
     /// <summary>One evaluation context per base URI, reused across the compile.</summary>
-    private sealed class StaticRuntime(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy)
+    private sealed class StaticRuntime(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
+        IReadOnlyDictionary<string, List<string>>? xqueryModules)
     {
         private readonly Dictionary<string, Entry> _byBase = new(StringComparer.Ordinal);
 
@@ -94,7 +95,7 @@ public sealed partial class StylesheetParser
         {
             var key = baseUri?.AbsoluteUri ?? "";
             if (!_byBase.TryGetValue(key, out var entry))
-                _byBase[key] = entry = new Entry(baseUri, policy);
+                _byBase[key] = entry = new Entry(baseUri, policy, xqueryModules);
             return entry;
         }
 
@@ -103,7 +104,8 @@ public sealed partial class StylesheetParser
             internal DefaultXsltExecutionContext Context { get; }
             internal Dictionary<string, string> Namespaces { get; }
 
-            internal Entry(Uri? baseUri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy)
+            internal Entry(Uri? baseUri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
+                IReadOnlyDictionary<string, List<string>>? xqueryModules)
             {
                 var shell = new XsltStylesheet { Version = "3.0", BaseUri = baseUri };
                 Namespaces = shell.Namespaces;
@@ -113,7 +115,9 @@ public sealed partial class StylesheetParser
                 var source = XsltTransformEngine.ConvertToXdm(empty, store);
                 Context = new DefaultXsltExecutionContext(
                     shell, new TemplateIndex(shell), source, new StringBuilder(),
-                    new XsltTransformOptions { ResourcePolicy = policy }, store);
+                    // The host's XQuery modules too: a static variable may load one
+                    // (W3C load-xquery-module-004).
+                    new XsltTransformOptions { ResourcePolicy = policy, XQueryModules = xqueryModules }, store);
                 // Static expressions have no focus (XSLT 3.0 §9.6).
                 Context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
             }

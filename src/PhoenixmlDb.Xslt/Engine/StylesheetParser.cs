@@ -32,6 +32,9 @@ public sealed partial class StylesheetParser
     /// </summary>
     internal PhoenixmlDb.XQuery.Security.ResourcePolicy? ResourcePolicy { get; init; }
 
+    /// <summary>The host's XQuery modules, for load-xquery-module in static expressions.</summary>
+    internal IReadOnlyDictionary<string, List<string>>? XQueryModules { get; init; }
+
     // A stylesheet module on disk, as far as this parser may know: under a resource policy a
     // module the policy refuses to import reads as not found, so an import attempt cannot be
     // used to learn whether a file outside the policy exists.
@@ -3888,7 +3891,12 @@ public sealed partial class StylesheetParser
             ItemType.Float => value is float or double,
             ItemType.Node or ItemType.Element or ItemType.Attribute or ItemType.Document
                 or ItemType.Text or ItemType.Comment or ItemType.ProcessingInstruction => false, // static values are never nodes
-            _ => false
+            // Function, map, array and other item types: the engine's own matcher. Answering false
+            // here made `$f instance of function(*)` false for a static variable holding a function
+            // item, so use-when dropped the instruction (W3C load-xquery-module-004). The atomic
+            // cases above stay hand-written: this evaluator's numbers are not typed like the engine's.
+            _ => PhoenixmlDb.XQuery.Execution.TypeCastHelper.MatchesType(
+                value is object?[] seq ? seq : [value], targetType, schemaProvider: null),
         };
     }
 

@@ -807,6 +807,7 @@ internal sealed partial class DefaultXsltExecutionContext
         execContext.InsideXslEvaluate = _insideXslEvaluateDepth > 0;
         execContext.DefaultCollation = DefaultCollation;
         execContext.StaticBaseUri = StaticBaseUri;
+        execContext.ExternalModules = _options?.XQueryModules;
 
         // Set up variable fallback for lazy global initialization.
         // When the XQuery engine encounters a variable not yet bound, this callback
