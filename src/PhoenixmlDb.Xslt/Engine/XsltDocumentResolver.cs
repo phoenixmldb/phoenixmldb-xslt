@@ -56,6 +56,9 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         _collections = collections;
     }
 
+    /// <summary>Whether the host declared a collection under this URI ("" is the default collection), even an empty one.</summary>
+    internal bool HasCollection(string uri) => _collections?.ContainsKey(uri) == true;
+
     /// <summary>
     /// Pre-populates the document cache with the source document so that
     /// doc(document-uri(.)) returns the same node (identity preservation).
