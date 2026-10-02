@@ -2484,6 +2484,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
 
+    /// <summary>Whether a path's last step is a text() kind test, so it selects only text nodes.</summary>
+    private static bool SelectEndsInTextStep(XQueryExpression select)
+        => select is PathExpression { Steps.Count: > 0 } path
+           && path.Steps[^1] is StepExpression { NodeTest: KindTest { Kind: XdmNodeKind.Text, Name: null } };
+
     public override async ValueTask ValueOfAsync(XsltValueOf instruction)
     {
         // xsl:value-of always creates a text node, even a zero-length one. Recorded so a typed
@@ -2528,6 +2533,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 }
                 else
                     value = StringValueOf(result);
+            }
+            else if (result is object?[] textArr && SelectEndsInTextStep(instruction.Select))
+            {
+                // A path ending in text() selects only text nodes; adjacent text nodes merge
+                // before any separator applies, so the result is their concatenation. The streamed
+                // evaluation of `//PRICE/text()` hands back the PRICE elements (the leaf its
+                // watcher captures), not text nodes, and those were joined with spaces (W3C
+                // si-value-of-047). Their string values are the text nodes' values; for real text
+                // nodes this is what the merge below produces anyway.
+                value = string.Concat(textArr.Where(i => i is not null).Select(i => StringValueOf(i!)));
             }
             else if (result is object?[] arr)
             {

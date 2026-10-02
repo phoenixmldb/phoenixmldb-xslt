@@ -329,7 +329,13 @@ internal static class StreamingSubtreeBufferDetector
                 // to put between the items. Only the select was examined, so at the document
                 // level that AVT evaluated against the empty synthetic node and folded to "":
                 // the items were joined with nothing at all (W3C si-value-of-044 and siblings).
+                // A value-of with a sequence-constructor BODY, and value-of select=".", are
+                // evaluated at the document level too, against the empty synthetic node: the
+                // body's for-each found nothing and "." was the empty document, so both came out
+                // empty (W3C si-value-of-046, -076). A body of plain xsl:text reads nothing.
                 return AvtNavigatesInput(vo.Separator)
+                    || (vo.Content is { Instructions.Count: > 0 } body && body.Instructions.Any(i => i is not XsltText))
+                    || (vo.Select != null && IsContextItem(vo.Select))
                     || (vo.Select != null
                         && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select)
                             || SelectNavigatesViaClimbingAxis(vo.Select)
