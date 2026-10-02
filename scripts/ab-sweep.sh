@@ -16,6 +16,11 @@
 # Env:
 #   AB_BASE   base to compare against (default origin/main)
 #   AB_OUT    directory for the two runs (default a scratch dir under /tmp)
+#   AB_SOURCE 1 (default): build against the sibling engines' SOURCE, as CI does; 0: against the
+#             pinned packages. xslt main can depend on unreleased XQuery API, so package mode can
+#             fail to build at all. In AB_WORKTREE mode the siblings are cloned at their main next
+#             to the throwaway worktree (scripts/clone-siblings.sh); in place, the checkouts beside
+#             this repo are used. Both arms build against the same siblings.
 #
 # The three guards below exist because all of their failure modes are SILENT:
 # each produces a clean-looking result rather than an error, which is the one
@@ -85,12 +90,23 @@ echo "A/B: $BRANCH vs $BASE   chunks: ${*:-all}   out: $OUT"
 if [ "${AB_WORKTREE:-0}" = "1" ]; then
   WT="$(mktemp -d /tmp/ab-worktree-XXXX)"
   CORPUS="tests/PhoenixmlDb.Conformance.Tests/TestData"
-  cleanup_worktree() { cd "$ROOT"; git worktree remove --force "$WT/tree" >/dev/null 2>&1; rm -rf "$WT"; }
+  # Named like the repo, not "tree": in source mode Directory.Build.targets re-points this repo's
+  # own ProjectReferences at <workspace>/phoenixmldb-xslt, so any other name points at nothing.
+  cleanup_worktree() { cd "$ROOT"; git worktree remove --force "$WT/phoenixmldb-xslt" >/dev/null 2>&1; rm -rf "$WT"; }
   trap cleanup_worktree EXIT
-  git worktree add -q --detach "$WT/tree" HEAD || { echo "A/B ABORT: could not create worktree" >&2; exit 2; }
-  ln -s "$ROOT/$CORPUS" "$WT/tree/$CORPUS"
-  cd "$WT/tree"
-  echo "  isolated: $WT/tree (your working tree is untouched)"
+  git worktree add -q --detach "$WT/phoenixmldb-xslt" HEAD || { echo "A/B ABORT: could not create worktree" >&2; exit 2; }
+  ln -s "$ROOT/$CORPUS" "$WT/phoenixmldb-xslt/$CORPUS"
+  cd "$WT/phoenixmldb-xslt"
+  echo "  isolated: $WT/phoenixmldb-xslt (your working tree is untouched)"
+  if [ "${AB_SOURCE:-1}" = "1" ]; then
+    ./scripts/clone-siblings.sh phoenixmldb-core phoenixmldb-xquery | sed 's/^/  /' \
+      || { echo "A/B ABORT: could not clone the sibling engines" >&2; exit 2; }
+  fi
+fi
+if [ "${AB_SOURCE:-1}" = "1" ]; then
+  export PHOENIXML_DEV=1
+else
+  unset PHOENIXML_DEV
 fi
 
 run_arm() {  # $1 = arm name, rest = chunks
