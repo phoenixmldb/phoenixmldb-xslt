@@ -2631,11 +2631,24 @@ public sealed partial class StylesheetParser
             ?? ResolveDefaultCollation(defaultCollationAttr?.Value)
             ?? stylesheetDefaultCollation;
 
+        // The use expression resolves its prefixes against xsl:key's own in-scope namespaces.
+        // ParseExpr resolves at parse time only when _nsContext is set, and nothing set it here,
+        // so name tests were left for the transform-time fallback, which looks prefixes up among
+        // the stylesheet's declared namespaces. The xml prefix is bound without being declared,
+        // so use="@xml:id" fell through to an unprefixed id attribute: key('id', ...) found
+        // nothing in a document using xml:id, and DocBook xslTNG reported every <link linkend>
+        // as a "Link to non-existent ID" and rendered it as [???id???].
+        var savedNsContext = _nsContext;
+        _nsContext = element;
+        XQueryExpression? use;
+        try { use = useAttr != null ? ParseExpr(useAttr.Value, useAttr) : null; }
+        finally { _nsContext = savedNsContext; }
+
         return new XsltKey
         {
             Name = name,
             Match = match,
-            Use = useAttr != null ? ParseExpr(useAttr.Value, useAttr) : null,
+            Use = use,
             UseContent = useAttr == null && element.HasElements
                 ? ParseSequenceConstructor(element)
                 : null,
