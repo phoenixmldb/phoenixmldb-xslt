@@ -360,9 +360,15 @@ public sealed partial class StylesheetParser
                             && ReferenceEquals(owner, displaced.PackageStylesheet))
                             stylesheet.PackagePrivateGlobals.Remove(variable.Name);
                     }
+                    // A clash with a variable a used package exposes is XTSE3050 (a homonym of a
+                    // used component outside xsl:override), not XTSE0630 (W3C override-v-011).
+                    if (stylesheet.Variables.Any(v => v.Name.Equals(variable.Name) && v.PackageStylesheet != null))
+                        throw new XsltException($"XTSE3050: The global variable '{variable.Name.LocalName}' has the same name as a variable of a used package; " +
+                            "to replace it, declare it inside xsl:override",
+                            GetSourceLocation(child));
                     if (stylesheet.Variables.Any(v => v.Name.Equals(variable.Name)) ||
                         stylesheet.Parameters.Any(p => p.Name.Equals(variable.Name)))
-                        throw new XsltException($"XTSE0630: Duplicate global variable '{variable.Name.LocalName}' DBG[{string.Join(";", stylesheet.Variables.Where(v => v.Name.Equals(variable.Name)).Select(v => v.ProvidedByPackage + "/" + v.Visibility + "/" + v.VisibilityAttr + "/pkg=" + (v.PackageStylesheet != null) + "/orig=" + (v.OriginalVariable != null)))}]",
+                        throw new XsltException($"XTSE0630: Duplicate global variable '{variable.Name.LocalName}'",
                             GetSourceLocation(child));
                     stylesheet.Variables.Add(variable);
                     stylesheet.LocalComponentSymbols.Add(("V", variable.Name, 0));
@@ -422,9 +428,17 @@ public sealed partial class StylesheetParser
                 case "function":
                     var func = ParseFunction(child);
                     var funcKey = (func.Name, func.Parameters.Count);
-                    if (stylesheet.Functions.ContainsKey(funcKey))
+                    if (stylesheet.Functions.TryGetValue(funcKey, out var existingFunc))
+                    {
+                        // A homonym of a function a used package exposes, outside xsl:override:
+                        // XTSE3050, not the duplicate-declaration XTSE0770 (W3C override-f-022).
+                        if (existingFunc.PackageStylesheet != null)
+                            throw new XsltException($"XTSE3050: The function '{func.Name.LocalName}#{func.Parameters.Count}' has the same name and arity as a function of a used package; " +
+                                "to replace it, declare it inside xsl:override",
+                                GetSourceLocation(child));
                         throw new XsltException($"XTSE0770: Duplicate function declaration '{func.Name.LocalName}' with arity {func.Parameters.Count}",
                             GetSourceLocation(child));
+                    }
                     stylesheet.Functions[funcKey] = func;
                     stylesheet.LocalComponentSymbols.Add(("F", func.Name, func.Parameters.Count));
                     break;

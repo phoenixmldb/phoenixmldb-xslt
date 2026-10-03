@@ -1669,7 +1669,8 @@ public sealed partial class StylesheetParser
         {
             var tv = terminateAttr.Value;
             bool isAvt = tv.Contains('{', StringComparison.Ordinal);
-            if (!isAvt && tv is not ("yes" or "no" or "true" or "false" or "1" or "0"))
+            // xs:boolean-like values are whitespace-collapsed: terminate=" 1 " means yes (message-0008).
+            if (!isAvt && tv.Trim() is not ("yes" or "no" or "true" or "false" or "1" or "0"))
                 throw new XsltException($"XTSE0020: Invalid value for 'terminate' attribute: '{tv}'. Must be 'yes' or 'no'.");
             isTerminateAvt = isAvt;
         }
@@ -1682,7 +1683,7 @@ public sealed partial class StylesheetParser
             // by the content (XSLT 3.0 §23.1). Dropping it here is why select="'Error Message:'" with
             // content produced only "Error Message:".
             Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
-            Terminate = terminateAttr?.Value is "yes" or "true" or "1",
+            Terminate = terminateAttr?.Value.Trim() is "yes" or "true" or "1",
             TerminateAvt = isTerminateAvt ? ParseAvt(terminateAttr!.Value, element, terminateAttr) : null,
             ErrorCode = errorCodeAttr?.Value,
             ErrorCodeAvt = errorCodeAttr != null ? ParseAvt(errorCodeAttr.Value, element, errorCodeAttr) : null,
@@ -2582,8 +2583,22 @@ public sealed partial class StylesheetParser
         if (name.StartsWith("schema-attribute(", StringComparison.Ordinal) && name.EndsWith(')'))
             return ParseKindTestWithArgs(XdmNodeKind.Attribute, name["schema-attribute(".Length..^1].Trim(), context);
 
+        // What reaches here must be a name test. An axis the pattern grammar does not allow
+        // (a/preceding-sibling::b, W3C version-023a) or an expression ({xs:string('foo')},
+        // avt-3201) arrived as the "name" and was misreported as an undeclared prefix (XTSE0280).
+        if (name.Contains("::", StringComparison.Ordinal))
+            throw new XsltException($"XTSE0340: The axis in '{name}' is not allowed in a pattern (only child, attribute, self, descendant, descendant-or-self and namespace are)");
+        if (!s_patternNameTest.IsMatch(name))
+            throw new XsltException($"XTSE0340: '{name}' is not a valid node test in a pattern");
         return ParseNameTest(name, context, isAttribute);
     }
+
+    // *, prefix:*, *:local, QName, Q{uri}local or Q{uri}* (the forms a pattern's name test can
+    // take). NCName characters per XML Names, including combining marks and the middle dot.
+    private const string NcName = @"[\p{L}_][\p{L}\p{N}\p{M}._\-\u00B7]*";
+    private static readonly System.Text.RegularExpressions.Regex s_patternNameTest = new(
+        $@"^(\*|\*:{NcName}|{NcName}(:({NcName}|\*))?|Q\{{[^{{}}]*\}}({NcName}|\*))$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
 
     /// <summary>

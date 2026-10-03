@@ -171,6 +171,11 @@ public sealed partial class StylesheetParser
 
     private XsltForEachGroup ParseForEachGroup(XElement element, SourceLocation? location)
     {
+        // XTSE0090: unknown attributes, e.g. the draft-era bind-group / bind-grouping-key
+        // (W3C for-each-group-002). Without this the stylesheet failed later, at a reference to
+        // the variable such an attribute appeared to bind (XPST0008).
+        ValidateAllowedAttributes(element, location,
+            "select", "group-by", "group-adjacent", "group-starting-with", "group-ending-with", "composite", "collation");
         var select = ParseExpr(RequiredAttribute(element, "select").Value, element.Attribute("select"));
         var groupByAttr = element.Attribute("group-by");
         var groupAdjacentAttr = element.Attribute("group-adjacent");

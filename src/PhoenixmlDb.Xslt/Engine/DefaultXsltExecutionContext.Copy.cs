@@ -54,17 +54,30 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             if (nonNullItems.Count > 1)
                 throw Error("XTTE3180: xsl:copy with select attribute must select at most one item");
-            foreach (var item in nonNullItems)
+            // With a select attribute the body runs with changed focus, so the current template
+            // rule is absent there (XSLT 3.0 §6.8.1: "xsl:copy if and only if there is a select
+            // attribute"); xsl:next-match inside it is XTDE0560, not a re-dispatch of the selected
+            // node (W3C next-match-030 recursed until the depth limit).
+            var savedTemplate = _currentTemplate;
+            _currentTemplate = null;
+            try
             {
-                PushContextItem(item, 1, 1);
-                try
+                foreach (var item in nonNullItems)
                 {
-                    await CopySingleItemAsync(item, instruction).ConfigureAwait(false);
+                    PushContextItem(item, 1, 1);
+                    try
+                    {
+                        await CopySingleItemAsync(item, instruction).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        PopContextItem();
+                    }
                 }
-                finally
-                {
-                    PopContextItem();
-                }
+            }
+            finally
+            {
+                _currentTemplate = savedTemplate;
             }
             return;
         }
