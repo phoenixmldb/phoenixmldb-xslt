@@ -286,13 +286,11 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         if (useValue is null || lookupValue is null)
             return useValue is null && lookupValue is null;
 
-        // Normalize untyped-atomic and anyURI wrappers to their underlying string.
-        // A use="@attr" value atomizes to xs:untypedAtomic (a CLR XsUntypedAtomic struct,
-        // not a string), so without this it would never match a string lookup key.
-        // Per XPath key-matching semantics an xs:untypedAtomic use value compares against
-        // the lookup value as though cast to the lookup value's type — string-vs-string
-        // here, and the cast-to-numeric branch below handles the numeric-lookup case.
-        // xs:anyURI is promotable to xs:string, so it is normalized the same way.
+        // Normalize untyped-atomic and anyURI wrappers to their underlying string. Keys compare
+        // "under the rules appropriate to the XPath eq operator" (XSLT 3.0 §20.2.2), and eq
+        // casts xs:untypedAtomic to xs:string; xs:anyURI promotes to xs:string. A use="@attr"
+        // value atomizes to xs:untypedAtomic (a CLR XsUntypedAtomic struct, not a string), so
+        // without this it would never match a string lookup key.
         if (useValue is XsUntypedAtomic useUntyped)
             useValue = useUntyped.Value;
         else if (useValue is XsAnyUri useUri)
@@ -321,25 +319,12 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
                 ? collationComparer.Equals(us, ls)
                 : string.Equals(us, ls, StringComparison.Ordinal);
 
-        // xs:untypedAtomic (string) vs typed: cast the string to the typed type
-        if (useValue is string useStr && lookupIsNumeric)
-        {
-            if (double.TryParse(useStr, System.Globalization.NumberStyles.Any,
-                    System.Globalization.CultureInfo.InvariantCulture, out var d))
-            {
-                var ld = Convert.ToDouble(lookupValue, System.Globalization.CultureInfo.InvariantCulture);
-                if (double.IsNaN(d) || double.IsNaN(ld))
-                    return false;
-                return d == ld;
-            }
+        // A string (untyped values included, per eq) against a number is not comparable, and
+        // values that are not comparable are "regarded ... as being not equal". The untyped
+        // value used to be cast to a number here, so key('k', 7) also returned nodes whose key
+        // was xs:untypedAtomic("7") (W3C key-088, where Saxon returns only the integer 7s).
+        if ((useValue is string && lookupIsNumeric) || (lookupValue is string && useIsNumeric))
             return false;
-        }
-        if (lookupValue is string lookupStr && useIsNumeric)
-        {
-            // Typed use value vs string lookup → different types, no match
-            // (Per XSLT spec, only untyped use values get promoted, not the other way)
-            return false;
-        }
 
         // Date/time comparison with new types
         if (useValue is XsDateTime uxdt && lookupValue is XsDateTime lxdt)
