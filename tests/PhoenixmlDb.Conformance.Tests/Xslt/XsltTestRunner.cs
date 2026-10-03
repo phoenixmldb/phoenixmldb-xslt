@@ -398,13 +398,12 @@ public sealed class XsltTestRunner
             var envRef = envElem.Attribute("ref")?.Value;
             if (envRef != null && namedEnvironments.TryGetValue(envRef, out var refEnv))
             {
+                // A test case's environment is EITHER a reference to a shared environment (ref)
+                // OR a locally-defined one (catalog-schema.xsd, environment). Content under a ref
+                // is not an override, so it is ignored. Merging it in was this harness's own
+                // reading. The only two cases in the suite with that shape, key-085a/b, put
+                // key306.xml under ref="key285" yet expect the towns in key285's key101.xml.
                 test.Environment = CloneEnvironment(refEnv);
-                // Merge any additional inline overrides
-                if (envElem.HasElements)
-                {
-                    var overrides = ParseEnvironment(envElem, ns, basePath, testSetUri);
-                    MergeEnvironment(test.Environment, overrides);
-                }
             }
             else
             {
@@ -872,56 +871,6 @@ public sealed class XsltTestRunner
         return clone;
     }
 
-    private static void MergeEnvironment(XsltEnvironment target, XsltEnvironment source)
-    {
-        if (source.StylesheetPath != null)
-            target.StylesheetPath = source.StylesheetPath;
-        if (source.BaseOutputPath != null)
-            target.BaseOutputPath = source.BaseOutputPath;
-        if (source.PrincipalSource != null)
-            target.PrincipalSource = source.PrincipalSource;
-        if (source.PrincipalSourceContent != null)
-            target.PrincipalSourceContent = source.PrincipalSourceContent;
-        if (source.PrincipalSourceSelect != null)
-            target.PrincipalSourceSelect = source.PrincipalSourceSelect;
-        if (source.PrincipalSourceXInclude)
-            target.PrincipalSourceXInclude = true;
-        if (source.PrincipalSourceStreaming)
-            target.PrincipalSourceStreaming = true;
-        if (source.InitialTemplate != null)
-            target.InitialTemplate = source.InitialTemplate;
-        if (source.InitialFunction != null)
-        {
-            target.InitialFunction = source.InitialFunction;
-            target.InitialFunctionNamespace = source.InitialFunctionNamespace;
-        }
-        if (source.InitialMode != null)
-        {
-            target.InitialMode = source.InitialMode;
-            target.InitialModeNamespace = source.InitialModeNamespace;
-            target.InitialModeSelect = source.InitialModeSelect;
-        }
-
-        foreach (var kv in source.AdditionalSources)
-            target.AdditionalSources[kv.Key] = kv.Value;
-        foreach (var kv in source.AdditionalSourceContents)
-            target.AdditionalSourceContents[kv.Key] = kv.Value;
-        foreach (var kv in source.Parameters)
-            target.Parameters[kv.Key] = kv.Value;
-        foreach (var kv in source.StaticParameters)
-            target.StaticParameters[kv.Key] = kv.Value;
-        foreach (var kv in source.Collections)
-            target.Collections[kv.Key] = new List<string>(kv.Value);
-        foreach (var kv in source.XQueryModules)
-            target.XQueryModules[kv.Key] = new List<string>(kv.Value);
-        foreach (var kv in source.Packages)
-        {
-            if (target.Packages.TryGetValue(kv.Key, out var existing))
-                existing.AddRange(kv.Value);
-            else
-                target.Packages[kv.Key] = new List<(string?, string)>(kv.Value);
-        }
-    }
 
     /// <summary>
     /// Reads the package name (name attribute) from an xsl:package file.
