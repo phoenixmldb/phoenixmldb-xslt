@@ -1728,6 +1728,27 @@ public sealed class XsltTestRunner
                     // elements recovers that tree; the assertions are unchanged.
                     doc = store.LoadFromString(xhtml, "urn:xslt-result");
                 }
+                catch (System.Xml.XmlException)
+                {
+                    // A result document node need not have exactly one element child: a document
+                    // holding only text serializes as "<?xml …?>test" (W3C whitespace-022/023),
+                    // which is not a well-formed DOCUMENT but is a well-formed external parsed
+                    // entity. parse-xml-fragment builds the document node such a serialization
+                    // denotes. It still requires well-formed content (balanced elements, legal
+                    // text), so malformed output still fails the assertion.
+                    var asDoc = engine.Compile("declare variable $raw external; parse-xml-fragment($raw)");
+                    if (!asDoc.Success) return false;
+                    var asDocCtx = engine.CreateContext(cancellationToken: ct);
+                    asDocCtx.SetExternalVariable("raw", text);
+                    object? builtDoc = null;
+                    await foreach (var item in asDoc.ExecutionPlan!.ExecuteAsync(asDocCtx).ConfigureAwait(false))
+                    {
+                        builtDoc = item;
+                        break;
+                    }
+                    if (builtDoc == null) return false;
+                    doc = builtDoc;
+                }
             }
 
             // Parse with NormalizeLineEndings OFF, then compile the AST. QueryEngine.Compile(string)
