@@ -209,6 +209,19 @@ if not ok:
 PY
 }
 WASM_ID="wasm/transform"
+# wasm/deep-recursion: the same probe with argument "deep-recursion" runs Martin Honnen's memoised
+# Fibonacci at n = 1000. Inline on wasm's small stack that failed (XTDE0000) on every build before
+# xslt#266. His own input, n = 200, sits at the stack's edge and flips run to run, so it can't
+# serve as a case. A baseline that fails this is expected (an old release), not a broken gate.
+WASM_DEEP_ID="wasm/deep-recursion"
+wasm_deep_run() { # arm whose probe is built, run dir name
+  local src="$OUT/wasm/$1" dir="$OUT/runs/$2/wasm__deep-recursion"
+  mkdir -p "$dir"
+  if [ ! -f "$src/pub/wwwroot/main.mjs" ]; then
+    echo "probe for $1 was not built" > "$dir/err"; echo 3 > "$dir/rc"; return
+  fi
+  ( cd "$src/pub/wwwroot" && timeout 300 node main.mjs deep-recursion >"$dir/out" 2>"$dir/err"; echo $? > "$dir/rc" )
+}
 wasm_arm() { # arm, then msbuild property selecting the engine
   local arm="$1" prop="$2" dir="$OUT/runs/$1/wasm__transform" src="$OUT/wasm/$1"
   mkdir -p "$dir" "$OUT/wasm"; rm -rf "$src"; cp -a "$ROOT/scripts/wasm-probe" "$src"
@@ -223,6 +236,7 @@ wasm_arm() { # arm, then msbuild property selecting the engine
 }
 if command -v node >/dev/null 2>&1; then
   printf '%s\twasm\t-\n' "$WASM_ID" >> "$CASES"
+  printf '%s\twasm\t-\n' "$WASM_DEEP_ID" >> "$CASES"
   wasm_arm base "-p:XsltVersion=$BASE"
   # The baseline is a published release that is known to run. If its probe does not, the gate
   # itself is broken, and continuing would file the case under NONDET, which does not block:
@@ -235,11 +249,14 @@ if command -v node >/dev/null 2>&1; then
   ( cd "$OUT/wasm/base/pub/wwwroot" 2>/dev/null && timeout 300 node main.mjs \
       >"$OUT/runs/base2/wasm__transform/out" 2>"$OUT/runs/base2/wasm__transform/err"
     echo $? > "$OUT/runs/base2/wasm__transform/rc" ) || echo 3 > "$OUT/runs/base2/wasm__transform/rc"
+  wasm_deep_run base base
+  wasm_deep_run base base2
   if [ "$CAND_LOCAL" = 1 ]; then
     wasm_arm cand "-p:XsltProject=$ROOT/src/PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj"
   else
     wasm_arm cand "-p:XsltVersion=$CAND"
   fi
+  wasm_deep_run cand cand
   echo "  wasm done"
 else
   echo "  wasm SKIPPED: node not found (the browser-wasm case needs Node to run)" >&2
