@@ -652,19 +652,37 @@ internal sealed partial class DefaultXsltExecutionContext
 
     /// <summary>
     /// At the start of a recursion level (a stylesheet function call, call-template,
-    /// apply-templates): when the native stack is running out and the transformation runs inline
-    /// on a runtime without a large-stack thread (browser-wasm), yield instead. The rest of the
-    /// recursion then resumes from the event loop on a fresh stack, and the suspended levels wait
-    /// on the heap. Elsewhere, or inside a synchronous wait, nothing changes: CheckResourceLimits
-    /// still reports a real shortage as XTDE0000.
+    /// apply-templates, the built-in rule's child recursion), when the transformation runs inline on
+    /// a runtime without a large-stack thread (browser-wasm): yield every
+    /// <see cref="YieldEveryLevels"/> levels of nesting, and also whenever the native stack is
+    /// running low. The rest of the recursion then resumes from the event loop on a fresh stack, and
+    /// the suspended levels wait on the heap. Elsewhere, or inside a synchronous wait, nothing
+    /// changes: CheckResourceLimits still reports a real shortage as XTDE0000.
     /// </summary>
-    private static ValueTask EnsureStackAsync()
+    /// <remarks>
+    /// Yielding only when the stack was already low lost a race. CheckResourceLimits runs with the
+    /// same threshold at every instruction INSIDE a level, so when one level's frames crossed the
+    /// threshold part-way through, the inner check threw before the next level could yield. Larger
+    /// frames made that likelier: the deep-recursion test failed intermittently on Windows CI. A
+    /// fixed depth interval bounds the stack used between yields whatever the frame sizes.
+    /// Nesting depth, not calls: a wide traversal (one level per node, as a Schematron validator
+    /// makes) never accumulates depth and so never yields.
+    /// </remarks>
+    private ValueTask EnsureStackAsync()
     {
-        if (t_syncWaitDepth > 0 || !LargeStack.CanYieldForStack
-            || System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        if (t_syncWaitDepth > 0 || !LargeStack.CanYieldForStack)
             return default;
+        if (_recursionDepth < _depthAtLastYield)
+            _depthAtLastYield = _recursionDepth;   // unwound below the last yield: count from here
+        if (_recursionDepth - _depthAtLastYield < YieldEveryLevels
+            && System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return default;
+        _depthAtLastYield = _recursionDepth;
         return YieldForStackAsync();
     }
+
+    private const int YieldEveryLevels = 8;
+    private int _depthAtLastYield;
 
 #pragma warning disable CA2007 // Task.Yield's awaitable has no ConfigureAwait; resuming anywhere is the point
     private static async ValueTask YieldForStackAsync() => await Task.Yield();

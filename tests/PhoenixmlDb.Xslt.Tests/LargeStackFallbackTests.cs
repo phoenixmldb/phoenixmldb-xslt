@@ -64,8 +64,13 @@ public sealed class LargeStackFallbackTests
         </xsl:stylesheet>
         """;
 
-    [Fact]
-    public void Deep_recursion_running_inline_on_a_small_stack_yields_instead_of_exhausting_it()
+    // Yielding only once the stack was already low raced the per-instruction stack check, and this
+    // failed intermittently at 512 KB on Windows and Linux CI. (Smaller stacks are not meaningful
+    // here: on a cold Windows CI runner the test host and transformation setup alone use most of
+    // 256 KB before the recursion starts.)
+    [Theory]
+    [InlineData(512 * 1024)]
+    public void Deep_recursion_running_inline_on_a_small_stack_yields_instead_of_exhausting_it(int stackSize)
     {
         string? result = null;
         Exception? failure = null;
@@ -82,7 +87,7 @@ public sealed class LargeStackFallbackTests
 #pragma warning disable CA1031 // reported on the test thread below
             catch (Exception ex) { failure = ex; }
 #pragma warning restore CA1031
-        }, 512 * 1024);
+        }, stackSize);
         thread.Start();
         thread.Join();
 
