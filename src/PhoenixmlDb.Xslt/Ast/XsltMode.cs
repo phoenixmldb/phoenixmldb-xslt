@@ -20,6 +20,15 @@ public sealed class XsltMode
     public bool Streamable { get; init; }
 
     /// <summary>
+    /// The attributes the declaration states (the union, for declarations combined at one
+    /// import precedence). Once parsed, an attribute left out and one stated at its default
+    /// value look the same, and the rules for combining xsl:mode declarations turn on which
+    /// attributes each one states: a higher-precedence declaration overrides only those, and
+    /// resolves an equal-precedence conflict (XTSE0545) only in those.
+    /// </summary>
+    public IReadOnlySet<string> StatedAttributes { get; init; } = new HashSet<string>();
+
+    /// <summary>
     /// Behavior when no template matches.
     /// </summary>
     public OnNoMatchBehavior? OnNoMatch { get; init; }

@@ -180,9 +180,15 @@ public sealed partial class StylesheetParser
             }
         }
 
-        // Modes: merge
+        // Modes: merge. Never the unnamed mode: it is always private to its package (which is
+        // why public or final on it is XTSE0020), and its parsed visibility only reads as public
+        // because an unstated visibility defaults to public here. Carried across, a used
+        // package's on-no-match="fail" met the using package's own unnamed mode as if the two
+        // were declarations of one mode (package-019/020).
         foreach (var (key, mode) in package.Modes)
         {
+            if (key.LocalName.Length == 0)
+                continue;
             if (mode.Visibility is Visibility.Public or Visibility.Final)
                 target.Modes.TryAdd(key, mode);
         }
@@ -325,6 +331,12 @@ public sealed partial class StylesheetParser
                 throw new XsltException($"XTSE3350: Duplicate accumulator name '{dupName.LocalName}'");
         }
 
+        // What the higher-precedence declarations state, taken BEFORE this module's modes merge
+        // in: the imported module's own conflicts are resolved only by a declaration above it.
+        // Reading target.Modes after the merge saw the imported declarations themselves, which
+        // state the very attribute in conflict, so no conflict from an import ever survived.
+        var higherModes = new Dictionary<QName, XsltMode>(target.Modes);
+
         // Merge modes from imports (property-level merge with import precedence)
         foreach (var (key, importedMode) in imported.Modes)
         {
@@ -336,14 +348,20 @@ public sealed partial class StylesheetParser
             {
                 // Merge: higher-precedence (existing) explicit properties win;
                 // fill in unset properties from imported mode
+                bool Overrides(string attr) => existingMode.StatedAttributes.Contains(attr);
                 target.Modes[key] = new XsltMode
                 {
                     Name = existingMode.Name,
-                    Streamable = existingMode.Streamable || importedMode.Streamable,
+                    StatedAttributes = new HashSet<string>(existingMode.StatedAttributes.Concat(importedMode.StatedAttributes)),
+                    // A higher-precedence declaration overrides what it states, in either
+                    // direction: OR-ing let an imported streamable="yes" survive an importing
+                    // streamable="no", and the imported on-multiple-match was never consulted.
+                    Streamable = Overrides("streamable") ? existingMode.Streamable : importedMode.Streamable,
                     OnNoMatch = existingMode.OnNoMatch ?? importedMode.OnNoMatch,
-                    OnMultipleMatch = existingMode.OnMultipleMatch,
-                    WarningOnNoMatch = existingMode.WarningOnNoMatch || importedMode.WarningOnNoMatch,
-                    WarningOnMultipleMatch = existingMode.WarningOnMultipleMatch || importedMode.WarningOnMultipleMatch,
+                    OnMultipleMatch = Overrides("on-multiple-match") ? existingMode.OnMultipleMatch : importedMode.OnMultipleMatch,
+                    WarningOnNoMatch = Overrides("warning-on-no-match") ? existingMode.WarningOnNoMatch : importedMode.WarningOnNoMatch,
+                    WarningOnMultipleMatch = Overrides("warning-on-multiple-match")
+                        ? existingMode.WarningOnMultipleMatch : importedMode.WarningOnMultipleMatch,
                     UseAllAccumulators = existingMode.UseAllAccumulators || importedMode.UseAllAccumulators,
                     UseAccumulatorNames = existingMode.UseAccumulatorNames.Count > 0
                         ? existingMode.UseAccumulatorNames
@@ -365,17 +383,25 @@ public sealed partial class StylesheetParser
             }
         }
 
+        // Propagate unresolved streamable / on-no-match / on-multiple-match conflicts
+        foreach (var conflict in imported.ConflictingModeAttributes)
+        {
+            if (!higherModes.TryGetValue(conflict.Mode, out var higherMode)
+                || !higherMode.StatedAttributes.Contains(conflict.Attribute))
+                target.ConflictingModeAttributes.Add(conflict);
+        }
+
         // Propagate unresolved conflicts from imported stylesheet
         foreach (var conflict in imported.ConflictingModeAccumulators)
         {
             // Only propagate if the target doesn't have its own higher-precedence declaration
-            if (!target.Modes.TryGetValue(conflict, out var conflictMode) || conflictMode.UseAccumulatorsAttr == null)
+            if (!higherModes.TryGetValue(conflict, out var conflictMode) || conflictMode.UseAccumulatorsAttr == null)
                 target.ConflictingModeAccumulators.Add(conflict);
         }
 
         foreach (var conflict in imported.ConflictingModeVisibility)
         {
-            if (!target.Modes.TryGetValue(conflict, out var conflictMode) || conflictMode.VisibilityAttr == null)
+            if (!higherModes.TryGetValue(conflict, out var conflictMode) || conflictMode.VisibilityAttr == null)
                 target.ConflictingModeVisibility.Add(conflict);
         }
 
@@ -798,6 +824,11 @@ public sealed partial class StylesheetParser
                     target.ConflictingModeAccumulators.Add(name);
                 if (VisibilityConflict(existingMode, mode))
                     target.ConflictingModeVisibility.Add(name);
+                foreach (var attr in StylesheetParser.ConflictingModeAttributes(existingMode, mode))
+                    target.ConflictingModeAttributes.Add((name, attr));
+                // Declarations at one import precedence combine. Keeping the first outright
+                // dropped every attribute only the included module's declaration stated.
+                target.Modes[name] = StylesheetParser.MergeModeDeclarations(existingMode, mode);
             }
             else
             {
@@ -809,6 +840,8 @@ public sealed partial class StylesheetParser
             target.ConflictingModeAccumulators.Add(conflict);
         foreach (var conflict in source.ConflictingModeVisibility)
             target.ConflictingModeVisibility.Add(conflict);
+        foreach (var conflict in source.ConflictingModeAttributes)
+            target.ConflictingModeAttributes.Add(conflict);
 
         // Merge namespace prefix bindings from included modules
         // (needed for element-available, function-available prefix resolution at runtime)

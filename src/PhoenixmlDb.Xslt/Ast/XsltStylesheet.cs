@@ -274,6 +274,13 @@ public sealed class XsltStylesheet
     public HashSet<QName> ConflictingModeVisibility { get; init; } = new();
 
     /// <summary>
+    /// (mode, attribute) pairs where two xsl:mode declarations at the same import precedence
+    /// state different values for streamable, on-no-match or on-multiple-match. Deferred like
+    /// the two sets above: a higher-precedence declaration stating the attribute resolves it.
+    /// </summary>
+    public HashSet<(QName Mode, string Attribute)> ConflictingModeAttributes { get; init; } = new();
+
+    /// <summary>
     /// Mode names that were EXPLICITLY given private visibility by an xsl:expose
     /// declaration (as opposed to being implicitly private by the package default).
     /// An implicitly-private mode is still eligible as an initial mode, but a mode
