@@ -342,6 +342,8 @@ public sealed partial class StylesheetParser
                     Streamable = existingMode.Streamable || importedMode.Streamable,
                     OnNoMatch = existingMode.OnNoMatch ?? importedMode.OnNoMatch,
                     OnMultipleMatch = existingMode.OnMultipleMatch,
+                    WarningOnNoMatch = existingMode.WarningOnNoMatch || importedMode.WarningOnNoMatch,
+                    WarningOnMultipleMatch = existingMode.WarningOnMultipleMatch || importedMode.WarningOnMultipleMatch,
                     UseAllAccumulators = existingMode.UseAllAccumulators || importedMode.UseAllAccumulators,
                     UseAccumulatorNames = existingMode.UseAccumulatorNames.Count > 0
                         ? existingMode.UseAccumulatorNames
