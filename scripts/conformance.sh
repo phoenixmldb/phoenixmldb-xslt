@@ -176,10 +176,36 @@ if ! dotnet build "$PROJ/PhoenixmlDb.Conformance.Tests.csproj" -c "$CONFIG" -f n
   exit 1
 fi
 
+# The tree a measurement was taken from: its commit, and what is modified in it, so a summary
+# states its own provenance. A raised baseline being confirmed shows as "dirty: scripts/";
+# engine changes show their directories. "src/ clean" says outright what an absent src/ means.
+tree_state() { # repo dir
+  local dir="$1" sha changed
+  sha=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null) || { echo "unknown ($dir)"; return; }
+  # Top-level directories with changes, ignoring the run's own output (conformance-results/).
+  changed=$(git -C "$dir" status --porcelain 2>/dev/null | cut -c4- | sed -E 's#^"##; s#/.*#/#' \
+    | grep -v "^conformance-results/$" | sort -u | tr "\n" " " | sed "s/ $//")
+  if [ -z "$changed" ]; then echo "$sha"
+  elif [[ " $changed " == *" src/ "* ]]; then echo "$sha (dirty: $changed)"
+  else echo "$sha (dirty: $changed; src/ clean)"; fi
+}
+
 for s in xslt30-test qt3tests; do
   rev=$(git -C "$SUITES/$s" rev-parse --short HEAD 2>/dev/null || echo "unpinned")
   echo "$s @ $rev" | tee -a "$OUT/summary.txt"
 done
+# The engine measured. This summary used to name no engine at all, so a figure could not be traced
+# to a commit, and an absent "dirty" read as clean. In source mode the XQuery and Core code under
+# test is the sibling checkouts', so their trees are recorded too; otherwise the pinned package.
+echo "xslt      @ $(tree_state "$ROOT")" | tee -a "$OUT/summary.txt"
+WS_DIR="$(cd "$ROOT/.." && pwd)"
+if [ "${PHOENIXML_DEV:-0}" = "1" ] || [ -e "$WS_DIR/.phoenixml-dev" ]; then
+  echo "xquery    @ $(tree_state "$WS_DIR/phoenixmldb-xquery") (source)" | tee -a "$OUT/summary.txt"
+  echo "core      @ $(tree_state "$WS_DIR/phoenixmldb-core") (source)" | tee -a "$OUT/summary.txt"
+else
+  xq_pin=$(grep -oP '(?<=Include="PhoenixmlDb.XQuery" Version=")[^"]+' "$ROOT/Directory.Packages.props" | head -1)
+  echo "xquery    @ package ${xq_pin:-unknown}" | tee -a "$OUT/summary.txt"
+fi
 echo | tee -a "$OUT/summary.txt"
 
 failed=0
