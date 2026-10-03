@@ -94,4 +94,47 @@ public sealed class LargeStackFallbackTests
         failure.Should().BeNull();
         result.Should().Be("110433070572952242346432246767718285942590237357555606380008891875277701705731473925618404421867819924194229142447517901959200");
     }
+
+    // The caller is not held while a transformation runs on the large-stack thread. Joining that
+    // thread held the caller (in a server, a pool thread) for the whole transformation, and a few
+    // long transformations starved the host. Right after the call returns, the work must still be
+    // running; under the blocking implementation it had always finished by then.
+    [Fact]
+    public async Task TransformAsync_returns_to_its_caller_while_the_transformation_runs()
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:f="urn:f">
+              <xsl:output method="text"/>
+              <xsl:function name="f:fib" as="xs:integer"><xsl:param name="n" as="xs:integer"/>
+                <xsl:sequence select="if ($n lt 2) then $n else f:fib($n - 1) + f:fib($n - 2)"/></xsl:function>
+              <xsl:template match="/"><xsl:value-of select="f:fib(22)"/></xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var running = t.TransformAsync("<r/>");
+
+        running.IsCompleted.Should().BeFalse("the transformation (hundreds of ms) should still be running when the call returns");
+        (await running).Trim().Should().Be("17711");
+    }
+
+    // Likewise the parse, whose static expressions (use-when) can be slow. Run on the caller's
+    // thread, it held, after an HTTP import fetch, whichever pool thread completed the fetch.
+    [Fact]
+    public async Task LoadStylesheetAsync_returns_to_its_caller_while_the_parse_runs()
+    {
+        var t = new XsltTransformer();
+
+        var loading = t.LoadStylesheetAsync("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <xsl:output method="text"/>
+              <xsl:template match="/" use-when="count((1 to 1500000)[. mod 7 = 0]) gt 0">loaded</xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        loading.IsCompleted.Should().BeFalse("the parse (a slow use-when) should still be running when the call returns");
+        await loading;
+        (await t.TransformAsync("<r/>")).Trim().Should().Be("loaded");
+    }
 }

@@ -56,26 +56,40 @@ internal static class LargeStack
 
     internal static Task<T> Run<T>(Func<Task<T>> body)
     {
-        // Nested transformations (fn:transform, xsl:evaluate re-entering the engine) are
-        // already on a large stack; another thread would only add a hop.
         if (t_onLargeStack || !CanStartThreads)
             return body();
 
-        Task<T>? task = null;
-        Exception? startFailure = null;
+        // The caller is NOT blocked while the body runs: the task returned here completes when
+        // the body's task does. Joining the thread held the calling thread (in a server, a pool
+        // thread) for the whole transformation, and a few long transformations starved the host
+        // (measured: 504s arriving 13 s late against a 1 s limit, delayed health checks).
+        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             t_onLargeStack = true;
+            Task<T> task;
             try
             {
                 task = body();
             }
-#pragma warning disable CA1031 // rethrown on the calling thread below
+#pragma warning disable CA1031 // handed to the caller through the returned task
             catch (Exception ex)
 #pragma warning restore CA1031
             {
-                startFailure = ex;
+                completion.TrySetException(ex);
+                return;
             }
+            // Once the body first truly awaits, its continuations run on the thread pool, as
+            // before; this thread ends when the body's synchronous part does.
+            task.ContinueWith(static (t, state) =>
+            {
+                var tcs = (TaskCompletionSource<T>)state!;
+                try { tcs.TrySetResult(t.GetAwaiter().GetResult()); }
+                catch (OperationCanceledException oce) { tcs.TrySetCanceled(oce.CancellationToken); }
+#pragma warning disable CA1031 // handed to the caller through the returned task
+                catch (Exception ex) { tcs.TrySetException(ex); }
+#pragma warning restore CA1031
+            }, completion, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }, StackSize)
         {
             IsBackground = true,
@@ -90,12 +104,8 @@ internal static class LargeStack
         }
         catch (Exception ex) when (ex is PlatformNotSupportedException or ThreadStartException or OutOfMemoryException)
         {
-            // No thread could be started: run on the caller's stack rather than fail (xslt#237).
             return body();
         }
-        thread.Join();
-        if (startFailure != null)
-            return Task.FromException<T>(startFailure);
-        return task!;
+        return completion.Task;
     }
 }
