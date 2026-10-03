@@ -642,10 +642,10 @@ public sealed partial class StylesheetParser
                     // XTSE0545: Check for conflicting mode declarations at same import precedence
                     if (_modeElements.TryGetValue(modeKey, out var prevModeElement))
                     {
-                        // Compare explicitly-set attributes between the two declarations (same module)
-                        CheckModeAttrConflict(prevModeElement, child, "on-no-match", mode.Name?.LocalName ?? "(unnamed)");
-                        CheckModeAttrConflict(prevModeElement, child, "on-multiple-match", mode.Name?.LocalName ?? "(unnamed)");
-                        CheckModeAttrConflict(prevModeElement, child, "streamable", mode.Name?.LocalName ?? "(unnamed)");
+                        // Explicitly-set attributes that differ: deferred, since a declaration
+                        // at higher import precedence may state the attribute and resolve it.
+                        foreach (var attr in ConflictingModeAttributes(stylesheet.Modes[modeKey], mode))
+                            stylesheet.ConflictingModeAttributes.Add((modeKey, attr));
                         // use-accumulators: defer conflict — may be resolved by higher-precedence import
                         if (UseAccumulatorsConflict(stylesheet.Modes[modeKey], mode))
                             stylesheet.ConflictingModeAccumulators.Add(modeKey);
@@ -656,6 +656,8 @@ public sealed partial class StylesheetParser
                     else if (stylesheet.Modes.TryGetValue(modeKey, out var mergedMode))
                     {
                         // Mode exists from an included module — defer conflict check
+                        foreach (var attr in ConflictingModeAttributes(mergedMode, mode))
+                            stylesheet.ConflictingModeAttributes.Add((modeKey, attr));
                         if (UseAccumulatorsConflict(mergedMode, mode))
                             stylesheet.ConflictingModeAccumulators.Add(modeKey);
                         if (VisibilityConflict(mergedMode, mode))
@@ -677,7 +679,7 @@ public sealed partial class StylesheetParser
                     // The loss is not specific to @streamable — on-no-match, on-multiple-match,
                     // use-accumulators and visibility all go the same way.
                     if (stylesheet.Modes.TryGetValue(modeKey, out var priorMode))
-                        mode = MergeModeDeclarations(priorMode, mode, child);
+                        mode = MergeModeDeclarations(priorMode, mode);
                     _modeElements[modeKey] = child;
                     stylesheet.Modes[modeKey] = mode;
                     if (mode.Name is { } namedMode)
@@ -951,6 +953,14 @@ public sealed partial class StylesheetParser
             var conflictName = stylesheet.ConflictingModeAccumulators.First();
             throw new XsltException(
                 $"XTSE0545: Conflicting xsl:mode declarations for mode '{conflictName.LocalName}': attribute 'use-accumulators' has conflicting values at the same import precedence");
+        }
+
+        // XTSE0545: Unresolved conflicts in streamable, on-no-match, on-multiple-match
+        if (isTopLevel && stylesheet.ConflictingModeAttributes.Count > 0)
+        {
+            var (conflictMode, conflictAttr) = stylesheet.ConflictingModeAttributes.First();
+            throw new XsltException(
+                $"XTSE0545: Conflicting xsl:mode declarations for mode '{(conflictMode.LocalName.Length > 0 ? conflictMode.LocalName : "(unnamed)")}': attribute '{conflictAttr}' has different values at the same import precedence, and no declaration at higher import precedence states it");
         }
 
         // XTSE0545: Unresolved mode visibility conflicts
@@ -1755,6 +1765,7 @@ public sealed partial class StylesheetParser
                     Name = mode.Name, Streamable = mode.Streamable,
                     OnNoMatch = mode.OnNoMatch, OnMultipleMatch = mode.OnMultipleMatch,
                     WarningOnNoMatch = mode.WarningOnNoMatch, WarningOnMultipleMatch = mode.WarningOnMultipleMatch,
+                    StatedAttributes = mode.StatedAttributes,
                     UseAllAccumulators = mode.UseAllAccumulators,
                     UseAccumulatorNames = mode.UseAccumulatorNames,
                     Visibility = vis,
@@ -2109,6 +2120,7 @@ public sealed partial class StylesheetParser
                                         OnMultipleMatch = mode.OnMultipleMatch,
                                         WarningOnNoMatch = mode.WarningOnNoMatch,
                                         WarningOnMultipleMatch = mode.WarningOnMultipleMatch,
+                                        StatedAttributes = mode.StatedAttributes,
                                         UseAllAccumulators = mode.UseAllAccumulators,
                                         UseAccumulatorNames = mode.UseAccumulatorNames,
                                         Visibility = visibility,
@@ -3053,6 +3065,12 @@ public sealed partial class StylesheetParser
                     GetSourceLocation(element));
         }
 
+        // XTSE0020: a mode's visibility is public, private or final; modes cannot be abstract.
+        if (visibilityAttr != null && visibilityAttr.Value.Trim() is not ("public" or "private" or "final"))
+            throw new XsltException(
+                $"XTSE0020: xsl:mode visibility must be public, private or final, not '{visibilityAttr.Value.Trim()}'",
+                GetSourceLocation(element));
+
         // warning-on-no-match (XTSE0020 for invalid values like "Yes")
         var warningOnNoMatchAttr = element.Attribute("warning-on-no-match");
         var warningOnNoMatch = warningOnNoMatchAttr != null
@@ -3079,6 +3097,10 @@ public sealed partial class StylesheetParser
         return new XsltMode
         {
             Name = nameAttr != null ? ParseQName(nameAttr.Value, element) : null,
+            StatedAttributes = element.Attributes()
+                .Where(a => a.Name.Namespace == XNamespace.None)
+                .Select(a => a.Name.LocalName)
+                .ToHashSet(),
             // Boolean-typed, as on xsl:source-document — and the typed= attribute two lines
             // above already spells the full set out.
             Streamable = streamableAttr != null
@@ -3127,13 +3149,14 @@ public sealed partial class StylesheetParser
     /// it does not. Presence is read off the element, because an unstated attribute and one
     /// stated at its default value are indistinguishable once parsed.
     /// </summary>
-    private static XsltMode MergeModeDeclarations(XsltMode prior, XsltMode current, XElement element)
+    internal static XsltMode MergeModeDeclarations(XsltMode prior, XsltMode current)
     {
-        bool States(string attr) => element.Attribute(attr) != null;
+        bool States(string attr) => current.StatedAttributes.Contains(attr);
         var statesAccumulators = States("use-accumulators");
         return new XsltMode
         {
             Name = current.Name,
+            StatedAttributes = new HashSet<string>(prior.StatedAttributes.Concat(current.StatedAttributes)),
             Streamable = States("streamable") ? current.Streamable : prior.Streamable,
             WarningOnNoMatch = States("warning-on-no-match")
                 ? current.WarningOnNoMatch : prior.WarningOnNoMatch,
@@ -3155,13 +3178,19 @@ public sealed partial class StylesheetParser
         };
     }
 
-    private static void CheckModeAttrConflict(XElement prev, XElement current, string attrName, string modeName)
+    /// <summary>
+    /// The attributes among streamable, on-no-match and on-multiple-match that both declarations
+    /// state, with different values. Compared as parsed, so streamable="yes" and "true" agree.
+    /// </summary>
+    internal static IEnumerable<string> ConflictingModeAttributes(XsltMode a, XsltMode b)
     {
-        var prevAttr = prev.Attribute(attrName);
-        var currAttr = current.Attribute(attrName);
-        if (prevAttr != null && currAttr != null && prevAttr.Value != currAttr.Value)
-            throw new XsltException($"XTSE0545: Conflicting xsl:mode declarations for mode '{modeName}': attribute '{attrName}' has values '{prevAttr.Value}' and '{currAttr.Value}'",
-                GetSourceLocation(current));
+        bool Both(string attr) => a.StatedAttributes.Contains(attr) && b.StatedAttributes.Contains(attr);
+        if (Both("streamable") && a.Streamable != b.Streamable)
+            yield return "streamable";
+        if (Both("on-no-match") && a.OnNoMatch != b.OnNoMatch)
+            yield return "on-no-match";
+        if (Both("on-multiple-match") && a.OnMultipleMatch != b.OnMultipleMatch)
+            yield return "on-multiple-match";
     }
 
 
