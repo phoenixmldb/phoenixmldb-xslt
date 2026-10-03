@@ -220,6 +220,16 @@ internal sealed partial class DefaultXsltExecutionContext
             return base.VisitFunctionCallExpression(fc);
         }
 
+        // f:name#1 names a function as a call does, so it resolves against the same bindings.
+        // Left unresolved, the reference could not be matched to the stylesheet function it
+        // names, and xsl:evaluate's check for private functions missed it.
+        public override object? VisitNamedFunctionRef(PhoenixmlDb.XQuery.Ast.NamedFunctionRef nf)
+        {
+            if (!string.IsNullOrEmpty(nf.Name.Prefix) && nf.Name.Namespace == NamespaceId.None)
+                nf.Name = ctx.ResolveQNameRuntime(nf.Name.Prefix!, nf.Name.LocalName, nsBindings);
+            return base.VisitNamedFunctionRef(nf);
+        }
+
         public override object? VisitStepExpression(PhoenixmlDb.XQuery.Ast.StepExpression se)
         {
             if (se.NodeTest is PhoenixmlDb.XQuery.Ast.NameTest nt)

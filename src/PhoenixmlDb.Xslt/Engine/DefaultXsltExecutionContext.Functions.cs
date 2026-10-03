@@ -1774,11 +1774,12 @@ internal sealed partial class DefaultXsltExecutionContext
         // Resolve namespace prefixes in the parsed expression using the determined bindings
         ResolveExpressionNamespacesRuntime(parsedExpr, nsBindings, xpathDefaultNs);
 
-        // XTDE3160 is about the TARGET EXPRESSION: it may not name current(), current-output-uri()
-        // or system-property() (XSLT 3.0 §20.4). A function item for one of them obtained outside
-        // and passed in with xsl:with-param is fine. The check used to fire at invocation, inside
-        // the functions themselves, so the passed-in item raised too (W3C system-property-101d..109f).
-        var unavailable = new EvaluateUnavailableFunctionFinder();
+        // XTDE3160 is about the TARGET EXPRESSION: its static context lacks the XSLT-defined
+        // functions and the private stylesheet functions (XSLT 3.0 §10.4.1), so naming one is a
+        // static error in it. A function item for one of them obtained outside and passed in with
+        // xsl:with-param is fine. The check used to fire at invocation, inside the functions
+        // themselves, so the passed-in item raised too (W3C system-property-101d..109f).
+        var unavailable = new EvaluateUnavailableFunctionFinder(_stylesheet.Functions);
         unavailable.Walk(parsedExpr);
         if (unavailable.Found is { } fn)
             throw new XsltException($"XTDE3160: The function {fn}() is not available within xsl:evaluate", instruction.Location);
@@ -2728,26 +2729,51 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
-    private sealed class EvaluateUnavailableFunctionFinder : XQueryExpressionWalker
+    private sealed class EvaluateUnavailableFunctionFinder(
+        IReadOnlyDictionary<(QName Name, int Arity), XsltFunction> stylesheetFunctions) : XQueryExpressionWalker
     {
         internal string? Found { get; private set; }
 
-        private void Check(QName name)
+        // The XSLT-defined functions in the fn namespace (XSLT 3.0 Appendix G.2) minus those that
+        // F&O 3.1 also defines (json-to-xml, xml-to-json, collation-key), which §10.4.1 keeps.
+        private static readonly HashSet<string> XsltOnlyFunctions = new(StringComparer.Ordinal)
+        {
+            "accumulator-after", "accumulator-before", "available-system-properties", "copy-of",
+            "current", "current-group", "current-grouping-key", "current-merge-group",
+            "current-merge-key", "current-output-uri", "document", "element-available",
+            "function-available", "key", "regex-group", "snapshot", "stream-available",
+            "system-property", "type-available", "unparsed-entity-public-id", "unparsed-entity-uri",
+        };
+
+        private void Check(QName name, int arity)
         {
             if ((name.Namespace == NamespaceId.None || name.Namespace == NamespaceId.Fn)
-                && name.LocalName is "current" or "current-output-uri" or "system-property")
+                && XsltOnlyFunctions.Contains(name.LocalName))
+            {
+                Found ??= name.LocalName;
+                return;
+            }
+            // "All user-defined functions present in the containing package provided their
+            // visibility is not hidden or private." A function declared without a visibility
+            // attribute is private to its package; xslTNG marks exactly the functions its
+            // evaluated expressions call as visibility="public". One taken from a used package is
+            // judged by the visibility it has here, after xsl:accept.
+            if (stylesheetFunctions.TryGetValue((name, arity), out var func)
+                && (func.PackageStylesheet == null
+                    ? func.VisibilityAttr is null or "private"
+                    : func.Visibility is Ast.Visibility.Private or Ast.Visibility.Hidden))
                 Found ??= name.LocalName;
         }
 
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
-            Check(expr.Name);
+            Check(expr.Name, expr.Arguments.Count);
             return base.VisitFunctionCallExpression(expr);
         }
 
         public override object? VisitNamedFunctionRef(NamedFunctionRef expr)
         {
-            Check(expr.Name);
+            Check(expr.Name, expr.Arity);
             return base.VisitNamedFunctionRef(expr);
         }
     }
