@@ -2879,7 +2879,11 @@ public sealed class XsltTransformEngine
                         sb.Append(' ', depth * 2);
                     }
 
-                    if (!isClosing && !isSelfClosing)
+                    // A void element (<meta>, <link>, <hr>, <br>) has no end tag in HTML output, so
+                    // it opens no level; counting it pushed everything after it one level deeper
+                    // for the rest of the document.
+                    if (!isClosing && !isSelfClosing
+                        && !DefaultXsltExecutionContext.HtmlVoidElements.Contains(elemName!))
                         depth++;
                 }
 

@@ -1293,7 +1293,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// wbr), per the XSLT/XQuery Serialization HTML/XHTML output method. Matching is
     /// case-insensitive.
     /// </summary>
-    private static readonly HashSet<string> HtmlVoidElements = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> HtmlVoidElements = new(StringComparer.OrdinalIgnoreCase)
     {
         "area", "base", "basefont", "br", "col", "embed", "frame", "hr", "img", "input",
         "isindex", "link", "meta", "param", "source", "track", "wbr"
