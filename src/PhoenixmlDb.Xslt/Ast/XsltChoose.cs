@@ -20,10 +20,21 @@ public sealed class XsltChoose : XsltInstruction
     {
         foreach (var when in When)
         {
-            if (await context.EvaluateBooleanAsync(when.Test).ConfigureAwait(false))
+            // A default-collation on the xsl:when governs its test and body (W3C choose-0107).
+            if (when.DefaultCollation != null)
+                context.PushCollation(when.DefaultCollation);
+            try
             {
-                await when.Body.ExecuteAsync(context).ConfigureAwait(false);
-                return;
+                if (await context.EvaluateBooleanAsync(when.Test).ConfigureAwait(false))
+                {
+                    await when.Body.ExecuteAsync(context).ConfigureAwait(false);
+                    return;
+                }
+            }
+            finally
+            {
+                if (when.DefaultCollation != null)
+                    context.PopCollation();
             }
         }
 

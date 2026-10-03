@@ -225,9 +225,20 @@ internal sealed partial class DefaultXsltExecutionContext
         // Skip when _preserveAtomicState > 0 (Phase 2 of on-non-empty when !wasPopulated):
         // non-conditional instructions producing empty text shouldn't break the chain
         // between the previous iteration's last atomic and on-empty's atomic output.
-        if (_preserveAtomicState == 0)
+        if (_preserveAtomicState == 0 && !RemovedByWherePopulated(value))
             _lastResultWasAtomic = false;
     }
+
+    /// <summary>
+    /// A zero-length text node directly in an xsl:where-populated is deemed empty and removed
+    /// from its result ($R[not(deemed-empty(.))], §8.4.1) BEFORE the containing element's content
+    /// is built, so the atomic values around it stay adjacent and space-separated (W3C coco-018:
+    /// 17, "", 92, "", 55 gives "17 92 55"). Inside an element nested in the where-populated,
+    /// ordinary content construction applies and the empty node still breaks the chain.
+    /// </summary>
+    private bool RemovedByWherePopulated(string value)
+        => value.Length == 0 && _wherePopulatedDepth > 0
+            && _serializingElementDepth == _wherePopulatedElementDepth;
 
 
     /// <summary>
@@ -290,7 +301,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // Text output (even zero-length) breaks adjacent atomic value chain.
         // Per XSLT 3.0 spec, text nodes in a sequence (even empty from xsl:text/xsl:value-of)
         // break adjacency between atomic values, preventing space insertion.
-        if (_preserveAtomicState == 0)
+        if (_preserveAtomicState == 0 && !RemovedByWherePopulated(value))
             _lastResultWasAtomic = false;
     }
 

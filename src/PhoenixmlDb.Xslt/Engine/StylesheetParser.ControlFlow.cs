@@ -409,7 +409,8 @@ public sealed partial class StylesheetParser
                 whens.Add(new XsltWhen
                 {
                     Test = test,
-                    Body = ParseSequenceConstructor(child)
+                    Body = ParseSequenceConstructor(child),
+                    DefaultCollation = ResolveDefaultCollation(child.Attribute("default-collation")?.Value),
                 });
             }
             else if (child.Name == XsltNs + "otherwise")

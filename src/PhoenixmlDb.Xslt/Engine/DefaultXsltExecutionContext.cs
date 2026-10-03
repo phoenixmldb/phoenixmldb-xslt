@@ -2024,6 +2024,28 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// the COMPILED stylesheet does, so an expected error code came out in the XSpec namespace
     /// while the actual one had none. Built once; both inputs are fixed per stylesheet.
     /// </remarks>
+    /// <summary>
+    /// The prefix bindings an expression's run-time QName resolution sees: the stylesheet-wide
+    /// <see cref="XPathNamespaceBindings"/>, overlaid with the expression element's own in-scope
+    /// declarations when it has any (<see cref="ExpressionNamespaces"/>). Merged once per
+    /// expression per transformation.
+    /// </summary>
+    private IReadOnlyDictionary<string, string> NamespaceBindingsFor(XQueryExpression expr)
+    {
+        if (!ExpressionNamespaces.TryGet(expr, out var own))
+            return XPathNamespaceBindings;
+        _mergedExpressionNamespaces ??= new Dictionary<XQueryExpression, IReadOnlyDictionary<string, string>>(ReferenceEqualityComparer.Instance);
+        if (_mergedExpressionNamespaces.TryGetValue(expr, out var merged))
+            return merged;
+        var bindings = new Dictionary<string, string>(XPathNamespaceBindings, StringComparer.Ordinal);
+        foreach (var (prefix, uri) in own)
+            bindings[prefix] = uri;
+        _mergedExpressionNamespaces[expr] = bindings;
+        return bindings;
+    }
+
+    private Dictionary<XQueryExpression, IReadOnlyDictionary<string, string>>? _mergedExpressionNamespaces;
+
     private IReadOnlyDictionary<string, string> XPathNamespaceBindings
     {
         get

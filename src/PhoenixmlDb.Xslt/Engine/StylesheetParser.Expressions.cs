@@ -1072,7 +1072,10 @@ public sealed partial class StylesheetParser
         // no-namespace nodes and quietly selected nothing (e.g. `some $e in nem:x satisfies …` was
         // always false). Found by the Schematron conformance harness against the state EMS schematrons.
         if (expr is not null)
+        {
             new StylesheetNamespaceResolver(context).Walk(expr);
+            ExpressionNamespaces.Record(expr, context);
+        }
     }
 
     /// <summary>Binds prefixed names in an XPath expression to the stylesheet element's in-scope namespaces.</summary>

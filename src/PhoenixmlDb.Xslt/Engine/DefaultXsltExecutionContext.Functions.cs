@@ -804,7 +804,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // When inside xsl:evaluate with namespace-context, use those bindings instead
         execContext.PrefixNamespaceBindings = _evaluateNamespaceBindings != null
             ? (IReadOnlyDictionary<string, string>)_evaluateNamespaceBindings
-            : XPathNamespaceBindings;
+            : NamespaceBindingsFor(expr);
         execContext.BackwardsCompatible = IsBackwardsCompatible;
         execContext.InsideXslEvaluate = _insideXslEvaluateDepth > 0;
         execContext.DefaultCollation = DefaultCollation;

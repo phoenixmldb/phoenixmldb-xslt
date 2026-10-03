@@ -941,6 +941,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // Resolve sort order directions, data types, lang, case-order, and collation upfront
         var descending = new bool[sorts.Count];
         var isNumeric = new bool[sorts.Count];
+        var isText = new bool[sorts.Count];
         var caseOrder = new string?[sorts.Count];
         var langs = new string?[sorts.Count];
         var collations = new string?[sorts.Count];
@@ -955,6 +956,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 var dtValue = await EvaluateAvtAsync(sorts[i].DataType!).ConfigureAwait(false);
                 isNumeric[i] = string.Equals(dtValue, "number", StringComparison.OrdinalIgnoreCase);
+                isText[i] = string.Equals(dtValue, "text", StringComparison.OrdinalIgnoreCase);
             }
             if (sorts[i].CaseOrder != null)
             {
@@ -1018,6 +1020,11 @@ internal sealed partial class DefaultXsltExecutionContext
                         else
                             throw Error($"XTTE1020: Sort key value is a sequence of {multiKey.Length} items; a single value is required");
                     }
+                    // data-type="text": the sort key is compared as a string, whatever its type
+                    // (XSLT 3.0 §13.1.2). A numeric key such as @height * @width sorts as text:
+                    // "12" before "8" (W3C sort-026).
+                    if (isText[i] && raw != null)
+                        raw = StringValueOf(raw is object?[] { Length: 1 } one ? one[0] : raw);
                     keys[i] = raw;
                 }
             }
