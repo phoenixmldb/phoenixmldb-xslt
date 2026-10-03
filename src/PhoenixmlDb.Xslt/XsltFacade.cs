@@ -368,7 +368,12 @@ public sealed class XsltTransformer
     /// <c>xsl:use-package/@package-version</c> range. Defaults to
     /// <see cref="PackageVersionResolution.Highest"/>.
     /// </param>
-    /// <returns>A completed task. The stylesheet is parsed synchronously.</returns>
+    /// <returns>
+    /// A task that completes when the stylesheet is loaded. HTTP-resolved imports are fetched
+    /// first. The parse, including static expressions such as use-when, then runs on a dedicated
+    /// large-stack thread (as transformations do), so the calling thread is not held while it runs.
+    /// On browser-wasm, which cannot start threads, the parse runs inline.
+    /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="stylesheetXml"/> is <c>null</c>.</exception>
     /// <exception cref="XsltException">The stylesheet contains syntax errors or invalid XSLT constructs.</exception>
     public async Task LoadStylesheetAsync(string stylesheetXml, Uri? baseUri = null,
@@ -398,8 +403,16 @@ public sealed class XsltTransformer
         var parser = packageCatalog != null
             ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules }
             : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules };
-        _stylesheet = parser.Parse(stylesheetXml, baseUri, staticParams);
-        ResolveSchemaImports(_stylesheet, baseUri);
+        // The parse, including static expressions (use-when, static variables) that may be slow,
+        // runs on the large-stack thread and does NOT hold the calling thread. After the HTTP
+        // import fetch above, the calling thread is whichever pool thread completed it, and parsing
+        // there held a pool thread for the whole parse whatever the host did.
+        _stylesheet = await LargeStack.Run(() =>
+        {
+            var parsed = parser.Parse(stylesheetXml, baseUri, staticParams);
+            ResolveSchemaImports(parsed, baseUri);
+            return Task.FromResult(parsed);
+        }).ConfigureAwait(false);
         // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
         // parameter is resolved at compile time for use-when / shadow attributes, but the
         // same `$debug` variable is also visible at runtime — and consumers expect both
@@ -906,6 +919,13 @@ public sealed class XsltTransformer
     /// After this method returns, any secondary outputs produced by
     /// <c>xsl:result-document</c> instructions are available in
     /// <see cref="SecondaryResultDocuments"/>.
+    /// </para>
+    /// <para>
+    /// The transformation runs on a dedicated thread with a 256 MB stack, so deep recursion does
+    /// not overflow the caller's stack. The calling thread is not held while it runs: the returned
+    /// task completes when the transformation does. After the transformation first awaits real
+    /// I/O (an HTTP document, for instance), the rest of it runs on the thread pool. On
+    /// browser-wasm, which cannot start threads, it runs inline on the caller's stack.
     /// </para>
     /// </remarks>
     public async Task<string> TransformAsync(string? inputXml, CancellationToken ct = default)
