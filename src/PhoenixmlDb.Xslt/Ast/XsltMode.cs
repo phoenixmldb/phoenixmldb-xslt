@@ -33,6 +33,14 @@ public sealed class XsltMode
     public bool WarningOnNoMatch { get; init; }
 
     /// <summary>
+    /// xsl:mode warning-on-multiple-match="yes": the processor reports a warning when a node
+    /// processed in this mode matches more than one template rule of the same import precedence
+    /// and priority (the conflict on-multiple-match="fail" makes an error). The spec leaves the
+    /// default implementation-defined; it is off, as for <see cref="WarningOnNoMatch"/>.
+    /// </summary>
+    public bool WarningOnMultipleMatch { get; init; }
+
+    /// <summary>
     /// Behavior when multiple templates match.
     /// </summary>
     public OnMultipleMatchBehavior OnMultipleMatch { get; init; } = OnMultipleMatchBehavior.UseLast;

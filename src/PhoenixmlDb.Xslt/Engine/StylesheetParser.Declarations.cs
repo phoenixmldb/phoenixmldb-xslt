@@ -1754,6 +1754,7 @@ public sealed partial class StylesheetParser
                 {
                     Name = mode.Name, Streamable = mode.Streamable,
                     OnNoMatch = mode.OnNoMatch, OnMultipleMatch = mode.OnMultipleMatch,
+                    WarningOnNoMatch = mode.WarningOnNoMatch, WarningOnMultipleMatch = mode.WarningOnMultipleMatch,
                     UseAllAccumulators = mode.UseAllAccumulators,
                     UseAccumulatorNames = mode.UseAccumulatorNames,
                     Visibility = vis,
@@ -2106,6 +2107,8 @@ public sealed partial class StylesheetParser
                                         Streamable = mode.Streamable,
                                         OnNoMatch = mode.OnNoMatch,
                                         OnMultipleMatch = mode.OnMultipleMatch,
+                                        WarningOnNoMatch = mode.WarningOnNoMatch,
+                                        WarningOnMultipleMatch = mode.WarningOnMultipleMatch,
                                         UseAllAccumulators = mode.UseAllAccumulators,
                                         UseAccumulatorNames = mode.UseAccumulatorNames,
                                         Visibility = visibility,
@@ -3057,8 +3060,8 @@ public sealed partial class StylesheetParser
 
         // Validate warning-on-multiple-match (XTSE0020 for invalid values like "Yes")
         var warningOnMultipleMatchAttr = element.Attribute("warning-on-multiple-match");
-        if (warningOnMultipleMatchAttr != null)
-            NormalizeYesNo(warningOnMultipleMatchAttr.Value.Trim(), "warning-on-multiple-match", "xsl:mode", element);
+        var warningOnMultipleMatch = warningOnMultipleMatchAttr != null
+            && NormalizeYesNo(warningOnMultipleMatchAttr.Value.Trim(), "warning-on-multiple-match", "xsl:mode", element);
 
         // Validate typed attribute (XTSE0020 for invalid values like "No")
         var typedAttr = element.Attribute("typed");
@@ -3081,6 +3084,7 @@ public sealed partial class StylesheetParser
             Streamable = streamableAttr != null
                 && NormalizeYesNo(streamableAttr.Value, "streamable", "xsl:mode", element),
             WarningOnNoMatch = warningOnNoMatch,
+            WarningOnMultipleMatch = warningOnMultipleMatch,
             OnNoMatch = onNoMatchAttr != null ? ParseOnNoMatchBehavior(onNoMatchAttr.Value, element) : null,
             OnMultipleMatch = onMultipleMatchAttr != null ? ParseOnMultipleMatchBehavior(onMultipleMatchAttr.Value, element) : OnMultipleMatchBehavior.UseLast,
             Visibility = ParseVisibility(visibilityAttr?.Value),
@@ -3133,6 +3137,8 @@ public sealed partial class StylesheetParser
             Streamable = States("streamable") ? current.Streamable : prior.Streamable,
             WarningOnNoMatch = States("warning-on-no-match")
                 ? current.WarningOnNoMatch : prior.WarningOnNoMatch,
+            WarningOnMultipleMatch = States("warning-on-multiple-match")
+                ? current.WarningOnMultipleMatch : prior.WarningOnMultipleMatch,
             OnNoMatch = States("on-no-match") ? current.OnNoMatch : prior.OnNoMatch,
             OnMultipleMatch = States("on-multiple-match")
                 ? current.OnMultipleMatch : prior.OnMultipleMatch,

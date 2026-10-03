@@ -346,45 +346,31 @@ internal sealed partial class DefaultXsltExecutionContext
                 using (var mc = AcquireMatchContext())
                     template = _templateIndex.FindMatchingTemplate(node, mode, mc.Value);
 
-            // XTDE0540: Check on-multiple-match="fail"
-            if (template != null)
+            // XTDE0540 under on-multiple-match="fail"; a warning under warning-on-multiple-match="yes".
+            if (template != null
+                && _stylesheet.Modes.TryGetValue(mode ?? new QName(NamespaceId.None, ""), out var modeDecl2)
+                && (modeDecl2.OnMultipleMatch == OnMultipleMatchBehavior.Fail
+                    || (modeDecl2.WarningOnMultipleMatch && _options.WarningListener != null))
+                && FindSameRankRival(node, mode, template) is { } rival)
             {
-                var modeKey = mode ?? new QName(NamespaceId.None, "");
-                if (_stylesheet.Modes.TryGetValue(modeKey, out var modeDecl2) &&
-                    modeDecl2.OnMultipleMatch == OnMultipleMatchBehavior.Fail)
-                {
-                    // Check if there's another matching template at the same priority.
-                    // Skip union siblings: matching two branches of a union pattern
-                    // doesn't count as multiple match (spec bug 30402).
-                    XsltTemplate? next;
-                    using (var mc = AcquireMatchContext())
-                        next = _templateIndex.FindMatchingTemplate(node, mode, mc.Value, template);
-                    while (next != null
-                        && template.UnionGroupId != null
-                        && next.UnionGroupId == template.UnionGroupId
-                        && TemplateIndex.SameConflictRank(next, template))
-                    {
-                        using var mc2 = AcquireMatchContext();
-                        next = _templateIndex.FindMatchingTemplate(node, mode, mc2.Value, next);
-                    }
-                    if (next != null && TemplateIndex.SameConflictRank(next, template))
-                    {
-                        // Name the node, the mode, and BOTH rules. "Multiple template rules
-                        // match the node" states only that a conflict exists — which the
-                        // author can already tell from the error code. Which node, and which
-                        // two rules, is the entire diagnosis.
-                        static string Describe(XsltTemplate t) =>
-                            (t.Name != null ? $"name='{t.Name.Value.LocalName}'"
-                                            : $"match=\"{DescribePattern(t.Match)}\"")
-                            + $" (priority {TemplateIndex.EffectivePriority(t).ToString(System.Globalization.CultureInfo.InvariantCulture)}"
-                            + $", precedence {TemplateIndex.EffectivePrecedence(t)})";
-                        throw Error(
-                            $"XTDE0540: Multiple template rules match {DescribeNodeForDiagnostics(node)}"
-                            + $" in mode {(modeKey.LocalName.Length > 0 ? "'" + modeKey.PrefixedName + "'" : "#unnamed")}"
-                            + $" with on-multiple-match='fail' — {Describe(template)} and {Describe(next)}"
-                            + " have the same priority");
-                    }
-                }
+                // Name the node, the mode, and BOTH rules. "Multiple template rules match the
+                // node" states only that a conflict exists, which the author can already tell
+                // from the error code. Which node, and which two rules, is the entire diagnosis.
+                static string Describe(XsltTemplate t) =>
+                    (t.Name != null ? $"name='{t.Name.Value.LocalName}'"
+                                    : $"match=\"{DescribePattern(t.Match)}\"")
+                    + $" (priority {TemplateIndex.EffectivePriority(t).ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+                    + $", precedence {TemplateIndex.EffectivePrecedence(t)})";
+                var modeName = mode is { } m && m.LocalName.Length > 0 ? "'" + m.PrefixedName + "'" : "#unnamed";
+                if (modeDecl2.OnMultipleMatch == OnMultipleMatchBehavior.Fail)
+                    throw Error(
+                        $"XTDE0540: Multiple template rules match {DescribeNodeForDiagnostics(node)}"
+                        + $" in mode {modeName}"
+                        + $" with on-multiple-match='fail' — {Describe(template)} and {Describe(rival)}"
+                        + " have the same priority");
+                _options.WarningListener!(
+                    $"Multiple template rules match {DescribeNodeForDiagnostics(node)} in mode {modeName}"
+                    + $" with the same priority: {Describe(template)} was used, not {Describe(rival)}");
             }
 
             if (template != null)
@@ -1880,6 +1866,27 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+
+    /// <summary>
+    /// Another template rule matching <paramref name="node"/> in <paramref name="mode"/> with the
+    /// same import precedence and priority as the chosen <paramref name="template"/>, or null.
+    /// Branches of one union pattern don't count as rivals (spec bug 30402).
+    /// </summary>
+    private XsltTemplate? FindSameRankRival(object node, QName? mode, XsltTemplate template)
+    {
+        XsltTemplate? next;
+        using (var mc = AcquireMatchContext())
+            next = _templateIndex.FindMatchingTemplate(node, mode, mc.Value, template);
+        while (next != null
+            && template.UnionGroupId != null
+            && next.UnionGroupId == template.UnionGroupId
+            && TemplateIndex.SameConflictRank(next, template))
+        {
+            using var mc2 = AcquireMatchContext();
+            next = _templateIndex.FindMatchingTemplate(node, mode, mc2.Value, next);
+        }
+        return next != null && TemplateIndex.SameConflictRank(next, template) ? next : null;
+    }
 
     /// <summary>
     /// xsl:mode warning-on-no-match="yes": report each node processed in this mode with no
