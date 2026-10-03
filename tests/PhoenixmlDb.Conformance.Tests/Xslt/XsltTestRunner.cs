@@ -1827,8 +1827,23 @@ public sealed class XsltTestRunner
 
         try
         {
+            // HTML-method output describes the same result tree as XML, but its serialization adds
+            // what assert-xml (a comparison of result trees) must not see: unclosed void elements,
+            // which the XML parser rejects, and the Content-Type <meta> that include-content-type
+            // inserts. Close the void elements (as the XPath assert path does), and drop that meta
+            // unless the expected tree has one (W3C accumulator-040: the transform copies an HTML
+            // page and the serializer inserted the meta, so the trees differed only by it).
+            var actualText = actualResult.Trim();
+            if (!IsWellFormed(WrapForParsing(actualText)) && HtmlAsXml(actualText) is { } closed)
+            {
+                actualText = closed;
+                if (!expectedXml.Contains("http-equiv", StringComparison.OrdinalIgnoreCase))
+                    actualText = System.Text.RegularExpressions.Regex.Replace(actualText,
+                        @"<meta\s+http-equiv=""Content-Type""[^>]*/>", "",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            }
             // Wrap fragments in a root element for comparison if needed
-            var actualParseable = WrapForParsing(actualResult.Trim());
+            var actualParseable = WrapForParsing(actualText);
             var expectedParseable = WrapForParsing(expectedXml.Trim());
 
             // Whitespace-only text is discarded at parse time unless PreserveWhitespace is asked
@@ -2237,6 +2252,12 @@ public sealed class XsltTestRunner
     /// HTML-method serialization as XML: each HTML void element closed, a DOCTYPE dropped. Null
     /// unless the text is HTML (an html root element). Only used when the XML parse failed.
     /// </summary>
+    private static bool IsWellFormed(string xml)
+    {
+        try { XDocument.Parse(xml); return true; }
+        catch (System.Xml.XmlException) { return false; }
+    }
+
     internal static string? HtmlAsXml(string text)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(text, @"^\s*(<!DOCTYPE[^>]*>\s*)?<html\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
