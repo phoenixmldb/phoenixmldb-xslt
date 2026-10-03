@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (95.5% W3C conformance — 10,347/10,839 cases, measured 2026-09-17)
+### XSLT 3.0 (98.6% W3C conformance — 10,684/10,839 cases, measured 2026-10-03)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,13 +24,21 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,347/10,839 cases (95.46%), 492 failing
+### W3C XSLT 3.0 — 10,684/10,839 cases (98.57%), 155 failing
 
-Measured 2026-09-17 against `w3c/xslt30-test` @ `fddf1cf`, in a **Release** build, as the
-**measured pass count from a confirming full run** — the per-set passes reported in
-`conformance-results/summary.txt`. Eleven chunks, **zero timeouts**.
+Measured 2026-10-03 against `w3c/xslt30-test` @ `fddf1cf` and `phoenixmldb-xquery` main (source
+mode), as the **measured pass count from a confirming full run**: the per-set passes in
+`conformance-results/summary.txt` (#274). Two full runs agreed on every set before the baseline was
+raised; the confirming run is the one committed. Eleven chunks, **zero timeouts**.
 
-> **The percentage fell and the engine improved.** It read 97.1% against a denominator of 10,672
+**Since 2026-09-17: 492 failing → 155**, on the same 10,839-case denominator, so the two figures are
+directly comparable. The rest of this section is the history behind that denominator.
+
+The same harness runs QT3 through the XSLT engine's XQuery: **30,009/31,024 (96.7%), 1,015 failing**.
+That's a different QT3 count from the XQuery repo's own figure, because each harness measures a
+different case set.
+
+> **History (2026-09-17): the percentage fell and the engine improved.** It read 97.1% against a denominator of 10,672
 > on 2026-09-15. The harness ran two sets the W3C catalog does not declare, skipped cases in one it
 > does, and never wired `fn/system-property-gen` at all. With the set list matched to the catalog
 > at 260 sets the denominator is **10,839**, and passes went **up** by 19. The drop is 166 cases
