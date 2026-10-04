@@ -915,7 +915,7 @@ internal sealed partial class DefaultXsltExecutionContext
             // Document-0 build instead: each element carries only its own copy-namespaces-filtered
             // in-scope set (no ancestor walk), and the reparse — which cannot undeclare prefixed
             // namespaces in XML 1.0 — is a known-wrong oracle, so skip the differential.
-            RouteDivergentCopyOfInto(inhTc, inhNodes!, copyNs);
+            RouteDivergentCopyOfInto(inhTc, inhNodes!, copyNs, inherit: false);
             routedCopyOfToTree = true;
             _suppressTcIncomplete = true;
             _untypedRtfFlipDivergent = true;
@@ -959,7 +959,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // known-wrong oracle for this shape. The node build is authoritative — deliver it
                 // and skip the differential. Re-clone into Document 0 so the namespace axis reads
                 // the copy's own complete in-scope set (no ancestor walk into the enclosing LRE).
-                RouteDivergentCopyOfInto(tc, tcCopyElems!.ConvertAll(e => (XdmNode)e), copyNs);
+                RouteDivergentCopyOfInto(tc, tcCopyElems!.ConvertAll(e => (XdmNode)e), copyNs, inherit: !_inheritNamespacesNo);
                 routedCopyOfToTree = true;
                 _suppressTcIncomplete = true;
                 _untypedRtfFlipDivergent = true;
@@ -973,7 +973,7 @@ internal sealed partial class DefaultXsltExecutionContext
             // element-only, so this shape never routed; route the full ordered sequence into the
             // flip constructor as the authoritative node build (§11.7.2 fixup as node data) and
             // skip the differential (reparse re-contaminates copied namespaces — copy-1220/1221).
-            RouteDivergentCopyOfInto(mixedTc, flipNodes!, copyNs);
+            RouteDivergentCopyOfInto(mixedTc, flipNodes!, copyNs, inherit: !_inheritNamespacesNo);
             routedCopyOfToTree = true;
             _suppressTcIncomplete = true;
             _untypedRtfFlipDivergent = true;
@@ -1074,7 +1074,8 @@ internal sealed partial class DefaultXsltExecutionContext
     /// namespace happened to be in scope in the transient serialization context). Returns the
     /// clone's NodeId. Temp-tree node-model migration (SP1: copy-of seam).
     /// </summary>
-    private NodeId CloneSubtreeDeep(XdmNode src, NodeId? parent, bool copyNamespaces, DocumentId? forceDocument = null)
+    private NodeId CloneSubtreeDeep(XdmNode src, NodeId? parent, bool copyNamespaces, DocumentId? forceDocument = null,
+        IReadOnlyDictionary<string, NamespaceId>? inherited = null)
     {
         switch (src)
         {
@@ -1114,6 +1115,28 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
                     decls.Add(nb);
                 }
+                // Namespace inheritance (XSLT 3.0 §11.9.1, inherit-namespaces="yes", the default):
+                // a copy placed in a new parent also has the parent's bindings for the prefixes it
+                // does not bind itself. The default namespace is never inherited by an unprefixed
+                // element: its own name decides it. A Document-0 clone carries its whole in-scope
+                // set with no ancestor walk, so this must be materialised here. Without it, a node
+                // copied into <root xmlns="urn:x"> reported no default binding (Saxon reports one).
+                // The bindings come from the element being constructed, for every node of the copied
+                // subtree alike; they do not cascade from a copied ancestor. Under
+                // copy-namespaces="no" a copied child keeps only what it needs, so its copied
+                // parent's own bindings must not reach it (Saxon: in copy-1221's shape the inner
+                // aa gets the constructing element's f and xs, not a= from the copied a).
+                if (inherited is { Count: > 0 })
+                {
+                    var own = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var nb in decls) own.Add(nb.Prefix ?? "");
+                    foreach (var (p, ns) in inherited)
+                    {
+                        if (own.Contains(p) || (p.Length == 0 && string.IsNullOrEmpty(e.Prefix)) || ns == NamespaceId.None)
+                            continue;
+                        decls.Add(new Xdm.NamespaceBinding(p, ns));
+                    }
+                }
                 var attrIds = new List<NodeId>();
                 foreach (var a in _nodeStore.GetAttributes(e))
                 {
@@ -1127,7 +1150,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 var childIds = new List<NodeId>();
                 foreach (var c in _nodeStore.GetChildren(e))
-                    childIds.Add(CloneSubtreeDeep(c, id, copyNamespaces, forceDocument));
+                    childIds.Add(CloneSubtreeDeep(c, id, copyNamespaces, forceDocument, inherited));
                 var clone = new XdmElement
                 {
                     StringValueResolver = _nodeStore.StringValueResolver,
