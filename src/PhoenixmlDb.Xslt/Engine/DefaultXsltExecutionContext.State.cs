@@ -668,7 +668,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Nesting depth, not calls: a wide traversal (one level per node, as a Schematron validator
     /// makes) never accumulates depth and so never yields.
     /// </remarks>
-    private ValueTask EnsureStackAsync()
+    private StackYield EnsureStackAsync()
     {
         if (t_syncWaitDepth > 0 || !LargeStack.CanYieldForStack)
             return default;
@@ -678,15 +678,22 @@ internal sealed partial class DefaultXsltExecutionContext
             && System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return default;
         _depthAtLastYield = _recursionDepth;
-        return YieldForStackAsync();
+        return YieldForStack();
     }
 
     private const int YieldEveryLevels = 8;
     private int _depthAtLastYield;
 
-#pragma warning disable CA2007 // Task.Yield's awaitable has no ConfigureAwait; resuming anywhere is the point
-    private static async ValueTask YieldForStackAsync() => await Task.Yield();
-#pragma warning restore CA2007
+    /// <summary>A yield that always leaves the current stack.</summary>
+    /// <remarks>
+    /// This was <c>async ValueTask YieldForStackAsync() => await Task.Yield()</c>. Its own
+    /// continuation, which had nothing left to do, was queued to the pool, and an idle pool thread
+    /// could finish it before the caller's await checked IsCompleted. The caller then saw a completed
+    /// task and continued on the SAME stack: measured under load, 22% of yields did nothing. Two
+    /// misses in a row let 20 levels pile up on a 512 KB stack, and the deep-recursion test failed
+    /// intermittently on Windows CI (4 runs on 2026-10-03/04).
+    /// </remarks>
+    internal static StackYield YieldForStack() => new(yield: true);
 
     /// <summary>
     /// The scope pushed by the call-template frame whose body is executing directly and can take a tail call,

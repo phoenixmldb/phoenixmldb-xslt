@@ -95,6 +95,18 @@ public sealed class LargeStackFallbackTests
         result.Should().Be("110433070572952242346432246767718285942590237357555606380008891875277701705731473925618404421867819924194229142447517901959200");
     }
 
+    // A yield must leave the stack whenever it is taken. The old yield was an async method around
+    // Task.Yield(); a pool thread could finish it before the caller's await looked, and the caller
+    // then ran on over the same stack (22% of yields under load). Waiting past that point makes the
+    // race certain: the old yield reads as completed, so its caller would never suspend.
+    [Fact]
+    public void A_stack_yield_is_still_pending_when_its_caller_awaits_it()
+    {
+        var awaiter = DefaultXsltExecutionContext.YieldForStack().GetAwaiter();
+        Thread.Sleep(200);
+        awaiter.IsCompleted.Should().BeFalse();
+    }
+
     // The caller is not held while a transformation runs on the large-stack thread. Joining that
     // thread held the caller (in a server, a pool thread) for the whole transformation, and a few
     // long transformations starved the host. Right after the call returns, the work must still be

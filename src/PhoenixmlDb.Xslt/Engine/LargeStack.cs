@@ -109,3 +109,37 @@ internal static class LargeStack
         return completion.Task;
     }
 }
+
+/// <summary>
+/// What a recursion level awaits before it starts: complete (run on) unless the stack needs
+/// unwinding, in which case it ALWAYS suspends and the level resumes from the scheduler on a fresh
+/// stack. The scheduling is Task.Yield's own; only the guarantee is added.
+/// </summary>
+#pragma warning disable CA1815 // an awaitable, never compared
+internal readonly struct StackYield
+{
+    private readonly bool _yield;
+
+    internal StackYield(bool yield) => _yield = yield;
+
+    // Resuming anywhere is the point, so there is no context to keep or drop.
+    public StackYield ConfigureAwait(bool continueOnCapturedContext) => this;
+
+    public Awaiter GetAwaiter() => new(_yield);
+
+    internal readonly struct Awaiter : System.Runtime.CompilerServices.ICriticalNotifyCompletion
+    {
+        private readonly bool _yield;
+
+        internal Awaiter(bool yield) => _yield = yield;
+
+        public bool IsCompleted => !_yield;
+
+        public void GetResult() { }
+
+        public void OnCompleted(Action continuation) => Task.Yield().GetAwaiter().OnCompleted(continuation);
+
+        public void UnsafeOnCompleted(Action continuation) => Task.Yield().GetAwaiter().UnsafeOnCompleted(continuation);
+    }
+}
+#pragma warning restore CA1815
