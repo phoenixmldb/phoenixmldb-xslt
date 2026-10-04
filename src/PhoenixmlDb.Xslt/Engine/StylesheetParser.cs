@@ -829,10 +829,14 @@ public sealed partial class StylesheetParser
                     ni--; // Back up since the for loop will increment
                     var textValue = sb.ToString();
 
-                    // In the preamble (before params/context-item), whitespace-only
-                    // text nodes are always stripped even with xml:space="preserve".
-                    // preserveSpace only applies once we're in the body section.
-                    if (hasNonWhitespace || (seenBody && preserveSpace))
+                    // §4.3: a whitespace-only text node whose next sibling is xsl:param or
+                    // xsl:context-item is stripped even under xml:space="preserve"; any other is
+                    // kept under preserve. Requiring body content first stripped the whitespace
+                    // after a lone xsl:context-item, which ends the preamble (context-item-019).
+                    var nextIsPreamble = ni + 1 < nodeList.Count
+                        && nodeList[ni + 1] is XElement nextEl && nextEl.Name.Namespace == XsltNs
+                        && nextEl.Name.LocalName is "param" or "context-item";
+                    if (hasNonWhitespace || (preserveSpace && !nextIsPreamble))
                     {
                         seenBody = true;
                         bodyInstructions.Add(CreateTextInstruction(textValue, expandText, element));
