@@ -771,6 +771,18 @@ public sealed class XsltTestRunner
         return uri is null ? null : $"Q{{{uri.NamespaceName}}}{code[(colon + 1)..]}";
     }
 
+    /// <summary>Prefixed namespace bindings in scope on <paramref name="e"/>, nearest wins.</summary>
+    private static Dictionary<string, string> PrefixedNamespacesInScope(XElement e)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var x = e; x != null; x = x.Parent)
+            foreach (var a in x.Attributes())
+                if (a.IsNamespaceDeclaration && a.Name.Namespace == XNamespace.Xmlns
+                    && a.Name.LocalName != "xml" && !map.ContainsKey(a.Name.LocalName))
+                    map[a.Name.LocalName] = a.Value;
+        return map;
+    }
+
     private List<XsltAssertion> ParseAssertions(XElement resultElem, XNamespace ns, string basePath)
     {
         var assertions = new List<XsltAssertion>();
@@ -788,7 +800,8 @@ public sealed class XsltTestRunner
                 // expected code as an ATTRIBUTE, not as element text, so Value is "" for both.
                 Code = child.Attribute("code")?.Value,
                 ExpandedCode = ExpandErrorCode(child),
-                Flags = child.Attribute("flags")?.Value
+                Flags = child.Attribute("flags")?.Value,
+                InScopeNamespaces = PrefixedNamespacesInScope(child),
             };
 
             // Handle file reference for expected output
@@ -1716,7 +1729,11 @@ public sealed class XsltTestRunner
                 AllowNamespaceAxis = true,
                 NormalizeLineEndings = false
             };
-            var ast = parser.Parse("declare variable $result external; " + assertion.Value);
+            var prolog = new System.Text.StringBuilder();
+            foreach (var (prefix, uri) in assertion.InScopeNamespaces)
+                prolog.Append("declare namespace ").Append(prefix).Append(" = \"")
+                    .Append(uri.Replace("\"", "\"\"", StringComparison.Ordinal)).Append("\"; ");
+            var ast = parser.Parse(prolog + "declare variable $result external; " + assertion.Value);
             var compiled = engine.Compile(ast);
             if (!compiled.Success) return false;
 
@@ -2673,6 +2690,13 @@ public sealed class XsltAssertion
     /// <summary><see cref="Code"/> as <c>Q{uri}local</c> when it is a prefixed QName the element binds; otherwise null.</summary>
     public string? ExpandedCode { get; init; }
     public string? ExpectedFile { get; set; }
+
+    /// <summary>
+    /// The prefixed namespace bindings in scope on the assertion element in the catalog, for its
+    /// XPath. A catalog may bind a prefix on an enclosing element (number-0403 binds fo on its
+    /// all-of), and the assertion /out/fo:block[1] uses it.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> InScopeNamespaces { get; init; } = new Dictionary<string, string>();
     public string Compare { get; set; } = "XML";
     public bool IgnorePrefixes { get; set; }
     public string? ExpectedEncoding { get; set; }
