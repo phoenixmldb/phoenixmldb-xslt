@@ -52,6 +52,14 @@ public sealed partial class StylesheetParser
                 throw new XsltException("XTSE0975: The value and from attributes of xsl:number are mutually exclusive", location);
         }
 
+        // XTSE0020: a lang that is not an AVT must be a language code (xs:language) or empty.
+        // A fixed invalid value is a static error, found before the instruction runs (W3C
+        // number-0825: lang="#####" inside a function that is reached with an empty select).
+        if (langAttr != null && !langAttr.Value.Contains('{', StringComparison.Ordinal)
+            && langAttr.Value.Trim() is { Length: > 0 } langValue
+            && !System.Text.RegularExpressions.Regex.IsMatch(langValue, "^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$"))
+            throw new XsltException($"XTSE0020: lang=\"{langValue}\" on xsl:number is not a valid language code", location);
+
         // Validate start-at: must be a list of space-separated integers (XTSE0020)
         if (startAtAttr != null && !startAtAttr.Value.Contains('{', StringComparison.Ordinal))
         {
