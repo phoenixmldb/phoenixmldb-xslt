@@ -321,7 +321,7 @@ public class TreeConstructorEmitterTests
     }
 
     [Fact]
-    public async Task CopyOf_MixedSequenceIntoLreWithDefaultNs_CopyNamespacesNo_NoParentAcquiredNamespace()
+    public async Task CopyOf_MixedSequenceIntoLreWithDefaultNs_CopyNamespacesNo_InheritsOnlyFromTheConstructingElement()
     {
         // SP-C targeted (W3C copy-1221). An untyped xsl:variable body wraps a MIXED
         // element+text copy-of (wrapper/child::node() = <a/>, "mid", <a/>) in an LRE that
@@ -358,8 +358,15 @@ public class TreeConstructorEmitterTests
             """;
         var result = await TransformAsync(xslt, "<r/>");
         // a[0] needs only its a:att prefix; aa[0] only its default (http://aa/); a[1] and aa[1]
-        // only the default (http://a/). None acquires http://out/ from the enclosing <doc>.
-        result.Should().Contain(">a=http://a/|=http://aa/|=http://a/|=http://a/</out>");
+        // only the default (http://a/). None acquires http://out/: each is unprefixed, so its
+        // own name decides its default. Each DOES inherit the prefixed bindings in scope on the
+        // constructing <doc> (f, xs; inherit-namespaces defaults to yes), and those alone: aa[0]
+        // does not get a= from its copied parent. This is Saxon-HE 12.10's answer; the test
+        // previously asserted that nothing at all was inherited.
+        result.Should().Contain(">a=http://a/,f=f,xs=http://www.w3.org/2001/XMLSchema"
+            + "|=http://aa/,f=f,xs=http://www.w3.org/2001/XMLSchema"
+            + "|=http://a/,f=f,xs=http://www.w3.org/2001/XMLSchema"
+            + "|=http://a/,f=f,xs=http://www.w3.org/2001/XMLSchema</out>");
         result.Should().NotContain("http://out/");
     }
 

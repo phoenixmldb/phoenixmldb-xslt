@@ -825,6 +825,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>
     /// Gets the in-scope default namespace URI (for prefix ""), or null if none is in scope.
     /// </summary>
+    /// <summary>
+    /// The namespace bindings in force in the output at this point, nearest scope first; a prefix
+    /// undeclared by a nearer scope (xmlns="") is not bound.
+    /// </summary>
+    private Dictionary<string, NamespaceId> OutputScopeBindings()
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var bound = new Dictionary<string, NamespaceId>(StringComparer.Ordinal);
+        foreach (var scope in _outputNsScopes)
+            foreach (var (prefix, uri) in scope)
+                if (seen.Add(prefix) && !string.IsNullOrEmpty(uri) && _nodeStore != null)
+                    bound[prefix] = _nodeStore.InternNamespace(uri);
+        return bound;
+    }
+
     private string? GetInScopeDefaultNamespace()
     {
         foreach (var scope in _outputNsScopes)
@@ -2759,15 +2774,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// append verbatim in order. The clone's copy-source base URI is stamped to mirror the reparse's
     /// recovered base sentinel exactly, as in the byte-parity routing.
     /// </summary>
-    private void RouteDivergentCopyOfInto(TreeConstructor tc, IReadOnlyList<XdmNode> nodes, bool copyNs)
+    private void RouteDivergentCopyOfInto(TreeConstructor tc, IReadOnlyList<XdmNode> nodes, bool copyNs, bool inherit)
     {
+        // The bindings in force at the insertion point, which the copies inherit unless the
+        // element they are copied into was built with inherit-namespaces="no". Read from the
+        // output namespace scopes, not the open constructor frame: an element's namespaces are
+        // applied to its frame only when it finishes (TcFinishElement), after this copy runs.
+        var inherited = inherit ? OutputScopeBindings() : null;
         foreach (var n in nodes)
         {
             switch (n)
             {
                 case XdmElement srcElem:
                 {
-                    var cloneId = CloneSubtreeDeep(srcElem, null, copyNs, new DocumentId(0));
+                    var cloneId = CloneSubtreeDeep(srcElem, null, copyNs, new DocumentId(0), inherited);
                     StampCopySourceBaseSentinel(srcElem, cloneId);
                     tc.AppendNode(cloneId);
                     break;
