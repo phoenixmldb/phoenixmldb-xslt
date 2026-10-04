@@ -95,6 +95,41 @@ public sealed class LargeStackFallbackTests
         result.Should().Be("110433070572952242346432246767718285942590237357555606380008891875277701705731473925618404421867819924194229142447517901959200");
     }
 
+    // Yielding exactly at the exhaustion threshold lost by a frame: the yield decision ran inline,
+    // the exhaustion check one call deeper, so a stack that ended between the two failed. Even a
+    // single call did (f:fib(1) at 144 and 148 KB on every run here; 512 KB on Windows CI,
+    // intermittently). Which stack sizes hit it depends on frame sizes, so test the property
+    // instead: where the decision first says "yield", a level's worth deeper must still pass.
+    [Fact]
+    public void The_yield_decision_leaves_room_for_the_exhaustion_check()
+    {
+        var roomLeft = false;
+        var thread = new Thread(() => roomLeft = DescendUntilTheDecisionYields(), 512 * 1024);
+        thread.Start();
+        thread.Join();
+        roomLeft.Should().BeTrue();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool DescendUntilTheDecisionYields()
+    {
+        Span<byte> frame = stackalloc byte[1024];
+        var result = DefaultXsltExecutionContext.HasYieldHeadroom()
+            ? DescendUntilTheDecisionYields()
+            : ExhaustionCheckPassesBelow(8 * 1024);
+        frame.Clear();   // keeps the frame's reservation live across the call
+        return result;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool ExhaustionCheckPassesBelow(int bytes)
+    {
+        Span<byte> level = stackalloc byte[bytes];
+        var passes = System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack();
+        level.Clear();
+        return passes;
+    }
+
     // A yield must leave the stack whenever it is taken. The old yield was an async method around
     // Task.Yield(); a pool thread could finish it before the caller's await looked, and the caller
     // then ran on over the same stack (22% of yields under load). Waiting past that point makes the
