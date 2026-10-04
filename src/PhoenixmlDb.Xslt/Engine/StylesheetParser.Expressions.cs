@@ -141,6 +141,21 @@ public sealed partial class StylesheetParser
         var namespaceDeclarations = new Dictionary<string, string>();
         var useAttributeSets = new List<QName>();
         var excludeResultPrefixes = new HashSet<string>();
+        // exclude-result-prefixes names NAMESPACES (XSLT 3.0 §11.1.3): each prefix is resolved to
+        // its URI on the element that carries the attribute, and a binding is excluded when its
+        // URI is. Kept as prefix names, an ancestor's exclude-result-prefixes="c" (meaning c.uri)
+        // also removed this element's own xmlns:c="e.uri" (W3C namespace-0911).
+        var excludedUris = new HashSet<string>(StringComparer.Ordinal);
+        static void AddInScopeUris(XElement e, HashSet<string> into)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            for (var x = e; x != null; x = x.Parent)
+                foreach (var ns in x.Attributes().Where(a => a.IsNamespaceDeclaration))
+                    if (seen.Add(ns.Name.LocalName == "xmlns" ? "" : ns.Name.LocalName)
+                        && ns.Value is { Length: > 0 } u
+                        && u is not ("http://www.w3.org/1999/XSL/Transform" or "http://www.w3.org/XML/1998/namespace"))
+                        into.Add(u);
+        }
         bool? inheritNamespaces = null;
         string? version = null;
         string? defaultCollation = null;
@@ -178,6 +193,7 @@ public sealed partial class StylesheetParser
                             if (p == "#all")
                             {
                                 excludeResultPrefixes.Add(p);
+                                AddInScopeUris(element, excludedUris);
                             }
                             else if (p == "#default")
                             {
@@ -185,7 +201,7 @@ public sealed partial class StylesheetParser
                                 if (string.IsNullOrEmpty(element.GetDefaultNamespace().NamespaceName))
                                     throw new XsltException("XTSE0809: The value '#default' is used in exclude-result-prefixes but the element has no default namespace",
                                         GetSourceLocation(element));
-                                excludeResultPrefixes.Add(p);
+                                excludedUris.Add(element.GetDefaultNamespace().NamespaceName);
                             }
                             else
                             {
@@ -194,7 +210,7 @@ public sealed partial class StylesheetParser
                                 if (ns == null)
                                     throw new XsltException($"XTSE0808: Namespace prefix '{p}' used in exclude-result-prefixes is not declared",
                                         GetSourceLocation(element));
-                                excludeResultPrefixes.Add(p);
+                                excludedUris.Add(ns.NamespaceName);
                             }
                         }
                         break;
@@ -215,8 +231,10 @@ public sealed partial class StylesheetParser
                                     or "http://www.w3.org/XML/1998/namespace")
                                     throw new XsltException($"XTSE0800: The namespace '{extNs.NamespaceName}' is a reserved namespace and must not be used as an extension element namespace",
                                         GetSourceLocation(element));
+                                excludedUris.Add(extNs.NamespaceName);
                             }
-                            excludeResultPrefixes.Add(p);
+                            else if (element.GetDefaultNamespace().NamespaceName is { Length: > 0 } extDefault)
+                                excludedUris.Add(extDefault);
                         }
                         break;
                     case "version":
@@ -300,21 +318,14 @@ public sealed partial class StylesheetParser
                 foreach (var p in erpAttr.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
                 {
                     if (p == "#all")
+                        AddInScopeUris(ancestor, excludedUris);
+                    else if (p == "#default")
                     {
-                        foreach (var ns in ancestor.Attributes().Where(a => a.IsNamespaceDeclaration))
-                        {
-                            var np = ns.Name.LocalName == "xmlns" ? "" : ns.Name.LocalName;
-                            var nu = ns.Value;
-                            if (nu == "http://www.w3.org/1999/XSL/Transform"
-                                || nu == "http://www.w3.org/XML/1998/namespace")
-                                continue;
-                            excludeResultPrefixes.Add(string.IsNullOrEmpty(np) ? "#default" : np);
-                        }
+                        if (ancestor.GetDefaultNamespace().NamespaceName is { Length: > 0 } du)
+                            excludedUris.Add(du);
                     }
-                    else
-                    {
-                        excludeResultPrefixes.Add(p);
-                    }
+                    else if (ancestor.GetNamespaceOfPrefix(p) is { } pns)
+                        excludedUris.Add(pns.NamespaceName);
                 }
             }
 
@@ -328,9 +339,20 @@ public sealed partial class StylesheetParser
             if (eepAttr != null)
             {
                 foreach (var p in eepAttr.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                    excludeResultPrefixes.Add(p);
+                {
+                    var eu = p == "#default" ? ancestor.GetDefaultNamespace().NamespaceName
+                        : ancestor.GetNamespaceOfPrefix(p)?.NamespaceName;
+                    if (!string.IsNullOrEmpty(eu))
+                        excludedUris.Add(eu);
+                }
             }
         }
+
+        // The runtime matches bindings by prefix, so name every binding of this element whose
+        // URI is excluded (the default namespace as #default).
+        foreach (var (nsPrefix, nsUri) in namespaceDeclarations)
+            if (excludedUris.Contains(nsUri))
+                excludeResultPrefixes.Add(nsPrefix.Length == 0 ? "#default" : nsPrefix);
 
         // Resolve xml:base on LRE for static-base-uri() of descendant expressions
         var xmlBase = element.Attribute(XNamespace.Xml + "base");

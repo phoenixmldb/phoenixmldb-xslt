@@ -1339,9 +1339,13 @@ internal sealed partial class DefaultXsltExecutionContext
             // Check exclude-result-prefixes using the ORIGINAL prefix (from stylesheet)
             var isInUse = usedPrefixes.Contains(effectivePrefix) || isAliasResultNs;
             if (!isInUse && (
+                // The LRE's set already carries the stylesheet module's exclude-result-prefixes,
+                // resolved to URIs where they were declared (StylesheetParser). Matching the
+                // module's raw prefix list here as well excluded a descendant's own binding of a
+                // reused prefix to a different URI.
                 instruction.ExcludeResultPrefixes.Contains("#all") ||
-                (!string.IsNullOrEmpty(prefix) && (_stylesheet.ExcludeResultPrefixes.Contains(prefix) || instruction.ExcludeResultPrefixes.Contains(prefix))) ||
-                (string.IsNullOrEmpty(prefix) && (_stylesheet.ExcludeResultPrefixes.Contains("#default") || instruction.ExcludeResultPrefixes.Contains("#default"))) ||
+                (!string.IsNullOrEmpty(prefix) && instruction.ExcludeResultPrefixes.Contains(prefix)) ||
+                (string.IsNullOrEmpty(prefix) && instruction.ExcludeResultPrefixes.Contains("#default")) ||
                 // StylesheetParser.Declarations stores a stylesheet-level extension-element-prefixes
                 // entry as the namespace URI ("#default" for the default namespace), so match on the
                 // URI. Matching the prefix against that set never succeeded, and the extension
@@ -1526,8 +1530,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     // Check if the prefix was in exclude-result-prefixes
                     var prefixWasExcluded = instruction.ExcludeResultPrefixes.Contains(elemPrefix)
-                        || instruction.ExcludeResultPrefixes.Contains("#all")
-                        || _stylesheet.ExcludeResultPrefixes.Contains(elemPrefix);
+                        || instruction.ExcludeResultPrefixes.Contains("#all");
                     if (!prefixWasExcluded)
                         throw Error($"XTDE0430: Namespace node with prefix '{elemPrefix}' and URI '{xslUri}' conflicts with the element's own namespace binding '{elemPrefix}' → '{elemNsUri}'");
 
