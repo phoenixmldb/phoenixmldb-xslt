@@ -447,7 +447,9 @@ internal sealed partial class DefaultXsltExecutionContext
                             // inside the default body preserves typed items (nodes, maps, …)
                             // instead of being serialized to text and re-wrapped as untyped
                             // atomic. Same shape as the with-param fix for #19.
-                            var value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
+                            var value = param.As != null
+                                ? await EvaluateTypedParamDefaultAsync(param).ConfigureAwait(false)
+                                : await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
                             if (param.As != null)
                             {
                                 value = CoerceToType(value, param.As);
@@ -1398,7 +1400,9 @@ internal sealed partial class DefaultXsltExecutionContext
                     else if (param.Content != null)
                     {
                         // Accumulator-isolating evaluation — see comment at the helper definition.
-                        var value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
+                        var value = param.As != null
+                            ? await EvaluateTypedParamDefaultAsync(param).ConfigureAwait(false)
+                            : await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
                         if (param.As != null)
                         {
                             value = CoerceToType(value, param.As);

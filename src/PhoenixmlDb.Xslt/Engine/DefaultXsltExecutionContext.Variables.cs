@@ -305,6 +305,34 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     public override async ValueTask BindVariableAsync(XsltVariableInstruction instruction)
+        => SetVariable(instruction.Name, await EvaluateVariableInstructionAsync(instruction).ConfigureAwait(false));
+
+    /// <summary>
+    /// A template parameter's default content, evaluated as a variable with the same as= type:
+    /// as="element()" over &lt;e/&gt; is that element, as="document-node()?" over whitespace is
+    /// the empty sequence. Evaluated as an untyped body, the default was always wrapped in a
+    /// document node, so $p instance of element() was false (W3C as-1212). A type error keeps
+    /// the parameter's code, XTTE0600, rather than the variable's XTTE0570.
+    /// </summary>
+    internal async ValueTask<object?> EvaluateTypedParamDefaultAsync(XsltParam param)
+    {
+        try
+        {
+            return await EvaluateVariableInstructionAsync(new XsltVariableInstruction
+            {
+                Name = param.Name,
+                As = param.As,
+                Content = param.Content,
+                BaseUri = param.BaseUri,
+            }).ConfigureAwait(false);
+        }
+        catch (XsltException ex) when (ex.ErrorCode == "XTTE0570")
+        {
+            throw Error($"XTTE0600: Parameter ${param.Name.LocalName} default value does not match its declared type: {ex.Message}");
+        }
+    }
+
+    private async ValueTask<object?> EvaluateVariableInstructionAsync(XsltVariableInstruction instruction)
     {
 
         // Try to evaluate the variable. If it fails with "not defined" error (potential
@@ -1386,7 +1414,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
     doneValidation:
-        SetVariable(instruction.Name, value);
+        return value;
     }
 
 

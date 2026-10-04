@@ -2719,17 +2719,21 @@ public sealed partial class StylesheetParser
     /// <summary>
     /// Parses content body for variables/params: handles both child elements and text-only content.
     /// </summary>
+    /// <summary>
+    /// The content of an xsl:variable or xsl:param, or null when it has none.
+    /// </summary>
+    /// <remarks>
+    /// Text-only content used to bypass ParseSequenceConstructor and become one literal string.
+    /// So it was neither whitespace-stripped (§4.3: <c>&lt;xsl:variable as="document-node()?"&gt;
+    /// &lt;/xsl:variable&gt;</c> held a text node, not the empty sequence, W3C as-0129) nor
+    /// expanded under expand-text (<c>&lt;xsl:variable&gt;{1+1}&lt;/xsl:variable&gt;</c> was the
+    /// string "{1+1}", where Saxon gives "2"). Content that strips to nothing is no content.
+    /// </remarks>
     private XsltSequenceConstructor? ParseContentBody(XElement element, XAttribute? selectAttr)
     {
-        if (selectAttr != null) return null;
-        if (element.HasElements) return ParseSequenceConstructor(element);
-        if (!element.IsEmpty)
-        {
-            var textValue = element.Value;
-            if (!string.IsNullOrEmpty(textValue))
-                return new XsltSequenceConstructor { Instructions = [new XsltLiteralText { Value = textValue }] };
-        }
-        return null;
+        if (selectAttr != null || !element.Nodes().Any()) return null;
+        var body = ParseSequenceConstructor(element);
+        return element.HasElements || body.Instructions.Count > 0 ? body : null;
     }
 
 
