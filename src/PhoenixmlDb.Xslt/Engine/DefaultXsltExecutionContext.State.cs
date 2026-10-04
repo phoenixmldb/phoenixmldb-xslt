@@ -674,12 +674,37 @@ internal sealed partial class DefaultXsltExecutionContext
             return default;
         if (_recursionDepth < _depthAtLastYield)
             _depthAtLastYield = _recursionDepth;   // unwound below the last yield: count from here
-        if (_recursionDepth - _depthAtLastYield < YieldEveryLevels
-            && System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        if (_recursionDepth - _depthAtLastYield < YieldEveryLevels && HasYieldHeadroom())
             return default;
         _depthAtLastYield = _recursionDepth;
         return YieldForStack();
     }
+
+    /// <summary>
+    /// Whether the stack has <see cref="YieldHeadroomBytes"/> to spare beyond the point where
+    /// CheckResourceLimits reports exhaustion. Yielding exactly AT that point lost by a frame:
+    /// this decision ran inline in the caller, the exhaustion check one call deeper, so a stack
+    /// that ended between the two passed here and failed there. It did so on every run at one
+    /// stack size (144 KB here) and intermittently on Windows CI, where frame sizes vary run to run.
+    /// The probe reserves the headroom below this frame, then asks the runtime's own question.
+    /// </summary>
+    internal static bool HasYieldHeadroom()
+        => System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack()
+            && HasStackBeyond();
+
+    // Separate and never inlined, so the reservation is really below the caller's frame. It runs
+    // only once the runtime's own threshold holds (CoreCLR: 64 KB, 128 KB on 64-bit), and the
+    // reservation is kept well under that so it cannot itself overflow. Mono (browser-wasm) is
+    // assumed to keep at least as much; that path has not been measured.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool HasStackBeyond()
+    {
+        Span<byte> reserve = stackalloc byte[YieldHeadroomBytes];
+        reserve[^1] = 1;
+        return System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack() && reserve[^1] == 1;
+    }
+
+    private const int YieldHeadroomBytes = 16 * 1024;
 
     private const int YieldEveryLevels = 8;
     private int _depthAtLastYield;
@@ -689,9 +714,9 @@ internal sealed partial class DefaultXsltExecutionContext
     /// This was <c>async ValueTask YieldForStackAsync() => await Task.Yield()</c>. Its own
     /// continuation, which had nothing left to do, was queued to the pool, and an idle pool thread
     /// could finish it before the caller's await checked IsCompleted. The caller then saw a completed
-    /// task and continued on the SAME stack: measured under load, 22% of yields did nothing. Two
-    /// misses in a row let 20 levels pile up on a 512 KB stack, and the deep-recursion test failed
-    /// intermittently on Windows CI (4 runs on 2026-10-03/04).
+    /// task and continued on the SAME stack: measured under load, 22% of yields did nothing. (The
+    /// intermittent Windows CI failure this was first blamed for had another cause; see
+    /// <see cref="HasYieldHeadroom"/>.)
     /// </remarks>
     internal static StackYield YieldForStack() => new(yield: true);
 
