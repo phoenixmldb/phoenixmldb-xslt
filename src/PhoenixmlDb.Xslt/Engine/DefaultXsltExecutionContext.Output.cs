@@ -306,6 +306,22 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// True when <paramref name="elem"/> has a non-empty default namespace in scope in its own
+    /// tree: the nearest declaration of the empty prefix on it or an ancestor binds a URI.
+    /// </summary>
+    private bool HasInScopeDefaultNamespace(XdmElement elem)
+    {
+        if (_nodeStore == null) return false;
+        for (XdmNode? n = elem; n is XdmElement e; n = e.Parent is { } pid && pid != NodeId.None ? _nodeStore.GetNode(pid) : null)
+        {
+            foreach (var nsDecl in e.NamespaceDeclarations)
+                if (string.IsNullOrEmpty(nsDecl.Prefix))
+                    return !string.IsNullOrEmpty(_nodeStore.GetNamespaceUri(nsDecl.Namespace));
+        }
+        return false;
+    }
+
     private void SerializeNode(object node, bool copyNamespaces = true, bool faithfulNamespaces = false)
     {
         // SP-B slice 4: node-to-string serialization (xsl:copy-of, sequence-of-nodes, etc.)
@@ -411,6 +427,15 @@ internal sealed partial class DefaultXsltExecutionContext
                             }
                         }
                     }
+
+                    // The parent was built with inherit-namespaces="no": a node added to it keeps
+                    // only its own namespaces, so one with no default namespace in scope must say
+                    // so, prefixed or not. Without the xmlns="" the reparsed child inherited the
+                    // parent's default: XSpec builds its combined document this way, and every
+                    // x:call / x:param in it reported a default binding to the XSpec namespace,
+                    // compiled into a stray <xsl:namespace name=""> (Saxon reports none).
+                    if (!needsUndeclaration && _forceDefaultNsUndeclaration && !HasInScopeDefaultNamespace(elem))
+                        needsUndeclaration = true;
 
                     if (needsUndeclaration)
                     {
