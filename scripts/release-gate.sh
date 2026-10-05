@@ -238,11 +238,16 @@ if command -v node >/dev/null 2>&1; then
   printf '%s\twasm\t-\n' "$WASM_ID" >> "$CASES"
   printf '%s\twasm\t-\n' "$WASM_DEEP_ID" >> "$CASES"
   wasm_arm base "-p:XsltVersion=$BASE"
-  # The baseline is a published release that is known to run. If its probe does not, the gate
-  # itself is broken, and continuing would file the case under NONDET, which does not block:
-  # the first version of this step reported GATE PASSED with neither probe built.
-  if [ "$(cat "$OUT/runs/base/wasm__transform/rc")" != 0 ]; then
-    echo "release gate: the wasm probe failed on the BASELINE $BASE; fix the gate before trusting it:" >&2
+  # A probe that did not BUILD or did not RUN means the gate itself is broken, and continuing would
+  # file the case under NONDET, which does not block: the first version of this step reported GATE
+  # PASSED with neither probe built. But a baseline that runs and raises an ENGINE error is a valid
+  # reading, not a broken gate: 2.5.1 itself fails this probe (#237), and that baseline must yield
+  # IMPROVED for a fixed candidate, not stop the gate. The probe exits 2 only from its own catch,
+  # with a "WASM <exception>" line; anything else (3 = build failed, a Node crash or timeout) is the
+  # gate's fault.
+  wasm_rc=$(cat "$OUT/runs/base/wasm__transform/rc")
+  if ! { [ "$wasm_rc" = 0 ] || { [ "$wasm_rc" = 2 ] && grep -q '^WASM ' "$OUT/runs/base/wasm__transform/err"; }; }; then
+    echo "release gate: the wasm probe did not run on the BASELINE $BASE (rc=$wasm_rc); fix the gate before trusting it:" >&2
     cat "$OUT/runs/base/wasm__transform/err" >&2; exit 2
   fi
   mkdir -p "$OUT/runs/base2/wasm__transform"   # rerun the base build for the NONDET check
@@ -339,8 +344,11 @@ if [ -d "$WB" ] && command -v node >/dev/null 2>&1; then
   # As with the wasm probe: the baseline is published and known to run, so a probe that will not
   # build or run there means the gate is broken, and that must not pass as NONDET.
   wb_probe_arm base "-p:XsltVersion=$BASE" || { echo "release gate: the workbench probe failed to build on the BASELINE $BASE" >&2; tail -20 "$OUT/wbprobe/base/build.log" >&2; exit 2; }
-  if ! grep -q '"rc":0' "$OUT/wbprobe/base/results.jsonl"; then
-    echo "release gate: the workbench probe ran no example on the BASELINE $BASE; fix the gate before trusting it" >&2
+  # Same distinction as the wasm probe: the probe writes one JSON line per example it ran, whatever
+  # the example's outcome. No lines at all means the probe itself crashed or never started; every
+  # example failing with an engine error (2.5.1 on browser-wasm, #237) is a valid baseline.
+  if ! grep -q '"id":' "$OUT/wbprobe/base/results.jsonl" 2>/dev/null; then
+    echo "release gate: the workbench probe produced no results on the BASELINE $BASE; fix the gate before trusting it" >&2
     tail -5 "$OUT/wbprobe/base/node.err" >&2; exit 2
   fi
   wb_probe_run base2 "$OUT/wbprobe/base"
