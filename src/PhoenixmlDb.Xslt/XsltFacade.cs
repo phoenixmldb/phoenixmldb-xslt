@@ -107,6 +107,14 @@ public sealed class XsltTransformer
     private Uri? _sourceDocumentUri;
     private Uri? _baseOutputUri;
     private bool _expandXInclude;
+
+    /// <summary>
+    /// When <c>true</c>, the string and node transform overloads evaluate against an in-memory tree
+    /// even when the stylesheet's initial mode is streamable, instead of taking the streaming
+    /// pass. Off by default. The overloads that take a <see cref="Stream"/> or
+    /// <see cref="System.Xml.XmlReader"/> for a streamable mode still stream.
+    /// </summary>
+    public bool DisableStreaming { get; set; }
     private bool _allowRemoteXInclude;
     private PhoenixmlDb.Core.Xml.IXmlResourceResolver? _xIncludeResolver;
     private string? _sourceSelect;
@@ -1310,6 +1318,7 @@ public sealed class XsltTransformer
             SourceDocumentUri = _sourceDocumentUri,
             BaseOutputUri = _baseOutputUri,
             ExpandXInclude = _expandXInclude,
+            DisableStreaming = DisableStreaming,
             AllowRemoteXInclude = _allowRemoteXInclude,
             XIncludeResolver = _xIncludeResolver,
             HasSourceDocument = hasSource,
