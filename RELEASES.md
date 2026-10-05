@@ -1,5 +1,89 @@
 # Release History
 
+## Unreleased (2.6.0)
+
+Takes **PhoenixmlDb.XQuery 2.6.0**. Streaming correctness, browser WebAssembly support, a faster
+apply-templates path, and the tail of the W3C conformance backlog.
+
+### Changed behaviour to check on upgrade
+
+- **Streaming no longer loses or mis-answers data.** Three defects in streamable modes, all
+  reported by Martin Honnen, produced wrong output with no error:
+  - A template rule reading its matched element's children as a value lost them:
+    `<a>{foo}</a>` came out `<a/>`, and `<xsl:copy><xsl:value-of select="foo"/></xsl:copy>` produced
+    malformed output (#295).
+  - A rule reading OUTSIDE its matched element answered wrongly: `count(preceding-sibling::*)`
+    was `0`, `last()` was `1` (#298). Such a rule is not streamable. The stylesheet is now
+    evaluated against an in-memory tree instead, which gives the right answer at the tree's
+    memory cost. The spec's `XTSE3430` for these stylesheets is not implemented yet.
+  - A subtree the streaming pass buffered lost its whitespace-only text nodes, so `snapshot()`
+    and `copy-of(.)` dropped indentation the unstreamed stylesheet kept (#301).
+  A stylesheet that depended on any of these outputs changes. Streamed and unstreamed
+  evaluation now agree on all three.
+- **`fn:format-number` rounds half to even** (`format-number(2.5, '0')` is `2`), and **a non-node
+  on the left of `/` is `XPTY0019`**, not `XPTY0020`. Both come from PhoenixmlDb.XQuery 2.6.0.
+- **`exclude-result-prefixes` excludes namespace URIs, not prefix names** (XSLT 3.0 §11.1.3), and
+  copies in a temporary tree inherit the namespaces of the element they are copied into. XSpec's
+  compiled stylesheets no longer carry a stray `xsl:namespace` for the default namespace.
+- **`xsl:mode` declarations combine across modules as §6.6.1 says**: conflicting attributes at
+  the same import precedence are `XTSE0545`.
+- **`key()` compares with `eq`**: an untyped key value never equals a number.
+
+### Added
+
+- **`XsltTransformer.DisableStreaming`** evaluates against a tree even when the initial mode is
+  streamable. The CLI's `--no-stream` sets it; that flag had no effect before.
+- **`AllowedOutputMethods`** restricts which serialization methods a transformation may deliver,
+  and **`OutputDeclarations`** lists the stylesheet's `xsl:output` declarations.
+- **`XsltTransformer.XQueryModules`**: modules for `fn:load-xquery-module` without location hints.
+- **`xsl:mode warning-on-multiple-match="yes"`** reports equal-rank template conflicts.
+
+### Browser WebAssembly
+
+- A transformation runs inline where no thread can be started; 2.5.1 threw
+  `PlatformNotSupportedException` for every transform in Blazor WebAssembly (#237).
+- Deep recursion yields to unwind the stack instead of failing, at a fixed nesting interval and
+  with headroom before the stack check.
+- `XsltTransformer` no longer holds the calling thread during a transform or a stylesheet load.
+
+### Performance
+
+Applying a compiled Schematron validator is 2.6 to 3 times faster than 2.5.1, with identical
+SVRL: `xsl:apply-templates` allocates far less per call, XPath plans evaluate synchronously where
+the operator tree allows, and the built-in text-only-copy rule recurses directly.
+
+### Fixed
+
+- **Namespaces.** `inherit-namespaces="no"` keeps the parent's default namespace off prefixed
+  children; `xsl:copy-of` keeps a parentless namespace node a namespace node; `xsl:key
+  use="@xml:id"` finds `xml:id` attributes (DocBook xslTNG links).
+- **Variables and params.** Typed template-param defaults, whitespace stripping and `expand-text`
+  in variable bodies; `xml:space="preserve"` keeps whitespace after a template's params.
+- **`xsl:evaluate`** refuses private stylesheet functions and XSLT-only functions (`XTDE3160`); a
+  policy that disables it is "dynamically disabled" (§27.6).
+- **Streaming.** `xsl:value-of` in a streamed `xsl:source-document` gives the unstreamed result;
+  streamed children dispatched by `apply-templates` have their parent; `accumulator-after()` before
+  a consuming instruction is `XTSE3430`.
+- **Serialization.** HTML indentation no longer deepens after every void element; `indent="yes"`
+  writes LF on every operating system; a typed template's text result keeps its characters.
+- **Error codes.** An unresolvable `xsl:use-package` is `XTSE3000`; a declaration homonymous with
+  an `xsl:override` child is `XTSE3055`; `xsl:number` with a fixed invalid `lang` is `XTSE0020`;
+  `document()` with a fragment that is not a shorthand pointer is `XTDE1160`.
+- `json-to-xml` replaces or escapes characters XML cannot hold; an empty declared default
+  collection is the empty sequence; a `regex-group` function item returns `""`.
+
+### Conformance
+
+W3C XSLT 3.0: **216 failing at 2.5.1 → 131 at 2.6.0** (98.8% of 10,839). The harness changed too,
+in ways that affect the count: it now compares HTML-method output as the result tree it
+serializes, parses a multi-rooted result document as a fragment, binds the catalog's namespace
+prefixes for XPath assertions, treats an environment `ref` as a reference, and declares the
+processor as XSD 1.1.
+
+The real-world gate against 2.5.1 (XSpec, DocBook xslTNG, Martin Honnen's reports and workbench,
+120 cases) shows no regressions: 21 cases 2.5.1 failed now pass, and 19 outputs differ, each
+checked as an improvement.
+
 ## 2.5.1 — 2026-10-01
 
 Takes **PhoenixmlDb.XQuery 2.5.1** and **PhoenixmlDb.Core 2.0.0**. There is no Xslt 2.5.0: the
