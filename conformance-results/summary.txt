@@ -1,17 +1,20 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
+xslt      @ b4e5a0d (dirty: scripts/; src/ clean)
+xquery    @ 068e4b3 (source)
+core      @ 8093668 (source)
 
-attr       7s  fixture Successful (18 tests) | 1100/1117 cases 98.5%, 17 failed
-decl       5s  fixture Successful (20 tests) | 1081/1122 cases 96.3%, 41 failed
-type       4s  fixture Successful (9 tests) | 758/766 cases 99.0%, 8 failed
+attr       7s  fixture Successful (18 tests) | 1107/1117 cases 99.1%, 10 failed
+decl       5s  fixture Successful (20 tests) | 1084/1122 cases 96.6%, 38 failed
+type       4s  fixture Successful (9 tests) | 759/766 cases 99.1%, 7 failed
 sandp      1s  fixture Successful (25 tests)
-fn        13s  fixture Successful (36 tests) | 1277/1297 cases 98.5%, 20 failed
+fn        13s  fixture Successful (36 tests) | 1282/1297 cases 98.8%, 15 failed
 strm1     26s  fixture Successful (36 tests) | 716/724 cases 98.9%, 8 failed
-strm2     23s  fixture Successful (26 tests) | 744/756 cases 98.4%, 12 failed
-strm3     23s  fixture Successful (26 tests) | 886/894 cases 99.1%, 8 failed
+strm2     24s  fixture Successful (26 tests) | 746/756 cases 98.7%, 10 failed
+strm3     22s  fixture Successful (26 tests) | 886/894 cases 99.1%, 8 failed
 expr       3s  fixture Successful (14 tests) | 643/648 cases 99.2%, 5 failed
-misc      13s  fixture Successful (22 tests) | 1909/1921 cases 99.4%, 12 failed
-insn       8s  fixture Successful (27 tests) | 1570/1594 cases 98.5%, 24 failed
-xqts      67s  fixture Successful (438 tests) | 30009/31024 cases 96.7%, 1015 failed
+misc      15s  fixture Successful (22 tests) | 1909/1921 cases 99.4%, 12 failed
+insn       9s  fixture Successful (27 tests) | 1576/1594 cases 98.9%, 18 failed
+xqts      68s  fixture Successful (438 tests) | 30145/31024 cases 97.2%, 879 failed
 
-12 chunk(s) in 3m13s — logs in /mnt/data/repos/phoenixml/phoenixmldb-xslt/conformance-results
+12 chunk(s) in 3m18s — logs in /mnt/data/repos/phoenixml/phoenixmldb-xslt/conformance-results
