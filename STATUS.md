@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-04 21:33 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-05 14:49 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,8 +18,8 @@ Generated 2026-10-04 21:33 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 1 | 0 |
-| phoenixmldb-xslt | 1 | 0 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-xslt | 3 | 0 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -35,13 +35,11 @@ Generated 2026-10-04 21:33 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
+- [295] XSLT 3.0 which should fail streamability analysis is run but doesn't produce the complete output; --no-stream doesn't improve the output
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-cli**
-
-- [13] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
