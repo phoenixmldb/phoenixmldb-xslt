@@ -85,9 +85,17 @@ internal static class StreamingSubtreeMaterializer
                     break;
                 }
 
+                // A whitespace-only text node is a text node (XDM): it is kept unless the stylesheet
+                // strips it, and xsl:strip-space is applied to streamed input by the reader before a
+                // node gets here (BuildStreamingWhitespaceStripper). This used to skip every
+                // XmlNodeType.Whitespace "for parity with strip-space", so a buffered subtree lost its
+                // whitespace when nothing asked for that: snapshot(), copy-of(.) and every body run
+                // against the materialised subtree gave <item><foo/><bar/></item> for indented input,
+                // where the unstreamed stylesheet kept the indentation (xslt#301, Martin Honnen).
                 case XmlNodeType.Text:
                 case XmlNodeType.CDATA:
                 case XmlNodeType.SignificantWhitespace:
+                case XmlNodeType.Whitespace:
                 {
                     var textId = store.NextId();
                     var text = new XdmText
@@ -101,12 +109,6 @@ internal static class StreamingSubtreeMaterializer
                     stack.Peek().Children.Add(textId);
                     break;
                 }
-
-                case XmlNodeType.Whitespace:
-                    // Skip whitespace-only text between elements unless preserved.
-                    // Streaming-mode parser default mirrors XSLT strip-space behavior;
-                    // we follow that here for parity.
-                    break;
 
                 case XmlNodeType.Comment:
                 {
