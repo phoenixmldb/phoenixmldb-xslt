@@ -1451,7 +1451,10 @@ public sealed class XsltTransformer
         var key = _initialMode != null
             ? ResolveQName(_initialMode, _initialModeNamespace)
             : new QName(NamespaceId.None, "");
-        return _stylesheet.Modes.TryGetValue(key, out var mode) && mode.Streamable;
+        return _stylesheet.Modes.TryGetValue(key, out var mode) && mode.Streamable
+            // Same fallback as the engine's string overload (xslt#298): a rule that reads outside
+            // its matched element is evaluated against a tree, not streamed.
+            && !StreamedScopeEscapeDetector.AnyStreamableRuleEscapesItsMatch(_stylesheet);
     }
 
     /// <summary>
