@@ -147,7 +147,14 @@ internal static class StreamingSubtreeBufferDetector
                 return RequiresSubtreeBuffer(lre.Content);
 
             case XsltCopy cp:
-                return cp.Content != null && RequiresSubtreeBuffer(cp.Content);
+                // A copy whose content reads the matched subtree as a value
+                // (<xsl:copy><a><xsl:value-of select="foo"/></a></xsl:copy>) was deferred to the end
+                // tag so watchers could collect foo first. But the streamed copy closes at the
+                // element's end event, which a deferred body runs after, so the copy was never
+                // closed: the next <item> came out nested inside it and </root> was lost (found
+                // with xslt#295). Run such a copy against the materialised subtree instead.
+                return cp.Content != null
+                    && (RequiresSubtreeBuffer(cp.Content) || ContentReadsMatchedSubtree(cp.Content));
 
             case XsltFork fk:
                 // xsl:fork runs each prong as a separate consumer over a single forward
@@ -220,6 +227,13 @@ internal static class StreamingSubtreeBufferDetector
 
             case XsltSequenceConstructor ctor:
                 return RequiresSubtreeBuffer(ctor);
+
+            // A text value template ({foo} under expand-text) reads the matched subtree exactly as
+            // xsl:value-of select="foo" does, but fell to the default "nothing to buffer". It then
+            // ran at the start tag, before any child had streamed in, and produced an empty string:
+            // <a>{foo}</a> came out <a/>, with no error (xslt#295, Martin Honnen).
+            case XsltTextValueTemplate tvt:
+                return AvtTouchesMatchedSubtree(tvt.Template);
 
             default:
                 return false;
@@ -1418,6 +1432,36 @@ internal static class StreamingSubtreeBufferDetector
     /// the subtree, so they stay on the cheaper striding-snapshot dispatch. A null AVT or
     /// one with only literal parts returns false.
     /// </summary>
+    /// <summary>
+    /// Whether <paramref name="body"/> reads the matched element's children or descendants as a
+    /// value: a value-of, sequence, text value template or attribute value template whose
+    /// expression navigates downward, at any depth of nested constructors and conditionals.
+    /// </summary>
+    private static bool ContentReadsMatchedSubtree(XsltSequenceConstructor? body)
+    {
+        if (body == null) return false;
+        foreach (var insn in body.Instructions)
+        {
+            var reads = insn switch
+            {
+                XsltValueOf vo => vo.Select != null && ExpressionNavigatesChildOrDescendant(vo.Select),
+                XsltSequence sq => sq.Select != null && ExpressionNavigatesChildOrDescendant(sq.Select),
+                XsltTextValueTemplate tvt => AvtTouchesMatchedSubtree(tvt.Template),
+                XsltLiteralResultElement lre => lre.Attributes.Values.Any(AvtTouchesMatchedSubtree)
+                    || ContentReadsMatchedSubtree(lre.Content),
+                XsltElement el => AvtTouchesMatchedSubtree(el.Name) || ContentReadsMatchedSubtree(el.Content),
+                XsltCopy cp => ContentReadsMatchedSubtree(cp.Content),
+                XsltIf i => ExpressionNavigatesChildOrDescendant(i.Test) || ContentReadsMatchedSubtree(i.Then),
+                XsltChoose c => c.When.Any(w => ExpressionNavigatesChildOrDescendant(w.Test) || ContentReadsMatchedSubtree(w.Body))
+                    || ContentReadsMatchedSubtree(c.Otherwise),
+                XsltSequenceConstructor nested => ContentReadsMatchedSubtree(nested),
+                _ => false,
+            };
+            if (reads) return true;
+        }
+        return false;
+    }
+
     private static bool AvtTouchesMatchedSubtree(XsltAttributeValueTemplate? avt)
     {
         if (avt == null) return false;
