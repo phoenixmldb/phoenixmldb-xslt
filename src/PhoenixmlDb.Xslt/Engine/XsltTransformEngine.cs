@@ -4836,7 +4836,11 @@ public sealed class XsltTransformEngine
             || (options?.HasSourceDocument == false
                 && _stylesheet.NamedTemplates.Keys.Any(k => k.LocalName == "initial-template"));
         var initialModeKey = options?.InitialMode ?? new QName(NamespaceId.None, "");
-        if (_stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable
+        // DisableStreaming: the caller asked for tree evaluation (the CLI's --no-stream). Without
+        // it a streamable initial mode always took the streaming pass here, so --no-stream changed
+        // nothing (xslt#295).
+        if (options?.DisableStreaming != true
+            && _stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable
             && !entryIsInitialTemplate
             // XInclude expansion needs the whole input buffered into a DOM before ConvertToXdm;
             // the streaming forward pass bypasses that, so fall through to the buffered path.

@@ -269,6 +269,9 @@ try
         // user wants to try, with the existing fallback behaviour).
         bool effectiveStream = options.Stream
             || (!options.NoStream && sourcePath != null && transformer.HasStreamableMode);
+        // --no-stream must also stop the engine's own switch to streaming for a streamable mode;
+        // without this the in-memory call below streamed anyway (xslt#295).
+        transformer.DisableStreaming = options.NoStream;
 
         // Streaming requires a local file (we hand the path to File.OpenRead). When the
         // source is HTTP it has already been read into inputXml above; fall through to

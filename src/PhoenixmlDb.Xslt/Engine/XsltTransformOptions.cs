@@ -112,6 +112,12 @@ public sealed class XsltTransformOptions
     public bool ExpandXInclude { get; init; }
 
     /// <summary>
+    /// When <c>true</c>, a source is built into an in-memory tree even when the initial mode is
+    /// streamable: the transformation never takes the streaming pass. Off by default.
+    /// </summary>
+    public bool DisableStreaming { get; init; }
+
+    /// <summary>
     /// When <see cref="ExpandXInclude"/> is on, controls whether remote (<c>http:</c>/<c>https:</c>)
     /// XInclude targets may be fetched. Off by default — only <c>file:</c>/relative targets resolve.
     /// </summary>
