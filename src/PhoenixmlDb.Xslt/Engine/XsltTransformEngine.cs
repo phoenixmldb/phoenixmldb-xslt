@@ -4842,6 +4842,9 @@ public sealed class XsltTransformEngine
         if (options?.DisableStreaming != true
             && _stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable
             && !entryIsInitialTemplate
+            // A rule of a streamable mode that reads outside its matched element cannot be
+            // answered by the streaming pass; it answered wrongly with no error (xslt#298).
+            && !StreamedScopeEscapeDetector.AnyStreamableRuleEscapesItsMatch(_stylesheet)
             // XInclude expansion needs the whole input buffered into a DOM before ConvertToXdm;
             // the streaming forward pass bypasses that, so fall through to the buffered path.
             && options?.ExpandXInclude != true
