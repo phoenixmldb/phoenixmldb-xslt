@@ -1,6 +1,6 @@
 # Release History
 
-## Unreleased (2.6.0)
+## 2.6.0 — 2026-10-05
 
 Takes **PhoenixmlDb.XQuery 2.6.0**. Streaming correctness, browser WebAssembly support, a faster
 apply-templates path, and the tail of the W3C conformance backlog.
