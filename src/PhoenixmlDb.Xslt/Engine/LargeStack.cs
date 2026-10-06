@@ -54,6 +54,59 @@ internal static class LargeStack
     internal static Task Run(Func<Task> body)
         => Run(async () => { await body().ConfigureAwait(false); return true; });
 
+    /// <summary>
+    /// Runs <paramref name="body"/> to completion on the large-stack thread while the calling
+    /// thread waits for it, and returns its result on the calling thread (xslt#309).
+    /// </summary>
+    /// <remarks>
+    /// The synchronous counterpart of <see cref="Run{T}"/>, for a caller that must stay on its
+    /// own thread: a UI thread with no synchronization context, or a host that isolates work on
+    /// dedicated threads. Nothing here is queued to the thread pool, so the call returns as soon
+    /// as the work is done however busy the pool is; only real I/O inside the body (an HTTP
+    /// fetch) still completes there, with the large-stack thread waiting on it. Where no thread
+    /// can be started the body runs on the caller's stack.
+    /// </remarks>
+    internal static T RunSynchronously<T>(Func<Task<T>> body)
+    {
+        if (t_onLargeStack || !CanStartThreads)
+            return body().GetAwaiter().GetResult();
+
+        T result = default!;
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? failure = null;
+        var thread = new Thread(() =>
+        {
+            t_onLargeStack = true;
+            try
+            {
+                result = body().GetAwaiter().GetResult();
+            }
+#pragma warning disable CA1031 // rethrown on the calling thread below
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+                failure = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
+            }
+        }, StackSize)
+        {
+            IsBackground = true,
+            Name = "PhoenixmlDb.Xslt transform",
+        };
+        try
+        {
+            if (StartOverride.Value is { } start)
+                start(thread);
+            else
+                thread.Start();
+        }
+        catch (Exception ex) when (ex is PlatformNotSupportedException or ThreadStartException or OutOfMemoryException)
+        {
+            return body().GetAwaiter().GetResult();
+        }
+        thread.Join();
+        failure?.Throw();
+        return result;
+    }
+
     internal static Task<T> Run<T>(Func<Task<T>> body)
     {
         if (t_onLargeStack || !CanStartThreads)
