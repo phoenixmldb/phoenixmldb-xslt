@@ -1345,6 +1345,94 @@ public sealed class XsltTransformer
         };
     }
 
+    // ── Synchronous entry points (xslt#309) ─────────────────────────────────────────────────
+    // The async methods complete off the calling thread, so code after `await` resumes on the
+    // synchronization context or the thread pool. A host that must stay on its own thread — a
+    // desktop plugin on a UI thread with no context, a server that isolates work on dedicated
+    // threads — calls these instead. The work still runs on the engine's large-stack thread, for
+    // recursion depth; the calling thread waits for it and gets the result back itself.
+
+    private static T OnCallersThread<T>(Func<Task<T>> work)
+    {
+        // Blocking is how these keep the caller on its thread, and the browser cannot block.
+        if (OperatingSystem.IsBrowser())
+            throw new PlatformNotSupportedException(
+                "The synchronous overloads block the calling thread, which browser WebAssembly does not allow. Use the Async methods.");
+        return LargeStack.RunSynchronously(work);
+    }
+
+    /// <summary>
+    /// Loads and compiles a stylesheet, returning on the calling thread. The synchronous form of
+    /// <see cref="LoadStylesheetAsync"/>; see it for the parameters and errors.
+    /// </summary>
+    /// <remarks>
+    /// The calling thread is blocked until the stylesheet is loaded and does not change: use this
+    /// from a UI thread that has no <see cref="System.Threading.SynchronizationContext"/>, where
+    /// <c>await LoadStylesheetAsync(...)</c> would resume on a thread-pool thread. Not available
+    /// on browser WebAssembly, which cannot block.
+    /// </remarks>
+    /// <exception cref="PlatformNotSupportedException">Called on browser WebAssembly.</exception>
+    public void LoadStylesheet(string stylesheetXml, Uri? baseUri = null,
+        Dictionary<string, string>? staticParams = null,
+        Dictionary<string, List<(string? Version, string FilePath)>>? packageCatalog = null,
+        PackageVersionResolution packageVersionResolution = PackageVersionResolution.Highest)
+        => OnCallersThread(async () =>
+        {
+            await LoadStylesheetAsync(stylesheetXml, baseUri, staticParams, packageCatalog, packageVersionResolution).ConfigureAwait(false);
+            return true;
+        });
+
+    /// <summary>
+    /// Transforms <paramref name="inputXml"/> and returns the serialized result on the calling
+    /// thread. The synchronous form of <see cref="TransformAsync(string?, CancellationToken)"/>.
+    /// </summary>
+    /// <remarks>
+    /// The calling thread is blocked until the transformation finishes and does not change; the
+    /// transformation itself runs on the engine's large-stack thread, so deep recursion is as safe
+    /// as with the async method. Nothing is queued to the thread pool unless the transformation
+    /// performs real I/O. Not available on browser WebAssembly.
+    /// </remarks>
+    /// <exception cref="PlatformNotSupportedException">Called on browser WebAssembly.</exception>
+    public string Transform(string? inputXml, CancellationToken ct = default)
+        => OnCallersThread(() => TransformAsync(inputXml, ct));
+
+    /// <summary>
+    /// Transforms <paramref name="inputXml"/> and returns the raw result value on the calling
+    /// thread. The synchronous form of <see cref="TransformToValueAsync"/>.
+    /// </summary>
+    /// <exception cref="PlatformNotSupportedException">Called on browser WebAssembly.</exception>
+    public object? TransformToValue(string? inputXml, CancellationToken ct = default)
+        => OnCallersThread(() => TransformToValueAsync(inputXml, ct));
+
+    /// <summary>
+    /// Transforms an XDM sequence and returns the serialized result on the calling thread. The
+    /// synchronous form of <see cref="TransformAsync(Xdm.XdmSequence?, CancellationToken)"/>.
+    /// </summary>
+    /// <exception cref="PlatformNotSupportedException">Called on browser WebAssembly.</exception>
+    public string Transform(Xdm.XdmSequence? source, CancellationToken ct = default)
+        => OnCallersThread(() => TransformAsync(source, ct));
+
+    /// <summary>
+    /// Transforms an XDM sequence and returns the result sequence on the calling thread. The
+    /// synchronous form of <see cref="TransformToSequenceAsync"/>.
+    /// </summary>
+    /// <exception cref="PlatformNotSupportedException">Called on browser WebAssembly.</exception>
+    public Xdm.XdmSequence TransformToSequence(Xdm.XdmSequence? source, CancellationToken ct = default)
+        => OnCallersThread(() => TransformToSequenceAsync(source, ct));
+
+    /// <summary>
+    /// Transforms XML read from <paramref name="inputXml"/> and writes the result to
+    /// <paramref name="output"/>, returning on the calling thread. The synchronous form of
+    /// <see cref="TransformAsync(TextReader, TextWriter, CancellationToken)"/>.
+    /// </summary>
+    /// <exception cref="PlatformNotSupportedException">Called on browser WebAssembly.</exception>
+    public void Transform(TextReader inputXml, TextWriter output, CancellationToken ct = default)
+        => OnCallersThread(async () =>
+        {
+            await TransformAsync(inputXml, output, ct).ConfigureAwait(false);
+            return true;
+        });
+
     /// <summary>
     /// Transforms XML from a <see cref="TextReader"/> source.
     /// </summary>
