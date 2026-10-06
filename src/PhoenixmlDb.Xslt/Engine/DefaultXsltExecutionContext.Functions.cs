@@ -798,7 +798,11 @@ internal sealed partial class DefaultXsltExecutionContext
             nodeProvider: nodeProvider,
             documentResolver: (PhoenixmlDb.XQuery.IDocumentResolver?)_policyResolver ?? _documentResolver,
             schemaProvider: _schemaProvider,
-            namespaceResolver: _nodeStoreNamespaceUriResolver ??= _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
+            namespaceResolver: _nodeStoreNamespaceUriResolver ??= _nodeStore != null ? _nodeStore.GetNamespaceUri : null,
+            // Without the token, cancelling the transformation reached no XPath expression: a long
+            // one (or a regex match) ran to completion inside a single instruction.
+            limits: _queryLimits,
+            cancellationToken: _ct);
         // Provide in-scope namespace prefix bindings so XSLT functions (system-property, etc.)
         // can resolve prefixed QName string arguments at runtime
         // When inside xsl:evaluate with namespace-context, use those bindings instead
@@ -1605,7 +1609,7 @@ internal sealed partial class DefaultXsltExecutionContext
         System.Text.RegularExpressions.Regex regex;
         try
         {
-            regex = new System.Text.RegularExpressions.Regex(pattern, regexOptions);
+            regex = PhoenixmlDb.XQuery.Functions.XQueryRegexHelper.CreateRegex(pattern, regexOptions, _queryLimits.RegexMatchTimeout);
         }
         catch (ArgumentException ex)
         {
@@ -1616,8 +1620,18 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // First pass: collect all matches to compute total substring count for position()/last()
         var matches = new List<System.Text.RegularExpressions.Match>();
-        for (var m = regex.Match(input); m.Success; m = m.NextMatch())
-            matches.Add(m);
+        try
+        {
+            for (var m = regex.Match(input); m.Success; m = m.NextMatch())
+            {
+                _ct.ThrowIfCancellationRequested();
+                matches.Add(m);
+            }
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
+        {
+            throw RegexMatchTimedOut(ex);
+        }
 
         // Count total substrings: non-matching gaps + matching + possible trailing non-matching
         int totalSubstrings = 0;

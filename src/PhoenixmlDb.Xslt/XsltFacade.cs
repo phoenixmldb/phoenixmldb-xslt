@@ -219,6 +219,12 @@ public sealed class XsltTransformer
             : _stylesheet.Outputs.Select(o => new XsltOutputDeclaration(o.Name, o.Method, o.EffectiveMethod)).ToList();
 
     /// <summary>
+    /// Longest a single regular-expression operation may run before it is abandoned; see
+    /// <see cref="XsltTransformOptions.RegexMatchTimeout"/>. Default: <c>null</c> (no engine timeout).
+    /// </summary>
+    public TimeSpan? RegexMatchTimeout { get; set; }
+
+    /// <summary>
     /// Pre-fetched contents for URIs that <c>xsl:import</c> / <c>xsl:include</c> /
     /// <c>fn:doc()</c> would otherwise need to fetch over HTTP synchronously.
     /// Required on Blazor WebAssembly, which cannot block the calling thread; ignored
@@ -1331,6 +1337,7 @@ public sealed class XsltTransformer
             WarningListener = WarningListener,
             ResourcePolicy = ResourcePolicy,
             AllowedOutputMethods = AllowedOutputMethods,
+            RegexMatchTimeout = RegexMatchTimeout,
             PreloadedResources = PreloadedResources,
             XQueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal),
             ReturnRawXdm = rawBox != null,

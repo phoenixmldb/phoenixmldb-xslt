@@ -158,7 +158,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 nodeProvider: _nodeStore,
                 documentResolver: null,
                 schemaProvider: _schemaProvider,
-                namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
+                namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null,
+                limits: _queryLimits,
+                cancellationToken: _ct);
 #pragma warning restore CA2000
             capturedContext.DefaultCollation = DefaultCollation;
             capturedContext.StaticBaseUri = StaticBaseUri;
@@ -227,7 +229,9 @@ internal sealed partial class DefaultXsltExecutionContext
             nodeProvider: _nodeStore,
             documentResolver: null,
             schemaProvider: _schemaProvider,
-            namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
+            namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null,
+            limits: _queryLimits,
+            cancellationToken: _ct);
         execContext.DefaultCollation = DefaultCollation;
         execContext.StaticBaseUri = StaticBaseUri;
 

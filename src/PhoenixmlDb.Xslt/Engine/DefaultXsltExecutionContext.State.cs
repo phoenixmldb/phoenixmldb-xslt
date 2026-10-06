@@ -777,6 +777,23 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>See <see cref="XsltTransformOptions.AllowedOutputMethods"/>.</summary>
     internal IReadOnlySet<OutputMethod>? AllowedOutputMethods { get; }
 
+    // Limits for the XPath evaluations this transformation runs. Only the regex match timeout
+    // differs from the engine defaults; see XsltTransformOptions.RegexMatchTimeout.
+    private readonly PhoenixmlDb.XQuery.Execution.QueryExecutionLimits _queryLimits;
+
+    /// <summary>
+    /// The error for a regex match that ran past <see cref="XsltTransformOptions.RegexMatchTimeout"/>:
+    /// cancellation when the transformation's token has fired, else FOER0000.
+    /// </summary>
+    private Exception RegexMatchTimedOut(System.Text.RegularExpressions.RegexMatchTimeoutException ex)
+    {
+        if (_ct.IsCancellationRequested)
+            return new OperationCanceledException("The transformation was cancelled during a regular-expression match.", ex, _ct);
+        return new XsltException(
+            $"FOER0000: A regular-expression match exceeded the time limit of {ex.MatchTimeout.TotalSeconds:0.###} s " +
+            "(XsltTransformOptions.RegexMatchTimeout). The pattern may backtrack catastrophically on this input.", ex);
+    }
+
     private readonly int _maxOutputSize;
 
 
@@ -1027,6 +1044,9 @@ internal sealed partial class DefaultXsltExecutionContext
         _schemaProvider = schemaProvider;
         _ct = options.CancellationToken;
         AllowedOutputMethods = options.AllowedOutputMethods;
+        _queryLimits = options.RegexMatchTimeout == PhoenixmlDb.XQuery.Execution.QueryExecutionLimits.Default.RegexMatchTimeout
+            ? PhoenixmlDb.XQuery.Execution.QueryExecutionLimits.Default
+            : new PhoenixmlDb.XQuery.Execution.QueryExecutionLimits { RegexMatchTimeout = options.RegexMatchTimeout };
         _maxOutputSize = options.MaxOutputSize;
         _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore)
         {

@@ -1037,8 +1037,9 @@ internal sealed partial class DefaultXsltExecutionContext
             keyed.Add((node, keys, idx++));
         }
 
-        // Stable sort: use index as tiebreaker to preserve document order
-        keyed.Sort((a, b) =>
+        // Stable sort: use index as tiebreaker to preserve document order. Cancellable: a sort
+        // runs to completion inside one call, so it checks the token as it compares.
+        PhoenixmlDb.XQuery.Functions.SortHelper.Sort(keyed, (a, b) =>
         {
             for (var i = 0; i < sorts.Count; i++)
             {
@@ -1047,7 +1048,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     return descending[i] ? -cmp : cmp;
             }
             return a.index.CompareTo(b.index);
-        });
+        }, _ct);
 
         return keyed.Select(k => k.node);
     }

@@ -196,7 +196,9 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
             ? null
             : new System.Text.RegularExpressions.Regex(
                 "^" + System.Text.RegularExpressions.Regex.Escape(select).Replace("\\*", ".*", StringComparison.Ordinal).Replace("\\?", ".", StringComparison.Ordinal) + "$",
-                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                // A glob of many '*'s backtracks polynomially on a long file name; the
+                // non-backtracking engine matches in linear time (globs have no backreferences).
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.NonBacktracking);
         var files = System.IO.Directory.EnumerateFiles(directory, "*",
                 recurse ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly)
             .Where(f => pattern == null || pattern.IsMatch(System.IO.Path.GetFileName(f)))

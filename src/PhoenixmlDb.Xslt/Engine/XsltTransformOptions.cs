@@ -185,6 +185,19 @@ public sealed class XsltTransformOptions
     public IReadOnlySet<OutputMethod>? AllowedOutputMethods { get; init; }
 
     /// <summary>
+    /// Longest a single regular-expression operation (<c>xsl:analyze-string</c>,
+    /// <c>fn:matches</c>, <c>fn:replace</c>, <c>fn:tokenize</c>, <c>fn:analyze-string</c>) may
+    /// run before it is abandoned: with FOER0000, or with <see cref="OperationCanceledException"/>
+    /// when <see cref="CancellationToken"/> has fired meanwhile. A running .NET regex match cannot
+    /// observe cancellation, so this is also the longest a match on a catastrophically
+    /// backtracking pattern can outlive a cancelled transformation. Default: <c>null</c>, which
+    /// leaves .NET's process-wide default (the <c>REGEX_DEFAULT_MATCH_TIMEOUT</c> AppContext value,
+    /// infinite unless set) in force. A host that runs untrusted stylesheets should set this, at
+    /// or below its time limit.
+    /// </summary>
+    public TimeSpan? RegexMatchTimeout { get; init; }
+
+    /// <summary>
     /// XPath expression to evaluate against the source document to determine the initial context node.
     /// When null, the document root is used. Example: "/doc" selects the document element named "doc".
     /// </summary>
