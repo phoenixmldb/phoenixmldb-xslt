@@ -5,6 +5,21 @@
 Takes **PhoenixmlDb.XQuery 2.6.0**. Streaming correctness, browser WebAssembly support, a faster
 apply-templates path, and the tail of the W3C conformance backlog.
 
+### Security: a cancelled transformation stops inside XPath, regex matching and sorting (GHSA-h2xc-4m53-6j8r)
+
+`XsltTransformer` did not pass its `CancellationToken` into XPath evaluation, so a cancelled
+transformation ran any expression already started to completion. With a regex that backtracks
+catastrophically (`matches`, `replace`, `tokenize`, `xsl:analyze-string`) that was effectively
+unbounded; see PhoenixmlDb.XQuery's GHSA-2wrh-863w-x2m9.
+
+- The token and the query limits now reach every XPath evaluation.
+- New: `XsltTransformer.RegexMatchTimeout` and `XsltTransformOptions.RegexMatchTimeout`.
+  **Opt-in**, default `null` (unchanged behaviour until set), applied to XPath regex functions
+  and `xsl:analyze-string`.
+- `xsl:sort` checks the token as it runs.
+
+Hosts that run untrusted stylesheets under a time limit should set `RegexMatchTimeout`.
+
 ### Changed behaviour to check on upgrade
 
 - **Streaming no longer loses or mis-answers data.** Three defects in streamable modes, all
