@@ -388,6 +388,16 @@ public sealed class XsltTransformer
     /// large-stack thread (as transformations do), so the calling thread is not held while it runs.
     /// On browser-wasm, which cannot start threads, the parse runs inline.
     /// </returns>
+    /// <remarks>
+    /// <b>Which thread your code resumes on.</b> Since 2.6.0 the parse runs on another thread, so
+    /// code after <c>await</c> resumes on the captured
+    /// <see cref="System.Threading.SynchronizationContext"/> when there is one, otherwise on a
+    /// thread-pool thread. In 2.5.1 the parse ran inline and the task usually completed on the
+    /// calling thread, so a host with no synchronization context (a plugin called from a native
+    /// message loop) stayed on its UI thread; it no longer does, and must marshal UI work back
+    /// itself, exactly as after <see cref="TransformAsync(string?, CancellationToken)"/>
+    /// (xslt#309).
+    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="stylesheetXml"/> is <c>null</c>.</exception>
     /// <exception cref="XsltException">The stylesheet contains syntax errors or invalid XSLT constructs.</exception>
     public async Task LoadStylesheetAsync(string stylesheetXml, Uri? baseUri = null,
@@ -940,6 +950,15 @@ public sealed class XsltTransformer
     /// task completes when the transformation does. After the transformation first awaits real
     /// I/O (an HTTP document, for instance), the rest of it runs on the thread pool. On
     /// browser-wasm, which cannot start threads, it runs inline on the caller's stack.
+    /// </para>
+    /// <para>
+    /// <b>Which thread your code resumes on.</b> Because the work happens on another thread, the
+    /// task completes there, and code after <c>await</c> resumes wherever the awaiter sends it:
+    /// on the captured <see cref="System.Threading.SynchronizationContext"/> when there is one
+    /// (WinForms, WPF, MAUI with their context installed), otherwise on a thread-pool thread.
+    /// A host that calls from a UI thread WITHOUT a synchronization context — a plugin invoked
+    /// from a native message loop, say — is therefore on a pool thread after the await and must
+    /// marshal UI work (dialogs, editor calls) back to the UI thread itself.
     /// </para>
     /// </remarks>
     public async Task<string> TransformAsync(string? inputXml, CancellationToken ct = default)
