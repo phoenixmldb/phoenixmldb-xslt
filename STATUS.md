@@ -1,12 +1,12 @@
 # Status
 
-Generated 2026-10-05 14:49 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-06 00:06 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.0.0 | ? | **repo is at ?, nuget.org has 2.0.0** |
+| `PhoenixmlDb.Core` | 2.1.0 | ? | **repo is at ?, nuget.org has 2.1.0** |
 | `PhoenixmlDb.XQuery` | 2.5.1 | ? | **repo is at ?, nuget.org has 2.5.1** |
 | `PhoenixmlDb.Xslt` | 2.5.1 | 2.5.1 | current |
 | `xquery4` | 2.5.1 | ? | **repo is at ?, nuget.org has 2.5.1** |
@@ -74,11 +74,14 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10684/10839 (98.57%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 10708/10839 (98.79%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 30009/31056 (96.63%)** across 428 test-sets,
+- **W3C QT3 baseline — 30145/31024 (97.17%)** across 428 test-sets,
   same file, same ratchet.
+- **The denominator moved since the previous baseline revision: QT3 31056 -> 31024.** A percentage
+  change across this revision is partly or wholly cases entering or leaving the count,
+  NOT necessarily the engine. Compare pass counts, not percentages, across this line.
 - **W3C QT3 / XQuery — figure not readable** from
   `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
 
