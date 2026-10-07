@@ -1,12 +1,12 @@
 # Status
 
-Generated 2026-10-06 22:40 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-07 13:31 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.1.0 | ? | **repo is at ?, nuget.org has 2.1.0** |
+| `PhoenixmlDb.Core` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
 | `PhoenixmlDb.XQuery` | 2.6.0 | ? | **repo is at ?, nuget.org has 2.6.0** |
 | `PhoenixmlDb.Xslt` | 2.6.0 | 2.6.0 | current |
 | `xquery4` | 2.6.0 | ? | **repo is at ?, nuget.org has 2.6.0** |
@@ -19,7 +19,7 @@ Generated 2026-10-06 22:40 UTC by `scripts/status.sh`. Do not edit by hand.
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 1 | 0 |
 | phoenixmldb-xslt | 4 | 1 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -44,11 +44,7 @@ Generated 2026-10-06 22:40 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [310] docs: say which thread a caller resumes on after LoadStylesheetAsync and TransformAsync
-
-**phoenixmldb-cli**
-
-- [14] build: Bump the phoenixmldb-engines group with 2 updates
+- [313] build: Bump the phoenixmldb-engines group with 1 update
 
 ## Defect register
 
