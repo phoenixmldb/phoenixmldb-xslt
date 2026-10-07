@@ -1,5 +1,49 @@
 # Release History
 
+## 2.7.0 — 2026-10-07
+
+Requires PhoenixmlDb.XQuery 2.7.0 and PhoenixmlDb.Core 2.2.0. W3C XSLT 3.0: 131 failing, unchanged.
+
+### Security: limits and resource policy with untrusted stylesheets (GHSA-xxjq-rwpx-m5ww)
+
+Only hosts that run stylesheets from untrusted parties are affected.
+
+- `RegexMatchTimeout` and the cancellation token now reach static expressions (`use-when`,
+  static variables and parameters, shadow attributes), a nested `fn:transform`, and
+  `fn:transform` called from a query. A timeout or cancellation is never swallowed.
+- `RegexMatchTimeout` bounds XSD `pattern` facets in imported schemas and in validation.
+- A text load that the host's resolver or the policy refuses ends with `FOUT1170`. It was read
+  anyway.
+- New `IResourceResolver.ResolveContent` support: a host can supply the content of imports,
+  includes, source documents and text itself. Imports ask the host even with no base URI.
+
+Not fixed: when the host neither refuses a location nor supplies its content, the file can be
+replaced between the check and the open.
+
+### Fixed
+
+- **A string returned through `fn:transform` is not parsed as XML (#314).** With
+  `delivery-format='raw'`, a string result that held markup was parsed into nodes: the text of
+  an XML file read with `unparsed-text()` came back as two whitespace items, and
+  `'<a>hello</a>'` as an element. A regression in 2.4.0; XSpec suites run with
+  `run-as="external"` hit it. Constructed result trees still come back as nodes.
+- **`unparsed-text-available` answers false for an encoding the runtime refuses** (`utf-7`)
+  where it threw, and content a named encoding rejects is `FOUT1190`.
+- **DocBook xslTNG image sizing**: `width`/`height` and the viewport wrapper now match xslTNG's
+  expected output (`duck-small.002`, `stamp.002`).
+
+### New
+
+- **Synchronous `LoadStylesheet` and `Transform` overloads**, for desktop and plugin hosts that
+  must stay on their own thread (#309). The async methods are unchanged: after `await`, a host
+  with no `SynchronizationContext` resumes on a thread-pool thread, and the methods' remarks
+  now say so.
+
+### From PhoenixmlDb.XQuery 2.7.0
+
+Schema-aware typing, `fn:idref` on schema-typed nodes and the changed error codes listed in
+the XQuery 2.7.0 notes apply to XPath in stylesheets.
+
 ## 2.6.0 — 2026-10-05
 
 Takes **PhoenixmlDb.XQuery 2.6.0**. Streaming correctness, browser WebAssembly support, a faster
