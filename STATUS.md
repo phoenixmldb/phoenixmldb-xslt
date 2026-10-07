@@ -1,16 +1,16 @@
 # Status
 
-Generated 2026-10-07 13:31 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-07 23:08 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
-| `PhoenixmlDb.XQuery` | 2.6.0 | ? | **repo is at ?, nuget.org has 2.6.0** |
-| `PhoenixmlDb.Xslt` | 2.6.0 | 2.6.0 | current |
-| `xquery4` | 2.6.0 | ? | **repo is at ?, nuget.org has 2.6.0** |
-| `xslt` | 2.6.0 | 2.6.0 | current |
+| `PhoenixmlDb.XQuery` | 2.7.0 | ? | **repo is at ?, nuget.org has 2.7.0** |
+| `PhoenixmlDb.Xslt` | 2.7.0 | 2.7.0 | current |
+| `xquery4` | 2.7.0 | ? | **repo is at ?, nuget.org has 2.7.0** |
+| `xslt` | 2.7.0 | 2.7.0 | current |
 
 ## Open work
 
@@ -18,7 +18,7 @@ Generated 2026-10-07 13:31 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 3 | 0 |
 | phoenixmldb-xquery | 1 | 0 |
-| phoenixmldb-xslt | 4 | 1 |
+| phoenixmldb-xslt | 5 | 0 |
 | phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
@@ -31,20 +31,17 @@ Generated 2026-10-07 13:31 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
-- [105] parse-xml'd <z xmlns=""/> under a default namespace serializes as <z/>: the round trip moves z into the parent's namespace
+- [205] Check the cancellation token before starting a regex or pattern-facet match
 
 **phoenixmldb-xslt**
 
+- [316] Schema-aware XSLT gaps: schema type names in XPath, inline xs:schema, validation on literal result elements
 - [309] Async load/transform resume on a thread-pool thread since 2.6.0: document it, add synchronous overloads
 - [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
 - [295] XSLT 3.0 which should fail streamability analysis is run but doesn't produce the complete output; --no-stream doesn't improve the output
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-xslt**
-
-- [313] build: Bump the phoenixmldb-engines group with 1 update
 
 ## Defect register
 
