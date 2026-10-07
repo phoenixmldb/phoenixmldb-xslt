@@ -209,8 +209,8 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // The nested stylesheet is parsed under the caller's policy (its imports, includes and
         // compile-time document reads are checked), and runs under it (transformOptions below).
         var parser = catalog2 != null
-            ? new StylesheetParser(exprParser, catalog2) { PreloadedResources = _context._options.PreloadedResources, ResourcePolicy = _context.Policy }
-            : new StylesheetParser(exprParser) { PreloadedResources = _context._options.PreloadedResources, ResourcePolicy = _context.Policy };
+            ? new StylesheetParser(exprParser, catalog2) { PreloadedResources = _context._options.PreloadedResources, ResourcePolicy = _context.Policy, RegexMatchTimeout = _context._options.RegexMatchTimeout }
+            : new StylesheetParser(exprParser) { PreloadedResources = _context._options.PreloadedResources, ResourcePolicy = _context.Policy, RegexMatchTimeout = _context._options.RegexMatchTimeout };
         Dictionary<string, string>? externalStaticParams = null;
         if (staticParamsMap != null)
         {
@@ -389,6 +389,10 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             // set the equivalent flag; this one did not.
             ReturnRawXdm = isRaw,
             ResourcePolicy = _context.Policy,
+            // The nested transformation is part of this one: it stops at the same regex match
+            // timeout and on the same cancellation. It had neither.
+            RegexMatchTimeout = _context._options.RegexMatchTimeout,
+            CancellationToken = _context._options.CancellationToken,
         };
 
         // Create engine and run transformation
@@ -571,6 +575,16 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         PhoenixmlDb.XQuery.Security.ResourceAccessKind access, PhoenixmlDb.XQuery.Security.ResourcePolicy policy)
     {
         var baseUri = staticBase != null && Uri.TryCreate(staticBase, UriKind.Absolute, out var b) ? b : _context._stylesheet.BaseUri;
+        // The host's own content first; with it nothing is opened here by name.
+        try
+        {
+            if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, location, baseUri, access) is { } supplied)
+                return (supplied.ReadText(), supplied.BaseUri);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw new XsltException($"FOXT0001: {e.Message}");
+        }
         Uri authorized;
         try
         {

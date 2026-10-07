@@ -176,7 +176,36 @@ public sealed partial class StylesheetParser
 
         var isHttp = resolvedUri != null && (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps);
 
-        if (!isHttp && (resolvedPath == null || !ModuleExists(resolvedPath)))
+        // The host's own content, asked for before anything is looked for on disk: a module the
+        // host supplies need not exist as a file, or be at a location the engine could open at
+        // all. The resolver sees the base the href is actually resolved against (xml:base or the
+        // including module). When the resolver is the only source of resources and supplies
+        // nothing, the import fails here and no file is tried.
+        string? hostModuleXml = null;
+        Uri? hostModuleBase = null;
+        if (ResourcePolicy?.ResourceResolver is { } hostResolver)
+        {
+            // Asked with the href as written and whatever base there is — none at all for a
+            // stylesheet loaded from text without one, which used to get no call for a
+            // relative href.
+            hostModuleXml = hostResolver.ResolveStylesheetModule(href, effectiveBase ?? _baseUri);
+            if (hostModuleXml is null
+                && hostResolver.ResolveContent(new PhoenixmlDb.XQuery.Security.ResourceRequest(
+                    href, effectiveBase ?? _baseUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) is { } suppliedModule)
+            {
+                hostModuleXml = suppliedModule.ReadText();
+                // The module is known by the URI the host gave it; its own relative imports
+                // resolve against that.
+                hostModuleBase = suppliedModule.BaseUri;
+            }
+            if (hostModuleXml is null && hostResolver.SuppliesAllContent)
+                throw new XsltException(
+                    $"XTSE0165: The host's resource resolver, which is the only source of resources here, did not supply the stylesheet module '{href}'",
+                    GetSourceLocation(element));
+        }
+        var hostSupplied = hostModuleXml != null;
+
+        if (!isHttp && !hostSupplied && (resolvedPath == null || !ModuleExists(resolvedPath)))
         {
             // Try as relative path from base URI directory
             if (effectiveBase?.IsFile == true)
@@ -189,12 +218,18 @@ public sealed partial class StylesheetParser
             }
         }
 
-        if (!isHttp && (resolvedPath == null || !ModuleExists(resolvedPath)))
+        if (!isHttp && !hostSupplied && (resolvedPath == null || !ModuleExists(resolvedPath)))
             throw new XsltException($"XTSE0165: Cannot find stylesheet module '{href}'",
                 GetSourceLocation(element));
 
-        // Recursion key: the absolute URI for HTTP imports, the canonical full path for file imports.
-        var recursionKey = isHttp ? resolvedUri!.AbsoluteUri : Path.GetFullPath(resolvedPath!);
+        // Recursion key: the absolute URI for HTTP imports and host-supplied modules, the
+        // canonical full path for file imports.
+        if (hostSupplied && hostModuleBase != null)
+            resolvedUri = hostModuleBase;
+        var keyedByUri = isHttp || (hostSupplied && resolvedUri != null && (hostModuleBase != null || !resolvedUri.IsFile));
+        var recursionKey = keyedByUri ? resolvedUri!.AbsoluteUri
+            : resolvedPath != null ? Path.GetFullPath(resolvedPath)
+            : href;
         // The element that closes the cycle decides the code: XTSE0180 for a module that
         // includes itself, XTSE0210 for one that imports itself. This method serves both,
         // and reported XTSE0210 for include cycles too.
@@ -211,15 +246,15 @@ public sealed partial class StylesheetParser
         string? policyResolvedXml = null;
         if (ResourcePolicy != null)
         {
-            var importUri = isHttp ? resolvedUri! : new Uri(recursionKey);
-            if (!ResourcePolicy.IsAllowed(importUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet))
-                throw new XsltException(
-                    $"XTSE0165: Resource policy denied import access to '{href}'",
-                    GetSourceLocation(element));
-
-            // The resolver sees the base the href is actually resolved against (xml:base or the
-            // including module), so what it checks is what would otherwise be fetched.
-            policyResolvedXml = ResourcePolicy.ResourceResolver?.ResolveStylesheetModule(href, effectiveBase ?? _baseUri);
+            policyResolvedXml = hostModuleXml;
+            if (!hostSupplied)
+            {
+                var importUri = isHttp ? resolvedUri! : new Uri(recursionKey);
+                if (!ResourcePolicy.IsAllowed(importUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet))
+                    throw new XsltException(
+                        $"XTSE0165: Resource policy denied import access to '{href}'",
+                        GetSourceLocation(element));
+            }
         }
 
         try
@@ -257,7 +292,15 @@ public sealed partial class StylesheetParser
                     : resolvedPath!);
             var savedBaseUri = _baseUri;
             var savedDefaultMode = _currentDefaultMode;
-            _baseUri = isHttp ? resolvedUri! : new Uri(recursionKey);
+            // A module the host supplied for an href with no base and no URI of its own gets a
+            // placeholder to be known by. It must not be a path under the process's current
+            // directory, which is where a bare relative name would otherwise land: that would
+            // put a real file-system location into base-uri() and error messages for content
+            // that never came from the file system.
+            _baseUri = keyedByUri ? resolvedUri!
+                : Uri.TryCreate(recursionKey, UriKind.Absolute, out var keyUri) ? keyUri
+                : hostSupplied ? new Uri("host-resource:///" + recursionKey.TrimStart('/').Replace('\\', '/'))
+                : new Uri(Path.GetFullPath(recursionKey));
             // Always load imported/included modules through XmlReader so SetBaseUri can
             // populate XElement.BaseUri with the imported module's URI — that's what
             // diagnostics later surface as "this error came from <module>".

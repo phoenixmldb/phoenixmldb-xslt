@@ -1047,6 +1047,10 @@ internal sealed partial class DefaultXsltExecutionContext
         _queryLimits = options.RegexMatchTimeout == PhoenixmlDb.XQuery.Execution.QueryExecutionLimits.Default.RegexMatchTimeout
             ? PhoenixmlDb.XQuery.Execution.QueryExecutionLimits.Default
             : new PhoenixmlDb.XQuery.Execution.QueryExecutionLimits { RegexMatchTimeout = options.RegexMatchTimeout };
+        // Validation matches the schema's pattern facets inside the provider, where no
+        // per-evaluation limit reaches.
+        if (options.RegexMatchTimeout is { } regexLimit)
+            schemaProvider?.LimitPatternMatchTime(regexLimit);
         _maxOutputSize = options.MaxOutputSize;
         _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore)
         {

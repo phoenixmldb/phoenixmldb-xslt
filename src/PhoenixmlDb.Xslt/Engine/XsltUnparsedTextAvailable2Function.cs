@@ -53,6 +53,9 @@ internal sealed class XsltUnparsedTextAvailable2Function : PhoenixmlDb.XQuery.As
 
         try
         {
+            // The host's resolver serves it: available, with no file to look for.
+            if (_context.HostServesText(UnparsedTextHelper.Absolute(href, _context)))
+                return ValueTask.FromResult<object?>(true);
             if (!_context.IsUnparsedTextAvailableViaPolicy(UnparsedTextHelper.Absolute(href, _context)))
                 return ValueTask.FromResult<object?>(false);
 

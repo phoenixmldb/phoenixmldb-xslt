@@ -177,7 +177,16 @@ public sealed class XsltTransformProvider : ITransformProvider
         }
 
         // Create transformer and load stylesheet
-        var transformer = new XsltTransformer { ResourcePolicy = policy };
+        // The transformation is part of the calling query: it stops at the query's regex match
+        // timeout and on its cancellation. Built with the policy alone, it had neither, so
+        // fn:transform was a way for a query to run outside QueryExecutionLimits.
+        var callingQuery = context as PhoenixmlDb.XQuery.Execution.QueryExecutionContext;
+        var queryToken = callingQuery?.CancellationToken ?? default;
+        var transformer = new XsltTransformer
+        {
+            ResourcePolicy = policy,
+            RegexMatchTimeout = callingQuery?.Limits.RegexMatchTimeout,
+        };
         // Under a policy, a package catalog named by the caller's vendor options is not honoured:
         // it would choose files to load outside the policy.
         var packageCatalog = policy is null
@@ -376,7 +385,7 @@ public sealed class XsltTransformProvider : ITransformProvider
             // xs:boolean from xsl:evaluate, where ?output came back empty under both
             // 'document' and 'serialized' because the boolean's serialization
             // ("true"/"false") didn't reparse to a useful XDM document.
-            var rawValue = await transformer.TransformToValueOrMarkupAsync(inputXml).ConfigureAwait(false);
+            var rawValue = await transformer.TransformToValueOrMarkupAsync(inputXml, queryToken).ConfigureAwait(false);
             // The engine wraps any XdmNode/XdmDocument items in raw-delivery results as
             // CrossStoreNodeRef so we can re-anchor them in the XQuery store here —
             // inner-store NodeIds don't resolve outside (Martin Honnen: subtrees came
@@ -402,7 +411,7 @@ public sealed class XsltTransformProvider : ITransformProvider
         else
         {
             // 'document' (default) or 'serialized' — go through the engine's serializer.
-            var result = await transformer.TransformAsync(inputXml).ConfigureAwait(false);
+            var result = await transformer.TransformAsync(inputXml, queryToken).ConfigureAwait(false);
             if (string.Equals(deliveryFormat, "serialized", StringComparison.Ordinal))
             {
                 resultMap["output"] = result;
@@ -671,6 +680,16 @@ public sealed class XsltTransformProvider : ITransformProvider
         PhoenixmlDb.XQuery.Security.ResourceAccessKind access, PhoenixmlDb.XQuery.Security.ResourcePolicy policy)
     {
         var baseUri = staticBase != null && Uri.TryCreate(staticBase, UriKind.Absolute, out var b) ? b : null;
+        // The host's own content first; with it nothing is opened here by name.
+        try
+        {
+            if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, location, baseUri, access) is { } supplied)
+                return (supplied.ReadText(), supplied.BaseUri);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw new XQueryException("FOXT0001", e.Message);
+        }
         Uri authorized;
         try
         {

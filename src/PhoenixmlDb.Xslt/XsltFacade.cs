@@ -425,8 +425,8 @@ public sealed class XsltTransformer
         var xqueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal);
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules }
-            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules };
+            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules, RegexMatchTimeout = RegexMatchTimeout }
+            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules, RegexMatchTimeout = RegexMatchTimeout };
         // The parse, including static expressions (use-when, static variables) that may be slow,
         // runs on the large-stack thread and does NOT hold the calling thread. After the HTTP
         // import fetch above, the calling thread is whichever pool thread completed it, and parsing
@@ -485,6 +485,10 @@ public sealed class XsltTransformer
     private void ResolveSchemaImports(XsltStylesheet stylesheet, Uri? baseUri)
     {
         if (SchemaProvider is null) return;
+        // Compiling a schema already matches its own values against its pattern facets, so the
+        // provider has to hold the limit before the first import.
+        if (RegexMatchTimeout is { } regexLimit)
+            SchemaProvider.LimitPatternMatchTime(regexLimit);
         // Walk imported and included stylesheets too — import-schema can appear in any module.
         foreach (var import in EnumerateAllSchemaImports(stylesheet))
         {

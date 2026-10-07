@@ -907,13 +907,20 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         try
         {
-            return _policyResolver.ResolveText(href, encoding);
+            // Text from the host's resolver, by either member. When that resolver is the only
+            // source and supplies none, the file path below is not tried either: see
+            // UnparsedTextHelper.ResolveFilePath.
+            return _policyResolver.ResolveText(href, encoding)
+                ?? PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(_options?.ResourcePolicy, href, null,
+                    PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadText)?.ReadText();
         }
-        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
         {
-            // Refused: fall through to the file path, which the policy refuses too, and the
-            // caller reports FOUT1170 as for any resource that cannot be retrieved.
-            return null;
+            // A refusal ends the load, whether it came from the policy or from the host's
+            // resolver. It used to be swallowed here and the location then checked a second
+            // time and read by name: a host's "no" was not final, and between the two checks
+            // the file could be replaced.
+            throw Error($"FOUT1170: {e.Message}");
         }
     }
 
@@ -3046,6 +3053,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             throw new XsltException(
                 $"{ex.ErrorCode}: {instructionName} validation failed: {ex.Message}",
                 location);
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
+        {
+            throw RegexMatchTimedOut(ex);
         }
     }
 

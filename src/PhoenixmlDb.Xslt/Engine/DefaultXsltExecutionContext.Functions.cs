@@ -1441,7 +1441,9 @@ internal sealed partial class DefaultXsltExecutionContext
 #pragma warning disable CA1031 // Predicate evaluation failure should not crash pattern matching
         catch (Exception ex) when (
             ex is not PhoenixmlDb.XQuery.Execution.XQueryRuntimeException { ErrorCode: "XPST0017" }
-            && (ex is not XsltException xsltEx || xsltEx.ErrorCode != "XTDE0640"))
+            && (ex is not XsltException xsltEx || xsltEx.ErrorCode != "XTDE0640")
+            // A match stopped at its time limit is not a dynamic error in the pattern.
+            && !ResourceLimitFailure.Is(ex))
         {
             // XTDE0640: If predicate evaluation failed because a variable is not yet bound
             // and that variable is currently being evaluated (circular reference), propagate as XTDE0640
@@ -1503,7 +1505,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             throw; // Non-recoverable: circular key reference must propagate
         }
-        catch (Exception)
+        catch (Exception ex) when (!ResourceLimitFailure.Is(ex))
         {
             return false;
         }
@@ -1539,7 +1541,7 @@ internal sealed partial class DefaultXsltExecutionContext
             return false;
         }
 #pragma warning disable CA1031
-        catch (Exception)
+        catch (Exception ex) when (!ResourceLimitFailure.Is(ex))
         {
             return false;
         }

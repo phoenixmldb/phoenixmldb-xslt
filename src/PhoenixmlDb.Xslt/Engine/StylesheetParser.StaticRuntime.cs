@@ -42,7 +42,7 @@ public sealed partial class StylesheetParser
         // Static expressions run while the stylesheet LOADS, so they obey the same resource
         // policy as the transformation: a use-when or static variable reading a file otherwise
         // leaked it before any runtime check (e.g. use-when="contains(unparsed-text(...), ...)").
-        _staticRuntime ??= new StaticRuntime(ResourcePolicy, XQueryModules);
+        _staticRuntime ??= new StaticRuntime(ResourcePolicy, XQueryModules, RegexMatchTimeout);
         var runtime = _staticRuntime.For(baseUri);
         // A prefixed function name (xpath:available-system-properties#0) is resolved against the
         // stylesheet's namespace table at run time; give the shell the declaring element's.
@@ -75,7 +75,11 @@ public sealed partial class StylesheetParser
 #pragma warning disable CA1031 // any evaluation failure means "not statically evaluable"; the caller reports it
         // …except XPST0017 from the guard, which is a static error in the stylesheet, not a
         // limitation of this processor, and must be reported as one.
-        catch (Exception ex) when (ex is not OutOfMemoryException && ex is not XsltException { ErrorCode: "XPST0017" })
+        // …nor a resource limit: a regex that ran into its match timeout did not fail to be
+        // static, it was stopped, and quietly carrying on would load the stylesheet with that
+        // expression's value simply missing.
+        catch (Exception ex) when (ex is not OutOfMemoryException && ex is not XsltException { ErrorCode: "XPST0017" }
+            && !ResourceLimitFailure.Is(ex))
 #pragma warning restore CA1031
         {
             value = null;
@@ -87,7 +91,7 @@ public sealed partial class StylesheetParser
 
     /// <summary>One evaluation context per base URI, reused across the compile.</summary>
     private sealed class StaticRuntime(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
-        IReadOnlyDictionary<string, List<string>>? xqueryModules)
+        IReadOnlyDictionary<string, List<string>>? xqueryModules, TimeSpan? regexMatchTimeout)
     {
         private readonly Dictionary<string, Entry> _byBase = new(StringComparer.Ordinal);
 
@@ -95,7 +99,7 @@ public sealed partial class StylesheetParser
         {
             var key = baseUri?.AbsoluteUri ?? "";
             if (!_byBase.TryGetValue(key, out var entry))
-                _byBase[key] = entry = new Entry(baseUri, policy, xqueryModules);
+                _byBase[key] = entry = new Entry(baseUri, policy, xqueryModules, regexMatchTimeout);
             return entry;
         }
 
@@ -105,7 +109,7 @@ public sealed partial class StylesheetParser
             internal Dictionary<string, string> Namespaces { get; }
 
             internal Entry(Uri? baseUri, PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
-                IReadOnlyDictionary<string, List<string>>? xqueryModules)
+                IReadOnlyDictionary<string, List<string>>? xqueryModules, TimeSpan? regexMatchTimeout)
             {
                 var shell = new XsltStylesheet { Version = "3.0", BaseUri = baseUri };
                 Namespaces = shell.Namespaces;
@@ -117,7 +121,14 @@ public sealed partial class StylesheetParser
                     shell, new TemplateIndex(shell), source, new StringBuilder(),
                     // The host's XQuery modules too: a static variable may load one
                     // (W3C load-xquery-module-004).
-                    new XsltTransformOptions { ResourcePolicy = policy, XQueryModules = xqueryModules }, store);
+                    new XsltTransformOptions
+                    {
+                        ResourcePolicy = policy,
+                        XQueryModules = xqueryModules,
+                        // A static expression is evaluated by the same engine as a dynamic one,
+                        // so it needs the same bound on a regex that backtracks catastrophically.
+                        RegexMatchTimeout = regexMatchTimeout,
+                    }, store);
                 // Static expressions have no focus (XSLT 3.0 §9.6).
                 Context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
             }

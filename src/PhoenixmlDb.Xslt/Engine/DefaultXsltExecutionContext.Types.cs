@@ -204,12 +204,32 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>
     /// Checks whether the policy allows text access without throwing.
     /// </summary>
+    /// <summary>Whether the host's resource resolver says it serves this text itself.</summary>
+    internal bool HostServesText(string href)
+    {
+        try
+        {
+            return _options?.ResourcePolicy?.ResourceResolver?.IsTextAvailable(href) == true;
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+        {
+            return false;
+        }
+    }
+
     internal bool IsUnparsedTextAvailableViaPolicy(string href)
     {
         if (_policyResolver == null)
             return true; // No policy — allow default check
 
-        return _policyResolver.IsTextAvailable(href);
+        try
+        {
+            return _policyResolver.IsTextAvailable(href);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+        {
+            return false; // refused is not available, and that is the whole answer
+        }
     }
 
 

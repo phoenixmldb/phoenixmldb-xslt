@@ -20,7 +20,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// IDocumentResolver for XSLT — loads documents via file URIs, converts to XDM,
 /// and caches them so repeated doc() calls for the same URI return the same document.
 /// </summary>
-internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolver
+internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolver, PhoenixmlDb.XQuery.Security.IHostDocumentBuilder
 {
     private readonly XsltStylesheet _stylesheet;
     private readonly XdmInMemoryStore? _nodeStore;
@@ -224,6 +224,42 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         return new Uri(uri, UriKind.RelativeOrAbsolute);
     }
 
+    /// <summary>
+    /// Builds a document from content the host's resource resolver supplied, in this
+    /// transformation's own node store, where the stylesheet can navigate it.
+    /// </summary>
+    XdmDocument? PhoenixmlDb.XQuery.Security.IHostDocumentBuilder.BuildHostDocument(string uri,
+        PhoenixmlDb.XQuery.Security.ResourceContent content)
+    {
+        if (_cache.TryGetValue(uri, out var cached) && cached != null)
+            return cached;
+        var doc = BuildFromXml(content.ReadText(), content.BaseUri);
+        _cache[uri] = doc;
+        return doc;
+    }
+
+    private XdmDocument BuildFromXml(string xmlContent, Uri documentUri)
+    {
+        var xmlDoc = new XmlDocument { PreserveWhitespace = true };
+        xmlDoc.LoadXml(xmlContent);
+
+        var nodeStore = _nodeStore ?? new XdmInMemoryStore();
+        var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, documentUri.AbsoluteUri);
+
+        // Apply xsl:strip-space declarations
+        if (_stylesheet.StripSpace.Count > 0)
+        {
+            foreach (var decl in _stylesheet.StripSpace)
+                decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+            foreach (var decl in _stylesheet.PreserveSpace)
+                decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+
+            XsltTransformEngine.StripWhitespaceNodes(xdmDoc, _stylesheet.StripSpace, _stylesheet.PreserveSpace, nodeStore);
+        }
+
+        return xdmDoc;
+    }
+
     private XdmDocument? LoadDocument(string uri)
     {
         try
@@ -272,24 +308,7 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
                 return null;
             }
 
-            var xmlDoc = new XmlDocument { PreserveWhitespace = true };
-            xmlDoc.LoadXml(xmlContent);
-
-            var nodeStore = _nodeStore ?? new XdmInMemoryStore();
-            var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
-
-            // Apply xsl:strip-space declarations
-            if (_stylesheet.StripSpace.Count > 0)
-            {
-                foreach (var decl in _stylesheet.StripSpace)
-                    decl.Test.ResolveNamespace(nodeStore.InternNamespace);
-                foreach (var decl in _stylesheet.PreserveSpace)
-                    decl.Test.ResolveNamespace(nodeStore.InternNamespace);
-
-                XsltTransformEngine.StripWhitespaceNodes(xdmDoc, _stylesheet.StripSpace, _stylesheet.PreserveSpace, nodeStore);
-            }
-
-            return xdmDoc;
+            return BuildFromXml(xmlContent, resolvedUri);
         }
         catch (UriFormatException)
         {

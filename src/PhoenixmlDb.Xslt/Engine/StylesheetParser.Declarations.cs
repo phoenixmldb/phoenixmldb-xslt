@@ -999,7 +999,7 @@ public sealed partial class StylesheetParser
         var packageFile = ResolvePackageVersion(packageEntries, packageVersion, packageName, GetSourceLocation(element));
 
         // Parse the package stylesheet with a fresh parser sharing our expression parser and catalog
-        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources, VersionResolution = VersionResolution };
+        var packageParser = new StylesheetParser(_expressionParser, _packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = PreloadedResources, VersionResolution = VersionResolution, XQueryModules = XQueryModules, RegexMatchTimeout = RegexMatchTimeout };
         var packageXml = System.IO.File.ReadAllText(packageFile);
         var packageBaseUri = new Uri(Path.GetFullPath(packageFile));
         var packageStylesheet = packageParser.Parse(packageXml, packageBaseUri, isLibraryPackage: true);

@@ -35,6 +35,13 @@ public sealed partial class StylesheetParser
     /// <summary>The host's XQuery modules, for load-xquery-module in static expressions.</summary>
     internal IReadOnlyDictionary<string, List<string>>? XQueryModules { get; init; }
 
+    /// <summary>
+    /// The regex match timeout for static expressions, which run while the stylesheet loads:
+    /// use-when, static variables and parameters, and shadow attributes. Without it they ran
+    /// with no timeout whatever the transformer's own <c>RegexMatchTimeout</c> was.
+    /// </summary>
+    internal TimeSpan? RegexMatchTimeout { get; init; }
+
     // A stylesheet module on disk, as far as this parser may know: under a resource policy a
     // module the policy refuses to import reads as not found, so an import attempt cannot be
     // used to learn whether a file outside the policy exists.

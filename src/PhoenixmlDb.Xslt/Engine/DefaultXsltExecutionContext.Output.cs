@@ -1833,7 +1833,20 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // The resource policy judges the document before either load path touches it, and both
         // read the URI it authorised (a file at its canonical path).
-        resolvedUri = AuthorizeResource(resolvedUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "FODC0002");
+        // The host's own content first: with it, neither load path below opens anything by name.
+        byte[]? hostSource = null;
+        try
+        {
+            if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(Policy, resolvedUri.AbsoluteUri, null,
+                    PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument) is { } supplied)
+                hostSource = supplied.ReadBytes().Bytes;
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw Error($"FODC0002: {e.Message}");
+        }
+        if (hostSource is null)
+            resolvedUri = AuthorizeResource(resolvedUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "FODC0002");
 
         // If streamable="yes", use XmlReader-based streaming instead of full tree loading.
         // Exception: content that cannot be driven off the live reader at the document
@@ -1847,12 +1860,14 @@ internal sealed partial class DefaultXsltExecutionContext
         // body never triggers it, so si-iterate-037 and kin still stream).
         var sourceDocNeedsWholeInput =
             XsltTransformEngine.DocLevelWholeInputBuffer(instruction.Content);
-        if (instruction.Streamable && resolvedUri.IsFile && string.IsNullOrEmpty(fragment)
+        if (instruction.Streamable && (resolvedUri.IsFile || hostSource != null) && string.IsNullOrEmpty(fragment)
             && !sourceDocNeedsWholeInput)
         {
             try
             {
-                using var fileStream = System.IO.File.OpenRead(resolvedUri.LocalPath);
+                using System.IO.Stream fileStream = hostSource != null
+                    ? new System.IO.MemoryStream(hostSource, writable: false)
+                    : System.IO.File.OpenRead(resolvedUri.LocalPath);
                 var readerSettings = new XmlReaderSettings
                 {
                     DtdProcessing = DtdProcessing.Parse,
@@ -2028,7 +2043,13 @@ internal sealed partial class DefaultXsltExecutionContext
         string xmlContent;
         try
         {
-            if (resolvedUri.IsFile)
+            if (hostSource != null)
+            {
+                using var hostReader = new System.IO.StreamReader(new System.IO.MemoryStream(hostSource, writable: false),
+                    System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                xmlContent = await hostReader.ReadToEndAsync().ConfigureAwait(false);
+            }
+            else if (resolvedUri.IsFile)
             {
                 xmlContent = await System.IO.File.ReadAllTextAsync(resolvedUri.LocalPath).ConfigureAwait(false);
             }

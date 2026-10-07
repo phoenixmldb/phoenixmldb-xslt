@@ -28,6 +28,9 @@ internal static class UnparsedTextHelper
         // missing file is "not available" either way — no existence answer for denied paths.
         if (policy != null)
         {
+            // A host resolver that is the only source of resources: no file is ever opened here.
+            if (policy.ResourceResolver is { SuppliesAllContent: true })
+                return null;
             var authorized = policy.TryAuthorize(href, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadText, baseUri);
             return authorized is { IsFile: true } && System.IO.File.Exists(authorized.LocalPath) ? authorized.LocalPath : null;
         }
