@@ -50,9 +50,10 @@ internal sealed class XsltUnparsedTextLines2Function : PhoenixmlDb.XQuery.Ast.XQ
         {
             encoding = System.Text.Encoding.GetEncoding(encodingName);
         }
-        catch (ArgumentException)
+        // NotSupportedException: an encoding .NET knows by name and refuses to provide (utf-7).
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {
-            throw new InvalidOperationException($"Unknown encoding: {encodingName}");
+            throw new InvalidOperationException($"FOUT1190: Unknown encoding: {encodingName}");
         }
 
         try

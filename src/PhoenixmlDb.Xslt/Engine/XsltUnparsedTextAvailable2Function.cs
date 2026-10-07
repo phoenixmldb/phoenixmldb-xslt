@@ -45,7 +45,8 @@ internal sealed class XsltUnparsedTextAvailable2Function : PhoenixmlDb.XQuery.As
         {
             System.Text.Encoding.GetEncoding(encodingName);
         }
-        catch (ArgumentException)
+        // NotSupportedException: an encoding .NET knows by name and refuses to provide (utf-7).
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {
             return ValueTask.FromResult<object?>(false);
         }
