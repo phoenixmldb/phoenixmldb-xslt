@@ -4,7 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- PhoenixmlDb -->
-    <PackageVersion Include="PhoenixmlDb.Core" Version="2.1.0" />
+    <PackageVersion Include="PhoenixmlDb.Core" Version="2.2.0" />
     <!-- check-pins: train-locked — must equal the release version at pack time. The
          published Xslt 1.6.13 carries XQuery 1.6.12 because the tag was cut before the
          XQuery push; an equality check at pack time is the only thing that catches that. -->
