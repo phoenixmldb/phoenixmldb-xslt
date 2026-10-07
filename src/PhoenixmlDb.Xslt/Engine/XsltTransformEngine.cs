@@ -1120,8 +1120,20 @@ public sealed class XsltTransformEngine
 
         // Fallback: if no sequence items but text was generated, return the text
         var text = outputBuilder.ToString();
-        return !string.IsNullOrEmpty(text) ? text : null;
+        return !string.IsNullOrEmpty(text) ? new SerializedMarkup(text) : null;
     }
+
+    /// <summary>
+    /// The serialized result tree of a raw transformation whose templates constructed nodes, so
+    /// that there was no typed value to return. The caller parses it back into nodes.
+    /// </summary>
+    /// <remarks>
+    /// It used to be returned as a bare string, which a caller could not tell from a typed
+    /// xs:string result. Callers guessed by looking for '&lt;', so a string VALUE that held
+    /// markup — the text of an XML file read with unparsed-text() — was parsed into nodes and
+    /// came back as several items (xslt#314).
+    /// </remarks>
+    internal sealed record SerializedMarkup(string Text);
 
     /// <summary>
     /// Wrapper for an XdmNode argument crossing fn:transform's engine boundary.
@@ -1480,7 +1492,7 @@ public sealed class XsltTransformEngine
         // the bare markup — full finalization would prepend an XML declaration / DOCTYPE /
         // BOM that breaks that re-parse. Leave it raw, matching the rawItems branches above.
         if (options.ReturnRawXdm)
-            return serialized;
+            return new SerializedMarkup(serialized);
 
         // Route serialized output through the same full finalization the main TransformAsync
         // path applies — otherwise serialized output produced from a non-node (e.g. JSON-map)

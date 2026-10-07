@@ -1020,6 +1020,17 @@ public sealed class XsltTransformer
     /// </returns>
     public async Task<object?> TransformToValueAsync(string? inputXml, CancellationToken ct = default)
     {
+        var value = await TransformToValueOrMarkupAsync(inputXml, ct).ConfigureAwait(false);
+        return value is XsltTransformEngine.SerializedMarkup markup ? markup.Text : value;
+    }
+
+    /// <summary>
+    /// <see cref="TransformToValueAsync"/>, with a constructed result tree marked as
+    /// <see cref="XsltTransformEngine.SerializedMarkup"/> so fn:transform can tell it from a
+    /// typed xs:string result.
+    /// </summary>
+    internal async Task<object?> TransformToValueOrMarkupAsync(string? inputXml, CancellationToken ct = default)
+    {
         if (_stylesheet == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
@@ -1047,7 +1058,7 @@ public sealed class XsltTransformer
         // already uses for this tier; the caller re-parses it into its own store. This method
         // had only the typed tier, which is why the stylesheet-side path handled constructed
         // nodes and the query-side path did not.
-        return !string.IsNullOrEmpty(serialized) ? serialized : null;
+        return !string.IsNullOrEmpty(serialized) ? new XsltTransformEngine.SerializedMarkup(serialized) : null;
     }
 
     /// <summary>
@@ -1110,6 +1121,7 @@ public sealed class XsltTransformer
             result = raw switch
             {
                 null => string.Empty,
+                XsltTransformEngine.SerializedMarkup markup => markup.Text,
                 string s => s,
                 _ => raw.ToString() ?? string.Empty
             };
@@ -1196,11 +1208,13 @@ public sealed class XsltTransformer
         // serialized XML string. For the chaining use case the caller wants a navigable
         // node — re-parse the markup into a fresh XdmDocument backed by `resultStore` so
         // downstream TransformAsync(XdmSequence) calls can navigate it.
-        if (typedResult is string xml && LooksLikeXml(xml))
+        // Only that serialized markup is parsed: a typed xs:string result is the value as it
+        // stands, whatever characters it holds.
+        if (typedResult is XsltTransformEngine.SerializedMarkup markup)
         {
-            var docNode = TryParseToXdmDocument(xml, resultStore);
-            if (docNode != null)
-                typedResult = docNode;
+            typedResult = LooksLikeXml(markup.Text)
+                ? TryParseToXdmDocument(markup.Text, resultStore) ?? (object)markup.Text
+                : markup.Text;
         }
 
         // Normalize raw value into an item list. Single item → 1-item sequence;

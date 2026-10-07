@@ -438,8 +438,12 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             // caller's store — unwrapped, since raw delivers the nodes themselves and not a
             // document node (that is what delivery-format='document' is for). Text with no
             // markup stays a string: there is no node to recover, and the string IS the result.
-            if (reanchored is string rawText && rawText.Contains('<', StringComparison.Ordinal))
-                reanchored = ParseResultAsXdm(rawText, _context._nodeStore) ?? reanchored;
+            // Only the serialized result tree is parsed. A typed xs:string is the result as it
+            // stands, markup characters and all.
+            if (reanchored is XsltTransformEngine.SerializedMarkup markup)
+                reanchored = markup.Text.Contains('<', StringComparison.Ordinal)
+                    ? ParseResultAsXdm(markup.Text, _context._nodeStore) ?? markup.Text
+                    : markup.Text;
             resultMap["output"] = reanchored;
 
             // Into the CALLER's store, like ?output above: a node parsed into a store the

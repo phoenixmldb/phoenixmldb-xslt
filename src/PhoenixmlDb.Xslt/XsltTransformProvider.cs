@@ -376,7 +376,7 @@ public sealed class XsltTransformProvider : ITransformProvider
             // xs:boolean from xsl:evaluate, where ?output came back empty under both
             // 'document' and 'serialized' because the boolean's serialization
             // ("true"/"false") didn't reparse to a useful XDM document.
-            var rawValue = await transformer.TransformToValueAsync(inputXml).ConfigureAwait(false);
+            var rawValue = await transformer.TransformToValueOrMarkupAsync(inputXml).ConfigureAwait(false);
             // The engine wraps any XdmNode/XdmDocument items in raw-delivery results as
             // CrossStoreNodeRef so we can re-anchor them in the XQuery store here —
             // inner-store NodeIds don't resolve outside (Martin Honnen: subtrees came
@@ -391,8 +391,12 @@ public sealed class XsltTransformProvider : ITransformProvider
             // them; that is what delivery-format='document' is for. Text carrying no markup
             // stays a string: there is no node to recover and the string is the result.
             // Engine/XsltTransformFunction has done this on the stylesheet side all along.
-            if (reanchored is string rawText && rawText.Contains('<', StringComparison.Ordinal))
-                reanchored = await ParseRawResultToXdmAsync(rawText, nodeStore).ConfigureAwait(false) ?? reanchored;
+            // Only the serialized result tree is parsed. A typed xs:string is the result as it
+            // stands, markup characters and all.
+            if (reanchored is Engine.XsltTransformEngine.SerializedMarkup markup)
+                reanchored = markup.Text.Contains('<', StringComparison.Ordinal)
+                    ? await ParseRawResultToXdmAsync(markup.Text, nodeStore).ConfigureAwait(false) ?? markup.Text
+                    : markup.Text;
             resultMap["output"] = reanchored;
         }
         else
