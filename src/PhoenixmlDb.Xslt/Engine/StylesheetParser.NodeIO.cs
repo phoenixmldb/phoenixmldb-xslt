@@ -98,6 +98,77 @@ public sealed partial class StylesheetParser
     }
 
 
+    // What the host's resolver answered for a module, by the href and base it was asked with. The
+    // static declarations of a module are collected before the module is parsed, so each module
+    // is wanted twice; the host is asked once.
+    private readonly Dictionary<(string Href, string? Base), (string Xml, Uri? Base)?> _hostModules = new();
+
+    /// <summary>
+    /// The text of a stylesheet module as the host's resolver supplies it, or null when there is
+    /// no resolver or it supplies nothing for this module.
+    /// </summary>
+    private (string Xml, Uri? Base)? HostModule(string href, Uri? baseUri)
+    {
+        if (ResourcePolicy?.ResourceResolver is not { } hostResolver) return null;
+        var key = (href, baseUri?.AbsoluteUri);
+        if (_hostModules.TryGetValue(key, out var known)) return known;
+
+        (string Xml, Uri? Base)? answer = null;
+        if (hostResolver.ResolveStylesheetModule(href, baseUri) is { } moduleXml)
+            answer = (moduleXml, null);
+        else if (hostResolver.ResolveContent(new PhoenixmlDb.XQuery.Security.ResourceRequest(
+                     href, baseUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) is { } suppliedModule)
+            answer = (suppliedModule.ReadText(), suppliedModule.BaseUri);
+        _hostModules[key] = answer;
+        return answer;
+    }
+
+    /// <summary>
+    /// Reads a module for the collection of static declarations, from where the parser will read
+    /// it: the host's resolver first, and a file only when no resolver is the only source of
+    /// resources and the resource policy allows the import. Returns null for a module that
+    /// cannot be had this way; the parser reports it when it gets there.
+    /// </summary>
+    private XElement? ReadModuleForStaticDeclarations(string href, Uri? baseUri, out Uri? moduleUri)
+    {
+        moduleUri = null;
+        if (baseUri != null && Uri.TryCreate(baseUri, href, out var resolved))
+            moduleUri = resolved;
+        else if (Uri.TryCreate(href, UriKind.Absolute, out var absolute))
+            moduleUri = absolute;
+
+        string xml;
+        if (HostModule(href, baseUri) is { } supplied)
+        {
+            xml = supplied.Xml;
+            moduleUri = supplied.Base ?? moduleUri;
+        }
+        else
+        {
+            if (ResourcePolicy?.ResourceResolver is { SuppliesAllContent: true }) return null;
+            if (moduleUri is not { IsFile: true } || !ModuleExists(moduleUri.LocalPath)) return null;
+            // Under a policy, read the canonical path the check judged (links resolved).
+            xml = File.ReadAllText(ResourcePolicy != null
+                ? PhoenixmlDb.XQuery.Security.ResourcePolicy.CanonicalPath(moduleUri.LocalPath)
+                : moduleUri.LocalPath);
+        }
+
+        var settings = new System.Xml.XmlReaderSettings
+        {
+            DtdProcessing = AllowDtdProcessing && xml.Contains("<!DOCTYPE", StringComparison.Ordinal)
+                ? System.Xml.DtdProcessing.Parse
+                : System.Xml.DtdProcessing.Prohibit,
+            MaxCharactersFromEntities = 1_000_000,
+        };
+        if (settings.DtdProcessing == System.Xml.DtdProcessing.Parse)
+            settings.XmlResolver = EntityResolver();
+        using var reader = moduleUri != null
+            ? System.Xml.XmlReader.Create(new System.IO.StringReader(xml), settings, moduleUri.AbsoluteUri)
+            : System.Xml.XmlReader.Create(new System.IO.StringReader(xml), settings);
+        return XDocument.Load(reader, LoadOptions.SetBaseUri | LoadOptions.SetLineInfo).Root;
+    }
+
+
     private static string? TryReadFilePackageVersion(string filePath)
     {
         try
@@ -188,15 +259,12 @@ public sealed partial class StylesheetParser
             // Asked with the href as written and whatever base there is — none at all for a
             // stylesheet loaded from text without one, which used to get no call for a
             // relative href.
-            hostModuleXml = hostResolver.ResolveStylesheetModule(href, effectiveBase ?? _baseUri);
-            if (hostModuleXml is null
-                && hostResolver.ResolveContent(new PhoenixmlDb.XQuery.Security.ResourceRequest(
-                    href, effectiveBase ?? _baseUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) is { } suppliedModule)
+            if (HostModule(href, effectiveBase ?? _baseUri) is { } supplied)
             {
-                hostModuleXml = suppliedModule.ReadText();
+                hostModuleXml = supplied.Xml;
                 // The module is known by the URI the host gave it; its own relative imports
                 // resolve against that.
-                hostModuleBase = suppliedModule.BaseUri;
+                hostModuleBase = supplied.Base;
             }
             if (hostModuleXml is null && hostResolver.SuppliesAllContent)
                 throw new XsltException(

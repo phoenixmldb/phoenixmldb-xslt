@@ -334,9 +334,21 @@ internal sealed partial class DefaultXsltExecutionContext
                 var baseUri = _ctx.StaticBaseUri is { } sb && Uri.TryCreate(sb, UriKind.Absolute, out var b) ? b : null;
                 var target = PhoenixmlDb.XQuery.Security.ResourcePolicy.Resolve(uri, baseUri)
                     ?? throw new XsltException($"FODC0002: Invalid merge source URI '{uri}'");
-                var authorized = _ctx.AuthorizeResource(target, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "FODC0002");
                 _ctx.ApplyEntityPolicy(settings);
                 settings.CloseInput = true;
+                // The host's own content first: with it, nothing is opened here by name, and a
+                // resolver that is the only source of resources is never passed by.
+                try
+                {
+                    if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, target.AbsoluteUri, null,
+                            PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument) is { } supplied)
+                        return XmlReader.Create(new System.IO.MemoryStream(supplied.ReadBytes().Bytes), settings, target.AbsoluteUri);
+                }
+                catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+                {
+                    throw new XsltException($"FODC0002: {e.Message}");
+                }
+                var authorized = _ctx.AuthorizeResource(target, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "FODC0002");
                 if (authorized.IsFile)
                     return XmlReader.Create(System.IO.File.OpenRead(authorized.LocalPath), settings, authorized.AbsoluteUri);
                 if (authorized.Scheme is "http" or "https")

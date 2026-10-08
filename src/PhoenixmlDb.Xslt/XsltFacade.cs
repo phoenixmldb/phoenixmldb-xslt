@@ -536,7 +536,15 @@ public sealed class XsltTransformer
                 continue;
             }
             var resolved = ResolveLocations(import.SchemaLocations, baseUri);
-            if (ResourcePolicy is { } policy && resolved is { Count: > 0 })
+            // Where the host's resolver is the only source of resources, the location is only a
+            // name to ask it by: nothing is opened at it, so the import rules, which say where the
+            // engine may fetch from, do not apply. With no rule at all the import failed here
+            // before the resolver was ever asked, while xsl:import, doc() and fn:transform under
+            // the same policy were served by it.
+            if (ResourcePolicy is { ResourceResolver.SuppliesAllContent: true })
+            {
+            }
+            else if (ResourcePolicy is { } policy && resolved is { Count: > 0 })
             {
                 // Each location must be one the policy allows importing from; the provider then
                 // checks every document the schema itself includes or imports.

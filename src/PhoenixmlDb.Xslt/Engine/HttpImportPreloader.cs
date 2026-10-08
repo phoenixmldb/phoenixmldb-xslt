@@ -40,9 +40,41 @@ internal static class HttpImportPreloader
         PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
         CancellationToken ct = default)
     {
+        // A resolver that is the only source of resources (SuppliesAllContent) leaves nothing to
+        // pre-fetch: the parser and the runtime get every module and document from it, and the
+        // engine's own client must not ask the network for any of them. Not even to throw the
+        // answer away, which is what happened: the request went out, then the resolver's
+        // content was used.
+        if (policy?.ResourceResolver is { SuppliesAllContent: true })
+            return;
         var visited = new HashSet<string>(StringComparer.Ordinal);
         await WalkAsync(rootStylesheetXml, rootBaseUri, resources, visited, policy, ct).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// What the host's resolver supplies for a stylesheet module, asked as the parser asks it
+    /// (<see cref="StylesheetParser"/>): by href and base first, then as content. A module the
+    /// host supplies is not fetched; it is only read here to find the modules it imports in turn.
+    /// </summary>
+    private static (string Xml, Uri Base)? HostModule(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
+        string href, Uri? baseUri, Uri resolved)
+    {
+        if (policy?.ResourceResolver is not { } resolver)
+            return null;
+        if (resolver.ResolveStylesheetModule(href, baseUri) is { } module)
+            return (module, resolved);
+        return resolver.ResolveContent(new PhoenixmlDb.XQuery.Security.ResourceRequest(
+                href, baseUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) is { } content
+            ? (content.ReadText(), content.BaseUri)
+            : null;
+    }
+
+    /// <summary>Whether the host's resolver supplies the document, so that it is not to be fetched.</summary>
+    private static bool HostSuppliesDocument(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy, Uri uri)
+        => policy?.ResourceResolver is { } resolver
+            && (resolver.IsDocumentAvailable(uri.AbsoluteUri)
+                || resolver.ResolveContent(new PhoenixmlDb.XQuery.Security.ResourceRequest(
+                    uri.AbsoluteUri, null, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument)) is not null);
 
     private static bool Allowed(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy, Uri uri, PhoenixmlDb.XQuery.Security.ResourceAccessKind access)
         => policy is null || policy.IsAllowed(uri, access);
@@ -145,6 +177,13 @@ internal static class HttpImportPreloader
             var key = resolved.AbsoluteUri;
             if (!visited.Add(key)) continue;
             if (resources.TryGet(resolved, out _)) continue;
+            // The host's module, where it supplies one: the parser will take it from the
+            // resolver, so it is not fetched and not cached here, only walked for its imports.
+            if (HostModule(policy, href, baseUri, resolved) is var (hostXml, hostBase))
+            {
+                await WalkAsync(hostXml, hostBase, resources, visited, policy, ct).ConfigureAwait(false);
+                continue;
+            }
             if (!Allowed(policy, resolved, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) continue;
 
             string content;
@@ -168,6 +207,7 @@ internal static class HttpImportPreloader
             if (!Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var docUri)) continue;
             if (!visited.Add(docUri.AbsoluteUri)) continue;
             if (resources.TryGet(docUri, out _)) continue;
+            if (HostSuppliesDocument(policy, docUri)) continue;
             if (!Allowed(policy, docUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument)) continue;
 
             try
@@ -189,6 +229,11 @@ internal static class HttpImportPreloader
             if (!Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var xslUri)) continue;
             if (!visited.Add(xslUri.AbsoluteUri)) continue;
             if (resources.TryGet(xslUri, out _)) continue;
+            if (HostModule(policy, xslUri.AbsoluteUri, null, xslUri) is var (hostXsl, hostXslBase))
+            {
+                await WalkAsync(hostXsl, hostXslBase, resources, visited, policy, ct).ConfigureAwait(false);
+                continue;
+            }
             if (!Allowed(policy, xslUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) continue;
 
             string xslContent;

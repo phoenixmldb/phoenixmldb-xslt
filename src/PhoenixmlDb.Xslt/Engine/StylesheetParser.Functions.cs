@@ -692,21 +692,18 @@ public sealed partial class StylesheetParser
                 break;
 
             case "available-environment-variables":
+                // As at run time: a stylesheet sees nothing of the process's environment. This
+                // evaluator read the real one, so a static expression could test, and a shadow
+                // attribute could write out, any variable of the process that compiles it.
                 if (fc.Arguments.Count == 0)
-                {
-                    var envVars = Environment.GetEnvironmentVariables();
-                    var names = new List<object?>();
-                    foreach (string key in envVars.Keys)
-                        names.Add(key);
-                    return names;
-                }
+                    return new List<object?>();
                 break;
 
             case "environment-variable":
                 if (fc.Arguments.Count == 1)
                 {
-                    var envName = EvaluateStaticExpression(fc.Arguments[0], context)?.ToString() ?? "";
-                    return Environment.GetEnvironmentVariable(envName) ?? null;
+                    EvaluateStaticExpression(fc.Arguments[0], context);
+                    return null;
                 }
                 break;
 

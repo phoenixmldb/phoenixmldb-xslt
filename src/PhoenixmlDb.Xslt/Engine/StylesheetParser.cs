@@ -3276,23 +3276,31 @@ public sealed partial class StylesheetParser
 
         void CollectModule(XElement moduleRef)
         {
-            if (baseUriObj == null) return;
             var href = moduleRef.Attribute("href")?.Value;
             if (href == null) return;
+            // A module that use-when excludes is no part of the stylesheet, and neither are its
+            // declarations. Where the condition cannot be judged yet (it may refer to a
+            // declaration further down), the module is read, as it always was.
             try
             {
-                var resolvedUri = new Uri(baseUriObj, href);
-                if (!resolvedUri.IsFile || !File.Exists(resolvedUri.LocalPath)) return;
+                if (!ShouldIncludeElement(moduleRef)) return;
+            }
+            catch (XsltException)
+            {
+            }
+            try
+            {
+                var moduleRoot = ReadModuleForStaticDeclarations(href, baseUriObj, out var moduleUri);
+                if (moduleRoot == null) return;
                 // A module already pulled in contributes its declarations once. The guard is also
                 // what stops a cyclic include from recursing forever now that this walk descends
                 // instead of scanning one level.
-                if (!visitedModules.Add(resolvedUri.AbsoluteUri)) return;
-                var importedDoc = XDocument.Load(resolvedUri.LocalPath, LoadOptions.SetBaseUri | LoadOptions.SetLineInfo);
-                if (importedDoc.Root != null)
-                    CollectStaticDeclarationsInScopeOrder(importedDoc.Root, staticParams, resolvedUri,
-                                                          visitedModules, checkConsistency: false, externallySupplied);
+                if (!visitedModules.Add(moduleUri?.AbsoluteUri ?? href)) return;
+                CollectStaticDeclarationsInScopeOrder(moduleRoot, staticParams, moduleUri,
+                                                      visitedModules, checkConsistency: false, externallySupplied);
             }
-            catch (Exception ex) when (ex is IOException or XmlException or UriFormatException or UnauthorizedAccessException or FileNotFoundException)
+            catch (Exception ex) when (ex is IOException or XmlException or UriFormatException or UnauthorizedAccessException or FileNotFoundException
+                                           or PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
             {
                 // If the module cannot be read here, skip — parsing proper reports it properly.
             }
