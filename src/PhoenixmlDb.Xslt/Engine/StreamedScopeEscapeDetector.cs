@@ -32,12 +32,21 @@ internal static class StreamedScopeEscapeDetector
 
     private static bool Compute(XsltStylesheet stylesheet)
     {
+        foreach (var template in StreamableModeRules(stylesheet))
+            if (Escapes(template.Body, new HashSet<object>(ReferenceEqualityComparer.Instance)))
+                return true;
+        return false;
+    }
+
+    /// <summary>The template rules that take part in a mode declared streamable.</summary>
+    internal static IEnumerable<XsltTemplate> StreamableModeRules(XsltStylesheet stylesheet)
+    {
         var streamableModes = new HashSet<QName>();
         foreach (var (name, mode) in stylesheet.Modes)
             if (mode.Streamable)
                 streamableModes.Add(name);
         if (streamableModes.Count == 0)
-            return false;
+            yield break;
 
         var unnamed = new QName(NamespaceId.None, "");
         foreach (var template in stylesheet.Templates)
@@ -48,10 +57,9 @@ internal static class StreamedScopeEscapeDetector
                 ? streamableModes.Contains(unnamed)
                 : template.Modes.Any(m => m.Equals(TemplateIndex.AllModeSentinel)
                     || streamableModes.Contains(m.Equals(TemplateIndex.DefaultModeSentinel) ? unnamed : m));
-            if (inStreamableMode && Escapes(template.Body, new HashSet<object>(ReferenceEqualityComparer.Instance)))
-                return true;
+            if (inStreamableMode)
+                yield return template;
         }
-        return false;
     }
 
     /// <summary>Walks an instruction tree: its XPath expressions, AVT parts and nested instructions.</summary>
