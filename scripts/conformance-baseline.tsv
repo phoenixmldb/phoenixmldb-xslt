@@ -484,7 +484,7 @@ tests/fn/id/_id-test-set.xml	8	8
 tests/fn/innermost/_innermost-test-set.xml	2	2
 tests/fn/json-to-xml/_json-to-xml-test-set.xml	52	53
 tests/fn/key/_key-test-set.xml	93	93
-tests/fn/load-xquery-module/_load-xquery-module-test-set.xml	4	4
+tests/fn/load-xquery-module/_load-xquery-module-test-set.xml	3	4
 tests/fn/normalize-unicode/_normalize-unicode-test-set.xml	16	17
 tests/fn/outermost/_outermost-test-set.xml	26	26
 tests/fn/position/_position-test-set.xml	208	208
