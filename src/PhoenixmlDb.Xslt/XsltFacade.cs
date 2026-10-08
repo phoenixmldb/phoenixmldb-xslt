@@ -512,6 +512,29 @@ public sealed class XsltTransformer
             // to the provider — that would fail with XQST0059 since there's nothing to load.
             if (string.IsNullOrEmpty(import.TargetNamespace) && import.SchemaLocations.Count == 0)
                 continue;
+            if (import.InlineSchema is { } inlineSchema)
+            {
+                // Schema text has no location for a provider to fetch, so it needs one that takes
+                // text. What the schema itself includes or imports still goes through the policy.
+                if (SchemaProvider is not PhoenixmlDb.XQuery.XsdSchemaProvider xsd)
+                    throw new XsltException(
+                        $"XTSE0220: xsl:import-schema for namespace '{import.TargetNamespace}' has an xs:schema child, which the registered schema provider cannot load",
+                        import.Location);
+                try
+                {
+                    if (ResourcePolicy is { } inlinePolicy)
+                        xsd.AddFromString(import.TargetNamespace, inlineSchema, inlinePolicy);
+                    else
+                        xsd.AddFromString(import.TargetNamespace, inlineSchema);
+                }
+                catch (PhoenixmlDb.XQuery.SchemaException ex)
+                {
+                    throw new XsltException(
+                        $"{ex.ErrorCode}: xsl:import-schema failed for namespace '{import.TargetNamespace}': {ex.Message}",
+                        import.Location);
+                }
+                continue;
+            }
             var resolved = ResolveLocations(import.SchemaLocations, baseUri);
             if (ResourcePolicy is { } policy && resolved is { Count: > 0 })
             {
@@ -1669,7 +1692,7 @@ public sealed class XsltTransformer
 /// <summary>
 /// Adapts XQueryParserFacade to IExpressionParser for XSLT stylesheet parsing.
 /// </summary>
-internal sealed class XQueryExpressionParser : IExpressionParser
+internal sealed class XQueryExpressionParser : ITypeNamespaceAwareExpressionParser
 {
     // XSLT/XPath retains the namespace axis (deprecated but optional) — let it through.
     // XQuery's XQST0134 only applies when this parser is invoked from a pure XQuery context.
@@ -1693,4 +1716,7 @@ internal sealed class XQueryExpressionParser : IExpressionParser
     {
         return _parser.Parse(expression);
     }
+
+    public XQueryExpression Parse(string expression, Func<string, string?> typeNamespaceResolver)
+        => _parser.Parse(expression, typeNamespaceResolver);
 }

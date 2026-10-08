@@ -159,6 +159,7 @@ public sealed partial class StylesheetParser
         bool? inheritNamespaces = null;
         string? version = null;
         string? defaultCollation = null;
+        Ast.ValidationMode? lreValidation = null;
 
         foreach (var attr in element.Attributes())
         {
@@ -261,6 +262,7 @@ public sealed partial class StylesheetParser
                         if (attr.Value.Trim() is "strict" && ShouldRejectSchemaAware)
                             throw new XsltException($"XTSE1660: A non-schema-aware XSLT processor must not accept xsl:validation=\"{attr.Value.Trim()}\"",
                                 GetSourceLocation(element));
+                        lreValidation = ParseValidationMode(attr);
                         break;
                     case "default-validation":
                         // XTSE1660: Non-schema-aware processor can only accept strip/preserve/lax
@@ -373,6 +375,7 @@ public sealed partial class StylesheetParser
             Version = version,
             DefaultCollation = defaultCollation,
             StaticBaseUri = staticBaseUri,
+            Validation = lreValidation,
             Content = ParseSequenceConstructor(element)
         };
     }
@@ -1005,7 +1008,18 @@ public sealed partial class StylesheetParser
     {
         try
         {
-            return _expressionParser.Parse(expression);
+            // A type name in the expression (cast as t:size) takes its prefix from the in-scope
+            // namespaces of the element the expression is on (XSLT 3.0 §5.3.3); the XPath parser
+            // has no other way to know them and reported XPST0081 (xslt#316).
+            var scope = origin switch
+            {
+                XElement e => e,
+                System.Xml.Linq.XObject o => o.Parent,
+                _ => null,
+            };
+            return scope != null && _expressionParser is ITypeNamespaceAwareExpressionParser aware
+                ? aware.Parse(expression, prefix => scope.GetNamespaceOfPrefix(prefix)?.NamespaceName)
+                : _expressionParser.Parse(expression);
         }
         catch (PhoenixmlDb.XQuery.Parser.XQueryParseException ex)
         {

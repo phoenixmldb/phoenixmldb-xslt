@@ -1201,7 +1201,13 @@ internal sealed partial class DefaultXsltExecutionContext
 
     // Not counted toward MaxRecursionDepth; see CreateElementAsync (xslt#199).
     public override ValueTask CreateLiteralElementAsync(XsltLiteralResultElement instruction)
-        => CreateLiteralElementCoreAsync(instruction);
+        // xsl:validation on a literal result element validates it as validation= does on
+        // xsl:element (XSLT 3.0 §11.1.2); it was read for XTSE1660 and then dropped (xslt#316).
+        => instruction.Validation is not (Ast.ValidationMode.Strict or Ast.ValidationMode.Lax)
+            ? CreateLiteralElementCoreAsync(instruction)
+            : RunInstructionWithValidationAsync(
+                instruction.Validation, "literal result element", instruction.Location,
+                () => CreateLiteralElementCoreAsync(instruction));
 
 
     private async ValueTask CreateLiteralElementCoreAsync(XsltLiteralResultElement instruction)

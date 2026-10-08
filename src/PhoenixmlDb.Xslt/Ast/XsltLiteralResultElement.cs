@@ -24,6 +24,8 @@ public sealed class XsltLiteralResultElement : XsltInstruction
     public Dictionary<string, string> NamespaceDeclarations { get; init; } = new();
     public List<QName> UseAttributeSets { get; init; } = new();
     public bool? InheritNamespaces { get; init; }
+    /// <summary>The <c>xsl:validation</c> attribute, when the element carries one.</summary>
+    public ValidationMode? Validation { get; init; }
     public required XsltSequenceConstructor Content { get; init; }
 
     /// <summary>
