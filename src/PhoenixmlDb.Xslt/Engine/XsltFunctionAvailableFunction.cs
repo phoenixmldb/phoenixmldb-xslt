@@ -64,6 +64,9 @@ internal sealed class XsltFunctionAvailableFunction : PhoenixmlDb.XQuery.Ast.XQu
         {
             qname = new QName(NamespaceId.None, name);
         }
+        // A simple type of an imported schema has a constructor function of its name, of arity 1.
+        if (arity is 1 or < 0 && IsSchemaTypeConstructor(qname, context))
+            return ValueTask.FromResult<object?>(true);
         // Try to resolve with various arities
         if (arity >= 0)
         {
@@ -76,5 +79,17 @@ internal sealed class XsltFunctionAvailableFunction : PhoenixmlDb.XQuery.Ast.XQu
                 return ValueTask.FromResult<object?>(true);
         }
         return ValueTask.FromResult<object?>(false);
+    }
+
+    private static bool IsSchemaTypeConstructor(QName name, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+    {
+        if (context is not PhoenixmlDb.XQuery.Execution.QueryExecutionContext { SchemaProvider: { } provider } query)
+            return false;
+        var uri = name.ExpandedNamespace;
+        if (uri is null && !string.IsNullOrEmpty(name.Prefix)
+            && query.PrefixNamespaceBindings is { } bindings && bindings.TryGetValue(name.Prefix, out var bound))
+            uri = bound;
+        return !string.IsNullOrEmpty(uri) && uri != "http://www.w3.org/2001/XMLSchema"
+            && provider.GetSchemaSimpleType(uri, name.LocalName) is not null;
     }
 }
