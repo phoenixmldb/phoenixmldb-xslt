@@ -2404,11 +2404,8 @@ public sealed class XsltTestRunner
                 ? assertion.Code
                 : assertion.Value;
             return string.IsNullOrEmpty(expectedCode)
-                || ex.Message.Contains(expectedCode, StringComparison.Ordinal)
-                || ReportedErrorCodes(ex).Contains(expectedCode, StringComparer.Ordinal)
-                || (assertion.ExpandedCode is { } expanded
-                    && (ex.Message.Contains(expanded, StringComparison.Ordinal)
-                        || ReportedErrorCodes(ex).Contains(expanded, StringComparer.Ordinal)));
+                || Raised(ex, expectedCode)
+                || (assertion.ExpandedCode is { } expanded && Raised(ex, expanded));
         }
 
         // <any-of> is satisfied when any one alternative is — and its <error> alternatives must
@@ -2416,6 +2413,32 @@ public sealed class XsltTestRunner
         // <error> child merely existed, which is the identical blanket-pass one level down.
         return assertion.Type == "any-of"
             && assertion.Children.Any(child => MatchesExpectedError(child, ex));
+    }
+
+    /// <summary>
+    /// True when some exception in the chain RAISED <paramref name="code"/>: it is the exception's
+    /// structured <c>ErrorCode</c>, or the code its message leads with ("FORX0002: Invalid …").
+    /// </summary>
+    /// <remarks>
+    /// A code that only occurs somewhere in the message text is not raised. That was accepted, so
+    /// load-xquery-module-001, which requires XQST0059 or FOQM0006, passed on FOQM0002 because the
+    /// message quoted the analyzer's "[XQST0059] …" diagnosis (xslt#318). The leading position is
+    /// kept because several exception types here carry their code only as the message prefix;
+    /// requiring the property alone failed 211 cases, most of them raising exactly the code
+    /// asked for.
+    /// </remarks>
+    private static bool Raised(Exception ex, string code)
+    {
+        if (ReportedErrorCodes(ex).Contains(code, StringComparer.Ordinal))
+            return true;
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
+            var message = e.Message;
+            if (message.StartsWith(code, StringComparison.Ordinal)
+                && (message.Length == code.Length || message[code.Length] is ':' or ' '))
+                return true;
+        }
+        return false;
     }
 
     private static bool IsExpectedError(List<XsltAssertion> assertions, Exception ex)
