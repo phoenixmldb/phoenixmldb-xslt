@@ -54,6 +54,18 @@ public sealed class SchemaTypeConstructorFunctionTests
     public async Task The_constructor_function_of_an_imported_simple_type_can_be_called(string select, string expected)
         => (await RunAsync(select)).Should().Be($"<out>{expected}</out>");
 
+    /// <summary>The value is an instance of the type it was made as, and of what that restricts.</summary>
+    [Theory]
+    [InlineData("t:size('8') instance of t:size", "true")]
+    [InlineData("('8' cast as t:size) instance of t:size", "true")]
+    [InlineData("t:size('8') instance of xs:integer", "true")]
+    [InlineData("8 instance of t:size", "false")]
+    [InlineData("(t:size('8') + 0) instance of t:size", "false")]
+    [InlineData("let $s := t:size('8') return $s instance of t:size", "true")]
+    [InlineData("every $s in t:sizes('1 2 3') satisfies $s instance of t:size", "true")]
+    public async Task A_value_made_as_a_schema_type_is_an_instance_of_it(string select, string expected)
+        => (await RunAsync(select)).Should().Be($"<out>{expected}</out>");
+
     [Fact]
     public async Task A_value_the_type_does_not_allow_is_an_error()
         => (await RunAsync("t:size('80')")).Should().StartWith("error:").And.Contain("80");
