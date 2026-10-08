@@ -123,6 +123,47 @@ public sealed class SchemaAwareGapTests : IDisposable
     public async Task Validation_that_asks_for_no_check_makes_none(string mode)
         => (await RunAsync(ByLocation, $"""<t:n xsl:validation="{mode}">12</t:n>""")).Should().Be("""<out><t:n xmlns:t="urn:t">12</t:n></out>""");
 
+    // The inline schema is part of the stylesheet, so a relative schemaLocation in it is
+    // relative to the stylesheet. It resolved against the process's current directory.
+    [Fact]
+    public async Task An_inline_schema_includes_a_document_relative_to_the_stylesheet()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_dir, "part.xsd"), """
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:t">
+              <xs:simpleType name="size"><xs:restriction base="xs:integer"><xs:maxInclusive value="9"/></xs:restriction></xs:simpleType>
+            </xs:schema>
+            """);
+        const string import = """
+            <xsl:import-schema namespace="urn:t">
+              <xs:schema targetNamespace="urn:t" elementFormDefault="qualified">
+                <xs:include schemaLocation="part.xsd"/>
+                <xs:element name="n" type="t:size"/>
+              </xs:schema>
+            </xsl:import-schema>
+            """;
+        (await RunAsync(import, """<t:n xsl:validation="strict">7</t:n>""")).Should().Be("""<out><t:n xmlns:t="urn:t">7</t:n></out>""");
+        (await ErrorAsync(import, """<t:n xsl:validation="strict">12</t:n>""")).Should().NotStartWith("no error");
+    }
+
+    [Fact]
+    public async Task Two_inline_schemas_in_one_stylesheet_are_both_loaded()
+    {
+        const string import = """
+            <xsl:import-schema namespace="urn:t">
+              <xs:schema targetNamespace="urn:t" elementFormDefault="qualified">
+                <xs:element name="n" type="xs:integer"/>
+              </xs:schema>
+            </xsl:import-schema>
+            <xsl:import-schema namespace="urn:u">
+              <xs:schema targetNamespace="urn:u" elementFormDefault="qualified">
+                <xs:element name="m" type="xs:integer"/>
+              </xs:schema>
+            </xsl:import-schema>
+            """;
+        (await RunAsync(import, """<u:m xmlns:u="urn:u" xsl:validation="strict">7</u:m>""")).Should().Contain(">7</u:m>");
+        (await ErrorAsync(import, """<u:m xmlns:u="urn:u" xsl:validation="strict">x</u:m>""")).Should().NotStartWith("no error");
+    }
+
     [Fact]
     public async Task A_location_and_an_inline_schema_together_are_XTSE0215()
         => (await ErrorAsync("""
