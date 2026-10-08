@@ -187,6 +187,152 @@ internal static class StreamabilityChecker
                 $"XTSE3430: The body of this template in a streamable mode is not guaranteed streamable: {phase.Reason}",
                 location);
         }
+
+    }
+
+    /// <summary>
+    /// True when more than one operand of a template body reads downward from the matched node
+    /// (XSLT 3.0 §19.8.4.1): the streamed input goes past once, so such a body is not
+    /// guaranteed-streamable (xslt#295). Not part of <see cref="CheckStreamableTemplateBody"/>:
+    /// the engine runs such a body on a buffered copy of the matched subtree, and refuses it only
+    /// under <see cref="XsltTransformOptions.StrictStreamability"/>.
+    /// </summary>
+    internal static bool HasSeveralConsumingOperands(XsltSequenceConstructor? body)
+        => body != null
+            && _severalConsumingOperands.GetValue(body,
+                static b => new System.Runtime.CompilerServices.StrongBox<bool>(new ConsumingOperandCounter().Visit(b) > 1)).Value;
+
+    // Asked once per matched element by the streaming pass; the body is the same object each time.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<XsltSequenceConstructor, System.Runtime.CompilerServices.StrongBox<bool>>
+        _severalConsumingOperands = new();
+
+    /// <summary>
+    /// Counts the operands of a template body that read downward from the node the template
+    /// matched: the consuming operands of XSLT 3.0 §19.8.4.1, whose general rule makes a construct
+    /// with more than one of them free-ranging and so not streamable.
+    /// </summary>
+    /// <remarks>
+    /// An under-count by design, so that it refuses only what is certainly not streamable. An
+    /// instruction counts once however many downward paths its expression holds (the expression
+    /// rules are other detectors' work). Alternatives count as their largest branch. The body of an
+    /// instruction that changes the focus (xsl:for-each and the like) is not looked into, nor is a
+    /// path that starts anywhere but the context item ($doc/a, doc('x')/a). A bare <c>.</c> is not
+    /// counted: whether it consumes depends on the kind of node matched.
+    /// </remarks>
+    private sealed class ConsumingOperandCounter : XsltInstructionVisitor<int>
+    {
+        public int Visit(XsltInstruction? insn) => insn == null ? 0 : insn.Accept(this);
+
+        protected override int DefaultVisit(XsltInstruction insn) => 0;
+
+        private static int Expr(XQueryExpression? expr)
+        {
+            if (expr == null) return 0;
+            var detector = new ContextDownwardDetector();
+            detector.Walk(expr);
+            return detector.Found ? 1 : 0;
+        }
+
+        private static int Avt(XsltAttributeValueTemplate? avt)
+        {
+            if (avt == null) return 0;
+            var n = 0;
+            foreach (var part in avt.Parts)
+                if (part is AvtExpression e)
+                    n += Expr(e.Expression);
+            return n;
+        }
+
+        public override int VisitSequenceConstructor(XsltSequenceConstructor insn)
+        {
+            var n = 0;
+            foreach (var instruction in insn.Instructions)
+                n += Visit(instruction);
+            return n;
+        }
+
+        public override int VisitApplyTemplates(XsltApplyTemplates insn) => insn.Select == null ? 1 : Expr(insn.Select);
+        public override int VisitForEach(XsltForEach insn) => Expr(insn.Select);
+        public override int VisitForEachGroup(XsltForEachGroup insn) => Expr(insn.Select);
+        public override int VisitIterate(XsltIterate insn) => Expr(insn.Select);
+        public override int VisitIf(XsltIf insn) => Expr(insn.Test) + Visit(insn.Then);
+
+        public override int VisitChoose(XsltChoose insn)
+        {
+            var tests = 0;
+            var branch = Visit(insn.Otherwise);
+            foreach (var when in insn.When)
+            {
+                tests += Expr(when.Test);
+                branch = Math.Max(branch, Visit(when.Body));
+            }
+            return tests + branch;
+        }
+
+        // Each prong of a fork has the input to itself; that is what xsl:fork is for.
+        public override int VisitFork(XsltFork insn)
+        {
+            var n = 0;
+            foreach (var prong in insn.Sequences) n = Math.Max(n, Visit(prong));
+            foreach (var group in insn.ForEachGroups) n = Math.Max(n, Visit(group));
+            return n;
+        }
+
+        public override int VisitTry(XsltTry insn) => Expr(insn.SelectExpression) + Visit(insn.Body);
+        public override int VisitElement(XsltElement insn) => Avt(insn.Name) + Visit(insn.Content);
+        public override int VisitAttribute(XsltAttribute insn) => Avt(insn.Name) + Expr(insn.Select) + Visit(insn.Content);
+        public override int VisitTextValueTemplate(XsltTextValueTemplate insn) => Avt(insn.Template);
+        public override int VisitValueOf(XsltValueOf insn) => Expr(insn.Select) + Visit(insn.Content);
+        public override int VisitCopy(XsltCopy insn) => Expr(insn.Select) + Visit(insn.Content);
+        public override int VisitCopyOf(XsltCopyOf insn) => Expr(insn.Select);
+        public override int VisitSequence(XsltSequence insn) => Expr(insn.Select) + Visit(insn.Content);
+        public override int VisitComment(XsltComment insn) => Expr(insn.Select) + Visit(insn.Content);
+        public override int VisitDocument(XsltDocument insn) => Visit(insn.Content);
+        public override int VisitMessage(XsltMessage insn) => Expr(insn.Select) + Visit(insn.Content);
+        public override int VisitVariableInstruction(XsltVariableInstruction insn) => Expr(insn.Select) + Visit(insn.Content);
+        public override int VisitWherePopulated(XsltWherePopulated insn) => Visit(insn.Content);
+        public override int VisitOnEmpty(XsltOnEmpty insn) => Expr(insn.Select) + Visit(insn.Content);
+        public override int VisitOnNonEmpty(XsltOnNonEmpty insn) => Expr(insn.Select) + Visit(insn.Content);
+
+        public override int VisitLiteralResultElement(XsltLiteralResultElement insn)
+        {
+            var n = Visit(insn.Content);
+            foreach (var avt in insn.Attributes.Values)
+                n += Avt(avt);
+            return n;
+        }
+    }
+
+    /// <summary>
+    /// A child or descendant step taken from the context item: <c>foo</c>, <c>./foo</c>,
+    /// <c>count(.//x)</c>. A path from anything else (<c>$v/foo</c>, <c>doc('x')/foo</c>) reads
+    /// some other tree, and a step's predicates have that step's node as their context.
+    /// </summary>
+    private sealed class ContextDownwardDetector : XQueryExpressionWalker
+    {
+        public bool Found { get; private set; }
+
+        public override object? VisitStepExpression(StepExpression expr)
+        {
+            if (expr.Axis is Axis.Child or Axis.Descendant or Axis.DescendantOrSelf)
+                Found = true;
+            return null;
+        }
+
+        public override object? VisitPathExpression(PathExpression expr)
+        {
+            if (Found) return null;
+            if (expr.InitialExpression is not (null or ContextItemExpression))
+            {
+                Walk(expr.InitialExpression);
+                return null;
+            }
+            // Only the first step leaves the context item; an attribute or upward first step
+            // makes the rest of the path about a different node.
+            if (expr.Steps.Count > 0)
+                Walk(expr.Steps[0]);
+            return null;
+        }
     }
 
     /// <summary>

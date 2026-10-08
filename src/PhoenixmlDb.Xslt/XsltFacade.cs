@@ -115,6 +115,20 @@ public sealed class XsltTransformer
     /// <see cref="System.Xml.XmlReader"/> for a streamable mode still stream.
     /// </summary>
     public bool DisableStreaming { get; set; }
+
+    /// <summary>
+    /// When <c>true</c>, a template rule of a streamable mode that is not guaranteed-streamable
+    /// (XSLT 3.0 §19) makes the transformation fail with XTSE3430, as a strict streaming
+    /// processor reports it. Off by default: the engine then runs such a rule on a buffered copy
+    /// of the matched subtree, or on a tree, and gives the same result. Has no effect when
+    /// <see cref="DisableStreaming"/> is set.
+    /// </summary>
+    /// <remarks>
+    /// The check finds a rule with more than one instruction that reads the children of the
+    /// matched node. It is not the complete streamability analysis of the specification, so a
+    /// stylesheet it accepts may still not be guaranteed-streamable.
+    /// </remarks>
+    public bool StrictStreamability { get; set; }
     private bool _allowRemoteXInclude;
     private PhoenixmlDb.Core.Xml.IXmlResourceResolver? _xIncludeResolver;
     private string? _sourceSelect;
@@ -1362,6 +1376,7 @@ public sealed class XsltTransformer
             BaseOutputUri = _baseOutputUri,
             ExpandXInclude = _expandXInclude,
             DisableStreaming = DisableStreaming,
+            StrictStreamability = StrictStreamability,
             AllowRemoteXInclude = _allowRemoteXInclude,
             XIncludeResolver = _xIncludeResolver,
             HasSourceDocument = hasSource,

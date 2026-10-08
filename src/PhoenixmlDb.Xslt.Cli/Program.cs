@@ -272,6 +272,7 @@ try
         // --no-stream must also stop the engine's own switch to streaming for a streamable mode;
         // without this the in-memory call below streamed anyway (xslt#295).
         transformer.DisableStreaming = options.NoStream;
+        transformer.StrictStreamability = options.StrictStreaming;
 
         // Streaming requires a local file (we hand the path to File.OpenRead). When the
         // source is HTTP it has already been read into inputXml above; fall through to
@@ -601,6 +602,9 @@ static void PrintUsage()
                              (with the existing fallback if the body isn't streamable).
           --no-stream        Disable auto-streaming. Forces the in-memory tree path
                              even when the stylesheet declares a streamable mode.
+          --strict-streaming Report XTSE3430 for a template in a streamable mode that
+                             is not guaranteed streamable, instead of running it on
+                             a buffered copy. No effect with --no-stream.
           -v, --verbose      Show detailed error information
           -h, --help         Show this help message
           --version          Show version information
@@ -645,6 +649,8 @@ file sealed class CliOptions
     /// <summary>True if the user passed <c>--no-stream</c> to opt out of
     /// auto-streaming on a streamable stylesheet.</summary>
     public bool NoStream { get; init; }
+    /// <summary>True if the user passed <c>--strict-streaming</c>.</summary>
+    public bool StrictStreaming { get; init; }
     public bool ShowHelp { get; init; }
     public bool ShowVersion { get; init; }
     public bool Verbose { get; init; }
@@ -663,6 +669,7 @@ file sealed class CliOptions
         var dryRun = false;
         var stream = false;
         var noStream = false;
+        var strictStreaming = false;
         var showHelp = false;
         var showVersion = false;
         var verbose = false;
@@ -728,6 +735,9 @@ file sealed class CliOptions
                 case "--no-stream":
                     noStream = true;
                     break;
+                case "--strict-streaming":
+                    strictStreaming = true;
+                    break;
                 case "-v" or "--verbose":
                     verbose = true;
                     break;
@@ -765,6 +775,7 @@ file sealed class CliOptions
             DryRun = dryRun,
             Stream = stream,
             NoStream = noStream,
+            StrictStreaming = strictStreaming,
             ShowHelp = showHelp,
             ShowVersion = showVersion,
             Verbose = verbose

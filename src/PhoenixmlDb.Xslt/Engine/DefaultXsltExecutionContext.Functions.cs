@@ -395,6 +395,10 @@ internal sealed partial class DefaultXsltExecutionContext
                     && (streamingBodyPlan is StreamingPlan.BufferMatchedSubtree
                             or StreamingPlan.BufferWholeInput
                         || StreamingSubtreeBufferDetector.RequiresSubtreeBuffer(template.Body)
+                        // More than one instruction reads the matched node's children, and the
+                        // reader passes them once: two xsl:apply-templates with different selects
+                        // wrote the first child and stopped, with no error (xslt#298).
+                        || StreamabilityChecker.HasSeveralConsumingOperands(template.Body)
                         || StreamingSubtreeBufferDetector.RequiresSubtreeBufferForAbsorbingFunctions(
                             template.Body, _stylesheet.Functions)))
                 {

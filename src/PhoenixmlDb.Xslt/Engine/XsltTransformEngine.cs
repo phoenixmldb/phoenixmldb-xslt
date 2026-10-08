@@ -165,6 +165,17 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// Transforms an XML document using the stylesheet.
     /// </summary>
+    /// <summary>
+    /// Reports XTSE3430 for a streamable-mode rule that is not guaranteed-streamable, when the
+    /// caller asked for the strict rule and did not ask for tree evaluation.
+    /// </summary>
+    private void EnsureStrictStreamability(XsltTransformOptions? options)
+    {
+        if (options is { StrictStreamability: true, DisableStreaming: false }
+            && StrictStreamability.Finding(_stylesheet) is { } finding)
+            throw new XsltException(finding.Message, finding.Location);
+    }
+
     public Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options = null)
         => TransformAsync(source, options, null);
 
@@ -173,6 +184,7 @@ public sealed class XsltTransformEngine
 
     private async Task<string> TransformOnCurrentStackAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
     {
+        EnsureStrictStreamability(options);
         ArgumentNullException.ThrowIfNull(source);
         options ??= new XsltTransformOptions();
 
@@ -992,6 +1004,7 @@ public sealed class XsltTransformEngine
 
     private async Task<object?> TransformRawOnCurrentStackAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
     {
+        EnsureStrictStreamability(options);
         ArgumentNullException.ThrowIfNull(source);
         options ??= new XsltTransformOptions();
 
@@ -1372,6 +1385,7 @@ public sealed class XsltTransformEngine
         XsltTransformOptions? options,
         XdmInMemoryStore nodeStore)
     {
+        EnsureStrictStreamability(options);
         ArgumentNullException.ThrowIfNull(initialContextItem);
         ArgumentNullException.ThrowIfNull(nodeStore);
         options ??= new XsltTransformOptions();
@@ -1507,6 +1521,7 @@ public sealed class XsltTransformEngine
 
     private async Task<object?> TransformRawOnCurrentStackAsync(string xmlSource, XsltTransformOptions? options)
     {
+        EnsureStrictStreamability(options);
         ArgumentNullException.ThrowIfNull(xmlSource);
         if (xmlSource.Length > 0 && xmlSource[0] == '\uFEFF')
             xmlSource = xmlSource[1..];
@@ -4822,6 +4837,7 @@ public sealed class XsltTransformEngine
 
     private async Task<string> TransformOnCurrentStackAsync(string xmlSource, XsltTransformOptions? options)
     {
+        EnsureStrictStreamability(options);
         ArgumentNullException.ThrowIfNull(xmlSource);
         // Strip leading BOM character (U+FEFF) — XmlDocument.LoadXml rejects it
         if (xmlSource.Length > 0 && xmlSource[0] == '\uFEFF')
@@ -4992,6 +5008,7 @@ public sealed class XsltTransformEngine
 
     private async Task TransformOnCurrentStackAsync(XmlReader input, TextWriter output, XsltTransformOptions? options)
     {
+        EnsureStrictStreamability(options);
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(output);
 
@@ -5410,6 +5427,11 @@ public sealed class XsltTransformEngine
             return true;
         if (body is null)
             return false;
+        // More than one instruction reads downward from the document node, and the reader goes
+        // past once: the second xsl:apply-templates of two found nothing left, with no error
+        // (xslt#298).
+        if (StreamabilityChecker.HasSeveralConsumingOperands(body))
+            return true;
         return StreamingPlanner.Plan(body, new StreamingContext(Posture.Striding, InStreamedScope: true))
             == StreamingPlan.BufferWholeInput;
     }

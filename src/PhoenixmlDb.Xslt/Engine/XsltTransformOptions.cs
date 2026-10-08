@@ -118,6 +118,15 @@ public sealed class XsltTransformOptions
     public bool DisableStreaming { get; init; }
 
     /// <summary>
+    /// When <c>true</c>, a template rule of a streamable mode that is not guaranteed-streamable
+    /// is reported as XTSE3430 when the transformation starts, as XSLT 3.0 §19.10 requires of a
+    /// streaming processor. Off by default: the engine then runs such a rule on a buffered copy
+    /// of the matched subtree, or on a tree, and the result is the same. Has no effect together
+    /// with <see cref="DisableStreaming"/>, which asks for tree evaluation.
+    /// </summary>
+    public bool StrictStreamability { get; init; }
+
+    /// <summary>
     /// When <see cref="ExpandXInclude"/> is on, controls whether remote (<c>http:</c>/<c>https:</c>)
     /// XInclude targets may be fetched. Off by default — only <c>file:</c>/relative targets resolve.
     /// </summary>
