@@ -1,12 +1,12 @@
 # Status
 
-Generated 2026-10-08 13:37 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-08 23:24 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.2.0 | ? | **repo is at ?, nuget.org has 2.2.0** |
+| `PhoenixmlDb.Core` | 2.3.0 | ? | **repo is at ?, nuget.org has 2.3.0** |
 | `PhoenixmlDb.XQuery` | 2.7.0 | ? | **repo is at ?, nuget.org has 2.7.0** |
 | `PhoenixmlDb.Xslt` | 2.7.0 | 2.7.0 | current |
 | `xquery4` | 2.7.0 | ? | **repo is at ?, nuget.org has 2.7.0** |
@@ -17,8 +17,8 @@ Generated 2026-10-08 13:37 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 2 | 0 |
-| phoenixmldb-xquery | 0 | 1 |
-| phoenixmldb-xslt | 3 | 0 |
+| phoenixmldb-xquery | 0 | 0 |
+| phoenixmldb-xslt | 2 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -30,15 +30,10 @@ Generated 2026-10-08 13:37 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [319] 2.7.0 is 5.4% slower than 2.6.0 on a stylesheet with no schema configured
 - [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-xquery**
-
-- [211] XsdSchemaProvider reads its schemas through the shared schema layer
 
 **phoenixmldb-cli**
 
