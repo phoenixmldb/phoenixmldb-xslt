@@ -19,6 +19,13 @@ public sealed class XsltSchemaImport
     /// <summary>Schema-location hints from the schema-location attribute (space-separated URIs).</summary>
     public IReadOnlyList<string> SchemaLocations { get; init; } = Array.Empty<string>();
 
+    /// <summary>
+    /// The text of an <c>xs:schema</c> element written as the child of <c>xsl:import-schema</c>
+    /// (XSLT 3.0 §3.15), carrying the namespace declarations in scope where it stood. Null when
+    /// the import names its schema by location.
+    /// </summary>
+    public string? InlineSchema { get; init; }
+
     /// <summary>Source location of the xsl:import-schema element (for diagnostic messages).</summary>
     public SourceLocation? Location { get; init; }
 }

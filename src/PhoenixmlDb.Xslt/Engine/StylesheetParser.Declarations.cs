@@ -791,11 +791,39 @@ public sealed partial class StylesheetParser
                                 break;
                             }
                         }
+                        // The schema may be written in place, as an xs:schema child (XSLT 3.0 §3.15).
+                        // It was not read: the import then had no location and failed XQST0059
+                        // (xslt#316).
+                        string? inlineSchema = null;
+                        XNamespace xsdNs = "http://www.w3.org/2001/XMLSchema";
+                        if (child.Element(xsdNs + "schema") is { } schemaElement)
+                        {
+                            if (locations.Length > 0)
+                                throw new XsltException(
+                                    "XTSE0215: xsl:import-schema has both a schema-location attribute and an xs:schema child",
+                                    GetSourceLocation(child));
+                            var declaredTarget = schemaElement.Attribute("targetNamespace")?.Value ?? "";
+                            if (child.Attribute("namespace") != null && declaredTarget != nsAttr)
+                                throw new XsltException(
+                                    $"XTSE0215: xsl:import-schema names namespace '{nsAttr}', and its xs:schema child has target namespace '{declaredTarget}'",
+                                    GetSourceLocation(child));
+                            nsAttr = declaredTarget;
+                            // A copy that declares every prefix in scope: the schema's own QNames
+                            // (type="t:size", base="xs:integer") may use prefixes the stylesheet
+                            // declares further up, which a serialized subtree would lose.
+                            var copy = new XElement(schemaElement);
+                            for (var scope = schemaElement; scope != null; scope = scope.Parent)
+                                foreach (var declaration in scope.Attributes())
+                                    if (declaration.IsNamespaceDeclaration && copy.Attribute(declaration.Name) == null)
+                                        copy.SetAttributeValue(declaration.Name, declaration.Value);
+                            inlineSchema = copy.ToString(SaveOptions.DisableFormatting);
+                        }
                         stylesheet.SchemaImports.Add(new XsltSchemaImport
                         {
                             TargetNamespace = nsAttr,
                             Prefix = prefix,
                             SchemaLocations = locations,
+                            InlineSchema = inlineSchema,
                             Location = GetSourceLocation(child),
                         });
                     }
