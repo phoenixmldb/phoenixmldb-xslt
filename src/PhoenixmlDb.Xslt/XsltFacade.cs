@@ -514,18 +514,18 @@ public sealed class XsltTransformer
                 continue;
             if (import.InlineSchema is { } inlineSchema)
             {
-                // Schema text has no location for a provider to fetch, so it needs one that takes
-                // text. What the schema itself includes or imports still goes through the policy.
-                if (SchemaProvider is not PhoenixmlDb.XQuery.XsdSchemaProvider xsd)
+                // The text is in the stylesheet, so what it includes or imports by a relative
+                // location is relative to the stylesheet, and goes through the policy.
+                try
+                {
+                    SchemaProvider.AddSchemaText(import.TargetNamespace, inlineSchema,
+                        baseUri is { IsAbsoluteUri: true } ? baseUri : null, ResourcePolicy);
+                }
+                catch (NotSupportedException)
+                {
                     throw new XsltException(
                         $"XTSE0220: xsl:import-schema for namespace '{import.TargetNamespace}' has an xs:schema child, which the registered schema provider cannot load",
                         import.Location);
-                try
-                {
-                    if (ResourcePolicy is { } inlinePolicy)
-                        xsd.AddFromString(import.TargetNamespace, inlineSchema, inlinePolicy);
-                    else
-                        xsd.AddFromString(import.TargetNamespace, inlineSchema);
                 }
                 catch (PhoenixmlDb.XQuery.SchemaException ex)
                 {
