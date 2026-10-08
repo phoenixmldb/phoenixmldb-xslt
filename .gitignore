@@ -23,3 +23,6 @@ tests/PhoenixmlDb.Conformance.Tests/TestData/qt3tests/
 conformance-results/*
 !conformance-results/summary.txt
 release-gate-results/
+# A local checkout symlinks the whole directory to another checkout's suites; a symlink is not
+# matched by the directory patterns above.
+tests/PhoenixmlDb.Conformance.Tests/TestData
