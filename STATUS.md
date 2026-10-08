@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-07 23:08 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-08 13:37 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -16,10 +16,10 @@ Generated 2026-10-07 23:08 UTC by `scripts/status.sh`. Do not edit by hand.
 
 | repo | open issues | open PRs |
 |---|---|---|
-| phoenixmldb-core | 3 | 0 |
-| phoenixmldb-xquery | 1 | 0 |
-| phoenixmldb-xslt | 5 | 0 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-core | 2 | 0 |
+| phoenixmldb-xquery | 0 | 1 |
+| phoenixmldb-xslt | 3 | 0 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -27,21 +27,22 @@ Generated 2026-10-07 23:08 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [5] Naming decision: the prefix `dbxml` means three different things
 - [4] StringValue returns "" for nodes read from storage — string comparisons in cross-document queries silently match nothing
-- [3] Parse_ElementWithManyChildren_ScalesLinearly is a wall-clock assertion and fails under parallel load
-
-**phoenixmldb-xquery**
-
-- [205] Check the cancellation token before starting a regex or pattern-facet match
 
 **phoenixmldb-xslt**
 
-- [316] Schema-aware XSLT gaps: schema type names in XPath, inline xs:schema, validation on literal result elements
-- [309] Async load/transform resume on a thread-pool thread since 2.6.0: document it, add synchronous overloads
+- [319] 2.7.0 is 5.4% slower than 2.6.0 on a stylesheet with no schema configured
 - [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
-- [295] XSLT 3.0 which should fail streamability analysis is run but doesn't produce the complete output; --no-stream doesn't improve the output
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-xquery**
+
+- [211] XsdSchemaProvider reads its schemas through the shared schema layer
+
+**phoenixmldb-cli**
+
+- [15] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
@@ -76,14 +77,11 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10708/10839 (98.79%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 10707/10839 (98.78%)** across 221 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 30145/31024 (97.17%)** across 428 test-sets,
   same file, same ratchet.
-- **The denominator moved since the previous baseline revision: QT3 31056 -> 31024.** A percentage
-  change across this revision is partly or wholly cases entering or leaving the count,
-  NOT necessarily the engine. Compare pass counts, not percentages, across this line.
 - **W3C QT3 / XQuery — figure not readable** from
   `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
 
