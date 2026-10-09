@@ -78,7 +78,7 @@ if [ "$CAND_LOCAL" = 1 ]; then
   echo "building candidate CLI from $ROOT ..."
   if [ "$CAND_DEV" = 1 ]; then
     for sib in phoenixmldb-xquery phoenixmldb-core; do
-      [ -d "$WS/$sib/.git" ] || { echo "--cand-dev needs $WS/$sib checked out" >&2; exit 2; }
+      [ -e "$WS/$sib/.git" ] || { echo "--cand-dev needs $WS/$sib checked out" >&2; exit 2; }
       git -C "$WS/$sib" diff --quiet HEAD -- || echo "WARNING: $sib has uncommitted changes; this reading is not reproducible from SHAs" >&2
     done
     export PHOENIXML_DEV=1   # inherited by every candidate build below; the base arms use packages
