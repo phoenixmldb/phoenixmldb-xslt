@@ -494,7 +494,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         // (xml:base="../../" plus 'insn/merge/log-file-2.xml') contributed nothing.
                         uri = ResolveAgainstStaticBaseUri(uri);
                         // Under a policy only the resolver that enforces it reads.
-                        var doc = (_policyResolver is { } guarded ? guarded.ResolveDocument(uri) : _documentResolver.ResolveDocument(uri))
+                        var doc = (_policyResolver is { } guarded ? guarded.ResolveDocument(uri, Caller) : _documentResolver.ResolveDocument(uri))
                             ?? throw Error($"FODC0002: for-each-source document '{uri}' cannot be retrieved");
                         contextItem = doc;
 

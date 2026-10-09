@@ -340,7 +340,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // resolver that is the only source of resources is never passed by.
                 try
                 {
-                    if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, target.AbsoluteUri, null,
+                    if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, target.AbsoluteUri, _ctx.Caller,
                             PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument) is { } supplied)
                         return XmlReader.Create(new System.IO.MemoryStream(supplied.ReadBytes().Bytes), settings, target.AbsoluteUri);
                 }

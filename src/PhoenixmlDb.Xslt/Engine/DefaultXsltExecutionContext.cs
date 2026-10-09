@@ -487,6 +487,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </remarks>
     internal SourceLocation? CurrentInstructionLocation => _currentInstructionLocation;
 
+    // The module whose code is running: of the instruction being executed, and inside the
+    // evaluation of an expression, of that expression. "" is a module with no known location.
+    private string? _currentModule;
+    private readonly Stack<string?> _moduleStack = new();
+
+    /// <summary>
+    /// Where the stylesheet module whose code is running was loaded from, or null when that
+    /// is not known. The module does not choose it: xml:base changes
+    /// <see cref="StaticBaseUri"/>, not this. It is what a host's resolver is told about who
+    /// asks (<see cref="PhoenixmlDb.XQuery.Security.ResourceRequest.ModuleUri"/>).
+    /// </summary>
+    internal string? ModuleLocation => string.IsNullOrEmpty(_currentModule) ? null : _currentModule;
+
+    /// <summary>Who asks, for a load the running code makes.</summary>
+    internal PhoenixmlDb.XQuery.Security.ResourceCaller Caller => PhoenixmlDb.XQuery.Security.ResourceGate.Caller(StaticBaseUri, ModuleLocation);
+
     private StringBuilder? _collectedAttributes => _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek() : null;
 
     private bool _attributeCollecting => _collectedAttributesStack.Count > 0;
@@ -911,7 +927,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // source and supplies none, the file path below is not tried either: see
             // UnparsedTextHelper.ResolveFilePath.
             return _policyResolver.ResolveText(href, encoding)
-                ?? PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(_options?.ResourcePolicy, href, null,
+                ?? PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(_options?.ResourcePolicy, href, Caller,
                     PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadText)?.ReadText();
         }
         catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)

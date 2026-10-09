@@ -49,7 +49,7 @@ internal sealed class XsltStreamAvailableFunction : PhoenixmlDb.XQuery.Ast.XQuer
             {
                 try
                 {
-                    if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, uri, _context._stylesheet.BaseUri,
+                    if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, uri, _context.Caller,
                             PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument) is { } content)
                         supplied = new System.IO.MemoryStream(content.ReadBytes().Bytes);
                 }

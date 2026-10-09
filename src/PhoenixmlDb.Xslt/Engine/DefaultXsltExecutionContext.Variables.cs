@@ -24,6 +24,9 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         _locationStack.Push(_currentInstructionLocation);
         _currentInstructionLocation = location;
+        // The instruction's module is the current module while it runs.
+        _moduleStack.Push(_currentModule);
+        _currentModule = location.Module ?? "";
     }
 
 
@@ -31,6 +34,7 @@ internal sealed partial class DefaultXsltExecutionContext
     public override void PopInstructionLocation()
     {
         _currentInstructionLocation = _locationStack.Count > 0 ? _locationStack.Pop() : null;
+        _currentModule = _moduleStack.Count > 0 ? _moduleStack.Pop() : null;
     }
 
 

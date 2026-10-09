@@ -513,7 +513,7 @@ internal sealed partial class DefaultXsltExecutionContext
         string? hostXml;
         try
         {
-            hostXml = PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(Policy, resolvedUri.AbsoluteUri, null,
+            hostXml = PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(Policy, resolvedUri.AbsoluteUri, Caller,
                 PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument)?.ReadText();
         }
         catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)

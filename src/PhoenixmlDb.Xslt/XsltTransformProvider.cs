@@ -85,7 +85,7 @@ public sealed class XsltTransformProvider : ITransformProvider
 
         if (stylesheetLocation != null && policy != null)
         {
-            (stylesheetXml, baseUri) = await ReadAuthorizedAsync(stylesheetLocation, context.StaticBaseUri,
+            (stylesheetXml, baseUri) = await ReadAuthorizedAsync(stylesheetLocation, context.StaticBaseUri, context.ModuleLocation,
                 PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet, policy).ConfigureAwait(false);
         }
         else if (stylesheetLocation != null)
@@ -301,7 +301,7 @@ public sealed class XsltTransformProvider : ITransformProvider
         }
         else if (sourceLocation != null && policy != null)
         {
-            (inputXml, resolvedSourceUri) = await ReadAuthorizedAsync(sourceLocation, context.StaticBaseUri,
+            (inputXml, resolvedSourceUri) = await ReadAuthorizedAsync(sourceLocation, context.StaticBaseUri, context.ModuleLocation,
                 PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, policy).ConfigureAwait(false);
         }
         else if (sourceLocation != null)
@@ -676,14 +676,16 @@ public sealed class XsltTransformProvider : ITransformProvider
     /// caller's static base, authorised for <paramref name="access"/>, and read from the
     /// authorised URI (HTTP redirects re-authorised). FOXT0001 if refused.
     /// </summary>
-    private async ValueTask<(string Xml, Uri Uri)> ReadAuthorizedAsync(string location, string? staticBase,
+    private async ValueTask<(string Xml, Uri Uri)> ReadAuthorizedAsync(string location, string? staticBase, string? moduleLocation,
         PhoenixmlDb.XQuery.Security.ResourceAccessKind access, PhoenixmlDb.XQuery.Security.ResourcePolicy policy)
     {
         var baseUri = staticBase != null && Uri.TryCreate(staticBase, UriKind.Absolute, out var b) ? b : null;
         // The host's own content first; with it nothing is opened here by name.
         try
         {
-            if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, location, baseUri, access) is { } supplied)
+            var caller = new PhoenixmlDb.XQuery.Security.ResourceCaller(baseUri,
+                PhoenixmlDb.XQuery.Security.ResourceGate.Caller(staticBase, moduleLocation).ModuleUri);
+            if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, location, caller, access) is { } supplied)
                 return (supplied.ReadText(), supplied.BaseUri);
         }
         catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
