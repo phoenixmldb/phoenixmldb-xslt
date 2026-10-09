@@ -498,11 +498,17 @@ public sealed partial class StylesheetParser
                 $"XTSE0010: Cannot resolve serialization parameter document '{href}' without a base URI",
                 GetSourceLocation(outputElement));
 
+        // The host's own content first: with it nothing is opened here, and a resolver that is
+        // the only source of resources is never passed by. Then the policy's rules.
+        string? hostXml = null;
         if (ResourcePolicy != null)
         {
             try
             {
-                resolved = ResourcePolicy.Authorize(resolved.AbsoluteUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument);
+                hostXml = PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(ResourcePolicy, resolved.AbsoluteUri, null,
+                    PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument)?.ReadText();
+                if (hostXml is null)
+                    resolved = ResourcePolicy.Authorize(resolved.AbsoluteUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument);
             }
             catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
             {
@@ -515,7 +521,9 @@ public sealed partial class StylesheetParser
         string xml;
         try
         {
-            if (resolved.Scheme == Uri.UriSchemeHttp || resolved.Scheme == Uri.UriSchemeHttps)
+            if (hostXml is not null)
+                xml = hostXml;
+            else if (resolved.Scheme == Uri.UriSchemeHttp || resolved.Scheme == Uri.UriSchemeHttps)
             {
                 if (PreloadedResources is { } preloaded && preloaded.TryGet(resolved, out var preloadedXml))
                     xml = preloadedXml;

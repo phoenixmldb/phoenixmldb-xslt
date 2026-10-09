@@ -152,18 +152,8 @@ internal sealed partial class DefaultXsltExecutionContext
             // empty sequence silently, so a fold-left over such a function produced empty
             // results with no error. Reported by Martin Honnen against xdm-persistence.
 #pragma warning disable CA2000
-            var capturedContext = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
-                container: default,
-                functions: _functionLibrary,
-                nodeProvider: _nodeStore,
-                documentResolver: null,
-                schemaProvider: _schemaProvider,
-                namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null,
-                limits: _queryLimits,
-                cancellationToken: _ct);
+            var capturedContext = MinimalQueryContext();
 #pragma warning restore CA2000
-            capturedContext.DefaultCollation = DefaultCollation;
-            capturedContext.StaticBaseUri = StaticBaseUri;
             var inlineItem = new PhoenixmlDb.XQuery.Execution.InlineFunctionItem(
                 ife.Parameters, ife.Body, capturedContext, ife.ReturnType);
             return (true, inlineItem);
@@ -187,6 +177,35 @@ internal sealed partial class DefaultXsltExecutionContext
         return (false, null);
     }
 
+
+
+    /// <summary>
+    /// A query context for a function called outside a compiled plan (a call whose arguments
+    /// the streaming pass already holds, or the body of an inline function). It is small, but
+    /// it is this transformation's: it carries the resource policy and the document resolver
+    /// that enforces it, as the context of every other expression does. Without them a
+    /// function that reads a resource (fn:json-doc, fn:load-xquery-module) read it with no
+    /// policy at all.
+    /// </summary>
+    private PhoenixmlDb.XQuery.Execution.QueryExecutionContext MinimalQueryContext()
+    {
+        var context = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+            container: default,
+            functions: _functionLibrary,
+            nodeProvider: _nodeStore,
+            documentResolver: (PhoenixmlDb.XQuery.IDocumentResolver?)_policyResolver ?? _documentResolver,
+            schemaProvider: _schemaProvider,
+            namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null,
+            limits: _queryLimits,
+            cancellationToken: _ct)
+        {
+            ResourcePolicy = Policy,
+        };
+        context.DefaultCollation = DefaultCollation;
+        context.StaticBaseUri = StaticBaseUri;
+        context.ExternalModules = _options?.XQueryModules;
+        return context;
+    }
 
     /// <summary>
     /// Attempts to evaluate a function call by resolving all its arguments from
@@ -223,17 +242,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // Build a minimal execution context for the function invocation. Minimal still has
         // to include the namespace resolver: an argument may be a node and the function
         // may apply a prefixed name test to it.
-        using var execContext = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
-            container: default,
-            functions: _functionLibrary,
-            nodeProvider: _nodeStore,
-            documentResolver: null,
-            schemaProvider: _schemaProvider,
-            namespaceResolver: _nodeStore != null ? _nodeStore.GetNamespaceUri : null,
-            limits: _queryLimits,
-            cancellationToken: _ct);
-        execContext.DefaultCollation = DefaultCollation;
-        execContext.StaticBaseUri = StaticBaseUri;
+        using var execContext = MinimalQueryContext();
 
         var result = await fn.InvokeAsync(args, execContext).ConfigureAwait(false);
         return (true, result);

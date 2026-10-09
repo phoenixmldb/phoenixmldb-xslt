@@ -39,9 +39,31 @@ internal sealed class XsltStreamAvailableFunction : PhoenixmlDb.XQuery.Ast.XQuer
 
         try
         {
-            // Resolve URI
+            // Under a resource policy: the host's own content first, and where its resolver is
+            // the only source of resources nothing else is looked at. Then only an authorised
+            // file is examined, at its canonical path; a refused one is simply not available
+            // (no existence answer).
             string? filePath = null;
-            if (Uri.TryCreate(uri, UriKind.Absolute, out var absUri) && absUri.IsFile)
+            System.IO.Stream? supplied = null;
+            if (_context.Policy is { } policy)
+            {
+                try
+                {
+                    if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, uri, _context._stylesheet.BaseUri,
+                            PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument) is { } content)
+                        supplied = new System.IO.MemoryStream(content.ReadBytes().Bytes);
+                }
+                catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+                {
+                    return false;
+                }
+                if (supplied is null)
+                {
+                    var authorized = policy.TryAuthorize(uri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, _context._stylesheet.BaseUri);
+                    filePath = authorized is { IsFile: true } ? authorized.LocalPath : null;
+                }
+            }
+            else if (Uri.TryCreate(uri, UriKind.Absolute, out var absUri) && absUri.IsFile)
             {
                 filePath = absUri.LocalPath;
             }
@@ -56,19 +78,11 @@ internal sealed class XsltStreamAvailableFunction : PhoenixmlDb.XQuery.Ast.XQuer
                 filePath = uri;
             }
 
-            // Under a resource policy only an authorised file is examined, at its canonical path;
-            // a refused one is simply not available (no existence answer).
-            if (_context.Policy is { } policy)
-            {
-                var authorized = policy.TryAuthorize(uri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, _context._stylesheet.BaseUri);
-                filePath = authorized is { IsFile: true } ? authorized.LocalPath : null;
-            }
-
-            if (filePath == null || !System.IO.File.Exists(filePath))
+            if (supplied is null && (filePath == null || !System.IO.File.Exists(filePath)))
                 return false;
 
             // Check if the file contains parseable XML
-            var stream = System.IO.File.OpenRead(filePath);
+            var stream = supplied ?? System.IO.File.OpenRead(filePath!);
             await using var _ = stream.ConfigureAwait(false);
             var settings = new System.Xml.XmlReaderSettings
             {

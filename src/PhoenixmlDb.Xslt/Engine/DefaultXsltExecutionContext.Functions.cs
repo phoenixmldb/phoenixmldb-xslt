@@ -1313,7 +1313,11 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         try
         {
-            return _policyResolver?.ResolveDocument(uri) ?? _documentResolver.ResolveDocument(uri);
+            // Under a policy only the resolver that enforces it reads. A document it does not
+            // find is not then looked for by the resolver that knows no policy.
+            return _policyResolver is { } guarded
+                ? guarded.ResolveDocument(ResolveAgainstStaticBaseUri(uri))
+                : _documentResolver.ResolveDocument(uri);
         }
 #pragma warning disable CA1031
         catch (Exception)

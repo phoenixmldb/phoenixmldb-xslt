@@ -207,7 +207,14 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         var nodes = new List<XdmNode>();
         foreach (var file in files)
         {
-            if (ResolveDocument(new Uri(file).AbsoluteUri) is { } doc)
+            var fileUri = new Uri(file).AbsoluteUri;
+            // The policy allowed the directory; each file in it is judged too, by where it
+            // really is. A link in an allowed directory that points outside it is not read:
+            // it is left out, as a file that is not XML is.
+            if (Policy is { } policy
+                && policy.TryAuthorize(fileUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument) is null)
+                continue;
+            if (ResolveDocument(fileUri) is { } doc)
                 nodes.Add(doc);
         }
         return nodes;

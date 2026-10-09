@@ -4910,13 +4910,18 @@ public sealed class XsltTransformEngine
                     + "(XsltTransformer.SetSourceDocumentUri) so relative xi:include hrefs resolve.");
             try
             {
-                PhoenixmlDb.Core.Xml.XIncludeProcessor.Expand(doc, xiBaseUri,
-                    new PhoenixmlDb.Core.Xml.XIncludeOptions
-                    {
-                        Enabled = true,
-                        AllowRemote = options.AllowRemoteXInclude,
-                        Resolver = options.XIncludeResolver,
-                    });
+                var xiOptions = new PhoenixmlDb.Core.Xml.XIncludeOptions
+                {
+                    Enabled = true,
+                    AllowRemote = options.AllowRemoteXInclude,
+                    Resolver = options.XIncludeResolver,
+                };
+                // Under a resource policy, what the source document includes is read under it:
+                // from the host's resolver, or a file the policy allows. Core's own resolver
+                // knows no policy.
+                if (options.ResourcePolicy is { } xiPolicy)
+                    xiOptions = PhoenixmlDb.XQuery.Security.PolicyXIncludeResolver.Guard(xiOptions, xiPolicy);
+                PhoenixmlDb.Core.Xml.XIncludeProcessor.Expand(doc, xiBaseUri, xiOptions);
             }
             catch (PhoenixmlDb.Core.Xml.XIncludeException xie)
             {

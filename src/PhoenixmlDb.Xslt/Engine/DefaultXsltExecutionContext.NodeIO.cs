@@ -508,12 +508,27 @@ internal sealed partial class DefaultXsltExecutionContext
         else
             throw Error($"XTDE0010: Cannot resolve result-document parameter document '{href}' without a base URI");
 
-        resolvedUri = AuthorizeResource(resolvedUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "XTDE0010");
+        // The host's own content first: with it nothing is opened here, and a resolver that is
+        // the only source of resources is never passed by. Then the policy's rules.
+        string? hostXml;
+        try
+        {
+            hostXml = PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(Policy, resolvedUri.AbsoluteUri, null,
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument)?.ReadText();
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw Error($"XTDE0010: {e.Message}");
+        }
+        if (hostXml is null)
+            resolvedUri = AuthorizeResource(resolvedUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "XTDE0010");
 
         string xml;
         try
         {
-            if (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps)
+            if (hostXml is not null)
+                xml = hostXml;
+            else if (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps)
             {
                 if (_options?.PreloadedResources is { } preloaded && preloaded.TryGet(resolvedUri, out var preloadedXml))
                     xml = preloadedXml;
