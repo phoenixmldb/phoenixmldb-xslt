@@ -603,8 +603,12 @@ static void PrintUsage()
           --no-stream        Disable auto-streaming. Forces the in-memory tree path
                              even when the stylesheet declares a streamable mode.
           --strict-streaming Report XTSE3430 for a template in a streamable mode that
-                             is not guaranteed streamable, instead of running it on
-                             a buffered copy. No effect with --no-stream.
+                             reads the children of its node more than once, instead
+                             of running it on a buffered copy. This is one check, not
+                             the full streamability analysis: other templates that
+                             are not streamable (a preceding-sibling axis, for
+                             example) still run on a buffered copy and give the
+                             right result. No effect with --no-stream.
           -v, --verbose      Show detailed error information
           -h, --help         Show this help message
           --version          Show version information
