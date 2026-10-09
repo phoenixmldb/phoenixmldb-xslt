@@ -1,5 +1,38 @@
 # Release History
 
+## 2.8.0 — 2026-10-09
+
+Requires PhoenixmlDb.XQuery 2.8.0 and PhoenixmlDb.Core 2.4.0. W3C XSLT 3.0: 131 failing.
+
+### Security
+
+Security fixes for hosts that compile or run stylesheets from untrusted parties. The advisory will
+be linked here when it is published.
+
+### Schemas
+
+- **Constructor functions of imported schema types** can be called (`t:size('8')`, `t:size#1`),
+  and `function-available` answers for them.
+- **Schema types by prefix in XPath**: `cast as t:size` and `castable as t:size` work (#316).
+- **An inline `xs:schema` in `xsl:import-schema`** is read, through the schema provider's
+  interface; a relative `schemaLocation` in it is relative to the stylesheet.
+- **`xsl:validation` on a literal result element** is applied (#316).
+- From PhoenixmlDb.XQuery 2.8.0: schemas are read through the shared schema layer and cached across
+  transformations, an atomic value keeps its schema type, and a schema that requires XSD 1.1 says so.
+
+### Streaming
+
+- **`StrictStreamability`** (opt-in; `XsltTransformer.StrictStreamability`,
+  `XsltTransformOptions.StrictStreamability`, CLI `--strict-streaming`) reports `XTSE3430` for a
+  template in a streamable mode that is not streamable (#295).
+- **Two wrong results in streamed rules are fixed**: an element rule with two
+  `xsl:apply-templates` gave truncated output, and a document-node rule lost its second result.
+
+### Conformance
+
+The harness now accepts an expected error code only when the engine raised it, not when the code
+merely appears in the message text (#318). With that stricter rule, W3C XSLT 3.0 is 131 failing.
+
 ## 2.7.0 — 2026-10-07
 
 Requires PhoenixmlDb.XQuery 2.7.0 and PhoenixmlDb.Core 2.2.0. W3C XSLT 3.0: 131 failing, unchanged.
