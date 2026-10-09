@@ -16,6 +16,14 @@ This XSLT engine implements specifications developed by the
 These specifications represent years of collaborative work by the W3C XSL Working Group
 and the Qt4 Community Group. We thank all editors and contributors.
 
+## W3C Schema for XSLT 3.0
+
+`src/PhoenixmlDb.Xslt/Schemas/xslt30-xsd10.xsd` is a modified copy of the
+[W3C schema for XSLT 3.0](https://www.w3.org/TR/xslt-30/schema-for-xslt30.xsd), used under the
+[W3C Software License](http://www.w3.org/Consortium/Legal/copyright-software-19980720). The
+original is an XSD 1.1 schema; the copy is derived by `scripts/derive-xslt-schema.py` so that an
+XSD 1.0 processor can load it, and the file lists every change.
+
 ## W3C XSLT 3.0 Test Suite
 
 Conformance is validated against the
