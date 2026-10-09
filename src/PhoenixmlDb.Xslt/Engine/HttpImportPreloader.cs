@@ -161,18 +161,22 @@ internal static class HttpImportPreloader
         try { doc = XDocument.Parse(xml, LoadOptions.None); }
         catch (System.Xml.XmlException) { return; } // Malformed: let the sync parser surface the error.
 
-        var hrefs = doc.Descendants()
+        var imports = doc.Descendants()
             .Where(e => e.Name.Namespace == XsltNs
                         && (e.Name.LocalName == "import" || e.Name.LocalName == "include"))
-            .Select(e => e.Attribute("href")?.Value)
-            .Where(h => !string.IsNullOrEmpty(h))
-            .Cast<string>()
+            .Select(e => (Href: e.Attribute("href")?.Value, Element: e))
+            .Where(i => !string.IsNullOrEmpty(i.Href))
             .ToList();
 
-        foreach (var href in hrefs)
+        var moduleBase = baseUri;
+        foreach (var (hrefOrNull, element) in imports)
         {
+            var href = hrefOrNull!;
             ct.ThrowIfCancellationRequested();
-            if (!Uri.TryCreate(baseUri, href, out var resolved)) continue;
+            // The base in effect at the element, xml:base included: the location the parser
+            // will ask for, and no other.
+            baseUri = StylesheetParser.EffectiveBaseUri(element, moduleBase);
+            if (baseUri is null || !Uri.TryCreate(baseUri, href, out var resolved)) continue;
             if (resolved.Scheme is not ("http" or "https")) continue;
             var key = resolved.AbsoluteUri;
             if (!visited.Add(key)) continue;

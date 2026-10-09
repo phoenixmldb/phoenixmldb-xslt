@@ -1605,7 +1605,15 @@ public sealed partial class StylesheetParser
         return Uri.TryCreate(element.BaseUri, UriKind.Absolute, out var uri) ? uri : null;
     }
 
-    private Uri? ResolveEffectiveBaseUri(XElement element)
+    private Uri? ResolveEffectiveBaseUri(XElement element) => EffectiveBaseUri(element, _baseUri);
+
+    /// <summary>
+    /// The base URI in effect at <paramref name="element"/> of a module whose own base URI is
+    /// <paramref name="moduleBase"/>: xml:base on the element and its ancestors applied to it.
+    /// Every place that resolves a module's href uses this, so that each of them asks for the
+    /// same location: the one the stylesheet names.
+    /// </summary>
+    internal static Uri? EffectiveBaseUri(XElement element, Uri? moduleBase)
     {
         // Content expanded from an external entity has that entity's base URI, which XLinq
         // records (LoadOptions.SetBaseUri) wherever it differs from the document's. Such an
@@ -1623,10 +1631,10 @@ public sealed partial class StylesheetParser
         }
 
         if (xmlBaseAttrs.Count == 0)
-            return entityBase ?? _baseUri;
+            return entityBase ?? moduleBase;
 
         // Start from the stylesheet (or entity) base URI, then apply xml:base values from outermost to innermost
-        Uri? result = entityBase ?? _baseUri;
+        Uri? result = entityBase ?? moduleBase;
         for (int i = xmlBaseAttrs.Count - 1; i >= 0; i--)
         {
             var xmlBase = xmlBaseAttrs[i];
@@ -3290,7 +3298,11 @@ public sealed partial class StylesheetParser
             }
             try
             {
-                var moduleRoot = ReadModuleForStaticDeclarations(href, baseUriObj, out var moduleUri);
+                // Against the base in effect at the element, xml:base included, as the parser
+                // resolves it. Resolved against the module's own base, this asked the host for
+                // a location the stylesheet does not name, and then the parser asked again
+                // for the one it does.
+                var moduleRoot = ReadModuleForStaticDeclarations(href, EffectiveBaseUri(moduleRef, baseUriObj), out var moduleUri);
                 if (moduleRoot == null) return;
                 // A module already pulled in contributes its declarations once. The guard is also
                 // what stops a cyclic include from recursing forever now that this walk descends
