@@ -118,12 +118,19 @@ public sealed class XsltTransformOptions
     public bool DisableStreaming { get; init; }
 
     /// <summary>
-    /// When <c>true</c>, a template rule of a streamable mode that is not guaranteed-streamable
-    /// is reported as XTSE3430 when the transformation starts, as XSLT 3.0 §19.10 requires of a
-    /// streaming processor. Off by default: the engine then runs such a rule on a buffered copy
-    /// of the matched subtree, or on a tree, and the result is the same. Has no effect together
-    /// with <see cref="DisableStreaming"/>, which asks for tree evaluation.
+    /// When <c>true</c>, a template rule of a streamable mode with more than one instruction
+    /// that reads the children of the matched node is reported as XTSE3430 when the
+    /// transformation starts, as XSLT 3.0 §19.10 requires of a streaming processor. Off by
+    /// default: the engine then runs such a rule on a buffered copy of the matched subtree, or
+    /// on a tree, and the result is the same. Has no effect together with
+    /// <see cref="DisableStreaming"/>, which asks for tree evaluation.
     /// </summary>
+    /// <remarks>
+    /// That is the one thing it checks; it is not the streamability analysis of the
+    /// specification. A rule that is not guaranteed-streamable for another reason (a
+    /// <c>preceding-sibling</c> or other roaming axis, a read outside the matched node) is not
+    /// reported and runs on a buffered copy, with the right result.
+    /// </remarks>
     public bool StrictStreamability { get; init; }
 
     /// <summary>
