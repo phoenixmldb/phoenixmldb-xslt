@@ -1,24 +1,24 @@
 # Status
 
-Generated 2026-10-09 13:23 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-09 22:42 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.3.0 | ? | **repo is at ?, nuget.org has 2.3.0** |
-| `PhoenixmlDb.XQuery` | 2.7.0 | ? | **repo is at ?, nuget.org has 2.7.0** |
-| `PhoenixmlDb.Xslt` | 2.7.0 | 2.7.0 | current |
-| `xquery4` | 2.7.0 | ? | **repo is at ?, nuget.org has 2.7.0** |
-| `xslt` | 2.7.0 | 2.7.0 | current |
+| `PhoenixmlDb.Core` | 2.4.0 | ? | **repo is at ?, nuget.org has 2.4.0** |
+| `PhoenixmlDb.XQuery` | 2.8.0 | ? | **repo is at ?, nuget.org has 2.8.0** |
+| `PhoenixmlDb.Xslt` | 2.8.0 | 2.8.0 | current |
+| `xquery4` | 2.8.0 | ? | **repo is at ?, nuget.org has 2.8.0** |
+| `xslt` | 2.8.0 | 2.8.0 | current |
 
 ## Open work
 
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 1 | 0 |
-| phoenixmldb-xquery | 2 | 1 |
-| phoenixmldb-xslt | 3 | 1 |
+| phoenixmldb-xquery | 0 | 0 |
+| phoenixmldb-xslt | 4 | 0 |
 | phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
@@ -27,26 +27,14 @@ Generated 2026-10-09 13:23 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [5] Naming decision: the prefix `dbxml` means three different things
 
-**phoenixmldb-xquery**
-
-- [224] Resource resolver requests do not carry the calling module's base URI
-- [223] static-base-uri() in a library module returns the main module's base URI
-
 **phoenixmldb-xslt**
 
-- [330] Resource resolver requests do not carry the calling module's base URI
+- [337] --strict-streaming does not report XTSE3430 for roaming axes (preceding-sibling)
+- [335] Compile-time requests (imports, schema locations, parameter documents) do not name the importing module
 - [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-xquery**
-
-- [222] release: 2.8.0 on Core 2.4.0
-
-**phoenixmldb-xslt**
-
-- [329] build: Bump the phoenixmldb-engines group with 1 update
 
 ## Defect register
 
