@@ -722,10 +722,8 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>A URI resolved against the static base URI in scope (absolute URIs unchanged).</summary>
     private string ResolveAgainstStaticBaseUri(string uri)
     {
-        if (Uri.TryCreate(uri, UriKind.Absolute, out _) || StaticBaseUri is not { } staticBase
-            || !Uri.TryCreate(staticBase, UriKind.Absolute, out var baseUri))
-            return uri;
-        return new Uri(baseUri, uri).AbsoluteUri;
+        // What is not a URI stays as written; the resolver then finds nothing there.
+        return PhoenixmlDb.XQuery.Functions.LocationResolver.Absolute(uri, StaticBaseUri) ?? uri;
     }
 
 

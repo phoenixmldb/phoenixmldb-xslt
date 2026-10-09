@@ -122,10 +122,10 @@ internal sealed class XsltDocument2Function : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // Resolve against the base node's document URI
         if (uri.Length == 0)
             uri = baseUri;
-        else if (!Uri.TryCreate(uri, UriKind.Absolute, out _))
+        else
         {
-            if (Uri.TryCreate(baseUri, UriKind.Absolute, out var baseUriObj))
-                uri = new Uri(baseUriObj, uri).AbsoluteUri;
+            uri = PhoenixmlDb.XQuery.Functions.LocationResolver.Absolute(uri, baseUri)
+                ?? throw new XsltException($"FODC0005: The URI '{uri}' cannot be resolved against the base URI");
         }
 
         var doc = qc.DocumentResolver!.ResolveDocument(uri);

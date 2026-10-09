@@ -168,16 +168,9 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             return uri;
         if (uri.Length == 0)
             return queryContext.StaticBaseUri;
-        // Only resolve relative URIs — absolute URIs are used as-is
-        if (!Uri.TryCreate(uri, UriKind.Absolute, out _))
-        {
-            if (Uri.TryCreate(queryContext.StaticBaseUri, UriKind.Absolute, out var baseUri))
-            {
-                var resolved = new Uri(baseUri, uri);
-                return resolved.AbsoluteUri;
-            }
-        }
-        return uri;
+        // Only relative URIs are resolved; file:/abs/path is absolute (file:///abs/path).
+        return PhoenixmlDb.XQuery.Functions.LocationResolver.Absolute(uri, queryContext.StaticBaseUri)
+            ?? throw new XsltException($"FODC0005: The URI '{uri}' cannot be resolved against the base URI");
     }
 
     /// <summary>
@@ -230,15 +223,8 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             return uri;
         if (uri.Length == 0)
             return baseUriStr;
-        if (!Uri.TryCreate(uri, UriKind.Absolute, out _))
-        {
-            if (Uri.TryCreate(baseUriStr, UriKind.Absolute, out var baseUri))
-            {
-                var resolved = new Uri(baseUri, uri);
-                return resolved.AbsoluteUri;
-            }
-        }
-        return uri;
+        return PhoenixmlDb.XQuery.Functions.LocationResolver.Absolute(uri, baseUriStr)
+            ?? throw new XsltException($"FODC0005: The URI '{uri}' cannot be resolved against the base URI");
     }
 
     /// <summary>
