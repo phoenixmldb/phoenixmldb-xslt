@@ -578,7 +578,9 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         // The host's own content first; with it nothing is opened here by name.
         try
         {
-            if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, location, baseUri, access) is { } supplied)
+            // The stylesheet module whose code calls fn:transform is the one that asks.
+            var caller = new PhoenixmlDb.XQuery.Security.ResourceCaller(baseUri, _context.Caller.ModuleUri);
+            if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, location, caller, access) is { } supplied)
                 return (supplied.ReadText(), supplied.BaseUri);
         }
         catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)

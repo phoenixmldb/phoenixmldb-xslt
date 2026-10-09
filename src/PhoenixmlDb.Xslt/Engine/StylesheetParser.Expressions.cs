@@ -1017,9 +1017,16 @@ public sealed partial class StylesheetParser
                 System.Xml.Linq.XObject o => o.Parent,
                 _ => null,
             };
-            return scope != null && _expressionParser is ITypeNamespaceAwareExpressionParser aware
+            var parsed = scope != null && _expressionParser is ITypeNamespaceAwareExpressionParser aware
                 ? aware.Parse(expression, prefix => scope.GetNamespaceOfPrefix(prefix)?.NamespaceName)
                 : _expressionParser.Parse(expression);
+            // Where the module this expression is written in was read from: the URI the
+            // document (or external entity) was loaded at, which xml:base does not change.
+            // Every expression of a stylesheet is parsed here, so every one carries it, and a
+            // load it makes is that module's wherever the expression comes to be evaluated: a
+            // global variable, a key, a pattern, an accumulator rule, a parameter default.
+            parsed.EmbeddedInModule = origin?.BaseUri ?? "";
+            return parsed;
         }
         catch (PhoenixmlDb.XQuery.Parser.XQueryParseException ex)
         {

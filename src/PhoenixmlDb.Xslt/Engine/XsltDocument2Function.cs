@@ -128,7 +128,7 @@ internal sealed class XsltDocument2Function : PhoenixmlDb.XQuery.Ast.XQueryFunct
                 ?? throw new XsltException($"FODC0005: The URI '{uri}' cannot be resolved against the base URI");
         }
 
-        var doc = qc.DocumentResolver!.ResolveDocument(uri);
+        var doc = PhoenixmlDb.XQuery.Security.ResourceGate.ResolveDocument(qc.DocumentResolver!, uri, PhoenixmlDb.XQuery.Security.ResourceGate.Caller(qc));
         if (doc != null)
         {
             if (fragment != null && qc.DocumentResolver is XsltDocumentResolver xsltResolver

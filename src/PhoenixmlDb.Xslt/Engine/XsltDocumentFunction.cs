@@ -85,7 +85,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
                 uri = nodeBaseUri != null
                     ? ResolveUriAgainstBase(uri, nodeBaseUri)
                     : ResolveUriAgainstStaticBase(uri, qc);
-                var doc = qc.DocumentResolver.ResolveDocument(uri);
+                var doc = PhoenixmlDb.XQuery.Security.ResourceGate.ResolveDocument(qc.DocumentResolver, uri, PhoenixmlDb.XQuery.Security.ResourceGate.Caller(qc));
                 if (doc != null)
                 {
                     if (fragment != null && qc.DocumentResolver is XsltDocumentResolver xsltResolver
@@ -137,7 +137,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             uri = nodeBaseUri != null
                 ? ResolveUriAgainstBase(uri, nodeBaseUri)
                 : ResolveUriAgainstStaticBase(uri, queryContext);
-            var doc = queryContext.DocumentResolver.ResolveDocument(uri);
+            var doc = PhoenixmlDb.XQuery.Security.ResourceGate.ResolveDocument(queryContext.DocumentResolver, uri, PhoenixmlDb.XQuery.Security.ResourceGate.Caller(queryContext));
             if (doc != null)
             {
                 // If a fragment identifier is present, select element by ID

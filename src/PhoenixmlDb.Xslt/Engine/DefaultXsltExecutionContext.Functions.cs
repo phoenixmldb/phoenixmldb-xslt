@@ -622,7 +622,31 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
-    public override async ValueTask<object?> EvaluateAsync(XQueryExpression expr)
+    public override ValueTask<object?> EvaluateAsync(XQueryExpression expr)
+    {
+        // An expression runs as the module it is written in. Most are evaluated by an
+        // instruction of the same module, and then there is nothing to change.
+        var module = expr.EmbeddedInModule;
+        return module is null || ReferenceEquals(module, _currentModule) || module == _currentModule
+            ? EvaluateCoreAsync(expr)
+            : EvaluateInModuleAsync(expr, module);
+    }
+
+    private async ValueTask<object?> EvaluateInModuleAsync(XQueryExpression expr, string module)
+    {
+        var saved = _currentModule;
+        _currentModule = module;
+        try
+        {
+            return await EvaluateCoreAsync(expr).ConfigureAwait(false);
+        }
+        finally
+        {
+            _currentModule = saved;
+        }
+    }
+
+    private async ValueTask<object?> EvaluateCoreAsync(XQueryExpression expr)
     {
         // Fast path for simple expressions
         switch (expr)
@@ -817,6 +841,7 @@ internal sealed partial class DefaultXsltExecutionContext
         execContext.InsideXslEvaluate = _insideXslEvaluateDepth > 0;
         execContext.DefaultCollation = DefaultCollation;
         execContext.StaticBaseUri = StaticBaseUri;
+        execContext.ModuleLocation = ModuleLocation;
         execContext.ExternalModules = _options?.XQueryModules;
 
         // Set up variable fallback for lazy global initialization.
@@ -1316,7 +1341,7 @@ internal sealed partial class DefaultXsltExecutionContext
             // Under a policy only the resolver that enforces it reads. A document it does not
             // find is not then looked for by the resolver that knows no policy.
             return _policyResolver is { } guarded
-                ? guarded.ResolveDocument(ResolveAgainstStaticBaseUri(uri))
+                ? guarded.ResolveDocument(ResolveAgainstStaticBaseUri(uri), Caller)
                 : _documentResolver.ResolveDocument(uri);
         }
 #pragma warning disable CA1031

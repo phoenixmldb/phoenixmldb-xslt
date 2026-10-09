@@ -203,6 +203,7 @@ internal sealed partial class DefaultXsltExecutionContext
         };
         context.DefaultCollation = DefaultCollation;
         context.StaticBaseUri = StaticBaseUri;
+        context.ModuleLocation = ModuleLocation;
         context.ExternalModules = _options?.XQueryModules;
         return context;
     }

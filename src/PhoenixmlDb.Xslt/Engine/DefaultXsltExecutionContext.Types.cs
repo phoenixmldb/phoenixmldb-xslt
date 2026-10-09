@@ -204,12 +204,22 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>
     /// Checks whether the policy allows text access without throwing.
     /// </summary>
-    /// <summary>Whether the host's resource resolver says it serves this text itself.</summary>
-    internal bool HostServesText(string href)
+    /// <summary>
+    /// What the host's resource resolver says about this text: true when it serves it, false
+    /// when it answers the whole request with no, null when it leaves the question open.
+    /// </summary>
+    internal bool? HostTextAvailability(string href)
     {
+        if (_options?.ResourcePolicy?.ResourceResolver is not { } resolver)
+            return null;
         try
         {
-            return _options?.ResourcePolicy?.ResourceResolver?.IsTextAvailable(href) == true;
+            var caller = Caller;
+            var request = new PhoenixmlDb.XQuery.Security.ResourceRequest(href, caller.BaseUri,
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadText) { ModuleUri = caller.ModuleUri };
+            if (resolver.IsAvailable(request) is { } answer)
+                return answer;
+            return resolver.IsTextAvailable(href) ? true : null;
         }
         catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
         {
@@ -224,7 +234,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         try
         {
-            return _policyResolver.IsTextAvailable(href);
+            return _policyResolver.IsTextAvailable(href, Caller);
         }
         catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
         {
