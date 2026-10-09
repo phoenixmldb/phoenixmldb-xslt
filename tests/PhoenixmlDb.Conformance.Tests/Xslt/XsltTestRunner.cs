@@ -388,6 +388,8 @@ public sealed class XsltTestRunner
         {
             Name = name,
             TestSet = testSetName,
+            // The streaming group: catalog path tests/strm/<set>/.
+            IsStreamingSet = string.Equals(Path.GetFileName(Path.GetDirectoryName(basePath)), "strm", StringComparison.Ordinal),
             Description = elem.Element(ns + "description")?.Value ?? ""
         };
 
@@ -1040,6 +1042,12 @@ public sealed class XsltTestRunner
                 // DTDs unless asked — the right default for arbitrary input, wrong for a
                 // conformance run, which must parse what the suite actually ships.
                 var transformer = new XsltTransformer { AllowDtdProcessing = true };
+                // The streaming sets are run as a streaming processor is required to run them
+                // (XSLT 3.0 §19.10): a construct that is not guaranteed-streamable is XTSE3430,
+                // not a silent fall back to a buffered copy. That is StrictStreamability, which
+                // is off by default for users. A conformance run measures what the
+                // specification requires; the default is a convenience on top of it.
+                transformer.StrictStreamability = testCase.IsStreamingSet;
                 // Before loading: a static variable may call load-xquery-module (load-xquery-module-004).
                 if (testCase.Environment.XQueryModules.Count > 0)
                     transformer.XQueryModules = testCase.Environment.XQueryModules
@@ -2628,6 +2636,10 @@ public sealed class XsltTestCase
 {
     public required string Name { get; init; }
     public required string TestSet { get; init; }
+
+    /// <summary>True for a case of the streaming group (<c>tests/strm</c>).</summary>
+    public bool IsStreamingSet { get; init; }
+
     public string Description { get; init; } = "";
     public XsltEnvironment Environment { get; set; } = new();
     public string? InlineStylesheet { get; set; }

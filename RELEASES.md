@@ -1,5 +1,15 @@
 # Release History
 
+## Unreleased
+
+### How conformance is measured
+
+- **The W3C streaming sets run with `StrictStreamability` on.** A conformance run measures what
+  the specification requires of a streaming processor: a construct that is not
+  guaranteed-streamable is XTSE3430 (XSLT 3.0 §19.10), not a silent fall back to a buffered copy.
+  Nothing changes for users: the option stays off by default. The figure did not move when this
+  was switched on (131 failing before and after, the same cases).
+
 ## 2.8.0 — 2026-10-09
 
 Requires PhoenixmlDb.XQuery 2.8.0 and PhoenixmlDb.Core 2.4.0. W3C XSLT 3.0: 131 failing.
