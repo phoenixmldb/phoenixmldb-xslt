@@ -16,6 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The W3C schema for XSLT 3.0 as an XSD 1.0 copy (scripts/derive-xslt-schema.py). -->
+    <EmbeddedResource Include="Schemas/xslt30-xsd10.xsd" LogicalName="PhoenixmlDb.Xslt.Schemas.xslt30-xsd10.xsd" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="PhoenixmlDb.Core" />
     <PackageReference Include="PhoenixmlDb.XQuery" />
   </ItemGroup>
