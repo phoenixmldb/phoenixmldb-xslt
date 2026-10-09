@@ -775,6 +775,13 @@ public sealed partial class StylesheetParser
                         if (!string.IsNullOrEmpty(locAttr))
                         {
                             var declBase = ResolveEffectiveBaseUri(child) ?? _baseUri;
+                            // With no base URI a relative location has nothing to be relative to.
+                            // It went on as written and was resolved against the directory the
+                            // host process runs in. Under a resource policy that is refused.
+                            if (declBase == null && ResourcePolicy != null && !Uri.TryCreate(locAttr, UriKind.Absolute, out _))
+                                throw new XsltException(
+                                    $"XTSE0165: xsl:import-schema: the schema-location '{locAttr}' is relative and the stylesheet has no base URI to resolve it against",
+                                    GetSourceLocation(child));
                             locations = [declBase != null && Uri.TryCreate(declBase, locAttr, out var absoluteLoc)
                                 ? absoluteLoc.AbsoluteUri
                                 : locAttr];
