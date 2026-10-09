@@ -41,6 +41,7 @@ internal static class UnparsedTextHelper
     {
         // An EXISTING file or null — for an absolute URI too. Returning the path unchecked made
         // unparsed-text-available answer true for any absolute file URI.
+        href = PhoenixmlDb.XQuery.Functions.LocationResolver.WithAuthority(href);
         if (Uri.TryCreate(href, UriKind.Absolute, out var absUri))
             return absUri.IsFile && System.IO.File.Exists(absUri.LocalPath) ? absUri.LocalPath : null;
 
@@ -49,7 +50,8 @@ internal static class UnparsedTextHelper
             // A relative URI resolves against the base and nothing else. It used to fall back to
             // the process's CURRENT DIRECTORY when not found there, which could quietly read an
             // unrelated file of the same name.
-            var resolved = new Uri(baseUri, href);
+            if (!Uri.TryCreate(baseUri, href, out var resolved))
+                return null;
             return resolved.IsFile && System.IO.File.Exists(resolved.LocalPath) ? resolved.LocalPath : null;
         }
 
@@ -80,9 +82,12 @@ internal static class UnparsedTextHelper
     /// </summary>
     internal static string Absolute(string href, DefaultXsltExecutionContext context)
     {
+        // file:/abs/path is file:///abs/path. What is not a URI at all stays as written: the
+        // caller then finds nothing there (FOUT1170, or false from an availability function).
+        href = PhoenixmlDb.XQuery.Functions.LocationResolver.WithAuthority(href);
         if (Uri.TryCreate(href, UriKind.Absolute, out var abs))
             return abs.AbsoluteUri;
-        return StaticBase(context) is { } b ? new Uri(b, href).AbsoluteUri : href;
+        return StaticBase(context) is { } b && Uri.TryCreate(b, href, out var resolved) ? resolved.AbsoluteUri : href;
     }
 
     /// <summary>
