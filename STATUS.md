@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-08 23:24 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-09 13:23 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -16,28 +16,37 @@ Generated 2026-10-08 23:24 UTC by `scripts/status.sh`. Do not edit by hand.
 
 | repo | open issues | open PRs |
 |---|---|---|
-| phoenixmldb-core | 2 | 0 |
-| phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 2 | 0 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-core | 1 | 0 |
+| phoenixmldb-xquery | 2 | 1 |
+| phoenixmldb-xslt | 3 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
 **phoenixmldb-core**
 
 - [5] Naming decision: the prefix `dbxml` means three different things
-- [4] StringValue returns "" for nodes read from storage — string comparisons in cross-document queries silently match nothing
+
+**phoenixmldb-xquery**
+
+- [224] Resource resolver requests do not carry the calling module's base URI
+- [223] static-base-uri() in a library module returns the main module's base URI
 
 **phoenixmldb-xslt**
 
+- [330] Resource resolver requests do not carry the calling module's base URI
 - [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
 
-**phoenixmldb-cli**
+**phoenixmldb-xquery**
 
-- [15] build: Bump the phoenixmldb-engines group with 2 updates
+- [222] release: 2.8.0 on Core 2.4.0
+
+**phoenixmldb-xslt**
+
+- [329] build: Bump the phoenixmldb-engines group with 1 update
 
 ## Defect register
 
