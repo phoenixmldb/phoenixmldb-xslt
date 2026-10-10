@@ -21,8 +21,15 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// Runs an XSLT transformation and returns the result as a map.
 /// XSLT 3.0 §25.3 / XPath Functions and Operators §17.2.
 /// </summary>
-internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
+internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction, PhoenixmlDb.XQuery.Functions.IHostGatedFunction
 {
+    /// <summary>
+    /// True when the resource policy of the transformation turns fn:transform off
+    /// (<see cref="PhoenixmlDb.XQuery.Security.ResourcePolicy.AllowTransformFunction"/>).
+    /// </summary>
+    public bool IsTurnedOff(PhoenixmlDb.XQuery.Ast.ExecutionContext? context)
+        => _context.Policy is { AllowTransformFunction: false };
+
     private readonly DefaultXsltExecutionContext _context;
     public XsltTransformFunction(DefaultXsltExecutionContext context) => _context = context;
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "transform");
@@ -44,6 +51,11 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
+        // Before anything is read from the options: every way to call the function (by name,
+        // through a function item, through fn:apply, from xsl:evaluate) arrives here.
+        if (IsTurnedOff(context))
+            throw new XsltException("FOXT0001: fn:transform is not available: the host's resource policy does not allow it");
+
         if (arguments[0] is not IDictionary<object, object?> options)
             throw new XsltException("FOXT0001: The argument to fn:transform must be a map");
 

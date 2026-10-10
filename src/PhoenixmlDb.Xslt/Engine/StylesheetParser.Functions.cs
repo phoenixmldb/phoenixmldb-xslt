@@ -679,6 +679,9 @@ public sealed partial class StylesheetParser
                     var arity = fc.Arguments.Count > 1
                         ? (int)ToDouble(EvaluateStaticExpression(fc.Arguments[1], context))
                         : -1;
+                    // As at run time: a function the host has turned off is not available.
+                    if (ResourcePolicy is { AllowTransformFunction: false } && IsTransformFunctionName(funcName, context))
+                        return false;
                     return EvaluateFunctionAvailable(funcName, context, arity);
                 }
                 break;
@@ -822,6 +825,18 @@ public sealed partial class StylesheetParser
         return XsltElementAvailableFunction.IsXsltElement(localName);
     }
 
+
+    private static bool IsTransformFunctionName(string name, XElement context)
+    {
+        const string Fn = "http://www.w3.org/2005/xpath-functions";
+        if (name.StartsWith("Q{", StringComparison.Ordinal))
+            return name == "Q{" + Fn + "}transform";
+        var colon = name.IndexOf(':', StringComparison.Ordinal);
+        if (colon < 0)
+            return name == "transform";
+        return name[(colon + 1)..] == "transform"
+            && context.GetNamespaceOfPrefix(name[..colon])?.NamespaceName == Fn;
+    }
 
     private static bool EvaluateFunctionAvailable(string name, XElement context, int arity)
     {

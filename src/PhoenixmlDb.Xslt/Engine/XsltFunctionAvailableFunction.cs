@@ -68,18 +68,23 @@ internal sealed class XsltFunctionAvailableFunction : PhoenixmlDb.XQuery.Ast.XQu
         if (arity is 1 or < 0 && IsSchemaTypeConstructor(qname, context))
             return ValueTask.FromResult<object?>(true);
         // Try to resolve with various arities
+        // A function the host has turned off is not available.
         if (arity >= 0)
         {
-            return ValueTask.FromResult<object?>(_library.Resolve(qname, arity) != null);
+            return ValueTask.FromResult<object?>(IsThere(_library.Resolve(qname, arity), context));
         }
         // Try common arities 0-3
         for (int i = 0; i <= 3; i++)
         {
-            if (_library.Resolve(qname, i) != null)
+            if (IsThere(_library.Resolve(qname, i), context))
                 return ValueTask.FromResult<object?>(true);
         }
         return ValueTask.FromResult<object?>(false);
     }
+
+    private static bool IsThere(PhoenixmlDb.XQuery.Ast.XQueryFunction? function, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+        => function is not null
+            && !(function is PhoenixmlDb.XQuery.Functions.IHostGatedFunction gated && gated.IsTurnedOff(context));
 
     private static bool IsSchemaTypeConstructor(QName name, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
