@@ -41,6 +41,15 @@
   buffered copy and gives the right result. A stylesheet that passed the old check can fail the
   new one. W3C XSLT 3.0: 130 failing (was 131), and no test that expects a result is refused.
 
+### Imports and includes
+
+- **`xsl:import` and `xsl:include` are resolved against the base URI in effect at the element**,
+  which `xml:base` sets, and the host's resolver is asked for that location once. In 2.8.0 the
+  resolver was asked twice, the first time for a location the stylesheet does not name.
+- **A module that `use-when` excludes is not read**, and neither is anything it imports.
+- **A relative schema location in a stylesheet with no base URI is an error**, not a location
+  resolved against the working directory.
+
 ### How conformance is measured
 
 - **The W3C streaming sets run with `StrictStreamability` on.** A conformance run measures what
