@@ -1605,7 +1605,15 @@ public sealed partial class StylesheetParser
         return Uri.TryCreate(element.BaseUri, UriKind.Absolute, out var uri) ? uri : null;
     }
 
-    private Uri? ResolveEffectiveBaseUri(XElement element)
+    private Uri? ResolveEffectiveBaseUri(XElement element) => EffectiveBaseUri(element, _baseUri);
+
+    /// <summary>
+    /// The base URI in effect at <paramref name="element"/> of a module whose own base URI is
+    /// <paramref name="moduleBase"/>: xml:base on the element and its ancestors applied to it.
+    /// Every place that resolves a module's href uses this, so that each of them asks for the
+    /// same location: the one the stylesheet names.
+    /// </summary>
+    internal static Uri? EffectiveBaseUri(XElement element, Uri? moduleBase)
     {
         // Content expanded from an external entity has that entity's base URI, which XLinq
         // records (LoadOptions.SetBaseUri) wherever it differs from the document's. Such an
@@ -1623,10 +1631,10 @@ public sealed partial class StylesheetParser
         }
 
         if (xmlBaseAttrs.Count == 0)
-            return entityBase ?? _baseUri;
+            return entityBase ?? moduleBase;
 
         // Start from the stylesheet (or entity) base URI, then apply xml:base values from outermost to innermost
-        Uri? result = entityBase ?? _baseUri;
+        Uri? result = entityBase ?? moduleBase;
         for (int i = xmlBaseAttrs.Count - 1; i >= 0; i--)
         {
             var xmlBase = xmlBaseAttrs[i];
@@ -3271,6 +3279,16 @@ public sealed partial class StylesheetParser
         bool checkConsistency,
         HashSet<string> externallySupplied)
     {
+        // A module whose root element use-when excludes declares nothing and imports nothing.
+        try
+        {
+            if (!ShouldIncludeElement(root)) return;
+        }
+        catch (XsltException)
+        {
+            // Not judged here; the declarations are collected as before.
+        }
+
         // Track names seen in THIS module for same-precedence consistency check
         HashSet<string>? seenInModule = checkConsistency ? new() : null;
 
@@ -3281,17 +3299,36 @@ public sealed partial class StylesheetParser
             // A module that use-when excludes is no part of the stylesheet, and neither are its
             // declarations. Where the condition cannot be judged yet (it may refer to a
             // declaration further down), the module is read, as it always was.
+            // The condition can use a static declaration of this module that comes before the
+            // element. Imports are collected ahead of this module's own declarations, so at that
+            // point the condition could not be judged, and the module was read whatever it said.
+            // It is judged with those declarations in a scope that is then put back. What still
+            // cannot be judged is not read here: the parser decides when it gets there.
             try
             {
                 if (!ShouldIncludeElement(moduleRef)) return;
             }
             catch (XsltException)
             {
+                if (IncludedGivenPrecedingDeclarations(moduleRef) != true) return;
             }
             try
             {
-                var moduleRoot = ReadModuleForStaticDeclarations(href, baseUriObj, out var moduleUri);
+                // Against the base in effect at the element, xml:base included, as the parser
+                // resolves it. Resolved against the module's own base, this asked the host for
+                // a location the stylesheet does not name, and then the parser asked again
+                // for the one it does.
+                var moduleRoot = ReadModuleForStaticDeclarations(href, EffectiveBaseUri(moduleRef, baseUriObj), out var moduleUri);
                 if (moduleRoot == null) return;
+                // A module whose own root element use-when excludes has no declarations and
+                // imports nothing.
+                try
+                {
+                    if (!ShouldIncludeElement(moduleRoot)) return;
+                }
+                catch (XsltException)
+                {
+                }
                 // A module already pulled in contributes its declarations once. The guard is also
                 // what stops a cyclic include from recursing forever now that this walk descends
                 // instead of scanning one level.
@@ -3303,6 +3340,42 @@ public sealed partial class StylesheetParser
                                            or PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
             {
                 // If the module cannot be read here, skip — parsing proper reports it properly.
+            }
+        }
+
+        // Whether use-when admits <paramref name="moduleRef"/> once this module's static
+        // declarations that precede it are in scope. Null when it still cannot be judged.
+        bool? IncludedGivenPrecedingDeclarations(XElement moduleRef)
+        {
+            var savedParams = new Dictionary<string, string>(staticParams);
+            var savedTyped = new Dictionary<QName, object?>(_staticVariables);
+            var savedSeen = seenInModule is null ? null : new HashSet<string>(seenInModule);
+            try
+            {
+                foreach (var preceding in root.Elements())
+                {
+                    if (ReferenceEquals(preceding, moduleRef)) break;
+                    if (preceding.Name != XsltNs + "param" && preceding.Name != XsltNs + "variable") continue;
+                    try { CollectDeclaration(preceding); }
+                    catch (XsltException) { }
+                }
+                return ShouldIncludeElement(moduleRef);
+            }
+            catch (XsltException)
+            {
+                return null;
+            }
+            finally
+            {
+                staticParams.Clear();
+                foreach (var (key, value) in savedParams) staticParams[key] = value;
+                _staticVariables.Clear();
+                foreach (var (key, value) in savedTyped) _staticVariables[key] = value;
+                if (seenInModule != null && savedSeen != null)
+                {
+                    seenInModule.Clear();
+                    seenInModule.UnionWith(savedSeen);
+                }
             }
         }
 
@@ -3335,6 +3408,12 @@ public sealed partial class StylesheetParser
             if (child.Name != XsltNs + "param" && child.Name != XsltNs + "variable")
                 continue;
 
+            CollectDeclaration(child);
+        }
+
+        // One static xsl:param or xsl:variable of this module.
+        void CollectDeclaration(XElement child)
+        {
             var staticAttr = child.Attribute("static");
             var isStatic = staticAttr?.Value?.Trim() is "yes" or "true" or "1";
 
@@ -3349,10 +3428,10 @@ public sealed partial class StylesheetParser
                 }
             }
 
-            if (!isStatic) continue;
+            if (!isStatic) return;
 
             var nameAttr = child.Attribute("name")?.Value;
-            if (nameAttr == null) continue;
+            if (nameAttr == null) return;
 
             var selectAttr = child.Attribute("select")?.Value;
 
@@ -3445,7 +3524,7 @@ public sealed partial class StylesheetParser
                 if (resolvedValue != null && !supplied)
                     staticParams[nameAttr] = resolvedValue;
                 seenInModule?.Add(nameAttr);
-                continue;
+                return;
             }
 
             seenInModule?.Add(nameAttr);
