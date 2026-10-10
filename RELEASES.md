@@ -41,6 +41,15 @@
   buffered copy and gives the right result. A stylesheet that passed the old check can fail the
   new one. W3C XSLT 3.0: 130 failing (was 131), and no test that expects a result is refused.
 
+### API
+
+- **A host can turn `fn:transform` off** with `ResourcePolicyBuilder.AllowTransformFunction(false)`
+  (from PhoenixmlDb.XQuery). It is on unless turned off, so nothing changes for a host that
+  does not use it. Turned off, every way a stylesheet can call the function (by name, through a
+  function item, `fn:apply`, `xsl:evaluate`, a static expression) fails with FOXT0001 before the
+  nested stylesheet is read, and `function-available` and `function-lookup` do not report the
+  function, at run time or in `use-when`.
+
 ### Imports and includes
 
 - **`xsl:import` and `xsl:include` are resolved against the base URI in effect at the element**,
