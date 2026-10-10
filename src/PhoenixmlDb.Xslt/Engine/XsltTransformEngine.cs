@@ -5250,9 +5250,17 @@ public sealed class XsltTransformEngine
             context._activeStreamingReader = inputReader;
             context._activeStreamingCancellationToken = options.CancellationToken;
             context._activeStreamWatchers = docWatchers;
+            // A for-each that is wrapped in a construction (a literal result element, xsl:copy,
+            // a variable) must run inside the LINEAR execution of the body, so that what is
+            // around it is written around its result: it hands off to the live reader where it
+            // stands. The forward-pass dispatch below runs only the for-each bodies and never the
+            // body itself, so <out><xsl:for-each select="root/item">…</xsl:for-each></out> lost
+            // its <out> (xslt#343). xsl:source-document makes the same choice.
+            bool allInlineDriven = docSubscriptions != null && docWatchers == null
+                && docSubscriptions.All(s => s.InlineDriven);
             try
             {
-                if (subscriptionOnly)
+                if (subscriptionOnly && !allInlineDriven)
                 {
                     // The body's for-each subscriptions are dispatched per matching
                     // element during the forward pass; bodies with no streaming
@@ -5290,9 +5298,9 @@ public sealed class XsltTransformEngine
                 }
                 else
                 {
-                    // The body contains xsl:apply-templates: executing it triggers the
-                    // streaming processor through the active-processor handle, exactly
-                    // as the source-document apply-templates path does.
+                    // The body contains xsl:apply-templates, or every for-each in it is wrapped:
+                    // executing it triggers the streaming processor through the active-processor
+                    // handle, exactly as the source-document path does.
                     await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
                 }
             }

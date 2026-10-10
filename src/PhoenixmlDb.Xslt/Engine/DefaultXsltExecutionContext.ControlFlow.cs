@@ -683,7 +683,7 @@ internal sealed partial class DefaultXsltExecutionContext
         if (_isStreamingExecution && _activeStreamingReader != null
             && sorts.Count == 0 && IsConsumingChildSelect(select))
         {
-            await ForEachStreamingAsync(body).ConfigureAwait(false);
+            await ForEachStreamingAsync(select, body).ConfigureAwait(false);
             return;
         }
 
@@ -1079,7 +1079,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// builds a full subtree, binds it as the focus, and runs the body. Sorts are
     /// not supported in this path (the caller falls back to the buffered impl).
     /// </summary>
-    private async ValueTask ForEachStreamingAsync(XsltSequenceConstructor body)
+    private async ValueTask ForEachStreamingAsync(XQueryExpression select, XsltSequenceConstructor body)
     {
         var reader = _activeStreamingReader!;
         var ct = _activeStreamingCancellationToken;
@@ -1087,6 +1087,7 @@ internal sealed partial class DefaultXsltExecutionContext
         var savedTemplate = _currentTemplate;
         _currentTemplate = null; // current template rule is absent inside xsl:for-each
         var position = 0;
+        var childTest = StreamedChildTest(select);
         try
         {
             while (await reader.ReadAsync().ConfigureAwait(false))
@@ -1098,6 +1099,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     break;
                 }
                 if (reader.NodeType != System.Xml.XmlNodeType.Element) continue;
+                // Only the children the select names: select="foo" also ran the body for a
+                // <bar> sibling, with no error (xslt#343).
+                if (!StreamedChildMatches(childTest, reader))
+                {
+                    if (!reader.IsEmptyElement)
+                        await SkipStreamingSubtreeAsync(reader, reader.Depth, ct).ConfigureAwait(false);
+                    continue;
+                }
 
                 var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
                 position++;

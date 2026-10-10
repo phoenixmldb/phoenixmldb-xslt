@@ -126,6 +126,13 @@ internal sealed class StreamingExpressionScanner
                     ScanExpression(valueOf.Select);
                 break;
 
+            // A text value template reads the stream as xsl:value-of does. It was not scanned, so
+            // {count(root/item)} was evaluated against the empty document node and gave 0, where
+            // the same expression in xsl:value-of gave the count (xslt#343).
+            case XsltTextValueTemplate textTemplate:
+                ScanAvt(textTemplate.Template);
+                break;
+
             case XsltSequence seq:
                 if (seq.Select != null)
                     ScanExpression(seq.Select);

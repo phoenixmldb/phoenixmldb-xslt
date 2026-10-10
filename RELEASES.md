@@ -10,6 +10,12 @@
   expression) lost the end tags of the elements around it, or its values. Such a body now runs
   on a buffered copy of the matched element and gives the result the tree gives. Bodies with
   `xsl:apply-templates`, `xsl:for-each`, `xsl:iterate` and the like stream as before.
+- **Three more streamed results that were wrong with no error** (#343).
+  A streamed `xsl:for-each select="foo"` ran its body for every child element, not only for
+  `foo`. An aggregate in a text value template, such as `{count(root/item)}`, in a rule for the
+  document node or in `xsl:source-document streamable="yes"`, was evaluated against an empty
+  document and gave 0 or nothing; the same expression in `xsl:value-of` was right. A rule for
+  the document node lost the element it wrote around a streamed `xsl:for-each`.
 - **`StrictStreamability` is now the streamability analysis of the specification** (#337). It
   was one check (two readers of the children of the matched node). It now applies the posture
   and sweep rules of XSLT 3.0 §19.8 to every template rule of a streamable mode and to the body
