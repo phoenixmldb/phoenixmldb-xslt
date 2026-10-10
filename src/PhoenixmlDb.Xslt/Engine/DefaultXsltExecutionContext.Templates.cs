@@ -56,8 +56,11 @@ internal sealed partial class DefaultXsltExecutionContext
         // element to template matching, so a striding select restricting to a named child
         // dispatches exactly the templates that match that name (si-result-document-301/
         // 303/304, where the matched account template body writes an xsl:result-document).
+        // select="node()" is the default select written out: with the document node as the
+        // context it took neither this route nor the next, was evaluated against a document
+        // node with no children, and selected nothing.
         if (_activeStreamingProcessor != null && _activeStreamingReader != null
-            && (select == null || IsDocumentLevelStridingSelect(select)))
+            && (select == null || IsChildNodeSelect(select) || IsDocumentLevelStridingSelect(select)))
         {
             var ci = ContextItem;
             // The STREAMED document only. Any other document — a doc() result being processed in

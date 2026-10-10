@@ -23,6 +23,13 @@ internal sealed class ForEachSubscription
     /// </summary>
     public Ast.XsltForEach? SourceInstruction { get; init; }
 
+    /// <summary>
+    /// The expression this subscription carries out, when it comes from an expression and not
+    /// from an xsl:for-each: the simple map or the <c>for</c> expression whose left side walks
+    /// the streamed input.
+    /// </summary>
+    public XQueryExpression? SourceExpression { get; init; }
+
     /// <summary>Path matcher fired against the input stream to identify match events.</summary>
     public required StreamPathMatcher PathMatcher { get; init; }
 

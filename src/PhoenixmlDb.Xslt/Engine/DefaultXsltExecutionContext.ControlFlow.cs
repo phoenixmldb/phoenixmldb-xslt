@@ -680,7 +680,12 @@ internal sealed partial class DefaultXsltExecutionContext
         // Mirrors the apply-templates streaming intercept above. Sorts are not
         // applicable in this path (a sort would force materialization, defeating
         // streaming) — fall back to the buffered impl if sorts are present.
+        // Not for an element that was read into memory before its rule ran (a child that
+        // xsl:apply-templates handed over): the reader is past it, and reading on took its
+        // following siblings for its children. The same holds for xsl:iterate and
+        // xsl:for-each-group below.
         if (_isStreamingExecution && _activeStreamingReader != null
+            && !_streamingDispatchElementMaterialized
             && sorts.Count == 0 && IsConsumingChildSelect(select))
         {
             await ForEachStreamingAsync(select, body).ConfigureAwait(false);
@@ -872,6 +877,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // Currently dispatches group-starting-with, group-ending-with and group-adjacent.
         // group-by is excluded: see the note in ForEachGroupStreamingAsync's group-by branch.
         if (_isStreamingExecution && _activeStreamingReader != null
+            && !_streamingDispatchElementMaterialized
             && StreamingSubtreeBufferDetector.StreamedGroupingModelsSelect(instruction.Select)
             && (instruction.GroupStartingWith != null
                 || instruction.GroupEndingWith != null
@@ -1050,7 +1056,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// the processor forward pass; this drives the reader for the multi-step descent that
     /// the forward pass cannot reach. Conservative by construction.
     /// </summary>
-    private static List<PhoenixmlDb.XQuery.Ast.NameTest>? TryGetStridingDescentSteps(
+    internal static List<PhoenixmlDb.XQuery.Ast.NameTest>? TryGetStridingDescentSteps(
         XQueryExpression? select)
     {
         if (select is not PhoenixmlDb.XQuery.Ast.PathExpression path)
@@ -1535,6 +1541,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // mirrors the non-streaming impl (NextIterationException carries the new
         // param bindings).
         if (_isStreamingExecution && _activeStreamingReader != null
+            && !_streamingDispatchElementMaterialized
             && IsConsumingChildSelect(instruction.Select))
         {
             await IterateStreamingAsync(instruction).ConfigureAwait(false);

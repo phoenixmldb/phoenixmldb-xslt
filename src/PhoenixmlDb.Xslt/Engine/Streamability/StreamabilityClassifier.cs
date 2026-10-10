@@ -62,6 +62,12 @@ namespace PhoenixmlDb.Xslt.Engine.Streamability;
 /// accumulator-after() is then motionless: the descendants it waits for have been read
 /// (§19.8.9.1).
 /// </param>
+/// <param name="Handled">
+/// Instructions and expressions (compared by reference) that something else carries out: an
+/// instruction that walks the streamed input itself, an aggregate a watcher computes during
+/// the pass. Each is classified grounded and motionless, so that the sweep of the construct
+/// around it says what is left for the executor to read with nothing to read it for it.
+/// </param>
 /// <param name="ContextHasNoChildren">
 /// With <paramref name="BySpec"/>: the context item is a text, comment or processing-instruction
 /// node, selected by a kind test. Its whole value is in hand, so atomizing it does not consume
@@ -77,7 +83,8 @@ public readonly record struct StreamingContext(
     bool InGroundedGroup = false,
     bool ContextHasNoChildren = false,
     XsltStylesheet? Stylesheet = null,
-    bool AfterConsumingSibling = false);
+    bool AfterConsumingSibling = false,
+    IReadOnlySet<object>? Handled = null);
 
 /// <summary>
 /// Compositional streamability classifier for the XPath/XQuery <b>expression</b> language,
@@ -122,6 +129,9 @@ public static class StreamabilityClassifier
     public static PostureSweep Classify(XQueryExpression expr, StreamingContext ctx)
     {
         ArgumentNullException.ThrowIfNull(expr);
+
+        if (ctx.Handled is { } handledExpressions && handledExpressions.Contains(expr))
+            return Grounded(Sweep.Motionless);
 
         return expr switch
         {
@@ -1594,6 +1604,9 @@ public static class StreamabilityClassifier
     public static PostureSweep Classify(XsltInstruction insn, StreamingContext ctx)
     {
         ArgumentNullException.ThrowIfNull(insn);
+
+        if (ctx.Handled is { } handledInstructions && handledInstructions.Contains(insn))
+            return Grounded(Sweep.Motionless);
 
         return insn switch
         {

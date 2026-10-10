@@ -2093,6 +2093,7 @@ internal sealed class StreamingExpressionScanner
         {
             OperandUsage = _ambientUsage,
             SourceInstruction = null,
+            SourceExpression = sm,
             PathMatcher = matcher,
             Body = null,
             PerItemSelect = sm.Right,
@@ -2160,6 +2161,7 @@ internal sealed class StreamingExpressionScanner
         {
             OperandUsage = _ambientUsage,
             SourceInstruction = null,
+            SourceExpression = flwor,
             PathMatcher = matcher,
             Body = null,
             PerItemSelect = flwor.ReturnExpression,
