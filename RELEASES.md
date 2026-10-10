@@ -58,6 +58,11 @@
 - **A module that `use-when` excludes is not read**, and neither is anything it imports.
 - **A relative schema location in a stylesheet with no base URI is an error**, not a location
   resolved against the working directory.
+- **The requests the compiler makes name the module that makes them** (#335).
+  `ResourceRequest.ModuleUri` was null for `xsl:import`, `xsl:include`, the schema documents of
+  `xsl:import-schema` and the `parameter-document` of `xsl:output`. It is now the URI the module
+  that holds the element was loaded at, which `xml:base` does not change. A host's resolver can
+  so tell which module imports, as it already could for a load a module makes when it runs.
 
 ### How conformance is measured
 

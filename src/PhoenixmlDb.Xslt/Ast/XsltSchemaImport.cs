@@ -28,4 +28,11 @@ public sealed class XsltSchemaImport
 
     /// <summary>Source location of the xsl:import-schema element (for diagnostic messages).</summary>
     public SourceLocation? Location { get; init; }
+
+    /// <summary>
+    /// The URI the module that holds the declaration was loaded at, which xml:base does not
+    /// change. The host's resolver is told it with each schema document the import asks for.
+    /// Null when the module has no URI.
+    /// </summary>
+    public Uri? ModuleUri { get; init; }
 }

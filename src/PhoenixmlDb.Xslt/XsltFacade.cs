@@ -526,7 +526,7 @@ public sealed class XsltTransformer
                 try
                 {
                     SchemaProvider.AddSchemaText(import.TargetNamespace, inlineSchema,
-                        baseUri is { IsAbsoluteUri: true } ? baseUri : null, ResourcePolicy);
+                        baseUri is { IsAbsoluteUri: true } ? baseUri : null, ResourcePolicy, import.ModuleUri);
                 }
                 catch (NotSupportedException)
                 {
@@ -569,7 +569,7 @@ public sealed class XsltTransformer
             }
             try
             {
-                SchemaProvider.ImportSchema(import.TargetNamespace, resolved, ResourcePolicy);
+                SchemaProvider.ImportSchema(import.TargetNamespace, resolved, ResourcePolicy, import.ModuleUri);
             }
             catch (PhoenixmlDb.XQuery.SchemaException ex)
             {
