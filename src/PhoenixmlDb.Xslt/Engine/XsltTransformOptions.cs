@@ -118,18 +118,23 @@ public sealed class XsltTransformOptions
     public bool DisableStreaming { get; init; }
 
     /// <summary>
-    /// When <c>true</c>, a template rule of a streamable mode with more than one instruction
-    /// that reads the children of the matched node is reported as XTSE3430 when the
-    /// transformation starts, as XSLT 3.0 §19.10 requires of a streaming processor. Off by
-    /// default: the engine then runs such a rule on a buffered copy of the matched subtree, or
-    /// on a tree, and the result is the same. Has no effect together with
+    /// When <c>true</c>, a template rule of a streamable mode, or the body of an
+    /// <c>xsl:source-document</c> with <c>streamable="yes"</c>, that is not guaranteed-streamable
+    /// makes the transformation fail with XTSE3430, as XSLT 3.0 §19.10 requires of a streaming
+    /// processor. Off by default: the engine then runs it on a buffered copy of the matched
+    /// subtree, or on a tree, and the result is the same. Has no effect together with
     /// <see cref="DisableStreaming"/>, which asks for tree evaluation.
     /// </summary>
     /// <remarks>
-    /// That is the one thing it checks; it is not the streamability analysis of the
-    /// specification. A rule that is not guaranteed-streamable for another reason (a
-    /// <c>preceding-sibling</c> or other roaming axis, a read outside the matched node) is not
-    /// reported and runs on a buffered copy, with the right result.
+    /// <para>The check is the posture and sweep analysis of XSLT 3.0 §19.8. A template rule is
+    /// reported when the transformation starts; an <c>xsl:source-document</c> body when that
+    /// instruction runs, so that one in a template that is never called is not an error.</para>
+    /// <para>It accepts a little more than the specification guarantees, where the engine is
+    /// known to give the right result: a union of two child selections, one branch of
+    /// <c>xsl:fork</c> that returns streamed nodes while no other branch reads the input, and
+    /// <c>current-group()</c> anywhere in a group of copied nodes. It does not check the body of
+    /// a stylesheet function against its <c>streamability</c> category, nor that
+    /// <c>xsl:apply-templates</c> names a streamable mode.</para>
     /// </remarks>
     public bool StrictStreamability { get; init; }
 

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Streaming
+
+- **`StrictStreamability` is now the streamability analysis of the specification** (#337). It
+  was one check (two readers of the children of the matched node). It now applies the posture
+  and sweep rules of XSLT 3.0 §19.8 to every template rule of a streamable mode and to the body
+  of every `xsl:source-document streamable="yes"`, and reports XTSE3430 for what is not
+  guaranteed-streamable: a `preceding-sibling` or other roaming axis, `reverse()`, sorting
+  streamed nodes, and so on. Off by default as before; without it such a construct runs on a
+  buffered copy and gives the right result. A stylesheet that passed the old check can fail the
+  new one. W3C XSLT 3.0: 130 failing (was 131), and no test that expects a result is refused.
+
 ### How conformance is measured
 
 - **The W3C streaming sets run with `StrictStreamability` on.** A conformance run measures what
