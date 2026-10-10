@@ -1865,7 +1865,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // classifier's StreamingPlan derives BufferWholeInput (additive — a guaranteed-streamable
         // body never triggers it, so si-iterate-037 and kin still stream).
         var sourceDocNeedsWholeInput =
-            XsltTransformEngine.DocLevelWholeInputBuffer(instruction.Content);
+            XsltTransformEngine.DocLevelWholeInputBuffer(instruction.Content, _stylesheet);
         if (instruction.Streamable && (resolvedUri.IsFile || hostSource != null) && string.IsNullOrEmpty(fragment)
             && !sourceDocNeedsWholeInput)
         {

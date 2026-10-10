@@ -10,6 +10,22 @@
   expression) lost the end tags of the elements around it, or its values. Such a body now runs
   on a buffered copy of the matched element and gives the result the tree gives. Bodies with
   `xsl:apply-templates`, `xsl:for-each`, `xsl:iterate` and the like stream as before.
+- **The live reader is used only for body shapes shown to be right on it; every other body is
+  buffered.** Until now a body streamed unless a check found a reason to buffer it, and a shape
+  no check knew gave a wrong result with no error (#340, #343). The rule is now the other way
+  round: a body streams when one walking instruction, registered loop or set of aggregates does
+  all of its reading and the rest reads nothing below the context node; the README lists the
+  shapes. Any other body runs on a buffered copy (the matched element for a template rule, the
+  whole input for a body at the document node) and gives the tree result. Every shape on the
+  list is run against the tree result in every position the list allows (more than 1,100 cases).
+  Effect on memory: of about 600 distinct streamed bodies in the W3C streaming sets, 28 now
+  buffer the whole input, all of them bodies that read the input with nothing to read it for
+  them. W3C XSLT 3.0: 123 failing (was 130); seven streamed cases that were wrong are right.
+- **Rules reached through `xsl:apply-templates` in a streamed rule.** In the rule of a child that
+  `xsl:apply-templates` had handed over, `xsl:iterate` and `xsl:for-each-group` read the
+  following siblings of the child as its children, and a body that needed a buffer left the
+  element after it one end tag short. `xsl:apply-templates select="node()"` and
+  `xsl:copy-of select="."` in a rule for the document node selected nothing.
 - **Three more streamed results that were wrong with no error** (#343).
   A streamed `xsl:for-each select="foo"` ran its body for every child element, not only for
   `foo`. An aggregate in a text value template, such as `{count(root/item)}`, in a rule for the

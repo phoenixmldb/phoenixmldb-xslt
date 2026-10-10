@@ -5290,7 +5290,19 @@ public sealed class XsltTransformEngine
                             // Literal-only body (e.g. match="/" producing <ROOTRAN/>):
                             // execute once; the forward pass below merely drains the reader
                             // in dispatch-only mode without firing built-in templates.
-                            await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
+                            // With the reader, and without the processor: xsl:copy-of of the whole
+                            // document sends the input on from the reader, and found none here,
+                            // so it copied a document node with no children. xsl:source-document
+                            // runs such a body the same way.
+                            context._activeStreamingReader = inputReader;
+                            try
+                            {
+                                await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                context._activeStreamingReader = null;
+                            }
                         }
 
                         await docProcessor.ProcessAsync(inputReader, options.CancellationToken).ConfigureAwait(false);
@@ -5413,7 +5425,7 @@ public sealed class XsltTransformEngine
             docNodeTemplate = _templateIndex.FindMatchingTemplate(probeDoc, options?.InitialMode, mc.Value);
 
         if (docNodeTemplate?.Body == null) return false;
-        return DocLevelWholeInputBuffer(docNodeTemplate.Body);
+        return DocLevelWholeInputBuffer(docNodeTemplate.Body, _stylesheet);
     }
 
     /// <summary>
@@ -5434,7 +5446,7 @@ public sealed class XsltTransformEngine
     /// (<see cref="StreamingPlan.StreamInline"/>) — it is never buffered, so no 100K-iteration hang.
     /// </para>
     /// </summary>
-    internal static bool DocLevelWholeInputBuffer(Ast.XsltSequenceConstructor? body)
+    internal static bool DocLevelWholeInputBuffer(Ast.XsltSequenceConstructor? body, XsltStylesheet stylesheet)
     {
         if (StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(body))
             return true;
@@ -5445,8 +5457,12 @@ public sealed class XsltTransformEngine
         // (xslt#298).
         if (StreamabilityChecker.HasSeveralConsumingOperands(body))
             return true;
-        return StreamingPlanner.Plan(body, new StreamingContext(Posture.Striding, InStreamedScope: true))
-            == StreamingPlan.BufferWholeInput;
+        if (StreamingPlanner.Plan(body, new StreamingContext(Posture.Striding, InStreamedScope: true))
+            == StreamingPlan.BufferWholeInput)
+            return true;
+        // The live reader is for the shapes it is proven on. A read of the input that nothing
+        // carries out is made on a document node with no children (xslt#343).
+        return !StreamedBodyShape.IsProvenForDocument(body, stylesheet);
     }
 
     private static bool ContentContainsApplyTemplatesStreaming(Ast.XsltSequenceConstructor? body)

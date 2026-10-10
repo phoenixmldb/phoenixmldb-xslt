@@ -390,7 +390,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 var streamingBodyCtx = new Streamability.StreamingContext(
                     Streamability.Posture.Striding, InStreamedScope: true);
                 var streamingBodyPlan = StreamingPlanner.Plan(template.Body, streamingBodyCtx);
+                // Not for an element that is in memory already (a child that xsl:apply-templates
+                // read whole before its rule ran). The reader is past it: there is nothing to
+                // buffer, and to claim its end tag as consumed here left the flag set for the
+                // next end tag the pass met, which then closed one element too few.
                 if (_activeStreamingReader != null
+                    && !_streamingDispatchElementMaterialized
                     && node is Xdm.Nodes.XdmElement bufElem
                     && (streamingBodyPlan is StreamingPlan.BufferMatchedSubtree
                             or StreamingPlan.BufferWholeInput
@@ -401,11 +406,11 @@ internal sealed partial class DefaultXsltExecutionContext
                         || StreamabilityChecker.HasSeveralConsumingOperands(template.Body)
                         || StreamingSubtreeBufferDetector.RequiresSubtreeBufferForAbsorbingFunctions(
                             template.Body, _stylesheet.Functions)
-                        // A body that reads the children and has no instruction to walk them
-                        // for it: on the live reader it saw none, or ran late and lost the end
-                        // tags of the elements around it (xslt#340).
-                        || (!StreamedBodyShape.WalksTheInputItself(template.Body)
-                            && StreamedBodyShape.ReadsTheChildren(template.Body, _stylesheet))))
+                        // The live reader is for the shapes it is proven on: one instruction
+                        // that walks the children, and nothing else that reads them. A read
+                        // with nothing to carry it out saw an element with no children, or ran
+                        // late and lost the end tags around it (xslt#340, xslt#343).
+                        || !StreamedBodyShape.IsProvenForElement(template.Body, _stylesheet)))
                 {
                     await ExecuteWithBufferedSubtreeAsync(template, bufElem, mode, position).ConfigureAwait(false);
                     PopScope(); pushedScope = false;

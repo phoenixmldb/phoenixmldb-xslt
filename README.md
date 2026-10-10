@@ -239,6 +239,36 @@ var result = await transformer.TransformAsync(xmlInput);
 ### Collections
 - `SetCollection(string uri, List<string> paths)` — register documents for `fn:collection()`
 
+### Streaming
+
+A stylesheet that asks for streaming (`xsl:mode streamable="yes"`, `xsl:source-document
+streamable="yes"`) always gives the result the unstreamed stylesheet gives. How much of the input
+is held in memory depends on the shape of the body that reads it.
+
+A body runs on the live reader, holding one child subtree at a time, when one of these does all
+of its reading and the rest of the body reads nothing below the context node:
+
+- In a template rule for an element: one `xsl:apply-templates`, `xsl:for-each`, `xsl:iterate`
+  or `xsl:for-each-group` (with `group-adjacent`, `group-starting-with` or `group-ending-with`)
+  over the children, selected by a single child step (`*`, `item`, `node()`) with no predicate.
+- In a rule for the document node, or in `xsl:source-document`: one `xsl:apply-templates` with
+  no `select` or a path of child steps (`root/item`); one `xsl:for-each` over such a path; one
+  `xsl:copy-of select="."`; or aggregates only (`count(//x)`, `sum(root/item/@n)`,
+  `string-join(…)`, and the like).
+
+The instruction may stand inside literal result elements, `xsl:copy`, `xsl:element`,
+`xsl:result-document`, `xsl:if`, `xsl:choose`, `xsl:try`, `xsl:where-populated` or the content of
+an `xsl:variable`. Anything in the body other than that one instruction may read the context
+node itself, its attributes and its ancestors.
+
+Any other body is run on a buffered copy: of the matched element for a template rule, of the
+whole input for a body at the document node. That covers a second read of the children, a
+predicate on the walked children, a path of several steps in an element rule, `xsl:iterate` or `xsl:for-each-group` directly under the
+document node, `xsl:fork`, and sorting. The result is the same; the memory is that of the copy.
+
+`StrictStreamability` is a separate question: it reports XTSE3430 for what the specification
+says is not guaranteed-streamable, whether or not this processor buffers it.
+
 ### Debugging
 - `TraceListener` — callback for template-match, function-call, built-in-rule events
 

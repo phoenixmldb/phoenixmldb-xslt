@@ -416,7 +416,20 @@ internal sealed partial class DefaultXsltExecutionContext
         };
     }
 
-    private static bool IsConsumingChildSelect(XQueryExpression? select)
+    /// <summary>True for <c>node()</c> or <c>child::node()</c>: every child, as the default select of xsl:apply-templates.</summary>
+    internal static bool IsChildNodeSelect(XQueryExpression? select)
+    {
+        var step = select switch
+        {
+            PhoenixmlDb.XQuery.Ast.StepExpression s => s,
+            PhoenixmlDb.XQuery.Ast.PathExpression { InitialExpression: null, IsAbsolute: false, Steps.Count: 1 } path => path.Steps[0],
+            _ => null,
+        };
+        return step is { Axis: PhoenixmlDb.XQuery.Ast.Axis.Child, Predicates.Count: 0 }
+            && step.NodeTest is PhoenixmlDb.XQuery.Ast.KindTest { Kind: XdmNodeKind.None };
+    }
+
+    internal static bool IsConsumingChildSelect(XQueryExpression? select)
     {
         if (select == null) return true; // null select = default children
         // Single child-axis step
@@ -447,7 +460,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// unchanged" shape written with <c>.</c> instead of <c>child::node()</c>
     /// (si-copy-of-011).
     /// </summary>
-    private static bool IsSelfContextSelect(XQueryExpression? select)
+    internal static bool IsSelfContextSelect(XQueryExpression? select)
     {
         if (select is PhoenixmlDb.XQuery.Ast.ContextItemExpression)
             return true;
@@ -469,7 +482,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// descendant hops, attribute tails, and multi-step descent so nothing but a
     /// top-level element striding select routes here.
     /// </summary>
-    private static bool IsDocumentLevelStridingSelect(XQueryExpression? select)
+    internal static bool IsDocumentLevelStridingSelect(XQueryExpression? select)
     {
         if (select is not PhoenixmlDb.XQuery.Ast.PathExpression path)
             return false;
