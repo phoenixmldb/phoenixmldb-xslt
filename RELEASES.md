@@ -4,6 +4,12 @@
 
 ### Streaming
 
+- **A template rule of a streamable mode gave wrong output for ordinary bodies, with no error**
+  (#340). A body that reads the children of the matched element with no instruction to walk
+  them (a variable, a conditional expression, `xsl:attribute select`, `xsl:try`, a `for` or `let`
+  expression) lost the end tags of the elements around it, or its values. Such a body now runs
+  on a buffered copy of the matched element and gives the result the tree gives. Bodies with
+  `xsl:apply-templates`, `xsl:for-each`, `xsl:iterate` and the like stream as before.
 - **`StrictStreamability` is now the streamability analysis of the specification** (#337). It
   was one check (two readers of the children of the matched node). It now applies the posture
   and sweep rules of XSLT 3.0 §19.8 to every template rule of a streamable mode and to the body

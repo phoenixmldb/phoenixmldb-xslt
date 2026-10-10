@@ -400,7 +400,12 @@ internal sealed partial class DefaultXsltExecutionContext
                         // wrote the first child and stopped, with no error (xslt#298).
                         || StreamabilityChecker.HasSeveralConsumingOperands(template.Body)
                         || StreamingSubtreeBufferDetector.RequiresSubtreeBufferForAbsorbingFunctions(
-                            template.Body, _stylesheet.Functions)))
+                            template.Body, _stylesheet.Functions)
+                        // A body that reads the children and has no instruction to walk them
+                        // for it: on the live reader it saw none, or ran late and lost the end
+                        // tags of the elements around it (xslt#340).
+                        || (!StreamedBodyShape.WalksTheInputItself(template.Body)
+                            && StreamedBodyShape.ReadsTheChildren(template.Body, _stylesheet))))
                 {
                     await ExecuteWithBufferedSubtreeAsync(template, bufElem, mode, position).ConfigureAwait(false);
                     PopScope(); pushedScope = false;
