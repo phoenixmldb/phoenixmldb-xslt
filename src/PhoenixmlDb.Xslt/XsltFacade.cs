@@ -117,18 +117,23 @@ public sealed class XsltTransformer
     public bool DisableStreaming { get; set; }
 
     /// <summary>
-    /// When <c>true</c>, a template rule of a streamable mode with more than one instruction
-    /// that reads the children of the matched node makes the transformation fail with XTSE3430,
-    /// as a strict streaming processor reports it (XSLT 3.0 §19). Off by default: the engine
-    /// then runs such a rule on a buffered copy of the matched subtree, or on a tree, and gives
-    /// the same result. Has no effect when <see cref="DisableStreaming"/> is set.
+    /// When <c>true</c>, a template rule of a streamable mode, or the body of an
+    /// <c>xsl:source-document</c> with <c>streamable="yes"</c>, that is not guaranteed-streamable
+    /// makes the transformation fail with XTSE3430, as XSLT 3.0 §19.10 requires of a streaming
+    /// processor. Off by default: the engine then runs it on a buffered copy of the matched
+    /// subtree, or on a tree, and the result is the same. Has no effect together with
+    /// <see cref="DisableStreaming"/>, which asks for tree evaluation.
     /// </summary>
     /// <remarks>
-    /// That is the one thing it checks. It is not the streamability analysis of the
-    /// specification: a rule that is not guaranteed-streamable for another reason (it uses the
-    /// <c>preceding-sibling</c> or another roaming axis, or reads outside the node it matched)
-    /// is not reported, with this set or not, and runs on a buffered copy with the right
-    /// result. A stylesheet this accepts may therefore not be guaranteed-streamable.
+    /// <para>The check is the posture and sweep analysis of XSLT 3.0 §19.8. A template rule is
+    /// reported when the transformation starts; an <c>xsl:source-document</c> body when that
+    /// instruction runs, so that one in a template that is never called is not an error.</para>
+    /// <para>It accepts a little more than the specification guarantees, where the engine is
+    /// known to give the right result: a union of two child selections, one branch of
+    /// <c>xsl:fork</c> that returns streamed nodes while no other branch reads the input, and
+    /// <c>current-group()</c> anywhere in a group of copied nodes. It does not check the body of
+    /// a stylesheet function against its <c>streamability</c> category, nor that
+    /// <c>xsl:apply-templates</c> names a streamable mode.</para>
     /// </remarks>
     public bool StrictStreamability { get; set; }
     private bool _allowRemoteXInclude;

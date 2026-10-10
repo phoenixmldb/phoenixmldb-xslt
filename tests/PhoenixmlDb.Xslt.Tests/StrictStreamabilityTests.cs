@@ -19,7 +19,7 @@ public class StrictStreamabilityTests
     {
         var t = new XsltTransformer();
         await t.LoadStylesheetAsync($"""
-            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0" expand-text="yes">
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="#all" version="3.0" expand-text="yes">
               <xsl:output omit-xml-declaration="yes"/>
               <xsl:mode on-no-match="shallow-copy" streamable="yes"/>
               <xsl:template match="item"><xsl:copy>{body}</xsl:copy></xsl:template>
@@ -62,6 +62,59 @@ public class StrictStreamabilityTests
         // the body of xsl:for-each has another focus
         "<xsl:for-each select=\"*\"><n>{name()}</n><v>{text()}</v></xsl:for-each>",
     };
+
+    /// <summary>
+    /// Not guaranteed-streamable for a reason other than two readers of the children: the full
+    /// posture and sweep rules of §19.8 find these (xslt#337).
+    /// </summary>
+    public static TheoryData<string> NotStreamableForAnotherReason => new()
+    {
+        // xslt#337 as reported
+        "<xsl:value-of select=\"count(preceding-sibling::*)\"/>",
+        "<xsl:value-of select=\"following-sibling::item/@id\"/>",
+        // the sequence is needed in reverse order
+        "<xsl:value-of select=\"reverse(*) ! name()\"/>",
+        // streamed nodes cannot be sorted
+        "<xsl:perform-sort select=\"*\"><xsl:sort select=\"name()\"/></xsl:perform-sort>",
+        // nor kept in a map
+        "<xsl:variable name=\"m\" select=\"map { 'k': foo }\"/><xsl:value-of select=\"map:size($m)\" xmlns:map=\"http://www.w3.org/2005/xpath-functions/map\"/>",
+    };
+
+    /// <summary>
+    /// Guaranteed-streamable by rules the first form of the check did not have. Each was refused
+    /// while the classifier took an unknown construct for not streamable.
+    /// </summary>
+    public static TheoryData<string> StreamableByTheFullRules => new()
+    {
+        "{upper-case(foo)}",
+        "{string-join(*, '-')}",
+        "{year-from-date(xs:date('2020-01-02'))}{foo}",
+        "<xsl:for-each select=\"*\">{position()}</xsl:for-each>",
+        "<xsl:for-each-group select=\"*\" group-adjacent=\"name()\"><g n=\"{current-grouping-key()}\">{count(current-group())}</g></xsl:for-each-group>",
+        "<xsl:for-each-group select=\"copy-of(*)\" group-by=\"name()\"><g>{current-group() ! string()}</g></xsl:for-each-group>",
+        "<xsl:perform-sort select=\"copy-of(*)\"><xsl:sort select=\"name()\"/></xsl:perform-sort>",
+        "<xsl:value-of select=\"some $n in copy-of(*) satisfies $n = 'b1'\"/>",
+        "<xsl:value-of select=\"outermost(.//foo)\"/>",
+        "<xsl:value-of select=\"@id, foo\"/>",
+    };
+
+    [Theory]
+    [MemberData(nameof(NotStreamableForAnotherReason))]
+    public async Task Strict_reports_XTSE3430_by_the_full_rules(string body)
+    {
+        var run = () => RunAsync(body, strict: true);
+        (await run.Should().ThrowAsync<XsltException>()).Which.Message.Should().StartWith("XTSE3430");
+    }
+
+    [Theory]
+    [MemberData(nameof(NotStreamableForAnotherReason))]
+    public async Task By_default_those_rules_run_and_give_the_tree_answer(string body)
+        => (await RunAsync(body)).Should().Be(await RunAsync(body, disableStreaming: true));
+
+    [Theory]
+    [MemberData(nameof(StreamableByTheFullRules))]
+    public async Task Strict_accepts_what_the_full_rules_call_streamable(string body)
+        => (await RunAsync(body, strict: true)).Should().Be(await RunAsync(body, disableStreaming: true));
 
     [Theory]
     [MemberData(nameof(SeveralConsumingOperands))]

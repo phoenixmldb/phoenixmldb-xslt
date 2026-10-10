@@ -602,13 +602,13 @@ static void PrintUsage()
                              (with the existing fallback if the body isn't streamable).
           --no-stream        Disable auto-streaming. Forces the in-memory tree path
                              even when the stylesheet declares a streamable mode.
-          --strict-streaming Report XTSE3430 for a template in a streamable mode that
-                             reads the children of its node more than once, instead
-                             of running it on a buffered copy. This is one check, not
-                             the full streamability analysis: other templates that
-                             are not streamable (a preceding-sibling axis, for
-                             example) still run on a buffered copy and give the
-                             right result. No effect with --no-stream.
+          --strict-streaming Report XTSE3430 for a template in a streamable mode, or
+                             an xsl:source-document streamable="yes" body, that is
+                             not guaranteed streamable by the rules of XSLT 3.0
+                             section 19.8, instead of running it on a buffered
+                             copy. A few constructs beyond those rules that this
+                             engine streams correctly are accepted. No effect with
+                             --no-stream.
           -v, --verbose      Show detailed error information
           -h, --help         Show this help message
           --version          Show version information
