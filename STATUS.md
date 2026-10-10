@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-10 12:38 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-10 21:49 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-10-10 12:38 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 1 | 0 |
 | phoenixmldb-xquery | 0 | 1 |
-| phoenixmldb-xslt | 4 | 0 |
+| phoenixmldb-xslt | 3 | 0 |
 | phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
@@ -29,7 +29,6 @@ Generated 2026-10-10 12:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [343] Streamed rules with a loop, and rules on the document node, still give wrong output with no error
 - [335] Compile-time requests (imports, schema locations, parameter documents) do not name the importing module
 - [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
@@ -38,7 +37,7 @@ Generated 2026-10-10 12:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
-- [231] "." in a pattern facet of an imported schema matches one character
+- [239] A child step from ordered nodes does not sort; a comparison predicate does not iterate
 
 ## Defect register
 
