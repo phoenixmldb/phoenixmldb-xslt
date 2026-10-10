@@ -107,7 +107,10 @@ public sealed partial class StylesheetParser
     /// The text of a stylesheet module as the host's resolver supplies it, or null when there is
     /// no resolver or it supplies nothing for this module.
     /// </summary>
-    private (string Xml, Uri? Base)? HostModule(string href, Uri? baseUri)
+    /// <param name="href">The href as written.</param>
+    /// <param name="baseUri">The base in effect at the element, xml:base included.</param>
+    /// <param name="importing">The xsl:import or xsl:include element: its module is who asks.</param>
+    private (string Xml, Uri? Base)? HostModule(string href, Uri? baseUri, XElement? importing)
     {
         if (ResourcePolicy?.ResourceResolver is not { } hostResolver) return null;
         var key = (href, baseUri?.AbsoluteUri);
@@ -117,7 +120,8 @@ public sealed partial class StylesheetParser
         if (hostResolver.ResolveStylesheetModule(href, baseUri) is { } moduleXml)
             answer = (moduleXml, null);
         else if (hostResolver.ResolveContent(new PhoenixmlDb.XQuery.Security.ResourceRequest(
-                     href, baseUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) is { } suppliedModule)
+                     href, baseUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)
+                     { ModuleUri = ModuleUriOf(importing) }) is { } suppliedModule)
             answer = (suppliedModule.ReadText(), suppliedModule.BaseUri);
         _hostModules[key] = answer;
         return answer;
@@ -129,7 +133,18 @@ public sealed partial class StylesheetParser
     /// resources and the resource policy allows the import. Returns null for a module that
     /// cannot be had this way; the parser reports it when it gets there.
     /// </summary>
-    private XElement? ReadModuleForStaticDeclarations(string href, Uri? baseUri, out Uri? moduleUri)
+    /// <summary>
+    /// The URI the module that holds <paramref name="element"/> was loaded at, which xml:base
+    /// does not change: what a request made for that element carries as
+    /// <see cref="PhoenixmlDb.XQuery.Security.ResourceRequest.ModuleUri"/>. The base URI of the
+    /// stylesheet for an element of a module that was given as text.
+    /// </summary>
+    private Uri? ModuleUriOf(XElement? element)
+        => !string.IsNullOrEmpty(element?.BaseUri) && Uri.TryCreate(element.BaseUri, UriKind.Absolute, out var loadedAt)
+            ? loadedAt
+            : _baseUri;
+
+    private XElement? ReadModuleForStaticDeclarations(string href, Uri? baseUri, XElement importing, out Uri? moduleUri)
     {
         moduleUri = null;
         if (baseUri != null && Uri.TryCreate(baseUri, href, out var resolved))
@@ -138,7 +153,7 @@ public sealed partial class StylesheetParser
             moduleUri = absolute;
 
         string xml;
-        if (HostModule(href, baseUri) is { } supplied)
+        if (HostModule(href, baseUri, importing) is { } supplied)
         {
             xml = supplied.Xml;
             moduleUri = supplied.Base ?? moduleUri;
@@ -259,7 +274,7 @@ public sealed partial class StylesheetParser
             // Asked with the href as written and whatever base there is — none at all for a
             // stylesheet loaded from text without one, which used to get no call for a
             // relative href.
-            if (HostModule(href, effectiveBase ?? _baseUri) is { } supplied)
+            if (HostModule(href, effectiveBase ?? _baseUri, element) is { } supplied)
             {
                 hostModuleXml = supplied.Xml;
                 // The module is known by the URI the host gave it; its own relative imports
@@ -505,7 +520,8 @@ public sealed partial class StylesheetParser
         {
             try
             {
-                hostXml = PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(ResourcePolicy, resolved.AbsoluteUri, null,
+                hostXml = PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(ResourcePolicy, resolved.AbsoluteUri,
+                    new PhoenixmlDb.XQuery.Security.ResourceCaller(null, ModuleUriOf(outputElement)),
                     PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument)?.ReadText();
                 if (hostXml is null)
                     resolved = ResourcePolicy.Authorize(resolved.AbsoluteUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument);

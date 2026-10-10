@@ -832,6 +832,7 @@ public sealed partial class StylesheetParser
                             SchemaLocations = locations,
                             InlineSchema = inlineSchema,
                             Location = GetSourceLocation(child),
+                            ModuleUri = ModuleUriOf(child),
                         });
                     }
                     break;

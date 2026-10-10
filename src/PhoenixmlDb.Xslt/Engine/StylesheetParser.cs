@@ -3318,7 +3318,7 @@ public sealed partial class StylesheetParser
                 // resolves it. Resolved against the module's own base, this asked the host for
                 // a location the stylesheet does not name, and then the parser asked again
                 // for the one it does.
-                var moduleRoot = ReadModuleForStaticDeclarations(href, EffectiveBaseUri(moduleRef, baseUriObj), out var moduleUri);
+                var moduleRoot = ReadModuleForStaticDeclarations(href, EffectiveBaseUri(moduleRef, baseUriObj), moduleRef, out var moduleUri);
                 if (moduleRoot == null) return;
                 // A module whose own root element use-when excludes has no declarations and
                 // imports nothing.

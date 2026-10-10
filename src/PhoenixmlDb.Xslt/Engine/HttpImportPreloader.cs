@@ -57,14 +57,15 @@ internal static class HttpImportPreloader
     /// host supplies is not fetched; it is only read here to find the modules it imports in turn.
     /// </summary>
     private static (string Xml, Uri Base)? HostModule(PhoenixmlDb.XQuery.Security.ResourcePolicy? policy,
-        string href, Uri? baseUri, Uri resolved)
+        string href, Uri? baseUri, Uri resolved, Uri? importingModule)
     {
         if (policy?.ResourceResolver is not { } resolver)
             return null;
         if (resolver.ResolveStylesheetModule(href, baseUri) is { } module)
             return (module, resolved);
         return resolver.ResolveContent(new PhoenixmlDb.XQuery.Security.ResourceRequest(
-                href, baseUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)) is { } content
+                href, baseUri, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet)
+                { ModuleUri = importingModule }) is { } content
             ? (content.ReadText(), content.BaseUri)
             : null;
     }
@@ -183,7 +184,7 @@ internal static class HttpImportPreloader
             if (resources.TryGet(resolved, out _)) continue;
             // The host's module, where it supplies one: the parser will take it from the
             // resolver, so it is not fetched and not cached here, only walked for its imports.
-            if (HostModule(policy, href, baseUri, resolved) is var (hostXml, hostBase))
+            if (HostModule(policy, href, baseUri, resolved, moduleBase) is var (hostXml, hostBase))
             {
                 await WalkAsync(hostXml, hostBase, resources, visited, policy, ct).ConfigureAwait(false);
                 continue;
@@ -233,7 +234,7 @@ internal static class HttpImportPreloader
             if (!Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var xslUri)) continue;
             if (!visited.Add(xslUri.AbsoluteUri)) continue;
             if (resources.TryGet(xslUri, out _)) continue;
-            if (HostModule(policy, xslUri.AbsoluteUri, null, xslUri) is var (hostXsl, hostXslBase))
+            if (HostModule(policy, xslUri.AbsoluteUri, null, xslUri, moduleBase) is var (hostXsl, hostXslBase))
             {
                 await WalkAsync(hostXsl, hostXslBase, resources, visited, policy, ct).ConfigureAwait(false);
                 continue;
