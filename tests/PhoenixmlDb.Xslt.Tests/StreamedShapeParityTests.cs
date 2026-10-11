@@ -182,6 +182,36 @@ public class StreamedShapeParityTests
         (await RunAsync(rules, tree: false)).Should().Be(await RunAsync(rules, tree: true));
     }
 
+    /// <summary>
+    /// The overload that reads the input as it goes and writes the output as it goes. It made
+    /// no check of what the streaming pass can answer, so a body off the list gave a wrong
+    /// result here, where the overloads that take text were right.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(DocumentCases))]
+    public async Task A_rule_for_the_document_node_gives_the_tree_result_from_a_stream_to_a_writer(string body)
+    {
+        var rules = $"<xsl:template match=\"/\">{body}</xsl:template>";
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync($"{Head}{rules}</xsl:stylesheet>");
+        using var input = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Input));
+        using var output = new StringWriter();
+        await t.TransformAsync(input, output);
+        output.ToString().Should().Be(await RunAsync(rules, tree: true));
+    }
+
+    [Theory]
+    [MemberData(nameof(ElementCases))]
+    public async Task A_rule_for_an_element_gives_the_tree_result_from_a_stream_to_a_writer(string site, string rules)
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync($"{Head}{rules}</xsl:stylesheet>");
+        using var input = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Input));
+        using var output = new StringWriter();
+        await t.TransformAsync(input, output);
+        output.ToString().Should().Be(await RunAsync(rules, tree: true), site);
+    }
+
     [Theory]
     [MemberData(nameof(DocumentCases))]
     public async Task A_streamed_source_document_gives_the_tree_result(string body)

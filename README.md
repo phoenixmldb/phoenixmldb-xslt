@@ -260,8 +260,11 @@ of its reading and the rest of the body reads nothing below the context node:
 `xsl:iterate select="root/item"` is the way to read a large file record by record: each `item`
 is in memory for its own iteration, and `xsl:break` stops the reading of the input. To read
 the input as it goes, give it as a stream and take the output as a writer
-(`TransformAsync(Stream, TextWriter)`); the overloads that take or return a string hold the
-whole input or the whole output.
+(`TransformAsync(Stream, TextWriter)`); the overloads that take a string hold the whole input.
+The output of a rule for the document node goes to the writer when the rule ends; the output
+of the rules for elements goes as each element ends. A stylesheet whose rule for the document
+node is not of a streamed shape gets the whole input read first, on every overload, and the
+same result.
 
 The instruction may stand inside literal result elements, `xsl:copy`, `xsl:element`,
 `xsl:result-document`, `xsl:if`, `xsl:choose`, `xsl:try`, `xsl:where-populated` or the content of

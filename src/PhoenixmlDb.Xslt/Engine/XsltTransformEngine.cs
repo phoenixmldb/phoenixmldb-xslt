@@ -4870,13 +4870,7 @@ public sealed class XsltTransformEngine
         if (options?.DisableStreaming != true
             && _stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable
             && !entryIsInitialTemplate
-            // A rule of a streamable mode that reads outside its matched element cannot be
-            // answered by the streaming pass; it answered wrongly with no error (xslt#298).
-            && !StreamedScopeEscapeDetector.AnyStreamableRuleEscapesItsMatch(_stylesheet)
-            // XInclude expansion needs the whole input buffered into a DOM before ConvertToXdm;
-            // the streaming forward pass bypasses that, so fall through to the buffered path.
-            && options?.ExpandXInclude != true
-            && !DocNodeTemplateRequiresWholeInputBuffer(options))
+            && StreamingPassAnswersRight(options))
         {
             return await TransformStreamingAsync(xmlSource, options).ConfigureAwait(false);
         }
@@ -5011,6 +5005,39 @@ public sealed class XsltTransformEngine
     public Task TransformAsync(XmlReader input, TextWriter output, XsltTransformOptions? options = null)
         => LargeStack.Run(() => TransformOnCurrentStackAsync(input, output, options));
 
+    /// <summary>
+    /// Runs the body of the rule for the document node with its output kept back from the
+    /// caller's writer until it has ended. The body may have an element open around the
+    /// instruction that reads the input (&lt;out&gt;&lt;xsl:for-each select="root/item"&gt;), and what is
+    /// written in an open element is not yet in its place: sent on at each event it reached
+    /// the writer ahead of the element, <c>1;2;&lt;out/&gt;</c> for <c>&lt;out&gt;1;2;&lt;/out&gt;</c>.
+    /// </summary>
+    private static async ValueTask ExecuteHoldingOutputAsync(DefaultXsltExecutionContext context, XsltSequenceConstructor body)
+    {
+        context._streamingOutputHeld++;
+        try
+        {
+            await body.ExecuteAsync(context).ConfigureAwait(false);
+        }
+        finally
+        {
+            context._streamingOutputHeld--;
+        }
+    }
+
+    /// <summary>
+    /// Whether the streaming pass from the document node gives the right result for this
+    /// stylesheet. Where it does not, the input is read whole and the tree engine answers.
+    /// </summary>
+    private bool StreamingPassAnswersRight(XsltTransformOptions? options)
+        // A rule of a streamable mode that reads outside its matched element cannot be
+        // answered by the streaming pass; it answered wrongly with no error (xslt#298).
+        => !StreamedScopeEscapeDetector.AnyStreamableRuleEscapesItsMatch(_stylesheet)
+            // XInclude expansion needs the whole input buffered into a DOM before ConvertToXdm;
+            // the streaming forward pass bypasses that, so fall through to the buffered path.
+            && options?.ExpandXInclude != true
+            && !DocNodeTemplateRequiresWholeInputBuffer(options);
+
     private async Task TransformOnCurrentStackAsync(XmlReader input, TextWriter output, XsltTransformOptions? options)
     {
         EnsureStrictStreamability(options);
@@ -5022,6 +5049,29 @@ public sealed class XsltTransformEngine
             throw new XsltException(
                 "TransformAsync(XmlReader, TextWriter) requires a streamable initial mode. " +
                 "For non-streaming transforms use TransformAsync(string) or TransformAsync(XdmNode).");
+
+        // The same decision the overloads that take the input as text make. This one made
+        // none: it sent every stylesheet to the streaming pass, so a rule for the document node
+        // that the pass cannot answer (a body that is not of a proven shape, a rule that reads
+        // outside its match) gave a wrong result here with no error, where the same stylesheet
+        // on the same input as text was right. The input is read whole for such a stylesheet,
+        // and for an entry at a named template or a function, which does not start at the
+        // document node at all.
+        if (options?.DisableStreaming == true
+            || options?.InitialTemplate != null || options?.InitialFunction != null
+            || !StreamingPassAnswersRight(options))
+        {
+            var text = new StringBuilder();
+            var settings = new XmlWriterSettings { OmitXmlDeclaration = true, Async = true, ConformanceLevel = ConformanceLevel.Auto };
+            var copy = XmlWriter.Create(text, settings);
+            await using (copy.ConfigureAwait(false))
+            {
+                await copy.WriteNodeAsync(input, defattr: false).ConfigureAwait(false);
+            }
+            await output.WriteAsync(await TransformOnCurrentStackAsync(text.ToString(), options).ConfigureAwait(false))
+                .ConfigureAwait(false);
+            return;
+        }
 
         var outputBuilder = new StringBuilder();
         await TransformStreamingCoreAsync(input, outputBuilder, output, options).ConfigureAwait(false);
@@ -5281,7 +5331,7 @@ public sealed class XsltTransformEngine
                         // <xsl:value-of select="count(//PRICE)"/> in match="/" gave 0 and
                         // sum(//PRICE) gave nothing, whatever the input held.
                         await docProcessor.ProcessAsync(inputReader, options.CancellationToken).ConfigureAwait(false);
-                        await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
+                        await ExecuteHoldingOutputAsync(context, docNodeTemplate.Body).ConfigureAwait(false);
                     }
                     else
                     {
@@ -5298,7 +5348,7 @@ public sealed class XsltTransformEngine
                             context._activeStreamingReader = inputReader;
                             try
                             {
-                                await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
+                                await ExecuteHoldingOutputAsync(context, docNodeTemplate.Body).ConfigureAwait(false);
                             }
                             finally
                             {
@@ -5320,7 +5370,7 @@ public sealed class XsltTransformEngine
                     // The body contains xsl:apply-templates, or every for-each in it is wrapped:
                     // executing it triggers the streaming processor through the active-processor
                     // handle, exactly as the source-document path does.
-                    await docNodeTemplate.Body.ExecuteAsync(context).ConfigureAwait(false);
+                    await ExecuteHoldingOutputAsync(context, docNodeTemplate.Body).ConfigureAwait(false);
                 }
             }
             finally

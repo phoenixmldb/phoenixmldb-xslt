@@ -34,6 +34,14 @@
   read into memory first. `xsl:break` now stops the reading: of a generated input of two
   million records, a loop that breaks at the third reads less than one megabyte. `group-by`
   still needs the whole input.
+- **`TransformAsync(Stream, TextWriter)` gave wrong output for many stylesheets, with no
+  error.** This overload sent every stylesheet to the streaming pass with none of the checks
+  the other overloads make, and sent output to the writer at each input event, also from inside
+  an element the rule for the document node still had open: `<out>1;2;</out>` came out as
+  `1;2;<out/>`. Of 261 rules for the document node in the shape tests, 142 were wrong through
+  this overload and right through the others. It now makes the same checks (and reads the
+  input whole where the streaming pass cannot answer), and holds the output of the rule for
+  the document node until the rule ends. Every shape is now tested through this overload too.
 - **`xsl:on-completion` is not run after `xsl:break` in a streamed `xsl:iterate`.** It was, in
   the rule of an element; the unstreamed loop and the specification do not.
 - **A variable with a grounded value is no longer refused for reading the descendants.**
