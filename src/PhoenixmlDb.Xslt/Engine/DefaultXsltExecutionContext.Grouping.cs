@@ -1226,7 +1226,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             var instant = xdt.HasTimezone
                 ? xdt.Value
-                : new DateTimeOffset(xdt.Value.DateTime, DateTimeOffset.Now.Offset);
+                : new DateTimeOffset(xdt.Value.DateTime, PhoenixmlDb.Xdm.ImplicitTimezone.Current);
             return "DT:" + xdt.EffectiveYear.ToString(CultureInfo.InvariantCulture)
                 + ":" + instant.UtcDateTime.Ticks.ToString(CultureInfo.InvariantCulture);
         }

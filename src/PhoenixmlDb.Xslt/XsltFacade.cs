@@ -111,10 +111,17 @@ public sealed class XsltTransformer
     /// <summary>
     /// When <c>true</c>, the string and node transform overloads evaluate against an in-memory tree
     /// even when the stylesheet's initial mode is streamable, instead of taking the streaming
-    /// pass. Off by default. The overloads that take a <see cref="Stream"/> or
-    /// <see cref="System.Xml.XmlReader"/> for a streamable mode still stream.
+    /// pass. Off by default.
     /// </summary>
     public bool DisableStreaming { get; set; }
+
+    /// <summary>
+    /// The implicit timezone of each transformation: the timezone a date, time or dateTime
+    /// with none of its own is taken to be in, and the timezone of <c>current-dateTime()</c>.
+    /// Null, the default, is the timezone of the machine. <see cref="TimeSpan.Zero"/> gives the
+    /// same result on every machine. See <see cref="XsltTransformOptions.ImplicitTimezone"/>.
+    /// </summary>
+    public TimeSpan? ImplicitTimezone { get; set; }
 
     /// <summary>
     /// When <c>true</c>, a template rule of a streamable mode, or the body of an
@@ -1376,6 +1383,7 @@ public sealed class XsltTransformer
             BaseOutputUri = _baseOutputUri,
             ExpandXInclude = _expandXInclude,
             DisableStreaming = DisableStreaming,
+            ImplicitTimezone = ImplicitTimezone,
             StrictStreamability = StrictStreamability,
             AllowRemoteXInclude = _allowRemoteXInclude,
             XIncludeResolver = _xIncludeResolver,
