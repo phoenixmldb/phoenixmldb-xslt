@@ -1927,11 +1927,28 @@ internal static class StreamabilityChecker
             // Per XSLT 3.0 §19.8.6.3, a variable with a grounded result type
             // (atomic, map, array, function) is a "grounding" operation — it can
             // consume the stream via crawling but produces grounded values.
-            if (!IsGroundedType(insn.As))
+            // So is a select whose value is grounded whatever the type declared: count(//x),
+            // string-join(//x, ','), sum(//x/@n). The descendant axis there is read and done
+            // with; no streamed node is bound to the variable. It was refused for the axis
+            // alone, though the same expression in xsl:value-of was accepted.
+            if (!IsGroundedType(insn.As) && !ValueIsGrounded(insn.Select))
                 CheckCrawlingSelect(insn.Select, "xsl:variable");
             CheckExpression(insn.Select);
             if (insn.Content != null) Walk(insn.Content);
             return null;
+        }
+
+        /// <summary>
+        /// True when the value of <paramref name="select"/> holds no streamed node by the rules of
+        /// §19.8: its posture is grounded, and it is not free-ranging.
+        /// </summary>
+        private bool ValueIsGrounded(XQueryExpression? select)
+        {
+            if (select is null)
+                return false;
+            var classified = Streamability.StreamabilityClassifier.Classify(select, new Streamability.StreamingContext(
+                Streamability.Posture.Striding, InStreamedScope: true, BySpec: true, Functions: _functions));
+            return classified.Posture == Streamability.Posture.Grounded && classified.Sweep != Streamability.Sweep.FreeRanging;
         }
 
         private static bool IsGroundedType(XdmSequenceType? seqType)

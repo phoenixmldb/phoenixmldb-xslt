@@ -26,6 +26,11 @@
   following siblings of the child as its children, and a body that needed a buffer left the
   element after it one end tag short. `xsl:apply-templates select="node()"` and
   `xsl:copy-of select="."` in a rule for the document node selected nothing.
+- **A variable with a grounded value is no longer refused for reading the descendants.**
+  `<xsl:variable name="n" select="count(//item)"/>` in a template of a streamable mode raised
+  XTSE3430, though the same expression in `xsl:value-of` was accepted. The value is a number,
+  not a streamed node. A variable that would hold streamed nodes (`select="//item"`) is refused
+  as before.
 - **Three more streamed results that were wrong with no error** (#343).
   A streamed `xsl:for-each select="foo"` ran its body for every child element, not only for
   `foo`. An aggregate in a text value template, such as `{count(root/item)}`, in a rule for the
