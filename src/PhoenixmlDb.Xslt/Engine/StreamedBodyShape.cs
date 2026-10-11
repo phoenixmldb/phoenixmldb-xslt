@@ -131,6 +131,9 @@ internal static class StreamedBodyShape
                     || DefaultXsltExecutionContext.IsSelfContextSelect(apply.Select)
                     || DefaultXsltExecutionContext.IsDocumentLevelStridingSelect(apply.Select)
                     || DefaultXsltExecutionContext.TryGetStridingDescentSteps(apply.Select) is not null):
+            // The records of the input one at a time: a path of child steps.
+            case XsltIterate iterate when DefaultXsltExecutionContext.TryGetStridingDescentSteps(iterate.Select) is not null:
+            case XsltForEachGroup grouping when StreamingSubtreeBufferDetector.GroupsStreamedAtDocumentLevel(grouping):
             // The whole document, sent on from the reader as it is.
             case XsltCopyOf copyOf when DefaultXsltExecutionContext.IsConsumingChildSelect(copyOf.Select)
                 || DefaultXsltExecutionContext.IsSelfContextSelect(copyOf.Select):

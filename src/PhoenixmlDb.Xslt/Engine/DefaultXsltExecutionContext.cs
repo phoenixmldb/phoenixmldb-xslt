@@ -902,7 +902,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     internal async ValueTask DrainStreamingOutputAsync(CancellationToken ct)
     {
-        if (_streamingOutputSink == null) return;
+        if (_streamingOutputSink == null || _streamingOutputHeld > 0) return;
         if (_output.Length == 0) return;
         var chunk = _output.ToString();
         _output.Clear();

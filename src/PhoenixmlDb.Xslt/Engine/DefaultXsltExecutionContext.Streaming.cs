@@ -467,6 +467,55 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// The elements a path of child steps selects from the streamed document (root/list/item),
+    /// each read whole as it is asked for and given the ancestors the path passed through. The
+    /// reader is before the root element on entry. A consumer that stops asking leaves the
+    /// rest of the input unread.
+    /// </summary>
+    private async IAsyncEnumerable<Xdm.Nodes.XdmElement> StreamedStridingElementsAsync(
+        System.Xml.XmlReader reader, List<PhoenixmlDb.XQuery.Ast.NameTest> steps,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var openAncestors = new List<StridingAncestor>();
+        // The depth of the element whose children are being looked at, for each step entered.
+        var parentDepths = new Stack<int>();
+        parentDepths.Push(reader.Depth);
+        var level = 0;
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (reader.NodeType == System.Xml.XmlNodeType.EndElement && level > 0 && reader.Depth == parentDepths.Peek())
+            {
+                parentDepths.Pop();
+                openAncestors.RemoveAt(openAncestors.Count - 1);
+                level--;
+                continue;
+            }
+            if (reader.NodeType != System.Xml.XmlNodeType.Element)
+                continue;
+
+            var matches = StridingNameTestMatchesReader(steps[level], reader);
+            if (matches && level == steps.Count - 1)
+            {
+                var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                LinkStridingAncestors(elem, openAncestors);
+                yield return elem;
+            }
+            else if (matches && !reader.IsEmptyElement)
+            {
+                openAncestors.Add(CaptureStridingAncestor(reader));
+                parentDepths.Push(reader.Depth);
+                level++;
+            }
+            else if (!reader.IsEmptyElement)
+            {
+                await SkipStreamingSubtreeAsync(reader, reader.Depth, ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+
     /// <summary>An element the striding descent has entered: its name and its attributes.</summary>
     private readonly record struct StridingAncestor(
         string LocalName, string NamespaceUri, string? Prefix,

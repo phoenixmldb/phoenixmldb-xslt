@@ -80,6 +80,12 @@ public class StreamedShapeParityTests
         "<xsl:for-each select=\"root/item\"><e>{{foo}}</e></xsl:for-each>",
         "<xsl:for-each select=\"root/item/foo\">{{.}};</xsl:for-each>",
         "<xsl:for-each select=\"root/item\"><xsl:variable name=\"v\" select=\"string(bar)\"/>{{$v}};</xsl:for-each>",
+        "<xsl:iterate select=\"root/item\">{{foo[1]}};</xsl:iterate>",
+        "<xsl:iterate select=\"root/item\"><xsl:param name=\"n\" select=\"0\"/><xsl:on-completion>[{{$n}}]</xsl:on-completion>{{@id}}<xsl:next-iteration><xsl:with-param name=\"n\" select=\"$n + count(foo)\"/></xsl:next-iteration></xsl:iterate>",
+        "<xsl:iterate select=\"root/item/foo\">{{.}}{{name(..)}};</xsl:iterate>",
+        "<xsl:for-each-group select=\"root/item\" group-adjacent=\"string-length(@id)\"><g k=\"{{current-grouping-key()}}\">{{current-group()/@id}}</g></xsl:for-each-group>",
+        "<xsl:for-each-group select=\"root/item/*\" group-starting-with=\"foo\"><g>{{current-group() ! name()}}</g></xsl:for-each-group>",
+        "<xsl:for-each-group select=\"root/item/*\" group-ending-with=\"bar\"><g><xsl:copy-of select=\"current-group()\"/></g></xsl:for-each-group>",
         "<xsl:value-of select=\"count(root/item)\"/>",
         "{{count(//foo)}}",
         "<xsl:value-of select=\"sum(root/item/@id)\"/>",
@@ -116,8 +122,6 @@ public class StreamedShapeParityTests
         "<out>{root/item[2]/foo}</out>",
         "<out><xsl:value-of select=\"if (root/@a = 'A') then 'y' else 'n'\"/></out>",
         "<out><xsl:variable name=\"n\" select=\"count(root/item)\"/><xsl:for-each select=\"root/item\">{$n}</xsl:for-each></out>",
-        "<out><xsl:iterate select=\"root/item\"><xsl:param name=\"n\" select=\"0\"/><xsl:on-completion>{$n}</xsl:on-completion><xsl:next-iteration><xsl:with-param name=\"n\" select=\"$n + 1\"/></xsl:next-iteration></xsl:iterate></out>",
-        "<out><xsl:for-each-group select=\"root/item\" group-adjacent=\"@id\">{current-grouping-key()};</xsl:for-each-group></out>",
         "<out><xsl:for-each select=\"root/item\"><xsl:sort select=\"@id\" order=\"descending\"/>{@id}</xsl:for-each></out>",
         "<out>{exists(root/tail)}{string(root/tail)}</out>",
         "<out><xsl:message select=\"string(root/tail)\"/><xsl:apply-templates/></out>",
@@ -176,6 +180,36 @@ public class StreamedShapeParityTests
     {
         var rules = $"<xsl:template match=\"/\">{body}</xsl:template>";
         (await RunAsync(rules, tree: false)).Should().Be(await RunAsync(rules, tree: true));
+    }
+
+    /// <summary>
+    /// The overload that reads the input as it goes and writes the output as it goes. It made
+    /// no check of what the streaming pass can answer, so a body off the list gave a wrong
+    /// result here, where the overloads that take text were right.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(DocumentCases))]
+    public async Task A_rule_for_the_document_node_gives_the_tree_result_from_a_stream_to_a_writer(string body)
+    {
+        var rules = $"<xsl:template match=\"/\">{body}</xsl:template>";
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync($"{Head}{rules}</xsl:stylesheet>");
+        using var input = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Input));
+        using var output = new StringWriter();
+        await t.TransformAsync(input, output);
+        output.ToString().Should().Be(await RunAsync(rules, tree: true));
+    }
+
+    [Theory]
+    [MemberData(nameof(ElementCases))]
+    public async Task A_rule_for_an_element_gives_the_tree_result_from_a_stream_to_a_writer(string site, string rules)
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync($"{Head}{rules}</xsl:stylesheet>");
+        using var input = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Input));
+        using var output = new StringWriter();
+        await t.TransformAsync(input, output);
+        output.ToString().Should().Be(await RunAsync(rules, tree: true), site);
     }
 
     [Theory]

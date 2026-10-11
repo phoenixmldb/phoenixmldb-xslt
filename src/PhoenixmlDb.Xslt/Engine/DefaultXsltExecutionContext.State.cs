@@ -296,6 +296,12 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     internal TextWriter? _streamingOutputSink;
 
+    /// <summary>
+    /// More than zero while a body runs that may have an element open around what it writes:
+    /// <see cref="DrainStreamingOutputAsync"/> sends nothing on until it has ended.
+    /// </summary>
+    internal int _streamingOutputHeld;
+
 
     // When a template/function body is being captured for `as=` type-checking, we have two
     // parallel output channels: `_output` (LREs, text) and `_sequenceAccumulator`
