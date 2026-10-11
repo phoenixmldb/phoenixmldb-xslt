@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-10 21:49 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-11 12:58 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -16,9 +16,9 @@ Generated 2026-10-10 21:49 UTC by `scripts/status.sh`. Do not edit by hand.
 
 | repo | open issues | open PRs |
 |---|---|---|
-| phoenixmldb-core | 1 | 0 |
-| phoenixmldb-xquery | 0 | 1 |
-| phoenixmldb-xslt | 3 | 0 |
+| phoenixmldb-core | 1 | 1 |
+| phoenixmldb-xquery | 0 | 0 |
+| phoenixmldb-xslt | 2 | 0 |
 | phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
@@ -29,15 +29,14 @@ Generated 2026-10-10 21:49 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [335] Compile-time requests (imports, schema locations, parameter documents) do not name the importing module
 - [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
 
-**phoenixmldb-xquery**
+**phoenixmldb-core**
 
-- [239] A child step from ordered nodes does not sort; a comparison predicate does not iterate
+- [34] ImplicitTimezone: one place the date and time types read it, which a host can set
 
 ## Defect register
 
