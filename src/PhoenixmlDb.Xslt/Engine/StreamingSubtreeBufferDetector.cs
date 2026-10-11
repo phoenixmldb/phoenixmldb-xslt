@@ -278,8 +278,11 @@ internal static class StreamingSubtreeBufferDetector
             // (literal / range / variable, no input navigation) can stay on the
             // streaming path — buffering a grounded population would be wasteful and a
             // large input could time out.
+            // A path of child steps (root/item) grouped by adjacency, or by a starting or ending
+            // pattern, has that dispatch now: only the group in hand is in memory.
             case XsltForEachGroup feg:
-                return feg.GroupBy != null || NavigatesInput(feg.Select);
+                return feg.GroupBy != null
+                    || (NavigatesInput(feg.Select) && !GroupsStreamedAtDocumentLevel(feg));
 
             // A top-level xsl:iterate appearing directly in a streamable
             // source-document body (or a match="/" document-node template) has no
@@ -295,8 +298,11 @@ internal static class StreamingSubtreeBufferDetector
             // (xsl:break / xsl:next-iteration / xsl:on-completion all work on the
             // buffered sequence). Only a grounded select (literal / variable, no input
             // navigation) can stay on the streaming path.
+            // A path of child steps (root/item) has that dispatch now: the reader is taken down
+            // the path and each element read whole for its own iteration.
             case XsltIterate it:
-                return IterateConsumesInput(it.Select);
+                return IterateConsumesInput(it.Select)
+                    && DefaultXsltExecutionContext.TryGetStridingDescentSteps(it.Select) is null;
 
             // A streamable xsl:for-each whose select navigates the input via a generic
             // node() kind test (e.g. //node()[name() = $param]) has no usable forward-pass
@@ -503,6 +509,12 @@ internal static class StreamingSubtreeBufferDetector
     /// the context node, which at the document level is the (empty) synthetic node — so
     /// it too needs the real input.
     /// </summary>
+    /// <summary>Whether the executor groups this population off the live reader at the document level.</summary>
+    internal static bool GroupsStreamedAtDocumentLevel(XsltForEachGroup group)
+        => group.Sorts.Count == 0 && group.GroupBy is null
+            && (group.GroupAdjacent is not null || group.GroupStartingWith is not null || group.GroupEndingWith is not null)
+            && DefaultXsltExecutionContext.TryGetStridingDescentSteps(group.Select) is not null;
+
     private static bool IterateConsumesInput(XQueryExpression? select)
     {
         if (select == null) return true; // default = children of context (the input root)

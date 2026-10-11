@@ -876,6 +876,32 @@ internal sealed partial class DefaultXsltExecutionContext
         //
         // Currently dispatches group-starting-with, group-ending-with and group-adjacent.
         // group-by is excluded: see the note in ForEachGroupStreamingAsync's group-by branch.
+        // With the streamed document node as the context, and a path of child steps as the
+        // select (root/item): the reader is taken down the path, and only the members of the
+        // group in hand are in memory. It used to read the whole input into memory first.
+        if (_activeStreamingReader is { } documentReader && IsActiveStreamedDocument(ContextItem)
+            && instruction.Sorts.Count == 0
+            && (instruction.GroupStartingWith != null || instruction.GroupEndingWith != null || instruction.GroupAdjacent != null)
+            && TryGetStridingDescentSteps(instruction.Select) is { } steps)
+        {
+            var processor = _activeStreamingProcessor;
+            // Nothing the body does may take the reader for its own.
+            _activeStreamingProcessor = null;
+            _activeStreamingReader = null;
+            try
+            {
+                await ForEachGroupOverStreamedAsync(instruction,
+                    StreamedStridingElementsAsync(documentReader, steps, _activeStreamingCancellationToken))
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                _activeStreamingProcessor = processor;
+                _activeStreamingReader = documentReader;
+            }
+            return;
+        }
+
         if (_isStreamingExecution && _activeStreamingReader != null
             && !_streamingDispatchElementMaterialized
             && StreamingSubtreeBufferDetector.StreamedGroupingModelsSelect(instruction.Select)
@@ -1155,7 +1181,72 @@ internal sealed partial class DefaultXsltExecutionContext
         var reader = _activeStreamingReader!;
         var ct = _activeStreamingCancellationToken;
         var parentDepth = reader.Depth;
+        // Only the children the select names (sx-gc-eq-801: select="ProteinEntry" was handed a
+        // <Database> first, and its xsl:break ended the iteration).
+        var children = StreamedChildElementsAsync(reader, StreamedChildTest(instruction.Select), parentDepth, ct);
+        await IterateOverStreamedAsync(instruction, children, async brokeOut =>
+        {
+            // xsl:break stops iteration early with the reader parked at the broken
+            // child's EndElement. Following siblings up to the parent's EndElement
+            // were NOT consumed by this iterate and would otherwise leak out through
+            // the processor's built-in template rule (si-iterate-013: trailing
+            // <item>/<c>/<d> text after the break, and the parent's own </root> close).
+            // Skip forward to the parent's EndElement and hand it to the processor via
+            // deferred-read so it closes any enclosing construction (e.g. the wrapping
+            // xsl:copy's <root> tag) — exactly as the natural end-of-children path does.
+            if (!brokeOut)
+                return;
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (reader.NodeType == System.Xml.XmlNodeType.EndElement
+                    && reader.Depth == parentDepth)
+                    break;
+            }
+            _streamingDeferReadOnNextIteration = true;
+        }).ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// The child elements of the element the reader is in that <paramref name="childTest"/>
+    /// selects, each read whole as it is asked for. At the end tag of the parent the processor
+    /// is told to look at it again, for its own bookkeeping.
+    /// </summary>
+    private async IAsyncEnumerable<Xdm.Nodes.XdmElement> StreamedChildElementsAsync(
+        System.Xml.XmlReader reader, PhoenixmlDb.XQuery.Ast.NodeTest? childTest, int parentDepth,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == parentDepth)
+            {
+                _streamingDeferReadOnNextIteration = true;
+                yield break;
+            }
+            if (reader.NodeType != System.Xml.XmlNodeType.Element) continue;
+            if (!StreamedChildMatches(childTest, reader))
+            {
+                if (!reader.IsEmptyElement)
+                    await SkipStreamingSubtreeAsync(reader, reader.Depth, ct).ConfigureAwait(false);
+                continue;
+            }
+            yield return await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// xsl:iterate over elements that arrive one at a time from the streamed input: each is in
+    /// memory for its own iteration and no longer. The parameters are bound once before the
+    /// loop, xsl:next-iteration gives them new values, xsl:break ends the loop, and
+    /// xsl:on-completion runs after the last item, as in the unstreamed form.
+    /// </summary>
+    /// <param name="instruction">The xsl:iterate.</param>
+    /// <param name="items">The selected elements, in document order.</param>
+    /// <param name="afterLoop">What to do with the reader once the loop has ended, told whether xsl:break ended it.</param>
+    private async ValueTask IterateOverStreamedAsync(XsltIterate instruction,
+        IAsyncEnumerable<Xdm.Nodes.XdmElement> items, Func<bool, ValueTask>? afterLoop)
+    {
         // Bind initial iteration parameters once
         PushScope();
         foreach (var param in instruction.Params)
@@ -1172,28 +1263,10 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var brokeOut = false;
         var position = 0;
-        var childTest = StreamedChildTest(instruction.Select);
         try
         {
-            while (await reader.ReadAsync().ConfigureAwait(false))
+            await foreach (var elem in items.ConfigureAwait(false))
             {
-                ct.ThrowIfCancellationRequested();
-                if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == parentDepth)
-                {
-                    _streamingDeferReadOnNextIteration = true;
-                    break;
-                }
-                if (reader.NodeType != System.Xml.XmlNodeType.Element) continue;
-                // Only the children the select names (sx-gc-eq-801: select="ProteinEntry" was
-                // handed a <Database> first, and its xsl:break ended the iteration).
-                if (!StreamedChildMatches(childTest, reader))
-                {
-                    if (!reader.IsEmptyElement)
-                        await SkipStreamingSubtreeAsync(reader, reader.Depth, ct).ConfigureAwait(false);
-                    continue;
-                }
-
-                var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
                 position++;
                 PushContextItem(elem, position, 0);
                 PushCurrentItem(elem);
@@ -1206,7 +1279,6 @@ internal sealed partial class DefaultXsltExecutionContext
                 catch (BreakException)
                 {
                     brokeOut = true;
-                    break;
                 }
                 catch (NextIterationException next)
                 {
@@ -1233,37 +1305,18 @@ internal sealed partial class DefaultXsltExecutionContext
                     PopCurrentItem();
                     PopContextItem();
                 }
+                if (brokeOut)
+                    break;
             }
 
-            // xsl:break stops iteration early with the reader parked at the broken
-            // child's EndElement. Following siblings up to the parent's EndElement
-            // were NOT consumed by this iterate and would otherwise leak out through
-            // the processor's built-in template rule (si-iterate-013: trailing
-            // <item>/<c>/<d> text after the break, and the parent's own </root> close).
-            // Skip forward to the parent's EndElement and hand it to the processor via
-            // deferred-read so it closes any enclosing construction (e.g. the wrapping
-            // xsl:copy's <root> tag) — exactly as the natural end-of-children path does.
-            if (brokeOut)
-            {
-                while (await reader.ReadAsync().ConfigureAwait(false))
-                {
-                    ct.ThrowIfCancellationRequested();
-                    if (reader.NodeType == System.Xml.XmlNodeType.EndElement
-                        && reader.Depth == parentDepth)
-                        break;
-                }
-                _streamingDeferReadOnNextIteration = true;
-            }
+            if (afterLoop != null)
+                await afterLoop(brokeOut).ConfigureAwait(false);
 
-            // xsl:on-completion fires after the loop unless an outer xsl:break
-            // explicitly suppressed it (BreakException reaches the outer loop).
-            // Streaming mirrors the non-streaming policy: on-completion fires when
-            // either we exhausted the input naturally OR an inner break exited early.
-            if (instruction.OnCompletion != null)
-            {
-                _ = brokeOut; // brokeOut tracked for parity; on-completion fires either way
+            // xsl:on-completion is for the input that ran out, not for xsl:break (XSLT 3.0
+            // §8.3). The streamed loop ran it after a break too, where the unstreamed one
+            // does not.
+            if (instruction.OnCompletion != null && !brokeOut)
                 await instruction.OnCompletion.ExecuteAsync(this).ConfigureAwait(false);
-            }
         }
         finally
         {
@@ -1299,24 +1352,14 @@ internal sealed partial class DefaultXsltExecutionContext
     /// reached.
     /// </para>
     /// </remarks>
-    private async ValueTask ForEachGroupStreamingAsync(XsltForEachGroup instruction)
+    private ValueTask ForEachGroupStreamingAsync(XsltForEachGroup instruction)
     {
         var reader = _activeStreamingReader!;
-        var ct = _activeStreamingCancellationToken;
         // Reader is currently positioned just past the parent's StartElement.
         // The parent's depth is reader.Depth (children appear at parent.Depth + 1
         // when we read them). We stop when we see an EndElement at parent.Depth
         // (the parent's own EndElement).
-        var parentDepth = reader.Depth;
-
-        var currentGroup = new List<object>();
-        object? currentKey = null;
-        var firstItem = true;
-        // 1-based position of the current item within the whole SELECTED sequence
-        // (not within its group) — the context position() for the grouping-key
-        // expression, e.g. 032's group-adjacent="(position()-1) idiv $block-size".
-        var selectedPosition = 0;
-
+        //
         // The select expression names which child elements are grouped. For a
         // striding leaf like select="transaction" (or "record/copy-of()", whose
         // striding step is `record`), only elements with that local name are
@@ -1324,7 +1367,80 @@ internal sealed partial class DefaultXsltExecutionContext
         // <transaction>s) would otherwise pollute the first group and evaluate the
         // grouping key against the wrong element. select="*" (or any wildcard leaf)
         // yields null → every child element is a member.
-        var selectLeafName = StreamingForEachGroupSelectLeafName(instruction.Select);
+        return ForEachGroupOverStreamedAsync(instruction, StreamedGroupMembersAsync(
+            reader, StreamingForEachGroupSelectLeafName(instruction.Select), reader.Depth, _activeStreamingCancellationToken));
+    }
+
+    /// <summary>
+    /// The child elements of the element the reader is in that are members of a grouping
+    /// population, each read whole as it is asked for and standing on its own. At the end tag
+    /// of the parent the processor is told to look at it again, for its own bookkeeping.
+    /// </summary>
+    private async IAsyncEnumerable<Xdm.Nodes.XdmElement> StreamedGroupMembersAsync(
+        System.Xml.XmlReader reader, string? selectLeafName, int parentDepth,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        // Build a full XdmElement subtree starting from the current
+        // StartElement event, delegating to the shared streaming materializer so
+        // the accumulated group members are REAL nodes: text descendants captured
+        // and _stringValue precomputed (so value-of/aggregate/copy-of/snapshot over
+        // current-group() all resolve). The materializer leaves the reader ON the
+        // matching EndElement (or on the empty element) — the next ReadAsync advances
+        // past it to the next sibling.
+        Xdm.Nodes.XdmElement ReadElementSubtree()
+        {
+            ct.ThrowIfCancellationRequested();
+            var elem = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore!, DocumentId.None)!;
+            // Detach the materialized root: as a selected group member it stands on
+            // its own, and later snapshot(current-group())/.. synthesizes the parent.
+            elem.Parent = NodeId.None;
+            return elem;
+        }
+
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == parentDepth)
+            {
+                // Reached the parent's EndElement. We've consumed it but the processor
+                // still needs to do its own EndElement bookkeeping — signal it.
+                _streamingDeferReadOnNextIteration = true;
+                yield break;
+            }
+
+            if (reader.NodeType != System.Xml.XmlNodeType.Element)
+                continue; // text/whitespace/comment between children are not selected by *
+
+            // Non-selected sibling element (wrong local name): consume its subtree so
+            // the reader advances, but do NOT treat it as a group member. Its presence
+            // does not break an adjacent run (the spec's selected sequence simply omits
+            // it), matching the buffered path where select filters before grouping.
+            if (selectLeafName != null && reader.LocalName != selectLeafName)
+            {
+                ReadElementSubtree();
+                continue;
+            }
+
+            yield return ReadElementSubtree();
+        }
+    }
+
+    /// <summary>
+    /// xsl:for-each-group over elements that arrive one at a time from the streamed input.
+    /// With group-adjacent, group-starting-with and group-ending-with only the members of the
+    /// group in hand are in memory.
+    /// </summary>
+    private async ValueTask ForEachGroupOverStreamedAsync(XsltForEachGroup instruction,
+        IAsyncEnumerable<Xdm.Nodes.XdmElement> population)
+    {
+        var currentGroup = new List<object>();
+        object? currentKey = null;
+        var firstItem = true;
+        // 1-based position of the current item within the whole SELECTED sequence
+        // (not within its group) — the context position() for the grouping-key
+        // expression, e.g. 032's group-adjacent="(position()-1) idiv $block-size".
+        var selectedPosition = 0;
 
         // group-by accumulates across the WHOLE population before any group can be emitted, so
         // it uses the shared accumulator rather than the running currentGroup the adjacent modes
@@ -1360,23 +1476,6 @@ internal sealed partial class DefaultXsltExecutionContext
             groupByAccumulator = new GroupByAccumulator(instruction.Composite, groupByComparer);
         }
 
-        // Helper: build a full XdmElement subtree starting from the current
-        // StartElement event, delegating to the shared streaming materializer so
-        // the accumulated group members are REAL nodes: text descendants captured
-        // and _stringValue precomputed (so value-of/aggregate/copy-of/snapshot over
-        // current-group() all resolve). The materializer leaves the reader ON the
-        // matching EndElement (or on the empty element) — the outer child loop's
-        // next ReadAsync advances past it to the next sibling.
-        Xdm.Nodes.XdmElement ReadElementSubtree()
-        {
-            ct.ThrowIfCancellationRequested();
-            var elem = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore!, DocumentId.None)!;
-            // Detach the materialized root: as a selected group member it stands on
-            // its own, and later snapshot(current-group())/.. synthesizes the parent.
-            elem.Parent = NodeId.None;
-            return elem;
-        }
-
         // Helper: flush the current group through the body
         async ValueTask FlushAsync()
         {
@@ -1406,34 +1505,8 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         }
 
-        // Drive the reader through the parent's children
-        while (await reader.ReadAsync().ConfigureAwait(false))
+        await foreach (var child in population.ConfigureAwait(false))
         {
-            ct.ThrowIfCancellationRequested();
-
-            if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Depth == parentDepth)
-            {
-                // Reached the parent's EndElement. We've consumed it but the processor
-                // still needs to do its own EndElement bookkeeping — signal it.
-                _streamingDeferReadOnNextIteration = true;
-                break;
-            }
-
-            if (reader.NodeType != System.Xml.XmlNodeType.Element)
-                continue; // text/whitespace/comment between children are not selected by *
-
-            // Non-selected sibling element (wrong local name): consume its subtree so
-            // the reader advances, but do NOT treat it as a group member. Its presence
-            // does not break an adjacent run (the spec's selected sequence simply omits
-            // it), matching the buffered path where select filters before grouping.
-            if (selectLeafName != null && reader.LocalName != selectLeafName)
-            {
-                ReadElementSubtree();
-                continue;
-            }
-
-            // Build full subtree for this child element
-            var child = ReadElementSubtree();
 
             // Apply grouping decision
             if (groupByAccumulator != null)
@@ -1545,6 +1618,31 @@ internal sealed partial class DefaultXsltExecutionContext
             && IsConsumingChildSelect(instruction.Select))
         {
             await IterateStreamingAsync(instruction).ConfigureAwait(false);
+            return;
+        }
+
+        // With the streamed document node as the context, and a path of child steps as the
+        // select (root/item): the reader is taken down the path and each selected element is
+        // read whole for its own iteration. This is how a large file is read record by
+        // record; it used to be read into memory whole first.
+        if (_activeStreamingReader is { } documentReader && IsActiveStreamedDocument(ContextItem)
+            && TryGetStridingDescentSteps(instruction.Select) is { } steps)
+        {
+            var processor = _activeStreamingProcessor;
+            // Nothing the body does may take the reader for its own.
+            _activeStreamingProcessor = null;
+            _activeStreamingReader = null;
+            try
+            {
+                await IterateOverStreamedAsync(instruction,
+                    StreamedStridingElementsAsync(documentReader, steps, _activeStreamingCancellationToken), null)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                _activeStreamingProcessor = processor;
+                _activeStreamingReader = documentReader;
+            }
             return;
         }
 

@@ -5285,6 +5285,7 @@ public sealed class XsltTransformEngine
                     }
                     else
                     {
+                        var bodyReadTheInput = false;
                         if (docSubscriptions == null)
                         {
                             // Literal-only body (e.g. match="/" producing <ROOTRAN/>):
@@ -5303,9 +5304,15 @@ public sealed class XsltTransformEngine
                             {
                                 context._activeStreamingReader = null;
                             }
+                            // A body that read the input itself (xsl:iterate over a path,
+                            // xsl:copy-of of the document) has taken what it wanted. What it left
+                            // after an xsl:break is not wanted, and is not read: that is what
+                            // the break is for in a large file.
+                            bodyReadTheInput = inputReader.ReadState != System.Xml.ReadState.Initial;
                         }
 
-                        await docProcessor.ProcessAsync(inputReader, options.CancellationToken).ConfigureAwait(false);
+                        if (!bodyReadTheInput)
+                            await docProcessor.ProcessAsync(inputReader, options.CancellationToken).ConfigureAwait(false);
                     }
                 }
                 else

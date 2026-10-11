@@ -26,6 +26,16 @@
   following siblings of the child as its children, and a body that needed a buffer left the
   element after it one end tag short. `xsl:apply-templates select="node()"` and
   `xsl:copy-of select="."` in a rule for the document node selected nothing.
+- **`xsl:iterate` and `xsl:for-each-group` under the document node read the input record by
+  record.** With the streamed document node as the context and a path of child steps as the
+  select (`<xsl:iterate select="root/item">`, in a rule for `/` or in `xsl:source-document`),
+  each selected element is in memory for its own iteration, or for its own group with
+  `group-adjacent`, `group-starting-with` and `group-ending-with`. The whole input used to be
+  read into memory first. `xsl:break` now stops the reading: of a generated input of two
+  million records, a loop that breaks at the third reads less than one megabyte. `group-by`
+  still needs the whole input.
+- **`xsl:on-completion` is not run after `xsl:break` in a streamed `xsl:iterate`.** It was, in
+  the rule of an element; the unstreamed loop and the specification do not.
 - **A variable with a grounded value is no longer refused for reading the descendants.**
   `<xsl:variable name="n" select="count(//item)"/>` in a template of a streamable mode raised
   XTSE3430, though the same expression in `xsl:value-of` was accepted. The value is a number,
