@@ -2199,6 +2199,55 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private async ValueTask RunInstructionWithValidationAsync(Ast.ValidationMode? mode,
         string instructionName, SourceLocation? location, Func<ValueTask> body)
     {
+        // An element that is built as a node (the value of a variable, a parameter, the result
+        // of a function): it is validated as it stands when it is complete, and the element
+        // that stays in the tree is the validated one, with its type annotations. It was not
+        // validated at all here, so invalid content passed and
+        // `$v instance of schema-element(N)` was false for valid content (xslt#353).
+        if (ShouldRunValidation(mode) && _textContentDepth == 0 && _activeTreeConstructor is { } tree)
+        {
+            var before = tree.NodesHere;
+            await body().ConfigureAwait(false);
+            if (!ReferenceEquals(tree, _activeTreeConstructor))
+                return;
+            for (var i = before; i < tree.NodesHere; i++)
+            {
+                if (tree.NodeHere(i) is not Xdm.Nodes.XdmElement element)
+                    continue;
+                tree.ReplaceNodeHere(i, ValidateBuiltElement(element, mode!.Value, instructionName, location));
+                // The tree as it was built is now the only one with the type annotations: the
+                // text of the same content, read again, would give an untyped tree.
+                if (_untypedRtfFlipActive)
+                    _untypedRtfFlipDivergent = true;
+            }
+            return;
+        }
+
+        // The body of a parameter or of a function: what it builds is written as text and read
+        // into nodes when the body ends. An element at the top of such a body is validated
+        // here, and the validated element, with its type annotations, goes into the sequence
+        // in place of the text. An element inside another one is validated as text: an error
+        // is reported, and the annotations come only when the outer element is validated.
+        if (ShouldRunValidation(mode) && _textContentDepth == 0 && _sequenceAccumulator is { } sequence)
+        {
+            var start = _output.Length;
+            var items = sequence.Count;
+            var depth = _serializingElementDepth;
+            await body().ConfigureAwait(false);
+            if (_output.Length <= start)
+                return;
+            var written = _output.ToString(start, _output.Length - start);
+            if (depth == 0 && sequence.Count == items && ReferenceEquals(sequence, _sequenceAccumulator)
+                && ValidateWrittenElement(written, mode!.Value, instructionName, location) is { } validated)
+            {
+                _output.Length = start;
+                AppendToSeqAccumulator(validated);
+                return;
+            }
+            RunValidation(mode, written, ValidationKind.Fragment, instructionName, location);
+            return;
+        }
+
         var shouldValidate = ShouldRunValidation(mode)
             && _textContentDepth == 0
             && _sequenceAccumulator is null;
@@ -3021,6 +3070,80 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _lastResultWasAtomic = false;
     }
 
+
+    /// <summary>
+    /// Validates an element that was built as a node and gives back the validated element: a
+    /// new one with the type annotations of the schema (XSLT 3.0 §25.4.1).
+    /// </summary>
+    private Xdm.Nodes.XdmElement ValidateBuiltElement(Xdm.Nodes.XdmElement element, Ast.ValidationMode mode,
+        string instructionName, SourceLocation? location)
+    {
+        if (_schemaProvider is null)
+            throw new XsltException(
+                $"XTTE1545: {instructionName} validation requires a registered ISchemaProvider on the XsltTransformer", location);
+        if (_nodeStore is null)
+            return element;
+        var ns = element.Namespace == NamespaceId.None ? "" : _nodeStore.GetNamespaceUri(element.Namespace) ?? "";
+        var declared = _schemaProvider.HasElementDeclaration(ns, element.LocalName);
+        var xml = PhoenixmlDb.XQuery.Functions.SerializeFunction.SerializeNodeToXml(element, _nodeStore);
+        return ValidateXmlOfElement(xml, declared, $"{{{ns}}}{element.LocalName}", mode, instructionName, location) ?? element;
+    }
+
+    /// <summary>
+    /// Validates one element that was written as text and gives back the validated element;
+    /// null when the text is not one element that can be read on its own.
+    /// </summary>
+    private Xdm.Nodes.XdmElement? ValidateWrittenElement(string written, Ast.ValidationMode mode,
+        string instructionName, SourceLocation? location)
+    {
+        if (_schemaProvider is null || RootElementIsDeclared(written) is not { } declared)
+            return null;
+        try
+        {
+            return ValidateXmlOfElement(written, declared, "the element", mode, instructionName, location);
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
+    }
+
+    private Xdm.Nodes.XdmElement? ValidateXmlOfElement(string xml, bool declared, string name, Ast.ValidationMode mode,
+        string instructionName, SourceLocation? location)
+    {
+        if (_nodeStore is not PhoenixmlDb.XQuery.INodeBuilder builder)
+            return null;
+        var strict = mode == Ast.ValidationMode.Strict;
+        if (strict && !declared)
+            throw new XsltException(
+                $"XTTE1512: {instructionName} validation=\"strict\": the schema has no top-level declaration of {name}", location);
+        try
+        {
+            var annotated = _schemaProvider!.ValidateAndAnnotate(xml, builder,
+                strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax, null, null);
+            if (annotated is Xdm.Nodes.XdmDocument document)
+            {
+                foreach (var childId in document.Children)
+                {
+                    if (_nodeStore.GetNode(childId) is Xdm.Nodes.XdmElement validated)
+                    {
+                        // An element of its own, as the one it replaces was: no parent.
+                        validated.Parent = null;
+                        return validated;
+                    }
+                }
+            }
+            return annotated as Xdm.Nodes.XdmElement;
+        }
+        catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
+        {
+            throw new XsltException($"{(strict ? "XTTE1510" : "XTTE1515")}: {instructionName} validation failed: {ex.Message}", location);
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
+        {
+            throw RegexMatchTimedOut(ex);
+        }
+    }
 
     /// <summary>
     /// Whether the schema has a top-level declaration for the outermost element of
