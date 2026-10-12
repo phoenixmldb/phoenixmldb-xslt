@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Schemas
+
+- **An imported schema is compiled once for all transformers** (#355). The default schema
+  provider of `XsltTransformer` took nothing from the cache of compiled schemas, because it
+  holds the schema of the XML namespace; each `XsltTransformer` read and compiled every
+  `xsl:import-schema` again. A schema from files is now compiled once and used until one of
+  its documents changes. Needs PhoenixmlDb.XQuery with `XsdSchemaProvider.KnowsXmlNamespace`.
+
 ### Streaming
 
 - **A template rule of a streamable mode gave wrong output for ordinary bodies, with no error**
@@ -117,8 +125,11 @@ be linked here when it is published.
 - **An inline `xs:schema` in `xsl:import-schema`** is read, through the schema provider's
   interface; a relative `schemaLocation` in it is relative to the stylesheet.
 - **`xsl:validation` on a literal result element** is applied (#316).
-- From PhoenixmlDb.XQuery 2.8.0: schemas are read through the shared schema layer and cached across
-  transformations, an atomic value keeps its schema type, and a schema that requires XSD 1.1 says so.
+- From PhoenixmlDb.XQuery 2.8.0: schemas are read through the shared schema layer, an atomic value
+  keeps its schema type, and a schema that requires XSD 1.1 says so. (Correction: this entry
+  said that schemas are cached across transformations. With the default schema provider of
+  `XsltTransformer` they were not in 2.8.0: each transformer compiled its imported schemas
+  again. A provider the host supplies, with nothing in it, did use the cache. See #355.)
 
 ### Streaming
 
