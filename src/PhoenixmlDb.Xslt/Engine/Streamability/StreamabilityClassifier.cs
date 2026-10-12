@@ -73,6 +73,11 @@ namespace PhoenixmlDb.Xslt.Engine.Streamability;
 /// node, selected by a kind test. Its whole value is in hand, so atomizing it does not consume
 /// (§19.8.1: absorption of a type that allows no children is inspection).
 /// </param>
+/// <param name="ContextIsNeverDocument">
+/// The context item of the construct is certain not to be a document node (the rule of an
+/// element or an attribute), so a leading "/" is a climb to the root and not the context node
+/// (§19.8.8.8).
+/// </param>
 public readonly record struct StreamingContext(
     Posture ContextPosture,
     bool InStreamedScope,
@@ -84,7 +89,8 @@ public readonly record struct StreamingContext(
     bool ContextHasNoChildren = false,
     XsltStylesheet? Stylesheet = null,
     bool AfterConsumingSibling = false,
-    IReadOnlySet<object>? Handled = null);
+    IReadOnlySet<object>? Handled = null,
+    bool ContextIsNeverDocument = false);
 
 /// <summary>
 /// Compositional streamability classifier for the XPath/XQuery <b>expression</b> language,
@@ -255,6 +261,14 @@ public static class StreamabilityClassifier
             // scope it is grounded.
             current = ctx.InStreamedScope ? Posture.Striding : Posture.Grounded;
             accumulatedSweep = Sweep.Motionless;
+            // §19.8.8.8: a leading "/" is root(self::node()), and §19.8.9.18 makes that the
+            // context node itself only where the context item is known to be a document node
+            // (a rule with match="/", the body of xsl:source-document). In the rule of an
+            // element it is the far end of the ancestor axis: climbing, so that a step down
+            // from it (/root/item, //item) is roaming and free-ranging. With a grounded
+            // context it is a node of a tree in memory.
+            if (ctx.BySpec && ctx.ContextIsNeverDocument && ctx.InStreamedScope)
+                current = ctx.ContextPosture == Posture.Grounded ? Posture.Grounded : Posture.Climbing;
         }
         else if (path.InitialExpression is not null)
         {
@@ -277,6 +291,16 @@ public static class StreamabilityClassifier
 
             current = init.Posture;
             accumulatedSweep = init.Sweep;
+
+            // §19.8.9.3: current() is climbing only inside a higher-order operand (a predicate,
+            // the right of "/"); elsewhere it has the posture of the context item, and a step
+            // down from it is a step down from the context node (W3C sf-current-004:
+            // current()/PRICE in xsl:for-each). This classifier calls it climbing everywhere,
+            // so a path that starts with it is given the context posture here. In a
+            // higher-order operand that accepts more than the specification guarantees.
+            if (ctx.BySpec && current == Posture.Climbing && path.Steps.Count > 0
+                && path.InitialExpression is FunctionCallExpression { Arguments.Count: 0, Name.LocalName: "current" })
+                current = ctx.ContextPosture;
         }
         else
         {
@@ -318,6 +342,16 @@ public static class StreamabilityClassifier
         // nodes are in a tree that is already in memory.
         if (ctx.BySpec && grounded)
             return Grounded(Sweep.Motionless);
+
+        // §19.8.8.10, the table of the axis step: from a climbing context (a parent, an
+        // ancestor, an attribute, the root) only the axes that go further up or stay are
+        // streamable; a step down from it reaches nodes that have passed or are still to come,
+        // and is roaming and free-ranging. From a roaming context every step is. A step down
+        // was given the posture of a step from the context node itself, so ../item,
+        // ancestor::a/b and /root/item in the rule of an element were called streamable.
+        if (ctx.BySpec && inPosture is Posture.Climbing or Posture.Roaming
+            && step.Axis is Axis.Child or Axis.Descendant or Axis.DescendantOrSelf)
+            return NotStreamable();
 
         // The output posture contributed by THIS axis (before grounding collapse).
         Posture axisPosture;
@@ -822,6 +856,22 @@ public static class StreamabilityClassifier
     {
         if (items.Count == 0)
             return Grounded(Sweep.Motionless);
+
+        if (ctx.BySpec)
+        {
+            // §19.8.3, the general rules: more than one consuming operand is roaming and
+            // free-ranging, so (foo, bar) reads the children twice. The operands were only
+            // widened into one posture here, and (foo, bar) passed as one read. The
+            // specification also counts a motionless operand that is not grounded (@a in
+            // (@a, foo)); this check does not, because the executor has the attribute in hand
+            // whatever is read after it.
+            var consuming = 0;
+            foreach (var item in items)
+            {
+                if (Classify(item, ctx).Sweep == Sweep.Consuming && ++consuming > 1)
+                    return NotStreamable();
+            }
+        }
 
         Posture posture = Posture.Grounded;
         var sweep = Sweep.Motionless;

@@ -49,6 +49,11 @@
   XTSE3430, though the same expression in `xsl:value-of` was accepted. The value is a number,
   not a streamed node. A variable that would hold streamed nodes (`select="//item"`) is refused
   as before.
+- **`StrictStreamability` reports three more shapes** (#298): a step down from a parent or an
+  ancestor (`../item`, `ancestor::a/b`); a leading `/` in the rule of an element (`//item`,
+  `/root/item`), which is streamable only where the context item is the document node; and a
+  comma with two consuming operands in one instruction (`<xsl:value-of select="foo, bar"/>`).
+  Without the option nothing changes: these run on a tree or a buffered copy, as before.
 - **Three more streamed results that were wrong with no error** (#343).
   A streamed `xsl:for-each select="foo"` ran its body for every child element, not only for
   `foo`. An aggregate in a text value template, such as `{count(root/item)}`, in a rule for the
