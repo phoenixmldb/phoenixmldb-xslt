@@ -9,6 +9,11 @@
   holds the schema of the XML namespace; each `XsltTransformer` read and compiled every
   `xsl:import-schema` again. A schema from files is now compiled once and used until one of
   its documents changes. Needs PhoenixmlDb.XQuery with `XsdSchemaProvider.KnowsXmlNamespace`.
+- **`xsl:with-param` with a body and a declared type of one node passes that node** (#358).
+  `<xsl:with-param name="p" as="element()"><e/></xsl:with-param>` passed a temporary tree, so
+  the receiver had a document node and `$p instance of element()` was false. Character content
+  with `as="text()"` or `as="node()"` is passed as a text node. W3C XSLT 3.0: 122 failing (was
+  123).
 - **An element built in a variable, a parameter or a function is validated** (#353). An
   element with `[xsl:]validation="strict"` or `"lax"` was validated only on its way to the
   principal result. Built in a variable it was not validated: invalid content passed, and the
