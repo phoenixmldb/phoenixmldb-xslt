@@ -3023,6 +3023,38 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
 
     /// <summary>
+    /// Whether the schema has a top-level declaration for the outermost element of
+    /// <paramref name="content"/>: XTTE1512 where it has none, XTTE1510 where it has one and
+    /// the element is not valid. Null when the content does not start with an element that
+    /// can be read.
+    /// </summary>
+    private bool? RootElementIsDeclared(string content)
+    {
+        try
+        {
+            var names = new System.Xml.XmlNamespaceManager(new System.Xml.NameTable());
+            foreach (var (prefix, uri) in SnapshotInScopeNamespaces())
+            {
+                if (prefix is not ("xml" or "xmlns"))
+                    names.AddNamespace(prefix, uri);
+            }
+            var settings = new System.Xml.XmlReaderSettings { ConformanceLevel = System.Xml.ConformanceLevel.Fragment, DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null };
+            using var reader = System.Xml.XmlReader.Create(new System.IO.StringReader(content), settings,
+                new System.Xml.XmlParserContext(null, names, null, System.Xml.XmlSpace.None));
+            while (reader.Read())
+            {
+                if (reader.NodeType == System.Xml.XmlNodeType.Element)
+                    return _schemaProvider!.HasElementDeclaration(reader.NamespaceURI, reader.LocalName);
+            }
+        }
+        catch (System.Xml.XmlException)
+        {
+            // Not readable here; the validation itself has said what is wrong with it.
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Runs the serialized content through the registered <see cref="PhoenixmlDb.XQuery.ISchemaProvider"/>
     /// when the XSLT instruction's <c>validation=</c> attribute requests it. Modes <c>strip</c>
     /// and <c>preserve</c> are no-ops (XSLT 3.0 §27.2): they only affect type annotations on the
@@ -3066,9 +3098,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
         {
-            throw new XsltException(
-                $"{ex.ErrorCode}: {instructionName} validation failed: {ex.Message}",
-                location);
+            // The codes of XSLT 3.0 §25.4.1, and not XQDY0027 of XQuery's validate expression,
+            // which is what the schema provider says: a stylesheet that catches the error by
+            // its code did not catch it (xslt#354).
+            var code = xqueryMode == PhoenixmlDb.XQuery.ValidationMode.Lax ? "XTTE1515"
+                : RootElementIsDeclared(content) == false ? "XTTE1512"
+                : "XTTE1510";
+            throw new XsltException($"{code}: {instructionName} validation failed: {ex.Message}", location);
         }
         catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
         {

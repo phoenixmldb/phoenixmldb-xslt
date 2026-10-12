@@ -1890,7 +1890,7 @@ public class XsltTransformerIntegrationTests
 
             var act = async () => await transformer.TransformAsync("<x/>");
             var ex = await act.Should().ThrowAsync<XsltException>();
-            ex.Which.Message.Should().Contain("XQDY0027");
+            ex.Which.Message.Should().Contain("XTTE1510");
         }
         finally
         {
@@ -2009,7 +2009,7 @@ public class XsltTransformerIntegrationTests
 
             var act = async () => await transformer.TransformAsync("<x/>");
             var ex = await act.Should().ThrowAsync<XsltException>();
-            ex.Which.Message.Should().Contain("XQDY0027");
+            ex.Which.Message.Should().Contain("XTTE1510");
         }
         finally
         {
@@ -2043,7 +2043,7 @@ public class XsltTransformerIntegrationTests
         // XTSE1660 rejects validation="strict" before runtime). The empty import is enough
         // to flip the flag; the actual attribute lookup happens at runtime against the
         // registered XsdSchemaProvider, which has no schemas loaded → strict validation
-        // can't find the global decl → XQDY0027.
+        // can't find the global decl → XTTE1512.
         var transformer = new XsltTransformer();
         await transformer.LoadStylesheetAsync("""
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
@@ -2057,7 +2057,7 @@ public class XsltTransformerIntegrationTests
             """);
         var act = async () => await transformer.TransformAsync("<x/>");
         var ex = await act.Should().ThrowAsync<XsltException>();
-        ex.Which.Message.Should().Contain("XQDY0027");
+        ex.Which.Message.Should().Contain("XTTE1512");
         ex.Which.Message.Should().Contain("undeclared");
     }
 
@@ -2101,7 +2101,7 @@ public class XsltTransformerIntegrationTests
 
             var act = async () => await transformer.TransformAsync("<x/>");
             var ex = await act.Should().ThrowAsync<XsltException>();
-            ex.Which.Message.Should().Contain("XQDY0027");
+            ex.Which.Message.Should().Contain("XTTE1510");
         }
         finally
         {

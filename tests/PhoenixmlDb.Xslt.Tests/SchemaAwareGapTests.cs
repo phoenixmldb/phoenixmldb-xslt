@@ -102,7 +102,7 @@ public sealed class SchemaAwareGapTests : IDisposable
     public async Task Validation_on_a_literal_result_element_is_applied(string import)
     {
         (await RunAsync(import, """<t:n xsl:validation="strict">8</t:n>""")).Should().Be("""<out><t:n xmlns:t="urn:t">8</t:n></out>""");
-        (await ErrorAsync(import, """<t:n xsl:validation="strict">12</t:n>""")).Should().Contain("XQDY0027");
+        (await ErrorAsync(import, """<t:n xsl:validation="strict">12</t:n>""")).Should().Contain("XTTE1510");
     }
 
     /// <summary>The literal result element and xsl:element answer alike.</summary>
@@ -113,7 +113,7 @@ public sealed class SchemaAwareGapTests : IDisposable
     {
         var literal = await ErrorAsync(ByLocation, $"""<t:n xsl:validation="strict">{value}</t:n>""");
         var instruction = await ErrorAsync(ByLocation, $"""<xsl:element name="t:n" validation="strict">{value}</xsl:element>""");
-        literal.Contains("XQDY0027", StringComparison.Ordinal).Should().Be(instruction.Contains("XQDY0027", StringComparison.Ordinal));
+        literal.Contains("XTTE1510", StringComparison.Ordinal).Should().Be(instruction.Contains("XTTE1510", StringComparison.Ordinal));
         literal.StartsWith("no error", StringComparison.Ordinal).Should().Be(instruction.StartsWith("no error", StringComparison.Ordinal));
     }
 
