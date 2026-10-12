@@ -76,6 +76,16 @@ public class StrictStreamabilityTests
         "<xsl:value-of select=\"reverse(*) ! name()\"/>",
         // streamed nodes cannot be sorted
         "<xsl:perform-sort select=\"*\"><xsl:sort select=\"name()\"/></xsl:perform-sort>",
+        // a step down from a parent or an ancestor reaches what has passed or is to come
+        // (§19.8.8.9; xslt#298 as reported)
+        "<xsl:value-of select=\"count(../*)\"/>",
+        "<xsl:value-of select=\"count(ancestor::root/item)\"/>",
+        // a leading "/" in the rule of an element is a climb to the root (§19.8.8.8)
+        "<xsl:value-of select=\"count(//item)\"/>",
+        "<xsl:value-of select=\"name(/*)\"/>",
+        // a comma with two consuming operands, in one instruction (§19.8.3)
+        "<xsl:value-of select=\"foo, bar\"/>",
+        "<xsl:copy-of select=\"foo, foo\"/>",
         // nor kept in a map
         "<xsl:variable name=\"m\" select=\"map { 'k': foo }\"/><xsl:value-of select=\"map:size($m)\" xmlns:map=\"http://www.w3.org/2005/xpath-functions/map\"/>",
     };
@@ -96,6 +106,10 @@ public class StrictStreamabilityTests
         "<xsl:value-of select=\"some $n in copy-of(*) satisfies $n = 'b1'\"/>",
         "<xsl:value-of select=\"outermost(.//foo)\"/>",
         "<xsl:value-of select=\"@id, foo\"/>",
+        // up, and no step down again
+        "<xsl:value-of select=\"name(..), ../@a, count(ancestor::*)\"/>",
+        // current() outside a predicate is the context node
+        "<xsl:for-each select=\"foo\"><xsl:value-of select=\"current()/text()\"/></xsl:for-each>",
     };
 
     [Theory]

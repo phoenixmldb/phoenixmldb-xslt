@@ -21,12 +21,15 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// a result and the engine gives the right one (§19.10 allows a processor to stream more): a
 /// union of two striding operands is striding; one branch of xsl:fork may return streamed nodes
 /// when no other branch consumes; current-group() of a grounded population is grounded wherever
-/// it is called. It does not check that the body of a stylesheet function keeps to its declared
+/// it is called; a motionless operand of a comma that is not grounded (@a in (@a, foo)) is not
+/// counted with the consuming ones; a path that starts with current() has the posture of the
+/// context item also inside a predicate. It does not check that the body of a stylesheet function keeps to its declared
 /// streamability category, nor that xsl:apply-templates names a streamable mode; other checks
 /// of the stylesheet report those.</para>
-/// <para>A rule that reads outside the node it matched (<see cref="StreamedScopeEscapeDetector"/>,
-/// xslt#298) is a separate question: that detector is over-inclusive by design, which suits a
-/// fallback to the tree and not an error.</para>
+/// <para>A rule that reads outside the node it matched (xslt#298) is found by the same rules: a
+/// step down from a parent, an ancestor or the root is roaming and free-ranging.
+/// <see cref="StreamedScopeEscapeDetector"/> is not used for the error: it is over-inclusive by
+/// design, which suits a fallback to the tree.</para>
 /// </remarks>
 internal static class StrictStreamability
 {
@@ -64,17 +67,27 @@ internal static class StrictStreamability
                 return new XsltException(
                     Subject + $"the {AxisName(roaming.Axis)} axis from the matched node reads what the streamed input has passed or not yet reached",
                     roaming.Location ?? template.Body.Location);
-            if (Reason(template.Body, stylesheet) is { } reason)
+            if (Reason(template.Body, stylesheet, MatchesNoDocument(template.Match)) is { } reason)
                 return new XsltException(Subject + reason, template.Body.Location);
         }
         return null;
     }
 
+    /// <summary>
+    /// Whether a match pattern is certain to match no document node: its last step is a name
+    /// test on the child or the attribute axis. Any other pattern may match one, and a leading
+    /// "/" in the body is then taken to be the context node (§19.8.8.8).
+    /// </summary>
+    private static bool MatchesNoDocument(XsltPattern? pattern)
+        => pattern is PathPattern { Steps: { Count: > 0 } steps }
+            && steps[^1] is { IsRootFunction: false, Axis: PhoenixmlDb.XQuery.Ast.Axis.Child or PhoenixmlDb.XQuery.Ast.Axis.Attribute, NodeTest: PhoenixmlDb.XQuery.Ast.NameTest };
+
     /// <summary>Why a body with a streamed context node is not guaranteed-streamable, or null when it is.</summary>
-    private static string? Reason(XsltSequenceConstructor body, XsltStylesheet stylesheet)
+    private static string? Reason(XsltSequenceConstructor body, XsltStylesheet stylesheet, bool contextIsNeverDocument = false)
     {
         var result = StreamabilityClassifier.Classify(body, new StreamingContext(
-            Posture.Striding, InStreamedScope: true, BySpec: true, Functions: stylesheet.Functions, Stylesheet: stylesheet));
+            Posture.Striding, InStreamedScope: true, BySpec: true, Functions: stylesheet.Functions, Stylesheet: stylesheet,
+            ContextIsNeverDocument: contextIsNeverDocument));
         if (result.Sweep == Sweep.FreeRanging || result.Posture == Posture.Roaming)
             return "it needs parts of the streamed input that have passed, or more than one pass (XSLT 3.0 section 19.8: roaming and free-ranging)";
         if (result.Posture != Posture.Grounded)
