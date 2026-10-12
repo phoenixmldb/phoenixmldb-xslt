@@ -1018,7 +1018,11 @@ public sealed partial class StylesheetParser
                 _ => null,
             };
             var parsed = scope != null && _expressionParser is ITypeNamespaceAwareExpressionParser aware
-                ? aware.Parse(expression, prefix => scope.GetNamespaceOfPrefix(prefix)?.NamespaceName)
+                ? aware.Parse(expression, prefix => prefix.Length == 0
+                    // No prefix: the default namespace for elements and types, which is
+                    // xpath-default-namespace (XSLT 3.0 §5.1.2).
+                    ? GetXpathDefaultNamespace(scope)
+                    : scope.GetNamespaceOfPrefix(prefix)?.NamespaceName)
                 : _expressionParser.Parse(expression);
             // Where the module this expression is written in was read from: the URI the
             // document (or external entity) was loaded at, which xml:base does not change.
