@@ -9,6 +9,13 @@
   holds the schema of the XML namespace; each `XsltTransformer` read and compiled every
   `xsl:import-schema` again. A schema from files is now compiled once and used until one of
   its documents changes. Needs PhoenixmlDb.XQuery with `XsdSchemaProvider.KnowsXmlNamespace`.
+- **An element built in a variable, a parameter or a function is validated** (#353). An
+  element with `[xsl:]validation="strict"` or `"lax"` was validated only on its way to the
+  principal result. Built in a variable it was not validated: invalid content passed, and the
+  element had no type annotation, so `$v instance of schema-element(o:order)` and
+  `$v/o:qty instance of element(*, xs:integer)` were false for valid content. It is now
+  validated where it is built, and the variable holds the validated element. Needs
+  PhoenixmlDb.XQuery with host prefixes in kind tests (`schema-element(o:order)`).
 - **A validation failure has the error code of XSLT** (#354): XTTE1510 for
   `validation="strict"` and a node that is not valid, XTTE1512 for `validation="strict"` and
   no top-level declaration, XTTE1515 for `validation="lax"` and a node that is not valid

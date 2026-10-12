@@ -312,6 +312,30 @@ internal sealed class TreeConstructor
         AddChild(frame.Id);
     }
 
+    private List<NodeId> Here => _open.Count > 0 ? _open.Peek().Children : _roots;
+
+    /// <summary>
+    /// The number of nodes in the element that is open, or at the top when none is. Text that
+    /// is still being gathered is not counted.
+    /// </summary>
+    public int NodesHere => Here.Count;
+
+    /// <summary>The node at <paramref name="index"/> of the element that is open, or of the top.</summary>
+    public XdmNode? NodeHere(int index) => _store.GetNode(Here[index]);
+
+    /// <summary>
+    /// Puts <paramref name="replacement"/> where the node at <paramref name="index"/> is: the
+    /// validated form of an element takes the place of the element as it was built.
+    /// </summary>
+    public void ReplaceNodeHere(int index, XdmElement replacement)
+    {
+        var here = Here;
+        if (_inScopeByElement.TryGetValue(here[index], out var inScope))
+            _inScopeByElement[replacement.Id] = inScope;
+        replacement.Parent = _open.Count > 0 ? _open.Peek().Id : (NodeId?)null;
+        here[index] = replacement.Id;
+    }
+
     public IReadOnlyList<NodeId> FinishFragment()
     {
         FlushPendingText(); // trailing fragment-root text
