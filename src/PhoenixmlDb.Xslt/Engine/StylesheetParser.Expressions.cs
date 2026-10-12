@@ -160,6 +160,7 @@ public sealed partial class StylesheetParser
         string? version = null;
         string? defaultCollation = null;
         Ast.ValidationMode? lreValidation = null;
+        Ast.XsltTypeName? lreValidationType = null;
 
         foreach (var attr in element.Attributes())
         {
@@ -256,6 +257,7 @@ public sealed partial class StylesheetParser
                         if (ShouldRejectSchemaAware)
                             throw new XsltException("XTSE1660: A non-schema-aware XSLT processor must not accept the xsl:type attribute",
                                 GetSourceLocation(element));
+                        lreValidationType = ParseValidationType(attr, element);
                         break;
                     case "validation":
                         // XTSE1660: Non-schema-aware processor can only accept strip/preserve/lax
@@ -376,6 +378,7 @@ public sealed partial class StylesheetParser
             DefaultCollation = defaultCollation,
             StaticBaseUri = staticBaseUri,
             Validation = lreValidation,
+            ValidationType = lreValidationType,
             Content = ParseSequenceConstructor(element)
         };
     }

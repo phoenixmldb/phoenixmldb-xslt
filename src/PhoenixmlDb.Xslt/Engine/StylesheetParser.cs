@@ -1553,7 +1553,7 @@ public sealed partial class StylesheetParser
         {
             Location = location,
             Validation = ParseValidationMode(validationAttr),
-            // Type: rejected by XTSE1660 for non-schema-aware processors
+            ValidationType = ParseValidationType(typeAttr, element),
             Content = ParseSequenceConstructor(element)
         };
     }
@@ -3089,6 +3089,25 @@ public sealed partial class StylesheetParser
         };
     }
 
+
+    /// <summary>
+    /// The type a <c>type</c> attribute names. A name with no prefix is in the default namespace
+    /// for elements and types (xpath-default-namespace, or none).
+    /// </summary>
+    private static Ast.XsltTypeName? ParseValidationType(XAttribute? attr, XElement element)
+    {
+        if (attr is null)
+            return null;
+        var text = attr.Value.Trim();
+        if (text.StartsWith("Q{", StringComparison.Ordinal) && text.IndexOf('}', StringComparison.Ordinal) is > 0 and var close)
+            return new Ast.XsltTypeName(text[2..close].Trim(), text[(close + 1)..]);
+        var colon = text.IndexOf(':', StringComparison.Ordinal);
+        if (colon < 0)
+            return new Ast.XsltTypeName(GetXpathDefaultNamespace(element) ?? "", text);
+        var uri = element.GetNamespaceOfPrefix(text[..colon])?.NamespaceName
+            ?? throw new XsltException($"XTSE0280: The prefix of the type name '{text}' is not declared", GetSourceLocation(element));
+        return new Ast.XsltTypeName(uri, text[(colon + 1)..]);
+    }
 
     private static Ast.ValidationMode? ParseValidationMode(XAttribute? attr)
     {

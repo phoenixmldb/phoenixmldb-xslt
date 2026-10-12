@@ -26,6 +26,9 @@ public sealed class XsltLiteralResultElement : XsltInstruction
     public bool? InheritNamespaces { get; init; }
     /// <summary>The <c>xsl:validation</c> attribute, when the element carries one.</summary>
     public ValidationMode? Validation { get; init; }
+
+    /// <summary>The schema type <c>xsl:type</c> names, which the element is validated against; null when there is none.</summary>
+    public XsltTypeName? ValidationType { get; init; }
     public required XsltSequenceConstructor Content { get; init; }
 
     /// <summary>

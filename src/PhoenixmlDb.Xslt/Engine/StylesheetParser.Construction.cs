@@ -258,7 +258,7 @@ public sealed partial class StylesheetParser
             UseAttributeSets = useAttributeSets,
             InheritNamespaces = ParseYesNo(inheritNamespacesAttr),
             Validation = ParseValidationMode(validationAttr),
-            // Type: rejected by XTSE1660 for non-schema-aware processors
+            ValidationType = ParseValidationType(typeAttr, element),
             Content = ParseSequenceConstructor(element),
             InScopeNamespaces = inScopeNamespaces,
             BaseUri = ResolveEffectiveBaseUri(element)
@@ -305,6 +305,7 @@ public sealed partial class StylesheetParser
                 : null,
             Separator = separatorAttr != null ? ParseAvt(separatorAttr.Value, element, separatorAttr) : null,
             Validation = ParseValidationMode(validationAttr),
+            ValidationType = ParseValidationType(typeAttr, element),
             // Type: rejected by XTSE1660 for non-schema-aware processors
             InScopeNamespaces = inScopeNamespaces
         };

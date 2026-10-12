@@ -17,6 +17,9 @@ public sealed class XsltElement : XsltInstruction
     public bool? InheritNamespaces { get; init; }
     public ValidationMode? Validation { get; init; }
     public QName? Type { get; init; }
+
+    /// <summary>The schema type the <c>type</c> attribute names, which the node is validated against; null when there is none.</summary>
+    public XsltTypeName? ValidationType { get; init; }
     public required XsltSequenceConstructor Content { get; init; }
 
     /// <summary>

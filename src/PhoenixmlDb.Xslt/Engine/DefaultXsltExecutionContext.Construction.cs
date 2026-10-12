@@ -45,7 +45,7 @@ internal sealed partial class DefaultXsltExecutionContext
     public override ValueTask CreateElementAsync(XsltElement instruction)
         => RunInstructionWithValidationAsync(
             instruction.Validation, "xsl:element", instruction.Location,
-            () => CreateElementCoreAsync(instruction));
+            () => CreateElementCoreAsync(instruction), instruction.ValidationType);
 
 
     private async ValueTask CreateElementCoreAsync(XsltElement instruction)
@@ -992,7 +992,7 @@ internal sealed partial class DefaultXsltExecutionContext
             if (content.Length > 0)
             {
                 RunValidation(instruction.Validation, content, ValidationKind.Fragment,
-                    "xsl:document", instruction.Location);
+                    "xsl:document", instruction.Location, instruction.ValidationType);
                 try
                 {
                     // Stream-parse via XmlReader rather than allocating a full XmlDocument.
@@ -1104,7 +1104,7 @@ internal sealed partial class DefaultXsltExecutionContext
             if (xmlContent.Length > 0)
             {
                 RunValidation(instruction.Validation, xmlContent, ValidationKind.Fragment,
-                    "xsl:document", instruction.Location);
+                    "xsl:document", instruction.Location, instruction.ValidationType);
                 try
                 {
                     // Stream descendant text nodes — equivalent to
@@ -1173,7 +1173,7 @@ internal sealed partial class DefaultXsltExecutionContext
         if (textContent.Length > 0)
         {
             RunValidation(instruction.Validation, textContent, ValidationKind.Fragment,
-                "xsl:document", instruction.Location);
+                "xsl:document", instruction.Location, instruction.ValidationType);
             _sink.RawText(textContent);
             // A non-empty document node is significant for where-populated tracking
             MarkContentProduced();
@@ -1203,11 +1203,11 @@ internal sealed partial class DefaultXsltExecutionContext
     public override ValueTask CreateLiteralElementAsync(XsltLiteralResultElement instruction)
         // xsl:validation on a literal result element validates it as validation= does on
         // xsl:element (XSLT 3.0 §11.1.2); it was read for XTSE1660 and then dropped (xslt#316).
-        => instruction.Validation is not (Ast.ValidationMode.Strict or Ast.ValidationMode.Lax)
+        => instruction.Validation is not (Ast.ValidationMode.Strict or Ast.ValidationMode.Lax) && instruction.ValidationType is null
             ? CreateLiteralElementCoreAsync(instruction)
             : RunInstructionWithValidationAsync(
                 instruction.Validation, "literal result element", instruction.Location,
-                () => CreateLiteralElementCoreAsync(instruction));
+                () => CreateLiteralElementCoreAsync(instruction), instruction.ValidationType);
 
 
     private async ValueTask CreateLiteralElementCoreAsync(XsltLiteralResultElement instruction)

@@ -133,6 +133,7 @@ public sealed partial class StylesheetParser
             Format = formatAvt,
             ResolvedFormatName = resolvedFormat,
             Validation = ParseValidationMode(validationAttr),
+            ValidationType = ParseValidationType(typeAttr, element),
             // Type: rejected by XTSE1660 for non-schema-aware processors
             Method = methodAttr != null ? ParseAvt(methodAttr.Value, element, methodAttr) : null,
             OmitXmlDeclaration = omitXmlDeclAttr != null ? ParseAvt(omitXmlDeclAttr.Value, element, omitXmlDeclAttr) : null,
