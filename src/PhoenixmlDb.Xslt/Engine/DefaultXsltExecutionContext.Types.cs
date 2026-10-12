@@ -567,7 +567,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private void ValidateResultDocumentContent(XsltResultDocument instruction, string content)
         => RunValidation(instruction.Validation, content, ValidationKind.Document,
-            "xsl:result-document", instruction.Location);
+            "xsl:result-document", instruction.Location, instruction.ValidationType);
 
 
     /// <summary>

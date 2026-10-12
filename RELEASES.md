@@ -37,6 +37,17 @@
   `$v/o:qty instance of element(*, xs:integer)` were false for valid content. It is now
   validated where it is built, and the variable holds the validated element. Needs
   PhoenixmlDb.XQuery with host prefixes in kind tests (`schema-element(o:order)`).
+- **The `type` attribute validates against the type** (#354). `type` on `xsl:element`,
+  `xsl:document` and `xsl:result-document`, and `xsl:type` on a literal result element, were
+  read and dropped. The node is now validated against the named type, whatever is declared
+  for its name; a node that is not valid is XTTE1540, and a type that no imported schema
+  declares is XTSE1520. In a variable the element has the type, and its content is typed.
+  Not yet: `type` on `xsl:attribute` (the value is not checked), and on `xsl:copy` and
+  `xsl:copy-of` (refused when the stylesheet is compiled, as before).
+- **A document node that is validated must have one element child** (XTTE1550), and must
+  satisfy the constraints on ID and IDREF (XTTE1555), for `xsl:document` and
+  `xsl:result-document` with `validation` or `type` (XSLT 3.0 §25.4.2). A validated document
+  with two elements, or with text beside its element, was accepted.
 - **A validation failure has the error code of XSLT** (#354): XTTE1510 for
   `validation="strict"` and a node that is not valid, XTTE1512 for `validation="strict"` and
   no top-level declaration, XTTE1515 for `validation="lax"` and a node that is not valid

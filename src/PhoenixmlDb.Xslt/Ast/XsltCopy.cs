@@ -17,6 +17,9 @@ public sealed class XsltCopy : XsltInstruction
     public List<QName> UseAttributeSets { get; init; } = new();
     public ValidationMode? Validation { get; init; }
     public QName? Type { get; init; }
+
+    /// <summary>The schema type the <c>type</c> attribute names, which the node is validated against; null when there is none.</summary>
+    public XsltTypeName? ValidationType { get; init; }
     public XsltSequenceConstructor? Content { get; init; }
 
     public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitCopy(this);

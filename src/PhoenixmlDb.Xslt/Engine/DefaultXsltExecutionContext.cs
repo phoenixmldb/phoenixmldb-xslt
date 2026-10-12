@@ -2197,8 +2197,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// validation hook on the constructing instruction handles them).
     /// </summary>
     private async ValueTask RunInstructionWithValidationAsync(Ast.ValidationMode? mode,
-        string instructionName, SourceLocation? location, Func<ValueTask> body)
+        string instructionName, SourceLocation? location, Func<ValueTask> body, Ast.XsltTypeName? type = null)
     {
+        // A type attribute asks for validation against that type, whatever the default
+        // validation is (XSLT 3.0 §25.4.1); the two attributes do not occur together.
+        if (type is not null)
+            mode = Ast.ValidationMode.Strict;
         // An element that is built as a node (the value of a variable, a parameter, the result
         // of a function): it is validated as it stands when it is complete, and the element
         // that stays in the tree is the validated one, with its type annotations. It was not
@@ -2214,7 +2218,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 if (tree.NodeHere(i) is not Xdm.Nodes.XdmElement element)
                     continue;
-                tree.ReplaceNodeHere(i, ValidateBuiltElement(element, mode!.Value, instructionName, location));
+                tree.ReplaceNodeHere(i, ValidateBuiltElement(element, mode!.Value, instructionName, location, type));
                 // The tree as it was built is now the only one with the type annotations: the
                 // text of the same content, read again, would give an untyped tree.
                 if (_untypedRtfFlipActive)
@@ -2238,13 +2242,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 return;
             var written = _output.ToString(start, _output.Length - start);
             if (depth == 0 && sequence.Count == items && ReferenceEquals(sequence, _sequenceAccumulator)
-                && ValidateWrittenElement(written, mode!.Value, instructionName, location) is { } validated)
+                && ValidateWrittenElement(written, mode!.Value, instructionName, location, type) is { } validated)
             {
                 _output.Length = start;
                 AppendToSeqAccumulator(validated);
                 return;
             }
-            RunValidation(mode, written, ValidationKind.Fragment, instructionName, location);
+            RunValidation(mode, written, ValidationKind.Fragment, instructionName, location, type);
             return;
         }
 
@@ -2263,7 +2267,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (_output.Length > startLength)
         {
             var fragment = _output.ToString(startLength, _output.Length - startLength);
-            RunValidation(mode, fragment, ValidationKind.Fragment, instructionName, location);
+            RunValidation(mode, fragment, ValidationKind.Fragment, instructionName, location, type);
         }
     }
 
@@ -3076,7 +3080,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// new one with the type annotations of the schema (XSLT 3.0 §25.4.1).
     /// </summary>
     private Xdm.Nodes.XdmElement ValidateBuiltElement(Xdm.Nodes.XdmElement element, Ast.ValidationMode mode,
-        string instructionName, SourceLocation? location)
+        string instructionName, SourceLocation? location, Ast.XsltTypeName? type = null)
     {
         if (_schemaProvider is null)
             throw new XsltException(
@@ -3086,7 +3090,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var ns = element.Namespace == NamespaceId.None ? "" : _nodeStore.GetNamespaceUri(element.Namespace) ?? "";
         var declared = _schemaProvider.HasElementDeclaration(ns, element.LocalName);
         var xml = PhoenixmlDb.XQuery.Functions.SerializeFunction.SerializeNodeToXml(element, _nodeStore);
-        return ValidateXmlOfElement(xml, declared, $"{{{ns}}}{element.LocalName}", mode, instructionName, location) ?? element;
+        return ValidateXmlOfElement(xml, declared, $"{{{ns}}}{element.LocalName}", mode, instructionName, location, type) ?? element;
     }
 
     /// <summary>
@@ -3094,13 +3098,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// null when the text is not one element that can be read on its own.
     /// </summary>
     private Xdm.Nodes.XdmElement? ValidateWrittenElement(string written, Ast.ValidationMode mode,
-        string instructionName, SourceLocation? location)
+        string instructionName, SourceLocation? location, Ast.XsltTypeName? type = null)
     {
         if (_schemaProvider is null || RootElementIsDeclared(written) is not { } declared)
             return null;
         try
         {
-            return ValidateXmlOfElement(written, declared, "the element", mode, instructionName, location);
+            return ValidateXmlOfElement(written, declared, "the element", mode, instructionName, location, type);
         }
         catch (System.Xml.XmlException)
         {
@@ -3109,18 +3113,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     private Xdm.Nodes.XdmElement? ValidateXmlOfElement(string xml, bool declared, string name, Ast.ValidationMode mode,
-        string instructionName, SourceLocation? location)
+        string instructionName, SourceLocation? location, Ast.XsltTypeName? type = null)
     {
         if (_nodeStore is not PhoenixmlDb.XQuery.INodeBuilder builder)
             return null;
         var strict = mode == Ast.ValidationMode.Strict;
-        if (strict && !declared)
+        if (strict && !declared && type is null)
             throw new XsltException(
                 $"XTTE1512: {instructionName} validation=\"strict\": the schema has no top-level declaration of {name}", location);
+        RequireKnownType(type, instructionName, location);
         try
         {
             var annotated = _schemaProvider!.ValidateAndAnnotate(xml, builder,
-                strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax, null, null);
+                strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax, type?.Namespace, type?.LocalName);
             if (annotated is Xdm.Nodes.XdmDocument document)
             {
                 foreach (var childId in document.Children)
@@ -3137,12 +3142,61 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
         {
-            throw new XsltException($"{(strict ? "XTTE1510" : "XTTE1515")}: {instructionName} validation failed: {ex.Message}", location);
+            throw new XsltException($"{(type is not null ? "XTTE1540" : strict ? "XTTE1510" : "XTTE1515")}: {instructionName} validation{(type is null ? "" : $" against the type {type}")} failed: {ex.Message}", location);
         }
         catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
         {
             throw RegexMatchTimedOut(ex);
         }
+    }
+
+    private static bool IsIdConstraintMessage(string message)
+        => message.Contains("Reference to undeclared ID", StringComparison.Ordinal)
+            || message.Contains("is already used as an ID", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A document node that is validated has exactly one element child and no text node child,
+    /// with any number of comments and processing instructions (XSLT 3.0 §25.4.2, XTTE1550).
+    /// </summary>
+    private static void RequireOneElementChild(string content, string instructionName, SourceLocation? location)
+    {
+        var elements = 0;
+        var text = false;
+        try
+        {
+            // Prefixes declared outside the content are of no interest here.
+            var names = new System.Xml.XmlNamespaceManager(new System.Xml.NameTable());
+            using var reader = new System.Xml.XmlTextReader(content, System.Xml.XmlNodeType.Element,
+                new System.Xml.XmlParserContext(null, names, null, System.Xml.XmlSpace.None)) { Namespaces = false, DtdProcessing = System.Xml.DtdProcessing.Ignore, XmlResolver = null };
+            while (reader.Read())
+            {
+                if (reader.Depth != 0)
+                    continue;
+                if (reader.NodeType == System.Xml.XmlNodeType.Element)
+                    elements++;
+                else if (reader.NodeType is System.Xml.XmlNodeType.Text or System.Xml.XmlNodeType.CDATA)
+                    text = true;
+            }
+        }
+        catch (System.Xml.XmlException)
+        {
+            // Not readable here; the validation itself says what is wrong with it.
+            return;
+        }
+        if (elements != 1 || text)
+            throw new XsltException(
+                $"XTTE1550: {instructionName}: a document node that is validated must have one element child and no text node child; this one has {elements} element{(elements == 1 ? "" : "s")}{(text ? " and text" : "")}",
+                location);
+    }
+
+    /// <summary>A type attribute must name a type of the schemas in scope (XSLT 3.0 §25.4.1, XTSE1520).</summary>
+    private void RequireKnownType(Ast.XsltTypeName? type, string instructionName, SourceLocation? location)
+    {
+        if (type is null || type.Namespace == "http://www.w3.org/2001/XMLSchema" || _schemaProvider is null
+            || _schemaProvider.HasSchemaType(type.Namespace, type.LocalName))
+            return;
+        throw new XsltException(
+            $"XTSE1520: {instructionName}: the type {type} is not a type of an imported schema", location);
     }
 
     /// <summary>
@@ -3189,9 +3243,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// fragment for `xsl:element` / `xsl:attribute` / `xsl:copy` / `xsl:copy-of`.</param>
     /// <param name="instructionName">Used in error messages, e.g. "xsl:result-document".</param>
     /// <param name="location">Source location for the diagnostic.</param>
+    /// <param name="type">The type a type attribute names, to validate against it; null for validation by declaration.</param>
     private void RunValidation(Ast.ValidationMode? mode, string content, ValidationKind kind,
-        string instructionName, SourceLocation? location)
+        string instructionName, SourceLocation? location, Ast.XsltTypeName? type = null)
     {
+        if (type is not null)
+            mode = Ast.ValidationMode.Strict;
         PhoenixmlDb.XQuery.ValidationMode? xqueryMode = mode switch
         {
             Ast.ValidationMode.Strict => PhoenixmlDb.XQuery.ValidationMode.Strict,
@@ -3206,15 +3263,19 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 location);
         }
 
+        RequireKnownType(type, instructionName, location);
+        var ofDocument = kind == ValidationKind.Document || instructionName == "xsl:document";
+        if (ofDocument)
+            RequireOneElementChild(content, instructionName, location);
         try
         {
             switch (kind)
             {
                 case ValidationKind.Document:
-                    _schemaProvider.ValidateXml(content, xqueryMode.Value);
+                    _schemaProvider.ValidateXml(content, xqueryMode.Value, type?.Namespace, type?.LocalName);
                     break;
                 case ValidationKind.Fragment:
-                    _schemaProvider.ValidateXmlFragment(content, xqueryMode.Value,
+                    _schemaProvider.ValidateXmlFragment(content, xqueryMode.Value, type?.Namespace, type?.LocalName,
                         inScopeNamespaces: SnapshotInScopeNamespaces());
                     break;
             }
@@ -3224,7 +3285,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // The codes of XSLT 3.0 §25.4.1, and not XQDY0027 of XQuery's validate expression,
             // which is what the schema provider says: a stylesheet that catches the error by
             // its code did not catch it (xslt#354).
-            var code = xqueryMode == PhoenixmlDb.XQuery.ValidationMode.Lax ? "XTTE1515"
+            // §25.4.2: the constraints of a document as a whole, which are those on ID and
+            // IDREF. System.Xml reports them with no code; they are known by their wording.
+            var code = ofDocument && IsIdConstraintMessage(ex.Message) ? "XTTE1555"
+                : type is not null ? "XTTE1540"
+                : xqueryMode == PhoenixmlDb.XQuery.ValidationMode.Lax ? "XTTE1515"
                 : RootElementIsDeclared(content) == false ? "XTTE1512"
                 : "XTTE1510";
             throw new XsltException($"{code}: {instructionName} validation failed: {ex.Message}", location);
