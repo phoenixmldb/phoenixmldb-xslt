@@ -16,6 +16,10 @@
 
 ### Schemas
 
+- **A type of a schema with no target namespace can be named** (#359). A type name with no
+  prefix is a type in the default namespace for elements and types (`xpath-default-namespace`,
+  or no namespace): `'7' castable as small`, `cast as`, `instance of`, `treat as` and `as="small"`
+  were XPST0051 for a type `small` of an imported schema with no target namespace.
 - **An imported schema is compiled once for all transformers** (#355). The default schema
   provider of `XsltTransformer` took nothing from the cache of compiled schemas, because it
   holds the schema of the XML namespace; each `XsltTransformer` read and compiled every
