@@ -603,7 +603,7 @@ internal sealed partial class DefaultXsltExecutionContext
             if (instruction.Validation == Ast.ValidationMode.Strict)
             {
                 throw new XsltException(
-                    $"XQDY0027: xsl:attribute validation=\"strict\" requires a global schema-attribute declaration for '{name}' (namespace: '{nsUri}'); none found in the loaded schemas",
+                    $"XTTE1512: xsl:attribute validation=\"strict\" requires a global schema-attribute declaration for '{name}' (namespace: '{nsUri}'); none found in the loaded schemas",
                     instruction.Location);
             }
             // Lax: silently skip when no declaration is found.

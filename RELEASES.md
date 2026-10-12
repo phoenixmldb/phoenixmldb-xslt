@@ -9,6 +9,12 @@
   holds the schema of the XML namespace; each `XsltTransformer` read and compiled every
   `xsl:import-schema` again. A schema from files is now compiled once and used until one of
   its documents changes. Needs PhoenixmlDb.XQuery with `XsdSchemaProvider.KnowsXmlNamespace`.
+- **A validation failure has the error code of XSLT** (#354): XTTE1510 for
+  `validation="strict"` and a node that is not valid, XTTE1512 for `validation="strict"` and
+  no top-level declaration, XTTE1515 for `validation="lax"` and a node that is not valid
+  (XSLT 3.0 §25.4.1). The code was XQDY0027, which belongs to XQuery's `validate` expression,
+  so `xsl:catch errors="err:XTTE1510"` did not catch the error. **A stylesheet or a host that
+  tests for XQDY0027 must test for the new codes.**
 
 ### Streaming
 
