@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-11 22:03 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-12 15:36 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -19,7 +19,7 @@ Generated 2026-10-11 22:03 UTC by `scripts/status.sh`. Do not edit by hand.
 | phoenixmldb-core | 1 | 1 |
 | phoenixmldb-xquery | 0 | 0 |
 | phoenixmldb-xslt | 2 | 0 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -37,6 +37,10 @@ Generated 2026-10-11 22:03 UTC by `scripts/status.sh`. Do not edit by hand.
 **phoenixmldb-core**
 
 - [34] ImplicitTimezone: one place the date and time types read it, which a host can set
+
+**phoenixmldb-cli**
+
+- [16] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
