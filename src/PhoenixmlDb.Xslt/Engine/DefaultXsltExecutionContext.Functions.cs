@@ -2090,8 +2090,15 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             // If the param has a sequence type (as="type *" or as="type +"),
             // use the sequence accumulator to collect individual items
-            var isSequenceType = param.As != null &&
-                (param.As.Occurrence == Occurrence.ZeroOrMore || param.As.Occurrence == Occurrence.OneOrMore);
+            // A declared node type with one item at most (as="element()", as="node()?") is the
+            // sequence the body constructs as well, and not a temporary tree: the receiver got
+            // a document node with the element in it, and `$p instance of element()` was false
+            // (xslt#358).
+            var oneNode = param.As is { Occurrence: Occurrence.ExactlyOne or Occurrence.ZeroOrOne,
+                ItemType: ItemType.Element or ItemType.SchemaElement or ItemType.Attribute or ItemType.SchemaAttribute
+                    or ItemType.Text or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Node };
+            var isSequenceType = oneNode || (param.As != null &&
+                (param.As.Occurrence == Occurrence.ZeroOrMore || param.As.Occurrence == Occurrence.OneOrMore));
 
             if (isSequenceType)
             {
@@ -2148,7 +2155,11 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 else if (!string.IsNullOrEmpty(textContent))
                 {
-                    sequenceItems.Add(new Xdm.XsUntypedAtomic(StripXmlMarkup(textContent)));
+                    // Character content of the body is a text node. A declared type that asks
+                    // for nodes gets it as one; an atomic type gets the value, cast below.
+                    sequenceItems.Add(param.As!.ItemType is ItemType.Text or ItemType.Node
+                        ? new Xdm.TextNodeItem(StripXmlMarkup(textContent))
+                        : new Xdm.XsUntypedAtomic(StripXmlMarkup(textContent)));
                 }
 
                 _sequenceAccumulator = savedAccumulator;
@@ -2162,6 +2173,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         if (sequenceItems[i] != null)
                             sequenceItems[i] = CoerceToType(sequenceItems[i], param.As);
                 }
+                if (oneNode && sequenceItems.Count == 1)
+                    return sequenceItems[0];
                 return sequenceItems.Count > 0 ? sequenceItems.ToArray() : Array.Empty<object?>();
             }
 
