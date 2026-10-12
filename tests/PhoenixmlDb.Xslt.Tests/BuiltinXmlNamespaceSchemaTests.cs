@@ -62,6 +62,70 @@ public sealed class BuiltinXmlNamespaceSchemaTests : System.IDisposable
         return await t.TransformAsync("<in/>").ConfigureAwait(true);
     }
 
+    private static async Task<XsltTransformer> LoadWithSchema(string path, string body = "loaded")
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync($"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                            xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:o="urn:o" expand-text="yes">
+              <xsl:output method="text"/>
+              <xsl:import-schema schema-location="{path.Replace("\\", "/", System.StringComparison.Ordinal)}"/>
+              <xsl:template match="/" name="xsl:initial-template">{body}</xsl:template>
+            </xsl:stylesheet>
+            """).ConfigureAwait(true);
+        return t;
+    }
+
+    [Theory]
+    // with an import of the XML namespace, which only the default provider's own knowledge satisfies
+    [InlineData("<xs:element name=\"e\"><xs:complexType><xs:attribute ref=\"xml:id\"/></xs:complexType></xs:element>")]
+    [InlineData("<xs:element name=\"e\" type=\"xs:integer\"/>")]
+    public async Task Two_transformers_that_import_one_schema_share_its_compiled_form(string schemaBody)
+    {
+        // Each XsltTransformer read and compiled the schema again (xslt#355).
+        var path = WriteSchema(schemaBody);
+        var first = await LoadWithSchema(path);
+        var second = await LoadWithSchema(path);
+
+        first.UsesSharedSchemaSetForTest.Should().BeTrue();
+        second.SchemaSetForTest.Should().BeSameAs(first.SchemaSetForTest);
+        (await second.TransformAsync("<in/>")).Should().Be("loaded");
+    }
+
+    [Fact]
+    public async Task A_schema_that_changes_on_disk_is_compiled_again()
+    {
+        var path = Path.Combine(_dir, "o.xsd");
+        void Write(int most) => File.WriteAllText(path, $"""
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:o">
+              <xs:simpleType name="small"><xs:restriction base="xs:integer"><xs:maxInclusive value="{most}"/></xs:restriction></xs:simpleType>
+            </xs:schema>
+            """);
+        async Task<XsltTransformer> Load()
+        {
+            var t = new XsltTransformer();
+            await t.LoadStylesheetAsync($"""
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:o="urn:o">
+                  <xsl:output method="text"/>
+                  <xsl:import-schema namespace="urn:o" schema-location="{path.Replace("\\", "/", System.StringComparison.Ordinal)}"/>
+                  <xsl:template match="/"><xsl:value-of select="'70' castable as o:small"/></xsl:template>
+                </xsl:stylesheet>
+                """).ConfigureAwait(true);
+            return t;
+        }
+
+        Write(9);
+        File.SetLastWriteTimeUtc(path, new System.DateTime(2024, 1, 1, 0, 0, 0, System.DateTimeKind.Utc));
+        var first = await Load();
+        first.UsesSharedSchemaSetForTest.Should().BeTrue();
+        (await first.TransformAsync("<in/>")).Should().Be("false");
+
+        Write(99);
+        var second = await Load();
+        (await second.TransformAsync("<in/>")).Should().Be("true");
+        (await first.TransformAsync("<in/>")).Should().Be("false", "a transformer keeps the schema it was compiled with");
+    }
+
     [Theory]
     // All four attributes the XML namespace defines — a schema may reference any of them.
     [InlineData("lang")]
