@@ -179,8 +179,29 @@ public sealed class XsltTransformEngine
     public Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options = null)
         => TransformAsync(source, options, null);
 
+    /// <summary>
+    /// Runs a transformation on the large stack, in the implicit timezone the options ask for
+    /// (<see cref="XsltTransformOptions.ImplicitTimezone"/>). The timezone is in effect for
+    /// this transformation only: others that run at the same time have their own.
+    /// </summary>
+    private static Task<T> RunInImplicitTimezone<T>(XsltTransformOptions? options, Func<Task<T>> transformation)
+    {
+        if (options?.ImplicitTimezone is not { } zone)
+            return LargeStack.Run(transformation);
+        return LargeStack.Run(async () =>
+        {
+            using (PhoenixmlDb.Xdm.ImplicitTimezone.Use(zone))
+            {
+                return await transformation().ConfigureAwait(false);
+            }
+        });
+    }
+
+    private static Task<bool> RunInImplicitTimezone(XsltTransformOptions? options, Func<Task> transformation)
+        => RunInImplicitTimezone(options, async () => { await transformation().ConfigureAwait(false); return true; });
+
     internal Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
-        => LargeStack.Run(() => TransformOnCurrentStackAsync(source, options, nodeStore));
+        => RunInImplicitTimezone(options, () => TransformOnCurrentStackAsync(source, options, nodeStore));
 
     private async Task<string> TransformOnCurrentStackAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
     {
@@ -1000,7 +1021,7 @@ public sealed class XsltTransformEngine
     /// Function items, maps, and atomic values are preserved as-is.
     /// </summary>
     internal Task<object?> TransformRawAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
-        => LargeStack.Run(() => TransformRawOnCurrentStackAsync(source, options, nodeStore));
+        => RunInImplicitTimezone(options, () => TransformRawOnCurrentStackAsync(source, options, nodeStore));
 
     private async Task<object?> TransformRawOnCurrentStackAsync(XdmNode source, XsltTransformOptions? options, XdmInMemoryStore? nodeStore)
     {
@@ -1378,7 +1399,7 @@ public sealed class XsltTransformEngine
         object initialContextItem,
         XsltTransformOptions? options,
         XdmInMemoryStore nodeStore)
-        => LargeStack.Run(() => TransformRawWithInitialContextItemOnCurrentStackAsync(initialContextItem, options, nodeStore));
+        => RunInImplicitTimezone(options, () => TransformRawWithInitialContextItemOnCurrentStackAsync(initialContextItem, options, nodeStore));
 
     private async Task<object?> TransformRawWithInitialContextItemOnCurrentStackAsync(
         object initialContextItem,
@@ -1517,7 +1538,7 @@ public sealed class XsltTransformEngine
     }
 
     internal Task<object?> TransformRawAsync(string xmlSource, XsltTransformOptions? options = null)
-        => LargeStack.Run(() => TransformRawOnCurrentStackAsync(xmlSource, options));
+        => RunInImplicitTimezone(options, () => TransformRawOnCurrentStackAsync(xmlSource, options));
 
     private async Task<object?> TransformRawOnCurrentStackAsync(string xmlSource, XsltTransformOptions? options)
     {
@@ -4833,7 +4854,7 @@ public sealed class XsltTransformEngine
     /// </summary>
 
     public Task<string> TransformAsync(string xmlSource, XsltTransformOptions? options = null)
-        => LargeStack.Run(() => TransformOnCurrentStackAsync(xmlSource, options));
+        => RunInImplicitTimezone(options, () => TransformOnCurrentStackAsync(xmlSource, options));
 
     private async Task<string> TransformOnCurrentStackAsync(string xmlSource, XsltTransformOptions? options)
     {
@@ -5003,7 +5024,7 @@ public sealed class XsltTransformEngine
     /// per-event serialized output is what reaches the caller's writer.
     /// </remarks>
     public Task TransformAsync(XmlReader input, TextWriter output, XsltTransformOptions? options = null)
-        => LargeStack.Run(() => TransformOnCurrentStackAsync(input, output, options));
+        => RunInImplicitTimezone(options, () => TransformOnCurrentStackAsync(input, output, options));
 
     /// <summary>
     /// Runs the body of the rule for the document node with its output kept back from the

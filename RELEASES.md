@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Dates and times
+
+- **The implicit timezone is a setting of the transformation**: `XsltTransformer.ImplicitTimezone`
+  and `XsltTransformOptions.ImplicitTimezone`. It is the timezone a date, time or dateTime with
+  none of its own is taken to be in (comparison, `xsl:sort`, `xsl:for-each-group`, `key()`),
+  and the timezone of `current-dateTime()` and `implicit-timezone()`. Unset, it is the timezone
+  of the machine as before; `TimeSpan.Zero` gives the same result on every machine.
+  Transformations that run at the same time each have their own. Static expressions are
+  evaluated when the stylesheet is compiled, in the timezone in effect then.
+- **`key()` finds dates and times as `eq` compares them.** A dateTime with no timezone was
+  taken to be in UTC, and a date or a time matched only one written with the same timezone.
+
 ### Schemas
 
 - **An imported schema is compiled once for all transformers** (#355). The default schema

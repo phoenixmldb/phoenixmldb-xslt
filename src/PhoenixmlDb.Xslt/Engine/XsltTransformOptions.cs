@@ -112,6 +112,22 @@ public sealed class XsltTransformOptions
     public bool ExpandXInclude { get; init; }
 
     /// <summary>
+    /// The implicit timezone of the transformation (XPath 3.1 §2.1.2): the timezone a date,
+    /// time or dateTime with none of its own is taken to be in when it is compared, sorted,
+    /// grouped or used as a key, and the timezone of <c>current-dateTime()</c>. Null, the
+    /// default, is what the host set around the call with
+    /// <see cref="PhoenixmlDb.Xdm.ImplicitTimezone.Use"/>, or else the timezone of the machine.
+    /// <see cref="TimeSpan.Zero"/> gives the same result on every machine.
+    /// </summary>
+    /// <remarks>
+    /// A whole number of minutes between -14:00 and +14:00; any other value makes the
+    /// transformation fail with <see cref="ArgumentOutOfRangeException"/>. Static expressions
+    /// (<c>use-when</c>, static variables) are evaluated when the stylesheet is compiled, in the
+    /// timezone in effect then.
+    /// </remarks>
+    public TimeSpan? ImplicitTimezone { get; init; }
+
+    /// <summary>
     /// When <c>true</c>, a source is built into an in-memory tree even when the initial mode is
     /// streamable: the transformation never takes the streaming pass. Off by default.
     /// </summary>

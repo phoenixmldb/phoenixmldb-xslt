@@ -327,12 +327,16 @@ internal sealed class XsltKeyFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             return false;
 
         // Date/time comparison with new types
+        // As `eq` compares them: by the instant, with the implicit timezone for a value that
+        // has none. A dateTime with no timezone was taken to be in UTC here, and a date or a
+        // time was equal only to one written with the same timezone, so key() did not find
+        // what `eq` called equal.
         if (useValue is XsDateTime uxdt && lookupValue is XsDateTime lxdt)
-            return uxdt.Value.UtcDateTime == lxdt.Value.UtcDateTime;
+            return uxdt.CompareTo(lxdt) == 0;
         if (useValue is XsDate uxd && lookupValue is XsDate lxd)
-            return uxd == lxd;
+            return uxd.CompareTo(lxd) == 0;
         if (useValue is XsTime uxt && lookupValue is XsTime lxt)
-            return uxt == lxt;
+            return uxt.CompareTo(lxt) == 0;
 
         // DateTimeOffset comparison
         if (useValue is DateTimeOffset udto && lookupValue is DateTimeOffset ldto)
