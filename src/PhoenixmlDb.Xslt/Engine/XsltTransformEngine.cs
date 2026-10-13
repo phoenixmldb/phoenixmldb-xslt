@@ -1551,7 +1551,7 @@ public sealed class XsltTransformEngine
         doc.LoadXml(xmlSource);
 
         var nodeStore = new XdmInMemoryStore();
-        var xdmDoc = ConvertToXdm(doc, nodeStore);
+        var xdmDoc = ValidatedSource(doc, nodeStore, options) ?? ConvertToXdm(doc, nodeStore);
 
         _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
         foreach (var keyDef in _stylesheet.Keys.Values)
@@ -4889,6 +4889,7 @@ public sealed class XsltTransformEngine
         // it a streamable initial mode always took the streaming pass here, so --no-stream changed
         // nothing (xslt#295).
         if (options?.DisableStreaming != true
+            && options?.SourceValidation is not (Ast.ValidationMode.Strict or Ast.ValidationMode.Lax)
             && _stylesheet.Modes.TryGetValue(initialModeKey, out var initialModeDecl) && initialModeDecl.Streamable
             && !entryIsInitialTemplate
             && StreamingPassAnswersRight(options))
@@ -4946,7 +4947,7 @@ public sealed class XsltTransformEngine
         }
 
         var nodeStore = new XdmInMemoryStore();
-        var xdmDoc = ConvertToXdm(doc, nodeStore, options?.SourceDocumentUri?.ToString());
+        var xdmDoc = ValidatedSource(doc, nodeStore, options) ?? ConvertToXdm(doc, nodeStore, options?.SourceDocumentUri?.ToString());
 
         // Resolve namespace URIs in patterns to NamespaceIds
         _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
@@ -5667,6 +5668,47 @@ public sealed class XsltTransformEngine
         }
 
         return current;
+    }
+
+    /// <summary>
+    /// The source document validated against the schemas in scope, as a tree whose nodes have
+    /// the type annotations of the schema; null when
+    /// <see cref="XsltTransformOptions.SourceValidation"/> does not ask for validation.
+    /// </summary>
+    private XdmDocument? ValidatedSource(XmlDocument doc, XdmInMemoryStore store, XsltTransformOptions? options)
+    {
+        if (options?.SourceValidation is not (Ast.ValidationMode.Strict or Ast.ValidationMode.Lax) || doc.DocumentElement is null)
+            return null;
+        if (_schemaProvider is null)
+            throw new XsltException("XTTE1545: Validation of the source document requires a schema provider on the XsltTransformer");
+        var strict = options.SourceValidation == Ast.ValidationMode.Strict;
+        // Strict: the outermost element must have a declaration. System.Xml only warns of an
+        // element in a namespace it has no schema for.
+        if (strict && !_schemaProvider.HasElementDeclaration(doc.DocumentElement.NamespaceURI, doc.DocumentElement.LocalName))
+            throw new XsltException(
+                $"XTTE1510: The source document is not valid: the schemas in scope have no declaration of its outermost element '{{{doc.DocumentElement.NamespaceURI}}}{doc.DocumentElement.LocalName}'");
+        // The document as it was read, with its entities expanded and without its document
+        // type declaration, which the validating parse has no use for and does not accept.
+        var text = new StringBuilder();
+        foreach (XmlNode child in doc.ChildNodes)
+        {
+            if (child.NodeType is not (XmlNodeType.DocumentType or XmlNodeType.XmlDeclaration))
+                text.Append(child.OuterXml);
+        }
+        var sourceText = text.ToString();
+        try
+        {
+            var mode = strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax;
+            // With the URI of the source where the provider can take one, for base-uri().
+            var validated = _schemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd
+                ? xsd.ValidateAndAnnotate(sourceText, store, mode, null, null, options.SourceDocumentUri?.ToString())
+                : _schemaProvider.ValidateAndAnnotate(sourceText, store, mode, null, null);
+            return validated as XdmDocument;
+        }
+        catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
+        {
+            throw new XsltException($"{(strict ? "XTTE1510" : "XTTE1515")}: The source document is not valid: {ex.Message}");
+        }
     }
 
     internal static XdmDocument ConvertToXdm(XmlDocument doc, XdmInMemoryStore store, string? documentUri = null)

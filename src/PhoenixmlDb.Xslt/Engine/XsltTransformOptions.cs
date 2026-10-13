@@ -128,6 +128,21 @@ public sealed class XsltTransformOptions
     public TimeSpan? ImplicitTimezone { get; init; }
 
     /// <summary>
+    /// Validation of the source document before the transformation: with
+    /// <see cref="Ast.ValidationMode.Strict"/> or <see cref="Ast.ValidationMode.Lax"/> the
+    /// source is validated against the schemas of the transformer's schema provider, a source
+    /// that is not valid fails the transformation, and its nodes have the type annotations of
+    /// the schema (<c>. instance of schema-element(N)</c>, <c>data(@n) instance of xs:integer</c>,
+    /// a mode with <c>typed="yes"</c>). Null, the default, and the other two modes leave the
+    /// source untyped.
+    /// </summary>
+    /// <remarks>
+    /// The source is built into a tree: a validated source is not streamed. For the overloads
+    /// that take XML text.
+    /// </remarks>
+    public Ast.ValidationMode? SourceValidation { get; init; }
+
+    /// <summary>
     /// When <c>true</c>, a source is built into an in-memory tree even when the initial mode is
     /// streamable: the transformation never takes the streaming pass. Off by default.
     /// </summary>

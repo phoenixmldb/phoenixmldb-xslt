@@ -236,6 +236,7 @@ public sealed class XsltTestRunner
                 if (role is "." or "principal")
                 {
                     env.PrincipalSource = sourcePath;
+                    env.PrincipalSourceValidation = source.Attribute("validation")?.Value;
                     if (sourceSelect != null) env.PrincipalSourceSelect = sourceSelect;
                     if (sourceXInclude) env.PrincipalSourceXInclude = true;
                     if (sourceStreaming) env.PrincipalSourceStreaming = true;
@@ -267,6 +268,14 @@ public sealed class XsltTestRunner
                     }
                 }
             }
+        }
+
+        // <schema role="source-reference" file="…"/>: a schema the source documents are
+        // validated against. Never read until now; see PrincipalSourceValidation.
+        foreach (var schemaElem in elem.Elements(ns + "schema"))
+        {
+            if (schemaElem.Attribute("file")?.Value is { } schemaFile)
+                env.SourceSchemas.Add(Path.Combine(basePath, schemaFile));
         }
 
         // Parse collections
@@ -858,6 +867,7 @@ public sealed class XsltTestRunner
             PrincipalSourceSelect = env.PrincipalSourceSelect,
             PrincipalSourceXInclude = env.PrincipalSourceXInclude,
             PrincipalSourceStreaming = env.PrincipalSourceStreaming,
+            PrincipalSourceValidation = env.PrincipalSourceValidation,
             InitialTemplate = env.InitialTemplate,
             InitialFunction = env.InitialFunction,
             InitialFunctionNamespace = env.InitialFunctionNamespace,
@@ -866,6 +876,7 @@ public sealed class XsltTestRunner
             InitialModeSelect = env.InitialModeSelect
         };
 
+        clone.SourceSchemas.AddRange(env.SourceSchemas);
         foreach (var kv in env.AdditionalSources)
             clone.AdditionalSources[kv.Key] = kv.Value;
         foreach (var kv in env.AdditionalSourceContents)
@@ -1048,6 +1059,23 @@ public sealed class XsltTestRunner
                 // is off by default for users. A conformance run measures what the
                 // specification requires; the default is a convenience on top of it.
                 transformer.StrictStreamability = testCase.IsStreamingSet;
+                // As a schema-aware processor: the schemas of the environment are known to the
+                // transformer, and a source the environment says is validated is validated, so
+                // that its nodes are typed.
+                if (_config.SupportsSchemaAwareness)
+                {
+                    if (transformer.SchemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider schemas)
+                    {
+                        foreach (var schema in testCase.Environment.SourceSchemas)
+                            schemas.Add(schema);
+                    }
+                    transformer.SourceValidation = testCase.Environment.PrincipalSourceValidation switch
+                    {
+                        "strict" => PhoenixmlDb.Xslt.Ast.ValidationMode.Strict,
+                        "lax" => PhoenixmlDb.Xslt.Ast.ValidationMode.Lax,
+                        _ => null,
+                    };
+                }
                 // Before loading: a static variable may call load-xquery-module (load-xquery-module-004).
                 if (testCase.Environment.XQueryModules.Count > 0)
                     transformer.XQueryModules = testCase.Environment.XQueryModules
@@ -2676,6 +2704,15 @@ public sealed class XsltEnvironment
     /// including the 176 that declare this. See BUGS.md #41.
     /// </summary>
     public bool PrincipalSourceStreaming { get; set; }
+    /// <summary>
+    /// The corpus's <c>&lt;source validation="strict|lax"/&gt;</c>: the principal source is to be
+    /// validated against <see cref="SourceSchemas"/>, so that the stylesheet sees typed nodes.
+    /// Never read until now; about a hundred environments declare it, and their cases were
+    /// all skipped as needing a schema-aware processor.
+    /// </summary>
+    public string? PrincipalSourceValidation { get; set; }
+    /// <summary>The corpus's <c>&lt;schema file="…"/&gt;</c> elements of the environment.</summary>
+    public List<string> SourceSchemas { get; } = [];
     public Dictionary<string, string> AdditionalSources { get; } = [];
     public Dictionary<string, string> AdditionalSourceContents { get; } = [];
     public Dictionary<string, string> Parameters { get; } = [];

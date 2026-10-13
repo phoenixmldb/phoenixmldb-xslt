@@ -116,6 +116,16 @@ public sealed class XsltTransformer
     public bool DisableStreaming { get; set; }
 
     /// <summary>
+    /// Validation of the source document before the transformation
+    /// (<see cref="Ast.ValidationMode.Strict"/> or <see cref="Ast.ValidationMode.Lax"/>),
+    /// against the schemas of <see cref="SchemaProvider"/>: the schemas the stylesheet imports,
+    /// and any the host added to the provider. The nodes of a validated source have the type
+    /// annotations of the schema. Null, the default, leaves the source untyped. See
+    /// <see cref="XsltTransformOptions.SourceValidation"/>.
+    /// </summary>
+    public Ast.ValidationMode? SourceValidation { get; set; }
+
+    /// <summary>
     /// The implicit timezone of each transformation: the timezone a date, time or dateTime
     /// with none of its own is taken to be in, and the timezone of <c>current-dateTime()</c>.
     /// Null, the default, is the timezone of the machine. <see cref="TimeSpan.Zero"/> gives the
@@ -1384,6 +1394,7 @@ public sealed class XsltTransformer
             ExpandXInclude = _expandXInclude,
             DisableStreaming = DisableStreaming,
             ImplicitTimezone = ImplicitTimezone,
+            SourceValidation = SourceValidation,
             StrictStreamability = StrictStreamability,
             AllowRemoteXInclude = _allowRemoteXInclude,
             XIncludeResolver = _xIncludeResolver,
