@@ -16,6 +16,10 @@
 
 ### Schemas
 
+- **A validated element is not held to the ID constraints of a document.** An element with
+  `[xsl:]validation` that had the same ID twice, or an IDREF to no ID, was refused. Those
+  constraints are applied to a document that is validated (XTTE1555), and not to an element
+  (XSLT 3.0 §25.4.1).
 - **A mode with `typed="yes"` processes typed nodes** (XTTE3100). The check was in the built-in
   template rule only, and refused every element and document node, a validated one too. It is
   now made where `xsl:apply-templates` selects a node, and is about the type of the node: an

@@ -3124,7 +3124,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         RequireKnownType(type, instructionName, location);
         try
         {
-            var annotated = _schemaProvider!.ValidateAndAnnotate(xml, builder,
+            // The validation of an element: the constraints on a document as a whole (the
+            // uniqueness of IDs, IDREFs with a target) are not applied (§25.4.1).
+            var annotated = _schemaProvider!.ValidateElementAndAnnotate(xml, builder,
                 strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax, type?.Namespace, type?.LocalName);
             if (annotated is Xdm.Nodes.XdmDocument document)
             {

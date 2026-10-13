@@ -125,4 +125,16 @@ public sealed class ValidationByTypeAndOfDocumentsTests : IDisposable
     public async Task A_validated_document_with_its_IDs_in_order_passes()
         => (await RunAsync("<xsl:variable name=\"d\"><xsl:document validation=\"strict\"><o:list><o:item id=\"a\"/><o:item ref=\"a\"/></o:list></xsl:document></xsl:variable><r>{count($d//o:item)}</r>"))
             .Should().Be("<r>2</r>");
+
+    /// <summary>
+    /// The constraints on ID and IDREF are for a document. An element that is validated is not
+    /// held to them (§25.4.1): the same ID twice in it was "already used as an ID".
+    /// </summary>
+    [Theory]
+    [InlineData("<o:list xsl:validation=\"strict\"><o:item id=\"a\"/><o:item id=\"a\"/></o:list>")]
+    [InlineData("<o:list xsl:validation=\"strict\"><o:item ref=\"nowhere\"/></o:list>")]
+    [InlineData("<xsl:variable name=\"v\" as=\"element()\"><o:list xsl:validation=\"strict\"><o:item id=\"a\"/><o:item id=\"a\"/></o:list></xsl:variable><xsl:copy-of select=\"$v\"/>")]
+    [InlineData("<xsl:variable name=\"v\"><o:list><o:item id=\"a\"/><o:item id=\"a\"/></o:list></xsl:variable><xsl:copy-of select=\"$v/*\" validation=\"strict\"/>")]
+    public async Task A_validated_element_is_not_held_to_the_ID_constraints_of_a_document(string body)
+        => (await RunAsync(body)).Should().StartWith("<o:list");
 }
