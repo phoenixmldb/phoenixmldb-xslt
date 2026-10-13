@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-12 15:36 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-13 00:46 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -16,7 +16,7 @@ Generated 2026-10-12 15:36 UTC by `scripts/status.sh`. Do not edit by hand.
 
 | repo | open issues | open PRs |
 |---|---|---|
-| phoenixmldb-core | 1 | 1 |
+| phoenixmldb-core | 1 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
 | phoenixmldb-xslt | 2 | 0 |
 | phoenixmldb-cli | 0 | 1 |
@@ -29,14 +29,10 @@ Generated 2026-10-12 15:36 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [298] Non-streamable templates in a streamable mode are streamed and give wrong results with no error (XTSE3430 not raised)
+- [364] The type attribute is not applied on xsl:attribute, xsl:copy and xsl:copy-of
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-core**
-
-- [34] ImplicitTimezone: one place the date and time types read it, which a host can set
 
 **phoenixmldb-cli**
 
