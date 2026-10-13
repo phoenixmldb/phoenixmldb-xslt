@@ -163,4 +163,36 @@ public sealed class SourceValidationTests : IDisposable
         var t = await LoadAsync("<xsl:variable name=\"q\" select=\"o:order/o:qty\" as=\"xs:integer\"/><r>{$q instance of xs:integer} {$q + 1}</r>");
         (await t.TransformAsync(Valid)).Should().Be("<r>true 13</r>");
     }
+
+    /// <summary>
+    /// A mode with <c>typed="yes"</c> takes no untyped element or attribute (XTTE3100, XSLT 3.0
+    /// §6.6.1). The check was made in the built-in rule only and for every element, typed or
+    /// not: a typed source could not be processed in such a mode, and an untyped element that
+    /// a rule matched was accepted.
+    /// </summary>
+    [Fact]
+    public async Task A_typed_mode_processes_a_validated_source()
+    {
+        var t = await LoadAsync("<r><xsl:apply-templates/></r>", "typed=\"yes\"");
+        t.SourceValidation = ValidationMode.Strict;
+        (await t.TransformAsync(Valid)).Should().Be("<r>12</r>");
+    }
+
+    [Theory]
+    // the built-in rule, and a rule that matches
+    [InlineData("<r><xsl:apply-templates/></r>")]
+    [InlineData("<r><xsl:apply-templates select=\"*\"/></r>")]
+    public async Task A_typed_mode_refuses_an_untyped_source(string body)
+    {
+        var t = await LoadAsync(body, "typed=\"yes\"");
+        var run = () => t.TransformAsync(Valid);
+        (await run.Should().ThrowAsync<XsltException>()).Which.Message.Should().StartWith("XTTE3100:");
+    }
+
+    [Fact]
+    public async Task A_mode_that_is_not_typed_takes_an_untyped_source_as_before()
+    {
+        var t = await LoadAsync("<r><xsl:apply-templates/></r>");
+        (await t.TransformAsync(Valid)).Should().Be("<r>12</r>");
+    }
 }

@@ -16,6 +16,11 @@
 
 ### Schemas
 
+- **A mode with `typed="yes"` processes typed nodes** (XTTE3100). The check was in the built-in
+  template rule only, and refused every element and document node, a validated one too. It is
+  now made where `xsl:apply-templates` selects a node, and is about the type of the node: an
+  element or attribute of type `xs:untyped` or `xs:untypedAtomic` is refused, whatever rule
+  would match it.
 - **A typed node bound with an atomic `as` type keeps its type.** With a validated source,
   `<xsl:variable name="v" select="elem" as="xs:int"/>` for an element of type `xs:int` held a
   plain `xs:integer`: the string value of the node was converted, not its typed value, so
