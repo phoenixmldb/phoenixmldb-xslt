@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-13 00:46 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-13 14:18 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-10-13 00:46 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 1 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 2 | 0 |
+| phoenixmldb-xslt | 1 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -29,7 +29,6 @@ Generated 2026-10-13 00:46 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [364] The type attribute is not applied on xsl:attribute, xsl:copy and xsl:copy-of
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
