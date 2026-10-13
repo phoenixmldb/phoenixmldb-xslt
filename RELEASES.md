@@ -16,6 +16,13 @@
 
 ### Schemas
 
+- **The source document can be validated**: `XsltTransformer.SourceValidation` and
+  `XsltTransformOptions.SourceValidation` (`Strict` or `Lax`). The source is validated against
+  the schemas of the transformer's schema provider before the transformation; a source that
+  is not valid fails it, and the stylesheet sees typed nodes
+  (`. instance of schema-element(o:order)`, `data(@n) instance of xs:integer`, a mode with
+  `typed="yes"`). Unset, the source is untyped as before. A validated source is built into a
+  tree and not streamed.
 - **A type of a schema with no target namespace can be named** (#359). A type name with no
   prefix is a type in the default namespace for elements and types (`xpath-default-namespace`,
   or no namespace): `'7' castable as small`, `cast as`, `instance of`, `treat as` and `as="small"`
