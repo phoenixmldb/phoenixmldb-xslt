@@ -22,7 +22,7 @@ internal sealed partial class DefaultXsltExecutionContext
     public override ValueTask CopyAsync(XsltCopy instruction)
         => RunInstructionWithValidationAsync(
             instruction.Validation, "xsl:copy", instruction.Location,
-            () => CopyCoreAsync(instruction));
+            () => CopyCoreAsync(instruction), instruction.ValidationType);
 
 
     private async ValueTask CopyCoreAsync(XsltCopy instruction)
@@ -67,6 +67,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     PushContextItem(item, 1, 1);
                     try
                     {
+                        ValidateCopiedAttribute(item, instruction.ValidationType, "xsl:copy", instruction.Location);
                         await CopySingleItemAsync(item, instruction).ConfigureAwait(false);
                     }
                     finally
@@ -85,6 +86,7 @@ internal sealed partial class DefaultXsltExecutionContext
         var node = ContextItem;
         if (node == null || ReferenceEquals(node, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
             throw Error("XTTE0945: xsl:copy has no context item");
+        ValidateCopiedAttribute(node, instruction.ValidationType, "xsl:copy", instruction.Location);
         await CopySingleItemAsync(node, instruction).ConfigureAwait(false);
     }
 
@@ -744,7 +746,7 @@ internal sealed partial class DefaultXsltExecutionContext
     public override ValueTask CopyOfAsync(XsltCopyOf instruction)
         => RunInstructionWithValidationAsync(
             instruction.Validation, "xsl:copy-of", instruction.Location,
-            () => CopyOfCoreAsync(instruction));
+            () => CopyOfCoreAsync(instruction), instruction.ValidationType);
 
 
     private async ValueTask CopyOfCoreAsync(XsltCopyOf instruction)
@@ -779,6 +781,11 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
         var copyNs = instruction.CopyNamespaces ?? true;
+        if (instruction.ValidationType is { } copyType)
+        {
+            foreach (var copied in result as IEnumerable<object?> ?? [result])
+                ValidateCopiedAttribute(copied, copyType, "xsl:copy-of", instruction.Location);
+        }
 
         // When inside attribute/comment/PI content, atomize nodes to their string values
         if (_textContentDepth > 0)
