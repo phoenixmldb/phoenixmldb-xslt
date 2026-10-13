@@ -993,7 +993,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
             if (content.Length > 0)
             {
-                RunValidation(instruction.Validation, content, ValidationKind.Fragment,
+                RunValidation(instruction.Validation, content, ValidationKind.Document,
                     "xsl:document", instruction.Location, instruction.ValidationType);
                 try
                 {
@@ -1105,7 +1105,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
             if (xmlContent.Length > 0)
             {
-                RunValidation(instruction.Validation, xmlContent, ValidationKind.Fragment,
+                RunValidation(instruction.Validation, xmlContent, ValidationKind.Document,
                     "xsl:document", instruction.Location, instruction.ValidationType);
                 try
                 {
@@ -1174,7 +1174,7 @@ internal sealed partial class DefaultXsltExecutionContext
         _outputLogicalStart = savedLogicalStart;
         if (textContent.Length > 0)
         {
-            RunValidation(instruction.Validation, textContent, ValidationKind.Fragment,
+            RunValidation(instruction.Validation, textContent, ValidationKind.Document,
                 "xsl:document", instruction.Location, instruction.ValidationType);
             _sink.RawText(textContent);
             // A non-empty document node is significant for where-populated tracking
