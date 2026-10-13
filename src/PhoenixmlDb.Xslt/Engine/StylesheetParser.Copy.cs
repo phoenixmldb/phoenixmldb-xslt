@@ -66,8 +66,6 @@ public sealed partial class StylesheetParser
         {
             if (ShouldRejectSchemaAware)
                 throw new XsltException("XTSE1660: A non-schema-aware XSLT processor must not accept the type attribute on xsl:copy", location);
-            // Even with import-schema, we can't resolve schema types at runtime
-            throw new XsltException($"XTTE1535: Schema type '{typeAttr.Value}' cannot be resolved on xsl:copy (schema validation not supported)", location);
         }
         if (validationAttr != null)
         {
@@ -101,7 +99,7 @@ public sealed partial class StylesheetParser
             InheritNamespaces = ParseYesNo(inheritNamespacesAttr),
             UseAttributeSets = useAttributeSets,
             Validation = ParseValidationMode(validationAttr),
-            // Type: rejected by XTSE1660 for non-schema-aware processors
+            ValidationType = ParseValidationType(typeAttr, element),
             Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null
         };
     }
@@ -139,7 +137,6 @@ public sealed partial class StylesheetParser
         {
             if (ShouldRejectSchemaAware)
                 throw new XsltException("XTSE1660: A non-schema-aware XSLT processor must not accept the type attribute on xsl:copy-of", location);
-            throw new XsltException($"XTTE1535: Schema type '{typeAttr.Value}' cannot be resolved on xsl:copy-of (schema validation not supported)", location);
         }
         if (validationAttr != null)
         {
@@ -162,7 +159,8 @@ public sealed partial class StylesheetParser
             Select = select,
             CopyNamespaces = ParseYesNo(copyNamespacesAttr),
             CopyAccumulators = ParseYesNo(copyAccumulatorsAttr),
-            Validation = ParseValidationMode(validationAttr)
+            Validation = ParseValidationMode(validationAttr),
+            ValidationType = ParseValidationType(typeAttr, element)
         };
     }
 

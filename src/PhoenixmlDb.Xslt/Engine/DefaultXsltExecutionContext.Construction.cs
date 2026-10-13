@@ -654,6 +654,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // for lax. Value-against-type checking is a TODO; today it relies on the parent
         // element's validation= when one is set.
         ValidateAttributeIfRequested(instruction, name, explicitNsUri);
+        if (instruction.ValidationType is { } attributeType)
+            ValidateAttributeValueAgainstType(value, attributeType, "xsl:attribute", instruction.Location, copied: false);
 
         // If sequence accumulator is active, create an XdmAttribute node for the sequence
         if (_sequenceAccumulator != null)

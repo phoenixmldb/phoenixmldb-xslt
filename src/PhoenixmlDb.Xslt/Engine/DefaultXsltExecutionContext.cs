@@ -3189,10 +3189,57 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 location);
     }
 
+    private const string XsdNamespace = "http://www.w3.org/2001/XMLSchema";
+
+    /// <summary>Whether the type is a complex type: an attribute cannot be validated against one.</summary>
+    private bool IsComplexType(Ast.XsltTypeName type)
+        => type.Namespace == XsdNamespace
+            ? type.LocalName is "anyType" or "untyped"
+            : _schemaProvider is { } provider && provider.HasSchemaType(type.Namespace, type.LocalName)
+                && provider.GetSchemaSimpleType(type.Namespace, type.LocalName) is null;
+
+    /// <summary>The check of <see cref="ValidateAttributeValueAgainstType"/> for an item that xsl:copy or xsl:copy-of copies, where it is an attribute.</summary>
+    private void ValidateCopiedAttribute(object? item, Ast.XsltTypeName? type, string instructionName, SourceLocation? location)
+    {
+        if (type is not null && item is Xdm.Nodes.XdmAttribute attribute)
+            ValidateAttributeValueAgainstType(attribute.Value, type, instructionName, location, copied: true);
+    }
+
+    /// <summary>
+    /// The value of an attribute against the simple type a type attribute names (XSLT 3.0
+    /// §25.4.1): XTTE1540 when it is not valid. A complex type is XTTE1535 for an attribute
+    /// that is copied, and XTTE1540 for one that is constructed.
+    /// </summary>
+    private void ValidateAttributeValueAgainstType(string value, Ast.XsltTypeName type, string instructionName,
+        SourceLocation? location, bool copied)
+    {
+        if (_schemaProvider is null)
+            throw new XsltException(
+                $"XTTE1545: {instructionName} validation requires a registered ISchemaProvider on the XsltTransformer", location);
+        RequireKnownType(type, instructionName, location);
+        if (IsComplexType(type))
+            throw new XsltException(
+                $"{(copied ? "XTTE1535" : "XTTE1540")}: {instructionName}: an attribute cannot be validated against the complex type {type}", location);
+        try
+        {
+            _schemaProvider.ValidateXml($"<a>{System.Security.SecurityElement.Escape(value)}</a>",
+                PhoenixmlDb.XQuery.ValidationMode.Strict, type.Namespace, type.LocalName);
+        }
+        catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
+        {
+            throw new XsltException(
+                $"XTTE1540: {instructionName}: the value '{value}' of the attribute is not valid against the type {type}: {ex.Message}", location);
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
+        {
+            throw RegexMatchTimedOut(ex);
+        }
+    }
+
     /// <summary>A type attribute must name a type of the schemas in scope (XSLT 3.0 §25.4.1, XTSE1520).</summary>
     private void RequireKnownType(Ast.XsltTypeName? type, string instructionName, SourceLocation? location)
     {
-        if (type is null || type.Namespace == "http://www.w3.org/2001/XMLSchema" || _schemaProvider is null
+        if (type is null || type.Namespace == XsdNamespace || _schemaProvider is null
             || _schemaProvider.HasSchemaType(type.Namespace, type.LocalName))
             return;
         throw new XsltException(
@@ -3264,6 +3311,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         RequireKnownType(type, instructionName, location);
+        // A type is for an element (an attribute is checked where it is made or copied): text,
+        // a comment or an attribute that the instruction wrote is not validated against it.
+        if (type is not null && kind == ValidationKind.Fragment && instructionName is "xsl:copy" or "xsl:copy-of"
+            && RootElementIsDeclared(content) is null)
+            return;
         var ofDocument = kind == ValidationKind.Document || instructionName == "xsl:document";
         if (ofDocument)
             RequireOneElementChild(content, instructionName, location);

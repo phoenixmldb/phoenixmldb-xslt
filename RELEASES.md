@@ -42,8 +42,11 @@
   read and dropped. The node is now validated against the named type, whatever is declared
   for its name; a node that is not valid is XTTE1540, and a type that no imported schema
   declares is XTSE1520. In a variable the element has the type, and its content is typed.
-  Not yet: `type` on `xsl:attribute` (the value is not checked), and on `xsl:copy` and
-  `xsl:copy-of` (refused when the stylesheet is compiled, as before).
+- **`type` on `xsl:attribute`, `xsl:copy` and `xsl:copy-of`** (#364). The value of a
+  constructed or copied attribute is checked against the simple type (XTTE1540). A copied
+  element, and each of several, is validated against the type. An attribute that is copied
+  with a complex type is XTTE1535. A stylesheet with `type` on `xsl:copy` or `xsl:copy-of` was
+  refused when it was compiled.
 - **A document node that is validated must have one element child** (XTTE1550), and must
   satisfy the constraints on ID and IDREF (XTTE1555), for `xsl:document` and
   `xsl:result-document` with `validation` or `type` (XSLT 3.0 §25.4.2). A validated document
