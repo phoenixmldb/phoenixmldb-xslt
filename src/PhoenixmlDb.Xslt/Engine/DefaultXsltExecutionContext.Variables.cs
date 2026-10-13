@@ -1407,7 +1407,9 @@ internal sealed partial class DefaultXsltExecutionContext
                     var coerced = new object?[items.Length];
                     for (int i = 0; i < items.Length; i++)
                     {
-                        coerced[i] = items[i] is XdmNode node
+                        // A validated node goes as it is, so that its typed value is used; an
+                        // untyped one as its string value, as before.
+                        coerced[i] = items[i] is XdmNode node && !HasTypedValue(node)
                             ? CoerceToType(node.StringValue, instruction.As)
                             : CoerceToType(items[i], instruction.As);
                     }

@@ -118,4 +118,49 @@ public sealed class SourceValidationTests : IDisposable
         (await t.TransformAsync("<!DOCTYPE o:order [<!ENTITY n '12'>]><o:order xmlns:o=\"urn:o\"><o:qty>&n;</o:qty></o:order>"))
             .Should().Be("<r>13</r>");
     }
+
+    /// <summary>
+    /// A validated node that is bound to a variable or a parameter with an atomic <c>as</c> type
+    /// is atomized to its typed value. Its string value was converted, so an element of type
+    /// xs:int became a plain xs:integer and <c>$v instance of xs:int</c> was false (W3C as-17xx).
+    /// </summary>
+    [Fact]
+    public async Task A_typed_node_bound_with_an_atomic_as_type_keeps_its_type()
+    {
+        var xsd = Path.Combine(_dir, "types.xsd");
+        await File.WriteAllTextAsync(xsd, """
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xs:element name="doc"><xs:complexType><xs:sequence>
+                <xs:element name="i" type="xs:int"/><xs:element name="n" type="xs:NMTOKEN"/>
+                <xs:element name="ub" type="xs:unsignedByte"/><xs:element name="d" type="xs:decimal"/>
+              </xs:sequence><xs:attribute name="id" type="xs:ID"/></xs:complexType></xs:element>
+            </xs:schema>
+            """, TestContext.Current.CancellationToken);
+        var t = new XsltTransformer { SourceValidation = ValidationMode.Strict };
+        await t.LoadStylesheetAsync($$"""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                            version="3.0" expand-text="yes" exclude-result-prefixes="#all">
+              <xsl:output omit-xml-declaration="yes"/>
+              <xsl:import-schema schema-location="{{xsd.Replace("\\", "/", StringComparison.Ordinal)}}"/>
+              <xsl:template match="/">
+                <xsl:variable name="i" select="doc/i" as="xs:int"/>
+                <xsl:variable name="n" select="doc/n" as="xs:NMTOKEN"/>
+                <xsl:variable name="ub" select="doc/ub" as="xs:unsignedByte"/>
+                <xsl:variable name="id" select="doc/@id" as="xs:ID"/>
+                <xsl:variable name="wide" select="doc/i" as="xs:integer"/>
+                <xsl:variable name="all" select="doc/(i, ub)" as="xs:integer*"/>
+                <r>{$i instance of xs:int} {$n instance of xs:NMTOKEN} {$ub instance of xs:unsignedByte} {$id instance of xs:ID} {$wide instance of xs:int} {$all[2] instance of xs:unsignedByte} {$i instance of xs:untypedAtomic} {$i + $ub}</r>
+              </xsl:template>
+            </xsl:stylesheet>
+            """);
+        (await t.TransformAsync("<doc id=\"a1\"><i>5</i><n>tok</n><ub>3</ub><d>1.5</d></doc>"))
+            .Should().Be("<r>true true true true true true false 8</r>");
+    }
+
+    [Fact]
+    public async Task An_untyped_node_bound_with_an_atomic_as_type_is_cast_as_before()
+    {
+        var t = await LoadAsync("<xsl:variable name=\"q\" select=\"o:order/o:qty\" as=\"xs:integer\"/><r>{$q instance of xs:integer} {$q + 1}</r>");
+        (await t.TransformAsync(Valid)).Should().Be("<r>true 13</r>");
+    }
 }

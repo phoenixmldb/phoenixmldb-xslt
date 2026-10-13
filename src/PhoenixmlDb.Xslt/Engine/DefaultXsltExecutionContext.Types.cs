@@ -1132,6 +1132,14 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>
     /// Coerces a value to match the specified XDM sequence type.
     /// </summary>
+    /// <summary>Whether a node has a type annotation of a schema, and so a typed value other than its string value.</summary>
+    private static bool HasTypedValue(Xdm.Nodes.XdmNode node) => node switch
+    {
+        Xdm.Nodes.XdmElement element => XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(element.TypeAnnotation),
+        Xdm.Nodes.XdmAttribute attribute => XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(attribute.TypeAnnotation),
+        _ => false,
+    };
+
     private static object? CoerceToType(object? value, XdmSequenceType targetType)
     {
         if (value == null)
@@ -1179,7 +1187,24 @@ internal sealed partial class DefaultXsltExecutionContext
         if (IsCastableAtomicType(itemType)
             && value is ResultTreeFragment or Xdm.Nodes.XdmNode or Xdm.TextNodeItem)
         {
-            value = StringValueOf(value);
+            // A node that was validated is atomized to its typed value (XDM 3.1 §5.15): an
+            // element of type xs:int gives an xs:int, and that value is kept where it matches
+            // the declared type. Its string value was taken, so
+            // <xsl:variable select="elem-int" as="xs:int"/> held a plain xs:integer and
+            // `$v instance of xs:int` was false.
+            if (value is Xdm.Nodes.XdmNode annotated && HasTypedValue(annotated))
+            {
+                var annotation = annotated is Xdm.Nodes.XdmElement element
+                    ? element.TypeAnnotation : ((Xdm.Nodes.XdmAttribute)annotated).TypeAnnotation;
+                var typed = XQuery.Execution.TypeCastHelper.SchemaTypedValue(annotation, annotated.StringValue, null, annotated);
+                if (typed is not null && typed is not object?[] && XQuery.Execution.TypeCastHelper.MatchesItemType(typed, itemType))
+                    return typed;
+                value = typed is null or object?[] ? StringValueOf(value) : typed;
+            }
+            else
+            {
+                value = StringValueOf(value);
+            }
         }
 
         return itemType switch
