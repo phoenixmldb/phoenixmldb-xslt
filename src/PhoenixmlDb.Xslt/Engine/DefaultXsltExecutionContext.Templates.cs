@@ -343,6 +343,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 _scopes.Peek().TunnelParameters[param.Name] = value;
             }
 
+            // A typed mode takes no untyped element or attribute, whatever rule would match it.
+            RequireTypedNodeInTypedMode(node, mode);
+
             // Find matching template
             XsltTemplate? template = matched;
             if (template == null)
@@ -623,14 +626,24 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    private void RequireTypedNodeInTypedMode(object? node, QName? mode)
+    {
+        if (IsTypedMode(mode)
+            && (node is XdmElement { TypeAnnotation: var elementType } && !XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(elementType)
+                || node is XdmAttribute { TypeAnnotation: var attributeType } && !XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(attributeType)))
+            throw Error("XTTE3100: xsl:apply-templates selects an untyped element or attribute in a mode with typed='yes'");
+    }
+
     private async ValueTask ApplyBuiltInTemplateAsync(
         object node,
         QName? mode,
         List<XsltWithParam> withParams)
     {
-        // XTTE3100: typed="yes" mode disallows untyped nodes in built-in templates
-        if (node is XdmElement or XdmDocument && IsTypedMode(mode))
-            throw Error("XTTE3100: Built-in template rule invoked for an untyped node in a mode with typed='yes'");
+        // XTTE3100 (XSLT 3.0 §6.6.1): a mode with typed="yes" does not process an element or an
+        // attribute whose type is xs:untyped or xs:untypedAtomic. It is about the type of the
+        // node: this refused every element and every document node, a validated one too, so
+        // no rule of a typed mode ever reached the children of a typed element.
+        RequireTypedNodeInTypedMode(node, mode);
 
         var behavior = GetOnNoMatchBehavior(mode);
 
