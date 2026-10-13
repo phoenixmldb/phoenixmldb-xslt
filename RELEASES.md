@@ -16,6 +16,10 @@
 
 ### Schemas
 
+- **A typed node bound with an atomic `as` type keeps its type.** With a validated source,
+  `<xsl:variable name="v" select="elem" as="xs:int"/>` for an element of type `xs:int` held a
+  plain `xs:integer`: the string value of the node was converted, not its typed value, so
+  `$v instance of xs:int` was false.
 - **The source document can be validated**: `XsltTransformer.SourceValidation` and
   `XsltTransformOptions.SourceValidation` (`Strict` or `Lax`). The source is validated against
   the schemas of the transformer's schema provider before the transformation; a source that
