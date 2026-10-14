@@ -833,7 +833,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // serialization to XML which would lose accumulator values).
         if (_sequenceAccumulator != null && instruction.CopyAccumulators == true && result is XdmNode or object?[])
         {
-            var copied = await DeepCopyWithAccumulatorsAsync(result).ConfigureAwait(false);
+            var copied = await DeepCopyWithAccumulatorsAsync(result,
+                stripAnnotations: instruction.Validation is not Ast.ValidationMode.Preserve).ConfigureAwait(false);
             if (copied is object?[] copiedArr)
             {
                 foreach (var item in copiedArr)
@@ -853,20 +854,26 @@ internal sealed partial class DefaultXsltExecutionContext
         // Other node types (elements, etc.) go through normal serialization to get proper orphan copies.
         if (_sequenceAccumulator != null && ShouldAccumulate(result))
         {
+            // validation="preserve": the copy keeps the type annotations of what it copies
+            // (XSLT 3.0 §25.4.2); they were dropped, as for "strip".
+            var preserve = instruction.Validation == Ast.ValidationMode.Preserve && _nodeStore != null;
+            object CopyForSequence(object item) => preserve && item is XdmNode node
+                ? SnapshotHelper.DeepCopyItems(node, _nodeStore!) ?? CopyNodeForAccumulator(item)
+                : CopyNodeForAccumulator(item);
             if (result is object?[] accArr)
             {
                 foreach (var item in accArr)
                     if (item != null)
-                        AppendToSeqAccumulator(CopyNodeForAccumulator(item));
+                        AppendToSeqAccumulator(CopyForSequence(item));
             }
             else if (result is IEnumerable<object> accSeq && result is not string)
             {
                 foreach (var item in accSeq)
-                    AppendToSeqAccumulator(CopyNodeForAccumulator(item));
+                    AppendToSeqAccumulator(CopyForSequence(item));
             }
             else if (result != null)
             {
-                AppendToSeqAccumulator(CopyNodeForAccumulator(result));
+                AppendToSeqAccumulator(CopyForSequence(result));
             }
             return;
         }
@@ -1417,7 +1424,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Deep-copies nodes and propagates accumulator values from source to copy.
     /// Ensures accumulators are computed on the source document first.
     /// </summary>
-    internal async ValueTask<object?> DeepCopyWithAccumulatorsAsync(object? input)
+    internal async ValueTask<object?> DeepCopyWithAccumulatorsAsync(object? input, bool stripAnnotations = false)
     {
         if (input == null || _nodeStore == null)
             return input;
@@ -1449,7 +1456,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Deep copy with mapping
         var mapping = new Dictionary<NodeId, NodeId>();
-        var result = SnapshotHelper.DeepCopyItems(input, _nodeStore, mapping);
+        var result = SnapshotHelper.DeepCopyItems(input, _nodeStore, mapping, stripAnnotations);
 
         // Copy accumulator values to the new nodes
         CopyAccumulatorValues(mapping);

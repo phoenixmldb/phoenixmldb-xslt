@@ -22,10 +22,47 @@ namespace PhoenixmlDb.Xslt.Engine;
 internal static class SnapshotHelper
 {
     /// <summary>
+    /// Whether the copies being made drop their type annotations (validation="strip"). A copy
+    /// made by fn:copy-of or fn:snapshot keeps them, as validation="preserve" does (XSLT 3.0
+    /// §11.9.2, §20.4.2); they were always dropped, so a copy of a validated tree was untyped and
+    /// a copy of a nilled element was not nilled.
+    /// </summary>
+    [ThreadStatic] private static bool t_stripAnnotations;
+
+    private static bool Keep => !t_stripAnnotations;
+
+    /// <summary>What a copy keeps of the annotations of the node it copies.</summary>
+    private static void Remember(XdmNode original, XdmNode copy, XdmInMemoryStore store)
+    {
+        if (!Keep)
+            return;
+        if (original is XdmElement source && copy is XdmElement clone
+            && PhoenixmlDb.XQuery.Execution.TypeCastHelper.NilledElements.TryGetValue(source, out _))
+            PhoenixmlDb.XQuery.Execution.TypeCastHelper.NilledElements.AddOrUpdate(clone, clone);
+        if (PhoenixmlDb.XQuery.Execution.TypeCastHelper.AnnotatingStores.TryGetValue(original, out _))
+            PhoenixmlDb.XQuery.Execution.TypeCastHelper.AnnotatingStores.AddOrUpdate(copy, store);
+    }
+
+    /// <summary>
     /// Deep copy items without ancestor chains (for fn:copy-of).
     /// </summary>
     public static object? DeepCopyItems(object? input, XdmInMemoryStore store,
-        Dictionary<NodeId, NodeId>? nodeMapping = null)
+        Dictionary<NodeId, NodeId>? nodeMapping = null, bool stripAnnotations = false)
+    {
+        var saved = t_stripAnnotations;
+        t_stripAnnotations = stripAnnotations;
+        try
+        {
+            return DeepCopyItemsCore(input, store, nodeMapping);
+        }
+        finally
+        {
+            t_stripAnnotations = saved;
+        }
+    }
+
+    private static object? DeepCopyItemsCore(object? input, XdmInMemoryStore store,
+        Dictionary<NodeId, NodeId>? nodeMapping)
     {
         if (input is null)
             return null;
@@ -175,8 +212,12 @@ internal static class SnapshotHelper
                             Namespace = origAttr.Namespace,
                             LocalName = origAttr.LocalName,
                             Prefix = origAttr.Prefix,
-                            Value = origAttr.Value
+                            Value = origAttr.Value,
+                            TypeAnnotation = Keep ? origAttr.TypeAnnotation : Xdm.XdmTypeName.UntypedAtomic,
+                            IsId = Keep && origAttr.IsId,
+                            IsIdRef = Keep && origAttr.IsIdRef,
                         };
+                        Remember(origAttr, newAttr, store);
                         store.Register(newAttr);
                         newAttrIds.Add(newAttrId);
                     }
@@ -193,8 +234,11 @@ internal static class SnapshotHelper
                     Prefix = ancestorElem.Prefix,
                     Attributes = newAttrIds,
                     Children = [], // Will be updated via LinkChild
-                    NamespaceDeclarations = ancestorElem.NamespaceDeclarations
+                    NamespaceDeclarations = ancestorElem.NamespaceDeclarations,
+                    TypeAnnotation = Keep ? ancestorElem.TypeAnnotation : Xdm.XdmTypeName.Untyped,
+                    IsIdContent = Keep && ancestorElem.IsIdContent,
                 };
+                Remember(ancestorElem, newElem, store);
                 store.Register(newElem);
 
                 // Link previous level to this element
@@ -278,8 +322,11 @@ internal static class SnapshotHelper
                 Prefix = elem.Prefix,
                 Attributes = elem.Attributes,
                 Children = [childId],
-                NamespaceDeclarations = elem.NamespaceDeclarations
+                NamespaceDeclarations = elem.NamespaceDeclarations,
+                TypeAnnotation = elem.TypeAnnotation,
+                IsIdContent = elem.IsIdContent,
             };
+            Remember(elem, newElem, store);
             // Recompute string value after adding child
             var child = store.GetNode(childId);
             newElem._stringValue = child?.StringValue ?? elem.StringValue;
@@ -368,8 +415,12 @@ internal static class SnapshotHelper
                             Namespace = origAttr.Namespace,
                             LocalName = origAttr.LocalName,
                             Prefix = origAttr.Prefix,
-                            Value = origAttr.Value
+                            Value = origAttr.Value,
+                            TypeAnnotation = Keep ? origAttr.TypeAnnotation : Xdm.XdmTypeName.UntypedAtomic,
+                            IsId = Keep && origAttr.IsId,
+                            IsIdRef = Keep && origAttr.IsIdRef,
                         };
+                        Remember(origAttr, newAttr, store);
                         store.Register(newAttr);
                         newAttrIds.Add(newAttrId);
                     }
@@ -398,8 +449,11 @@ internal static class SnapshotHelper
                     Prefix = elem.Prefix,
                     Attributes = newAttrIds,
                     Children = childIds,
-                    NamespaceDeclarations = elem.NamespaceDeclarations
+                    NamespaceDeclarations = elem.NamespaceDeclarations,
+                    TypeAnnotation = Keep ? elem.TypeAnnotation : Xdm.XdmTypeName.Untyped,
+                    IsIdContent = Keep && elem.IsIdContent,
                 };
+                Remember(elem, newElem, store);
                 newElem._stringValue = elem.StringValue;
                 store.Register(newElem);
                 return newElem;
@@ -463,8 +517,12 @@ internal static class SnapshotHelper
                     Namespace = attr.Namespace,
                     LocalName = attr.LocalName,
                     Prefix = attr.Prefix,
-                    Value = attr.Value
+                    Value = attr.Value,
+                    TypeAnnotation = Keep ? attr.TypeAnnotation : Xdm.XdmTypeName.UntypedAtomic,
+                    IsId = Keep && attr.IsId,
+                    IsIdRef = Keep && attr.IsIdRef,
                 };
+                Remember(attr, newAttr, store);
                 store.Register(newAttr);
                 return newAttr;
             }
