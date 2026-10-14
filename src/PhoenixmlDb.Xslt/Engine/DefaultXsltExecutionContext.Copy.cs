@@ -751,6 +751,20 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private async ValueTask CopyOfCoreAsync(XsltCopyOf instruction)
     {
+        var savedPreserve = _copyPreservesAnnotations;
+        _copyPreservesAnnotations = instruction.Validation == Ast.ValidationMode.Preserve;
+        try
+        {
+            await CopyOfNodesAsync(instruction).ConfigureAwait(false);
+        }
+        finally
+        {
+            _copyPreservesAnnotations = savedPreserve;
+        }
+    }
+
+    private async ValueTask CopyOfNodesAsync(XsltCopyOf instruction)
+    {
         _currentInstructionLocation = instruction.Location ?? _currentInstructionLocation;
 
         // SM-ctx streaming handoff (OP phase 2): a consuming simple-map LEFT ! RIGHT
@@ -1172,11 +1186,17 @@ internal sealed partial class DefaultXsltExecutionContext
                 foreach (var a in _nodeStore.GetAttributes(e))
                 {
                     var aid = _nodeStore.NextId();
-                    _nodeStore.Register(new XdmAttribute
+                    var attributeCopy = new XdmAttribute
                     {
                         Id = aid, Document = cloneDoc, Namespace = a.Namespace,
                         LocalName = a.LocalName, Prefix = a.Prefix, Value = a.Value, Parent = id,
-                    });
+                        TypeAnnotation = _copyPreservesAnnotations ? a.TypeAnnotation : Xdm.XdmTypeName.UntypedAtomic,
+                        IsId = _copyPreservesAnnotations && a.IsId,
+                        IsIdRef = _copyPreservesAnnotations && a.IsIdRef,
+                    };
+                    if (_copyPreservesAnnotations)
+                        SnapshotHelper.CopyAnnotationMarks(a, attributeCopy, _nodeStore);
+                    _nodeStore.Register(attributeCopy);
                     attrIds.Add(aid);
                 }
                 var childIds = new List<NodeId>();
@@ -1191,7 +1211,11 @@ internal sealed partial class DefaultXsltExecutionContext
                     Children = childIds.Count == 0 ? XdmElement.EmptyChildren : System.Collections.Immutable.ImmutableArray.CreateRange(childIds),
                     NamespaceDeclarations = decls.Count == 0 ? XdmElement.EmptyNamespaceDeclarations : decls.ToImmutable(),
                     Parent = parent,
+                    TypeAnnotation = _copyPreservesAnnotations ? e.TypeAnnotation : Xdm.XdmTypeName.Untyped,
+                    IsIdContent = _copyPreservesAnnotations && e.IsIdContent,
                 };
+                if (_copyPreservesAnnotations)
+                    SnapshotHelper.CopyAnnotationMarks(e, clone, _nodeStore);
                 // XdmElement.StringValue returns the cached _stringValue (it is NOT computed
                 // lazily from children), so a clone with a null cache reports an empty string
                 // value — string($clone)/xsl:value-of would be blank. The source element carries

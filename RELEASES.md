@@ -87,6 +87,12 @@
   refused. An element typed `xs:untypedAtomic` may not have element children (XTTE1540).
 - **`default-validation` other than preserve or strip is XTSE0020**; `strict` was XTSE1660.
 - **An invalid `xsi:type` is XTTE1510** under lax validation too; it was XTTE1515.
+- **A variable or parameter `as="schema-attribute(N)"` (or `schema-element(N)`) holds the node
+  its body makes**; it was built as a temporary tree, and a document node cannot hold an
+  attribute (XTDE0420).
+- **A global variable with a schema-defined atomic `as=` type casts an untyped value to it**;
+  it held the string.
+- **`xsl:copy-of validation="preserve"` keeps annotations when it copies into a tree** too.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

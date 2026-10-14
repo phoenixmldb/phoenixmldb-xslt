@@ -511,4 +511,43 @@ public sealed class TypedPatternTests : IDisposable
             """);
         (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTSE0020");
     }
+
+    /// <summary>
+    /// A parameter or variable as="schema-attribute(N)" built from xsl:attribute holds the
+    /// attribute; it was built as a temporary tree, and a document node cannot hold an
+    /// attribute (XTDE0420).
+    /// </summary>
+    [Fact]
+    public async Task A_schema_attribute_variable_holds_its_attribute()
+        => (await RunAsync("""
+                <xsl:template match="/">
+                  <xsl:variable name="a" as="schema-attribute(t:special)"><xsl:attribute name="t:special" validation="strict">456-CD</xsl:attribute></xsl:variable>
+                  <xsl:value-of select="$a instance of schema-attribute(t:special), string($a)"/>
+                </xsl:template>
+                """, "<x/>", validation: null)).Should().Be("true 456-CD");
+
+    /// <summary>
+    /// A global variable as="t:part?" over an untyped node casts its value to t:part (the
+    /// function conversion rules); it held the string.
+    /// </summary>
+    [Fact]
+    public async Task An_untyped_value_is_cast_to_the_declared_schema_type()
+        => (await RunAsync("""
+                <xsl:template match="/"><xsl:value-of select="$v instance of t:part, $v instance of xs:untypedAtomic"/></xsl:template>
+                """, "<e>123-AB</e>", validation: null, declarations: """
+                <xsl:variable name="v" select="/e" as="t:part?"/>
+                """)).Should().Be("true false");
+
+    /// <summary>
+    /// xsl:copy-of validation="preserve" of an element into a variable as="element(...)" keeps
+    /// its annotation; the copy made into the tree was untyped.
+    /// </summary>
+    [Fact]
+    public async Task A_preserved_element_copy_keeps_its_annotation_in_a_variable()
+        => (await RunAsync("""
+                <xsl:template match="/">
+                  <xsl:variable name="e" as="element(t:d, xs:decimal)"><xsl:copy-of select="t:doc/t:d" validation="preserve"/></xsl:variable>
+                  <xsl:value-of select="data($e) instance of xs:decimal"/>
+                </xsl:template>
+                """, Source)).Should().Be("true");
 }

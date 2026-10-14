@@ -34,8 +34,13 @@ internal static class SnapshotHelper
     /// <summary>What a copy keeps of the annotations of the node it copies.</summary>
     private static void Remember(XdmNode original, XdmNode copy, XdmInMemoryStore store)
     {
-        if (!Keep)
-            return;
+        if (Keep)
+            CopyAnnotationMarks(original, copy, store);
+    }
+
+    /// <summary>The nilled mark and the annotating store of a node, given to its copy.</summary>
+    internal static void CopyAnnotationMarks(XdmNode original, XdmNode copy, XdmInMemoryStore store)
+    {
         if (original is XdmElement source && copy is XdmElement clone
             && PhoenixmlDb.XQuery.Execution.TypeCastHelper.NilledElements.TryGetValue(source, out _))
             PhoenixmlDb.XQuery.Execution.TypeCastHelper.NilledElements.AddOrUpdate(clone, clone);

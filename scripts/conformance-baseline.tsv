@@ -416,7 +416,7 @@ ser/method-json	65	74
 ser/method-text	18	18
 ser/method-xhtml	49	49
 ser/method-xml	35	43
-tests/attr/as/_as-test-set.xml	173	186
+tests/attr/as/_as-test-set.xml	177	186
 tests/attr/avt/_avt-test-set.xml	34	35
 tests/attr/declared-modes/_declared-modes-test-set.xml	14	14
 tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml	28	28
