@@ -63,6 +63,10 @@
   such value was "Reference to an undeclared entity".
 - The base-URI marks a temporary tree's text carries are no longer seen by validation, which
   refused them as undeclared attributes.
+- **`xsl:copy-of` of a document node with validation validates it as a document**: duplicate
+  IDs and dangling IDREFs are XTTE1555; its content was validated as a fragment.
+- **`lang()` is streamable** in a template of a streamable mode; under strict streamability
+  it was XTSE3430.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

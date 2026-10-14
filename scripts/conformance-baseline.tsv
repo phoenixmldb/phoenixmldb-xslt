@@ -422,12 +422,12 @@ tests/attr/declared-modes/_declared-modes-test-set.xml	14	14
 tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml	28	28
 tests/attr/expand-text/_expand-text-test-set.xml	61	62
 tests/attr/match/_match-test-set.xml	267	282
-tests/attr/mode/_mode-test-set.xml	167	168
+tests/attr/mode/_mode-test-set.xml	168	168
 tests/attr/package-version/_package-version-test-set.xml	34	35
 tests/attr/select/_select-test-set.xml	157	157
 tests/attr/shadow/_shadow-test-set.xml	8	8
 tests/attr/static/_static-test-set.xml	46	50
-tests/attr/streamable/_streamable-test-set.xml	124	139
+tests/attr/streamable/_streamable-test-set.xml	132	139
 tests/attr/strip-type-annotations/_strip-type-annotations-test-set.xml	18	23
 tests/attr/tunnel/_tunnel-test-set.xml	58	58
 tests/attr/use-when/_use-when-test-set.xml	97	99
@@ -510,7 +510,7 @@ tests/insn/attribute/_attribute-test-set.xml	27	28
 tests/insn/call-template/_call-template-test-set.xml	40	41
 tests/insn/choose/_choose-test-set.xml	55	55
 tests/insn/construct-node/_construct-node-test-set.xml	34	34
-tests/insn/copy/_copy-test-set.xml	136	144
+tests/insn/copy/_copy-test-set.xml	140	144
 tests/insn/element/_element-test-set.xml	24	24
 tests/insn/evaluate/_evaluate-test-set.xml	50	57
 tests/insn/for-each-group/_for-each-group-test-set.xml	81	81
