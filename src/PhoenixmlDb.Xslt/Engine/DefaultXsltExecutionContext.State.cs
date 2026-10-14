@@ -117,6 +117,9 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private readonly PhoenixmlDb.XQuery.ISchemaProvider? _schemaProvider;
 
+    /// <summary>The schemas of the transformation, for the functions that validate what they build.</summary>
+    internal PhoenixmlDb.XQuery.ISchemaProvider? SchemaProviderForFunctions => _schemaProvider;
+
 
     /// <summary>
     /// Per-package overlay for package-local global variables that could not occupy the

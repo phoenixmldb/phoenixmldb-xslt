@@ -485,7 +485,7 @@ tests/fn/function-available/_function-available-test-set.xml	10	10
 tests/fn/function-lookup/_function-lookup-test-set.xml	6	8
 tests/fn/id/_id-test-set.xml	8	8
 tests/fn/innermost/_innermost-test-set.xml	2	2
-tests/fn/json-to-xml/_json-to-xml-test-set.xml	52	59
+tests/fn/json-to-xml/_json-to-xml-test-set.xml	59	59
 tests/fn/key/_key-test-set.xml	93	93
 tests/fn/load-xquery-module/_load-xquery-module-test-set.xml	3	4
 tests/fn/normalize-unicode/_normalize-unicode-test-set.xml	16	17
@@ -638,7 +638,7 @@ tests/type/date/_date-test-set.xml	129	130
 tests/type/maps/_maps-test-set.xml	49	50
 tests/type/namespace/_namespace-test-set.xml	186	188
 tests/type/node/_node-test-set.xml	31	31
-tests/type/notation/_notation-test-set.xml	6	23
+tests/type/notation/_notation-test-set.xml	15	23
 tests/type/string/_string-test-set.xml	136	136
 tests/type/type/_type-test-set.xml	73	74
 xs/xs-anyURI	13	17

@@ -48,6 +48,9 @@
   its text, untyped.
 - **`xsl:result-document validation=` with no `href` validates the principal result as a
   document** (one element child, ID uniqueness); only a secondary result was validated.
+- **`json-to-xml` with `validate: true()` gives a typed tree**, validated against the built-in
+  schema for the XML representation of JSON; it was FOJS0004, as for a processor that is not
+  schema-aware.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

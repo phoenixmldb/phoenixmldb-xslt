@@ -303,4 +303,18 @@ public sealed class TypedPatternTests : IDisposable
                 """, "<x/>", validation: null);
         (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTTE1550");
     }
+
+    /// <summary>
+    /// json-to-xml with validate: true() gives a tree typed by the schema for the XML
+    /// representation of JSON (F&amp;O 3.1 §17.1.4); it was FOJS0004, as for a processor
+    /// that is not schema-aware.
+    /// </summary>
+    [Fact]
+    public async Task Json_to_xml_validates_when_asked()
+        => (await RunAsync("""
+                <xsl:template match="/" xmlns:j="http://www.w3.org/2005/xpath-functions">
+                  <xsl:variable name="j" select="json-to-xml('[1, true]', map{'validate': true()})"/>
+                  <xsl:value-of select="$j/* instance of element(j:array, j:arrayType), data($j//j:number) instance of xs:double, data($j//j:boolean)"/>
+                </xsl:template>
+                """, "<x/>", validation: null, declarations: "<xsl:import-schema namespace='http://www.w3.org/2005/xpath-functions'/>")).Should().Be("true true true");
 }
