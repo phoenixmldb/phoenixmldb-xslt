@@ -1817,18 +1817,8 @@ internal sealed partial class DefaultXsltExecutionContext
         var xpathResult = await EvaluateAsync(instruction.Xpath).ConfigureAwait(false);
         var xpathStr = StringValueOf(xpathResult);
 
-        // Parse the XPath expression
-        XQueryExpression parsedExpr;
-        try
-        {
-            parsedExpr = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(xpathStr);
-        }
-        catch (Exception ex)
-        {
-            // A static error while analysing the xpath string is XTDE3160 (XSLT 3.0 §19.4);
-            // XTDE3150 is a different rule (error-3160a).
-            throw new XsltException($"XTDE3160: Dynamic XPath expression is not valid: {ex.Message}", instruction.Location);
-        }
+        var schemaAware = instruction.SchemaAware is { } schemaAwareAvt
+            && (await EvaluateAvtAsync(schemaAwareAvt).ConfigureAwait(false)).Trim() is "yes" or "true" or "1";
 
         // Determine namespace bindings for the dynamic expression.
         // Per XSLT 3.0 §19.4: namespace-context provides an element whose in-scope namespaces
@@ -1858,6 +1848,37 @@ internal sealed partial class DefaultXsltExecutionContext
         else
         {
             nsBindings = instruction.DefaultNamespaceBindings;
+        }
+
+        // Parse the XPath expression
+        XQueryExpression parsedExpr;
+        try
+        {
+            // With the namespace bindings for type names: a prefix in a type name is resolved as
+            // the expression is parsed (instance of e32:calendar), and it was unbound there.
+            var typeBindings = nsBindings;
+            var typeDefault = xpathDefaultNs;
+            string? schemaTypeNamespace = null;
+            parsedExpr = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(xpathStr,
+                prefix =>
+                {
+                    var uri = prefix.Length == 0 ? typeDefault : typeBindings.TryGetValue(prefix, out var bound) ? bound : null;
+                    if (!string.IsNullOrEmpty(uri) && uri != "http://www.w3.org/2001/XMLSchema")
+                        schemaTypeNamespace ??= uri;
+                    return uri;
+                });
+            // schema-aware="no", the default: the types of imported schemas are not in the
+            // static context of the target expression (XSLT 3.0 §10.4.1).
+            if (schemaTypeNamespace is not null && !schemaAware)
+                throw new XsltException(
+                    $"XTDE3160: Dynamic XPath expression is not valid: it names a schema type in '{schemaTypeNamespace}', and xsl:evaluate is not schema-aware",
+                    instruction.Location);
+        }
+        catch (Exception ex)
+        {
+            // A static error while analysing the xpath string is XTDE3160 (XSLT 3.0 §19.4);
+            // XTDE3150 is a different rule (error-3160a).
+            throw new XsltException($"XTDE3160: Dynamic XPath expression is not valid: {ex.Message}", instruction.Location);
         }
 
         // Resolve namespace prefixes in the parsed expression using the determined bindings

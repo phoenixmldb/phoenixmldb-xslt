@@ -428,7 +428,7 @@ tests/attr/select/_select-test-set.xml	157	157
 tests/attr/shadow/_shadow-test-set.xml	8	8
 tests/attr/static/_static-test-set.xml	46	50
 tests/attr/streamable/_streamable-test-set.xml	132	139
-tests/attr/strip-type-annotations/_strip-type-annotations-test-set.xml	18	23
+tests/attr/strip-type-annotations/_strip-type-annotations-test-set.xml	21	23
 tests/attr/tunnel/_tunnel-test-set.xml	58	58
 tests/attr/use-when/_use-when-test-set.xml	97	99
 tests/attr/validation/_validation-test-set.xml	43	57
@@ -512,7 +512,7 @@ tests/insn/choose/_choose-test-set.xml	55	55
 tests/insn/construct-node/_construct-node-test-set.xml	34	34
 tests/insn/copy/_copy-test-set.xml	140	144
 tests/insn/element/_element-test-set.xml	24	24
-tests/insn/evaluate/_evaluate-test-set.xml	50	57
+tests/insn/evaluate/_evaluate-test-set.xml	54	57
 tests/insn/for-each-group/_for-each-group-test-set.xml	81	81
 tests/insn/iterate/_iterate-test-set.xml	40	44
 tests/insn/lre/_lre-test-set.xml	35	35
@@ -589,12 +589,12 @@ tests/strm/si-choose/_si-choose-test-set.xml	12	12
 tests/strm/si-copy-of/_si-copy-of-test-set.xml	40	45
 tests/strm/si-copy/_si-copy-test-set.xml	60	65
 tests/strm/si-document/_si-document-test-set.xml	34	39
-tests/strm/si-element/_si-element-test-set.xml	88	93
+tests/strm/si-element/_si-element-test-set.xml	92	93
 tests/strm/si-for-each-group/_si-for-each-group-test-set.xml	112	114
 tests/strm/si-for-each/_si-for-each-test-set.xml	20	20
 tests/strm/si-fork/_si-fork-test-set.xml	53	55
 tests/strm/si-iterate/_si-iterate-test-set.xml	35	35
-tests/strm/si-LRE/_si-lre-test-set.xml	86	90
+tests/strm/si-LRE/_si-lre-test-set.xml	90	90
 tests/strm/si-map/_si-map-test-set.xml	12	12
 tests/strm/si-merge/_si-merge-test-set.xml	7	7
 tests/strm/si-message/_si-message-test-set.xml	11	11

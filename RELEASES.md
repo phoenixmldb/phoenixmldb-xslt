@@ -67,6 +67,10 @@
   IDs and dangling IDREFs are XTTE1555; its content was validated as a fragment.
 - **`lang()` is streamable** in a template of a streamable mode; under strict streamability
   it was XTSE3430.
+- **`xsl:for-each select="head(//x)"`** (or `exactly-one`, `zero-or-one`) with a consuming body
+  is streamable: one node at most is striding. Under strict streamability it was XTSE3430.
+- **`xsl:evaluate schema-aware="yes"` may name a schema type with a prefix of the stylesheet**;
+  the prefix was unbound (XPST0081). Without `schema-aware` such a type is XTDE3160.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

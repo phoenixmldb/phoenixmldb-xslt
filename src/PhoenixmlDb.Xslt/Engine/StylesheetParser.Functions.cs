@@ -123,6 +123,7 @@ public sealed partial class StylesheetParser
         var nsContextAttr = element.Attribute("namespace-context");
         var withParamsAttr = element.Attribute("with-params");
         var asAttr = element.Attribute("as");
+        var schemaAwareAttr = element.Attribute("schema-aware");
         var collationAttr = element.Attribute("default-collation");
 
         // Parse with-param children
@@ -169,6 +170,7 @@ public sealed partial class StylesheetParser
             NamespaceContext = nsContextAttr != null ? ParseExpr(nsContextAttr.Value, nsContextAttr) : null,
             WithParamsExpr = withParamsAttr != null ? ParseExpr(withParamsAttr.Value, withParamsAttr) : null,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
+            SchemaAware = schemaAwareAttr != null ? ParseAvt(schemaAwareAttr.Value, element, schemaAwareAttr) : null,
             EvaluateDefaultCollation = collationAttr?.Value,
             WithParams = withParams,
             Fallback = fallbackElem != null ? ParseSequenceConstructor(fallbackElem) : null,
