@@ -28,6 +28,14 @@ public sealed class PatternStep
     public bool IsRootFunction { get; init; }
 
     /// <summary>
+    /// When true, the first of <see cref="Predicates"/> is not one the stylesheet wrote: it is
+    /// the test of the type of the node (<c>. instance of element(*, T)</c>) that a kind test
+    /// with a type, <c>schema-element(N)</c> or <c>schema-attribute(N)</c> asks for. It does
+    /// not count as a predicate for the default priority of the pattern.
+    /// </summary>
+    public bool HasTypeTest { get; init; }
+
+    /// <summary>
     /// True when any predicate on this step could observe <c>position()</c> or <c>last()</c>.
     /// </summary>
     /// <remarks>

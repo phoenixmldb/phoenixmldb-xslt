@@ -18,7 +18,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 
 /// <summary>
 /// fn:nilled($node as node()?) as xs:boolean?
-/// Returns true if the node is nilled. Without schema validation, always returns false for elements.
+/// Returns true if the node is a validated element with xsi:nil="true".
 /// </summary>
 internal sealed class XsltNilledFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
@@ -37,9 +37,11 @@ internal sealed class XsltNilledFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         if (node is null)
             return ValueTask.FromResult<object?>(null);
 
-        // Without schema validation, nilled is always false for elements, empty-sequence for non-elements
-        if (node is XdmElement)
-            return ValueTask.FromResult<object?>(false);
+        // A validated element with xsi:nil="true" is nilled; it was always false here, which was
+        // right only while no element was ever validated. Empty for a node of any other kind.
+        if (node is XdmElement element)
+            return ValueTask.FromResult<object?>(PhoenixmlDb.XQuery.Execution.TypeCastHelper.IsNilled(element,
+                context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext query ? query.LoadNode : null));
 
         return ValueTask.FromResult<object?>(null);
     }

@@ -1695,9 +1695,46 @@ internal sealed partial class DefaultXsltExecutionContext
     /// template-relative instruction (apply-imports, next-match), which would otherwise see the
     /// caller as the current template.
     /// </summary>
+    /// <summary>
+    /// Whether xsl:source-document validates the document it reads (validation="strict" or
+    /// "lax"). Such a document is read into a tree with the type annotations of the schema,
+    /// and not streamed; the validation attribute was ignored, and the document was untyped.
+    /// </summary>
+    private bool ValidatesSourceDocument(XsltSourceDocument instruction)
+        => instruction.Validation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax && _schemaProvider is not null;
+
+    private XdmDocument ValidatedSourceDocument(XmlDocument doc, XdmInMemoryStore store, XsltSourceDocument instruction, Uri uri)
+    {
+        var strict = instruction.Validation == Ast.ValidationMode.Strict;
+        if (strict && doc.DocumentElement is { } root && !_schemaProvider!.HasElementDeclaration(root.NamespaceURI, root.LocalName))
+            throw new XsltException(
+                $"XTTE1510: xsl:source-document validation=\"strict\": the schemas in scope have no declaration of '{{{root.NamespaceURI}}}{root.LocalName}'",
+                instruction.Location);
+        // The document as it was read, without its document type declaration.
+        var text = new StringBuilder();
+        foreach (XmlNode child in doc.ChildNodes)
+        {
+            if (child.NodeType is not (XmlNodeType.DocumentType or XmlNodeType.XmlDeclaration))
+                text.Append(child.OuterXml);
+        }
+        var mode = strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax;
+        try
+        {
+            var validated = _schemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd
+                ? xsd.ValidateAndAnnotate(text.ToString(), store, mode, null, null, uri.AbsoluteUri)
+                : _schemaProvider!.ValidateAndAnnotate(text.ToString(), store, mode, null, null);
+            return validated as XdmDocument ?? XsltTransformEngine.ConvertToXdm(doc, store, uri.AbsoluteUri);
+        }
+        catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
+        {
+            throw new XsltException($"{(strict ? "XTTE1510" : "XTTE1515")}: xsl:source-document: the document is not valid: {ex.Message}",
+                instruction.Location);
+        }
+    }
+
     private async ValueTask<bool> TryStreamDocumentTemplateBodyAsync(XsltSourceDocument instruction)
     {
-        if (!instruction.Streamable
+        if (!instruction.Streamable || ValidatesSourceDocument(instruction)
             || instruction.Content is not { Instructions.Count: 1 } content
             || content.Instructions[0] is not XsltApplyTemplates
             {
@@ -1867,7 +1904,7 @@ internal sealed partial class DefaultXsltExecutionContext
         var sourceDocNeedsWholeInput =
             XsltTransformEngine.DocLevelWholeInputBuffer(instruction.Content, _stylesheet);
         if (instruction.Streamable && (resolvedUri.IsFile || hostSource != null) && string.IsNullOrEmpty(fragment)
-            && !sourceDocNeedsWholeInput)
+            && !sourceDocNeedsWholeInput && !ValidatesSourceDocument(instruction))
         {
             try
             {
@@ -2078,7 +2115,9 @@ internal sealed partial class DefaultXsltExecutionContext
         xmlDoc.LoadXml(xmlContent);
 
         var nodeStore = _nodeStore ?? new XdmInMemoryStore();
-        var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
+        var xdmDoc = ValidatesSourceDocument(instruction)
+            ? ValidatedSourceDocument(xmlDoc, nodeStore, instruction, resolvedUri)
+            : XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
 
         // Apply xsl:strip-space declarations
         if (_stylesheet.StripSpace.Count > 0)

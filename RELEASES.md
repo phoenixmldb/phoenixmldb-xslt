@@ -16,6 +16,30 @@
 
 ### Schemas
 
+- **A pattern that names a type matches by the type.** `element(*, T)`, `element(N, T)`,
+  `attribute(N, T)`, `schema-element(N)` and `schema-attribute(N)` in a match pattern were
+  parsed and the type not used, so the rule matched every node of the name. The type is now
+  tested as `instance of` tests it; the test does not count as a predicate for the default
+  priority.
+- **`as="xs:int"`, `as="xs:NMTOKEN"` and the other derived built-in types are checked and
+  cast as that type**: they were reduced to their base type, so a parameter `as="xs:int"` held
+  a plain `xs:integer` and `$p instance of xs:int` was false.
+- **`xsl:source-document validation="strict"` or `"lax"` validates the document it reads**,
+  which then has the type annotations of the schema; the attribute was ignored. Such a
+  document is read into a tree and not streamed.
+- **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
+- **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
+  validates the copy as a document**; it was kept untyped.
+- **`xsl:value-of` of a validated node gives its typed value**: an element of type
+  `xs:decimal` with the text `  1.10  ` gives `1.1`.
+- **`input-type-annotations="strip"`** takes the type annotations away from a validated
+  source; it was ignored.
+- **An attribute made with `type=` or `validation="strict"` has its type annotation**, in a
+  variable; it was validated and left untyped.
+- **A global variable with no `as` keeps the annotations of what was validated in it**; it was
+  built from its text, which is untyped.
+- **A pattern may name an element or attribute called `union`** (`my:union`, `@union`): the
+  name was taken for the union operator.
 - **An inline schema with no target namespace is loaded.** An `xs:schema` child of
   `xsl:import-schema` with no `namespace` attribute was taken for the empty form of the
   declaration and skipped: validation against it found no declaration, and strict validation

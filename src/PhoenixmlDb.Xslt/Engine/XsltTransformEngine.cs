@@ -4370,7 +4370,15 @@ public sealed class XsltTransformEngine
                 // WriteText routes text into it, and every binding path below that reads the
                 // serialized content (RTF, text(), node(), document-node()) would silently lose it.
                 var savedCollectText = context.SwapCollectTextAsSequenceItems(false);
-                try { await global.Content.ExecuteAsync(context).ConfigureAwait(false); }
+                XdmDocument? typedTree = null;
+                try
+                {
+                    if (global.As == null)
+                        typedTree = await context.ExecuteGlobalBodyAsync(global.Content,
+                            XsltTransformEngine.UriString(global.BaseUri) ?? stylesheetBaseUri).ConfigureAwait(false);
+                    else
+                        await global.Content.ExecuteAsync(context).ConfigureAwait(false);
+                }
                 catch
                 {
                     // What the body wrote before it failed is not output. The error of a global
@@ -4391,7 +4399,12 @@ public sealed class XsltTransformEngine
                 var globalBaseUri = XsltTransformEngine.UriString(global.BaseUri) ?? stylesheetBaseUri;
                 // XSLT 2.0: variables with content and no 'as' always create a temporary tree
                 if (global.As == null)
-                    context.GlobalVariables[global.Name] = new ResultTreeFragment(content, globalBaseUri);
+                    context.GlobalVariables[global.Name] = new ResultTreeFragment(content, globalBaseUri)
+                    {
+                        // The tree with its type annotations, where an element in it was
+                        // validated; the text read again would be untyped.
+                        CachedDocumentNode = typedTree,
+                    };
                 // Isolating the accumulator (above) is only half of it: this path binds from the
                 // SERIALIZED TEXT, so typed items the body produced via xsl:sequence would be
                 // dropped — an xs:anyURI("") serializes to nothing and the empty-content guard
@@ -4548,7 +4561,15 @@ public sealed class XsltTransformEngine
                         // that the narrower TryCoerceStringToType/IsStrictAtomicType gate missed,
                         // so `instance of xs:TYPE` now holds — attr/as-0105, as-0111).
                         object? coerced;
-                        try { coerced = PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(content, global.As.ItemType); }
+                        try
+                        {
+                            // A derived built-in type (as="xs:int") is cast to itself, not to the
+                            // base type it maps to.
+                            coerced = global.As.LocalTypeName is { } derived
+                                && PhoenixmlDb.XQuery.Execution.TypeCastHelper.BuiltInTypedValue(derived, content) is { } derivedValue
+                                ? derivedValue
+                                : PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(content, global.As.ItemType);
+                        }
                         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
                         { _ = ex; coerced = null; }
                         context.GlobalVariables[global.Name] = coerced ?? (object)content;
@@ -5692,6 +5713,9 @@ public sealed class XsltTransformEngine
         if (_schemaProvider is null)
             throw new XsltException("XTTE1545: Validation of the source document requires a schema provider on the XsltTransformer");
         var strict = options.SourceValidation == Ast.ValidationMode.Strict;
+        // input-type-annotations="strip" in any module (XSLT 3.0 §4.3): the source is validated,
+        // and its type annotations are taken away, as by validation="strip". It was ignored.
+        var stripAnnotations = StripsInputTypeAnnotations(_stylesheet);
         // Strict: the outermost element must have a declaration. System.Xml only warns of an
         // element in a namespace it has no schema for.
         if (strict && !_schemaProvider.HasElementDeclaration(doc.DocumentElement.NamespaceURI, doc.DocumentElement.LocalName))
@@ -5710,6 +5734,11 @@ public sealed class XsltTransformEngine
         {
             var mode = strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax;
             // With the URI of the source where the provider can take one, for base-uri().
+            if (stripAnnotations)
+            {
+                _schemaProvider.ValidateXml(sourceText, mode);
+                return null;
+            }
             var validated = _schemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd
                 ? xsd.ValidateAndAnnotate(sourceText, store, mode, null, null, options.SourceDocumentUri?.ToString())
                 : _schemaProvider.ValidateAndAnnotate(sourceText, store, mode, null, null);
@@ -5719,6 +5748,20 @@ public sealed class XsltTransformEngine
         {
             throw new XsltException($"{(strict ? "XTTE1510" : "XTTE1515")}: The source document is not valid: {ex.Message}");
         }
+    }
+
+    /// <summary>Whether a module of the stylesheet has input-type-annotations="strip".</summary>
+    private static bool StripsInputTypeAnnotations(Ast.XsltStylesheet stylesheet)
+    {
+        if (stylesheet.InputTypeAnnotations == Ast.TypeAnnotations.Strip)
+            return true;
+        foreach (var module in stylesheet.Includes)
+            if (StripsInputTypeAnnotations(module))
+                return true;
+        foreach (var module in stylesheet.Imports)
+            if (StripsInputTypeAnnotations(module))
+                return true;
+        return false;
     }
 
     internal static XdmDocument ConvertToXdm(XmlDocument doc, XdmInMemoryStore store, string? documentUri = null)

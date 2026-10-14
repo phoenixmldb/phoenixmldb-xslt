@@ -49,8 +49,8 @@ public sealed class PathPattern : XsltPattern
             if (step.DescendantSeparator)
                 return 0.5;
 
-            // Predicates → 0.5
-            if (step.Predicates.Count > 0)
+            // Predicates → 0.5. The test of the type that a kind test carries is not one.
+            if (step.Predicates.Count > (step.HasTypeTest ? 1 : 0))
                 return 0.5;
 
             return step.NodeTest switch

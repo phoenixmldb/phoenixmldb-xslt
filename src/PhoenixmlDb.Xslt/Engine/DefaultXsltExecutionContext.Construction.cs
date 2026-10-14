@@ -653,9 +653,10 @@ internal sealed partial class DefaultXsltExecutionContext
         // exists when validation="strict" (raise XQDY0027 otherwise), and skip silently
         // for lax. Value-against-type checking is a TODO; today it relies on the parent
         // element's validation= when one is set.
-        ValidateAttributeIfRequested(instruction, name, explicitNsUri);
-        if (instruction.ValidationType is { } attributeType)
-            ValidateAttributeValueAgainstType(value, attributeType, "xsl:attribute", instruction.Location, copied: false);
+        var declaredAnnotation = ValidateAttributeIfRequested(instruction, name, explicitNsUri, value);
+        var attributeAnnotation = instruction.ValidationType is { } attributeType
+            ? ValidateAttributeValueAgainstType(value, attributeType, "xsl:attribute", instruction.Location, copied: false)
+            : declaredAnnotation;
 
         // If sequence accumulator is active, create an XdmAttribute node for the sequence
         if (_sequenceAccumulator != null)
@@ -680,8 +681,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 Namespace = attrNsId,
                 Value = value,
                 Id = NodeId.None,
-                Parent = NodeId.None
+                Parent = NodeId.None,
+                // The type the type attribute named, so that attribute(*, T) matches it and its
+                // typed value is of T. It was validated and left untyped.
+                TypeAnnotation = attributeAnnotation ?? Xdm.XdmTypeName.UntypedAtomic,
             };
+            if (attributeAnnotation is not null && _nodeStore is not null)
+                XQuery.Execution.TypeCastHelper.AnnotatingStores.AddOrUpdate(attr, _nodeStore);
             AppendToSeqAccumulator(attr);
             return;
         }

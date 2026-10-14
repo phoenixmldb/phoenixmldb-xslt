@@ -2211,9 +2211,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (ShouldRunValidation(mode) && _textContentDepth == 0 && _activeTreeConstructor is { } tree)
         {
             var before = tree.NodesHere;
+            var accumulated = _sequenceAccumulator;
+            var itemsBefore = accumulated?.Count ?? 0;
             await body().ConfigureAwait(false);
             if (!ReferenceEquals(tree, _activeTreeConstructor))
                 return;
+            if (accumulated is not null && ReferenceEquals(accumulated, _sequenceAccumulator))
+                ValidateAccumulatedDocuments(accumulated, itemsBefore, mode!.Value, instructionName, location, type);
             for (var i = before; i < tree.NodesHere; i++)
             {
                 if (tree.NodeHere(i) is not Xdm.Nodes.XdmElement element)
@@ -2238,6 +2242,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var items = sequence.Count;
             var depth = _serializingElementDepth;
             await body().ConfigureAwait(false);
+            if (ReferenceEquals(sequence, _sequenceAccumulator))
+                ValidateAccumulatedDocuments(sequence, items, mode!.Value, instructionName, location, type);
             if (_output.Length <= start)
                 return;
             var written = _output.ToString(start, _output.Length - start);
@@ -2394,6 +2400,52 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <c>DocumentElement.InnerText</c> — equal to the sole element's string value once the
     /// dropped whitespace is excluded).
     /// </remarks>
+    /// <summary>
+    /// Runs the body of a global variable that has no declared type, building its tree as nodes
+    /// as well as text, as a local variable's body does. Gives the tree where it is the only one
+    /// with type annotations (an element in it was validated), and null otherwise: the text of
+    /// the body is then the value, as before. A global was built from its text only, so an
+    /// element validated in it lost its annotations.
+    /// </summary>
+    internal async ValueTask<XdmDocument?> ExecuteGlobalBodyAsync(XsltSequenceConstructor body, string? baseUri)
+    {
+        if (_nodeStore is null || UntypedRtfFlipBlocked(body))
+        {
+            await body.ExecuteAsync(this).ConfigureAwait(false);
+            return null;
+        }
+        var tree = new TreeConstructor(_nodeStore, 1UL);
+        var savedTree = _activeTreeConstructor;
+        var savedIncomplete = _tcFragmentIncomplete;
+        var savedFlipActive = _untypedRtfFlipActive;
+        var savedFlipDivergent = _untypedRtfFlipDivergent;
+        var savedFlipBase = _untypedFlipBaseContext;
+        var savedInheritNo = _inheritNamespacesNo;
+        _activeTreeConstructor = tree;
+        _tcFragmentIncomplete = false;
+        _untypedRtfFlipActive = true;
+        _untypedRtfFlipDivergent = false;
+        _untypedFlipBaseContext = baseUri ?? EffectiveBaseUri;
+        _inheritNamespacesNo = false;
+        bool incomplete, typed;
+        try
+        {
+            await body.ExecuteAsync(this).ConfigureAwait(false);
+        }
+        finally
+        {
+            incomplete = _tcFragmentIncomplete;
+            typed = _untypedRtfFlipDivergent;
+            _activeTreeConstructor = savedTree;
+            _tcFragmentIncomplete = savedIncomplete;
+            _untypedRtfFlipActive = savedFlipActive;
+            _untypedRtfFlipDivergent = savedFlipDivergent;
+            _untypedFlipBaseContext = savedFlipBase;
+            _inheritNamespacesNo = savedInheritNo;
+        }
+        return typed && !incomplete ? BuildUntypedRtfFlipDocument(tree.FinishFragment(), baseUri) : null;
+    }
+
     private XdmDocument BuildUntypedRtfFlipDocument(IReadOnlyList<NodeId> roots, string? varBaseUri)
     {
         var elementRootCount = 0;
@@ -2642,7 +2694,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (instruction.Select != null)
         {
-            var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
+            var result = TypedValuesOfValidatedNodes(await EvaluateAsync(instruction.Select).ConfigureAwait(false));
 
             // XSLT 1.0 backwards-compatible mode: xsl:value-of uses first-value semantics
             // (only the first item, no separator joining) when no explicit separator is set
@@ -3094,6 +3146,58 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// A document node that went into the sequence as a node (xsl:copy-of of one) is validated
+    /// as a document, and the validated one takes its place; it was kept untyped.
+    /// </summary>
+    private void ValidateAccumulatedDocuments(List<object?> sequence, int from, Ast.ValidationMode mode,
+        string instructionName, SourceLocation? location, Ast.XsltTypeName? type)
+    {
+        for (var i = from; i < sequence.Count; i++)
+        {
+            // One that the instruction has validated already (xsl:copy of a document node) is
+            // left as it is.
+            if (sequence[i] is Xdm.Nodes.XdmDocument copied
+                && copied.DocumentElement is { } rootId && _nodeStore?.GetNode(rootId) is Xdm.Nodes.XdmElement { TypeAnnotation: var annotation }
+                && annotation == Xdm.XdmTypeName.Untyped)
+                sequence[i] = ValidateBuiltDocument(copied, mode, instructionName, location, type);
+        }
+    }
+
+    /// <summary>
+    /// Validates a document node that was built or copied as a node and gives back the
+    /// validated document: a new one with the type annotations of the schema. The constraints
+    /// on a document as a whole apply (XSLT 3.0 §25.4.2).
+    /// </summary>
+    private Xdm.Nodes.XdmDocument ValidateBuiltDocument(Xdm.Nodes.XdmDocument document, Ast.ValidationMode mode,
+        string instructionName, SourceLocation? location, Ast.XsltTypeName? type = null)
+    {
+        if (_nodeStore is not PhoenixmlDb.XQuery.INodeBuilder builder || _schemaProvider is null)
+            return document;
+        var xml = PhoenixmlDb.XQuery.Functions.SerializeFunction.SerializeNodeToXml(document, _nodeStore);
+        // The errors, with the codes of §25.4.1.
+        RunValidation(mode, xml, ValidationKind.Document, instructionName, location, type);
+        try
+        {
+            var strict = mode == Ast.ValidationMode.Strict;
+            if (_schemaProvider.ValidateAndAnnotate(xml, builder,
+                    strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax,
+                    type?.Namespace, type?.LocalName) is not Xdm.Nodes.XdmDocument validated)
+                return document;
+            // The name the checks of document-node(element(N)) read.
+            if (validated.DocumentElementLocalName is null && validated.DocumentElement is { } rootId
+                && _nodeStore.GetNode(rootId) is Xdm.Nodes.XdmElement root)
+                validated.DocumentElementLocalName = root.LocalName;
+            validated.BaseUri ??= document.BaseUri;
+            return validated;
+        }
+        catch (PhoenixmlDb.XQuery.SchemaValidationException)
+        {
+            // RunValidation accepted it; the annotations are not to be had.
+            return document;
+        }
+    }
+
+    /// <summary>
     /// Validates one element that was written as text and gives back the validated element;
     /// null when the text is not one element that can be read on its own.
     /// </summary>
@@ -3212,7 +3316,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// §25.4.1): XTTE1540 when it is not valid. A complex type is XTTE1535 for an attribute
     /// that is copied, and XTTE1540 for one that is constructed.
     /// </summary>
-    private void ValidateAttributeValueAgainstType(string value, Ast.XsltTypeName type, string instructionName,
+    private Xdm.XdmTypeName? ValidateAttributeValueAgainstType(string value, Ast.XsltTypeName type, string instructionName,
         SourceLocation? location, bool copied)
     {
         if (_schemaProvider is null)
@@ -3224,8 +3328,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 $"{(copied ? "XTTE1535" : "XTTE1540")}: {instructionName}: an attribute cannot be validated against the complex type {type}", location);
         try
         {
-            _schemaProvider.ValidateXml($"<a>{System.Security.SecurityElement.Escape(value)}</a>",
-                PhoenixmlDb.XQuery.ValidationMode.Strict, type.Namespace, type.LocalName);
+            var text = $"<a>{System.Security.SecurityElement.Escape(value)}</a>";
+            // Validated as the content of an element of that type, in the store: the element
+            // has the annotation the attribute is to have, and the store learns how to build the
+            // typed value of that type.
+            if (_nodeStore is PhoenixmlDb.XQuery.INodeBuilder builder
+                && _schemaProvider.ValidateElementAndAnnotate(text, builder, PhoenixmlDb.XQuery.ValidationMode.Strict,
+                    type.Namespace, type.LocalName) is Xdm.Nodes.XdmDocument { Children: [var rootId, ..] }
+                && _nodeStore.GetNode(rootId) is Xdm.Nodes.XdmElement validated)
+                return validated.TypeAnnotation;
+            _schemaProvider.ValidateXml(text, PhoenixmlDb.XQuery.ValidationMode.Strict, type.Namespace, type.LocalName);
+            return null;
         }
         catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
         {
@@ -5661,6 +5774,49 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>
     /// Extracts the string value of any result (XDM node or primitive).
     /// </summary>
+    /// <summary>
+    /// The value with each node that was validated replaced by its typed value (XDM 3.1 §5.15),
+    /// for an instruction that atomizes what it selects: an element of type xs:decimal with
+    /// the text "  1.1  " gives the decimal 1.1, whose string is "1.1". Nodes that were not
+    /// validated, and everything else, are left as they are. A value with no validated node
+    /// is returned as it is.
+    /// </summary>
+    private static object? TypedValuesOfValidatedNodes(object? value)
+    {
+        switch (value)
+        {
+            case XdmNode node when HasTypedValue(node):
+                return TypedValueOf(node);
+            case object?[] items when Array.Exists(items, item => item is XdmNode n && HasTypedValue(n)):
+            {
+                var result = new List<object?>(items.Length);
+                foreach (var item in items)
+                {
+                    if (item is XdmNode n && HasTypedValue(n))
+                    {
+                        if (TypedValueOf(n) is object?[] several)
+                            result.AddRange(several);
+                        else
+                            result.Add(TypedValueOf(n));
+                    }
+                    else
+                    {
+                        result.Add(item);
+                    }
+                }
+                return result.ToArray();
+            }
+            default:
+                return value;
+        }
+
+        static object? TypedValueOf(XdmNode node)
+        {
+            var annotation = node is XdmElement element ? element.TypeAnnotation : ((XdmAttribute)node).TypeAnnotation;
+            return XQuery.Execution.TypeCastHelper.SchemaTypedValue(annotation, node.StringValue, null, node) ?? node;
+        }
+    }
+
     internal static string StringValueOf(object? value)
     {
         return value switch
