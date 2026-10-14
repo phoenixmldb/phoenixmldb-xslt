@@ -149,6 +149,10 @@ internal static class BuiltInFunctionUsages
         ["fn:json-to-xml#1"] = "A",
         ["fn:json-to-xml#2"] = "AI",
         ["fn:key#3"] = "AAN",
+        // lang($l) is lang($l, .): it inspects the context node and the xml:lang of its
+        // ancestors, which streaming keeps (XSLT 3.0 §19.8.9). It was missing, so a call
+        // was classified as an unknown function and refused as free-ranging.
+        ["fn:lang#1"] = "A",
         ["fn:lang#2"] = "AI",
         ["fn:load-xquery-module#1"] = "A",
         ["fn:load-xquery-module#2"] = "AI",

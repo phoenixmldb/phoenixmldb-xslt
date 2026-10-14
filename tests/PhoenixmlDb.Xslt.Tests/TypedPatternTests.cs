@@ -365,4 +365,38 @@ public sealed class TypedPatternTests : IDisposable
             """);
         (await t.TransformAsync("<!DOCTYPE e [<!ENTITY pic 'P'>]><e ent='pic'/>")).Should().Be("pic");
     }
+
+    /// <summary>
+    /// xsl:copy-of of a document node with validation="strict" validates it as a document, so a
+    /// duplicate ID is XTTE1555; its content was validated as a fragment, which allows that.
+    /// </summary>
+    [Fact]
+    public async Task A_copied_document_is_validated_as_a_document()
+    {
+        var act = () => RunAsync("""
+                <xsl:template match="/"><xsl:copy-of select="$t" validation="strict"/></xsl:template>
+                """, "<x/>", validation: null, declarations: """
+                <xsl:variable name="t"><t:table><t:row><t:key>A</t:key><t:value>1</t:value></t:row><t:row><t:key>A</t:key><t:value>2</t:value></t:row></t:table></xsl:variable>
+                """);
+        (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTTE1555");
+    }
+
+    /// <summary>
+    /// lang() in a template of a streamable mode is motionless (it reads the xml:lang of the
+    /// ancestors, which streaming keeps); under strict streamability it was XTSE3430.
+    /// </summary>
+    [Fact]
+    public async Task Lang_is_streamable()
+    {
+        var t = new XsltTransformer { StrictStreamability = true };
+        await t.LoadStylesheetAsync("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <xsl:mode streamable="yes"/>
+              <xsl:output omit-xml-declaration="yes"/>
+              <xsl:template match="p"><r en="{lang('en')}"/></xsl:template>
+            </xsl:stylesheet>
+            """);
+        using var input = new StringReader("<doc xml:lang='en'><p/></doc>");
+        (await t.TransformAsync(input)).Should().Be("<r en=\"true\"/>");
+    }
 }

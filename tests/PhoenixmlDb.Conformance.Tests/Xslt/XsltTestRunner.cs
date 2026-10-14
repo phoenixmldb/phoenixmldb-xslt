@@ -1062,7 +1062,11 @@ public sealed class XsltTestRunner
                 // not a silent fall back to a buffered copy. That is StrictStreamability, which
                 // is off by default for users. A conformance run measures what the
                 // specification requires; the default is a convenience on top of it.
-                transformer.StrictStreamability = testCase.IsStreamingSet;
+                // A case outside strm/ that depends on the streaming feature tests the same
+                // rules (attr/streamable: XTSE3430 for a motionless-pattern breach); it ran as a
+                // processor that falls back to buffering, so its expected XTSE3430 never came.
+                transformer.StrictStreamability = testCase.IsStreamingSet
+                    || testCase.Dependencies.Exists(static d => d is { Type: "feature", Value: "streaming" } && d.Satisfied);
                 // As a schema-aware processor: the schemas of the environment are known to the
                 // transformer, and a source the environment says is validated is validated, so
                 // that its nodes are typed.

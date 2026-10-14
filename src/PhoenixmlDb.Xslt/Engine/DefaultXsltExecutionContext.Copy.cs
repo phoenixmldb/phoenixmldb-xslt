@@ -781,6 +781,23 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
         var copyNs = instruction.CopyNamespaces ?? true;
+        // A document node copied with validation is validated as a document (XSLT 3.0
+        // §25.4.2): the identity constraints apply, so duplicate IDs and dangling IDREFs are
+        // XTTE1555. Its content was validated as a fragment, which does not check them.
+        var copyMode = instruction.ValidationType is not null ? Ast.ValidationMode.Strict : instruction.Validation;
+        if (copyMode is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax && _schemaProvider is not null)
+        {
+            foreach (var copied in result as IEnumerable<object?> ?? [result])
+            {
+                if (copied is XdmDocument copiedDocument)
+                    ValidateBuiltDocument(copiedDocument, copyMode.Value, "xsl:copy-of", instruction.Location, instruction.ValidationType);
+                // A temporary tree held as its text: the same document, validated from that text.
+                else if (copied is ResultTreeFragment { CachedDocumentNode: null } fragment)
+                    RunValidation(copyMode, fragment.XmlContent, ValidationKind.Document, "xsl:copy-of", instruction.Location, instruction.ValidationType);
+                else if (copied is ResultTreeFragment { CachedDocumentNode: XdmDocument cachedDocument })
+                    ValidateBuiltDocument(cachedDocument, copyMode.Value, "xsl:copy-of", instruction.Location, instruction.ValidationType);
+            }
+        }
         if (instruction.ValidationType is { } copyType)
         {
             foreach (var copied in result as IEnumerable<object?> ?? [result])
