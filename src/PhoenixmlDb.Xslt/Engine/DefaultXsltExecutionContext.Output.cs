@@ -1551,7 +1551,13 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             else
             {
+                var bodyStart = _output.Length;
                 await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+                // The principal result is validated as a secondary one is (§25.4.2): one element
+                // child, the identity constraints of the document. Only a secondary result was
+                // validated, and two root elements or two equal IDs passed here.
+                if (!redirectToSecondary)
+                    ValidateResultDocumentContent(instruction, _output.ToString(bodyStart, _output.Length - bodyStart));
             }
 
             // Store secondary result document content

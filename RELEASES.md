@@ -46,6 +46,8 @@
 - **An element validated as it is built in a typed variable keeps its annotations** when part
   of its content was copied in (`xsl:copy-of select="@*"`); the variable was read again from
   its text, untyped.
+- **`xsl:result-document validation=` with no `href` validates the principal result as a
+  document** (one element child, ID uniqueness); only a secondary result was validated.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

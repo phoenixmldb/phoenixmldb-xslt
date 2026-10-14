@@ -431,7 +431,7 @@ tests/attr/streamable/_streamable-test-set.xml	124	139
 tests/attr/strip-type-annotations/_strip-type-annotations-test-set.xml	18	23
 tests/attr/tunnel/_tunnel-test-set.xml	58	58
 tests/attr/use-when/_use-when-test-set.xml	97	99
-tests/attr/validation/_validation-test-set.xml	33	57
+tests/attr/validation/_validation-test-set.xml	35	57
 tests/attr/version/_version-test-set.xml	33	33
 tests/attr/xpath-default-namespace/_xpath-default-namespace-test-set.xml	25	26
 tests/decl/accept/_accept-test-set.xml	47	50
@@ -535,7 +535,7 @@ tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	5	7
 tests/misc/collations/_collations-test-set.xml	42	43
 tests/misc/docbook/_docbook-test-set.xml	2	4
-tests/misc/error/_error-test-set.xml	509	528
+tests/misc/error/_error-test-set.xml	514	528
 tests/misc/forwards/_forwards-test-set.xml	23	23
 tests/misc/initial-function/_initial-function-test-set.xml	34	35
 tests/misc/initial-mode/_initial-mode-test-set.xml	5	5
