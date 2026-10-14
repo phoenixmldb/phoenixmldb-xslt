@@ -3844,7 +3844,8 @@ public sealed class XsltTransformEngine
                 try
                 {
                     var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
-                    context.GlobalVariables[global.Name] = DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As);
+                    context.GlobalVariables[global.Name] = context.CastToDeclaredSchemaType(
+                        DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
             }
@@ -4300,7 +4301,8 @@ public sealed class XsltTransformEngine
                 try
                 {
                     var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
-                    context.GlobalVariables[global.Name] = DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As);
+                    context.GlobalVariables[global.Name] = context.CastToDeclaredSchemaType(
+                        DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
             }

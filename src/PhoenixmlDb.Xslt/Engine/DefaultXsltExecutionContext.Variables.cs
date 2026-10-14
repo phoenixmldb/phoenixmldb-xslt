@@ -378,7 +378,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 instruction.As.ItemType is ItemType.Node or ItemType.Element or ItemType.Text
                 or ItemType.Comment or ItemType.Document or ItemType.ProcessingInstruction
                 or ItemType.Attribute or ItemType.Item or ItemType.Map or ItemType.Array
-                or ItemType.Function;
+                or ItemType.Function or ItemType.SchemaElement or ItemType.SchemaAttribute;
             var isSequenceType = instruction.As != null &&
                 (instruction.As.Occurrence == Occurrence.ZeroOrMore
                 || instruction.As.Occurrence == Occurrence.OneOrMore
@@ -1260,9 +1260,12 @@ internal sealed partial class DefaultXsltExecutionContext
                     + "but the supplied value is an empty sequence");
             }
 
+            // schema-element() and schema-attribute() are node types as well: a body making an
+            // attribute for as="schema-attribute(N)" was built as a temporary tree, and a
+            // document node cannot hold an attribute (XTDE0420, W3C as-3602).
             var isNodeType = targetType is ItemType.Node or ItemType.Element or ItemType.Text
                 or ItemType.Comment or ItemType.Document or ItemType.ProcessingInstruction
-                or ItemType.Attribute or ItemType.Item;
+                or ItemType.Attribute or ItemType.Item or ItemType.SchemaElement or ItemType.SchemaAttribute;
 
             // For node types, unwrap RTFs and flatten nested arrays into actual XDM nodes
             if (isNodeType && value is object?[] nodeItems)
@@ -1295,6 +1298,8 @@ internal sealed partial class DefaultXsltExecutionContext
                             (ItemType.Comment, XdmComment) => true,
                             (ItemType.ProcessingInstruction, XdmProcessingInstruction) => true,
                             (ItemType.Attribute, XdmAttribute) => true,
+                            (ItemType.SchemaAttribute, XdmAttribute) => true,
+                            (ItemType.SchemaElement, XdmElement) => true,
                             (ItemType.Document, XdmDocument doc) =>
                                 instruction.As.DocumentElementName == null ||
                                 doc.DocumentElementLocalName == instruction.As.DocumentElementName,
@@ -1317,6 +1322,8 @@ internal sealed partial class DefaultXsltExecutionContext
                     (ItemType.Comment, XdmComment) => true,
                     (ItemType.ProcessingInstruction, XdmProcessingInstruction) => true,
                     (ItemType.Attribute, XdmAttribute) => true,
+                            (ItemType.SchemaAttribute, XdmAttribute) => true,
+                            (ItemType.SchemaElement, XdmElement) => true,
                     (ItemType.Document, XdmDocument doc) =>
                         instruction.As.DocumentElementName == null ||
                         doc.DocumentElementLocalName == instruction.As.DocumentElementName,

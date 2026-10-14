@@ -1298,6 +1298,28 @@ internal sealed partial class DefaultXsltExecutionContext
     /// failed <c>instance of xs:TYPE</c> for e.g. <c>select="/doc/item/@a" as="xs:untypedAtomic"</c>
     /// or <c>select="/doc/item" as="xs:duration"</c>.
     /// </summary>
+    /// <summary>
+    /// An untyped value cast to the schema-defined atomic type that as= names (XSLT 3.0 §9.3,
+    /// the function conversion rules): `as="my:part?"` over an untyped node held its string,
+    /// which is not an instance of my:part.
+    /// </summary>
+    internal object? CastToDeclaredSchemaType(object? value, XdmSequenceType? asType)
+    {
+        if (asType?.SchemaTypeLocalName is not { } local || _schemaProvider is null)
+            return value;
+        object? Cast(object? item) => item is Xdm.XsUntypedAtomic or string
+            ? XQuery.Execution.TypeCastHelper.CastToSchemaSimpleType(item, asType.SchemaTypeNamespace, local, _schemaProvider)
+            : item;
+        try
+        {
+            return value is object?[] many ? many.Select(Cast).ToArray() : Cast(value);
+        }
+        catch (XQuery.Execution.XQueryRuntimeException ex)
+        {
+            throw Error($"XTTE0570: The value does not match the declared type {local}: {ex.Message}");
+        }
+    }
+
     internal static object? CoerceSelectValueToDeclaredType(object? value, XdmSequenceType? asType)
     {
         if (asType == null || value == null || !IsCastableAtomicType(asType.ItemType))

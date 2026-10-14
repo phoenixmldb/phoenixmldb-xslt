@@ -821,6 +821,12 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private readonly HashSet<NodeId> _validatedTreeRoots = [];
 
+    /// <summary>
+    /// True while xsl:copy-of validation="preserve" copies: the copies keep the type
+    /// annotations of what they copy (XSLT 3.0 §25.4.2).
+    /// </summary>
+    private bool _copyPreservesAnnotations;
+
 
     // When true, WriteText redirects text to _sequenceAccumulator as individual items
     // instead of appending to _output. Used by xsl:perform-sort content to collect
