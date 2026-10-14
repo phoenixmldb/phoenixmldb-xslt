@@ -1,20 +1,19 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
-xslt      @ 879e4ce (dirty: tests/; src/ clean)
-xquery    @ acd4994 (source)
-core      @ 65ef60e (source)
+xslt      @ a72a8b6 (dirty: scripts/ tests/; src/ clean)
+xquery    @ 65c7eda (source)
+core      @ 61b3287 (source)
 
-attr       7s  fixture Successful (18 tests) | 1107/1117 cases 99.1%, 10 failed
-decl       5s  fixture Successful (20 tests) | 1084/1122 cases 96.6%, 38 failed
-type       3s  fixture Successful (9 tests) | 759/766 cases 99.1%, 7 failed
-sandp      2s  fixture Successful (25 tests)
-fn        13s  fixture Successful (36 tests) | 1281/1297 cases 98.8%, 16 failed
-strm1     26s  fixture Successful (36 tests) | 716/724 cases 98.9%, 8 failed
-strm2     23s  fixture Successful (26 tests) | 746/756 cases 98.7%, 10 failed
-strm3     23s  fixture Successful (26 tests) | 886/894 cases 99.1%, 8 failed
-expr       3s  fixture Successful (14 tests) | 643/648 cases 99.2%, 5 failed
-misc      14s  fixture Successful (22 tests) | 1909/1921 cases 99.4%, 12 failed
-insn       8s  fixture Successful (27 tests) | 1576/1594 cases 98.9%, 18 failed
-per-set baseline updated: /mnt/data/repos/phoenixml/phoenixmldb-xslt/scripts/conformance-baseline.tsv
+attr       9s  fixture Successful (18 tests) | 1285/1460 cases 88.0%, 175 failed
+decl       6s  fixture Successful (20 tests) | 1089/1133 cases 96.1%, 44 failed
+type       4s  fixture Successful (9 tests) | 781/806 cases 96.9%, 25 failed
+sandp      1s  fixture Successful (25 tests)
+fn         9s  fixture Successful (36 tests) | 1282/1308 cases 98.0%, 26 failed
+strm1     27s  fixture Successful (36 tests) | 720/725 cases 99.3%, 5 failed
+strm2     24s  fixture Successful (26 tests) | 851/903 cases 94.2%, 52 failed
+strm3     28s  fixture Successful (26 tests) | 900/906 cases 99.3%, 6 failed
+expr       4s  fixture Successful (14 tests) | 686/706 cases 97.2%, 20 failed
+misc      14s  fixture Successful (22 tests) | 1910/1945 cases 98.2%, 35 failed
+insn      16s  fixture Successful (27 tests) | 1598/1647 cases 97.0%, 49 failed
 
-11 chunk(s) in 2m07s — logs in /mnt/data/repos/phoenixml/phoenixmldb-xslt/conformance-results
+11 chunk(s) in 2m22s — logs in /tmp/claude-1000/-mnt-data-repos-phoenixml/f47444a5-c39f-4a39-ad05-3ff8d106cdcd/scratchpad/p2/phoenixmldb-xslt/conformance-results
