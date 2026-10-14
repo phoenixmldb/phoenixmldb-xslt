@@ -2199,6 +2199,34 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private async ValueTask RunInstructionWithValidationAsync(Ast.ValidationMode? mode,
         string instructionName, SourceLocation? location, Func<ValueTask> body, Ast.XsltTypeName? type = null)
     {
+        // type="xs:untyped" (or xs:untypedAtomic) asks for no validation: the node is untyped,
+        // as with validation="strip" (§25.4.1). It was validated against that type and refused.
+        if (type is { Namespace: "http://www.w3.org/2001/XMLSchema", LocalName: "untyped" or "untypedAtomic" } untypedType)
+        {
+            // xs:untypedAtomic is a simple type: an element of it has no element children.
+            if (untypedType.LocalName == "untypedAtomic")
+            {
+                var startOfContent = _output.Length;
+                var treeBefore = _activeTreeConstructor?.NodesHere ?? 0;
+                await body().ConfigureAwait(false);
+                var hasElementChild = _output.Length > startOfContent
+                    && HasElementChild(_output.ToString(startOfContent, _output.Length - startOfContent));
+                if (!hasElementChild && _activeTreeConstructor is { } builtTree && _nodeStore is not null)
+                {
+                    for (var i = treeBefore; i < builtTree.NodesHere && !hasElementChild; i++)
+                    {
+                        if (builtTree.NodeHere(i) is Xdm.Nodes.XdmElement built)
+                            hasElementChild = built.Children.Any(id => _nodeStore.GetNode(id) is Xdm.Nodes.XdmElement);
+                    }
+                }
+                if (hasElementChild)
+                    throw new XsltException(
+                        $"XTTE1540: {instructionName}: an element of the simple type xs:untypedAtomic may not have element children", location);
+                return;
+            }
+            type = null;
+            mode = Ast.ValidationMode.Strip;
+        }
         // A type attribute asks for validation against that type, whatever the default
         // validation is (XSLT 3.0 §25.4.1); the two attributes do not occur together.
         if (type is not null)
@@ -3260,7 +3288,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
         {
-            throw new XsltException($"{(type is not null ? "XTTE1540" : strict ? "XTTE1510" : "XTTE1515")}: {instructionName} validation{(type is null ? "" : $" against the type {type}")} failed: {ex.Message}", location);
+            throw new XsltException($"{(type is not null ? "XTTE1540" : strict || ex.Message.Contains("invalid xsi:type", StringComparison.Ordinal) ? "XTTE1510" : "XTTE1515")}: {instructionName} validation{(type is null ? "" : $" against the type {type}")} failed: {ex.Message}", location);
         }
         catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
         {
@@ -3331,6 +3359,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private Xdm.XdmTypeName? ValidateAttributeValueAgainstType(string value, Ast.XsltTypeName type, string instructionName,
         SourceLocation? location, bool copied)
     {
+        // type="xs:untypedAtomic" (or xs:untyped): no validation, an untyped attribute.
+        if (type is { Namespace: "http://www.w3.org/2001/XMLSchema", LocalName: "untyped" or "untypedAtomic" })
+            return Xdm.XdmTypeName.UntypedAtomic;
         if (_schemaProvider is null)
             throw new XsltException(
                 $"XTTE1545: {instructionName} validation requires a registered ISchemaProvider on the XsltTransformer", location);
@@ -3412,6 +3443,27 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // Not readable here; the validation itself has said what is wrong with it.
         }
         return null;
+    }
+
+    /// <summary>Whether the outermost element of a written fragment has an element child.</summary>
+    private static bool HasElementChild(string xml)
+    {
+        try
+        {
+            var settings = new System.Xml.XmlReaderSettings { ConformanceLevel = System.Xml.ConformanceLevel.Fragment, DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null };
+            using var reader = System.Xml.XmlReader.Create(new System.IO.StringReader(xml), settings,
+                new System.Xml.XmlParserContext(null, new System.Xml.XmlNamespaceManager(new System.Xml.NameTable()), null, System.Xml.XmlSpace.None));
+            while (reader.Read())
+            {
+                if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.Depth == 1)
+                    return true;
+            }
+        }
+        catch (System.Xml.XmlException)
+        {
+            // Not readable on its own (an undeclared prefix): no element child is known.
+        }
+        return false;
     }
 
     /// <summary>
@@ -3499,7 +3551,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // IDREF. System.Xml reports them with no code; they are known by their wording.
             var code = ofDocument && IsIdConstraintMessage(ex.Message) ? "XTTE1555"
                 : type is not null ? "XTTE1540"
-                : xqueryMode == PhoenixmlDb.XQuery.ValidationMode.Lax ? "XTTE1515"
+                // An xsi:type that names no type is invalid however laxly assessed (W3C validation-1702).
+                : xqueryMode == PhoenixmlDb.XQuery.ValidationMode.Lax && !ex.Message.Contains("invalid xsi:type", StringComparison.Ordinal) ? "XTTE1515"
                 : RootElementIsDeclared(content) == false ? "XTTE1512"
                 : "XTTE1510";
             throw new XsltException($"{code}: {instructionName} validation failed: {ex.Message}", location);

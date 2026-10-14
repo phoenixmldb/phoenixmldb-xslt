@@ -937,7 +937,10 @@ internal sealed partial class DefaultXsltExecutionContext
                 PushContextItem(item, pos, items.Count);
                 try
                 {
-                    var key = await EvaluateAsync(instruction.GroupBy).ConfigureAwait(false);
+                    // A validated node gives its typed value as the key (XSLT 3.0 §14.2: the
+                    // key is atomized); its string value was used, so two NOTATION values with
+                    // different prefixes for one namespace were two groups.
+                    var key = TypedValuesOfValidatedNodes(await EvaluateAsync(instruction.GroupBy).ConfigureAwait(false));
                     accumulator.Add(item, key, GroupingKeyString, IsNumeric,
                                     (a, b) => ValuesEqual(a, b), CompositeKeysEqual, groupByComparer);
                 }
@@ -1522,7 +1525,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     object? key;
                     try
                     {
-                        key = await EvaluateAsync(instruction.GroupBy!).ConfigureAwait(false);
+                        key = TypedValuesOfValidatedNodes(await EvaluateAsync(instruction.GroupBy!).ConfigureAwait(false));
                     }
                     finally
                     {

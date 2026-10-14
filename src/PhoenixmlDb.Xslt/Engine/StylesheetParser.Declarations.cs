@@ -68,10 +68,11 @@ public sealed partial class StylesheetParser
         ValidateAllowedAttributes(element, GetSourceLocation(element),
             "id", "input-type-annotations", "name", "package-version", "declared-modes");
 
-        // XTSE1660: Non-schema-aware processor must reject default-validation="strict"
+        // default-validation is "preserve" or "strip" (XSLT 3.0 §3.5); any other value is
+        // XTSE0020. "strict" was XTSE1660, as if only a basic processor refused it.
         var defaultValidationAttr = element.Attribute("default-validation");
-        if (defaultValidationAttr != null && defaultValidationAttr.Value.Trim() is "strict")
-            throw new XsltException($"XTSE1660: A non-schema-aware XSLT processor must not accept default-validation=\"{defaultValidationAttr.Value.Trim()}\"",
+        if (defaultValidationAttr != null && defaultValidationAttr.Value.Trim() is not ("preserve" or "strip"))
+            throw new XsltException($"XTSE0020: default-validation must be preserve or strip, not \"{defaultValidationAttr.Value.Trim()}\"",
                 GetSourceLocation(element));
 
         // Parse input-type-annotations
