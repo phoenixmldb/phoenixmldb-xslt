@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using FluentAssertions;
+using AwesomeAssertions;
 using PhoenixmlDb.Xslt;
 using Xunit;
 

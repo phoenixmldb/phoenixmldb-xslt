@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 #pragma warning disable CA2007 // xUnit runs tests without a synchronization context

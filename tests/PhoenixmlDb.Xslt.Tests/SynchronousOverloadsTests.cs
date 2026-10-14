@@ -1,5 +1,5 @@
 #pragma warning disable CA1849 // the synchronous overloads are what this file tests
-using FluentAssertions;
+using AwesomeAssertions;
 using PhoenixmlDb.Xslt.Engine;
 using Xunit;
 

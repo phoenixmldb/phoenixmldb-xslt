@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using PhoenixmlDb.Xslt;
 using Xunit;
 
@@ -343,7 +343,7 @@ public class SerializationMatrixTests
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// FluentAssertions assertions capturing the shared indentation layout produced by both
+    /// AwesomeAssertions assertions capturing the shared indentation layout produced by both
     /// JSON emitters for the logical JSON <c>{ "a": 1, "arr": [ 1, 2 ] }</c>. Applied to the
     /// output of both the json output method (A) and fn:xml-to-json (B) to prove identical
     /// indentation conventions without diffing scalar text char-by-char.
