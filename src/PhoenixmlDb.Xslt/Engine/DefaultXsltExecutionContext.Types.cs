@@ -596,6 +596,10 @@ internal sealed partial class DefaultXsltExecutionContext
             var prefix = name[..colonIdx];
             if (instruction.InScopeNamespaces.TryGetValue(prefix, out var bound))
                 nsUri = bound;
+            // The xml prefix is bound by definition and never declared (XML Names §3): xml:lang,
+            // xml:space and xml:id were looked for in no namespace.
+            else if (prefix == "xml")
+                nsUri = "http://www.w3.org/XML/1998/namespace";
         }
 
         if (!_schemaProvider.HasAttributeDeclaration(nsUri, localName))
@@ -618,6 +622,9 @@ internal sealed partial class DefaultXsltExecutionContext
             return null;
         var text = string.IsNullOrEmpty(nsUri)
             ? $"<phx-attribute-holder {localName}=\"{System.Security.SecurityElement.Escape(value)}\"/>"
+            // The xml prefix is bound already and may not be declared again.
+            : nsUri == "http://www.w3.org/XML/1998/namespace"
+            ? $"<phx-attribute-holder xml:{localName}=\"{System.Security.SecurityElement.Escape(value)}\"/>"
             : $"<phx-attribute-holder xmlns:phx-a=\"{System.Security.SecurityElement.Escape(nsUri)}\" phx-a:{localName}=\"{System.Security.SecurityElement.Escape(value)}\"/>";
         try
         {

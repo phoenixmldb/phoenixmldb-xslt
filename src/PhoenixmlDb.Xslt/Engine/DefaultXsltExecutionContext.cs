@@ -3230,6 +3230,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private Xdm.Nodes.XdmElement? ValidateXmlOfElement(string xml, bool declared, string name, Ast.ValidationMode mode,
         string instructionName, SourceLocation? location, Ast.XsltTypeName? type = null)
     {
+        xml = WithoutBaseSentinel(xml);
         if (_nodeStore is not PhoenixmlDb.XQuery.INodeBuilder builder)
             return null;
         var strict = mode == Ast.ValidationMode.Strict;
@@ -3394,7 +3395,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             while (reader.Read())
             {
                 if (reader.NodeType == System.Xml.XmlNodeType.Element)
-                    return _schemaProvider!.HasElementDeclaration(reader.NamespaceURI, reader.LocalName);
+                    // xsi:type names the type to validate against, so an element with no
+                    // declaration is still assessed (XSD 1.0 §3.3.4); it was XTTE1512.
+                    return reader.GetAttribute("type", "http://www.w3.org/2001/XMLSchema-instance") is not null
+                        || _schemaProvider!.HasElementDeclaration(reader.NamespaceURI, reader.LocalName);
             }
         }
         catch (System.Xml.XmlException)
@@ -3403,6 +3407,21 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
         return null;
     }
+
+    /// <summary>
+    /// Text without the base-URI marks that a temporary tree's text carries for its own reading
+    /// (<see cref="XsltTransformEngine.BaseSentinelNs"/>): they are not part of the tree, and
+    /// validation refused them as undeclared attributes (W3C si-document-101).
+    /// </summary>
+    private static string WithoutBaseSentinel(string xml)
+        => xml.Contains(XsltTransformEngine.BaseSentinelNs, StringComparison.Ordinal)
+            ? BaseSentinelMarks().Replace(xml, "")
+            : xml;
+
+    [System.Text.RegularExpressions.GeneratedRegex(
+        @"\s(?:xmlns:_pxbase_=""[^""]*""|_pxbase_:[A-Za-z_][\w.-]*=""[^""]*"")",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial System.Text.RegularExpressions.Regex BaseSentinelMarks();
 
     /// <summary>
     /// Runs the serialized content through the registered <see cref="PhoenixmlDb.XQuery.ISchemaProvider"/>
@@ -3422,6 +3441,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         if (type is not null)
             mode = Ast.ValidationMode.Strict;
+        content = WithoutBaseSentinel(content);
         PhoenixmlDb.XQuery.ValidationMode? xqueryMode = mode switch
         {
             Ast.ValidationMode.Strict => PhoenixmlDb.XQuery.ValidationMode.Strict,

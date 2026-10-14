@@ -317,4 +317,52 @@ public sealed class TypedPatternTests : IDisposable
                   <xsl:value-of select="$j/* instance of element(j:array, j:arrayType), data($j//j:number) instance of xs:double, data($j//j:boolean)"/>
                 </xsl:template>
                 """, "<x/>", validation: null, declarations: "<xsl:import-schema namespace='http://www.w3.org/2005/xpath-functions'/>")).Should().Be("true true true");
+
+    /// <summary>
+    /// xsl:attribute name="xml:lang" validation="strict" is validated against the schema of the
+    /// XML namespace; the xml prefix was not resolved, and the attribute was looked for in no
+    /// namespace (XTTE1512). xml:id is then an ID that id() finds in a temporary tree.
+    /// </summary>
+    [Fact]
+    public async Task An_xml_attribute_is_validated_and_xml_id_is_an_id()
+        => (await RunAsync("""
+                <xsl:template match="/">
+                  <xsl:variable name="t"><e><xsl:attribute name="xml:lang" select="'en'" validation="strict"/><xsl:attribute name="xml:id" select="'k1'" validation="strict"/></e></xsl:variable>
+                  <xsl:value-of select="string($t/e/@xml:lang), exists(id('k1', $t))"/>
+                </xsl:template>
+                """, "<x/>", validation: null)).Should().Be("en true");
+
+    /// <summary>A strictly validated element with no declaration but an xsi:type is validated against that type; it was XTTE1512.</summary>
+    [Fact]
+    public async Task An_undeclared_element_with_xsi_type_is_validated_against_the_type()
+        => (await RunAsync("""
+                <xsl:template match="/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+                  <xsl:variable name="d" as="document-node()"><xsl:document validation="strict"><free><xsl:namespace name="xs" select="'http://www.w3.org/2001/XMLSchema'"/><xsl:attribute name="xsi:type">xs:anyType</xsl:attribute><x/></free></xsl:document></xsl:variable>
+                  <xsl:value-of select="count($d/free/x)"/>
+                </xsl:template>
+                """, "<x/>", validation: null)).Should().Be("1");
+
+    /// <summary>
+    /// A source whose DTD declares the entities its xs:ENTITY attributes name is valid; the
+    /// validating parse reads no DTD, so each value was "Reference to an undeclared entity".
+    /// </summary>
+    [Fact]
+    public async Task A_source_entity_attribute_names_an_entity_its_dtd_declares()
+    {
+        var xsd = Path.Combine(_dir, "e.xsd");
+        await File.WriteAllTextAsync(xsd, """
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xs:element name="e"><xs:complexType><xs:attribute name="ent" type="xs:ENTITY"/></xs:complexType></xs:element>
+            </xs:schema>
+            """, TestContext.Current.CancellationToken);
+        var t = new XsltTransformer { AllowDtdProcessing = true, SourceValidation = PhoenixmlDb.Xslt.Ast.ValidationMode.Strict };
+        await t.LoadStylesheetAsync($$"""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0" expand-text="yes">
+              <xsl:import-schema schema-location="{{xsd.Replace("\\", "/", StringComparison.Ordinal)}}"/>
+              <xsl:output omit-xml-declaration="yes"/>
+              <xsl:template match="/">{e/@ent}</xsl:template>
+            </xsl:stylesheet>
+            """);
+        (await t.TransformAsync("<!DOCTYPE e [<!ENTITY pic 'P'>]><e ent='pic'/>")).Should().Be("pic");
+    }
 }

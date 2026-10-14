@@ -116,7 +116,10 @@ internal sealed class XsltIdFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
             var added = false;
             foreach (var attr in store.GetAttributes(elem))
             {
-                if (attr.IsId && ids.Contains(NormalizeIdValue(attr.Value)))
+                // xml:id is an ID wherever it is (xml:id §4), however the tree holding it was
+                // built; a temporary tree's xml:id was not marked, and id() missed it.
+                var isId = attr.IsId || (attr.Namespace == NamespaceId.Xml && attr.LocalName == "id");
+                if (isId && ids.Contains(NormalizeIdValue(attr.Value)))
                 {
                     results.Add(elem);
                     added = true;

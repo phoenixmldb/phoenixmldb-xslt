@@ -5752,6 +5752,15 @@ public sealed class XsltTransformEngine
                 text.Append(child.OuterXml);
         }
         var sourceText = text.ToString();
+        // The entities its document type declaration declares: a value of type xs:ENTITY names
+        // one of them, and the validating parse does not read the declaration (W3C as-3301).
+        var declared = new List<string>();
+        if (doc.DocumentType?.Entities is { } entities)
+        {
+            foreach (XmlNode entity in entities)
+                declared.Add(entity.Name);
+        }
+        using var entityScope = declared.Count > 0 ? PhoenixmlDb.XQuery.XsdSchemaProvider.DeclaringEntities(declared) : null;
         try
         {
             var mode = strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax;
