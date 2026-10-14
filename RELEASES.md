@@ -78,6 +78,15 @@
 - **Typed modes**: a mode with `typed="no"` refuses a typed element or attribute (XTTE3110);
   a mode with `typed="strict"` refuses a rule whose pattern names an undeclared element
   (XTSE3105).
+- **The name in `attribute(name, T)` of a pattern is not in `xpath-default-namespace`**; it
+  was put there, so the rule matched the attribute of that namespace.
+- **A `group-by` key that is a validated node is its typed value**; its string value was used,
+  so `1.0` and `1` of type `xs:decimal`, or NOTATION values written with different prefixes,
+  were separate groups.
+- **`type="xs:untyped"` asks for no validation**; it was validated against `xs:untyped` and
+  refused. An element typed `xs:untypedAtomic` may not have element children (XTTE1540).
+- **`default-validation` other than preserve or strip is XTSE0020**; `strict` was XTSE1660.
+- **An invalid `xsi:type` is XTTE1510** under lax validation too; it was XTTE1515.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

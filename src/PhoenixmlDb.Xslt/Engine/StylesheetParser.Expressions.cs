@@ -267,9 +267,9 @@ public sealed partial class StylesheetParser
                         lreValidation = ParseValidationMode(attr);
                         break;
                     case "default-validation":
-                        // XTSE1660: Non-schema-aware processor can only accept strip/preserve/lax
-                        if (attr.Value.Trim() is "strict" && ShouldRejectSchemaAware)
-                            throw new XsltException($"XTSE1660: A non-schema-aware XSLT processor must not accept default-validation=\"{attr.Value.Trim()}\"",
+                        // xsl:default-validation is "preserve" or "strip" (§3.5): XTSE0020.
+                        if (attr.Value.Trim() is not ("preserve" or "strip"))
+                            throw new XsltException($"XTSE0020: xsl:default-validation must be preserve or strip, not \"{attr.Value.Trim()}\"",
                                 GetSourceLocation(element));
                         break;
                     default:

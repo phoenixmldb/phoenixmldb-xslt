@@ -457,4 +457,58 @@ public sealed class TypedPatternTests : IDisposable
                 """, Source);
         (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTSE3105");
     }
+
+    /// <summary>
+    /// The name in attribute(name, T) of a pattern is not in xpath-default-namespace (XSLT 3.0
+    /// §5.1.2); it was put there, so the rule matched the attribute of that namespace.
+    /// </summary>
+    [Fact]
+    public async Task An_attribute_kind_test_name_is_not_in_the_default_namespace()
+        => (await RunAsync("""
+                <xsl:template match="/"><r><xsl:apply-templates select="//@*"/></r></xsl:template>
+                <xsl:template match="attribute(code, t:part)" xpath-default-namespace="urn:t">[{.}]</xsl:template>
+                <xsl:template match="@*"/>
+                """, "<t:doc xmlns:t='urn:t' code='123-AB'><t:p>456-CD</t:p><t:d>1</t:d><t:u>1</t:u></t:doc>")).Should().Be("<r>[123-AB]</r>");
+
+    /// <summary>
+    /// A group-by key that is a validated node is its typed value: 1.0 and 1 of type xs:decimal
+    /// are one group. Its string value was the key.
+    /// </summary>
+    [Fact]
+    public async Task A_group_by_key_is_the_typed_value_of_a_validated_node()
+        => (await RunAsync("""
+                <xsl:template match="/"><r><xsl:for-each-group select="$d/t:doc/*" group-by="."><g n="{count(current-group())}"/></xsl:for-each-group></r></xsl:template>
+                """, "<x/>", validation: null, declarations: """
+                <xsl:variable name="d" as="document-node()"><xsl:document validation="strict"><t:doc><t:p>123-AB</t:p><t:p>123-AB</t:p><t:d>1.0</t:d><t:u>1</t:u></t:doc></xsl:document></xsl:variable>
+                """)).Should().Be("<r><g n=\"2\"/><g n=\"2\"/></r>");
+
+    /// <summary>
+    /// type="xs:untyped" asks for no validation (the element is untyped); it was validated
+    /// against xs:untyped and refused. An element typed xs:untypedAtomic may not have element
+    /// children (XTTE1540).
+    /// </summary>
+    [Fact]
+    public async Task Type_untyped_means_no_validation()
+    {
+        (await RunAsync("""
+                <xsl:template match="/"><xsl:variable name="v" as="element()"><e xsl:type="xs:untyped"><f/></e></xsl:variable><xsl:value-of select="$v instance of element(*, xs:untyped)"/></xsl:template>
+                """, "<x/>", validation: null)).Should().Be("true");
+        var withChild = () => RunAsync("""
+                <xsl:template match="/"><e xsl:type="xs:untypedAtomic">a<f/>b</e></xsl:template>
+                """, "<x/>", validation: null);
+        (await withChild.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTTE1540");
+    }
+
+    /// <summary>default-validation is preserve or strip; strict is XTSE0020 (it was XTSE1660).</summary>
+    [Fact]
+    public async Task Default_validation_strict_is_XTSE0020()
+    {
+        var t = new XsltTransformer();
+        var act = () => t.LoadStylesheetAsync("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0" default-validation="strict">
+              <xsl:template match="/"/>
+            </xsl:stylesheet>
+            """);
+        (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTSE0020");
+    }
 }

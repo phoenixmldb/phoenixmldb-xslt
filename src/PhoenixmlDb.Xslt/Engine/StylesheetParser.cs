@@ -2649,9 +2649,11 @@ public sealed partial class StylesheetParser
             var namePart = inner[..commaIdx].Trim();
             var typePart = inner[(commaIdx + 1)..].Trim();
 
+            // An attribute name is not in xpath-default-namespace (XSLT 3.0 §5.1.2); it was put
+            // there, so attribute(name, T) matched an attribute in that namespace (W3C match-207).
             NameTest? nameTest = null;
             if (namePart != "*" && !string.IsNullOrEmpty(namePart))
-                nameTest = ParseNameTest(namePart, context);
+                nameTest = ParseNameTest(namePart, context, isAttribute: kind == XdmNodeKind.Attribute);
 
             XdmTypeName? typeName = null;
             if (!string.IsNullOrEmpty(typePart))
@@ -2675,7 +2677,7 @@ public sealed partial class StylesheetParser
         return new KindTest
         {
             Kind = kind,
-            Name = ParseNameTest(inner, context)
+            Name = ParseNameTest(inner, context, isAttribute: kind == XdmNodeKind.Attribute)
         };
     }
 
