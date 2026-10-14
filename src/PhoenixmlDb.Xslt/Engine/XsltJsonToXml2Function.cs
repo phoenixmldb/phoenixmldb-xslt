@@ -41,6 +41,7 @@ internal sealed class XsltJsonToXml2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
         if (jsonText is null)
             return ValueTask.FromResult<object?>(null);
 
+        var validate = false;
         var store = _context._nodeStore;
         if (store is null)
             throw new XsltException("FOJS0001: json-to-xml requires a node store");
@@ -70,7 +71,13 @@ internal sealed class XsltJsonToXml2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
             if (map.TryGetValue("validate", out var validateVal))
             {
                 if (validateVal is true)
-                    throw new XsltException("FOJS0004: Option 'validate' is true but the processor is not schema-aware");
+                {
+                    // Schema-aware when the transformation has the XSD provider, which carries
+                    // the built-in schema for this vocabulary; FOJS0004 only without one.
+                    if (_context.SchemaProviderForFunctions is not PhoenixmlDb.XQuery.XsdSchemaProvider)
+                        throw new XsltException("FOJS0004: Option 'validate' is true but the processor is not schema-aware");
+                    validate = true;
+                }
                 if (validateVal is bool)
                 { /* false — no action needed */ }
                 else if (validateVal is null || validateVal is object?[] va && va.Length == 0)
@@ -124,6 +131,17 @@ internal sealed class XsltJsonToXml2Function : PhoenixmlDb.XQuery.Ast.XQueryFunc
         try
         {
             var doc = JsonToXmlConverter.Convert(jsonText, store, liberal, duplicates, escape);
+            // validate: the result is validated against the schema for the XML representation
+            // of JSON and carries its type annotations (F&O 3.1 §17.1.4); the option was
+            // refused as if the processor were not schema-aware.
+            if (validate && doc is XdmNode docNode
+                && _context.SchemaProviderForFunctions is PhoenixmlDb.XQuery.XsdSchemaProvider schemas
+                && schemas.TryAddBuiltInJsonSchema())
+            {
+                var xml = PhoenixmlDb.XQuery.Functions.SerializeFunction.SerializeNodeToXml(docNode, store);
+                if (schemas.ValidateAndAnnotate(xml, store, PhoenixmlDb.XQuery.ValidationMode.Strict) is { } annotated)
+                    return ValueTask.FromResult<object?>(annotated);
+            }
             return ValueTask.FromResult<object?>(doc);
         }
         catch (System.Text.Json.JsonException ex)
