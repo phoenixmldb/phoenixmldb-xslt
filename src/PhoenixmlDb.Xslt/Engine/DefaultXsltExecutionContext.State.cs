@@ -917,6 +917,44 @@ internal sealed partial class DefaultXsltExecutionContext
     // Track nesting depth of secondary result-document redirects
     private int _resultDocumentRedirectDepth;
 
+    /// <summary>The elements validated at the top of the principal result, with the text each was written as.</summary>
+    private readonly List<(string Xml, Xdm.Nodes.XdmElement Element)> _principalValidatedRoots = [];
+
+    /// <summary>
+    /// The principal result as a tree, with the type annotations validation gave it, when the
+    /// whole result is the elements validated at its top (<paramref name="rawOutput"/> is what
+    /// was written, before serialization); null otherwise. The result was available only as
+    /// text, read again untyped, so a validated result could not be seen as validated.
+    /// </summary>
+    internal Xdm.Nodes.XdmDocument? BuildPrincipalResultTree(string rawOutput)
+    {
+        if (_principalValidatedRoots.Count == 0 || _nodeStore is null)
+            return null;
+        var written = string.Concat(_principalValidatedRoots.Select(static r => r.Xml));
+        if (!string.Equals(written.Trim(), rawOutput.Trim(), StringComparison.Ordinal))
+            return null;
+        var documentId = _nodeStore.NextId();
+        var children = new List<NodeId>(_principalValidatedRoots.Count);
+        foreach (var (_, element) in _principalValidatedRoots)
+        {
+            element.Parent = documentId;
+            children.Add(element.Id);
+        }
+        var first = _principalValidatedRoots[0].Element;
+        var document = new Xdm.Nodes.XdmDocument
+        {
+            StringValueResolver = _nodeStore.StringValueResolver,
+            Id = documentId,
+            Document = first.Document,
+            Parent = NodeId.None,
+            DocumentElement = first.Id,
+            DocumentElementLocalName = first.LocalName,
+            Children = children,
+        };
+        _nodeStore.Register(document);
+        return document;
+    }
+
     // XTDE1490: Set when an explicit xsl:result-document href="" has claimed the primary output
     private bool _primaryOutputClaimedByResultDocument;
 

@@ -57,6 +57,9 @@ public sealed class XsltTransformEngine
     public IReadOnlyDictionary<string, string> SecondaryResultDocuments { get; private set; }
         = new Dictionary<string, string>();
 
+    /// <summary>The principal result as a typed tree; see <see cref="XsltTransformer.PrincipalResultTree"/>.</summary>
+    internal XsltResultTree? PrincipalResultTree { get; private set; }
+
     public XsltTransformEngine(XsltStylesheet stylesheet,
         PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider = null)
     {
@@ -502,6 +505,9 @@ public sealed class XsltTransformEngine
         SecondaryResultDocuments = context.SecondaryResults;
 
         var output = outputBuilder.ToString();
+        PrincipalResultTree = context.BuildPrincipalResultTree(output) is { } resultTree && context._nodeStore is { } resultNodes
+            ? new XsltResultTree(resultTree, resultNodes)
+            : null;
 
         // Apply output method post-processing
         // When result-document claimed primary output with a named format, use that declaration
