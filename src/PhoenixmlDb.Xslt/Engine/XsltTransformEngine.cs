@@ -169,6 +169,33 @@ public sealed class XsltTransformEngine
     /// Transforms an XML document using the stylesheet.
     /// </summary>
     /// <summary>
+    /// XTSE3105 (XSLT 3.0 §6.6.1): in a mode with typed="strict", a template rule whose pattern
+    /// starts with a step on the child or descendant axis naming an element must name one the
+    /// schemas in scope declare. Such a rule could never match a validated node.
+    /// </summary>
+    private void RequireDeclaredNamesInStrictTypedModes()
+    {
+        if (_schemaProvider is null)
+            return;
+        foreach (var template in _stylesheet.Templates)
+        {
+            if (template.Match is not PathPattern { Steps: [var first, ..] }
+                || first.Axis is not (Axis.Child or Axis.Descendant)
+                || first.NodeTest is not PhoenixmlDb.XQuery.Ast.NameTest { LocalName: not "*" } name
+                || name.IsNamespaceWildcard)
+                continue;
+            var modes = template.Modes.Count > 0 ? template.Modes : [new QName(default, "")];
+            foreach (var mode in modes)
+            {
+                if (_stylesheet.Modes.TryGetValue(mode, out var declared) && declared.TypedAttribute == "strict"
+                    && !_schemaProvider.HasElementDeclaration(name.NamespaceUri ?? "", name.LocalName))
+                    throw new XsltException(
+                        $"XTSE3105: The pattern of a template rule of a mode with typed=\"strict\" names the element '{name.LocalName}', which the schemas in scope do not declare");
+            }
+        }
+    }
+
+    /// <summary>
     /// Reports XTSE3430 for a streamable-mode rule that is not guaranteed-streamable, when the
     /// caller asked for the strict rule and did not ask for tree evaluation.
     /// </summary>
@@ -4912,6 +4939,7 @@ public sealed class XsltTransformEngine
     private async Task<string> TransformOnCurrentStackAsync(string xmlSource, XsltTransformOptions? options)
     {
         EnsureStrictStreamability(options);
+        RequireDeclaredNamesInStrictTypedModes();
         ArgumentNullException.ThrowIfNull(xmlSource);
         // Strip leading BOM character (U+FEFF) — XmlDocument.LoadXml rejects it
         if (xmlSource.Length > 0 && xmlSource[0] == '\uFEFF')

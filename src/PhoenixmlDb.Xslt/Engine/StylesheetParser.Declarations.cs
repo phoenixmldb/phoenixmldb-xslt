@@ -1806,7 +1806,7 @@ public sealed partial class StylesheetParser
                     UseAccumulatorNames = mode.UseAccumulatorNames,
                     Visibility = vis,
                     VisibilityAttr = VisibilityToAttr(vis),
-                    TypedValueWarnings = mode.TypedValueWarnings, Typed = mode.Typed,
+                    TypedValueWarnings = mode.TypedValueWarnings, Typed = mode.Typed, TypedAttribute = mode.TypedAttribute,
                     UseAccumulatorsAttr = mode.UseAccumulatorsAttr,
                 };
             }
@@ -2163,6 +2163,7 @@ public sealed partial class StylesheetParser
                                         VisibilityAttr = expose.Element?.Attribute("visibility")?.Value,
                                         TypedValueWarnings = mode.TypedValueWarnings,
                                         Typed = mode.Typed,
+                                        TypedAttribute = mode.TypedAttribute,
                                         UseAccumulatorsAttr = mode.UseAccumulatorsAttr,
                                     };
                                     if (visibility == Visibility.Private)
@@ -3163,7 +3164,14 @@ public sealed partial class StylesheetParser
             UseAllAccumulators = useAllAccumulators,
             UseAccumulatorNames = useAccumulatorNames,
             UseAccumulatorsAttr = useAccumulatorsAttr?.Value.Trim(),
-            Typed = isTyped
+            Typed = isTyped,
+            TypedAttribute = typedAttr?.Value.Trim() switch
+            {
+                null => null,
+                "true" or "1" => "yes",
+                "false" or "0" => "no",
+                var value => value,
+            }
         };
     }
 

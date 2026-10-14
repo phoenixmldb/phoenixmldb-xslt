@@ -632,6 +632,19 @@ internal sealed partial class DefaultXsltExecutionContext
             && (node is XdmElement { TypeAnnotation: var elementType } && !XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(elementType)
                 || node is XdmAttribute { TypeAnnotation: var attributeType } && !XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(attributeType)))
             throw Error("XTTE3100: xsl:apply-templates selects an untyped element or attribute in a mode with typed='yes'");
+        // typed="no": a typed element or attribute is XTTE3110 (§6.6.1).
+        if (ModeTypedAttribute(mode) == "no"
+            && (node is XdmElement { TypeAnnotation: var typedElement } && XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(typedElement)
+                    && typedElement != Xdm.XdmTypeName.Untyped
+                || node is XdmAttribute { TypeAnnotation: var typedAttribute } && XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(typedAttribute)))
+            throw Error("XTTE3110: xsl:apply-templates selects a typed element or attribute in a mode with typed='no'");
+    }
+
+    private string? ModeTypedAttribute(QName? mode)
+    {
+        if (mode != null && _stylesheet.Modes.TryGetValue(mode.Value, out var declared))
+            return declared.TypedAttribute;
+        return _stylesheet.Modes.TryGetValue(new QName(default, ""), out var unnamed) ? unnamed.TypedAttribute : null;
     }
 
     private async ValueTask ApplyBuiltInTemplateAsync(

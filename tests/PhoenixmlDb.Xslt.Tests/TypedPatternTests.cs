@@ -416,4 +416,45 @@ public sealed class TypedPatternTests : IDisposable
                 """, Source);
         (await notAware.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTDE3160");
     }
+
+    /// <summary>The static and type errors of the type attribute (XSLT 3.0 §25.4, §11.3).</summary>
+    [Theory]
+    // type and validation together.
+    [InlineData("<e><xsl:attribute name='a' type='xs:integer' validation='strict'>1</xsl:attribute></e>", "XTSE1505")]
+    // A prefix that is not declared; was XTSE0280.
+    [InlineData("<e><xsl:attribute name='a' type='nope:x'>1</xsl:attribute></e>", "XTSE1520")]
+    // Not a QName.
+    [InlineData("<e><xsl:attribute name='a' type='t::x'>1</xsl:attribute></e>", "XTSE1520")]
+    // A new attribute validated against xs:QName.
+    [InlineData("<e><xsl:attribute name='a' type='xs:QName'>t:x</xsl:attribute></e>", "XTTE1545")]
+    public async Task Type_attribute_errors(string body, string code)
+    {
+        var act = () => RunAsync($"<xsl:template match='/'>{body}</xsl:template>", "<x/>", validation: null);
+        (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain(code);
+    }
+
+    /// <summary>A mode with typed="no" refuses a typed element: XTTE3110 (§6.6.1).</summary>
+    [Fact]
+    public async Task A_mode_with_typed_no_refuses_a_typed_element()
+    {
+        var act = () => RunAsync("""
+                <xsl:mode name="u" typed="no"/>
+                <xsl:template match="/"><xsl:apply-templates select="t:doc" mode="u"/></xsl:template>
+                """, Source);
+        (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTTE3110");
+    }
+
+    /// <summary>
+    /// A mode with typed="strict" may not have a rule whose pattern names an element the schemas
+    /// do not declare: XTSE3105 (§6.6.1).
+    /// </summary>
+    [Fact]
+    public async Task A_strict_typed_mode_requires_declared_names_in_its_patterns()
+    {
+        var act = () => RunAsync("""
+                <xsl:mode typed="strict"/>
+                <xsl:template match="t:undeclared">x</xsl:template>
+                """, Source);
+        (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTSE3105");
+    }
 }

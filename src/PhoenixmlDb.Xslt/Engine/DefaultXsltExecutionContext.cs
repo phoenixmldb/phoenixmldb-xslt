@@ -3335,9 +3335,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             throw new XsltException(
                 $"XTTE1545: {instructionName} validation requires a registered ISchemaProvider on the XsltTransformer", location);
         RequireKnownType(type, instructionName, location);
+        // xsl:attribute naming a complex type is XTSE1530 (§11.3), reported where it is found.
         if (IsComplexType(type))
             throw new XsltException(
-                $"{(copied ? "XTTE1535" : "XTTE1540")}: {instructionName}: an attribute cannot be validated against the complex type {type}", location);
+                $"{(copied ? "XTTE1535" : instructionName == "xsl:attribute" ? "XTSE1530" : "XTTE1540")}: {instructionName}: an attribute cannot be validated against the complex type {type}", location);
+        // An attribute that is made may not be validated against xs:QName or xs:NOTATION: its
+        // value cannot be namespace-fixed (§25.4.1, XTTE1545).
+        if (!copied && type.Namespace == "http://www.w3.org/2001/XMLSchema" && type.LocalName is "QName" or "NOTATION")
+            throw new XsltException(
+                $"XTTE1545: {instructionName}: a new attribute cannot be validated against the namespace-sensitive type {type}", location);
         try
         {
             var text = $"<a>{System.Security.SecurityElement.Escape(value)}</a>";

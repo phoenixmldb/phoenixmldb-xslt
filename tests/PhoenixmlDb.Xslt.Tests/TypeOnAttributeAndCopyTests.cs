@@ -54,7 +54,8 @@ public sealed class TypeOnAttributeAndCopyTests : IDisposable
     [InlineData("<e><xsl:attribute name=\"n\" type=\"o:small\">70</xsl:attribute></e>", "XTTE1540")]
     [InlineData("<e><xsl:attribute name=\"n\" type=\"o:small\" select=\"70\"/></e>", "XTTE1540")]
     // an attribute cannot have a complex type
-    [InlineData("<e><xsl:attribute name=\"n\" type=\"o:orderType\">7</xsl:attribute></e>", "XTTE1540")]
+    // xsl:attribute naming a complex type is XTSE1530 (XSLT 3.0 §11.3), not XTTE1540 (W3C error-1530a).
+    [InlineData("<e><xsl:attribute name=\"n\" type=\"o:orderType\">7</xsl:attribute></e>", "XTSE1530")]
     [InlineData("<e><xsl:attribute name=\"n\" type=\"o:nope\">7</xsl:attribute></e>", "XTSE1520")]
     // xsl:copy-of: an element, each of several elements, an attribute
     [InlineData("<xsl:copy-of select=\"$bad/a\" type=\"o:orderType\"/>", "XTTE1540")]

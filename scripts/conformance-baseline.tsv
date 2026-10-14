@@ -421,7 +421,7 @@ tests/attr/avt/_avt-test-set.xml	34	35
 tests/attr/declared-modes/_declared-modes-test-set.xml	14	14
 tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml	28	28
 tests/attr/expand-text/_expand-text-test-set.xml	61	62
-tests/attr/match/_match-test-set.xml	267	282
+tests/attr/match/_match-test-set.xml	269	282
 tests/attr/mode/_mode-test-set.xml	168	168
 tests/attr/package-version/_package-version-test-set.xml	34	35
 tests/attr/select/_select-test-set.xml	157	157
@@ -535,7 +535,7 @@ tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	5	7
 tests/misc/collations/_collations-test-set.xml	42	43
 tests/misc/docbook/_docbook-test-set.xml	2	4
-tests/misc/error/_error-test-set.xml	515	528
+tests/misc/error/_error-test-set.xml	523	528
 tests/misc/forwards/_forwards-test-set.xml	23	23
 tests/misc/initial-function/_initial-function-test-set.xml	34	35
 tests/misc/initial-mode/_initial-mode-test-set.xml	5	5
