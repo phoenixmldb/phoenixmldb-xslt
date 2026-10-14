@@ -578,9 +578,9 @@ internal sealed partial class DefaultXsltExecutionContext
     /// type checking (typed casts, facet enforcement) is deferred — when the parent element
     /// also carries <c>validation="strict|lax"</c>, the element-level check covers the value.
     /// </summary>
-    private void ValidateAttributeIfRequested(XsltAttribute instruction, string name, string? explicitNsUri)
+    private Xdm.XdmTypeName? ValidateAttributeIfRequested(XsltAttribute instruction, string name, string? explicitNsUri, string value)
     {
-        if (!ShouldRunValidation(instruction.Validation)) return;
+        if (!ShouldRunValidation(instruction.Validation)) return null;
         if (_schemaProvider is null)
         {
             throw new XsltException(
@@ -607,6 +607,32 @@ internal sealed partial class DefaultXsltExecutionContext
                     instruction.Location);
             }
             // Lax: silently skip when no declaration is found.
+            return null;
+        }
+
+        // The value against the declaration, and the annotation it gives: the attribute on an
+        // element the schema does not know, validated laxly, is assessed by its global
+        // declaration. The value was not checked at all, and the attribute stayed untyped, so
+        // schema-attribute(N) did not match it.
+        if (_nodeStore is not PhoenixmlDb.XQuery.INodeBuilder builder)
+            return null;
+        var text = string.IsNullOrEmpty(nsUri)
+            ? $"<phx-attribute-holder {localName}=\"{System.Security.SecurityElement.Escape(value)}\"/>"
+            : $"<phx-attribute-holder xmlns:phx-a=\"{System.Security.SecurityElement.Escape(nsUri)}\" phx-a:{localName}=\"{System.Security.SecurityElement.Escape(value)}\"/>";
+        try
+        {
+            if (_schemaProvider.ValidateElementAndAnnotate(text, builder, PhoenixmlDb.XQuery.ValidationMode.Lax) is Xdm.Nodes.XdmDocument { Children: [var rootId, ..] }
+                && _nodeStore.GetNode(rootId) is Xdm.Nodes.XdmElement { Attributes: [var attributeId, ..] }
+                && _nodeStore.GetNode(attributeId) is Xdm.Nodes.XdmAttribute validated
+                && XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(validated.TypeAnnotation))
+                return validated.TypeAnnotation;
+            return null;
+        }
+        catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
+        {
+            throw new XsltException(
+                $"{(instruction.Validation == Ast.ValidationMode.Strict ? "XTTE1510" : "XTTE1515")}: xsl:attribute validation failed: the value '{value}' of '{name}' is not valid: {ex.Message}",
+                instruction.Location);
         }
     }
 
@@ -1206,6 +1232,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 value = StringValueOf(value);
             }
         }
+
+        // A derived built-in type (as="xs:int", as="xs:NMTOKEN"): the value cast to that type,
+        // which is an instance of it. The arms below give the base type's value.
+        if (targetType.LocalTypeName is { } derivedName && value is string or Xdm.XsUntypedAtomic
+            && XQuery.Execution.TypeCastHelper.BuiltInTypedValue(derivedName, StringValueOf(value)) is { } derivedValue)
+            return derivedValue;
 
         return itemType switch
         {

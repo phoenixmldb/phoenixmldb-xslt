@@ -2322,6 +2322,11 @@ public sealed partial class StylesheetParser
                         && pattern.AsSpan(i, 5).SequenceEqual("union")
                         && (i == 0 || !char.IsLetterOrDigit(pattern[i - 1]) && pattern[i - 1] != '_' && pattern[i - 1] != '-')
                         && (i + 5 >= pattern.Length || !char.IsLetterOrDigit(pattern[i + 5]) && pattern[i + 5] != '_' && pattern[i + 5] != '-')
+                        // Part of a QName (my:union, union:x), an attribute (@union) or a
+                        // variable ($union) is a name and not the operator: match="my:union"
+                        // was split into "my:" and nothing.
+                        && (i == 0 || pattern[i - 1] is not (':' or '@' or '$' or '.'))
+                        && (i + 5 >= pattern.Length || pattern[i + 5] is not (':' or '.'))
                         && PrecedingNonWhitespaceChar(pattern, i) != '/':
                         parts.Add(pattern[start..i]);
                         start = i + 5;

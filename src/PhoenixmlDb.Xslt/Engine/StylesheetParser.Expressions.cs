@@ -976,12 +976,25 @@ public sealed partial class StylesheetParser
                     axis = Axis.Self;
             }
 
+            // A kind test that names a type, or a declaration of the schema: the name and the
+            // kind are matched as for any step, and the type by the expression that
+            // `instance of` evaluates, with the schemas in scope. The type was read and not
+            // used, so element(*, T) matched every element and schema-element(N) every N.
+            var hasTypeTest = nodeTest is KindTest { TypeName: not null }
+                || name.StartsWith("schema-element(", StringComparison.Ordinal)
+                || name.StartsWith("schema-attribute(", StringComparison.Ordinal)
+                || name.StartsWith("document-node(schema-element(", StringComparison.Ordinal)
+                || (name.StartsWith("document-node(element(", StringComparison.Ordinal) && name.Contains(',', StringComparison.Ordinal));
+            if (hasTypeTest)
+                predicates.Insert(0, ParseExpression($". instance of {name}", context));
+
             steps.Add(new PatternStep
             {
                 Axis = axis,
                 NodeTest = nodeTest,
                 DescendantSeparator = descendantSep,
-                Predicates = predicates
+                Predicates = predicates,
+                HasTypeTest = hasTypeTest
             });
         }
 
@@ -1598,8 +1611,30 @@ public sealed partial class StylesheetParser
             _ => ItemType.Item
         };
 
+        // A derived built-in type keeps its name: xs:int is checked and cast as xs:int, not as
+        // the xs:integer it was reduced to (a parameter as="xs:int" held a plain integer, and
+        // `$p instance of xs:int` was false). The checks of the XQuery engine read these two.
+        if (type.StartsWith("xs:", StringComparison.Ordinal) && DerivedBuiltInTypes.Contains(type[3..]))
+        {
+            var local = type[3..];
+            return new XdmSequenceType
+            {
+                ItemType = itemType,
+                Occurrence = occurrence,
+                LocalTypeName = local,
+                DerivedIntegerType = itemType == ItemType.Integer ? local : null,
+            };
+        }
+
         return new XdmSequenceType { ItemType = itemType, Occurrence = occurrence };
     }
+
+    private static readonly HashSet<string> DerivedBuiltInTypes = new(StringComparer.Ordinal)
+    {
+        "normalizedString", "token", "language", "NMTOKEN", "Name", "NCName", "ID", "IDREF", "ENTITY",
+        "long", "int", "short", "byte", "nonNegativeInteger", "positiveInteger", "nonPositiveInteger",
+        "negativeInteger", "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte",
+    };
 
 
     private static string? GetLiteralAvtValue(XsltAttributeValueTemplate avt)
