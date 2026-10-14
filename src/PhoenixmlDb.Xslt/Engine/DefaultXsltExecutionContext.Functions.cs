@@ -2084,7 +2084,23 @@ internal sealed partial class DefaultXsltExecutionContext
             return XsltTransformEngine.UnwrapCrossStoreValue(param.RuntimeValue, _nodeStore);
         if (param.Select != null)
         {
-            return await EvaluateAsync(param.Select).ConfigureAwait(false);
+            var selected = await EvaluateAsync(param.Select).ConfigureAwait(false);
+            // An atomic as= type: the nodes selected are atomized to their typed values, which
+            // are converted to the type (XSLT 3.0 §9.3). The nodes were passed on, so
+            // `$p instance of xs:int` was false for a validated element of type xs:int.
+            if (param.As is { } atomicType && IsCastableAtomicType(atomicType.ItemType))
+            {
+                if (selected is object?[] many)
+                {
+                    var converted = new object?[many.Length];
+                    for (var i = 0; i < many.Length; i++)
+                        converted[i] = many[i] is Xdm.Nodes.XdmNode ? CoerceToType(many[i], atomicType) : many[i];
+                    return converted;
+                }
+                if (selected is Xdm.Nodes.XdmNode)
+                    return CoerceToType(selected, atomicType);
+            }
+            return selected;
         }
         if (param.Content != null)
         {
