@@ -198,6 +198,14 @@ public sealed class XsltTransformer
         = new Dictionary<string, string>();
 
     /// <summary>
+    /// The principal result of the last transformation as a tree, with the type annotations
+    /// that validation gave it, when the whole result was validated as it was built (an
+    /// element with <c>xsl:validation</c>, <c>validation=</c> or <c>type=</c> at its top);
+    /// null otherwise. The serialized result is text, and text read again is untyped.
+    /// </summary>
+    public XsltResultTree? PrincipalResultTree { get; private set; }
+
+    /// <summary>
     /// Controls whether DTD processing is allowed when loading stylesheets.
     /// Default is <c>false</c> (DTDs are prohibited) for security.
     /// </summary>
@@ -1031,10 +1039,12 @@ public sealed class XsltTransformer
                 await writer.FlushAsync(ct).ConfigureAwait(false);
             }
             SecondaryResultDocuments = new Dictionary<string, string>();
+            PrincipalResultTree = null;
         }
         else
         {
             SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        PrincipalResultTree = engine.PrincipalResultTree;
         }
         return result;
     }
@@ -1090,6 +1100,7 @@ public sealed class XsltTransformer
         var serialized = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
 
         SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        PrincipalResultTree = engine.PrincipalResultTree;
         if (rawBox.Value != null)
             return rawBox.Value;
 
@@ -1189,10 +1200,12 @@ public sealed class XsltTransformer
                 await writer.FlushAsync(ct).ConfigureAwait(false);
             }
             SecondaryResultDocuments = new Dictionary<string, string>();
+            PrincipalResultTree = null;
         }
         else
         {
             SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        PrincipalResultTree = engine.PrincipalResultTree;
         }
         return result;
     }
@@ -1247,6 +1260,7 @@ public sealed class XsltTransformer
             raw = await engine.TransformRawAsync("<empty/>", options).ConfigureAwait(false);
 
         SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        PrincipalResultTree = engine.PrincipalResultTree;
 
         // Prefer the explicit RawResult box (initial-function path) when set; otherwise
         // use TransformRawAsync's return value (template / mode / default paths).
@@ -1591,6 +1605,7 @@ public sealed class XsltTransformer
 
         // Surface secondary results to the facade, mirroring the buffered TransformAsync overloads.
         SecondaryResultDocuments = engine.SecondaryResultDocuments;
+        PrincipalResultTree = engine.PrincipalResultTree;
     }
 
     /// <summary>

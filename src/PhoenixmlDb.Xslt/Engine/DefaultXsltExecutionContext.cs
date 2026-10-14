@@ -2271,11 +2271,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         }
 
         var startLength = _output.Length;
+        var atTopOfPrincipalResult = _serializingElementDepth == 0 && _temporaryOutputDepth == 0
+            && _resultDocumentRedirectDepth == 0 && _activeTreeConstructor is null;
         await body().ConfigureAwait(false);
         if (_output.Length > startLength)
         {
             var fragment = _output.ToString(startLength, _output.Length - startLength);
             RunValidation(mode, fragment, ValidationKind.Fragment, instructionName, location, type);
+            // An element validated at the top of the principal result: kept with its type
+            // annotations, for the result tree (see BuildPrincipalResultTree).
+            if (atTopOfPrincipalResult && ValidateWrittenElement(fragment, mode!.Value, instructionName, location, type) is { } typed)
+                _principalValidatedRoots.Add((fragment, typed));
         }
     }
 

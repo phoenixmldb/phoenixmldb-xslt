@@ -51,6 +51,9 @@
 - **`json-to-xml` with `validate: true()` gives a typed tree**, validated against the built-in
   schema for the XML representation of JSON; it was FOJS0004, as for a processor that is not
   schema-aware.
+- **`XsltTransformer.PrincipalResultTree`** (new): the principal result as a tree with the
+  type annotations that validation gave it, when the whole result was validated as it was
+  built; the result was available only as text, and the text read again is untyped.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

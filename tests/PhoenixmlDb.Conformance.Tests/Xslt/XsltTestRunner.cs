@@ -1212,6 +1212,11 @@ public sealed class XsltTestRunner
                 {
                     primaryOutput = await transformer.TransformAsync(sourceContent, cts.Token);
                 }
+                // A result validated as it was built is also kept as a tree, with its type
+                // annotations, for the assertions (validation-1601: `not(/* instance of
+                // element(*, xs:untyped))`); the text read again is untyped.
+                if (transformer.PrincipalResultTree is { } resultTree)
+                    TypedResults.AddOrUpdate(primaryOutput, new TypedResult(resultTree, transformer.SchemaProvider));
                 return (primaryOutput, transformer.SecondaryResultDocuments);
             }, cts.Token);
 
@@ -1642,6 +1647,50 @@ public sealed class XsltTestRunner
         catch (NotSupportedException) { return message; }
     }
 
+    private sealed record TypedResult(PhoenixmlDb.Xslt.XsltResultTree Tree, PhoenixmlDb.XQuery.ISchemaProvider? Schemas);
+
+    /// <summary>The typed result trees of the transformations, by the output text they produced.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<string, TypedResult> TypedResults = new();
+
+    private static async Task<bool> EvaluateAssertAsync(XsltAssertion assertion,
+        PhoenixmlDb.XQuery.Execution.QueryEngine engine, object? doc, CancellationToken ct)
+    {
+            // Parse with NormalizeLineEndings OFF, then compile the AST. QueryEngine.Compile(string)
+            // builds its own parser with XQuery's query-SOURCE defaults, which apply §A.2.1
+            // end-of-line normalization — and this expression did not come from a query file. It
+            // came from the catalog XML, where the XML parser had already decoded &#xD; into a
+            // real CR. Normalizing again rewrites that CR to LF, so
+            //
+            //     /out/a[3]/@att = "&#x9;&#xA;&#xD;"
+            //
+            // compares against TAB,LF,LF and cannot match however right the engine is. That is
+            // the SAME defect this session fixed in the XSLT engine, reproduced here in the
+            // harness — and it masked the engine fix completely.
+            var parser = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade
+            {
+                AllowNamespaceAxis = true,
+                NormalizeLineEndings = false
+            };
+            var prolog = new System.Text.StringBuilder();
+            foreach (var (prefix, uri) in assertion.InScopeNamespaces)
+                prolog.Append("declare namespace ").Append(prefix).Append(" = \"")
+                    .Append(uri.Replace("\"", "\"\"", StringComparison.Ordinal)).Append("\"; ");
+            var ast = parser.Parse(prolog + "declare variable $result external; " + assertion.Value);
+            var compiled = engine.Compile(ast);
+            if (!compiled.Success) return false;
+
+            var ctx = engine.CreateContext(initialContextItem: doc, cancellationToken: ct);
+            ctx.SetExternalVariable("result", doc);
+
+            var items = new List<object?>();
+            await foreach (var item in compiled.ExecutionPlan!.ExecuteAsync(ctx).ConfigureAwait(false))
+            {
+                items.Add(item);
+                if (items.Count > 10_000) break;
+            }
+            return EffectiveBooleanValue(items);
+    }
+
     private async Task<bool> VerifyXPathAssertAsync(
         XsltAssertion assertion, string? actualResult, CancellationToken ct, bool asFragment = false)
     {
@@ -1649,6 +1698,10 @@ public sealed class XsltTestRunner
 
         try
         {
+            if (!asFragment && TypedResults.TryGetValue(actualResult, out var typed))
+                return await EvaluateAssertAsync(assertion,
+                    new PhoenixmlDb.XQuery.Execution.QueryEngine(nodeProvider: typed.Tree.Nodes, schemaProvider: typed.Schemas),
+                    typed.Tree.Document, ct).ConfigureAwait(false);
             var store = new PhoenixmlDb.XQuery.XdmDocumentStore();
 
             // A TEXT-ONLY result is a document node whose children are text — valid XDM, but
@@ -1753,40 +1806,7 @@ public sealed class XsltTestRunner
                 }
             }
 
-            // Parse with NormalizeLineEndings OFF, then compile the AST. QueryEngine.Compile(string)
-            // builds its own parser with XQuery's query-SOURCE defaults, which apply §A.2.1
-            // end-of-line normalization — and this expression did not come from a query file. It
-            // came from the catalog XML, where the XML parser had already decoded &#xD; into a
-            // real CR. Normalizing again rewrites that CR to LF, so
-            //
-            //     /out/a[3]/@att = "&#x9;&#xA;&#xD;"
-            //
-            // compares against TAB,LF,LF and cannot match however right the engine is. That is
-            // the SAME defect this session fixed in the XSLT engine, reproduced here in the
-            // harness — and it masked the engine fix completely.
-            var parser = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade
-            {
-                AllowNamespaceAxis = true,
-                NormalizeLineEndings = false
-            };
-            var prolog = new System.Text.StringBuilder();
-            foreach (var (prefix, uri) in assertion.InScopeNamespaces)
-                prolog.Append("declare namespace ").Append(prefix).Append(" = \"")
-                    .Append(uri.Replace("\"", "\"\"", StringComparison.Ordinal)).Append("\"; ");
-            var ast = parser.Parse(prolog + "declare variable $result external; " + assertion.Value);
-            var compiled = engine.Compile(ast);
-            if (!compiled.Success) return false;
-
-            var ctx = engine.CreateContext(initialContextItem: doc, cancellationToken: ct);
-            ctx.SetExternalVariable("result", doc);
-
-            var items = new List<object?>();
-            await foreach (var item in compiled.ExecutionPlan!.ExecuteAsync(ctx).ConfigureAwait(false))
-            {
-                items.Add(item);
-                if (items.Count > 10_000) break;
-            }
-            return EffectiveBooleanValue(items);
+            return await EvaluateAssertAsync(assertion, engine, doc, ct).ConfigureAwait(false);
         }
         // The serialized result is not a single well-formed document — most often a result
         // tree with several top-level elements, which an XDM document permits and XML does not.
