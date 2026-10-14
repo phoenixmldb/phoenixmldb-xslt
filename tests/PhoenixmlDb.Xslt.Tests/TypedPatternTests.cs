@@ -399,4 +399,21 @@ public sealed class TypedPatternTests : IDisposable
         using var input = new StringReader("<doc xml:lang='en'><p/></doc>");
         (await t.TransformAsync(input)).Should().Be("<r en=\"true\"/>");
     }
+
+    /// <summary>
+    /// xsl:evaluate schema-aware="yes" may name a type of an imported schema with a prefix of
+    /// the stylesheet: the prefix was not bound when the expression was parsed (XPST0081).
+    /// Without schema-aware the type is not available: XTDE3160.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_may_name_a_schema_type_when_schema_aware()
+    {
+        (await RunAsync("""
+                <xsl:template match="/"><xsl:evaluate xpath="'t:doc/t:p instance of element(*, t:part)'" context-item="." schema-aware="yes"/></xsl:template>
+                """, Source)).Should().Be("true");
+        var notAware = () => RunAsync("""
+                <xsl:template match="/"><xsl:evaluate xpath="'t:doc/t:p instance of element(*, t:part)'" context-item="."/></xsl:template>
+                """, Source);
+        (await notAware.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTDE3160");
+    }
 }

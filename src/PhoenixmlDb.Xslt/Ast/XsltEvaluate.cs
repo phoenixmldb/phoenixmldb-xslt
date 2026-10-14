@@ -17,6 +17,12 @@ public sealed class XsltEvaluate : XsltInstruction
     public XQueryExpression? NamespaceContext { get; init; }
     public XQueryExpression? WithParamsExpr { get; init; }
     public XdmSequenceType? As { get; init; }
+
+    /// <summary>
+    /// The schema-aware attribute (an attribute value template). When it is not yes, the
+    /// types of imported schemas are not available to the target expression (XSLT 3.0 §10.4.1).
+    /// </summary>
+    public XsltAttributeValueTemplate? SchemaAware { get; init; }
     public string? EvaluateDefaultCollation { get; init; }
     public List<XsltWithParam> WithParams { get; init; } = [];
     public XsltSequenceConstructor? Fallback { get; init; }

@@ -222,4 +222,18 @@ public class StrictStreamabilityTests
         t.StrictStreamability = true;
         (await t.TransformAsync(Input)).Trim().Should().Be("<i>f1b1</i><i>f2b2</i>");
     }
+
+    /// <summary>
+    /// A for-each over head() of a crawling expression selects one node at most, so it is
+    /// striding, and a consuming body over it is streamable; it was refused as a crawl
+    /// (W3C si-element-118). Without head() the same body is still XTSE3430.
+    /// </summary>
+    [Fact]
+    public async Task A_for_each_over_head_of_a_crawl_is_streamable()
+    {
+        (await RunAsync("""<xsl:for-each select="head(descendant::foo)"><x><xsl:copy-of select="node()"/></x></xsl:for-each>""", strict: true))
+            .Should().Be("<root><item><x>f1</x></item><item><x>f2</x></item></root>");
+        var crawl = () => RunAsync("""<xsl:for-each select="descendant::*"><x><xsl:copy-of select="node()"/></x></xsl:for-each>""", strict: true);
+        (await crawl.Should().ThrowAsync<XsltException>()).Which.Message.Should().Contain("XTSE3430");
+    }
 }

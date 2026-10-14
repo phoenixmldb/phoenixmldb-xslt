@@ -822,6 +822,17 @@ internal static class StreamabilityChecker
         return checker.Found;
     }
 
+    /// <summary>
+    /// Whether a select yields one item at most: head(E), exactly-one(E), zero-or-one(E). Such a
+    /// select over a crawling expression is striding (XSLT 3.0 §19.8.8: at most one node, so no
+    /// node of it contains another), and a consuming body over it is streamable; it was refused
+    /// as a crawl (W3C si-element-118).
+    /// </summary>
+    private static bool SelectsAtMostOneItem(XQueryExpression select)
+        => select is FunctionCallExpression { Name.LocalName: "head" or "exactly-one" or "zero-or-one" } call
+           && (call.Name.Namespace == NamespaceId.Fn || call.Name.Namespace == NamespaceId.None)
+           && call.Arguments.Count == 1;
+
     private static bool ContainsDescendantAxis(XQueryExpression expr)
     {
         var checker = new DescendantAxisDetector();
@@ -1357,7 +1368,7 @@ internal static class StreamabilityChecker
             // not streamable — unbounded crawling requires buffering the entire document.
             // Note: union-of-striding crawling is NOT checked here — it can be streamed
             // with bounded buffering even when the body is consuming.
-            if (insn.Select != null && ContainsDescendantAxis(insn.Select))
+            if (insn.Select != null && ContainsDescendantAxis(insn.Select) && !SelectsAtMostOneItem(insn.Select))
             {
                 if (BodyConsumesContext(insn.Body))
                 {
@@ -1582,7 +1593,7 @@ internal static class StreamabilityChecker
 
             // Same body checks as for-each: crawling select + consuming body,
             // and multi-consuming expressions in the body.
-            if (!selectGroundsItems && insn.Select != null && ContainsDescendantAxis(insn.Select))
+            if (!selectGroundsItems && insn.Select != null && ContainsDescendantAxis(insn.Select) && !SelectsAtMostOneItem(insn.Select))
             {
                 if (BodyConsumesContext(insn.Body))
                 {
