@@ -1,12 +1,12 @@
 # Status
 
-Generated 2026-10-13 22:50 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-14 12:00 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.4.0 | ? | **repo is at ?, nuget.org has 2.4.0** |
+| `PhoenixmlDb.Core` | 2.5.0 | ? | **repo is at ?, nuget.org has 2.5.0** |
 | `PhoenixmlDb.XQuery` | 2.8.0 | ? | **repo is at ?, nuget.org has 2.8.0** |
 | `PhoenixmlDb.Xslt` | 2.8.0 | 2.8.0 | current |
 | `xquery4` | 2.8.0 | ? | **repo is at ?, nuget.org has 2.8.0** |
@@ -16,22 +16,22 @@ Generated 2026-10-13 22:50 UTC by `scripts/status.sh`. Do not edit by hand.
 
 | repo | open issues | open PRs |
 |---|---|---|
-| phoenixmldb-core | 1 | 0 |
+| phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 1 | 0 |
+| phoenixmldb-xslt | 1 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
-
-**phoenixmldb-core**
-
-- [5] Naming decision: the prefix `dbxml` means three different things
 
 **phoenixmldb-xslt**
 
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-xslt**
+
+- [384] Copied documents validated as documents; lang() streamable; streaming-feature cases judged strictly
 
 **phoenixmldb-cli**
 
@@ -70,7 +70,7 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 10707/10839 (98.78%)** across 221 test-sets,
+- **W3C XSLT 3.0 — 11274/11539 (97.70%)** across 225 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 30145/31024 (97.17%)** across 428 test-sets,
