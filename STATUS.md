@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-14 12:00 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-14 21:45 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -19,7 +19,7 @@ Generated 2026-10-14 12:00 UTC by `scripts/status.sh`. Do not edit by hand.
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
 | phoenixmldb-xslt | 1 | 1 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -31,11 +31,7 @@ Generated 2026-10-14 12:00 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [384] Copied documents validated as documents; lang() streamable; streaming-feature cases judged strictly
-
-**phoenixmldb-cli**
-
-- [16] build: Bump the phoenixmldb-engines group with 2 updates
+- [389] build: Bump the phoenixmldb-engines group with 1 update
 
 ## Defect register
 
@@ -70,7 +66,7 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 11274/11539 (97.70%)** across 225 test-sets,
+- **W3C XSLT 3.0 — 11323/11539 (98.13%)** across 225 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
 - **W3C QT3 baseline — 30145/31024 (97.17%)** across 428 test-sets,
