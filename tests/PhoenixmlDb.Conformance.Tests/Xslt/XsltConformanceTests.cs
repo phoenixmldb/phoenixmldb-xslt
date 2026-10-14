@@ -449,7 +449,11 @@ public sealed class XsltTestFixture : IAsyncLifetime
             // We don't support these advanced features yet
             SupportsStreaming = true,   // EXPERIMENT — measuring the 402 currently-skipped cases
             SupportsHigherOrderFunctions = true,
-            SupportsSchemaAwareness = false
+            // The suite is run as a schema-aware processor (owner's decision, 2026-10-13). It was
+            // not, and every case with the dependency schema_aware was skipped: about 950 cases
+            // in 50 sets, so none of the schema support was measured. The cases that require a
+            // processor that is NOT schema-aware are skipped in their place.
+            SupportsSchemaAwareness = true
         };
 
         // xsl:expose is implemented — enable its test set
