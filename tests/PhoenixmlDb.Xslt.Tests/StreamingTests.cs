@@ -1,5 +1,5 @@
 using System.Collections.ObjectModel;
-using FluentAssertions;
+using AwesomeAssertions;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.Xdm.Nodes;

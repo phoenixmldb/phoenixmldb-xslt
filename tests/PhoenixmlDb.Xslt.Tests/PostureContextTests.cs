@@ -1,5 +1,5 @@
 using PhoenixmlDb.Xslt.Engine.Streamability;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace PhoenixmlDb.Xslt.Tests;

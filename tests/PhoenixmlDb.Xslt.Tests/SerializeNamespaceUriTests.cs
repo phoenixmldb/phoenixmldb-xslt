@@ -1,6 +1,6 @@
 using System.Threading.Tasks;
 using System.Xml.Linq;
-using FluentAssertions;
+using AwesomeAssertions;
 using PhoenixmlDb.Xslt;
 using Xunit;
 

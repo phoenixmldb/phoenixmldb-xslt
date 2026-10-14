@@ -1,5 +1,5 @@
 using System.Xml.Linq;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace PhoenixmlDb.Conformance.Tests.Xslt;

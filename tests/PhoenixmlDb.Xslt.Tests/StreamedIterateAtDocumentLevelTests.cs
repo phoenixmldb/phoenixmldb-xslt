@@ -1,5 +1,5 @@
 using System.Text;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace PhoenixmlDb.Xslt.Tests;
