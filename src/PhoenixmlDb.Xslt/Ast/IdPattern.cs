@@ -11,8 +11,18 @@ namespace PhoenixmlDb.Xslt.Ast;
 /// </summary>
 public sealed class IdPattern : XsltPattern
 {
-    /// <summary>The value expression (argument to id()).</summary>
+    /// <summary>
+    /// The value expression (argument to id()); or, for element-with-id() and the forms with a
+    /// second argument, the whole call (see <see cref="WholeCalls"/>).
+    /// </summary>
     public required XQueryExpression ValueExpression { get; init; }
+
+    /// <summary>
+    /// The value expressions that are a whole call, id($v, $doc) or element-with-id(...): the
+    /// call is evaluated with the node being matched as the context item, and the node matches
+    /// when it is in the result.
+    /// </summary>
+    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<XQueryExpression, XQueryExpression> WholeCalls = new();
 
     /// <summary>
     /// Optional continuation pattern for descendant/child steps after id().

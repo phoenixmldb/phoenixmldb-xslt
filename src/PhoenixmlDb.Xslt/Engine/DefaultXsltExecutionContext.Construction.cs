@@ -1050,6 +1050,12 @@ internal sealed partial class DefaultXsltExecutionContext
                     };
                     docNode.BaseUri = seqBaseUri;
                     _nodeStore.Register(docNode);
+                    // A validated document has the type annotations of the schema: its IDs are
+                    // found by id() and element-with-id(), and its nodes match typed patterns.
+                    // It was checked for errors and kept untyped.
+                    var documentMode = instruction.ValidationType is not null ? Ast.ValidationMode.Strict : instruction.Validation;
+                    if (documentMode is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax && _schemaProvider is not null)
+                        docNode = ValidateBuiltDocument(docNode, documentMode.Value, "xsl:document", instruction.Location, instruction.ValidationType);
                     AppendToSeqAccumulator(docNode);
                 }
                 catch (System.Xml.XmlException)

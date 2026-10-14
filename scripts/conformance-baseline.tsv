@@ -421,7 +421,7 @@ tests/attr/avt/_avt-test-set.xml	34	35
 tests/attr/declared-modes/_declared-modes-test-set.xml	14	14
 tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml	28	28
 tests/attr/expand-text/_expand-text-test-set.xml	61	62
-tests/attr/match/_match-test-set.xml	261	282
+tests/attr/match/_match-test-set.xml	265	282
 tests/attr/mode/_mode-test-set.xml	167	168
 tests/attr/package-version/_package-version-test-set.xml	34	35
 tests/attr/select/_select-test-set.xml	157	157
