@@ -290,4 +290,17 @@ public sealed class TypedPatternTests : IDisposable
                   <xsl:value-of select="nilled($v), $v instance of element(*, xs:untyped)"/>
                 </xsl:template>
                 """, Nilled, validation: null)).Should().Be("true false");
+
+    /// <summary>
+    /// xsl:result-document validation="strict" with no href validates the principal result
+    /// as a document: two root elements are XTTE1550. Only a secondary result was validated.
+    /// </summary>
+    [Fact]
+    public async Task A_principal_result_document_is_validated_as_a_document()
+    {
+        var act = () => RunAsync("""
+                <xsl:template match="/"><xsl:result-document validation="strict"><t:n>1</t:n><t:n>2</t:n></xsl:result-document></xsl:template>
+                """, "<x/>", validation: null);
+        (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTTE1550");
+    }
 }
