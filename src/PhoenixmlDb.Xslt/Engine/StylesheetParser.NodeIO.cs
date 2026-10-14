@@ -704,7 +704,14 @@ public sealed partial class StylesheetParser
 
     private IdPattern? TryParseIdPattern(string pattern, XElement context)
     {
-        if (!pattern.StartsWith("id(", StringComparison.Ordinal))
+        // id(...) or element-with-id(...), XSLT 3.0 §5.5.2. A call with the second argument,
+        // or element-with-id, is kept whole and evaluated with the node being matched as the
+        // context item; only the one-argument id() was recognized, and element-with-id was
+        // XTSE0340.
+        var nameLength = pattern.StartsWith("id(", StringComparison.Ordinal) ? 2
+            : pattern.StartsWith("element-with-id(", StringComparison.Ordinal) ? 15
+            : -1;
+        if (nameLength < 0)
             return null;
 
         // Make sure it's not generate-id( or some other function ending in "id("
@@ -714,9 +721,11 @@ public sealed partial class StylesheetParser
         // Find the matching closing parenthesis for id(...)
         var depth = 0;
         var closeIdx = -1;
-        for (var k = 3; k < pattern.Length; k++)
+        var topLevelComma = false;
+        for (var k = nameLength + 1; k < pattern.Length; k++)
         {
             var c = pattern[k];
+            if (c == ',' && depth == 0) topLevelComma = true;
             if (c == '(') depth++;
             else if (c == ')')
             {
@@ -735,11 +744,14 @@ public sealed partial class StylesheetParser
             return null;
 
         // Extract the argument: id(value)
-        var argStr = pattern[3..closeIdx].Trim();
+        var wholeCall = nameLength != 2 || topLevelComma;
+        var argStr = wholeCall ? pattern[..(closeIdx + 1)] : pattern[(nameLength + 1)..closeIdx].Trim();
         XQueryExpression valueExpr;
         try
         {
             valueExpr = ParseExpr(argStr);
+            if (wholeCall)
+                IdPattern.WholeCalls.AddOrUpdate(valueExpr, valueExpr);
         }
 #pragma warning disable CA1031
         catch (Exception)

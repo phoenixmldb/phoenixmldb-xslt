@@ -34,6 +34,9 @@ public sealed class TypedPatternTests : IDisposable
               </xs:sequence><xs:attribute name="code" type="t:part"/></xs:complexType></xs:element>
               <xs:attribute name="special" type="t:part"/>
               <xs:element name="n" type="xs:integer" nillable="true"/>
+              <xs:element name="table"><xs:complexType><xs:sequence><xs:element name="row" maxOccurs="unbounded"><xs:complexType><xs:sequence>
+                <xs:element name="key" type="xs:ID"/><xs:element name="value" type="xs:string"/>
+              </xs:sequence></xs:complexType></xs:element></xs:sequence></xs:complexType></xs:element>
             </xs:schema>
             """, TestContext.Current.CancellationToken);
         var t = new XsltTransformer { SourceValidation = validation };
@@ -218,4 +221,32 @@ public sealed class TypedPatternTests : IDisposable
                 </xsl:template>
                 """, "<x/>", validation: null)).Should().Be("true");
     }
+
+    private const string Table = """
+        <xsl:variable name="x" as="document-node()">
+          <xsl:document validation="strict"><t:table><t:row><t:key>A</t:key><t:value>alpha</t:value></t:row><t:row><t:key>C</t:key><t:value>gamma</t:value></t:row></t:table></xsl:document>
+        </xsl:variable>
+        """;
+
+    /// <summary>
+    /// element-with-id() and id() with a second argument may start a pattern (XSLT 3.0
+    /// §5.5.2); element-with-id was XTSE0340. A global document-node() made by a validated
+    /// xsl:document keeps its annotations, so the element of type xs:ID is found.
+    /// </summary>
+    [Fact]
+    public async Task A_pattern_may_start_with_element_with_id()
+        => (await RunAsync("""
+                <xsl:template match="/"><r><xsl:apply-templates select="$x//t:row"/></r></xsl:template>
+                <xsl:template match="element-with-id('C', $x)">[{t:value}]</xsl:template>
+                <xsl:template match="*"/>
+                """, "<x/>", validation: null, declarations: Table)).Should().Be("<r>[gamma]</r>");
+
+    /// <summary>id() finds an element of type xs:ID by the ID it holds; only ID attributes were looked at.</summary>
+    [Fact]
+    public async Task Id_finds_an_element_whose_type_is_xs_ID()
+        => (await RunAsync("""
+                <xsl:template match="/"><r><xsl:apply-templates select="$x//t:key"/>{count($x/id('C'))} {$x/element-with-id('C')/t:value}</r></xsl:template>
+                <xsl:template match="id('A', $x)">[{..//t:value}]</xsl:template>
+                <xsl:template match="*"/>
+                """, "<x/>", validation: null, declarations: Table)).Should().Be("<r>[alpha]1 gamma</r>");
 }

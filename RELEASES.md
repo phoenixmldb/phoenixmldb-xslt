@@ -33,6 +33,13 @@
   taken for `item()`, and the value kept the node it was selected as.
 - **`xsl:copy-of validation="strict"` of an element from another document, in a variable**,
   validates the copy; such a copy was kept as it was.
+- **A pattern may start with `element-with-id()`, or with `id()` given a second argument**
+  (XSLT 3.0 §5.5.2); `element-with-id` was XTSE0340, and the second argument of `id` was
+  read as part of the value.
+- **`id()` finds an element of type `xs:ID` by the ID it holds**; only ID attributes were
+  looked at.
+- **A global `as="document-node()"` made by a validated `xsl:document` keeps its type
+  annotations**; it was read again from its text, untyped.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

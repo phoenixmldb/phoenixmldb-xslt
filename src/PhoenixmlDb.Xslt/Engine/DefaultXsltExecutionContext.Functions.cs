@@ -1558,6 +1558,8 @@ internal sealed partial class DefaultXsltExecutionContext
 
     internal bool EvaluateIdPattern(PhoenixmlDb.XQuery.Ast.XQueryExpression valueExpr, object node)
     {
+        if (IdPattern.WholeCalls.TryGetValue(valueExpr, out _))
+            return EvaluateIdCallPattern(valueExpr, node);
         try
         {
             // Evaluate the value expression
@@ -1589,6 +1591,34 @@ internal sealed partial class DefaultXsltExecutionContext
             return false;
         }
 #pragma warning restore CA1031
+    }
+
+
+    private bool EvaluateIdCallPattern(PhoenixmlDb.XQuery.Ast.XQueryExpression call, object node)
+    {
+        if (node is not XdmNode target)
+            return false;
+        PushContextItem(node, 1, 1);
+        try
+        {
+            var result = RunSync(() => EvaluateAsync(call));
+            foreach (var item in result as IEnumerable<object?> ?? [result])
+            {
+                if (item is XdmNode found && found.Id == target.Id)
+                    return true;
+            }
+            return false;
+        }
+#pragma warning disable CA1031
+        catch (Exception ex) when (!ResourceLimitFailure.Is(ex))
+        {
+            return false;
+        }
+#pragma warning restore CA1031
+        finally
+        {
+            PopContextItem();
+        }
     }
 
 

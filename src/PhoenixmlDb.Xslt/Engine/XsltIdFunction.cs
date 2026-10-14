@@ -113,14 +113,21 @@ internal sealed class XsltIdFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
     {
         if (node is XdmElement elem)
         {
+            var added = false;
             foreach (var attr in store.GetAttributes(elem))
             {
                 if (attr.IsId && ids.Contains(NormalizeIdValue(attr.Value)))
                 {
                     results.Add(elem);
+                    added = true;
                     break; // Only add the element once
                 }
             }
+            // An element whose content is an ID (a validated element of type xs:ID) is found by
+            // the ID it holds (F&O 3.1 §14.5.2); element-with-id() gives its parent instead.
+            // Only ID attributes were looked at.
+            if (!added && elem.IsIdContent && ids.Contains(NormalizeIdValue(elem.StringValue)))
+                results.Add(elem);
             foreach (var childId in elem.Children)
             {
                 var child = store.GetNode(childId);

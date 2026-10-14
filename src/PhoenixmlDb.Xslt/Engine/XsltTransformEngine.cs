@@ -4361,9 +4361,15 @@ public sealed class XsltTransformEngine
                 // further gate), silently emptying RTF / text() / node() / document-node() globals.
                 // null is therefore the correct isolation for those: it is exactly what a top-level
                 // eager binding already sees.
+                // A document-node() whose body is xsl:document instructions only: the documents
+                // they make are taken as they are, a validated one with its type annotations.
+                // Read again from their text, they were untyped (W3C match-054..056).
+                var documentsOnly = global.As is { ItemType: ItemType.Document }
+                    && global.Content.Instructions.Count > 0
+                    && global.Content.Instructions.All(static i => i is XsltDocument);
                 var wantsItemCapture = global.As != null
-                    && global.As.ItemType is not (ItemType.Text or ItemType.Node
-                        or ItemType.Item or ItemType.Document);
+                    && (documentsOnly || global.As.ItemType is not (ItemType.Text or ItemType.Node
+                        or ItemType.Item or ItemType.Document));
                 var globalAccumulator = wantsItemCapture ? new List<object?>() : null;
                 var savedGlobalAccumulator = context.SwapSequenceAccumulator(globalAccumulator);
                 // Capture xsl:sequence items WITHOUT diverting text: with an accumulator installed,
@@ -4417,6 +4423,16 @@ public sealed class XsltTransformEngine
                 // binding that directly gave a value that `except`/`union` refused as "not a
                 // node". Installing an accumulator also reroutes text away from the serialized
                 // content those branches read, so they must keep seeing it.
+                else if (documentsOnly && content.Length == 0 && globalAccumulator is { Count: > 0 }
+                    && globalAccumulator.TrueForAll(static d => d is XdmDocument))
+                {
+                    var documents = globalAccumulator;
+                    var occ = global.As.Occurrence;
+                    if ((occ == Occurrence.ExactlyOne && documents.Count != 1) || (occ == Occurrence.ZeroOrOne && documents.Count > 1))
+                        throw new XsltException($"XTTE0570: Variable ${global.Name.LocalName} value does not match declared type {global.As.ItemType} {global.As.Occurrence}"
+                            + $" — the body produced {DefaultXsltExecutionContext.DescribeSequenceForDiagnostics(documents.ToArray())}");
+                    context.GlobalVariables[global.Name] = documents.Count == 1 ? documents[0] : documents.ToArray();
+                }
                 else if (globalAccumulator is { Count: > 0 } && content.Length == 0
                     && global.As.ItemType is not (ItemType.Text or ItemType.Node
                         or ItemType.Item or ItemType.Document))
