@@ -259,6 +259,10 @@ public sealed class XsltTestRunner
                         {
                             env.PrincipalSourceContent = inlineContent;
                             env.PrincipalSourceBaseUri = testSetUri;
+                            // validation= applies to an inline source as to a file; it was
+                            // read for files only, so an inline source said to be validated
+                            // was untyped (W3C validation-1201..1204).
+                            env.PrincipalSourceValidation = source.Attribute("validation")?.Value;
                             if (sourceSelect != null) env.PrincipalSourceSelect = sourceSelect;
                         }
                         else

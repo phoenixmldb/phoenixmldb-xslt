@@ -416,7 +416,7 @@ ser/method-json	65	74
 ser/method-text	18	18
 ser/method-xhtml	49	49
 ser/method-xml	35	43
-tests/attr/as/_as-test-set.xml	169	186
+tests/attr/as/_as-test-set.xml	171	186
 tests/attr/avt/_avt-test-set.xml	34	35
 tests/attr/declared-modes/_declared-modes-test-set.xml	14	14
 tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml	28	28
@@ -427,11 +427,11 @@ tests/attr/package-version/_package-version-test-set.xml	34	35
 tests/attr/select/_select-test-set.xml	157	157
 tests/attr/shadow/_shadow-test-set.xml	8	8
 tests/attr/static/_static-test-set.xml	46	50
-tests/attr/streamable/_streamable-test-set.xml	115	139
+tests/attr/streamable/_streamable-test-set.xml	124	139
 tests/attr/strip-type-annotations/_strip-type-annotations-test-set.xml	18	23
 tests/attr/tunnel/_tunnel-test-set.xml	58	58
 tests/attr/use-when/_use-when-test-set.xml	97	99
-tests/attr/validation/_validation-test-set.xml	28	57
+tests/attr/validation/_validation-test-set.xml	30	57
 tests/attr/version/_version-test-set.xml	33	33
 tests/attr/xpath-default-namespace/_xpath-default-namespace-test-set.xml	25	26
 tests/decl/accept/_accept-test-set.xml	47	50
