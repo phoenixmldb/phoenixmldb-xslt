@@ -54,6 +54,15 @@
 - **`XsltTransformer.PrincipalResultTree`** (new): the principal result as a tree with the
   type annotations that validation gave it, when the whole result was validated as it was
   built; the result was available only as text, and the text read again is untyped.
+- **`xsl:attribute name="xml:lang"` (and `xml:space`, `xml:id`) with validation** is validated
+  against the schema of the XML namespace; the `xml` prefix was not resolved (XTTE1512).
+  `id()` finds `xml:id` in any tree, a temporary one included.
+- **A strictly validated element with no declaration but an `xsi:type`** is validated against
+  that type; it was XTTE1512.
+- **A source whose DTD declares the entities its `xs:ENTITY` attributes name** is valid; each
+  such value was "Reference to an undeclared entity".
+- The base-URI marks a temporary tree's text carries are no longer seen by validation, which
+  refused them as undeclared attributes.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

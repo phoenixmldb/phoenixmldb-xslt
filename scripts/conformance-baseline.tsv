@@ -416,12 +416,12 @@ ser/method-json	65	74
 ser/method-text	18	18
 ser/method-xhtml	49	49
 ser/method-xml	35	43
-tests/attr/as/_as-test-set.xml	171	186
+tests/attr/as/_as-test-set.xml	173	186
 tests/attr/avt/_avt-test-set.xml	34	35
 tests/attr/declared-modes/_declared-modes-test-set.xml	14	14
 tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml	28	28
 tests/attr/expand-text/_expand-text-test-set.xml	61	62
-tests/attr/match/_match-test-set.xml	265	282
+tests/attr/match/_match-test-set.xml	267	282
 tests/attr/mode/_mode-test-set.xml	167	168
 tests/attr/package-version/_package-version-test-set.xml	34	35
 tests/attr/select/_select-test-set.xml	157	157
@@ -506,7 +506,7 @@ tests/insn/analyze-string/_analyze-string-test-set.xml	53	53
 tests/insn/apply-imports/_apply-imports-test-set.xml	1	1
 tests/insn/apply-templates/_apply-templates-test-set.xml	42	43
 tests/insn/assert/_assert-test-set.xml	9	9
-tests/insn/attribute/_attribute-test-set.xml	20	28
+tests/insn/attribute/_attribute-test-set.xml	27	28
 tests/insn/call-template/_call-template-test-set.xml	40	41
 tests/insn/choose/_choose-test-set.xml	55	55
 tests/insn/construct-node/_construct-node-test-set.xml	34	34
@@ -588,7 +588,7 @@ tests/strm/si-call-template/_si-call-template-test-set.xml	2	2
 tests/strm/si-choose/_si-choose-test-set.xml	12	12
 tests/strm/si-copy-of/_si-copy-of-test-set.xml	40	45
 tests/strm/si-copy/_si-copy-test-set.xml	60	65
-tests/strm/si-document/_si-document-test-set.xml	32	39
+tests/strm/si-document/_si-document-test-set.xml	34	39
 tests/strm/si-element/_si-element-test-set.xml	88	93
 tests/strm/si-for-each-group/_si-for-each-group-test-set.xml	112	114
 tests/strm/si-for-each/_si-for-each-test-set.xml	20	20
