@@ -431,7 +431,7 @@ tests/attr/streamable/_streamable-test-set.xml	107	139
 tests/attr/strip-type-annotations/_strip-type-annotations-test-set.xml	3	23
 tests/attr/tunnel/_tunnel-test-set.xml	58	58
 tests/attr/use-when/_use-when-test-set.xml	97	99
-tests/attr/validation/_validation-test-set.xml	26	57
+tests/attr/validation/_validation-test-set.xml	27	57
 tests/attr/version/_version-test-set.xml	33	33
 tests/attr/xpath-default-namespace/_xpath-default-namespace-test-set.xml	25	26
 tests/decl/accept/_accept-test-set.xml	47	50
@@ -471,7 +471,7 @@ tests/fn/accessor/_accessor-test-set.xml	37	37
 tests/fn/available-system-properties/_available-system-properties-test-set.xml	29	29
 tests/fn/base-uri/_base-uri-test-set.xml	51	51
 tests/fn/collection/_collection-test-set.xml	5	6
-tests/fn/copy-of/_copy-of-test-set.xml	10	13
+tests/fn/copy-of/_copy-of-test-set.xml	12	13
 tests/fn/core-function/_core-function-test-set.xml	90	90
 tests/fn/current/_current-test-set.xml	1	1
 tests/fn/current-output-uri/_current-output-uri-test-set.xml	16	17
@@ -531,11 +531,11 @@ tests/insn/where-populated/_where-populated-test-set.xml	27	27
 tests/insn/xsl-document/_xsl-document-test-set.xml	24	25
 tests/misc/backwards/_backwards-test-set.xml	45	47
 tests/misc/bug/_bug-test-set.xml	76	78
-tests/misc/built-in-templates/_built-in-templates-test-set.xml	4	5
+tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	5	7
 tests/misc/collations/_collations-test-set.xml	42	43
 tests/misc/docbook/_docbook-test-set.xml	2	4
-tests/misc/error/_error-test-set.xml	507	528
+tests/misc/error/_error-test-set.xml	508	528
 tests/misc/forwards/_forwards-test-set.xml	23	23
 tests/misc/initial-function/_initial-function-test-set.xml	34	35
 tests/misc/initial-mode/_initial-mode-test-set.xml	5	5
@@ -586,10 +586,10 @@ tests/strm/si-assert/_si-assert-test-set.xml	12	13
 tests/strm/si-attribute/_si-attribute-test-set.xml	45	45
 tests/strm/si-call-template/_si-call-template-test-set.xml	2	2
 tests/strm/si-choose/_si-choose-test-set.xml	12	12
-tests/strm/si-copy-of/_si-copy-of-test-set.xml	31	45
-tests/strm/si-copy/_si-copy-test-set.xml	59	65
-tests/strm/si-document/_si-document-test-set.xml	28	39
-tests/strm/si-element/_si-element-test-set.xml	87	93
+tests/strm/si-copy-of/_si-copy-of-test-set.xml	32	45
+tests/strm/si-copy/_si-copy-test-set.xml	60	65
+tests/strm/si-document/_si-document-test-set.xml	32	39
+tests/strm/si-element/_si-element-test-set.xml	88	93
 tests/strm/si-for-each-group/_si-for-each-group-test-set.xml	112	114
 tests/strm/si-for-each/_si-for-each-test-set.xml	20	20
 tests/strm/si-fork/_si-fork-test-set.xml	53	55
@@ -602,7 +602,7 @@ tests/strm/si-next-match/_si-next-match-test-set.xml	2	2
 tests/strm/si-on-empty/_si-on-empty-test-set.xml	33	33
 tests/strm/si-on-non-empty/_si-on-non-empty-test-set.xml	42	42
 tests/strm/si-perform-sort/_si-perform-sort-test-set.xml	2	2
-tests/strm/si-result-document/_si-result-document-test-set.xml	38	43
+tests/strm/si-result-document/_si-result-document-test-set.xml	42	43
 tests/strm/si-try/_si-try-test-set.xml	47	47
 tests/strm/si-value-of/_si-value-of-test-set.xml	38	39
 tests/strm/si-where-populated/_si-where-populated-test-set.xml	21	21

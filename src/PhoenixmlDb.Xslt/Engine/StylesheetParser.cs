@@ -15,10 +15,18 @@ public sealed partial class StylesheetParser
 {
 
     /// <summary>
-    /// Checks if validation="strict" or type attributes should be rejected (XTSE1660).
-    /// Returns false (suppress error) when xsl:import-schema is present.
+    /// Whether the stylesheet is compiled as by a schema-aware processor, which is the default.
+    /// When false, <c>validation="strict"</c>, <c>validation="type"</c> and a <c>type</c>
+    /// attribute are refused with XTSE1660 in a stylesheet with no xsl:import-schema, as XSLT
+    /// 3.0 §27.1 requires of a basic processor.
     /// </summary>
-    private bool ShouldRejectSchemaAware => !_hasImportSchema;
+    public bool SchemaAware { get; init; } = true;
+
+    /// <summary>
+    /// Whether validation="strict" and type attributes are to be refused (XTSE1660): only by a
+    /// processor that is not schema-aware, and never where xsl:import-schema is present.
+    /// </summary>
+    private bool ShouldRejectSchemaAware => !SchemaAware && !_hasImportSchema;
 
 
     /// <summary>

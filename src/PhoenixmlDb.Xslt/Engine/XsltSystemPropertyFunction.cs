@@ -114,7 +114,8 @@ internal sealed class XsltSystemPropertyFunction : PhoenixmlDb.XQuery.Ast.XQuery
         "vendor-url" => "https://endpointsystems.com",
         "product-name" => "PhoenixmlDb XSLT",
         "product-version" => typeof(XsltTransformEngine).Assembly.GetName().Version?.ToString(3) ?? "1.0",
-        "is-schema-aware" => "no",
+        // The processor validates against imported schemas and annotates what it validates.
+        "is-schema-aware" => "yes",
         "supports-serialization" => "yes",
         "supports-backwards-compatibility" => "yes",
         "supports-namespace-axis" => "yes",

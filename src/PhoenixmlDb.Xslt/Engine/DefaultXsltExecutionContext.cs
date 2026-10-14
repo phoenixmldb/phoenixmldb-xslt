@@ -3321,6 +3321,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var ofDocument = kind == ValidationKind.Document || instructionName == "xsl:document";
         if (ofDocument)
             RequireOneElementChild(content, instructionName, location);
+        // Strict: the element must have a top-level declaration (XTTE1512). System.Xml only
+        // warns of an element in a namespace it has no schema for, so such an element passed.
+        if (type is null && xqueryMode == PhoenixmlDb.XQuery.ValidationMode.Strict
+            && RootElementIsDeclared(content) == false)
+            throw new XsltException(
+                $"XTTE1512: {instructionName} validation=\"strict\": the schema has no top-level declaration of the element", location);
         try
         {
             switch (kind)
