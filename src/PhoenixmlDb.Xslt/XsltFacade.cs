@@ -116,6 +116,16 @@ public sealed class XsltTransformer
     public bool DisableStreaming { get; set; }
 
     /// <summary>
+    /// Whether stylesheets are compiled as by a schema-aware processor. True by default: a
+    /// <c>type</c> attribute and <c>validation="strict"</c> are accepted in any stylesheet, and
+    /// validate against the built-in types and the schemas of <see cref="SchemaProvider"/>. Set
+    /// to false for the behaviour of a basic XSLT processor (XSLT 3.0 §27.1): those attributes
+    /// are refused with XTSE1660 in a stylesheet that has no <c>xsl:import-schema</c>. Read when
+    /// a stylesheet is loaded.
+    /// </summary>
+    public bool SchemaAware { get; set; } = true;
+
+    /// <summary>
     /// Validation of the source document before the transformation
     /// (<see cref="Ast.ValidationMode.Strict"/> or <see cref="Ast.ValidationMode.Lax"/>),
     /// against the schemas of <see cref="SchemaProvider"/>: the schemas the stylesheet imports,
@@ -425,8 +435,8 @@ public sealed class XsltTransformer
         var xqueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal);
         var exprParser = new XQueryExpressionParser();
         var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules, RegexMatchTimeout = RegexMatchTimeout }
-            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules, RegexMatchTimeout = RegexMatchTimeout };
+            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, SchemaAware = SchemaAware, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules, RegexMatchTimeout = RegexMatchTimeout }
+            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, SchemaAware = SchemaAware, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules, RegexMatchTimeout = RegexMatchTimeout };
         // The parse, including static expressions (use-when, static variables) that may be slow,
         // runs on the large-stack thread and does NOT hold the calling thread. After the HTTP
         // import fetch above, the calling thread is whichever pool thread completed it, and parsing
@@ -496,7 +506,11 @@ public sealed class XsltTransformer
             // marker that puts the parser into schema-aware mode (suppresses XTSE1660 on
             // validation= attributes) without actually loading anything. Don't forward it
             // to the provider — that would fail with XQST0059 since there's nothing to load.
-            if (string.IsNullOrEmpty(import.TargetNamespace) && import.SchemaLocations.Count == 0)
+            // An xs:schema child with no target namespace is not that marker: it was taken for
+            // one and never loaded, so validation against it found no declaration at all, and
+            // strict validation passed with nothing checked.
+            if (string.IsNullOrEmpty(import.TargetNamespace) && import.SchemaLocations.Count == 0
+                && import.InlineSchema is null)
                 continue;
             if (import.InlineSchema is { } inlineSchema)
             {

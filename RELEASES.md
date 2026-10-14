@@ -16,6 +16,19 @@
 
 ### Schemas
 
+- **An inline schema with no target namespace is loaded.** An `xs:schema` child of
+  `xsl:import-schema` with no `namespace` attribute was taken for the empty form of the
+  declaration and skipped: validation against it found no declaration, and strict validation
+  passed with nothing checked.
+- **What a failing global variable wrote is not in the result.** A global variable whose body
+  failed after it had written something, and that nothing used, left that output ahead of the
+  result.
+- **The processor is schema-aware by default.** A `type` attribute and
+  `validation="strict"` are accepted in a stylesheet with no `xsl:import-schema`, and validate
+  against the built-in types and the schemas of the schema provider; they were refused with
+  XTSE1660. `system-property('xsl:is-schema-aware')` is `yes`. **A stylesheet that relied on
+  XTSE1660 now compiles.** `XsltTransformer.SchemaAware = false` gives the behaviour of a basic
+  processor again.
 - **A validated element is not held to the ID constraints of a document.** An element with
   `[xsl:]validation` that had the same ID twice, or an IDREF to no ID, was refused. Those
   constraints are applied to a document that is validated (XTTE1555), and not to an element

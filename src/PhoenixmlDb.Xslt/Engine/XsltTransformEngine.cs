@@ -4371,6 +4371,16 @@ public sealed class XsltTransformEngine
                 // serialized content (RTF, text(), node(), document-node()) would silently lose it.
                 var savedCollectText = context.SwapCollectTextAsSequenceItems(false);
                 try { await global.Content.ExecuteAsync(context).ConfigureAwait(false); }
+                catch
+                {
+                    // What the body wrote before it failed is not output. The error of a global
+                    // variable is kept for its first use; where nothing uses the variable the
+                    // transformation goes on, and what was left here came out in the result
+                    // ahead of it.
+                    if (outputBuilder.Length > savedLen)
+                        outputBuilder.Length = savedLen;
+                    throw;
+                }
                 finally
                 {
                     context.SwapCollectTextAsSequenceItems(savedCollectText);
