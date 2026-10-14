@@ -370,6 +370,7 @@ public sealed partial class StylesheetParser
                     VisibilityAttr = existingMode.VisibilityAttr ?? importedMode.VisibilityAttr,
                     TypedValueWarnings = existingMode.TypedValueWarnings ?? importedMode.TypedValueWarnings,
                     Typed = existingMode.Typed || importedMode.Typed,
+                    TypedAttribute = existingMode.TypedAttribute ?? importedMode.TypedAttribute,
                     UseAccumulatorsAttr = existingMode.UseAccumulatorsAttr ?? importedMode.UseAccumulatorsAttr,
                 };
                 // If the higher-precedence module has explicit use-accumulators,

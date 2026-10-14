@@ -3111,14 +3111,20 @@ public sealed partial class StylesheetParser
     {
         if (attr is null)
             return null;
+        // type and validation together are XTSE1505 (§25.4).
+        if (element.Attribute(attr.Name.Namespace + "validation") is not null)
+            throw new XsltException("XTSE1505: The type and validation attributes may not both be present", GetSourceLocation(element));
         var text = attr.Value.Trim();
         if (text.StartsWith("Q{", StringComparison.Ordinal) && text.IndexOf('}', StringComparison.Ordinal) is > 0 and var close)
             return new Ast.XsltTypeName(text[2..close].Trim(), text[(close + 1)..]);
+        // Not an EQName, or a prefix that is not declared: XTSE1520 (§25.4). It was XTSE0280.
         var colon = text.IndexOf(':', StringComparison.Ordinal);
+        if (!System.Xml.XmlReader.IsName(text) || text.Count(static c => c == ':') > 1 || colon == 0 || colon == text.Length - 1)
+            throw new XsltException($"XTSE1520: The type name '{text}' is not a valid EQName", GetSourceLocation(element));
         if (colon < 0)
             return new Ast.XsltTypeName(GetXpathDefaultNamespace(element) ?? "", text);
         var uri = element.GetNamespaceOfPrefix(text[..colon])?.NamespaceName
-            ?? throw new XsltException($"XTSE0280: The prefix of the type name '{text}' is not declared", GetSourceLocation(element));
+            ?? throw new XsltException($"XTSE1520: The prefix of the type name '{text}' is not declared", GetSourceLocation(element));
         return new Ast.XsltTypeName(uri, text[(colon + 1)..]);
     }
 

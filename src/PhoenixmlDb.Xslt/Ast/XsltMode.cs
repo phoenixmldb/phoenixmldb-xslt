@@ -91,4 +91,11 @@ public sealed class XsltMode
     /// When true/yes/strict/lax, built-in templates raise XTTE3100 for untyped nodes.
     /// </summary>
     public bool Typed { get; init; }
+
+    /// <summary>
+    /// The typed attribute as written, normalized (yes, no, strict, lax, unspecified), or null
+    /// when absent. typed="no" refuses typed nodes (XTTE3110); typed="strict" requires the names
+    /// in its patterns to be declared (XTSE3105).
+    /// </summary>
+    public string? TypedAttribute { get; init; }
 }

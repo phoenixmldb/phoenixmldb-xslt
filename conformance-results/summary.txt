@@ -1,19 +1,19 @@
 xslt30-test @ fddf1cf
 qt3tests @ 201a6e4
-xslt      @ 5eeab13
+xslt      @ 0c2fa9a
 xquery    @ a934ae0 (source)
 core      @ 770f154 [BEHIND origin/main by 1] (source)
 
-attr       9s  fixture Successful (18 tests) | 1399/1460 cases 95.8%, 61 failed
+attr       9s  fixture Successful (18 tests) | 1401/1460 cases 96.0%, 59 failed
 decl       5s  fixture Successful (20 tests) | 1090/1133 cases 96.2%, 43 failed
 type       4s  fixture Successful (9 tests) | 790/806 cases 98.0%, 16 failed
 sandp      2s  fixture Successful (25 tests)
 fn         9s  fixture Successful (36 tests) | 1291/1308 cases 98.7%, 17 failed
 strm1     27s  fixture Successful (36 tests) | 720/725 cases 99.3%, 5 failed
 strm2     24s  fixture Successful (26 tests) | 880/903 cases 97.5%, 23 failed
-strm3     28s  fixture Successful (26 tests) | 900/906 cases 99.3%, 6 failed
-expr       4s  fixture Successful (14 tests) | 696/706 cases 98.6%, 10 failed
-misc      17s  fixture Successful (22 tests) | 1919/1945 cases 98.7%, 26 failed
+strm3     29s  fixture Successful (26 tests) | 900/906 cases 99.3%, 6 failed
+expr       3s  fixture Successful (14 tests) | 696/706 cases 98.6%, 10 failed
+misc      17s  fixture Successful (22 tests) | 1927/1945 cases 99.1%, 18 failed
 insn      17s  fixture Successful (27 tests) | 1617/1647 cases 98.2%, 30 failed
 per-set baseline updated: /tmp/claude-1000/-mnt-data-repos-phoenixml/f47444a5-c39f-4a39-ad05-3ff8d106cdcd/scratchpad/p2/phoenixmldb-xslt/scripts/conformance-baseline.tsv
 

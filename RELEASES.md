@@ -71,6 +71,13 @@
   is streamable: one node at most is striding. Under strict streamability it was XTSE3430.
 - **`xsl:evaluate schema-aware="yes"` may name a schema type with a prefix of the stylesheet**;
   the prefix was unbound (XPST0081). Without `schema-aware` such a type is XTDE3160.
+- **The errors of the `type` attribute**: `type` with `validation` is XTSE1505; a `type` that
+  is not an EQName or uses an undeclared prefix is XTSE1520 (it was XTSE0280);
+  `xsl:attribute type=` naming a complex type is XTSE1530; a new attribute validated against
+  `xs:QName` or `xs:NOTATION` is XTTE1545.
+- **Typed modes**: a mode with `typed="no"` refuses a typed element or attribute (XTTE3110);
+  a mode with `typed="strict"` refuses a rule whose pattern names an undeclared element
+  (XTSE3105).
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.
