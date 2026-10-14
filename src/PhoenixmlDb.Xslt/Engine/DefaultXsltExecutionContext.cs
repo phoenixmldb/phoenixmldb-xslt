@@ -1095,7 +1095,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         lib.Register(new XsltCopyOf0Function(this));
         lib.Register(new XsltPathFunction(this));
         lib.Register(new XsltPath0Function(this));
-        lib.Register(new XsltNilledFunction());
+        lib.Register(new XsltNilledFunction(this));
         lib.Register(new XsltNilled0Function(this));
         lib.Register(new XsltDocumentUri0Function(this));
         lib.Register(new XsltHasChildrenFunction(this));
@@ -2222,7 +2222,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             {
                 if (tree.NodeHere(i) is not Xdm.Nodes.XdmElement element)
                     continue;
-                tree.ReplaceNodeHere(i, ValidateBuiltElement(element, mode!.Value, instructionName, location, type));
+                var validatedElement = ValidateBuiltElement(element, mode!.Value, instructionName, location, type);
+                tree.ReplaceNodeHere(i, validatedElement);
+                _validatedTreeRoots.Add(validatedElement.Id);
                 // The tree as it was built is now the only one with the type annotations: the
                 // text of the same content, read again, would give an untyped tree.
                 if (_untypedRtfFlipActive)

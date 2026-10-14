@@ -36,7 +36,7 @@ internal sealed class XsltNilled0Function : PhoenixmlDb.XQuery.Ast.XQueryFunctio
         var node = context.ContextItem ?? _context.ContextItem;
         if (node is XdmElement element)
             return ValueTask.FromResult<object?>(PhoenixmlDb.XQuery.Execution.TypeCastHelper.IsNilled(element,
-                context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext query ? query.LoadNode : null));
+                XsltNilledFunction.NodesOf(_context, context)));
         return ValueTask.FromResult<object?>(null);
     }
 }

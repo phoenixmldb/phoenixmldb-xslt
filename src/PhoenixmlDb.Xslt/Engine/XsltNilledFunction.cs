@@ -22,6 +22,24 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </summary>
 internal sealed class XsltNilledFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
+    private readonly DefaultXsltExecutionContext _context;
+
+    public XsltNilledFunction(DefaultXsltExecutionContext context) => _context = context;
+
+    /// <summary>
+    /// The nodes of the store an element is in, for the xsi:nil attribute of a copy: the
+    /// query's own resolver does not see the nodes the transformation made, and a copy of a
+    /// nilled element (copy-of(), snapshot(), validation="preserve") was not nilled.
+    /// </summary>
+    internal static Func<NodeId, XdmNode?>? NodesOf(DefaultXsltExecutionContext context, PhoenixmlDb.XQuery.Ast.ExecutionContext query)
+    {
+        var fromQuery = query is PhoenixmlDb.XQuery.Execution.QueryExecutionContext q ? q.LoadNode : (Func<NodeId, XdmNode?>?)null;
+        var store = context._nodeStore;
+        if (store is null)
+            return fromQuery;
+        return id => store.GetNode(id) ?? fromQuery?.Invoke(id);
+    }
+
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "nilled");
     public override PhoenixmlDb.XQuery.Ast.XdmSequenceType ReturnType => new() { ItemType = PhoenixmlDb.XQuery.Ast.ItemType.Boolean, Occurrence = PhoenixmlDb.XQuery.Ast.Occurrence.ZeroOrOne };
     public override IReadOnlyList<PhoenixmlDb.XQuery.Ast.FunctionParameterDef> Parameters =>
@@ -41,7 +59,7 @@ internal sealed class XsltNilledFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         // right only while no element was ever validated. Empty for a node of any other kind.
         if (node is XdmElement element)
             return ValueTask.FromResult<object?>(PhoenixmlDb.XQuery.Execution.TypeCastHelper.IsNilled(element,
-                context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext query ? query.LoadNode : null));
+                NodesOf(_context, context)));
 
         return ValueTask.FromResult<object?>(null);
     }

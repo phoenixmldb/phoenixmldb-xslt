@@ -40,6 +40,12 @@
   looked at.
 - **A global `as="document-node()"` made by a validated `xsl:document` keeps its type
   annotations**; it was read again from its text, untyped.
+- **`fn:copy-of`, `fn:snapshot` and `xsl:copy-of validation="preserve"` keep the type
+  annotations of what they copy**; the copies were untyped, and a copy of a nilled element
+  was not nilled.
+- **An element validated as it is built in a typed variable keeps its annotations** when part
+  of its content was copied in (`xsl:copy-of select="@*"`); the variable was read again from
+  its text, untyped.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

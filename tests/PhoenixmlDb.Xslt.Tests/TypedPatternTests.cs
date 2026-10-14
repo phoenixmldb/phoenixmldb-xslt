@@ -249,4 +249,45 @@ public sealed class TypedPatternTests : IDisposable
                 <xsl:template match="id('A', $x)">[{..//t:value}]</xsl:template>
                 <xsl:template match="*"/>
                 """, "<x/>", validation: null, declarations: Table)).Should().Be("<r>[alpha]1 gamma</r>");
+
+    private const string Nilled = "<t:n xmlns:t=\"urn:t\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:nil=\"true\"/>";
+
+    /// <summary>
+    /// fn:copy-of and fn:snapshot keep the type annotations of what they copy, as
+    /// validation="preserve" does; the copies were untyped, and a copy of a nilled element
+    /// was not nilled.
+    /// </summary>
+    [Fact]
+    public async Task Copy_of_and_snapshot_keep_type_annotations()
+        => (await RunAsync("""
+                <xsl:template match="/">{nilled(copy-of(t:n))} {nilled(snapshot(t:n))} {copy-of(t:n) instance of element(*, xs:integer?)}</xsl:template>
+                """, Nilled)).Should().Be("true true true");
+
+    /// <summary>
+    /// xsl:copy-of validation="preserve" keeps the annotations, and "strip" drops them; both
+    /// were dropped.
+    /// </summary>
+    [Fact]
+    public async Task Copy_of_with_validation_preserve_keeps_type_annotations()
+        => (await RunAsync("""
+                <xsl:template match="/">
+                  <xsl:variable name="p" as="document-node()"><xsl:copy-of select="." validation="preserve"/></xsl:variable>
+                  <xsl:variable name="s" as="document-node()"><xsl:copy-of select="." validation="strip"/></xsl:variable>
+                  <xsl:value-of select="$p/t:doc/t:d instance of element(*, xs:decimal), $s/t:doc/t:d instance of element(*, xs:decimal)"/>
+                </xsl:template>
+                """, Source)).Should().Be("true false");
+
+    /// <summary>
+    /// An element validated as it is built in a typed variable keeps its annotations when
+    /// its content was copied in (xsl:copy-of select="@*"): the variable was read again
+    /// from its text, untyped, so the copy of a nilled element was not nilled.
+    /// </summary>
+    [Fact]
+    public async Task An_element_validated_in_a_variable_keeps_its_annotations_when_content_is_copied_in()
+        => (await RunAsync("""
+                <xsl:template match="/">
+                  <xsl:variable name="v" as="element()"><xsl:copy select="t:n" validation="strict"><xsl:copy-of select="@*"/></xsl:copy></xsl:variable>
+                  <xsl:value-of select="nilled($v), $v instance of element(*, xs:untyped)"/>
+                </xsl:template>
+                """, Nilled, validation: null)).Should().Be("true false");
 }

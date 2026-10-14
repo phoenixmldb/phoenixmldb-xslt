@@ -512,7 +512,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (bodyTc != null)
                 {
                     bodyNodeRoots = bodyTc.FinishFragment();
-                    migratedCandidate = !bodyTcIncomplete
+                    migratedCandidate = (!bodyTcIncomplete || bodyNodeRoots.All(_validatedTreeRoots.Contains))
                         && _sequenceAccumulator.Count == 0
                         && bodyNodeRoots.Count > 0;
                     // Differential: node build vs legacy reparse (structural parity check). Skip

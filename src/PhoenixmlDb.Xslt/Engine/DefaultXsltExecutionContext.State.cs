@@ -811,6 +811,13 @@ internal sealed partial class DefaultXsltExecutionContext
     // instead of being serialized to the output. Used for variable/param bodies with as="type *".
     private List<object?>? _sequenceAccumulator;
 
+    /// <summary>
+    /// The elements of a tree under construction that were validated as built: each was read
+    /// whole to be validated, so it is complete although the tree is marked incomplete, and the
+    /// tree that holds only such elements is delivered as built (with their annotations).
+    /// </summary>
+    private readonly HashSet<NodeId> _validatedTreeRoots = [];
+
 
     // When true, WriteText redirects text to _sequenceAccumulator as individual items
     // instead of appending to _output. Used by xsl:perform-sort content to collect
