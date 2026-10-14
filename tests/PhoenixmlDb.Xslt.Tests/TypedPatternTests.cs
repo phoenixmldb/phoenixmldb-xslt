@@ -175,4 +175,47 @@ public sealed class TypedPatternTests : IDisposable
                   <xsl:value-of select="$d/t:doc/t:d instance of element(*, xs:decimal), nilled($d/t:doc), $e/t:doc/@code instance of attribute(*, t:part)"/>
                 </xsl:template>
                 """, Source, validation: null)).Should().Be("true false true");
+
+    /// <summary>
+    /// xsl:with-param select= with an atomic as= type atomizes the nodes it selects to their
+    /// typed values; the nodes were passed on.
+    /// </summary>
+    [Fact]
+    public async Task A_with_param_with_an_atomic_type_atomizes_what_it_selects()
+        => (await RunAsync("""
+                <xsl:template match="/"><xsl:apply-templates select="t:doc"><xsl:with-param name="p" select="t:doc/t:d" as="xs:decimal"/></xsl:apply-templates></xsl:template>
+                <xsl:template match="t:doc"><xsl:param name="p"/>{$p instance of xs:decimal} {$p instance of node()} {$p}</xsl:template>
+                """, Source)).Should().Be("true false 1.1");
+
+    /// <summary>
+    /// as= may name an atomic type that a schema defines; it was taken for item(), and the
+    /// value kept the node it was selected as.
+    /// </summary>
+    [Fact]
+    public async Task An_as_type_may_be_a_type_that_a_schema_defines()
+        => (await RunAsync("""
+                <xsl:template match="/">
+                  <xsl:variable name="v" select="t:doc/@code" as="t:part"/>
+                  <xsl:value-of select="$v instance of t:part, $v instance of node()"/>
+                </xsl:template>
+                """, Source)).Should().Be("true false");
+
+    /// <summary>
+    /// xsl:copy-of validation="strict" of an element whose base URI differs from the
+    /// stylesheet's, in a variable: the copy is validated. Such a copy goes into the sequence
+    /// as a node, and was kept untyped.
+    /// </summary>
+    [Fact]
+    public async Task A_copy_from_a_document_with_its_own_base_uri_is_validated()
+    {
+        var doc = Path.Combine(_dir, "in.xml");
+        await File.WriteAllTextAsync(doc, Source, TestContext.Current.CancellationToken);
+        var uri = new Uri(doc).AbsoluteUri;
+        (await RunAsync($$"""
+                <xsl:template match="/">
+                  <xsl:variable name="e" as="element()"><xsl:copy-of select="doc('{{uri}}')/t:doc" validation="strict"/></xsl:variable>
+                  <xsl:value-of select="$e/t:d instance of element(*, xs:decimal)"/>
+                </xsl:template>
+                """, "<x/>", validation: null)).Should().Be("true");
+    }
 }

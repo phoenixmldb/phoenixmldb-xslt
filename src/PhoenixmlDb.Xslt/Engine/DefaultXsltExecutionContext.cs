@@ -2217,7 +2217,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             if (!ReferenceEquals(tree, _activeTreeConstructor))
                 return;
             if (accumulated is not null && ReferenceEquals(accumulated, _sequenceAccumulator))
-                ValidateAccumulatedDocuments(accumulated, itemsBefore, mode!.Value, instructionName, location, type);
+                ValidateAccumulatedNodes(accumulated, itemsBefore, mode!.Value, instructionName, location, type);
             for (var i = before; i < tree.NodesHere; i++)
             {
                 if (tree.NodeHere(i) is not Xdm.Nodes.XdmElement element)
@@ -2243,7 +2243,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var depth = _serializingElementDepth;
             await body().ConfigureAwait(false);
             if (ReferenceEquals(sequence, _sequenceAccumulator))
-                ValidateAccumulatedDocuments(sequence, items, mode!.Value, instructionName, location, type);
+                ValidateAccumulatedNodes(sequence, items, mode!.Value, instructionName, location, type);
             if (_output.Length <= start)
                 return;
             var written = _output.ToString(start, _output.Length - start);
@@ -3146,10 +3146,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
-    /// A document node that went into the sequence as a node (xsl:copy-of of one) is validated
-    /// as a document, and the validated one takes its place; it was kept untyped.
+    /// A document node or an element that went into the sequence as a node (xsl:copy-of of
+    /// one) is validated, a document as a document, and the validated node takes its place; it
+    /// was kept as it was copied.
     /// </summary>
-    private void ValidateAccumulatedDocuments(List<object?> sequence, int from, Ast.ValidationMode mode,
+    private void ValidateAccumulatedNodes(List<object?> sequence, int from, Ast.ValidationMode mode,
         string instructionName, SourceLocation? location, Ast.XsltTypeName? type)
     {
         for (var i = from; i < sequence.Count; i++)
@@ -3160,6 +3161,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 && copied.DocumentElement is { } rootId && _nodeStore?.GetNode(rootId) is Xdm.Nodes.XdmElement { TypeAnnotation: var annotation }
                 && annotation == Xdm.XdmTypeName.Untyped)
                 sequence[i] = ValidateBuiltDocument(copied, mode, instructionName, location, type);
+            else if (sequence[i] is Xdm.Nodes.XdmElement element)
+                sequence[i] = ValidateBuiltElement(element, mode, instructionName, location, type);
         }
     }
 

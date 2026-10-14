@@ -27,6 +27,12 @@
 - **`xsl:source-document validation="strict"` or `"lax"` validates the document it reads**,
   which then has the type annotations of the schema; the attribute was ignored. Such a
   document is read into a tree and not streamed.
+- **`xsl:with-param select=` with an atomic `as=` type atomizes the nodes it selects** to
+  their typed values; the nodes were passed on, so `$p instance of xs:int` was false.
+- **`as=` may name an atomic type that a schema defines** (`as="my:partNumber"`); it was
+  taken for `item()`, and the value kept the node it was selected as.
+- **`xsl:copy-of validation="strict"` of an element from another document, in a variable**,
+  validates the copy; such a copy was kept as it was.
 - **`fn:nilled` is true for a validated element with `xsi:nil="true"`**; it was always false.
 - **`xsl:copy-of` of a document node with `validation="strict"` or `"lax"`, in a variable,
   validates the copy as a document**; it was kept untyped.

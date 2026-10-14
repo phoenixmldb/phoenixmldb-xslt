@@ -1364,6 +1364,24 @@ public sealed partial class StylesheetParser
             }
         }
 
+        // A type that a schema defines (as="my:partNumber"): an atomic type the schema provider
+        // knows, as XQuery's sequence types hold it. It was taken for item(), so the value kept
+        // the nodes it was selected as, and `$v instance of my:partNumber` was false.
+        if (context != null && !type.Contains('(', StringComparison.Ordinal) && !type.StartsWith("xs:", StringComparison.Ordinal)
+            && type.IndexOf(':', StringComparison.Ordinal) is > 0 and var typeColon
+            && context.GetNamespaceOfPrefix(type[..typeColon]) is { } typeNamespace
+            && typeNamespace.NamespaceName.Length > 0
+            && typeNamespace.NamespaceName != "http://www.w3.org/2001/XMLSchema")
+        {
+            return new XdmSequenceType
+            {
+                ItemType = ItemType.AnyAtomicType,
+                Occurrence = occurrence,
+                SchemaTypeNamespace = typeNamespace.NamespaceName,
+                SchemaTypeLocalName = type[(typeColon + 1)..],
+            };
+        }
+
         // Handle parameterized map types: map(xs:string, xs:boolean)
         if (type.StartsWith("map(", StringComparison.Ordinal) && type.EndsWith(')') && type != "map(*)")
         {
