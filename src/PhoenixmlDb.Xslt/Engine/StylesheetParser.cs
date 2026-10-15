@@ -1652,10 +1652,10 @@ public sealed partial class StylesheetParser
             // as file:///path on Linux, though XML Base treats it as a relative reference) and
             // NOT a "./..." relative reference. An absolute xml:base replaces the accumulated
             // base rather than resolving against it.
-            if (HasUriScheme(xmlBase) && Uri.TryCreate(xmlBase, UriKind.Absolute, out var absUri))
-                result = absUri;
+            if (HasUriScheme(xmlBase))
+                result = AbsoluteXmlBase(xmlBase);
             else if (result != null)
-                result = new Uri(result, xmlBase);
+                result = Uri.TryCreate(result, xmlBase, out var resolved) ? resolved : throw InvalidXmlBase(xmlBase);
             else if (Uri.TryCreate(xmlBase, UriKind.Relative, out _))
                 continue; // Cannot resolve relative without a base — skip
         }
@@ -1663,6 +1663,30 @@ public sealed partial class StylesheetParser
         return result;
     }
 
+
+    /// <summary>
+    /// An absolute xml:base. <c>file:/path</c> (one slash, valid in RFC 3986, refused by
+    /// System.Uri) is read as <c>file:///path</c>. A value that is not a URI is XTSE0020; it
+    /// left the transformer as a UriFormatException.
+    /// </summary>
+    private static Uri AbsoluteXmlBase(string xmlBase)
+    {
+        if (Uri.TryCreate(xmlBase, UriKind.Absolute, out var absolute))
+            return absolute;
+        if (xmlBase.StartsWith("file:/", StringComparison.OrdinalIgnoreCase)
+            && !xmlBase.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
+            && Uri.TryCreate("file://" + xmlBase[5..], UriKind.Absolute, out var oneSlash))
+            return oneSlash;
+        throw InvalidXmlBase(xmlBase);
+    }
+
+    /// <summary>xml:base of a stylesheet module, resolved against <paramref name="current"/>; XTSE0020 when it is not a URI.</summary>
+    internal static Uri ResolveXmlBase(Uri current, string xmlBase)
+        => HasUriScheme(xmlBase) ? AbsoluteXmlBase(xmlBase)
+            : Uri.TryCreate(current, xmlBase, out var resolved) ? resolved : throw InvalidXmlBase(xmlBase);
+
+    private static XsltException InvalidXmlBase(string xmlBase)
+        => new($"XTSE0020: The xml:base attribute '{xmlBase}' is not a valid URI reference");
 
     /// <summary>
     /// True when <paramref name="s"/> begins with an RFC 3986 URI scheme
