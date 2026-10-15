@@ -51,6 +51,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
+        using var call = _context.EnterCall(context);
         // Before anything is read from the options: every way to call the function (by name,
         // through a function item, through fn:apply, from xsl:evaluate) arrives here.
         if (IsTurnedOff(context))

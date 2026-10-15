@@ -33,6 +33,7 @@ internal sealed class XsltStaticBaseUriFunction : PhoenixmlDb.XQuery.Ast.XQueryF
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
+        using var call = _context.EnterCall(context);
         var baseUri = _context.StaticBaseUri;
         return ValueTask.FromResult<object?>(baseUri != null ? new PhoenixmlDb.Xdm.XsAnyUri(baseUri) : null);
     }
