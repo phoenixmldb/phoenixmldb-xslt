@@ -1,6 +1,16 @@
 # Release History
 
-## Unreleased
+## 2.9.0 — 2026-10-15
+
+Requires PhoenixmlDb.XQuery 2.9.0 and PhoenixmlDb.Core 2.5.0. The processor is schema-aware by
+default; the complete streamability analysis of the specification; streamed results that were
+wrong are right; validation in variables and the XSLT error codes.
+
+**W3C XSLT 3.0: 216 failing of 11,539.** From this release the conformance runner measures a
+schema-aware processor, so the suite includes about 700 schema-aware cases that the run for 2.8.0
+(131 failing of 10,839, as a basic processor) skipped. When the runner first measured the
+schema-aware suite it was 437 failing; the schema work in this release brought it to 216. The two
+figures are not comparable.
 
 ### Dates and times
 
