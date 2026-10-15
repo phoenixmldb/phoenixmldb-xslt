@@ -49,7 +49,9 @@ clone_or_reset() {   # repo branch
   if [ ! -d "$dir/.git" ]; then
     git clone -q --branch "$2" "https://github.com/phoenixmldb/$1.git" "$dir" || return 1
   fi
-  git -C "$dir" fetch -q origin "$2" && git -C "$dir" checkout -q -B "$2" "origin/$2" \
+  # The workspace is the nightly's own: discard anything a previous run left (a conformance run
+  # rewrites tracked files such as conformance-results/summary.txt), then move to the branch.
+  git -C "$dir" fetch -q origin "$2" && git -C "$dir" reset -q --hard && git -C "$dir" checkout -q -f -B "$2" "origin/$2" \
     && git -C "$dir" reset -q --hard "origin/$2" && git -C "$dir" clean -qfdx -e TestData -e '*/TestData'
 }
 
