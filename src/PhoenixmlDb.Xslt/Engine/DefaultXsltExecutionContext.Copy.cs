@@ -966,7 +966,7 @@ internal sealed partial class DefaultXsltExecutionContext
             _untypedRtfFlipDivergent = true;
         }
         else if (_activeTreeConstructor is { } tc && _nodeStore != null
-            && TryGetCopyOfElements(result, out var tcCopyElems))
+            && TryGetCopyOfElements(copyMode is not null ? DocumentsAsTheirElements(result) : result, out var tcCopyElems))
         {
             // Stage the clones first, then commit them together, so a byte-parity guard can
             // abandon the whole routing (leaving the legacy serialize-reparse path to mark the
@@ -997,17 +997,20 @@ internal sealed partial class DefaultXsltExecutionContext
                 routedCopyOfToTree = true;
                 _suppressTcIncomplete = true;
             }
-            else if (_untypedRtfFlipActive)
+            else if (_untypedRtfFlipActive || copyMode is not null)
             {
                 // SP-C targeted: the redundant-in-scope declarations the reparse strips (and the
                 // enclosing default namespace it re-contaminates the copy with) make the reparse a
                 // known-wrong oracle for this shape. The node build is authoritative — deliver it
                 // and skip the differential. Re-clone into Document 0 so the namespace axis reads
                 // the copy's own complete in-scope set (no ancestor walk into the enclosing LRE).
+                // A copy with a validation attribute takes this route too: read again from its
+                // text, it would lose the annotations the validation gives it.
                 RouteDivergentCopyOfInto(tc, tcCopyElems!.ConvertAll(e => (XdmNode)e), copyNs, inherit: !_inheritNamespacesNo);
                 routedCopyOfToTree = true;
                 _suppressTcIncomplete = true;
-                _untypedRtfFlipDivergent = true;
+                if (_untypedRtfFlipActive)
+                    _untypedRtfFlipDivergent = true;
             }
         }
         else if (_untypedRtfFlipActive && _activeTreeConstructor is { } mixedTc && _nodeStore != null
@@ -1191,8 +1194,10 @@ internal sealed partial class DefaultXsltExecutionContext
                         Id = aid, Document = cloneDoc, Namespace = a.Namespace,
                         LocalName = a.LocalName, Prefix = a.Prefix, Value = a.Value, Parent = id,
                         TypeAnnotation = _copyPreservesAnnotations ? a.TypeAnnotation : Xdm.XdmTypeName.UntypedAtomic,
-                        IsId = _copyPreservesAnnotations && a.IsId,
-                        IsIdRef = _copyPreservesAnnotations && a.IsIdRef,
+                        // is-id and is-idrefs are unchanged when the annotations are stripped
+                        // (XSLT 3.0 §25.4.1): id() finds a copy of a validated document.
+                        IsId = a.IsId,
+                        IsIdRef = a.IsIdRef,
                     };
                     if (_copyPreservesAnnotations)
                         SnapshotHelper.CopyAnnotationMarks(a, attributeCopy, _nodeStore);
@@ -1212,7 +1217,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     NamespaceDeclarations = decls.Count == 0 ? XdmElement.EmptyNamespaceDeclarations : decls.ToImmutable(),
                     Parent = parent,
                     TypeAnnotation = _copyPreservesAnnotations ? e.TypeAnnotation : Xdm.XdmTypeName.Untyped,
-                    IsIdContent = _copyPreservesAnnotations && e.IsIdContent,
+                    IsIdContent = e.IsIdContent,
                 };
                 if (_copyPreservesAnnotations)
                     SnapshotHelper.CopyAnnotationMarks(e, clone, _nodeStore);

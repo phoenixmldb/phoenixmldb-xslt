@@ -2151,6 +2151,46 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Mixed or non-element results fall back to the normal serialization path so this
     /// base-URI-preserving branch never changes behavior for other node/atomic kinds.
     /// </summary>
+    /// <summary>
+    /// A copy of a document node is a copy of its children. Each document in
+    /// <paramref name="result"/> (or temporary tree) whose children are all elements stands for
+    /// those elements, so a validated copy of it is built as nodes, which the validation then
+    /// annotates. Written as text and read again, it lost the annotations: id() and
+    /// <c>instance of attribute(*, xs:ID)</c> found nothing in a validated copy of a document.
+    /// Anything else is left as it is.
+    /// </summary>
+    private object? DocumentsAsTheirElements(object? result)
+    {
+        if (_nodeStore is null)
+            return result;
+        var items = result as IEnumerable<object?> ?? [result];
+        if (result is string)
+            return result;
+        var expanded = new List<object?>();
+        foreach (var item in items)
+        {
+            var document = item switch
+            {
+                XdmDocument d => d,
+                ResultTreeFragment { CachedDocumentNode: XdmDocument cached } => cached,
+                ResultTreeFragment fragment => ParseResultTreeFragment(fragment),
+                _ => null,
+            };
+            if (document is null)
+            {
+                expanded.Add(item);
+                continue;
+            }
+            foreach (var childId in document.Children)
+            {
+                if (_nodeStore.GetNode(childId) is not XdmElement child)
+                    return result;
+                expanded.Add(child);
+            }
+        }
+        return expanded;
+    }
+
     private static bool TryGetCopyOfElements(object? result, out List<XdmElement>? elements)
     {
         elements = null;

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A validated copy of a document keeps its type annotations in a temporary tree.**
+  `xsl:copy-of` of a document node with a `validation` attribute was written as text and read
+  again, so the copy was untyped and `id()` and `idref()` found nothing in it. With
+  `validation="strip"` or `"preserve"`, a copy now keeps the is-id and is-idrefs properties
+  (XSLT 3.0 §25.4.1); it cleared them. W3C copy-5031..5034.
 - **A function value runs as the module that made it.** `unparsed-text`, the other text
   functions, `static-base-uri`, `stream-available` and `fn:transform` read the stylesheet's
   current position. So a closure, a partial application or a named reference made in one module and
