@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A function value runs as the module that made it.** `unparsed-text`, the other text
+  functions, `static-base-uri`, `stream-available` and `fn:transform` read the stylesheet's
+  current position. So a closure, a partial application or a named reference made in one module and
+  called in another resolved a relative location against the caller's base URI, and
+  `ResourceRequest.ModuleUri` named the caller. Requires the XQuery change of the same name.
 - **An `xml:base` in a stylesheet module that is not a URI is XTSE0020**; it left the
   transformer as a `UriFormatException`. `file:/path` (one slash) is read as `file:///path`.
 - **`fn:transform` turned off by the resource policy raises FOXT0004** ("the XSLT

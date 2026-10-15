@@ -186,4 +186,44 @@ public sealed class ResolverLearnsTheCallingModuleTests
 
         host.Asked.Should().NotBeEmpty().And.OnlyContain(a => a.Module == null);
     }
+
+    /// <summary>
+    /// A function value runs as the module that made it (XPath 3.1 §3.1.6): its relative
+    /// location resolves against that module's base URI, and the host is told that module asks.
+    /// unparsed-text, static-base-uri and the other functions of the XSLT context read the
+    /// stylesheet's position instead, so they ran as the module that called the value.
+    /// </summary>
+    [Theory]
+    [InlineData("a closure", "<xsl:function name='f:make'><xsl:sequence select=\"function() { unparsed-text('t.txt') }\"/></xsl:function>", "f:make()()")]
+    [InlineData("a partial application", "<xsl:function name='f:make'><xsl:sequence select='unparsed-text(?)'/></xsl:function>", "f:make()('t.txt')")]
+    [InlineData("a named reference", "<xsl:function name='f:make'><xsl:sequence select='unparsed-text#1'/></xsl:function>", "f:make()('t.txt')")]
+    [InlineData("a closure in a global variable", "<xsl:variable name='g' select=\"function() { unparsed-text('t.txt') }\"/>", "$g()")]
+    public async Task A_function_value_the_library_makes_runs_as_the_library(string what, string library, string call)
+    {
+        var host = await Run($"<xsl:template match='/'><xsl:value-of select=\"{call}\"/></xsl:template>", library);
+
+        host.Asked.Should().Equal([("mem://app/lib/t.txt", LibraryUri)], what);
+    }
+
+    [Theory]
+    [InlineData("unparsed-text#1")]
+    [InlineData("unparsed-text(?)")]
+    [InlineData("function($x) { unparsed-text($x) }")]
+    public async Task A_function_value_the_main_module_makes_runs_as_the_main_module_in_the_library(string value)
+    {
+        var host = await Run($"<xsl:template match='/'><xsl:value-of select=\"f:call({value})\"/></xsl:template>",
+            "<xsl:function name='f:call'><xsl:param name='g'/><xsl:sequence select=\"$g('t.txt')\"/></xsl:function>");
+
+        host.Asked.Should().Equal([("mem://app/t.txt", MainUri)], value);
+    }
+
+    [Fact]
+    public async Task Static_base_uri_in_a_closure_is_the_base_of_the_module_that_made_it()
+    {
+        var transformer = new XsltTransformer { ResourcePolicy = ResourcePolicy.CreateBuilder().WithResourceResolver(
+            new Recorder { Library = Module("<xsl:function name='f:make'><xsl:sequence select='function() { static-base-uri() }'/></xsl:function>") }).Build() };
+        await transformer.LoadStylesheetAsync(Module("<xsl:import href='lib/inc.xsl'/><xsl:template match='/'><xsl:value-of select='f:make()()'/></xsl:template>"), new Uri(MainUri));
+
+        (await transformer.TransformAsync("<r/>")).Should().Be(LibraryUri);
+    }
 }

@@ -36,6 +36,7 @@ internal sealed class XsltUnparsedText2Function : PhoenixmlDb.XQuery.Ast.XQueryF
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
+        using var call = _context.EnterCall(context);
         var href = arguments[0]?.ToString();
         if (string.IsNullOrEmpty(href))
             return null;

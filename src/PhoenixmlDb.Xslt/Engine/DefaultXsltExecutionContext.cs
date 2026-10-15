@@ -470,7 +470,31 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return parent?.BaseUri;
     }
 
-    internal string? StaticBaseUri => _staticBaseUriStack.Count > 0 ? _staticBaseUriStack.Peek() : XsltTransformEngine.UriString(_stylesheet.BaseUri);
+    internal string? StaticBaseUri => _call is { } call ? call.StaticBaseUri
+        : _staticBaseUriStack.Count > 0 ? _staticBaseUriStack.Peek() : XsltTransformEngine.UriString(_stylesheet.BaseUri);
+
+    private (string? StaticBaseUri, string? ModuleLocation)? _call;
+
+    /// <summary>
+    /// Runs a function of this context (unparsed-text, static-base-uri, fn:transform, ...) with
+    /// the static context of its call: a function item made in one module and called in
+    /// another runs as the module that made it (XPath 3.1 §3.1.6), and the call context carries
+    /// that module's base URI and location. These functions read the stylesheet's position
+    /// instead, so a closure or unparsed-text#1 made in an imported module resolved against, and
+    /// was reported to the host as, the module that called it. Dispose to end the call.
+    /// </summary>
+    internal CallScope EnterCall(PhoenixmlDb.XQuery.Ast.ExecutionContext call)
+    {
+        var saved = _call;
+        if (call is PhoenixmlDb.XQuery.Execution.QueryExecutionContext q)
+            _call = (q.StaticBaseUri, q.ModuleLocation);
+        return new CallScope(this, saved);
+    }
+
+    internal readonly struct CallScope(DefaultXsltExecutionContext owner, (string?, string?)? saved) : IDisposable
+    {
+        public void Dispose() => owner._call = saved;
+    }
 
 
     /// <summary>
@@ -498,7 +522,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <see cref="StaticBaseUri"/>, not this. It is what a host's resolver is told about who
     /// asks (<see cref="PhoenixmlDb.XQuery.Security.ResourceRequest.ModuleUri"/>).
     /// </summary>
-    internal string? ModuleLocation => string.IsNullOrEmpty(_currentModule) ? null : _currentModule;
+    internal string? ModuleLocation => _call is { } call ? call.ModuleLocation
+        : string.IsNullOrEmpty(_currentModule) ? null : _currentModule;
 
     /// <summary>Who asks, for a load the running code makes.</summary>
     internal PhoenixmlDb.XQuery.Security.ResourceCaller Caller => PhoenixmlDb.XQuery.Security.ResourceGate.Caller(StaticBaseUri, ModuleLocation);
