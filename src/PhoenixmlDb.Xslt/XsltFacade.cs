@@ -207,7 +207,7 @@ public sealed class XsltTransformer
 
     /// <summary>
     /// Controls whether DTD processing is allowed when loading stylesheets.
-    /// Default is <c>false</c> (DTDs are prohibited) for security.
+    /// Default is <c>false</c> (DTDs are ignored) for security.
     /// </summary>
     /// <remarks>
     /// <para>
