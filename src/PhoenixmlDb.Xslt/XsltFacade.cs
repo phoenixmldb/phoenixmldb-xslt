@@ -599,6 +599,14 @@ public sealed class XsltTransformer
         var result = new List<string>(locations.Count);
         foreach (var loc in locations)
         {
+            // file:/path (one slash) is an absolute URI (RFC 8089) that System.Uri refuses; it
+            // was taken for a relative location.
+            if (PhoenixmlDb.XQuery.Security.ResourcePolicy.Resolve(loc) is { IsFile: true } oneSlash
+                && loc.StartsWith("file:/", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add(oneSlash.LocalPath);
+                continue;
+            }
             if (Uri.TryCreate(baseUri, loc, out var resolved))
                 result.Add(resolved.IsFile ? resolved.LocalPath : resolved.ToString());
             else
