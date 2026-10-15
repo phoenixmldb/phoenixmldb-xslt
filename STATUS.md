@@ -1,16 +1,16 @@
 # Status
 
-Generated 2026-10-14 21:45 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-15 11:36 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.5.0 | ? | **repo is at ?, nuget.org has 2.5.0** |
-| `PhoenixmlDb.XQuery` | 2.8.0 | ? | **repo is at ?, nuget.org has 2.8.0** |
-| `PhoenixmlDb.Xslt` | 2.8.0 | 2.8.0 | current |
-| `xquery4` | 2.8.0 | ? | **repo is at ?, nuget.org has 2.8.0** |
-| `xslt` | 2.8.0 | 2.8.0 | current |
+| `PhoenixmlDb.XQuery` | 2.9.0 | ? | **repo is at ?, nuget.org has 2.9.0** |
+| `PhoenixmlDb.Xslt` | 2.9.0 | 2.9.0 | current |
+| `xquery4` | 2.9.0 | ? | **repo is at ?, nuget.org has 2.9.0** |
+| `xslt` | 2.9.0 | 2.9.0 | current |
 
 ## Open work
 
@@ -19,7 +19,7 @@ Generated 2026-10-14 21:45 UTC by `scripts/status.sh`. Do not edit by hand.
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
 | phoenixmldb-xslt | 1 | 1 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -31,7 +31,11 @@ Generated 2026-10-14 21:45 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [389] build: Bump the phoenixmldb-engines group with 1 update
+- [393] fn:transform turned off by the resource policy raises FOXT0004
+
+**phoenixmldb-cli**
+
+- [17] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
