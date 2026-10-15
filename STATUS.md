@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-15 11:36 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-15 21:28 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-10-15 11:36 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 1 | 1 |
+| phoenixmldb-xslt | 1 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -28,10 +28,6 @@ Generated 2026-10-15 11:36 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-xslt**
-
-- [393] fn:transform turned off by the resource policy raises FOXT0004
 
 **phoenixmldb-cli**
 
