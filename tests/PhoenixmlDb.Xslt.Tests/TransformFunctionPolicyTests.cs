@@ -7,7 +7,7 @@ namespace PhoenixmlDb.Xslt.Tests;
 /// <summary>
 /// A host can turn <c>fn:transform</c> off for a stylesheet
 /// (<see cref="ResourcePolicy.AllowTransformFunction"/>). Every way to call it then fails with
-/// FOXT0001 before the nested stylesheet is read, and <c>function-available</c> and
+/// FOXT0004 before the nested stylesheet is read, and <c>function-available</c> and
 /// <c>function-lookup</c> do not report the function, at run time or in a static expression.
 /// It is on unless turned off.
 /// </summary>
@@ -36,7 +36,7 @@ public class TransformFunctionPolicyTests
         {
             return await t.TransformAsync("<in/>");
         }
-        catch (Exception e) when (e.Message.Contains("FOXT0001", StringComparison.Ordinal) || e.Message.Contains("resource policy", StringComparison.Ordinal))
+        catch (Exception e) when (e.Message.Contains("FOXT0004", StringComparison.Ordinal) && e.Message.Contains("resource policy", StringComparison.Ordinal))
         {
             return "REFUSED " + e.Message;
         }
