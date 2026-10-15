@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **An `xml:base` in a stylesheet module that is not a URI is XTSE0020**; it left the
+  transformer as a `UriFormatException`. `file:/path` (one slash) is read as `file:///path`.
 - **`fn:transform` turned off by the resource policy raises FOXT0004** ("the XSLT
   transformation has been disabled", F&O 3.1); it raised FOXT0001, which means no suitable
   XSLT processor.

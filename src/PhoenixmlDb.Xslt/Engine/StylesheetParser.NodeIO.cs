@@ -440,7 +440,7 @@ public sealed partial class StylesheetParser
                 var xmlBase = stylesheetRoot.Attribute(xmlNs + "base")?.Value;
                 if (xmlBase != null)
                 {
-                    _baseUri = new Uri(_baseUri!, xmlBase);
+                    _baseUri = ResolveXmlBase(_baseUri!, xmlBase);
                 }
             }
 
