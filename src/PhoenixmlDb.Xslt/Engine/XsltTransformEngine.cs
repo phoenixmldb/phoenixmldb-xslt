@@ -2690,12 +2690,7 @@ public sealed class XsltTransformEngine
     internal static string ApplyIndentation(string output, OutputMethod method, HashSet<QName>? suppressIndentation = null)
     {
         if (method is OutputMethod.Xml or OutputMethod.Xhtml)
-        {
-            var result = ApplyXmlIndentation(output);
-            if (suppressIndentation != null && suppressIndentation.Count > 0)
-                result = RemoveSuppressedIndentation(result, suppressIndentation);
-            return result;
-        }
+            return ApplyXmlIndentation(output, suppressIndentation);
         else if (method == OutputMethod.Html)
         {
             var result = ApplyHtmlIndentation(output);
@@ -2823,42 +2818,169 @@ public sealed class XsltTransformEngine
         return sb.ToString();
     }
 
-    private static string ApplyXmlIndentation(string output)
+    /// <summary>
+    /// Indents serialized XML in one streaming pass: the text is read with an XmlReader and
+    /// written again with the indentation an indenting XmlWriter gives, so the bytes are those
+    /// of the earlier pass. That pass read the whole result into an XDocument first, which held
+    /// the result three times over (a 1.96 MB result had a 118.5 MB peak, #400), and a second
+    /// pass over the text then took out the indentation of suppress-indentation elements by
+    /// local name only. Here a suppress-indentation element is matched by its expanded QName
+    /// (Serialization 3.1 §7.1), and its content is not indented.
+    /// </summary>
+    /// <remarks>
+    /// The rules are XmlWriter's (Indent = true): a start tag, a comment, a processing
+    /// instruction or a document type is put on a new line indented two spaces for each open
+    /// element, and an end tag too when its element has content; but not right at the start,
+    /// and not in an element that has text (mixed content), nor in anything inside it, until that
+    /// element ends. A suppress-indentation element counts as one with text.
+    /// </remarks>
+    private static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null)
     {
+        // The XML declaration is written as it is, then a newline, and the rest is read from
+        // after it and the line ends that follow it. The text is not copied to do so: the
+        // whole result copied once more for each step cost more than the indentation did.
+        var bodyStart = 0;
+        var declLength = 0;
+        if (output.StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            var declEnd = output.IndexOf("?>", StringComparison.Ordinal);
+            if (declEnd >= 0)
+            {
+                declLength = declEnd + 2;
+                bodyStart = declLength;
+                while (bodyStart < output.Length && output[bodyStart] is '\r' or '\n')
+                    bodyStart++;
+            }
+        }
+
+        HashSet<(NamespaceId, string)>? suppressed = null;
+        if (suppressIndentation is { Count: > 0 })
+        {
+            suppressed = [];
+            foreach (var name in suppressIndentation)
+                suppressed.Add((name.Namespace, name.LocalName));
+        }
+
+        // The settings XDocument.Parse reads with.
+        var readerSettings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, XmlResolver = null };
+        var writerSettings = new XmlWriterSettings
+        {
+            OmitXmlDeclaration = true, // We handle the declaration separately
+            NewLineHandling = NewLineHandling.Replace,
+            // NewLineChars defaults to Environment.NewLine, so indent="yes" wrote CRLF on
+            // Windows and LF elsewhere: the same transform gave different bytes per OS. The
+            // serializer's newline is LF everywhere, as the rest of the output already is.
+            NewLineChars = "\n",
+        };
+        // Room for the indentation, so that the buffer does not grow by doubling.
+        var buffer = new StringBuilder(output.Length + output.Length / 2);
+        if (declLength > 0)
+            buffer.Append(output, 0, declLength).Append('\n');
+        var sw = new System.IO.StringWriter(buffer, CultureInfo.InvariantCulture);
         try
         {
-            // Check for and strip XML declaration before parsing, then re-add it after
-            string? xmlDecl = null;
-            var parseInput = output;
-            if (parseInput.StartsWith("<?xml", StringComparison.Ordinal))
+            var input = new System.IO.StringReader(output);
+            for (var skip = bodyStart; skip > 0; skip--)
+                input.Read();
+            using var reader = XmlReader.Create(input, readerSettings);
+            using var xw = XmlWriter.Create(sw, writerSettings);
+            var depth = 0;
+            var mixed = false;
+            // Whitespace outside the document element stops the indentation of what follows it
+            // there, but not inside the document element.
+            var topMixed = false;
+            var hasContent = false;
+            // Whether anything is written since the start or since the last text.
+            var afterMarkup = false;
+            var open = new Stack<(bool Mixed, bool HasContent)>();
+            // A newline and the indentation of each depth, made once.
+            var indents = new List<string> { "\n" };
+            // An end tag is indented by its own element's content; anything else by where it is.
+            void Indent(bool endTag = false)
             {
-                var declEnd = parseInput.IndexOf("?>", StringComparison.Ordinal);
-                if (declEnd >= 0)
+                if (!(depth == 0 && !endTag ? topMixed : mixed) && afterMarkup)
                 {
-                    xmlDecl = parseInput[..(declEnd + 2)];
-                    parseInput = parseInput[(declEnd + 2)..].TrimStart('\r', '\n');
+                    while (indents.Count <= depth)
+                        indents.Add("\n" + new string(' ', indents.Count * 2));
+                    xw.WriteRaw(indents[depth]);
                 }
             }
-
-            var xdoc = System.Xml.Linq.XDocument.Parse(parseInput, System.Xml.Linq.LoadOptions.PreserveWhitespace);
-            var settings = new XmlWriterSettings
+            void Text()
             {
-                Indent = true,
-                IndentChars = "  ",
-                OmitXmlDeclaration = true, // We handle the declaration separately
-                NewLineHandling = NewLineHandling.Replace,
-                // NewLineChars defaults to Environment.NewLine, so indent="yes" wrote CRLF on
-                // Windows and LF elsewhere: the same transform gave different bytes per OS. The
-                // serializer's newline is LF everywhere, as the rest of the output already is.
-                NewLineChars = "\n",
-            };
-            using var sw = new System.IO.StringWriter();
-            using (var xw = XmlWriter.Create(sw, settings))
-            {
-                xdoc.WriteTo(xw);
+                mixed = true;
+                hasContent = true;
+                afterMarkup = false;
             }
-            var indented = sw.ToString();
-            return xmlDecl != null ? xmlDecl + "\n" + indented : indented;
+            while (reader.Read())
+            {
+                switch (reader.NodeType)
+                {
+                    case XmlNodeType.Element:
+                        Indent();
+                        hasContent = true;
+                        var empty = reader.IsEmptyElement;
+                        var isSuppressed = suppressed is not null
+                            && suppressed.Contains((StylesheetParser.ResolveNamespaceUri(reader.NamespaceURI), reader.LocalName));
+                        xw.WriteStartElement(reader.Prefix, reader.LocalName, reader.NamespaceURI);
+                        xw.WriteAttributes(reader, defattr: true);
+                        reader.MoveToElement();
+                        afterMarkup = true;
+                        if (empty)
+                        {
+                            xw.WriteEndElement();
+                            break;
+                        }
+                        open.Push((mixed, hasContent));
+                        depth++;
+                        hasContent = false;
+                        if (isSuppressed)
+                            mixed = true;
+                        break;
+                    case XmlNodeType.EndElement:
+                        depth--;
+                        if (hasContent)
+                            Indent(endTag: true);
+                        xw.WriteFullEndElement();
+                        (mixed, hasContent) = open.Pop();
+                        afterMarkup = true;
+                        break;
+                    case XmlNodeType.Text:
+                        xw.WriteString(reader.Value);
+                        Text();
+                        break;
+                    case XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace:
+                        xw.WriteWhitespace(reader.Value);
+                        if (depth == 0)
+                        {
+                            topMixed = true;
+                            afterMarkup = false;
+                        }
+                        else
+                            Text();
+                        break;
+                    case XmlNodeType.CDATA:
+                        xw.WriteCData(reader.Value);
+                        Text();
+                        break;
+                    case XmlNodeType.Comment:
+                        Indent();
+                        xw.WriteComment(reader.Value);
+                        hasContent = true;
+                        afterMarkup = true;
+                        break;
+                    case XmlNodeType.ProcessingInstruction:
+                        Indent();
+                        xw.WriteProcessingInstruction(reader.Name, reader.Value);
+                        hasContent = true;
+                        afterMarkup = true;
+                        break;
+                    case XmlNodeType.DocumentType:
+                        Indent();
+                        xw.WriteDocType(reader.Name, reader.GetAttribute("PUBLIC"), reader.GetAttribute("SYSTEM"), reader.Value);
+                        afterMarkup = true;
+                        break;
+                }
+            }
         }
         catch (XmlException)
         {
@@ -2866,6 +2988,7 @@ public sealed class XsltTransformEngine
             // fall back to the unindented output rather than crashing
             return output;
         }
+        return buffer.ToString();
     }
 
     private static string ApplyHtmlIndentation(string output)

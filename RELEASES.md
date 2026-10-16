@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`indent="yes"` for the xml and xhtml methods is one streaming pass** (#400, part 1). The result
+  was read into an `XDocument` and written again, then the text was passed over once more for
+  `suppress-indentation`. It now goes once through an `XmlReader` and `XmlWriter`, with the same
+  bytes; the pass allocates 56% less (12.6 MB against 28.7 MB for a 1.8 MB result).
+  `suppress-indentation` now names elements by expanded QName (Serialization 3.1 §7.1): it matched
+  local names only, so `suppress-indentation="p"` also suppressed `x:p` in another namespace. An
+  element keeps the prefix it has in the result tree; the `XDocument` pass could change it where
+  two prefixes were bound to one namespace.
 - **The `xslt` CLI can validate the source: `--validation strict|lax`** (also `--val:strict`,
   `--val:lax`), which sets `XsltTransformer.SourceValidation` (#398). The source's nodes then have
   the type annotations of the schemas the stylesheet imports; an invalid source is XTTE1510 (strict)
