@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The `xslt` CLI can validate the source: `--validation strict|lax`** (also `--val:strict`,
+  `--val:lax`), which sets `XsltTransformer.SourceValidation` (#398). The source's nodes then have
+  the type annotations of the schemas the stylesheet imports; an invalid source is XTTE1510 (strict)
+  or XTTE1515 (lax). Without the option the source stays untyped, as before.
 - **A validated copy of a document keeps its type annotations in a temporary tree.**
   `xsl:copy-of` of a document node with a `validation` attribute was written as text and read
   again, so the copy was untyped and `id()` and `idref()` found nothing in it. With
