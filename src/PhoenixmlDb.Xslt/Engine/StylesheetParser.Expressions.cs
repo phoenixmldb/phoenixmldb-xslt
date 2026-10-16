@@ -370,7 +370,7 @@ public sealed partial class StylesheetParser
             Name = name,
             SourceNamespaceName = element.Name.NamespaceName,
             Attributes = attributes,
-            NamespaceDeclarations = namespaceDeclarations,
+            NamespaceDeclarations = NamespaceSets.Shared(element, namespaceDeclarations),
             UseAttributeSets = useAttributeSets,
             InheritNamespaces = inheritNamespaces,
             ExcludeResultPrefixes = excludeResultPrefixes,
