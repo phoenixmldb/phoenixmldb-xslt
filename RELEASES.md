@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The indentation pass grows its buffer in chunks** (#401). Sized for the whole result, it was one
+  large-object-heap array, which only a full collection frees: the committed heap of the
+  Schematron compile of GA.EMS.v350 rose by 12 MB on Linux, and the peak private commit by 1.9 MB
+  on Windows, against 2.9.0. It is back to the 2.9.0 level.
 - **`on-no-match="deep-copy"` keeps type annotations**: its built-in rule is
   `xsl:copy-of select="." validation="preserve"` (XSLT 3.0 §6.7.2). An element or attribute it
   copied into a variable was untyped. W3C match-262, match-263.

@@ -2995,8 +2995,11 @@ public sealed class XsltTransformEngine
             // serializer's newline is LF everywhere, as the rest of the output already is.
             NewLineChars = "\n",
         };
-        // Room for the indentation, so that the buffer does not grow by doubling.
-        var buffer = new StringBuilder(output.Length + output.Length / 2);
+        // Not sized up front: a StringBuilder grows by adding chunks of its own, each small, where
+        // one buffer of the whole result is a single large-object-heap array, which only a full
+        // collection frees. Sized for the result, it raised the committed heap of an indented
+        // 1.4 MB result by 12 MB (#401, the GA.EMS Schematron compile).
+        var buffer = new StringBuilder();
         if (declLength > 0)
             buffer.Append(output, 0, declLength).Append('\n');
         var sw = new System.IO.StringWriter(buffer, CultureInfo.InvariantCulture);
