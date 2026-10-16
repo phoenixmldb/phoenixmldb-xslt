@@ -13,6 +13,8 @@
   <ItemGroup>
     <ProjectReference Include="../PhoenixmlDb.Xslt/PhoenixmlDb.Xslt.csproj" />
     <PackageReference Include="StreamJsonRpc" />
+    <!-- The version without GHSA-qhrr-8q5h-9q3h; see Directory.Packages.props. -->
+    <PackageReference Include="MessagePack" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="PhoenixmlDb.Xslt.LanguageServer.Tests" />

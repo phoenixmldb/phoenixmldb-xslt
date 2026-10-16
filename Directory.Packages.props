@@ -25,5 +25,9 @@
     <PackageVersion Include="coverlet.collector" Version="8.0.0" />
     <PackageVersion Include="AwesomeAssertions" Version="9.6.0" />
     <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
+    <!-- StreamJsonRpc 2.25.29 asks for MessagePack 2.5.302, which has GHSA-qhrr-8q5h-9q3h
+         (moderate); 2.5.303 and later fix it. The language server references it directly to
+         take the fixed version. -->
+    <PackageVersion Include="MessagePack" Version="2.5.307" />
   </ItemGroup>
 </Project>
