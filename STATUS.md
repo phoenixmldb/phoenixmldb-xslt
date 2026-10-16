@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-15 21:28 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-16 11:31 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,20 +18,23 @@ Generated 2026-10-15 21:28 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 1 | 0 |
+| phoenixmldb-xslt | 4 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
+- [405] Nightly regression report
+- [401] Performance and memory scan of the engines (measured, ranked)
+- [400] Serializer: indent while writing; no reparse, suppress-indentation by QName
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
 
 **phoenixmldb-cli**
 
-- [17] build: Bump the phoenixmldb-engines group with 2 updates
+- [18] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
