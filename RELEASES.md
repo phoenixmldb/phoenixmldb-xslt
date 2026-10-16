@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`suppress-indentation` with the html method matches names as HTML does** (#400). An element in no
+  namespace or the XHTML namespace is matched by local name without case; any other element by its
+  expanded QName, its prefix resolved through the namespace declarations of the output. The names
+  were matched by local name only and with case, so `suppress-indentation="div"` also suppressed
+  `x:div` in another namespace, and `"DIV"` did not suppress `<div>`.
 - **`indent="yes"` for the xml and xhtml methods is one streaming pass** (#400, part 1). The result
   was read into an `XDocument` and written again, then the text was passed over once more for
   `suppress-indentation`. It now goes once through an `XmlReader` and `XmlWriter`, with the same

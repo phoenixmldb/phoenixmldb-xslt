@@ -2708,13 +2708,27 @@ public sealed class XsltTransformEngine
     /// </summary>
     private static string RemoveSuppressedIndentation(string output, HashSet<QName> suppressedElements)
     {
-        // Build a simple set of local names for fast matching (most stylesheets use unprefixed names)
-        var suppressedNames = new HashSet<string>(StringComparer.Ordinal);
+        // The html method's names: an element in no namespace or the XHTML namespace is an HTML
+        // element, and its name is matched without case (HTML elements are written unprefixed).
+        // Any other element is matched by its expanded QName, its prefix resolved through the
+        // namespace declarations of the tags around it. The names were matched by local name
+        // only, so suppress-indentation="title" also suppressed svg:title, and "P" missed <p>.
+        var htmlNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var otherNames = new HashSet<(NamespaceId, string)>();
+        var xhtml = StylesheetParser.ResolveNamespaceUri("http://www.w3.org/1999/xhtml");
         foreach (var qn in suppressedElements)
-            suppressedNames.Add(qn.LocalName);
+        {
+            if (qn.Namespace == NamespaceId.None || qn.Namespace == xhtml)
+                htmlNames.Add(qn.LocalName);
+            else
+                otherNames.Add((qn.Namespace, qn.LocalName));
+        }
 
         var sb = new StringBuilder(output.Length);
         int suppressDepth = 0; // nesting depth inside suppressed elements
+        // The open elements: name, the namespace bindings in scope there, and whether suppressed.
+        var open = new Stack<(string Name, Dictionary<string, string> Scope, bool Suppressed)>();
+        var rootScope = new Dictionary<string, string>(StringComparer.Ordinal);
         int pos = 0;
         while (pos < output.Length)
         {
@@ -2744,24 +2758,52 @@ public sealed class XsltTransformEngine
                         elemName = output[nameStart..nameEnd2];
                 }
 
-                // Strip the prefix for matching (e.g., "ns:elem" -> "elem")
-                var localName = elemName;
-                if (localName != null && localName.Contains(':', StringComparison.Ordinal))
-                    localName = localName[(localName.IndexOf(':', StringComparison.Ordinal) + 1)..];
-
-                if (isClosing && localName != null && suppressedNames.Contains(localName))
+                if (isClosing && elemName != null)
                 {
-                    // Closing a suppressed element
-                    suppressDepth = Math.Max(0, suppressDepth - 1);
+                    // Close up to the element this end tag names; an end tag with no open element
+                    // of its name closes nothing.
+                    if (open.Any(o => string.Equals(o.Name, elemName, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        while (open.Count > 0)
+                        {
+                            var closed = open.Pop();
+                            if (closed.Suppressed)
+                                suppressDepth = Math.Max(0, suppressDepth - 1);
+                            if (string.Equals(closed.Name, elemName, StringComparison.OrdinalIgnoreCase))
+                                break;
+                        }
+                    }
                 }
 
                 sb.Append(output, pos, tagEnd - pos + 1);
+                var tag = output.AsSpan(pos, tagEnd - pos + 1);
                 pos = tagEnd + 1;
 
-                if (!isClosing && !isSelfClosing && localName != null && suppressedNames.Contains(localName))
+                if (!isClosing && elemName != null)
                 {
-                    // Opening a suppressed element
-                    suppressDepth++;
+                    var scope = open.Count > 0 ? open.Peek().Scope : rootScope;
+                    var declared = NamespaceDeclarationsOf(tag);
+                    if (declared.Count > 0)
+                    {
+                        scope = new Dictionary<string, string>(scope, StringComparer.Ordinal);
+                        foreach (var (prefix, uri) in declared)
+                            scope[prefix] = uri;
+                    }
+                    var colon = elemName.IndexOf(':', StringComparison.Ordinal);
+                    var prefixOf = colon > 0 ? elemName[..colon] : "";
+                    var local = colon > 0 ? elemName[(colon + 1)..] : elemName;
+                    var uriOf = scope.TryGetValue(prefixOf, out var u) ? u : "";
+                    var ns = StylesheetParser.ResolveNamespaceUri(uriOf);
+                    var suppressed = colon < 0 && (ns == NamespaceId.None || ns == xhtml)
+                        ? htmlNames.Contains(local)
+                        : otherNames.Contains((ns, local)) || ((ns == NamespaceId.None || ns == xhtml) && htmlNames.Contains(local));
+                    // A void element (<br>, <meta>) has no end tag in HTML output and opens nothing.
+                    if (!isSelfClosing && !(colon < 0 && DefaultXsltExecutionContext.HtmlVoidElements.Contains(local)))
+                    {
+                        open.Push((elemName, scope, suppressed));
+                        if (suppressed)
+                            suppressDepth++;
+                    }
                 }
             }
             else if (suppressDepth > 0)
@@ -2817,6 +2859,18 @@ public sealed class XsltTransformEngine
         }
         return sb.ToString();
     }
+
+    /// <summary>The namespace declarations of one start tag: prefix ("" for the default) and URI.</summary>
+    private static List<(string Prefix, string Uri)> NamespaceDeclarationsOf(ReadOnlySpan<char> tag)
+    {
+        var found = new List<(string, string)>();
+        foreach (System.Text.RegularExpressions.Match m in s_namespaceDeclaration.Matches(tag.ToString()))
+            found.Add((m.Groups[1].Success ? m.Groups[1].Value : "", System.Net.WebUtility.HtmlDecode(m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value)));
+        return found;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex s_namespaceDeclaration =
+        new("""\sxmlns(?::([^\s=/>]+))?\s*=\s*(?:"([^"]*)"|'([^']*)')""", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
     /// Indents serialized XML in one streaming pass: the text is read with an XmlReader and
