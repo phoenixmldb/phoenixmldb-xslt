@@ -63,6 +63,12 @@ if (options.ShowVersion)
     return 0;
 }
 
+if (options.InvalidValidation is { } invalidValidation)
+{
+    await Console.Error.WriteLineAsync($"Error: --validation takes strict or lax, not '{invalidValidation}'").ConfigureAwait(true);
+    return 1;
+}
+
 if (options.ShowHelp || options.Stylesheet == null)
 {
     PrintUsage();
@@ -273,6 +279,7 @@ try
         // without this the in-memory call below streamed anyway (xslt#295).
         transformer.DisableStreaming = options.NoStream;
         transformer.StrictStreamability = options.StrictStreaming;
+        transformer.SourceValidation = options.SourceValidation;
 
         // Streaming requires a local file (we hand the path to File.OpenRead). When the
         // source is HTTP it has already been read into inputXml above; fall through to
@@ -609,6 +616,13 @@ static void PrintUsage()
                              copy. A few constructs beyond those rules that this
                              engine streams correctly are accepted. No effect with
                              --no-stream.
+          --validation <strict|lax>
+                             Validate the source document against the schemas the
+                             stylesheet imports, so its nodes are typed. An invalid
+                             source is an error (XTTE1510 with strict, XTTE1515
+                             with lax). Also
+                             --val:strict and --val:lax. Default: the source is
+                             untyped.
           -v, --verbose      Show detailed error information
           -h, --help         Show this help message
           --version          Show version information
@@ -655,9 +669,23 @@ file sealed class CliOptions
     public bool NoStream { get; init; }
     /// <summary>True if the user passed <c>--strict-streaming</c>.</summary>
     public bool StrictStreaming { get; init; }
+    /// <summary>
+    /// <c>--validation strict|lax</c> (or <c>--val:strict</c>, <c>--val:lax</c>): validation of
+    /// the source document. Null, the default, leaves the source untyped.
+    /// </summary>
+    public PhoenixmlDb.Xslt.Ast.ValidationMode? SourceValidation { get; init; }
+    /// <summary>The value given to <c>--validation</c> when it is neither strict nor lax.</summary>
+    public string? InvalidValidation { get; init; }
     public bool ShowHelp { get; init; }
     public bool ShowVersion { get; init; }
     public bool Verbose { get; init; }
+
+    private static PhoenixmlDb.Xslt.Ast.ValidationMode? ValidationMode(string value) => value switch
+    {
+        "strict" => PhoenixmlDb.Xslt.Ast.ValidationMode.Strict,
+        "lax" => PhoenixmlDb.Xslt.Ast.ValidationMode.Lax,
+        _ => null,
+    };
 
     public static CliOptions Parse(string[] args)
     {
@@ -683,6 +711,9 @@ file sealed class CliOptions
         var expectingParam = false;
         var expectingTemplate = false;
         var expectingMode = false;
+        var expectingValidation = false;
+        PhoenixmlDb.Xslt.Ast.ValidationMode? sourceValidation = null;
+        string? invalidValidation = null;
 
         foreach (var arg in args)
         {
@@ -690,6 +721,14 @@ file sealed class CliOptions
             if (expectingOutputDir) { outputDir = arg; expectingOutputDir = false; continue; }
             if (expectingTemplate) { initialTemplate = arg; expectingTemplate = false; continue; }
             if (expectingMode) { initialMode = arg; expectingMode = false; continue; }
+            if (expectingValidation)
+            {
+                sourceValidation = ValidationMode(arg);
+                if (sourceValidation is null)
+                    invalidValidation = arg;
+                expectingValidation = false;
+                continue;
+            }
             if (expectingParam)
             {
                 var eqIdx = arg.IndexOf('=', StringComparison.Ordinal);
@@ -745,6 +784,13 @@ file sealed class CliOptions
                 case "-v" or "--verbose":
                     verbose = true;
                     break;
+                case "--validation":
+                    expectingValidation = true;
+                    break;
+                // Saxon's style: -val:strict, -val:lax.
+                case "--val:strict" or "--val:lax" or "-val:strict" or "-val:lax":
+                    sourceValidation = ValidationMode(arg[(arg.IndexOf(':', StringComparison.Ordinal) + 1)..]);
+                    break;
                 default:
                     // Handle -p name=value (combined form)
                     if (arg.StartsWith("-p:", StringComparison.Ordinal) || arg.StartsWith("--param:", StringComparison.Ordinal))
@@ -780,6 +826,8 @@ file sealed class CliOptions
             Stream = stream,
             NoStream = noStream,
             StrictStreaming = strictStreaming,
+            SourceValidation = sourceValidation,
+            InvalidValidation = expectingValidation ? "" : invalidValidation,
             ShowHelp = showHelp,
             ShowVersion = showVersion,
             Verbose = verbose

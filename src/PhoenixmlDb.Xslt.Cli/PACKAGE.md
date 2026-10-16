@@ -34,6 +34,9 @@ xslt --dry-run style.xsl
 
 # Stream large files (lower memory)
 xslt --stream style.xsl large-input.xml
+
+# Validate the source against the schemas the stylesheet imports (typed nodes)
+xslt --validation strict style.xsl data.xml
 ```
 
 ## Features
