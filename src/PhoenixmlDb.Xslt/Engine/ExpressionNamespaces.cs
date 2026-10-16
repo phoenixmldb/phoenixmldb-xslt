@@ -19,27 +19,10 @@ internal static class ExpressionNamespaces
 
     internal static void Record(XQueryExpression expr, XElement element)
     {
-        var root = element.Document?.Root ?? element.AncestorsAndSelf().Last();
-        var declaresBelowRoot = false;
-        foreach (var e in element.AncestorsAndSelf())
-        {
-            if (ReferenceEquals(e, root)) break;
-            if (e.Attributes().Any(a => a.IsNamespaceDeclaration && a.Name.Namespace == XNamespace.Xmlns))
-            {
-                declaresBelowRoot = true;
-                break;
-            }
-        }
-        if (!declaresBelowRoot)
+        if (!NamespaceScopes.DeclaresBelowRoot(element))
             return;
-
-        // Nearest declaration wins: walk from the element outward and keep the first binding seen.
-        var bindings = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var e in element.AncestorsAndSelf())
-            foreach (var a in e.Attributes())
-                if (a.IsNamespaceDeclaration && a.Name.Namespace == XNamespace.Xmlns)
-                    bindings.TryAdd(a.Name.LocalName, a.Value);
-        s_table.AddOrUpdate(expr, NamespaceSets.Shared(element, bindings));
+        // Nearest declaration wins: the first binding of each prefix walking outward.
+        s_table.AddOrUpdate(expr, NamespaceScopes.Prefixed(element));
     }
 
     internal static bool TryGet(XQueryExpression expr, out IReadOnlyDictionary<string, string> bindings)

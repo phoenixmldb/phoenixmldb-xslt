@@ -414,16 +414,5 @@ public sealed partial class StylesheetParser
     /// such as a QName produced by an AVT.
     /// </summary>
     private static IReadOnlyDictionary<string, string> InScopeNamespacesOf(XElement element)
-    {
-        var inScope = new Dictionary<string, string>();
-        for (var e = element; e != null; e = e.Parent)
-        {
-            foreach (var nsAttr in e.Attributes().Where(a => a.IsNamespaceDeclaration))
-            {
-                var prefix = nsAttr.Name.LocalName == "xmlns" ? "" : nsAttr.Name.LocalName;
-                inScope.TryAdd(prefix, nsAttr.Value);
-            }
-        }
-        return NamespaceSets.Shared(element, inScope);
-    }
+        => NamespaceScopes.InScope(element);
 }

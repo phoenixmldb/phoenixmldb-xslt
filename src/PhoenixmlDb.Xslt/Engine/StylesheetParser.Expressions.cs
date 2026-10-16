@@ -306,8 +306,13 @@ public sealed partial class StylesheetParser
         // Inherit namespace declarations and exclude-result-prefixes from ancestor elements
         for (var ancestor = element.Parent; ancestor != null; ancestor = ancestor.Parent)
         {
-            foreach (var nsAttr in ancestor.Attributes().Where(a => a.IsNamespaceDeclaration))
+            // The attribute list itself, not Attributes().Where(...): this runs for each ancestor
+            // of each literal result element, and the iterators were a measurable part of a
+            // stylesheet compile's allocation (#401).
+            for (var nsAttr = ancestor.FirstAttribute; nsAttr != null; nsAttr = nsAttr.NextAttribute)
             {
+                if (!nsAttr.IsNamespaceDeclaration)
+                    continue;
                 var prefix = nsAttr.Name.LocalName == "xmlns" ? "" : nsAttr.Name.LocalName;
                 namespaceDeclarations.TryAdd(prefix, nsAttr.Value);
             }
