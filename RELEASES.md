@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A compiled stylesheet keeps one copy of each set of namespace bindings** (#401). Each literal
+  result element, `xsl:element`, `xsl:attribute` and XPath expression kept its own copy of the
+  in-scope namespaces. For a generated Schematron validator of 2.3 MB, a compile now keeps 18.5 MB,
+  not 26.5 MB (the first compile in a process: 38.4 MB, not 46.4 MB).
 - **`indent="yes"` for the xml and xhtml methods is one streaming pass** (#400, part 1). The result
   was read into an `XDocument` and written again, then the text was passed over once more for
   `suppress-indentation`. It now goes once through an `XmlReader` and `XmlWriter`, with the same
