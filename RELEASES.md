@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **In a mode with `typed="strict"` or `typed="lax"`, a declared element name in a pattern means
+  `schema-element(E)`** (XSLT 3.0 §6.6.1): only an element validated against that declaration
+  matches the first step of the pattern. It was matched by name. W3C match-220 and match-221, with
+  the XQuery change for elements validated against a type.
 - **The in-scope namespaces of each stylesheet element are worked out once** (#401). Each instruction
   and XPath expression walked its ancestors' attributes for them. For a generated Schematron
   validator of 2.3 MB, a compile now allocates 419 MB, not 465 MB (-10%).

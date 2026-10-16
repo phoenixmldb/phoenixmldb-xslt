@@ -196,6 +196,75 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// In a mode with typed="strict" or typed="lax", the element name of the first step of a
+    /// template rule's pattern, when the schemas in scope declare it, is matched as
+    /// schema-element(E) (XSLT 3.0 §6.6.1): only an element validated against that declaration
+    /// matches. It was matched by name, so an element of that name with another type (one built
+    /// with xsl:type="xs:string", W3C match-220/221) took the rule meant for the validated ones.
+    /// A rule that is also a rule of a mode without the provision keeps its pattern.
+    /// </summary>
+    private void MatchDeclaredNamesAsSchemaElementsInTypedModes()
+    {
+        if (_schemaProvider is null || Volatile.Read(ref _typedModePatternsDone))
+            return;
+        // The patterns are the stylesheet's, shared by every transformation: they are changed
+        // once, before the first one matches with them.
+        lock (_typedModePatternsLock)
+        {
+            if (!_typedModePatternsDone)
+                ApplyTypedModePatterns();
+            Volatile.Write(ref _typedModePatternsDone, true);
+        }
+    }
+
+    private bool _typedModePatternsDone;
+    private readonly object _typedModePatternsLock = new();
+
+    private void ApplyTypedModePatterns()
+    {
+        if (_schemaProvider is not { } schemas)
+            return;
+        foreach (var template in _stylesheet.Templates)
+        {
+            if (template.Match is null)
+                continue;
+            var modes = template.Modes.Count > 0 ? template.Modes : [new QName(default, "")];
+            if (!modes.All(mode => _stylesheet.Modes.TryGetValue(mode, out var declared)
+                    && declared.TypedAttribute is "strict" or "lax"))
+                continue;
+            foreach (var branch in template.Match is UnionPattern union ? union.Patterns : [template.Match])
+            {
+                if (branch is not PathPattern { Steps: List<PatternStep> { Count: > 0 } steps }
+                    || steps[0] is not { Axis: Axis.Child or Axis.Descendant, HasTypeTest: false, IsRootFunction: false } first
+                    || first.NodeTest is not PhoenixmlDb.XQuery.Ast.NameTest { LocalName: not "*" } name
+                    || name.IsNamespaceWildcard
+                    || !schemas.HasElementDeclaration(name.NamespaceUri ?? "", name.LocalName))
+                    continue;
+                var test = new PhoenixmlDb.XQuery.Ast.InstanceOfExpression
+                {
+                    Expression = PhoenixmlDb.XQuery.Ast.ContextItemExpression.Instance,
+                    TargetType = new XdmSequenceType
+                    {
+                        ItemType = ItemType.SchemaElement,
+                        Occurrence = Occurrence.ExactlyOne,
+                        SchemaElementName = name.LocalName,
+                        SchemaElementNamespace = name.NamespaceUri ?? "",
+                    },
+                };
+                steps[0] = new PatternStep
+                {
+                    Axis = first.Axis,
+                    NodeTest = first.NodeTest,
+                    Predicates = [test, .. first.Predicates],
+                    DescendantSeparator = first.DescendantSeparator,
+                    IsRootFunction = first.IsRootFunction,
+                    HasTypeTest = true,
+                };
+            }
+        }
+    }
+
+    /// <summary>
     /// Reports XTSE3430 for a streamable-mode rule that is not guaranteed-streamable, when the
     /// caller asked for the strict rule and did not ask for tree evaluation.
     /// </summary>
@@ -5119,6 +5188,7 @@ public sealed class XsltTransformEngine
     {
         EnsureStrictStreamability(options);
         RequireDeclaredNamesInStrictTypedModes();
+        MatchDeclaredNamesAsSchemaElementsInTypedModes();
         ArgumentNullException.ThrowIfNull(xmlSource);
         // Strip leading BOM character (U+FEFF) — XmlDocument.LoadXml rejects it
         if (xmlSource.Length > 0 && xmlSource[0] == '\uFEFF')
