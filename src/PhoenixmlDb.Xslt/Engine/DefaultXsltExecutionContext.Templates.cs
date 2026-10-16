@@ -1189,7 +1189,19 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (!_isStreamingExecution && InTypedAsBodyAccumulator && _nodeStore != null
                     && _textContentDepth == 0)
                 {
-                    var deepCloneId = CloneSubtreeDeep(elem, null, copyNamespaces: true);
+                    // validation="preserve" (XSLT 3.0 §6.7.2): the copy keeps the type annotations
+                    // of what it copies. They were dropped (W3C match-262).
+                    var savedPreserve = _copyPreservesAnnotations;
+                    _copyPreservesAnnotations = true;
+                    NodeId deepCloneId;
+                    try
+                    {
+                        deepCloneId = CloneSubtreeDeep(elem, null, copyNamespaces: true);
+                    }
+                    finally
+                    {
+                        _copyPreservesAnnotations = savedPreserve;
+                    }
                     if (_nodeStore.GetNode(deepCloneId) is XdmElement deepClone)
                     {
                         deepClone.CopySourceBaseUri ??= ComputeSourceBaseUri(elem);
@@ -1201,6 +1213,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 break;
             case XdmText text:
                 WriteText(text.Value, false);
+                break;
+            case XdmAttribute typedAttr when !_isStreamingExecution && InTypedAsBodyAccumulator && _nodeStore != null
+                && _textContentDepth == 0 && !_attributeCollecting
+                && SnapshotHelper.DeepCopyItems(typedAttr, _nodeStore) is { } attributeCopy:
+                // Captured as a node: a copy that keeps its type annotation, as validation="preserve"
+                // gives (W3C match-263). Written as text, it was untyped.
+                AppendToSeqAccumulator(attributeCopy);
                 break;
             case XdmAttribute attr:
             {

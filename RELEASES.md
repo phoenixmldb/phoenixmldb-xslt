@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **`on-no-match="deep-copy"` keeps type annotations**: its built-in rule is
+  `xsl:copy-of select="." validation="preserve"` (XSLT 3.0 §6.7.2). An element or attribute it
+  copied into a variable was untyped. W3C match-262, match-263.
 - **In a mode with `typed="strict"` or `typed="lax"`, a declared element name in a pattern means
   `schema-element(E)`** (XSLT 3.0 §6.6.1): only an element validated against that declaration
   matches the first step of the pattern. It was matched by name. W3C match-220 and match-221, with
