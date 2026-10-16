@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **The in-scope namespaces of each stylesheet element are worked out once** (#401). Each instruction
+  and XPath expression walked its ancestors' attributes for them. For a generated Schematron
+  validator of 2.3 MB, a compile now allocates 419 MB, not 465 MB (-10%).
 - **Breaking: the namespace sets of three AST types are read-only.** `XsltElement.InScopeNamespaces`,
   `XsltAttribute.InScopeNamespaces` and `XsltLiteralResultElement.NamespaceDeclarations` are
   `IReadOnlyDictionary<string, string>`, not `Dictionary<string, string>`. Equal sets in a module are

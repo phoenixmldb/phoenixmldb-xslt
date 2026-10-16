@@ -145,8 +145,10 @@ public sealed partial class StylesheetParser
         }
         foreach (var desc in element.Descendants())
         {
-            foreach (var ns in desc.Attributes().Where(a => a.IsNamespaceDeclaration))
+            for (var ns = desc.FirstAttribute; ns != null; ns = ns.NextAttribute)
             {
+                if (!ns.IsNamespaceDeclaration)
+                    continue;
                 var prefix = ns.Name.LocalName == "xmlns" ? "" : ns.Name.LocalName;
                 stylesheet.Namespaces.TryAdd(prefix, ns.Value);
             }
