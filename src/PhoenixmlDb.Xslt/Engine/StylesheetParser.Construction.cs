@@ -424,6 +424,6 @@ public sealed partial class StylesheetParser
                 inScope.TryAdd(prefix, nsAttr.Value);
             }
         }
-        return inScope;
+        return NamespaceSets.Shared(element, inScope);
     }
 }

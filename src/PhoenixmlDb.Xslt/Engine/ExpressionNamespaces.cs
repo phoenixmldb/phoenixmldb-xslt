@@ -39,7 +39,7 @@ internal static class ExpressionNamespaces
             foreach (var a in e.Attributes())
                 if (a.IsNamespaceDeclaration && a.Name.Namespace == XNamespace.Xmlns)
                     bindings.TryAdd(a.Name.LocalName, a.Value);
-        s_table.AddOrUpdate(expr, bindings);
+        s_table.AddOrUpdate(expr, NamespaceSets.Shared(element, bindings));
     }
 
     internal static bool TryGet(XQueryExpression expr, out IReadOnlyDictionary<string, string> bindings)
