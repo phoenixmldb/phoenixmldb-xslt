@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Breaking: the namespace sets of three AST types are read-only.** `XsltElement.InScopeNamespaces`,
+  `XsltAttribute.InScopeNamespaces` and `XsltLiteralResultElement.NamespaceDeclarations` are
+  `IReadOnlyDictionary<string, string>`, not `Dictionary<string, string>`. Equal sets in a module are
+  one shared object (#403), so a write to one would change every instruction that shares it. Code
+  that reads them, or sets them with a `Dictionary`, compiles as before; code that changes them, or
+  takes them as a `Dictionary`, does not, and the change is binary-breaking.
 - **`suppress-indentation` with the html method matches names as HTML does** (#400). An element in no
   namespace or the XHTML namespace is matched by local name without case; any other element by its
   expanded QName, its prefix resolved through the namespace declarations of the output. The names

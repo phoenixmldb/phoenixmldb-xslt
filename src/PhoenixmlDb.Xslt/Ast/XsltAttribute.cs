@@ -21,7 +21,12 @@ public sealed class XsltAttribute : XsltInstruction
 
     /// <summary>The schema type the <c>type</c> attribute names, which the node is validated against; null when there is none.</summary>
     public XsltTypeName? ValidationType { get; init; }
-    public Dictionary<string, string> InScopeNamespaces { get; init; } = new();
+    /// <summary>In-scope namespace bindings from the stylesheet element (prefix → URI).</summary>
+    /// <remarks>
+    /// Read-only: equal sets in one stylesheet module are one shared dictionary, so a write to
+    /// one would change every instruction that shares it.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> InScopeNamespaces { get; init; } = Engine.NamespaceSets.Empty;
 
     public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitAttribute(this);
 

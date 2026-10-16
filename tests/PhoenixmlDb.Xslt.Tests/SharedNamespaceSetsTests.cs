@@ -31,6 +31,20 @@ public sealed class SharedNamespaceSetsTests
     }
 
     [Fact]
+    public void A_shared_set_cannot_be_changed_and_is_not_the_callers_dictionary()
+    {
+        var bindings = new Dictionary<string, string> { ["a"] = "urn:a" };
+        var shared = NamespaceSets.Shared(XDocument.Parse("<r/>").Root!, bindings);
+        bindings["b"] = "urn:b";
+
+        shared.Keys.Should().Equal("a");
+        var asDictionary = (IDictionary<string, string>)shared;
+        asDictionary.IsReadOnly.Should().BeTrue();
+        var write = () => asDictionary["c"] = "urn:c";
+        write.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
     public async Task Literal_result_elements_keep_their_namespace_declarations()
     {
         var transformer = new XsltTransformer();

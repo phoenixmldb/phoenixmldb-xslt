@@ -413,7 +413,7 @@ public sealed partial class StylesheetParser
     /// winning ("" is the default namespace). For prefixes that are only known at run time,
     /// such as a QName produced by an AVT.
     /// </summary>
-    private static Dictionary<string, string> InScopeNamespacesOf(XElement element)
+    private static IReadOnlyDictionary<string, string> InScopeNamespacesOf(XElement element)
     {
         var inScope = new Dictionary<string, string>();
         for (var e = element; e != null; e = e.Parent)
