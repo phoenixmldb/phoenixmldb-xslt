@@ -12,15 +12,24 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </summary>
 /// <remarks>
 /// A set is matched with the order of its bindings and its key comparer, since a literal result
-/// element writes its namespace declarations in that order. The dictionaries are not changed
-/// after the parse. The pool belongs to the module's document, and goes with it.
+/// element writes its namespace declarations in that order. A shared set is read-only: a write
+/// to one would change every instruction that shares it. The pool belongs to the module's
+/// document, and goes with it.
 /// </remarks>
 internal static class NamespaceSets
 {
-    private static readonly ConditionalWeakTable<XDocument, Dictionary<string, Dictionary<string, string>>> s_pools = new();
-    private static readonly ConditionalWeakTable<XElement, Dictionary<string, Dictionary<string, string>>> s_rootPools = new();
+    private static readonly ConditionalWeakTable<XDocument, Dictionary<string, IReadOnlyDictionary<string, string>>> s_pools = new();
+    private static readonly ConditionalWeakTable<XElement, Dictionary<string, IReadOnlyDictionary<string, string>>> s_rootPools = new();
 
-    internal static Dictionary<string, string> Shared(XElement context, Dictionary<string, string> bindings)
+    /// <summary>The empty set, shared by every instruction that has no bindings of its own.</summary>
+    internal static IReadOnlyDictionary<string, string> Empty { get; } =
+        new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.Ordinal));
+
+    /// <summary>
+    /// The shared, read-only set equal to <paramref name="bindings"/>. A new set is a copy, so the
+    /// caller's dictionary does not alias it.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> Shared(XElement context, Dictionary<string, string> bindings)
     {
         var pool = context.Document is { } document
             ? s_pools.GetValue(document, static _ => new(StringComparer.Ordinal))
@@ -34,8 +43,9 @@ internal static class NamespaceSets
             var text = key.ToString();
             if (pool.TryGetValue(text, out var shared))
                 return shared;
-            pool[text] = bindings;
-            return bindings;
+            var copy = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(new Dictionary<string, string>(bindings, bindings.Comparer));
+            pool[text] = copy;
+            return copy;
         }
     }
 }

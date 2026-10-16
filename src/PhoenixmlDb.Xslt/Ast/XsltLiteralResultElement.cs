@@ -21,7 +21,12 @@ public sealed class XsltLiteralResultElement : XsltInstruction
     /// </summary>
     public string? SourceNamespaceName { get; init; }
     public Dictionary<QName, XsltAttributeValueTemplate> Attributes { get; init; } = new();
-    public Dictionary<string, string> NamespaceDeclarations { get; init; } = new();
+    /// <summary>The namespace declarations of the literal result element (prefix → URI), in order.</summary>
+    /// <remarks>
+    /// Read-only: equal sets in one stylesheet module are one shared dictionary, so a write to
+    /// one would change every instruction that shares it.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> NamespaceDeclarations { get; init; } = Engine.NamespaceSets.Empty;
     public List<QName> UseAttributeSets { get; init; } = new();
     public bool? InheritNamespaces { get; init; }
     /// <summary>The <c>xsl:validation</c> attribute, when the element carries one.</summary>

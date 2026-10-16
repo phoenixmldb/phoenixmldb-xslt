@@ -32,7 +32,11 @@ public sealed class XsltElement : XsltInstruction
     /// In-scope namespace bindings from the stylesheet element (prefix → URI).
     /// Used to resolve prefixed element names when no namespace attribute is specified.
     /// </summary>
-    public Dictionary<string, string> InScopeNamespaces { get; init; } = new();
+    /// <remarks>
+    /// Read-only: equal sets in one stylesheet module are one shared dictionary, so a write to
+    /// one would change every instruction that shares it.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> InScopeNamespaces { get; init; } = Engine.NamespaceSets.Empty;
 
     public override T Accept<T>(IXsltInstructionVisitor<T> visitor) => visitor.VisitElement(this);
 
