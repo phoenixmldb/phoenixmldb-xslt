@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A variable or parameter whose `select` gives an untyped node or a string, with `as` a type derived
+  from xs:string (`xs:NMTOKEN`, `xs:ID`, `xs:token`, `xs:Name`, ...), holds a value of that type.** The
+  value matched the xs:string the type is reduced to and was kept as a plain string, so
+  `$v instance of xs:NMTOKEN` was false. W3C as-1902.
+
 - **A template with `as="schema-element(N)"` or `as="schema-attribute(N)"` returns the element or
   attribute.** The type was taken for an atomic one, so the node was atomized and its value written
   as text: an attribute a template returned did not reach its parent element. W3C as-1812, as-2905,
