@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **New: `XsltTransformer.DocumentValidation`** (`XsltTransformOptions.DocumentValidation`).
+  With `Strict` or `Lax`, the documents a transformation reads with `fn:doc`, `document()` and
+  `fn:collection` are validated against the transformer's schemas as they are read, as Saxon's
+  `-val` does: their nodes have the schema's type annotations, and a document that is not valid
+  fails the transformation (XTTE1510, XTTE1515). Null, the default, reads them untyped as before;
+  `SourceValidation` still governs the principal source only. W3C validation-2001, validation-2002.
+
 - **`xsl:evaluate` parses each target expression once per transformation** (#405): an instruction
   that evaluates the same text again reuses the expression it parsed and checked, where its
   namespace bindings are its own (no `namespace-context`). W3C evaluate-010, which evaluates two

@@ -39,6 +39,12 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
     /// </summary>
     internal PhoenixmlDb.XQuery.Security.ResourcePolicy? Policy { get; set; }
 
+    /// <summary>
+    /// Whether a document read is validated, and with which schemas: strict or lax
+    /// (<see cref="XsltTransformOptions.DocumentValidation"/>); null reads it untyped.
+    /// </summary>
+    internal (bool Strict, PhoenixmlDb.XQuery.ISchemaProvider? Schemas)? Validation { get; set; }
+
     /// <summary>Set of absolute URIs that have been read via doc()/document() during this transformation.</summary>
     internal IReadOnlyCollection<string> ReadDocumentUris => _cache.Keys;
 
@@ -251,7 +257,10 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         xmlDoc.LoadXml(xmlContent);
 
         var nodeStore = _nodeStore ?? new XdmInMemoryStore();
-        var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, documentUri.AbsoluteUri);
+        var xdmDoc = (Validation is var (strict, schemas) && xmlDoc.DocumentElement is not null
+                ? XsltTransformEngine.ValidateDocument(xmlDoc, nodeStore, schemas, _stylesheet, strict, documentUri.AbsoluteUri)
+                : null)
+            ?? XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, documentUri.AbsoluteUri);
 
         // Apply xsl:strip-space declarations
         if (_stylesheet.StripSpace.Count > 0)

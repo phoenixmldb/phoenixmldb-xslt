@@ -143,6 +143,17 @@ public sealed class XsltTransformOptions
     public Ast.ValidationMode? SourceValidation { get; init; }
 
     /// <summary>
+    /// Validation of the documents the transformation reads with <c>fn:doc</c>,
+    /// <c>document()</c> and <c>fn:collection</c>: with <see cref="Ast.ValidationMode.Strict"/>
+    /// or <see cref="Ast.ValidationMode.Lax"/> each is validated against the schemas of the
+    /// transformer's schema provider as it is read, a document that is not valid fails the
+    /// transformation (XTTE1510, XTTE1515), and its nodes have the type annotations of the schema.
+    /// Null, the default, and the other two modes read them untyped. Saxon's <c>-val</c> option
+    /// does the same; the principal source has its own setting, <see cref="SourceValidation"/>.
+    /// </summary>
+    public Ast.ValidationMode? DocumentValidation { get; init; }
+
+    /// <summary>
     /// When <c>true</c>, a source is built into an in-memory tree even when the initial mode is
     /// streamable: the transformation never takes the streaming pass. Off by default.
     /// </summary>
