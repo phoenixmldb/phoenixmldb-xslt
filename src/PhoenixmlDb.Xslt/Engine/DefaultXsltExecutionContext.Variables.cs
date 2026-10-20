@@ -1408,7 +1408,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Coerce values to target type: atomize XDM nodes, apply numeric promotion, etc.
                 // Per XSLT spec, when 'as' is declared, values must be coerced to the target type.
                 var needsCoercion = items.Any(item => item is XdmNode
-                    || (item != null && !XQuery.Execution.TypeCastHelper.MatchesItemType(item, targetType)));
+                    || (item != null && !XQuery.Execution.TypeCastHelper.MatchesItemType(item, targetType))
+                    || IsStringForDerivedType(item, instruction.As));
                 if (needsCoercion)
                 {
                     var coerced = new object?[items.Length];

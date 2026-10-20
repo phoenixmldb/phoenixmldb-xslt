@@ -1176,6 +1176,14 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Coerces a value to match the specified XDM sequence type.
     /// </summary>
     /// <summary>Whether a node has a type annotation of a schema, and so a typed value other than its string value.</summary>
+    /// <summary>
+    /// Whether the value is a plain string or xs:untypedAtomic and the type a derived built-in
+    /// one (xs:NMTOKEN, xs:ID, xs:token, ...), which it is cast to.
+    /// </summary>
+    private static bool IsStringForDerivedType(object? value, XdmSequenceType targetType)
+        => targetType.LocalTypeName is not null && targetType.DerivedIntegerType is null
+           && value is string or Xdm.XsUntypedAtomic;
+
     private static bool HasTypedValue(Xdm.Nodes.XdmNode node) => node switch
     {
         Xdm.Nodes.XdmElement element => XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(element.TypeAnnotation),
@@ -1215,8 +1223,11 @@ internal sealed partial class DefaultXsltExecutionContext
         // xs:dayTimeDuration value satisfying as="xs:duration" — keep it as-is. Down-casting to
         // the declared base type would strip the subtype and break `instance of xs:dayTimeDuration`
         // (attr/as-0118). Only applies to atomic targets; node/item targets are handled below.
+        // A string for a derived built-in type (as="xs:NMTOKEN") matches the xs:string it is
+        // reduced to, but is not an instance of the derived type: it is cast below.
         if (IsCastableAtomicType(itemType)
-            && XQuery.Execution.TypeCastHelper.MatchesItemType(value, itemType))
+            && XQuery.Execution.TypeCastHelper.MatchesItemType(value, itemType)
+            && !IsStringForDerivedType(value, targetType))
         {
             return value;
         }

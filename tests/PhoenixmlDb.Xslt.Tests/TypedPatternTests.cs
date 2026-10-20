@@ -171,6 +171,25 @@ public sealed class TypedPatternTests : IDisposable
                 <xsl:param name="n" as="xs:NMTOKEN"><xsl:value-of select="'a-b'"/></xsl:param>
                 """)).Should().Be("true false true");
 
+    /// <summary>
+    /// A variable or parameter whose select= gives an untyped node or a string, as="xs:NMTOKEN"
+    /// (or another type derived from xs:string), holds a value of that type. The value matched the
+    /// xs:string the type is reduced to and was kept as a plain string (W3C as-1902). The
+    /// expected values are Saxon-HE 12's.
+    /// </summary>
+    [Fact]
+    public async Task A_select_for_a_type_derived_from_string_gives_a_value_of_that_type()
+        => (await RunAsync("""
+                <xsl:variable name="g" select="/x/@n" as="xs:NMTOKEN"/>
+                <xsl:template match="/"><xsl:call-template name="t"><xsl:with-param name="w" select="/x/@n"/></xsl:call-template></xsl:template>
+                <xsl:template name="t">
+                  <xsl:param name="w" as="xs:Name"/>
+                  <xsl:param name="i" select="/x/@i" as="xs:ID"/>
+                  <xsl:variable name="s" select="string(/x/@n)" as="xs:token"/>
+                  <xsl:value-of select="$g instance of xs:NMTOKEN, $w instance of xs:Name, $i instance of xs:ID, $s instance of xs:token"/>
+                </xsl:template>
+                """, "<x n='ab' i='k1'/>", validation: null)).Should().Be("true true true true");
+
     /// <summary>xsl:source-document validation="strict" gives a typed document; the attribute was ignored.</summary>
     [Theory]
     [InlineData("true")]
