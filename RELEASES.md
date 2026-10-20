@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A template with `as="schema-element(N)"` or `as="schema-attribute(N)"` returns the element or
+  attribute.** The type was taken for an atomic one, so the node was atomized and its value written
+  as text: an attribute a template returned did not reach its parent element. W3C as-1812, as-2905,
+  as-3504, as-3601, as-3701.
+
 - **A sequence constructor whose type is a sequence of atomic values gives one value for each text
   node it makes** (XSLT 3.0 §9.4): a variable, a parameter or a template with `as="xs:string*"`,
   `as="xs:anyAtomicType+"` and the like. Its text was written into one buffer, so two `xsl:value-of`

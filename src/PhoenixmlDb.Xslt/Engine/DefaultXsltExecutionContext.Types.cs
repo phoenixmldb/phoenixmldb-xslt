@@ -1027,12 +1027,14 @@ internal sealed partial class DefaultXsltExecutionContext
             template.Match != null ? $" match=\"{DescribePattern(template.Match)}\"" : "";
         var locInfo = templateId;
 
-        // Apply function conversion rules: atomize nodes for atomic target types
+        // Apply function conversion rules: atomize nodes for atomic target types. schema-element()
+        // and schema-attribute() are node types: they were taken for atomic ones, so the element
+        // or attribute a template returned was atomized and written as text (W3C as-1812).
         var isAtomicTarget = targetType is not ItemType.Item and not ItemType.Node
             and not ItemType.Element and not ItemType.Text and not ItemType.Comment
             and not ItemType.ProcessingInstruction and not ItemType.Attribute
             and not ItemType.Document and not ItemType.Function and not ItemType.Map
-            and not ItemType.Array;
+            and not ItemType.Array and not ItemType.SchemaElement and not ItemType.SchemaAttribute;
 
         if (isAtomicTarget)
         {
@@ -1128,6 +1130,9 @@ internal sealed partial class DefaultXsltExecutionContext
                     (ItemType.Comment, XdmComment) => true,
                     (ItemType.ProcessingInstruction, XdmProcessingInstruction) => true,
                     (ItemType.Attribute, XdmAttribute) => true,
+                    // The kind, as for a variable; the declaration is not checked here.
+                    (ItemType.SchemaElement, XdmElement) => true,
+                    (ItemType.SchemaAttribute, XdmAttribute) => true,
                     (ItemType.Document, XdmDocument doc) =>
                         template.As.DocumentElementName == null ||
                         doc.DocumentElementLocalName == template.As.DocumentElementName,
