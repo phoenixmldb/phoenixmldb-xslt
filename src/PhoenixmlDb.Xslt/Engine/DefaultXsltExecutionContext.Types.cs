@@ -1040,6 +1040,11 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 if (resultItems[i] is XdmNode node)
                     resultItems[i] = node.StringValue; // atomize: node → string
+                // A text node the body made is kept as one item for an atomic sequence type
+                // (KeepsTextNodesApartAsAtomicValues); it is atomized the same way. Kept as a text
+                // node, it merged with the next one where the result was written.
+                else if (resultItems[i] is Xdm.TextNodeItem text)
+                    resultItems[i] = text.Value;
             }
         }
 
@@ -1374,6 +1379,16 @@ internal sealed partial class DefaultXsltExecutionContext
     private static bool IsAtomicReturnType(ItemType type) =>
         IsStrictAtomicType(type) || type is ItemType.String or ItemType.AnyUri
             or ItemType.UntypedAtomic or ItemType.AnyAtomicType;
+
+    /// <summary>
+    /// Whether a sequence constructor of this declared type keeps each text node it makes as one
+    /// item: a sequence of atomic values does, since each text node is atomized to one value
+    /// (XSLT 3.0 §9.4). The text was written into one buffer, so two xsl:value-of gave one value
+    /// of the two strings joined (W3C as-1801, as-1803).
+    /// </summary>
+    internal static bool KeepsTextNodesApartAsAtomicValues(XdmSequenceType? type) =>
+        type is not null && IsAtomicReturnType(type.ItemType)
+        && type.Occurrence is Occurrence.ZeroOrMore or Occurrence.OneOrMore;
 
 
     private static bool IsNodeType(ItemType type) => type is

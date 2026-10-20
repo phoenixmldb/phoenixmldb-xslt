@@ -521,7 +521,22 @@ internal sealed partial class DefaultXsltExecutionContext
                         _sequenceAccumulator = bodyAccum;
                         _currentAsBodyCapture = new AsBodyCapture { Accumulator = bodyAccum, OutputBaseLen = savedLen, AttrDepthAtStart = _collectedAttributesStack.Count };
                         var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
-                        await template.Body.ExecuteAsync(this).ConfigureAwait(false);
+                        var savedCollectText = _collectTextAsSequenceItems;
+                        var savedElementDepth = _serializingElementDepth;
+                        if (KeepsTextNodesApartAsAtomicValues(template.As))
+                        {
+                            _collectTextAsSequenceItems = true;
+                            _serializingElementDepth = 0;
+                        }
+                        try
+                        {
+                            await template.Body.ExecuteAsync(this).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            _collectTextAsSequenceItems = savedCollectText;
+                            _serializingElementDepth = savedElementDepth;
+                        }
                         var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
                         var bodyCapture = _currentAsBodyCapture;
                         _currentAsBodyCapture = savedCapture;
@@ -1519,6 +1534,13 @@ internal sealed partial class DefaultXsltExecutionContext
                         var rdClaimedPrimaryBefore = _primaryOutputClaimedByResultDocument;
                         var savedTailFrameAs = _tailCallFrameScope;
                         _tailCallFrameScope = null; // the captured result is post-processed below
+                        var savedCollectText = _collectTextAsSequenceItems;
+                        var savedElementDepth = _serializingElementDepth;
+                        if (KeepsTextNodesApartAsAtomicValues(template.As))
+                        {
+                            _collectTextAsSequenceItems = true;
+                            _serializingElementDepth = 0;
+                        }
                         try
                         {
                             await template.Body.ExecuteAsync(this).ConfigureAwait(false);
@@ -1526,6 +1548,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         finally
                         {
                             _tailCallFrameScope = savedTailFrameAs;
+                            _collectTextAsSequenceItems = savedCollectText;
+                            _serializingElementDepth = savedElementDepth;
                         }
                         var bodyOutput = TakeAsBodyOutput(savedLen, rdClaimedPrimaryBefore);
                         var bodyCapture = _currentAsBodyCapture;

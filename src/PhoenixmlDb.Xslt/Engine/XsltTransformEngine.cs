@@ -4151,9 +4151,10 @@ public sealed class XsltTransformEngine
                     // Use sequence accumulator to collect individual items from xsl:sequence
                     context.BeginSequenceCollection();
                     // When the target type is text(), collect each text write as a separate
-                    // accumulator item so they remain individual text nodes.
-                    var needsTextCollection = global.As != null &&
-                        global.As.ItemType is ItemType.Text;
+                    // accumulator item so they remain individual text nodes. So for a sequence
+                    // of atomic values, as a local variable does.
+                    var needsTextCollection = global.As?.ItemType is ItemType.Text
+                        || DefaultXsltExecutionContext.KeepsTextNodesApartAsAtomicValues(global.As);
                     var savedCollectText = context._collectTextAsSequenceItems;
                     var savedElemDepth = context._serializingElementDepth;
                     if (needsTextCollection)
