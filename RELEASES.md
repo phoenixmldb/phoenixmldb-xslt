@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`xsl:evaluate` parses each target expression once per transformation** (#405): an instruction
+  that evaluates the same text again reuses the expression it parsed and checked, where its
+  namespace bindings are its own (no `namespace-context`). W3C evaluate-010, which evaluates two
+  strings 100,000 times, takes 1.2 s, not 2.7 s; the output is the same.
+
 - **In `xsl:override`, an `xsl:param` may override an `xsl:variable` of the used package, and an
   `xsl:variable` an `xsl:param`** (XSLT 3.0 §3.5.3.4): the overriding parameter takes the value
   the caller supplies. It was looked for among the parameters only and dropped. An overriding

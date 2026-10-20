@@ -822,6 +822,16 @@ internal sealed partial class DefaultXsltExecutionContext
     private readonly HashSet<NodeId> _validatedTreeRoots = [];
 
     /// <summary>
+    /// The target expressions of xsl:evaluate this transformation has parsed and checked, by
+    /// instruction, text, schema-awareness and default namespace (see EvaluateInstructionAsync).
+    /// Bounded, so that a stylesheet evaluating ever new strings does not keep them all.
+    /// </summary>
+    private readonly Dictionary<(XsltEvaluate Instruction, string Text, bool SchemaAware, string? DefaultNamespace), XQueryExpression>
+        _evaluateExpressions = [];
+
+    private const int MaxCachedEvaluateExpressions = 256;
+
+    /// <summary>
     /// True while xsl:copy-of validation="preserve" copies: the copies keep the type
     /// annotations of what they copy (XSLT 3.0 §25.4.2).
     /// </summary>

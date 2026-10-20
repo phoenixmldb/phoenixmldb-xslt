@@ -1850,49 +1850,63 @@ internal sealed partial class DefaultXsltExecutionContext
             nsBindings = instruction.DefaultNamespaceBindings;
         }
 
-        // Parse the XPath expression
+        // The expression, parsed and checked, is kept for the next evaluation of the same text by
+        // this instruction: a loop evaluating one of a few strings parsed it each time (W3C
+        // evaluate-010 evaluates two strings 100,000 times). Only where the namespace bindings are
+        // the instruction's own; a namespace-context gives them per evaluation.
+        var cacheKey = (instruction, xpathStr, schemaAware, xpathDefaultNs);
+        var cacheable = instruction.NamespaceContext == null;
         XQueryExpression parsedExpr;
-        try
+        if (cacheable && _evaluateExpressions.TryGetValue(cacheKey, out var cachedExpr))
         {
-            // With the namespace bindings for type names: a prefix in a type name is resolved as
-            // the expression is parsed (instance of e32:calendar), and it was unbound there.
-            var typeBindings = nsBindings;
-            var typeDefault = xpathDefaultNs;
-            string? schemaTypeNamespace = null;
-            parsedExpr = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(xpathStr,
-                prefix =>
-                {
-                    var uri = prefix.Length == 0 ? typeDefault : typeBindings.TryGetValue(prefix, out var bound) ? bound : null;
-                    if (!string.IsNullOrEmpty(uri) && uri != "http://www.w3.org/2001/XMLSchema")
-                        schemaTypeNamespace ??= uri;
-                    return uri;
-                });
-            // schema-aware="no", the default: the types of imported schemas are not in the
-            // static context of the target expression (XSLT 3.0 §10.4.1).
-            if (schemaTypeNamespace is not null && !schemaAware)
-                throw new XsltException(
-                    $"XTDE3160: Dynamic XPath expression is not valid: it names a schema type in '{schemaTypeNamespace}', and xsl:evaluate is not schema-aware",
-                    instruction.Location);
+            parsedExpr = cachedExpr;
         }
-        catch (Exception ex)
+        else
         {
-            // A static error while analysing the xpath string is XTDE3160 (XSLT 3.0 §19.4);
-            // XTDE3150 is a different rule (error-3160a).
-            throw new XsltException($"XTDE3160: Dynamic XPath expression is not valid: {ex.Message}", instruction.Location);
+            try
+            {
+                // With the namespace bindings for type names: a prefix in a type name is resolved as
+                // the expression is parsed (instance of e32:calendar), and it was unbound there.
+                var typeBindings = nsBindings;
+                var typeDefault = xpathDefaultNs;
+                string? schemaTypeNamespace = null;
+                parsedExpr = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade { AllowNamespaceAxis = true }.Parse(xpathStr,
+                    prefix =>
+                    {
+                        var uri = prefix.Length == 0 ? typeDefault : typeBindings.TryGetValue(prefix, out var bound) ? bound : null;
+                        if (!string.IsNullOrEmpty(uri) && uri != "http://www.w3.org/2001/XMLSchema")
+                            schemaTypeNamespace ??= uri;
+                        return uri;
+                    });
+                // schema-aware="no", the default: the types of imported schemas are not in the
+                // static context of the target expression (XSLT 3.0 §10.4.1).
+                if (schemaTypeNamespace is not null && !schemaAware)
+                    throw new XsltException(
+                        $"XTDE3160: Dynamic XPath expression is not valid: it names a schema type in '{schemaTypeNamespace}', and xsl:evaluate is not schema-aware",
+                        instruction.Location);
+            }
+            catch (Exception ex)
+            {
+                // A static error while analysing the xpath string is XTDE3160 (XSLT 3.0 §19.4);
+                // XTDE3150 is a different rule (error-3160a).
+                throw new XsltException($"XTDE3160: Dynamic XPath expression is not valid: {ex.Message}", instruction.Location);
+            }
+
+            // Resolve namespace prefixes in the parsed expression using the determined bindings
+            ResolveExpressionNamespacesRuntime(parsedExpr, nsBindings, xpathDefaultNs);
+
+            // XTDE3160 is about the TARGET EXPRESSION: its static context lacks the XSLT-defined
+            // functions and the private stylesheet functions (XSLT 3.0 §10.4.1), so naming one is a
+            // static error in it. A function item for one of them obtained outside and passed in with
+            // xsl:with-param is fine. The check used to fire at invocation, inside the functions
+            // themselves, so the passed-in item raised too (W3C system-property-101d..109f).
+            var unavailable = new EvaluateUnavailableFunctionFinder(_stylesheet.Functions);
+            unavailable.Walk(parsedExpr);
+            if (unavailable.Found is { } fn)
+                throw new XsltException($"XTDE3160: The function {fn}() is not available within xsl:evaluate", instruction.Location);
+            if (cacheable && _evaluateExpressions.Count < MaxCachedEvaluateExpressions)
+                _evaluateExpressions[cacheKey] = parsedExpr;
         }
-
-        // Resolve namespace prefixes in the parsed expression using the determined bindings
-        ResolveExpressionNamespacesRuntime(parsedExpr, nsBindings, xpathDefaultNs);
-
-        // XTDE3160 is about the TARGET EXPRESSION: its static context lacks the XSLT-defined
-        // functions and the private stylesheet functions (XSLT 3.0 §10.4.1), so naming one is a
-        // static error in it. A function item for one of them obtained outside and passed in with
-        // xsl:with-param is fine. The check used to fire at invocation, inside the functions
-        // themselves, so the passed-in item raised too (W3C system-property-101d..109f).
-        var unavailable = new EvaluateUnavailableFunctionFinder(_stylesheet.Functions);
-        unavailable.Walk(parsedExpr);
-        if (unavailable.Found is { } fn)
-            throw new XsltException($"XTDE3160: The function {fn}() is not available within xsl:evaluate", instruction.Location);
 
         // Evaluate context-item if specified
         object? contextItem = null;
