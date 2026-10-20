@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A literal result element built with `validation="strip"`, the default, strips the type
+  annotations of everything in it** (XSLT 3.0 §25.4.1), including a child given a type with
+  `xsl:type` and validated before it. The child kept its annotation, so `element(*, T)` matched it
+  inside an untyped parent. W3C match-173.
+
 - **An element or attribute validated against a union type has the union as its annotation** (with
   PhoenixmlDb.Core's change), so `element(*, xs:decimal)` no longer matches an element declared as
   a union of xs:integer and another type: the rule for the union is chosen. W3C match-195,

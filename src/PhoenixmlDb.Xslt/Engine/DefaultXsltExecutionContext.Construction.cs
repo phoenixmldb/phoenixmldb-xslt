@@ -1218,10 +1218,59 @@ internal sealed partial class DefaultXsltExecutionContext
         // xsl:validation on a literal result element validates it as validation= does on
         // xsl:element (XSLT 3.0 §11.1.2); it was read for XTSE1660 and then dropped (xslt#316).
         => instruction.Validation is not (Ast.ValidationMode.Strict or Ast.ValidationMode.Lax) && instruction.ValidationType is null
-            ? CreateLiteralElementCoreAsync(instruction)
+            ? _activeTreeConstructor is not null && _textContentDepth == 0
+              && (instruction.Validation ?? _stylesheet.DefaultValidation) == Ast.ValidationMode.Strip
+                ? CreateLiteralElementStrippingAsync(instruction)
+                : CreateLiteralElementCoreAsync(instruction)
             : RunInstructionWithValidationAsync(
                 instruction.Validation, "literal result element", instruction.Location,
                 () => CreateLiteralElementCoreAsync(instruction), instruction.ValidationType);
+
+    /// <summary>
+    /// Builds a literal result element with validation="strip" in a tree: it and everything in it
+    /// are untyped (XSLT 3.0 §25.4.1), including a child that was given a type of its own
+    /// (xsl:type) and validated as it was built. That child kept its annotation, so
+    /// element(*, T) matched it inside an untyped parent (W3C match-173). Only when something
+    /// in the body was validated is the element looked at again.
+    /// </summary>
+    private async ValueTask CreateLiteralElementStrippingAsync(XsltLiteralResultElement instruction)
+    {
+        var tree = _activeTreeConstructor!;
+        var before = tree.NodesHere;
+        var validatedBefore = _validatedTreeRoots.Count;
+        await CreateLiteralElementCoreAsync(instruction).ConfigureAwait(false);
+        if (_validatedTreeRoots.Count == validatedBefore || !ReferenceEquals(tree, _activeTreeConstructor) || _nodeStore is null)
+            return;
+        for (var i = before; i < tree.NodesHere; i++)
+        {
+            if (tree.NodeHere(i) is not XdmElement element || !HasTypedNode(element))
+                continue;
+            var savedPreserve = _copyPreservesAnnotations;
+            _copyPreservesAnnotations = false;
+            NodeId copy;
+            try { copy = CloneSubtreeDeep(element, null, copyNamespaces: true); }
+            finally { _copyPreservesAnnotations = savedPreserve; }
+            if (_nodeStore.GetNode(copy) is XdmElement untyped)
+                tree.ReplaceNodeHere(i, untyped);
+        }
+    }
+
+    private bool HasTypedNode(XdmElement element)
+    {
+        if (element.TypeAnnotation != Xdm.XdmTypeName.Untyped)
+            return true;
+        foreach (var attribute in _nodeStore!.GetAttributes(element))
+        {
+            if (attribute.TypeAnnotation != Xdm.XdmTypeName.UntypedAtomic)
+                return true;
+        }
+        foreach (var child in _nodeStore.GetChildren(element))
+        {
+            if (child is XdmElement childElement && HasTypedNode(childElement))
+                return true;
+        }
+        return false;
+    }
 
 
     private async ValueTask CreateLiteralElementCoreAsync(XsltLiteralResultElement instruction)
