@@ -68,9 +68,11 @@ public sealed class TypedPatternTests : IDisposable
 
     [Fact]
     public async Task A_pattern_with_a_type_matches_the_nodes_of_that_type()
-        // t:u holds 100, so its annotation is the member xs:integer: it matches the union and
-        // xs:decimal, and the later of the two rules is chosen.
-        => (await RunAsync(Rules, Source)).Should().Be("<r>[code 123-AB][part 123-AB][decimal 1.1][decimal 100]</r>");
+        // t:u holds 100. Its annotation is its declared type, the union t:partOrInt, not the
+        // member xs:integer its value matched (XDM 3.1 §3.3.1.2), so element(*, xs:decimal) does
+        // not match it: the union's rule is chosen. With the member as the annotation, the later
+        // xs:decimal rule was.
+        => (await RunAsync(Rules, Source)).Should().Be("<r>[code 123-AB][part 123-AB][decimal 1.1][union 100]</r>");
 
     /// <summary>An element of a member type of a union matches element(*, U) as well (XPath 3.0).</summary>
     [Fact]
