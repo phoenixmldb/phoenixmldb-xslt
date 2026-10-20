@@ -65,8 +65,9 @@ RUN="$(gh run list -R "$SLUG" --branch main --limit 20 --json databaseId,headSha
   -q ".[]|select(.headSha==\"$HEAD\" and .workflowName==\"CI\")|\"\(.databaseId) \(.status) \(.conclusion)\"" | head -1)"
 if [ -z "$RUN" ]; then bad "no CI run on main for ${HEAD:0:7}"
 else
-  set -- $RUN
-  if [ "$2 $3" != "completed success" ]; then bad "CI on ${HEAD:0:7} is '$2 $3'"
+  # A run that is not completed has no conclusion yet: give it one so set -u does not stop here.
+  set -- $RUN "-"
+  if [ "$2 $3" != "completed success" ]; then bad "CI on ${HEAD:0:7} is '$2 $3' (wait for it to complete)"
   else
     WIN="$(gh run view "$1" -R "$SLUG" --json jobs -q '[.jobs[]|select((.name|ascii_downcase|test("windows")) and .conclusion=="success")]|length')"
     [ "${WIN:-0}" -gt 0 ] && ok "CI green on ${HEAD:0:7}, $WIN Windows job(s)" || bad "CI on ${HEAD:0:7} has no successful Windows job"
