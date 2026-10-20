@@ -162,4 +162,33 @@ public class PatternKeywordAndFunctionTests
         var r = await RunTemplateAsync(xsl, "initial-template", "http://www.w3.org/1999/XSL/Transform");
         r.Should().NotContain("wrong");
     }
+
+    /// <summary>
+    /// A pattern step has a forward axis only (XSLT 3.0 §5.5.2): match="/.." and parent:: as a
+    /// step are XTSE0340, as W3C match-213 expects. They were taken as a rule for a parent, which
+    /// matched nothing. ".." in a predicate is allowed.
+    /// </summary>
+    [Theory]
+    [InlineData("/..")]
+    [InlineData("a/..")]
+    [InlineData("parent::a")]
+    public async Task Match213_ParentAxisStepIsAnError(string pattern)
+    {
+        var act = () => RunAsync($"""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <xsl:template match="{pattern}"/>
+            </xsl:stylesheet>
+            """, "<a/>");
+        (await act.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTSE0340");
+    }
+
+    [Fact]
+    public async Task ParentAxisInAPredicateIsAllowed()
+        => (await RunAsync("""
+            <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0">
+              <xsl:output omit-xml-declaration="yes"/>
+              <xsl:template match="b[../@k = '1']">[b]</xsl:template>
+              <xsl:template match="text()"/>
+            </xsl:stylesheet>
+            """, "<a k='1'><b/></a>")).Should().Be("[b]");
 }

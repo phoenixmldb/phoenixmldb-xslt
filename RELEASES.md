@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`schema-element(E)` in a pattern matches the elements of E's substitution group** (XPath 3.1
+  §2.5.5.3). The pattern was matched by the name E, so a member of the group with another name
+  never reached the test of its declaration. W3C match-179, match-199, match-200.
+- **The default priorities of kind tests are those of XSLT 3.0 §6.5**: 0.25 for `schema-element(E)`,
+  `schema-attribute(A)`, `element(E, T)` and `attribute(A, T)`; 0 for `element(*, T)` and
+  `attribute(*, T)`; and for `document-node(...)` around an element test, that test's. The first
+  four were 0, `element(*, T)` and `attribute(*, T)` were −0.25, and `document-node(element(E))` was
+  −0.5. A rule with no `priority` attribute may now be chosen over another rule where it was not.
+- **A pattern step with the parent axis is XTSE0340** (XSLT 3.0 §5.5.2): `match="/.."` and
+  `match="parent::a"`. Such a rule was compiled and matched nothing. `..` in a predicate is allowed.
+  W3C match-213.
+
 - **The indentation pass grows its buffer in chunks** (#401). Sized for the whole result, it was one
   large-object-heap array, which only a full collection frees: the committed heap of the
   Schematron compile of GA.EMS.v350 rose by 12 MB on Linux, and the peak private commit by 1.9 MB

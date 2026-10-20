@@ -34,6 +34,9 @@ public sealed class TypedPatternTests : IDisposable
               </xs:sequence><xs:attribute name="code" type="t:part"/></xs:complexType></xs:element>
               <xs:attribute name="special" type="t:part"/>
               <xs:element name="n" type="xs:integer" nillable="true"/>
+              <xs:element name="head" type="xs:string"/>
+              <xs:element name="member" type="xs:string" substitutionGroup="t:head"/>
+              <xs:element name="heads"><xs:complexType><xs:sequence><xs:element ref="t:head" maxOccurs="unbounded"/></xs:sequence></xs:complexType></xs:element>
               <xs:element name="table"><xs:complexType><xs:sequence><xs:element name="row" maxOccurs="unbounded"><xs:complexType><xs:sequence>
                 <xs:element name="key" type="xs:ID"/><xs:element name="value" type="xs:string"/>
               </xs:sequence></xs:complexType></xs:element></xs:sequence></xs:complexType></xs:element>
@@ -95,6 +98,35 @@ public sealed class TypedPatternTests : IDisposable
             <xsl:variable name="a" as="attribute()"><xsl:attribute name="t:special" validation="strict">456-CD</xsl:attribute></xsl:variable>
             """;
         (await RunAsync(rules, Source, declarations: declarations)).Should().Be("<r>[doc][other t:doc][special 456-CD]</r>");
+    }
+
+    /// <summary>
+    /// schema-element(N) matches the elements of N's substitution group, and its default
+    /// priority is 0.25, above the 0 of a name (XSLT 3.0 §6.5). It was matched by the name N
+    /// only, with priority 0, so t:member took the later rule by name.
+    /// </summary>
+    [Fact]
+    public async Task Schema_element_matches_the_substitution_group_with_priority_a_quarter()
+        => (await RunAsync("""
+                <xsl:template match="/"><r><xsl:apply-templates select="t:heads/*"/></r></xsl:template>
+                <xsl:template match="schema-element(t:head)">[group {local-name()}]</xsl:template>
+                <xsl:template match="t:member">[by name]</xsl:template>
+                """, "<t:heads xmlns:t=\"urn:t\"><t:head>a</t:head><t:member>b</t:member></t:heads>"))
+            .Should().Be("<r>[group head][group member]</r>");
+
+    /// <summary>
+    /// document-node(schema-element(N)) has the priority of schema-element(N), above the −0.5
+    /// of "/", and matches only a document whose element is N or of its group.
+    /// </summary>
+    [Fact]
+    public async Task Document_node_schema_element_matches_only_its_documents()
+    {
+        const string rules = """
+            <xsl:template match="document-node(schema-element(t:heads))">[heads]</xsl:template>
+            <xsl:template match="/">[root]</xsl:template>
+            """;
+        (await RunAsync(rules, "<t:heads xmlns:t=\"urn:t\"><t:head>a</t:head></t:heads>")).Should().Be("[heads]");
+        (await RunAsync(rules, Source)).Should().Be("[root]");
     }
 
     [Fact]
