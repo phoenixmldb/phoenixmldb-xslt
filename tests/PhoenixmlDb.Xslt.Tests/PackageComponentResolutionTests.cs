@@ -254,4 +254,56 @@ public sealed class PackageComponentResolutionTests : IDisposable
         var result = await RunMainAsync(principal, Catalog(("urn:base-acc", basePath)));
         result.Should().Contain("<v1>1</v1>");
     }
+
+    private const string BaseWithVariable = """
+        <xsl:package name="urn:base-ov" package-version="1.0.0" version="3.0"
+          xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+          xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="xs">
+          <xsl:variable name="var" as="xs:string" select="'base'" visibility="public"/>
+        </xsl:package>
+        """;
+
+    /// <summary>
+    /// An xsl:param may override an xsl:variable of the used package (XSLT 3.0 §3.5.3.4), and its
+    /// value is then the one the caller supplies. It was looked for among the parameters only and
+    /// dropped, so the variable's value stayed (W3C override-v-008/009).
+    /// </summary>
+    [Fact]
+    public async Task Override_Variable_With_Param_Takes_The_Supplied_Value()
+    {
+        var basePath = WritePackage("base-ov.xsl", BaseWithVariable);
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync("""
+            <xsl:package name="urn:main-ov" version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="xs">
+              <xsl:use-package name="urn:base-ov" package-version="*">
+                <xsl:override><xsl:param name="var" as="xs:string" required="yes"/></xsl:override>
+              </xsl:use-package>
+              <xsl:template name="main" visibility="public"><out><xsl:value-of select="$var"/></out></xsl:template>
+            </xsl:package>
+            """, new Uri(Path.Combine(_dir, "principal.xsl")), null, Catalog(("urn:base-ov", basePath)));
+        t.SetInitialTemplate("main");
+        t.SetParameter("var", "supplied");
+        (await t.TransformAsync("<in/>")).Should().Contain("<out>supplied</out>");
+    }
+
+    /// <summary>
+    /// XTSE3070: an overriding variable or parameter declares the type of the component it
+    /// overrides. A different type was accepted (W3C override-v-006/007).
+    /// </summary>
+    [Fact]
+    public async Task Override_Variable_With_Another_Type_Is_XTSE3070()
+    {
+        var basePath = WritePackage("base-ov.xsl", BaseWithVariable);
+        var act = () => RunMainAsync("""
+            <xsl:package name="urn:main-ov" version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="xs">
+              <xsl:use-package name="urn:base-ov" package-version="*">
+                <xsl:override><xsl:variable name="var" as="xs:integer" select="1" visibility="public"/></xsl:override>
+              </xsl:use-package>
+              <xsl:template name="main" visibility="public"><out/></xsl:template>
+            </xsl:package>
+            """, Catalog(("urn:base-ov", basePath)));
+        (await act.Should().ThrowAsync<XsltException>()).Which.Message.Should().Contain("XTSE3070");
+    }
 }
