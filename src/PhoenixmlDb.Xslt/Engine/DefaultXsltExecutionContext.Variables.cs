@@ -1023,6 +1023,38 @@ internal sealed partial class DefaultXsltExecutionContext
                 // the variable's tree. Found in SchXslt2 transpile: an `as="element(...)"`
                 // template's result was lost when called from inside an unconstrained
                 // `<xsl:variable name="transpiled-schematron">…<xsl:apply-templates/>…`.
+                // A body that made only nodes with type annotations (a validated xsl:document, a
+                // validated element) gives a tree whose nodes keep them: the content of the
+                // implicit document is copied with its annotations unchanged (XSLT 3.0 §9.4). The
+                // drain below writes the items as text, and the tree read from that text was
+                // untyped.
+                List<NodeId>? typedRoots = null;
+                if (instruction.As == null && capturedAccumulator is { Count: > 0 } && _nodeStore != null
+                    && savedScope.GetWritten().Length == 0
+                    && capturedAccumulator.All(item => item is XdmDocument or XdmElement)
+                    && capturedAccumulator.Any(item => item is XdmElement e ? HasTypedNode(e)
+                        : ((XdmDocument)item!).Children.Any(id => _nodeStore.GetNode(id) is XdmElement child && HasTypedNode(child))))
+                {
+                    typedRoots = [];
+                    var savedPreserve = _copyPreservesAnnotations;
+                    _copyPreservesAnnotations = true;
+                    try
+                    {
+                        foreach (var item in capturedAccumulator)
+                        {
+                            IEnumerable<NodeId> sources = item is XdmDocument document ? document.Children : [((XdmNode)item!).Id];
+                            foreach (var id in sources)
+                            {
+                                if (_nodeStore.GetNode(id) is { } node)
+                                    typedRoots.Add(CloneSubtreeDeep(node, null, copyNamespaces: true));
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        _copyPreservesAnnotations = savedPreserve;
+                    }
+                }
                 if (instruction.As == null && capturedAccumulator is { Count: > 0 })
                 {
                     var savedAccDrain = _sequenceAccumulator;
@@ -1071,6 +1103,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (instruction.As == null)
                 {
                     var rtf = new ResultTreeFragment(content, varBaseUri);
+                    if (typedRoots is { Count: > 0 })
+                        rtf.CachedDocumentNode = BuildUntypedRtfFlipDocument(typedRoots, varBaseUri);
                     // A body is a migrated candidate when nothing forced the string buffer
                     // (`_tcFragmentIncomplete` — xsl:copy-of of a source node, built-in copy, an
                     // unresolvable attribute prefix), the accumulator drain above did not run (its
