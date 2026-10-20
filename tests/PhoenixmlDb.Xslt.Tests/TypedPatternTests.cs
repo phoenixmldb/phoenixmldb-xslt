@@ -243,6 +243,38 @@ public sealed class TypedPatternTests : IDisposable
                 """, "<x/>", validation: null)).Should().Be("<r>[decimal 1.1]</r>");
     }
 
+    /// <summary>
+    /// xsl:merge-source validation="strict" validates each document for-each-source reads, and
+    /// the merged items are typed; it was refused as "schema validation not supported" (W3C
+    /// merge-049). Without for-each-source the attribute is XTSE0020 (merge-054).
+    /// </summary>
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("no")]
+    public async Task Merge_source_validation_types_what_it_reads(string streamable)
+    {
+        var doc = Path.Combine(_dir, "in.xml");
+        await File.WriteAllTextAsync(doc, Source, TestContext.Current.CancellationToken);
+        var uri = new Uri(doc).AbsoluteUri;
+        (await RunAsync($$"""
+                <xsl:template name="xsl:initial-template" match="/">
+                  <r><xsl:merge>
+                    <xsl:merge-source for-each-source="'{{uri}}'" select="t:doc/t:p" streamable="{{streamable}}" validation="strict">
+                      <xsl:merge-key select="string(.)"/>
+                    </xsl:merge-source>
+                    <xsl:merge-action>{current-merge-group() instance of element(*, t:part)}</xsl:merge-action>
+                  </xsl:merge></r>
+                </xsl:template>
+                """, "<x/>", validation: null)).Should().Be("<r>true</r>");
+        var withoutSource = () => RunAsync("""
+                <xsl:template match="/"><xsl:merge>
+                  <xsl:merge-source select="t:doc/t:p" validation="strict"><xsl:merge-key select="string(.)"/></xsl:merge-source>
+                  <xsl:merge-action/>
+                </xsl:merge></xsl:template>
+                """, Source);
+        (await withoutSource.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XTSE0020");
+    }
+
     /// <summary>fn:nilled of a validated element with xsi:nil="true" is true; it was always false.</summary>
     [Fact]
     public async Task Nilled_is_true_for_a_validated_nilled_element()

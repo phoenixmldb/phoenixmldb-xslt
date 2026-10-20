@@ -1154,22 +1154,22 @@ public sealed partial class StylesheetParser
         if (validationAttr != null && typeAttr != null)
             throw new XsltException("XTSE1505: The validation and type attributes are mutually exclusive on xsl:merge-source", location);
 
+        // validation and type say how the documents for-each-source reads are validated; without
+        // for-each-source there are none (XSLT 3.0 §15.3, W3C merge-054).
+        if ((validationAttr != null || typeAttr != null) && forEachSourceAttr == null)
+            throw new XsltException("XTSE0020: The validation and type attributes of xsl:merge-source are allowed only with for-each-source", location);
+
         // XTSE1660/XTSE1650: type attribute requires schema-aware processing
         if (typeAttr != null)
         {
             if (ShouldRejectSchemaAware)
                 throw new XsltException("XTSE1660: A non-schema-aware XSLT processor must not accept the type attribute on xsl:merge-source", location);
-            // Even with import-schema, we don't actually resolve schema types
-            throw new XsltException($"XTTE1540: Schema type '{typeAttr.Value}' cannot be resolved (schema validation not supported)", location);
         }
 
         // XTSE1660: validation="strict" requires schema-aware processing
         if (validationAttr != null && validationAttr.Value.Trim() is "strict" or "type" && ShouldRejectSchemaAware)
             throw new XsltException($"XTSE1660: A non-schema-aware XSLT processor must not accept validation=\"{validationAttr.Value.Trim()}\" on xsl:merge-source", location);
 
-        // XTTE1510: validation="strict" with import-schema but no actual validation runtime
-        if (validationAttr != null && validationAttr.Value.Trim() == "strict" && _hasImportSchema)
-            throw new XsltException("XTTE1510: Schema validation is not supported (validation=\"strict\" on xsl:merge-source)", location);
 
         // XTSE0020: Validate name is a valid NCName if specified
         if (nameAttr != null)
@@ -1218,7 +1218,11 @@ public sealed partial class StylesheetParser
                 ? ParseYesNo(streamableAttr) ?? false
                 : false,
             MergeKeys = mergeKeys,
-            UseAccumulators = useAccumulators
+            UseAccumulators = useAccumulators,
+            // Each document read by for-each-source is validated as these say (XSLT 3.0 §15.3);
+            // both were refused with "schema validation not supported".
+            Validation = ParseValidationMode(validationAttr),
+            ValidationType = ParseValidationType(typeAttr, element),
         };
         StreamabilityChecker.CheckStreamableMergeSource(mergeSource);
         return mergeSource;

@@ -32,6 +32,8 @@ internal static class XsltMergeStreaming
             if (src.ForEachItem != null) return false;
             if (src.SortBeforeMerge) return false;
             if (src.UseAccumulators.Count > 0) return false;
+            // A validated document is read into a typed tree, as xsl:source-document's is.
+            if (src.Validation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax || src.ValidationType is not null) return false;
             if (TryGetSimpleChildStep(src.Select) == null) return false;
         }
         return true;

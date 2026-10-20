@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`xsl:merge-source` with `validation` or `type` validates each document `for-each-source` reads**
+  (XSLT 3.0 §15.3), and the merged items have the schema's type annotations. Both attributes were
+  refused as "schema validation not supported". Without `for-each-source` they are XTSE0020. A
+  validated source is read into a tree, not streamed. W3C merge-049, merge-051, merge-054.
+
 - **A variable with no `as` whose content is a validated document or element keeps the type
   annotations** (XSLT 3.0 §9.4: the content of the implicit document node is copied with its
   annotations unchanged). Its content was written as text and read again, untyped, so
