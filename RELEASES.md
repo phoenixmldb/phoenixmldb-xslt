@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A sequence constructor whose type is a sequence of atomic values gives one value for each text
+  node it makes** (XSLT 3.0 §9.4): a variable, a parameter or a template with `as="xs:string*"`,
+  `as="xs:anyAtomicType+"` and the like. Its text was written into one buffer, so two `xsl:value-of`
+  gave one value of the two strings joined, and a template's values were written with no space
+  between them. W3C as-1801, as-1803, as-2601.
+
 - **`schema-element(E)` in a pattern matches the elements of E's substitution group** (XPath 3.1
   §2.5.5.3). The pattern was matched by the name E, so a member of the group with another name
   never reached the test of its declaration. W3C match-179, match-199, match-200.

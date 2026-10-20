@@ -124,9 +124,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // A body whose declared type admits multiple items INCLUDING text must keep each text
         // write as its own item so it stays a text node rather than being merged into the buffer.
-        if (declaredType != null
-            && declaredType.ItemType is ItemType.Text or ItemType.Node or ItemType.Item
-            && declaredType.Occurrence is Occurrence.ZeroOrMore or Occurrence.OneOrMore)
+        // So must one of a sequence of atomic values.
+        if ((declaredType != null
+                && declaredType.ItemType is ItemType.Text or ItemType.Node or ItemType.Item
+                && declaredType.Occurrence is Occurrence.ZeroOrMore or Occurrence.OneOrMore)
+            || KeepsTextNodesApartAsAtomicValues(declaredType))
         {
             _collectTextAsSequenceItems = true;
         }
