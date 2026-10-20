@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **An element or attribute validated against a union type has the union as its annotation** (with
+  PhoenixmlDb.Core's change), so `element(*, xs:decimal)` no longer matches an element declared as
+  a union of xs:integer and another type: the rule for the union is chosen. W3C match-195,
+  match-197, match-211.
+
 - **A variable or parameter whose `select` gives an untyped node or a string, with `as` a type derived
   from xs:string (`xs:NMTOKEN`, `xs:ID`, `xs:token`, `xs:Name`, ...), holds a value of that type.** The
   value matched the xs:string the type is reduced to and was kept as a plain string, so
