@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A stylesheet function's parameter applies the function conversion rules to `xs:string` and the
+  types derived from it**: a node is atomized, and an untyped value cast to the declared type, so
+  `as="xs:NMTOKEN"` holds an xs:NMTOKEN and `as="xs:string"` an xs:string, not the node. A value of
+  xs:string itself for a derived type is XPTY0004, as the rules (and Saxon) say.
+
 - **`xsl:merge-source` with `validation` or `type` validates each document `for-each-source` reads**
   (XSLT 3.0 §15.3), and the merged items have the schema's type annotations. Both attributes were
   refused as "schema validation not supported". Without `for-each-source` they are XTSE0020. A

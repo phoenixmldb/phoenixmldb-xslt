@@ -224,6 +224,30 @@ public sealed class TypedPatternTests : IDisposable
                 </xsl:template>
                 """, "<x/>", validation: null)).Should().Be("true true true");
 
+    /// <summary>
+    /// A stylesheet function's parameter of a type derived from xs:string takes an untyped node
+    /// as a value of that type, and one of xs:string as an atomized string. Both were bound as
+    /// they came: a plain string, and the node itself. A value already of xs:string is not cast
+    /// to the derived type (XPTY0004). The expected values are Saxon-HE 12's.
+    /// </summary>
+    [Fact]
+    public async Task A_function_parameter_of_a_derived_type_casts_an_untyped_value()
+    {
+        const string function = """
+            <xsl:function name="Q{urn:f}t" as="xs:string" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:param name="v" as="xs:NMTOKEN"/><xsl:param name="s" as="xs:token*"/><xsl:param name="p" as="xs:string"/>
+              <xsl:sequence select="string-join(($v instance of xs:NMTOKEN, every $x in $s satisfies $x instance of xs:token, $p instance of xs:string, $p instance of xs:NMTOKEN) ! string(), ' ')"/>
+            </xsl:function>
+            """;
+        (await RunAsync("""
+                <xsl:template match="/"><xsl:value-of select="Q{urn:f}t(/x/@n, (/x/@n, /x/@i), /x/@n)"/></xsl:template>
+                """, "<x n='ab' i='k1'/>", validation: null, declarations: function)).Should().Be("true true true false");
+        var fromString = () => RunAsync("""
+                <xsl:template match="/"><xsl:value-of select="Q{urn:f}t(string(/x/@n), (), '')"/></xsl:template>
+                """, "<x n='ab'/>", validation: null, declarations: function);
+        (await fromString.Should().ThrowAsync<PhoenixmlDb.Xslt.Engine.XsltException>()).Which.Message.Should().Contain("XPTY0004");
+    }
+
     /// <summary>xsl:source-document validation="strict" gives a typed document; the attribute was ignored.</summary>
     [Theory]
     [InlineData("true")]

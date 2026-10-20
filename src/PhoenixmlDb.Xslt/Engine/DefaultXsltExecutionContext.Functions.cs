@@ -2493,8 +2493,22 @@ internal sealed partial class DefaultXsltExecutionContext
                     ValidateValueMatchesType(value, param.As, "XPTY0004",
                         $"Value of parameter ${param.Name.LocalName} in function {func.Name.LocalName}");
                 }
+                else if (param.As is { ItemType: ItemType.String, LocalTypeName: not null, DerivedIntegerType: null })
+                {
+                    // A type derived from xs:string (as="xs:NMTOKEN", "xs:ID", ...): a node is
+                    // atomized and an untyped value cast to that type. It took the xs:string
+                    // branch below and stayed a plain string. A value of xs:string itself is not
+                    // cast by the function conversion rules: XPTY0004, as Saxon reports.
+                    value = ApplyFunctionConversionRules(value, param.As);
+                    if ((value is object?[] converted ? converted : [value]).Any(item => item is string))
+                        throw Error($"XPTY0004: Value of parameter ${param.Name.LocalName} in function {func.Name.LocalName}"
+                            + $" is an xs:string, not an xs:{param.As.LocalTypeName}");
+                }
                 else if (param.As?.ItemType == ItemType.String)
                 {
+                    // A node is atomized, and an untyped value cast to xs:string; the node was
+                    // bound as it was, so `$p instance of xs:string` was false for an attribute.
+                    value = ApplyFunctionConversionRules(value, param.As);
                     // xs:string is not in the strict set above, so it got no conversion at all —
                     // and URI promotion is part of the conversion rules: an xs:anyURI argument to
                     // an as="xs:string" parameter must arrive as an xs:string (W3C function-1015).
