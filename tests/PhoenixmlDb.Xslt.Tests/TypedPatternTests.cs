@@ -192,6 +192,22 @@ public sealed class TypedPatternTests : IDisposable
                 </xsl:template>
                 """, "<x n='ab' i='k1'/>", validation: null)).Should().Be("true true true true");
 
+    /// <summary>
+    /// A literal result element built with validation="strip", the default, is untyped and so is
+    /// everything in it, even a child given a type with xsl:type (XSLT 3.0 §25.4.1). The child
+    /// kept its annotation (W3C match-173). Under xsl:validation="preserve" it keeps it.
+    /// </summary>
+    [Fact]
+    public async Task A_stripped_parent_strips_a_typed_child()
+        => (await RunAsync("""
+                <xsl:template match="/">
+                  <xsl:variable name="s"><p><n xsl:type="xs:integer">5</n></p></xsl:variable>
+                  <xsl:variable name="k"><p xsl:validation="preserve"><n xsl:type="xs:integer">5</n></p></xsl:variable>
+                  <xsl:variable name="alone"><n xsl:type="xs:integer">5</n></xsl:variable>
+                  <xsl:value-of select="$s/p/n instance of element(*, xs:integer), $k/p/n instance of element(*, xs:integer), $alone/n instance of element(*, xs:integer)"/>
+                </xsl:template>
+                """, "<x/>", validation: null)).Should().Be("false true true");
+
     /// <summary>xsl:source-document validation="strict" gives a typed document; the attribute was ignored.</summary>
     [Theory]
     [InlineData("true")]
