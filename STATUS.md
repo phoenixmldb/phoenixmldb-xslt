@@ -1,12 +1,12 @@
 # Status
 
-Generated 2026-10-20 11:45 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-20 21:41 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.5.0 | ? | **repo is at ?, nuget.org has 2.5.0** |
+| `PhoenixmlDb.Core` | 2.6.0 | ? | **repo is at ?, nuget.org has 2.6.0** |
 | `PhoenixmlDb.XQuery` | 2.9.0 | ? | **repo is at ?, nuget.org has 2.9.0** |
 | `PhoenixmlDb.Xslt` | 2.9.0 | 2.9.0 | current |
 | `xquery4` | 2.9.0 | ? | **repo is at ?, nuget.org has 2.9.0** |
