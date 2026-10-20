@@ -208,6 +208,22 @@ public sealed class TypedPatternTests : IDisposable
                 </xsl:template>
                 """, "<x/>", validation: null)).Should().Be("false true true");
 
+    /// <summary>
+    /// A variable with no as= whose content is a validated xsl:document holds a tree whose nodes
+    /// keep the annotations of the validation: the content of the implicit document is copied
+    /// with its type annotations unchanged (XSLT 3.0 §9.4). It was read again from its text, and
+    /// untyped (W3C si-document-101, si-copy-of-102 and others).
+    /// </summary>
+    [Fact]
+    public async Task A_variable_without_as_keeps_a_validated_document_typed()
+        => (await RunAsync("""
+                <xsl:template match="/">
+                  <xsl:variable name="d"><xsl:document validation="strict"><t:n>6</t:n></xsl:document></xsl:variable>
+                  <xsl:variable name="u"><xsl:document><t:n>6</t:n></xsl:document></xsl:variable>
+                  <xsl:value-of select="$d/t:n instance of element(*, xs:integer), data($d/t:n) instance of xs:integer, $u/t:n instance of element(*, xs:untyped)"/>
+                </xsl:template>
+                """, "<x/>", validation: null)).Should().Be("true true true");
+
     /// <summary>xsl:source-document validation="strict" gives a typed document; the attribute was ignored.</summary>
     [Theory]
     [InlineData("true")]

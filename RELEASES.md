@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A variable with no `as` whose content is a validated document or element keeps the type
+  annotations** (XSLT 3.0 §9.4: the content of the implicit document node is copied with its
+  annotations unchanged). Its content was written as text and read again, untyped, so
+  `<xsl:variable name="d"><xsl:document validation="strict">…</xsl:document></xsl:variable>` gave
+  untyped nodes. W3C si-copy-101/102/105, si-copy-of-102/105, si-document-101/102/105, streamable-009.
+
 - **A literal result element built with `validation="strip"`, the default, strips the type
   annotations of everything in it** (XSLT 3.0 §25.4.1), including a child given a type with
   `xsl:type` and validated before it. The child kept its annotation, so `element(*, T)` matched it
