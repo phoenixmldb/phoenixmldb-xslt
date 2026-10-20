@@ -2621,10 +2621,9 @@ public sealed partial class StylesheetParser
         }
         if (name.StartsWith("document-node(schema-element(", StringComparison.Ordinal) && name.EndsWith("))", StringComparison.Ordinal))
         {
-            // Treat schema-element the same as element for non-schema-aware processor
-            var inner = name["document-node(schema-element(".Length..^2].Trim();
-            NameTest? elemName = inner.Length > 0 ? ParseNameTest(inner, context, isAttribute: false) as NameTest : null;
-            return new KindTest { Kind = XdmNodeKind.Document, DocumentElementTest = elemName };
+            // The document element is matched by the `instance of` test the pattern step carries,
+            // which knows the substitution group of the declaration; here only the kind is.
+            return new KindTest { Kind = XdmNodeKind.Document };
         }
         if (name == "namespace-node()")
             return new KindTest { Kind = XdmNodeKind.Namespace };
@@ -2632,8 +2631,11 @@ public sealed partial class StylesheetParser
         // XSLT 2.0+: element() and attribute() KindTest patterns
         if (name.StartsWith("element(", StringComparison.Ordinal) && name.EndsWith(')'))
             return ParseKindTestWithArgs(XdmNodeKind.Element, name["element(".Length..^1].Trim(), context);
+        // schema-element(E) matches E and every element of its substitution group (XPath 3.1
+        // §2.5.5.3), so not by name: the `instance of` test of the pattern step decides. Matched
+        // by the name E, an element of the group with another name never reached that test.
         if (name.StartsWith("schema-element(", StringComparison.Ordinal) && name.EndsWith(')'))
-            return ParseKindTestWithArgs(XdmNodeKind.Element, name["schema-element(".Length..^1].Trim(), context);
+            return new KindTest { Kind = XdmNodeKind.Element };
         if (name.StartsWith("attribute(", StringComparison.Ordinal) && name.EndsWith(')'))
             return ParseKindTestWithArgs(XdmNodeKind.Attribute, name["attribute(".Length..^1].Trim(), context);
         if (name.StartsWith("schema-attribute(", StringComparison.Ordinal) && name.EndsWith(')'))

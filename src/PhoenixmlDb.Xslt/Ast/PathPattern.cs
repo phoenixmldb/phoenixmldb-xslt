@@ -53,6 +53,9 @@ public sealed class PathPattern : XsltPattern
             if (step.Predicates.Count > (step.HasTypeTest ? 1 : 0))
                 return 0.5;
 
+            if (step.KindTestPriority is { } kindTestPriority)
+                return kindTestPriority;
+
             return step.NodeTest switch
             {
                 // KindTest with specific name: element(name) or attribute(name) → 0

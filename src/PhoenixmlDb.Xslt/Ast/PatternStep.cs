@@ -36,6 +36,14 @@ public sealed class PatternStep
     public bool HasTypeTest { get; init; }
 
     /// <summary>
+    /// The default priority XSLT 3.0 §6.5 gives the kind test of this step when the pattern is
+    /// that one step, or null when the node test alone decides it: 0 for element(*, T), 0.25
+    /// for element(E, T), attribute(A, T), schema-element(E) and schema-attribute(A), and for
+    /// document-node() around one of them that one's.
+    /// </summary>
+    public double? KindTestPriority { get; init; }
+
+    /// <summary>
     /// True when any predicate on this step could observe <c>position()</c> or <c>last()</c>.
     /// </summary>
     /// <remarks>

@@ -903,23 +903,18 @@ public sealed partial class StylesheetParser
                 explicitAxis = true;
                 name = name["descendant::".Length..];
             }
-            else if (name.StartsWith("parent::", StringComparison.Ordinal))
-            {
-                axis = Axis.Parent;
-                explicitAxis = true;
-                name = name["parent::".Length..];
-            }
             else if (name.StartsWith("namespace::", StringComparison.Ordinal))
             {
                 axis = Axis.Namespace;
                 explicitAxis = true;
                 name = name["namespace::".Length..];
             }
-            else if (name.StartsWith("..", StringComparison.Ordinal))
+            else if (name.StartsWith("parent::", StringComparison.Ordinal) || name.StartsWith("..", StringComparison.Ordinal))
             {
-                axis = Axis.Parent;
-                explicitAxis = true;
-                name = "*";
+                // A step of a pattern has a forward axis only (XSLT 3.0 §5.5.2); ".." and parent::
+                // are allowed in its predicates, not as a step. match="/.." was taken as a rule
+                // for the parent of the root, which matches nothing (W3C match-213).
+                throw new XsltException($"XTSE0340: The parent axis ('{name}') is not allowed in a pattern step", GetSourceLocation(context));
             }
             else if (name == ".")
             {
@@ -999,13 +994,48 @@ public sealed partial class StylesheetParser
                 NodeTest = nodeTest,
                 DescendantSeparator = descendantSep,
                 Predicates = predicates,
-                HasTypeTest = hasTypeTest
+                HasTypeTest = hasTypeTest,
+                KindTestPriority = KindTestPriority(name)
             });
         }
 
         return new PathPattern { Steps = steps };
     }
 
+
+    /// <summary>
+    /// The default priority of a pattern that is this one kind test (XSLT 3.0 §6.5), where it
+    /// is not the one the node test alone gives: element(*, T) and attribute(*, T) are 0;
+    /// element(E, T), attribute(A, T), schema-element(E) and schema-attribute(A) are 0.25; and
+    /// document-node() around an element test is that test's. Null for any other node test.
+    /// </summary>
+    private static double? KindTestPriority(string test)
+    {
+        if (test.StartsWith("document-node(", StringComparison.Ordinal) && test.EndsWith(')'))
+        {
+            var inner = test["document-node(".Length..^1].Trim();
+            return inner.Length == 0 ? null : KindTestPriority(inner) ?? ElementTestPriority(inner);
+        }
+        if (test.StartsWith("schema-element(", StringComparison.Ordinal)
+            || test.StartsWith("schema-attribute(", StringComparison.Ordinal))
+            return 0.25;
+        if ((test.StartsWith("element(", StringComparison.Ordinal) || test.StartsWith("attribute(", StringComparison.Ordinal))
+            && test.EndsWith(')') && test.Contains(',', StringComparison.Ordinal))
+        {
+            var open = test.IndexOf('(', StringComparison.Ordinal);
+            return test[(open + 1)..test.IndexOf(',', StringComparison.Ordinal)].Trim() == "*" ? 0 : 0.25;
+        }
+        return null;
+    }
+
+    /// <summary>The priority of element() and element(E), inside document-node().</summary>
+    private static double? ElementTestPriority(string test)
+    {
+        if (!test.StartsWith("element(", StringComparison.Ordinal) || !test.EndsWith(')'))
+            return null;
+        var inner = test["element(".Length..^1].Trim();
+        return inner.Length == 0 || inner == "*" ? -0.5 : 0;
+    }
 
     /// <summary>
     /// Parses an XPath/XQuery expression and resolves namespace prefixes in QNames
