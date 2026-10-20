@@ -1,0 +1,5 @@
+# Release-gate differences accepted against the published 2.9.0 baseline.
+# One case id per line; text after '#' is the reason. The nightly passes each as --accept.
+# This file applies only while 2.9.0 is the latest published Xslt: a new release is a new baseline.
+docbook/orient-lbptd0.xml   # main adds the Table of Contents and List of Tables that xslTNG's expected output has
+docbook/autotoc-007.xml     # main adds the List of Examples and List of Figures that xslTNG's expected output has

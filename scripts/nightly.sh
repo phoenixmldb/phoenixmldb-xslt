@@ -132,7 +132,13 @@ fi
 if want gate; then
   BASE="$(curl -s https://api.nuget.org/v3-flatcontainer/phoenixmldb.xslt/index.json \
     | python3 -c 'import sys,json;print(json.load(sys.stdin)["versions"][-1])')"
-  step gate bash -c "cd '$WS/phoenixmldb-xslt' && ./scripts/release-gate.sh --base '$BASE' --cand-dev --out '$REP/gate'"
+  # Differences reviewed and accepted against this baseline (scripts/gate-accepted/<base>.txt).
+  ACCEPTED=""
+  ACC_FILE="$WS/phoenixmldb-xslt/scripts/gate-accepted/$BASE.txt"
+  if [ -f "$ACC_FILE" ]; then
+    for id in $(sed 's/#.*//' "$ACC_FILE"); do ACCEPTED="$ACCEPTED --accept $id"; done
+  fi
+  step gate bash -c "cd '$WS/phoenixmldb-xslt' && ./scripts/release-gate.sh --base '$BASE' --cand-dev --out '$REP/gate'$ACCEPTED"
   grep -E "=== release gate|DIFFERS=|SAME=|GATE|BLOCKED|^\s+(DIFFERS|REGRESSED|IMPROVED)" "$REP/gate.log" \
     | head -25 | sed 's/^/    /' >> "$SUMMARY"
 fi
