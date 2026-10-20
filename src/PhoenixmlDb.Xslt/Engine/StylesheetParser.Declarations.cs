@@ -1507,17 +1507,30 @@ public sealed partial class StylesheetParser
                 {
                     var overrideVar = ParseVariable(child);
                     // Replace matching variable, capturing the original for xsl:original resolution
+                    var replaced = false;
                     for (var i = 0; i < packageStylesheet.Variables.Count; i++)
                     {
                         if (packageStylesheet.Variables[i].Name.Equals(overrideVar.Name))
                         {
+                            RequireSameDeclaredType(overrideVar.As, packageStylesheet.Variables[i].As, overrideVar.Name, child);
                             overrideVar.OriginalVariable = packageStylesheet.Variables[i];
                             // An overriding variable targets a provided component of the used
                             // package, so it is itself visible across the boundary (accept-040/046).
                             overrideVar.ProvidedByPackage = true;
                             packageStylesheet.Variables[i] = overrideVar;
+                            replaced = true;
                             break;
                         }
+                    }
+                    // A variable may override a parameter (XSLT 3.0 §3.5.3.4: both are
+                    // variable components).
+                    var paramIndex = replaced ? -1 : packageStylesheet.Parameters.FindIndex(p => p.Name.Equals(overrideVar.Name));
+                    if (paramIndex >= 0)
+                    {
+                        RequireSameDeclaredType(overrideVar.As, packageStylesheet.Parameters[paramIndex].As, overrideVar.Name, child);
+                        packageStylesheet.Parameters.RemoveAt(paramIndex);
+                        overrideVar.ProvidedByPackage = true;
+                        packageStylesheet.Variables.Add(overrideVar);
                     }
                     break;
                 }
@@ -1525,13 +1538,26 @@ public sealed partial class StylesheetParser
                 {
                     var overrideParam = ParseParam(child, isGlobal: true);
                     // Replace matching parameter
+                    var replaced = false;
                     for (var i = 0; i < packageStylesheet.Parameters.Count; i++)
                     {
                         if (packageStylesheet.Parameters[i].Name.Equals(overrideParam.Name))
                         {
+                            RequireSameDeclaredType(overrideParam.As, packageStylesheet.Parameters[i].As, overrideParam.Name, child);
                             packageStylesheet.Parameters[i] = overrideParam;
+                            replaced = true;
                             break;
                         }
+                    }
+                    // A parameter may override a variable: the overriding package's caller
+                    // then supplies its value (W3C override-v-008/009). It was not found among
+                    // the parameters and dropped, so the variable's own value stayed.
+                    var variableIndex = replaced ? -1 : packageStylesheet.Variables.FindIndex(v => v.Name.Equals(overrideParam.Name));
+                    if (variableIndex >= 0)
+                    {
+                        RequireSameDeclaredType(overrideParam.As, packageStylesheet.Variables[variableIndex].As, overrideParam.Name, child);
+                        packageStylesheet.Variables.RemoveAt(variableIndex);
+                        packageStylesheet.Parameters.Add(overrideParam);
                     }
                     break;
                 }
@@ -1566,6 +1592,26 @@ public sealed partial class StylesheetParser
         _currentDefaultMode = savedDefaultMode;
     }
 
+
+    /// <summary>
+    /// XTSE3070: an overriding variable or parameter declares the same type as the component it
+    /// overrides (XSLT 3.0 §3.5.3.4); no as= is item()*. A different type was accepted (W3C
+    /// override-v-006/007).
+    /// </summary>
+    private static void RequireSameDeclaredType(XdmSequenceType? overriding, XdmSequenceType? original, QName name, XElement element)
+    {
+        if (TypeKey(overriding) != TypeKey(original))
+            throw new XsltException(
+                $"XTSE3070: The overriding declaration of ${name.LocalName} has a different type ({TypeKey(overriding)}) from the overridden one ({TypeKey(original)})",
+                GetSourceLocation(element));
+
+        static string TypeKey(XdmSequenceType? type) => type is null || type is { ItemType: ItemType.Item, Occurrence: Occurrence.ZeroOrMore }
+            ? "item()*"
+            : string.Join('|', type.ItemType, type.Occurrence, type.LocalTypeName, type.DerivedIntegerType,
+                type.SchemaTypeNamespace, type.SchemaTypeLocalName, type.ElementName, type.ElementNamespace,
+                type.AttributeName, type.AttributeNamespace, type.TypeAnnotation, type.SchemaElementName,
+                type.SchemaElementNamespace, type.SchemaAttributeName, type.SchemaAttributeNamespace, type.DocumentElementName);
+    }
 
     /// <summary>
     /// Validates that an overriding template's signature is compatible with the original (XTSE3070).

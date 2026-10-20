@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **In `xsl:override`, an `xsl:param` may override an `xsl:variable` of the used package, and an
+  `xsl:variable` an `xsl:param`** (XSLT 3.0 §3.5.3.4): the overriding parameter takes the value
+  the caller supplies. It was looked for among the parameters only and dropped. An overriding
+  variable or parameter must declare the type of the one it overrides: XTSE3070. W3C
+  override-v-007, override-v-008, override-v-009.
+
 - **A stylesheet function's parameter applies the function conversion rules to `xs:string` and the
   types derived from it**: a node is atomized, and an untyped value cast to the declared type, so
   `as="xs:NMTOKEN"` holds an xs:NMTOKEN and `as="xs:string"` an xs:string, not the node. A value of

@@ -2312,6 +2312,35 @@ public sealed class XsltTestRunner
     /// Evaluates a parameter select expression to a typed value.
     /// Handles common XPath literals: integers, decimals, strings, booleans.
     /// </summary>
+    private static object? EvaluateWithEngine(string expression)
+    {
+        try
+        {
+            var engine = new PhoenixmlDb.XQuery.Execution.QueryEngine();
+            var compiled = engine.Compile(expression);
+            if (!compiled.Success || compiled.ExecutionPlan is null)
+                return null;
+            var items = new List<object?>();
+            var enumerator = compiled.ExecutionPlan.ExecuteAsync(engine.CreateContext()).GetAsyncEnumerator();
+            try
+            {
+                while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+                    items.Add(enumerator.Current);
+            }
+            finally
+            {
+                enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+            return items.Count == 1 ? items[0] : null;
+        }
+#pragma warning disable CA1031 // anything the engine cannot evaluate is left to the literal parser below
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return null;
+        }
+    }
+
     private static object? EvaluateParamSelect(string selectExpr)
     {
         var s = selectExpr.Trim();
@@ -2329,6 +2358,18 @@ public sealed class XsltTestRunner
         {
             return s[1..^1];
         }
+
+        // A constructor of a type derived from another (xs:int, xs:NCName, ...): the value has that
+        // type only as the engine makes it. The constructors below give the base type's value,
+        // so a parameter as="xs:int" supplied xs:int(23) held an xs:integer, and
+        // `$p[. instance of xs:int]` was empty (W3C override-v-008/009). Only for the types the
+        // constructors below do not make: the engine's query text normalizes line ends, so a
+        // string with &#xD; in the catalog lost it (regex-syntax-0126).
+        if (s.StartsWith("xs:", StringComparison.Ordinal) && s.IndexOf('(') is > 3 and var open
+            && s[3..open] is not ("integer" or "double" or "decimal" or "float" or "string" or "anyURI"
+                or "token" or "boolean" or "untypedAtomic")
+            && EvaluateWithEngine(s) is { } typed)
+            return typed;
 
         // XPath type constructors: xs:type(value)
         if (s.StartsWith("xs:", StringComparison.Ordinal))
