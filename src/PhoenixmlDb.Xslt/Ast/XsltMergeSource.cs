@@ -28,6 +28,15 @@ public sealed class XsltMergeSource
     /// </summary>
     public bool Streamable { get; init; }
 
+    /// <summary>
+    /// validation= on xsl:merge-source: how each document read by for-each-source is validated
+    /// (strict or lax gives it the type annotations of the schema).
+    /// </summary>
+    public ValidationMode? Validation { get; init; }
+
+    /// <summary>type= on xsl:merge-source: the type each document's element is validated against.</summary>
+    public XsltTypeName? ValidationType { get; init; }
+
     public List<XsltMergeKey> MergeKeys { get; init; } = new();
     public List<QName> UseAccumulators { get; init; } = new();
     public SourceLocation? Location { get; init; }

@@ -496,6 +496,9 @@ internal sealed partial class DefaultXsltExecutionContext
                         // Under a policy only the resolver that enforces it reads.
                         var doc = (_policyResolver is { } guarded ? guarded.ResolveDocument(uri, Caller) : _documentResolver.ResolveDocument(uri))
                             ?? throw Error($"FODC0002: for-each-source document '{uri}' cannot be retrieved");
+                        var sourceMode = source.ValidationType is not null ? Ast.ValidationMode.Strict : source.Validation;
+                        if (sourceMode is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax && _schemaProvider is not null)
+                            doc = ValidateBuiltDocument(doc, sourceMode.Value, "xsl:merge-source", source.Location, source.ValidationType);
                         contextItem = doc;
 
                         // Compute specified accumulators on the merge source document
