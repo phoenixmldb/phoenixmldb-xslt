@@ -545,6 +545,19 @@ public sealed class TypedPatternTests : IDisposable
     }
 
     /// <summary>
+    /// A template as="schema-attribute(N)" or as="schema-element(N)*" returns the nodes. Its
+    /// type was taken for an atomic one, so the attribute or element was atomized, and its
+    /// value was written as text (W3C as-1812, as-3504, as-3601).
+    /// </summary>
+    [Fact]
+    public async Task A_template_with_a_schema_node_type_returns_the_nodes()
+        => (await RunAsync("""
+                <xsl:template match="/"><r><a><xsl:call-template name="attr"/></a><xsl:call-template name="elems"/></r></xsl:template>
+                <xsl:template name="attr" as="schema-attribute(t:special)"><xsl:attribute name="t:special" validation="strict">456-CD</xsl:attribute></xsl:template>
+                <xsl:template name="elems" as="schema-element(t:doc)*"><xsl:copy-of select="t:doc" validation="preserve"/></xsl:template>
+                """, Source)).Should().Be("<r><a xmlns:t=\"urn:t\" t:special=\"456-CD\"/><t:doc xmlns:t=\"urn:t\" code=\"123-AB\"><t:p>123-AB</t:p><t:d>  1.10  </t:d><t:u>100</t:u></t:doc></r>");
+
+    /// <summary>
     /// A parameter or variable as="schema-attribute(N)" built from xsl:attribute holds the
     /// attribute; it was built as a temporary tree, and a document node cannot hold an
     /// attribute (XTDE0420).
