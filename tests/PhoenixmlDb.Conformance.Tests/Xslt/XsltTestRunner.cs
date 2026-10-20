@@ -244,6 +244,10 @@ public sealed class XsltTestRunner
                 else
                 {
                     env.AdditionalSources[role] = sourcePath;
+                    // A secondary source the environment says is validated: the documents
+                    // fn:doc reads are validated (W3C validation-2001, validation-2002).
+                    if (source.Attribute("validation")?.Value is { } secondaryValidation)
+                        env.SecondarySourceValidation = secondaryValidation;
                 }
             }
             else
@@ -872,6 +876,7 @@ public sealed class XsltTestRunner
             PrincipalSourceXInclude = env.PrincipalSourceXInclude,
             PrincipalSourceStreaming = env.PrincipalSourceStreaming,
             PrincipalSourceValidation = env.PrincipalSourceValidation,
+            SecondarySourceValidation = env.SecondarySourceValidation,
             InitialTemplate = env.InitialTemplate,
             InitialFunction = env.InitialFunction,
             InitialFunctionNamespace = env.InitialFunctionNamespace,
@@ -1078,6 +1083,12 @@ public sealed class XsltTestRunner
                             schemas.Add(schema);
                     }
                     transformer.SourceValidation = testCase.Environment.PrincipalSourceValidation switch
+                    {
+                        "strict" => PhoenixmlDb.Xslt.Ast.ValidationMode.Strict,
+                        "lax" => PhoenixmlDb.Xslt.Ast.ValidationMode.Lax,
+                        _ => null,
+                    };
+                    transformer.DocumentValidation = testCase.Environment.SecondarySourceValidation switch
                     {
                         "strict" => PhoenixmlDb.Xslt.Ast.ValidationMode.Strict,
                         "lax" => PhoenixmlDb.Xslt.Ast.ValidationMode.Lax,
@@ -2780,6 +2791,7 @@ public sealed class XsltEnvironment
     /// all skipped as needing a schema-aware processor.
     /// </summary>
     public string? PrincipalSourceValidation { get; set; }
+    public string? SecondarySourceValidation { get; set; }
     /// <summary>The corpus's <c>&lt;schema file="…"/&gt;</c> elements of the environment.</summary>
     public List<string> SourceSchemas { get; } = [];
     public Dictionary<string, string> AdditionalSources { get; } = [];

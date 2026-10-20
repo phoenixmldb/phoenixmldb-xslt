@@ -1126,6 +1126,9 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             PreloadedResources = options.PreloadedResources,
             Policy = options.ResourcePolicy,
+            Validation = options.DocumentValidation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax
+                ? (options.DocumentValidation == Ast.ValidationMode.Strict, schemaProvider)
+                : null,
         };
         if (options.Collections != null)
             _documentResolver.SetCollections(options.Collections);

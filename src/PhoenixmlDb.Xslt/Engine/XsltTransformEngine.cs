@@ -6013,17 +6013,33 @@ public sealed class XsltTransformEngine
     {
         if (options?.SourceValidation is not (Ast.ValidationMode.Strict or Ast.ValidationMode.Lax) || doc.DocumentElement is null)
             return null;
-        if (_schemaProvider is null)
-            throw new XsltException("XTTE1545: Validation of the source document requires a schema provider on the XsltTransformer");
-        var strict = options.SourceValidation == Ast.ValidationMode.Strict;
+        return ValidateDocument(doc, store, _schemaProvider, _stylesheet,
+            options.SourceValidation == Ast.ValidationMode.Strict, options.SourceDocumentUri?.ToString());
+    }
+
+    /// <summary>
+    /// <paramref name="doc"/> validated against the schemas of <paramref name="schemaProvider"/>,
+    /// as a tree whose nodes have the type annotations of the schema; null when the stylesheet
+    /// strips input type annotations (the document is validated, and then read untyped). A
+    /// document that is not valid is XTTE1510 (strict) or XTTE1515 (lax). For the principal
+    /// source (<see cref="XsltTransformOptions.SourceValidation"/>) and for the documents
+    /// fn:doc and its kin read (<see cref="XsltTransformOptions.DocumentValidation"/>).
+    /// </summary>
+    internal static XdmDocument? ValidateDocument(XmlDocument doc, XdmInMemoryStore store,
+        PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider, Ast.XsltStylesheet stylesheet, bool strict, string? documentUri)
+    {
+        if (doc.DocumentElement is not { } root)
+            return null;
+        var provider = schemaProvider
+            ?? throw new XsltException("XTTE1545: Validation of the source document requires a schema provider on the XsltTransformer");
         // input-type-annotations="strip" in any module (XSLT 3.0 §4.3): the source is validated,
         // and its type annotations are taken away, as by validation="strip". It was ignored.
-        var stripAnnotations = StripsInputTypeAnnotations(_stylesheet);
+        var stripAnnotations = StripsInputTypeAnnotations(stylesheet);
         // Strict: the outermost element must have a declaration. System.Xml only warns of an
         // element in a namespace it has no schema for.
-        if (strict && !_schemaProvider.HasElementDeclaration(doc.DocumentElement.NamespaceURI, doc.DocumentElement.LocalName))
+        if (strict && !provider.HasElementDeclaration(root.NamespaceURI, root.LocalName))
             throw new XsltException(
-                $"XTTE1510: The source document is not valid: the schemas in scope have no declaration of its outermost element '{{{doc.DocumentElement.NamespaceURI}}}{doc.DocumentElement.LocalName}'");
+                $"XTTE1510: The source document is not valid: the schemas in scope have no declaration of its outermost element '{{{root.NamespaceURI}}}{root.LocalName}'");
         // The document as it was read, with its entities expanded and without its document
         // type declaration, which the validating parse has no use for and does not accept.
         var text = new StringBuilder();
@@ -6048,12 +6064,12 @@ public sealed class XsltTransformEngine
             // With the URI of the source where the provider can take one, for base-uri().
             if (stripAnnotations)
             {
-                _schemaProvider.ValidateXml(sourceText, mode);
+                provider.ValidateXml(sourceText, mode);
                 return null;
             }
-            var validated = _schemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd
-                ? xsd.ValidateAndAnnotate(sourceText, store, mode, null, null, options.SourceDocumentUri?.ToString())
-                : _schemaProvider.ValidateAndAnnotate(sourceText, store, mode, null, null);
+            var validated = provider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd
+                ? xsd.ValidateAndAnnotate(sourceText, store, mode, null, null, documentUri)
+                : provider.ValidateAndAnnotate(sourceText, store, mode, null, null);
             return validated as XdmDocument;
         }
         catch (PhoenixmlDb.XQuery.SchemaValidationException ex)

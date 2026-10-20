@@ -136,6 +136,14 @@ public sealed class XsltTransformer
     public Ast.ValidationMode? SourceValidation { get; set; }
 
     /// <summary>
+    /// Validation of the documents the transformation reads with <c>fn:doc</c>,
+    /// <c>document()</c> and <c>fn:collection</c>, against the schemas of
+    /// <see cref="SchemaProvider"/>. Null, the default, reads them untyped. See
+    /// <see cref="XsltTransformOptions.DocumentValidation"/>.
+    /// </summary>
+    public Ast.ValidationMode? DocumentValidation { get; set; }
+
+    /// <summary>
     /// The implicit timezone of each transformation: the timezone a date, time or dateTime
     /// with none of its own is taken to be in, and the timezone of <c>current-dateTime()</c>.
     /// Null, the default, is the timezone of the machine. <see cref="TimeSpan.Zero"/> gives the
@@ -1431,6 +1439,7 @@ public sealed class XsltTransformer
             DisableStreaming = DisableStreaming,
             ImplicitTimezone = ImplicitTimezone,
             SourceValidation = SourceValidation,
+            DocumentValidation = DocumentValidation,
             StrictStreamability = StrictStreamability,
             AllowRemoteXInclude = _allowRemoteXInclude,
             XIncludeResolver = _xIncludeResolver,
