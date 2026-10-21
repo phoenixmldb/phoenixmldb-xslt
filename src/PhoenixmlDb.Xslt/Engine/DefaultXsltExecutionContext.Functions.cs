@@ -658,6 +658,10 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private async ValueTask<object?> EvaluateCoreAsync(XQueryExpression expr)
     {
+        // Asked for by the one evaluation it was set for (EvaluateWithParamAsync); never seen by
+        // the evaluations nested inside it.
+        var sliceRequested = _stringSliceRequested;
+        _stringSliceRequested = false;
         // Fast path for simple expressions
         switch (expr)
         {
@@ -966,6 +970,12 @@ internal sealed partial class DefaultXsltExecutionContext
             // Without an async iterator per operator when the whole plan allows it: a compiled
             // Schematron validator evaluates many small expressions per node, and the iterators were
             // the largest allocation source. Same result shape as below, same error handling.
+            // substring($string, 2) handed to a template parameter: a slice of $string, not a copy
+            // of it (xquery#287). The recursion the ISO Schematron skeleton runs over each XPath
+            // of a schema copied the rest of the string at every character.
+            if (sliceRequested && plan.Root is PhoenixmlDb.XQuery.Execution.FunctionCallOperator
+                && PhoenixmlDb.XQuery.Execution.StringSliceEvaluation.TryEvaluate(plan.Root, execContext, fromSliceOnly: false) is { } slice)
+                return slice;
             if (PhoenixmlDb.XQuery.Execution.PhysicalOperator.CanEvaluateSync(plan.Root))
                 return plan.Root.EvaluateSync(execContext);
             await foreach (var item in plan.Root.ExecuteAsync(execContext).ConfigureAwait(false))
@@ -2137,7 +2147,13 @@ internal sealed partial class DefaultXsltExecutionContext
         return evaluated;
     }
 
-    private async ValueTask<object?> EvaluateWithParamAsync(XsltWithParam param)
+    /// <param name="param">The parameter.</param>
+    /// <param name="mayBindSlice">
+    /// Whether the value may be a <see cref="PhoenixmlDb.XQuery.Execution.StringSlice"/>: only
+    /// where it binds a template parameter without an <c>as</c> type, which stores it as it is
+    /// (see <see cref="MayBindSlice"/>). The variable lookups give the string to everything else.
+    /// </param>
+    private async ValueTask<object?> EvaluateWithParamAsync(XsltWithParam param, bool mayBindSlice = false)
     {
         // A value handed in directly needs no evaluation, and must not be converted on the way
         // through — see XsltWithParam.RuntimeValue. It may however have arrived from another
@@ -2149,6 +2165,7 @@ internal sealed partial class DefaultXsltExecutionContext
             return XsltTransformEngine.UnwrapCrossStoreValue(param.RuntimeValue, _nodeStore);
         if (param.Select != null)
         {
+            _stringSliceRequested = mayBindSlice && param.As is null;
             var selected = await EvaluateAsync(param.Select).ConfigureAwait(false);
             // An atomic as= type: the nodes selected are atomized to their typed values, which
             // are converted to the type (XSLT 3.0 §9.3). The nodes were passed on, so

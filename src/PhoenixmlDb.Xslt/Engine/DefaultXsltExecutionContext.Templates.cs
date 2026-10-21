@@ -1350,7 +1350,7 @@ internal sealed partial class DefaultXsltExecutionContext
         var preEvaluatedParams = new Dictionary<QName, object?>();
         foreach (var wp in withParams)
         {
-            preEvaluatedParams[wp.Name] = await EvaluateWithParamAsync(wp).ConfigureAwait(false);
+            preEvaluatedParams[wp.Name] = await EvaluateWithParamAsync(wp, MayBindSlice(template, wp)).ConfigureAwait(false);
         }
 
         Dictionary<QName, object?>? tailTunnelParameters = null;
@@ -1701,6 +1701,23 @@ internal sealed partial class DefaultXsltExecutionContext
         return template;
     }
 
+    /// <summary>
+    /// Whether <paramref name="withParam"/> binds a parameter of <paramref name="template"/> that
+    /// stores the value as it is: not tunnel, and without an <c>as</c> type, whose conversion
+    /// would read it. Only then may the value be a string slice (xquery#287).
+    /// </summary>
+    private static bool MayBindSlice(XsltTemplate template, XsltWithParam withParam)
+    {
+        if (withParam.Tunnel || withParam.As is not null)
+            return false;
+        foreach (var param in template.Parameters)
+        {
+            if (!param.Tunnel && param.Name.Equals(withParam.Name))
+                return param.As is null;
+        }
+        return false;
+    }
+
     public override async ValueTask<bool> TryScheduleTailCallAsync(QName name, List<XsltWithParam> withParams)
     {
         // Only straight from the body of the innermost call-template frame: its own scope must be the top of
@@ -1718,7 +1735,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // context, and the tunnel parameters it would inherit from the scopes currently on the stack.
         var preEvaluatedParams = new Dictionary<QName, object?>();
         foreach (var wp in withParams)
-            preEvaluatedParams[wp.Name] = await EvaluateWithParamAsync(wp).ConfigureAwait(false);
+            preEvaluatedParams[wp.Name] = await EvaluateWithParamAsync(wp, MayBindSlice(template, wp)).ConfigureAwait(false);
         // The frame's own scope already holds every tunnel parameter it inherited from the scopes below it
         // (InheritTunnelParameters, or the set the previous tail call carried), with its own tunnel with-params
         // taking precedence, so a copy of it is exactly what walking the stack would collect. The walk cost the

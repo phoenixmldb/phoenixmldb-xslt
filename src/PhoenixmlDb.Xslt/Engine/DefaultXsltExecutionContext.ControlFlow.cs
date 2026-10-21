@@ -363,6 +363,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     value = RunSync(() => lazy.GetValueAsync());
                     vars[name] = value;
                 }
+                value = PhoenixmlDb.XQuery.Execution.StringSlice.Materialize(value);
                 return true;
             }
             // Lexical scope: an invoked template or function does not see its invoker's locals.
