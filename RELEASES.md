@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **XPath evaluations reuse their query context** (xquery#294): each used to make a new one, with
+  its stacks and scope; a small pool now keeps them for the next evaluation, reset, and never one
+  a function item keeps. `iso_dsdl_include` over NY.EMS.v350: 4.2 GB -> 2.3 GB, time 0.93x;
+  W3C evaluate-010: 685 -> 370 MB. Output unchanged.
+
 - **A template parameter declared `as="xs:string"` also holds a slice** (xquery#293): the walk
   of xquery#287 is linear for it too (a 100,000-character walk: 3.9 s and 10 GB -> 0.16 s and 438
   MB). A type derived from xs:string still casts the value.

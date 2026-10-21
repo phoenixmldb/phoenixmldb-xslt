@@ -834,17 +834,10 @@ internal sealed partial class DefaultXsltExecutionContext
         // so XQuery constructors can create proper XDM elements instead of serialized strings
         PhoenixmlDb.XQuery.INodeProvider? nodeProvider = _nodeStore;
 
-        using var execContext = new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
-            container: default,
-            functions: _functionLibrary,
-            nodeProvider: nodeProvider,
-            documentResolver: (PhoenixmlDb.XQuery.IDocumentResolver?)_policyResolver ?? _documentResolver,
-            schemaProvider: _schemaProvider,
-            namespaceResolver: _nodeStoreNamespaceUriResolver ??= _nodeStore != null ? _nodeStore.GetNamespaceUri : null,
-            // Without the token, cancelling the transformation reached no XPath expression: a long
-            // one (or a regex match) ran to completion inside a single instruction.
-            limits: _queryLimits,
-            cancellationToken: _ct);
+        using var lease = RentQueryContext(nodeProvider,
+            (PhoenixmlDb.XQuery.IDocumentResolver?)_policyResolver ?? _documentResolver,
+            _nodeStoreNamespaceUriResolver ??= _nodeStore != null ? _nodeStore.GetNamespaceUri : null);
+        var execContext = lease.Context;
         // Provide in-scope namespace prefix bindings so XSLT functions (system-property, etc.)
         // can resolve prefixed QName string arguments at runtime
         // When inside xsl:evaluate with namespace-context, use those bindings instead
@@ -1033,6 +1026,69 @@ internal sealed partial class DefaultXsltExecutionContext
         };
     }
 
+
+    /// <summary>
+    /// A query context for one XPath evaluation: one this transformation used before, reset, when
+    /// it was made with the same library, providers, limits and token, else a new one. An XSLT
+    /// instruction loop evaluated several expressions per iteration, each with a new context and
+    /// its stacks and scope (xquery#294). A nested evaluation (a stylesheet function called from
+    /// an XPath expression) rents its own. A context that something kept, such as an inline
+    /// function item that runs its body in it later, is not returned.
+    /// </summary>
+    private QueryContextLease RentQueryContext(PhoenixmlDb.XQuery.INodeProvider? nodeProvider,
+        PhoenixmlDb.XQuery.IDocumentResolver? documentResolver, Func<NamespaceId, string?>? namespaceResolver)
+    {
+        while (_queryContextPool.Count > 0)
+        {
+            var pooled = _queryContextPool.Pop();
+            if (ReferenceEquals(pooled.Functions, _functionLibrary)
+                && ReferenceEquals(pooled.NodeProvider, nodeProvider)
+                && ReferenceEquals(pooled.DocumentResolver, documentResolver)
+                && ReferenceEquals(pooled.SchemaProvider, _schemaProvider)
+                && Equals(pooled.NamespaceResolver, namespaceResolver)
+                && ReferenceEquals(pooled.Limits, _queryLimits)
+                && pooled.CancellationToken.Equals(_ct))
+                return new QueryContextLease(this, pooled);
+        }
+        return new QueryContextLease(this, new PhoenixmlDb.XQuery.Execution.QueryExecutionContext(
+            container: default,
+            functions: _functionLibrary,
+            nodeProvider: nodeProvider,
+            documentResolver: documentResolver,
+            schemaProvider: _schemaProvider,
+            namespaceResolver: namespaceResolver,
+            // Without the token, cancelling the transformation reached no XPath expression: a long
+            // one (or a regex match) ran to completion inside a single instruction.
+            limits: _queryLimits,
+            cancellationToken: _ct));
+    }
+
+    private const int MaxPooledQueryContexts = 8;
+
+    /// <summary>Returns its context to the pool when disposed, reset, unless something kept it.</summary>
+    private readonly struct QueryContextLease : IDisposable
+    {
+        private readonly DefaultXsltExecutionContext _owner;
+
+        public QueryContextLease(DefaultXsltExecutionContext owner, PhoenixmlDb.XQuery.Execution.QueryExecutionContext context)
+        {
+            _owner = owner;
+            Context = context;
+        }
+
+        public PhoenixmlDb.XQuery.Execution.QueryExecutionContext Context { get; }
+
+        public void Dispose()
+        {
+            if (Context.Captured || _owner._queryContextPool.Count >= MaxPooledQueryContexts)
+            {
+                Context.Dispose();
+                return;
+            }
+            Context.ResetForReuse();
+            _owner._queryContextPool.Push(Context);
+        }
+    }
 
     private async ValueTask ApplyAttributeSetsAsync(List<QName> attrSetNames, StringBuilder target)
     {
