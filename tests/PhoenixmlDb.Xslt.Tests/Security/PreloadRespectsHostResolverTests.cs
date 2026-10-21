@@ -46,7 +46,11 @@ public sealed class PreloadRespectsHostResolverTests : IAsyncDisposable
                 {
                     context = await _listener.GetContextAsync();
                 }
-                catch (Exception e) when (e is HttpListenerException or ObjectDisposedException or InvalidOperationException)
+                // Once DisposeAsync has stopped the listener, any failure here is the shutdown:
+                // on Windows a pending GetContextAsync throws ArgumentException ("The handle is
+                // invalid"), which no list of exception types had (xquery#295's downstream run).
+                catch (Exception e) when (!_listener.IsListening
+                    || e is HttpListenerException or ObjectDisposedException or InvalidOperationException)
                 {
                     return;
                 }
@@ -66,7 +70,8 @@ public sealed class PreloadRespectsHostResolverTests : IAsyncDisposable
                     await context.Response.OutputStream.WriteAsync(bytes);
                     context.Response.OutputStream.Close();
                 }
-                catch (Exception e) when (e is HttpListenerException or ObjectDisposedException or InvalidOperationException)
+                catch (Exception e) when (!_listener.IsListening
+                    || e is HttpListenerException or ObjectDisposedException or InvalidOperationException)
                 {
                     return;
                 }
