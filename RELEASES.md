@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A template parameter declared `as="xs:string"` also holds a slice** (xquery#293): the walk
+  of xquery#287 is linear for it too (a 100,000-character walk: 3.9 s and 10 GB -> 0.16 s and 438
+  MB). A type derived from xs:string still casts the value.
+
 - **The element test inside `document-node()` in a step is applied** (xquery#292). In a step such
   as `self::document-node(element(N))` or `child::document-node(element(*, T))`, the element test
   is matched against the document element, with the prefixes of the stylesheet. In 2.9.0 it was

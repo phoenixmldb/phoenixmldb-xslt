@@ -1423,7 +1423,9 @@ internal sealed partial class DefaultXsltExecutionContext
                     {
                         // Non-tunnel with-param binds only to non-tunnel template param
                         var value = preEvaluatedParams[withParam.Name];
-                        if (param.As != null)
+                        // A slice is an xs:string: as="xs:string" needs no conversion, which
+                        // would make its string (xquery#293).
+                        if (param.As != null && value is not PhoenixmlDb.XQuery.Execution.StringSlice)
                         {
                             value = CoerceToType(value, param.As);
                             ValidateValueMatchesType(value, param.As, "XTTE0590",
@@ -1703,8 +1705,9 @@ internal sealed partial class DefaultXsltExecutionContext
 
     /// <summary>
     /// Whether <paramref name="withParam"/> binds a parameter of <paramref name="template"/> that
-    /// stores the value as it is: not tunnel, and without an <c>as</c> type, whose conversion
-    /// would read it. Only then may the value be a string slice (xquery#287).
+    /// stores the value as it is: not tunnel, and without an <c>as</c> type or with exactly
+    /// xs:string, whose conversion of a string is no conversion (a type derived from it casts).
+    /// Only then may the value be a string slice (xquery#287, #293).
     /// </summary>
     private static bool MayBindSlice(XsltTemplate template, XsltWithParam withParam)
     {
@@ -1713,10 +1716,13 @@ internal sealed partial class DefaultXsltExecutionContext
         foreach (var param in template.Parameters)
         {
             if (!param.Tunnel && param.Name.Equals(withParam.Name))
-                return param.As is null;
+                return TakesSlice(param.As);
         }
         return false;
     }
+
+    private static bool TakesSlice(XdmSequenceType? type)
+        => type is null or { ItemType: ItemType.String, LocalTypeName: null, UnprefixedTypeName: null, SchemaTypeLocalName: null };
 
     public override async ValueTask<bool> TryScheduleTailCallAsync(QName name, List<XsltWithParam> withParams)
     {
