@@ -822,6 +822,12 @@ internal sealed partial class DefaultXsltExecutionContext
     private readonly HashSet<NodeId> _validatedTreeRoots = [];
 
     /// <summary>
+    /// Set by <see cref="EvaluateWithParamAsync"/> for the one evaluation whose value may be a
+    /// string slice; read and cleared as that evaluation starts (EvaluateCoreAsync).
+    /// </summary>
+    private bool _stringSliceRequested;
+
+    /// <summary>
     /// The target expressions of xsl:evaluate this transformation has parsed and checked, by
     /// instruction, text, schema-awareness and default namespace (see EvaluateInstructionAsync).
     /// Bounded, so that a stylesheet evaluating ever new strings does not keep them all.

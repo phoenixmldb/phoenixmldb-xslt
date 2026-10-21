@@ -1165,7 +1165,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     public object? CurrentItem => _currentItems.Count > 0 ? _currentItems.Peek() : ContextItem;
 
 
-    public object? GetVariable(QName name)
+    /// <summary>
+    /// The value of the variable, with a string slice (a template parameter bound to
+    /// <c>substring(...)</c>, xquery#287) given as its string.
+    /// </summary>
+    public object? GetVariable(QName name) => PhoenixmlDb.XQuery.Execution.StringSlice.Materialize(GetVariableCore(name));
+
+    private object? GetVariableCore(QName name)
     {
         foreach (var scope in _scopes)
         {
@@ -1301,7 +1307,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                         found = evaluated;
                         return true;
                     }
-                    found = value;
+                    found = PhoenixmlDb.XQuery.Execution.StringSlice.Materialize(value);
                     return true;
                 }
             }

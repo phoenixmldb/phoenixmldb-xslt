@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A template walking a string one character at a time is linear, not quadratic** (xquery#287).
+  An `xsl:call-template` parameter bound to `substring(...)`, without an `as` type, holds a slice of
+  the original string instead of a copy of its rest; `substring`, `string-length` and `starts-with`
+  read the slice, and any other use of the parameter sees an ordinary string. The ISO Schematron
+  skeleton's `sch-check:xpath-wf` walks every XPath this way: `iso_dsdl_include` over NY.EMS.v350
+  allocates 4.2 GB instead of 21.4 GB and runs in 1.9 s instead of 8.0 s; output byte-identical.
+
 - **New: `XsltTransformer.DocumentValidation`** (`XsltTransformOptions.DocumentValidation`).
   With `Strict` or `Lax`, the documents a transformation reads with `fn:doc`, `document()` and
   `fn:collection` are validated against the transformer's schemas as they are read, as Saxon's
