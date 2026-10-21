@@ -662,6 +662,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // the evaluations nested inside it.
         var sliceRequested = _stringSliceRequested;
         _stringSliceRequested = false;
+        var tailCallKey = _tailCallKeyRequested;
+        _tailCallKeyRequested = null;
         // Fast path for simple expressions
         switch (expr)
         {
@@ -827,6 +829,10 @@ internal sealed partial class DefaultXsltExecutionContext
             var optimizer = new PhoenixmlDb.XQuery.Optimizer.QueryOptimizer();
             var optContext = new PhoenixmlDb.XQuery.Optimizer.OptimizationContext { Container = default, BackwardsCompatible = IsBackwardsCompatible, FunctionLibrary = _functionLibrary };
             plan = optimizer.Optimize(expr, optContext);
+            // The select of the xsl:sequence a stylesheet function evaluates last: its calls in
+            // tail position return a tail-call request to the function's loop (xquery#296).
+            if (tailCallKey is not null)
+                PhoenixmlDb.XQuery.Execution.TailCalls.Mark(plan.Root, tailCallKey);
             cached.Plan = plan;
         }
 
@@ -2489,7 +2495,21 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>
     /// Calls an XSLT user-defined function (xsl:function) and returns its result.
     /// </summary>
+    /// <summary>
+    /// Calls a stylesheet function, and then each tail call its body returns, in a loop at the
+    /// same depth (xquery#296): tail recursion, direct or mutual, is not limited by
+    /// MaxRecursionDepth. Each iteration is a call of its own: its trace event, its frame, its
+    /// return-type check.
+    /// </summary>
     internal async ValueTask<object?> CallXsltFunctionAsync(XsltFunction func, IReadOnlyList<object?> arguments)
+    {
+        var result = await CallXsltFunctionOnceAsync(func, arguments).ConfigureAwait(false);
+        while (result is PhoenixmlDb.XQuery.Execution.TailCallRequest { Function: XsltUserFunctionAdapter next } tailCall)
+            result = await CallXsltFunctionOnceAsync(next.Function, tailCall.Arguments).ConfigureAwait(false);
+        return result;
+    }
+
+    private async ValueTask<object?> CallXsltFunctionOnceAsync(XsltFunction func, IReadOnlyList<object?> arguments)
     {
         // Trace: function call
         if (_options?.TraceListener != null)
@@ -2573,6 +2593,12 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 var param = func.Parameters[i];
                 var value = arguments[i];
+                // A slice of a string (xquery#296): an xs:string, which needs no conversion.
+                if (value is PhoenixmlDb.XQuery.Execution.StringSlice && ParameterTakesSlice(param.As))
+                {
+                    SetVariable(param.Name, value);
+                    continue;
+                }
                 if (param.As != null && IsStrictAtomicType(param.As.ItemType))
                 {
                     // Apply function conversion rules: atomize nodes, coerce to target type
@@ -2647,10 +2673,14 @@ internal sealed partial class DefaultXsltExecutionContext
             _functionBodyDepth++;
             var savedFunctionBodyAccumulator = _functionBodyAccumulator;
             _functionBodyAccumulator = _sequenceAccumulator;
+            PhoenixmlDb.XQuery.Execution.TailCallRequest? tailCall;
+            _pendingFunctionTailCall = null;
             try
             { await func.Body.ExecuteAsync(this).ConfigureAwait(false); }
             finally
             {
+                tailCall = _pendingFunctionTailCall;
+                _pendingFunctionTailCall = null;
                 _functionBodyAccumulator = savedFunctionBodyAccumulator;
                 _functionBodyDepth--;
                 _temporaryOutputDepth--;
@@ -2667,6 +2697,20 @@ internal sealed partial class DefaultXsltExecutionContext
 
             var accumulatedItems = _sequenceAccumulator;
             _sequenceAccumulator = savedAccumulator;
+
+            // The body ended in a tail call (SequenceAsync). With nothing else output, the call is
+            // this function's result: the caller's loop runs it next, with the callee's return type
+            // the same as this one's. Otherwise it is made here and its result appended.
+            if (tailCall is not null)
+            {
+                if (accumulatedItems.Count == 0 && string.IsNullOrEmpty(textOutput))
+                    return tailCall;
+                var made = await CallXsltFunctionAsync(((XsltUserFunctionAdapter)tailCall.Function).Function, tailCall.Arguments).ConfigureAwait(false);
+                if (made is object?[] madeItems)
+                    accumulatedItems.AddRange(madeItems);
+                else if (made != null)
+                    accumulatedItems.Add(made);
+            }
 
             // A declared node-ish return type wants TEXT NODES, so materialize the text the
             // body produced (collected above as TextNodeItem, or written as a bare string)

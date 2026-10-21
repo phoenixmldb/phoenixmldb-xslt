@@ -19,7 +19,8 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// <summary>
 /// Adapts an XSLT user-defined function (xsl:function) to the XQuery function interface.
 /// </summary>
-internal sealed class XsltUserFunctionAdapter : PhoenixmlDb.XQuery.Ast.XQueryFunction
+internal sealed class XsltUserFunctionAdapter : PhoenixmlDb.XQuery.Ast.XQueryFunction,
+    PhoenixmlDb.XQuery.Execution.ITailCallTarget, PhoenixmlDb.XQuery.Execution.IStringSliceParameters
 {
     private readonly XsltFunction _xsltFunc;
     private readonly DefaultXsltExecutionContext _context;
@@ -57,6 +58,33 @@ internal sealed class XsltUserFunctionAdapter : PhoenixmlDb.XQuery.Ast.XQueryFun
             return name;
         }
     }
+
+    /// <summary>The stylesheet function this adapter calls.</summary>
+    internal XsltFunction Function => _xsltFunc;
+
+    /// <summary>
+    /// Whether calls to and from <paramref name="function"/> may be tail calls (xquery#296): not a
+    /// memoised function (cache="yes", new-each-time="no"), whose result is stored per call, nor
+    /// a streamable one.
+    /// </summary>
+    internal static bool TakesTailCalls(XsltFunction function)
+        => !function.Cache && function.NewEachTime != "no" && function.Streamability == null;
+
+    /// <summary>The tail-call key of a stylesheet function: its kind and its declared return type.</summary>
+    internal static string TailCallKeyOf(XsltFunction function)
+        => PhoenixmlDb.XQuery.Execution.TailCalls.ReturnTypeKey("xslt", function.As);
+
+    /// <summary>A key no call matches for a function that takes no tail calls.</summary>
+    public string TailCallKey => TakesTailCalls(_xsltFunc) ? TailCallKeyOf(_xsltFunc) : "";
+
+    /// <summary>
+    /// The binding stores a string slice as it is for a parameter without an as type or of
+    /// exactly xs:string (CallXsltFunctionOnceAsync). A memoised function compares its arguments,
+    /// and takes none.
+    /// </summary>
+    public bool TakesSlice(int parameterIndex)
+        => TakesTailCalls(_xsltFunc) && parameterIndex < _xsltFunc.Parameters.Count
+            && DefaultXsltExecutionContext.ParameterTakesSlice(_xsltFunc.Parameters[parameterIndex].As);
 
     public override XdmSequenceType ReturnType =>
         _xsltFunc.As ?? XdmSequenceType.ZeroOrMoreItems;

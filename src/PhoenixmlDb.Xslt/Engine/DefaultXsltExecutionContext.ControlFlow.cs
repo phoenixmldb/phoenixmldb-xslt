@@ -2396,7 +2396,20 @@ internal sealed partial class DefaultXsltExecutionContext
 
         if (instruction.Select != null)
         {
+            _tailCallKeyRequested = instruction.TailCallKey;
             var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
+            // A tail call of the stylesheet function whose body this ends (xquery#296): straight
+            // into its result, it is the function's to run; anywhere else it is made here.
+            if (result is PhoenixmlDb.XQuery.Execution.TailCallRequest tailCall)
+            {
+                if (_sequenceAccumulator != null && ReferenceEquals(_sequenceAccumulator, _functionBodyAccumulator)
+                    && _pendingFunctionTailCall is null)
+                {
+                    _pendingFunctionTailCall = tailCall;
+                    return;
+                }
+                result = await CallXsltFunctionAsync(((XsltUserFunctionAdapter)tailCall.Function).Function, tailCall.Arguments).ConfigureAwait(false);
+            }
             if (result != null)
             {
                 // If we're collecting sequence items (variable body with as="type *"),

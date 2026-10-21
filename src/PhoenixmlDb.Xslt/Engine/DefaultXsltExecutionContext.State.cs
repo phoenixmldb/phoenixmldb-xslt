@@ -827,6 +827,15 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private bool _stringSliceRequested;
 
+    /// <summary>
+    /// The tail-call key of the xsl:sequence being evaluated (SequenceAsync), for the plan of its
+    /// select (EvaluateCoreAsync); read and cleared as that evaluation starts.
+    /// </summary>
+    private string? _tailCallKeyRequested;
+
+    /// <summary>The tail call the running stylesheet function's body ended in (CallXsltFunctionOnceAsync).</summary>
+    private PhoenixmlDb.XQuery.Execution.TailCallRequest? _pendingFunctionTailCall;
+
     /// <summary>Query contexts reset for the next XPath evaluation (see RentQueryContext).</summary>
     private readonly Stack<PhoenixmlDb.XQuery.Execution.QueryExecutionContext> _queryContextPool = new();
 
