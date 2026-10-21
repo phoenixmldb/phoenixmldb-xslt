@@ -827,6 +827,9 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private bool _stringSliceRequested;
 
+    /// <summary>Query contexts reset for the next XPath evaluation (see RentQueryContext).</summary>
+    private readonly Stack<PhoenixmlDb.XQuery.Execution.QueryExecutionContext> _queryContextPool = new();
+
     /// <summary>
     /// The target expressions of xsl:evaluate this transformation has parsed and checked, by
     /// instruction, text, schema-awareness and default namespace (see EvaluateInstructionAsync).
