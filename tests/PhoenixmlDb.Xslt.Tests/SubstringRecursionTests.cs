@@ -90,17 +90,39 @@ public sealed class SubstringRecursionTests
                 </xsl:template>
                 """)).Should().Be("true true bcd! true 98 1 bcd BCD bcd bcd  cd true");
 
+    // A parameter declared as="xs:string" holds the slice as well (xquery#293); a type derived
+    // from xs:string casts, and holds the string.
+    [Theory]
+    [InlineData("")]
+    [InlineData(" as=\"xs:string\"")]
+    public async Task The_walk_over_a_long_string_is_linear_with_or_without_xs_string(string asString)
+        => await AssertLinear(asString);
+
+    [Fact]
+    public async Task A_parameter_of_a_type_derived_from_xs_string_casts_the_value()
+        => (await Run("""
+                <xsl:call-template name="tok"><xsl:with-param name="t" select="substring('  a  b ', 1)"/></xsl:call-template>
+                """, """
+                <xsl:template name="tok">
+                  <xsl:param name="t" as="xs:token"/>
+                  <xsl:value-of select="'[' || $t || ']', $t instance of xs:token"/>
+                </xsl:template>
+                """)).Should().Be("[a b] true");
+
     [Fact]
     public async Task The_walk_over_a_long_string_is_linear()
+        => await AssertLinear("");
+
+    private static async Task AssertLinear(string asString)
     {
         var text = new string('x', 20_000);
         GC.Collect();
         var before = GC.GetTotalAllocatedBytes(precise: true);
         var count = await Run($"""
             <xsl:call-template name="count"><xsl:with-param name="string" select="'{text}'"/></xsl:call-template>
-            """, """
+            """, $"""
             <xsl:template name="count">
-              <xsl:param name="string"/>
+              <xsl:param name="string"{asString}/>
               <xsl:param name="n" select="0"/>
               <xsl:choose>
                 <xsl:when test="string-length($string) = 0"><xsl:value-of select="$n"/></xsl:when>
