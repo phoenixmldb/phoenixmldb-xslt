@@ -56,10 +56,20 @@ public sealed class PreloadRespectsHostResolverTests : IAsyncDisposable
                     : path.EndsWith("data.xml", StringComparison.Ordinal) ? "<data>from-network</data>"
                     : "";
                 var bytes = System.Text.Encoding.UTF8.GetBytes(body);
-                context.Response.ContentType = "application/xml";
-                context.Response.ContentLength64 = bytes.Length;
-                await context.Response.OutputStream.WriteAsync(bytes);
-                context.Response.OutputStream.Close();
+                // The listener may be stopped by DisposeAsync while a response is written: the
+                // write then throws, and the exception surfaced from `await _serving` and failed
+                // the test after its assertions had passed (seen on net8.0 in CI).
+                try
+                {
+                    context.Response.ContentType = "application/xml";
+                    context.Response.ContentLength64 = bytes.Length;
+                    await context.Response.OutputStream.WriteAsync(bytes);
+                    context.Response.OutputStream.Close();
+                }
+                catch (Exception e) when (e is HttpListenerException or ObjectDisposedException or InvalidOperationException)
+                {
+                    return;
+                }
             }
         });
     }
