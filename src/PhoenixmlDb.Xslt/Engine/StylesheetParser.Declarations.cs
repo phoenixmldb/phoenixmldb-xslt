@@ -2646,7 +2646,7 @@ public sealed partial class StylesheetParser
             or "shallow-descent" or "deep-descent" or "ascent"))
             streamabilityValue = null;
 
-        return new XsltFunction
+        var function = new XsltFunction
         {
             Name = name,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
@@ -2660,6 +2660,46 @@ public sealed partial class StylesheetParser
             Streamability = streamabilityValue,
             BaseUri = ResolveEffectiveBaseUri(element)
         };
+        if (XsltUserFunctionAdapter.TakesTailCalls(function))
+            MarkFunctionTailCalls(function.Body, XsltUserFunctionAdapter.TailCallKeyOf(function));
+        return function;
+    }
+
+    /// <summary>
+    /// Marks the xsl:sequence a stylesheet function's body evaluates last: its final instruction, or
+    /// the final instruction of the chosen xsl:choose branch or xsl:if (as MarkTailCalls does for
+    /// xsl:call-template). Not marked: a body with xsl:on-empty / xsl:on-non-empty, an instruction
+    /// with its own version, default-collation or xml:base, and anything inside xsl:try, whose
+    /// xsl:catch must see an error of the call in this frame.
+    /// </summary>
+    private static void MarkFunctionTailCalls(XsltSequenceConstructor body, string key)
+    {
+        var instructions = body.Instructions;
+        if (instructions.Count == 0)
+            return;
+        for (var i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is XsltOnEmpty or XsltOnNonEmpty)
+                return;
+        }
+        var last = instructions[instructions.Count - 1];
+        if (last.Version != null || last.DefaultCollation != null || last.StaticBaseUri != null)
+            return;
+        switch (last)
+        {
+            case XsltSequence { Select: not null, Content: null } sequence:
+                sequence.TailCallKey = key;
+                break;
+            case XsltChoose choose:
+                foreach (var when in choose.When)
+                    MarkFunctionTailCalls(when.Body, key);
+                if (choose.Otherwise != null)
+                    MarkFunctionTailCalls(choose.Otherwise, key);
+                break;
+            case XsltIf conditional:
+                MarkFunctionTailCalls(conditional.Then, key);
+                break;
+        }
     }
 
 

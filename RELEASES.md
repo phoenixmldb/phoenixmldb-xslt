@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Tail calls of stylesheet functions** (xquery#296). A call to a stylesheet function in tail
+  position of a stylesheet function's body (the select of the xsl:sequence the body evaluates
+  last, also in the chosen xsl:choose / xsl:if branch, and there the then/else of an if) runs as
+  the caller's next iteration instead of nested, when the callee has the caller's `as` type.
+  Tail recursion, direct or mutual, is no longer limited by the recursion depth (XTDE0000 at
+  1,200): a million iterations run in about 1.4 s. Not tail calls, and still limited: a call
+  whose result is used, one inside xsl:try, a call of or from a memoised (`cache="yes"`,
+  `new-each-time="no"`) or streamable function. A string walked with `substring($s, 2)` is passed
+  as a slice where the parameter is untyped or `xs:string`: a 100,000-character walk takes about
+  0.6 s. The trace listener reports each iteration as a call, as before. An infinite tail
+  recursion now runs until the transformation is cancelled, as a loop does.
+
 - **XPath evaluations reuse their query context** (xquery#294): each used to make a new one, with
   its stacks and scope; a small pool now keeps them for the next evaluation, reset, and never one
   a function item keeps. `iso_dsdl_include` over NY.EMS.v350: 4.2 GB -> 2.3 GB, time 0.93x;

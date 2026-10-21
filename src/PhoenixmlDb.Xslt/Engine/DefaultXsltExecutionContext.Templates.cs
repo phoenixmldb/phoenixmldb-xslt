@@ -1721,8 +1721,15 @@ internal sealed partial class DefaultXsltExecutionContext
         return false;
     }
 
-    private static bool TakesSlice(XdmSequenceType? type)
-        => type is null or { ItemType: ItemType.String, LocalTypeName: null, UnprefixedTypeName: null, SchemaTypeLocalName: null };
+    private static bool TakesSlice(XdmSequenceType? type) => ParameterTakesSlice(type);
+
+    /// <summary>
+    /// Whether a parameter of this declared type stores a string slice as it is: no as type, or
+    /// exactly xs:string, whose conversion of a string is no conversion (a type derived from it
+    /// casts). For template and stylesheet-function parameters (xquery#293, #296).
+    /// </summary>
+    internal static bool ParameterTakesSlice(XdmSequenceType? type)
+        => type is null or { ItemType: ItemType.String, LocalTypeName: null or "string", UnprefixedTypeName: null or "string", SchemaTypeLocalName: null };
 
     public override async ValueTask<bool> TryScheduleTailCallAsync(QName name, List<XsltWithParam> withParams)
     {
