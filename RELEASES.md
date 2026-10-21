@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`self::document-node(element(x:N))` matches the document again** (xquery#292, a regression
+  since xquery#282 on main, not in any release). The element test inside `document-node()` in a
+  step is matched against the document element, and its prefix was not resolved against the
+  stylesheet's namespaces, so the step matched nothing while `instance of` was true.
+
 - **A template walking a string one character at a time is linear, not quadratic** (xquery#287).
   An `xsl:call-template` parameter bound to `substring(...)`, without an `as` type, holds a slice of
   the original string instead of a copy of its rest; `substring`, `string-length` and `starts-with`

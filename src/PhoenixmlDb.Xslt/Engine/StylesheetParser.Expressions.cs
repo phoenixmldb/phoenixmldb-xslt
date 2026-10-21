@@ -1248,23 +1248,36 @@ public sealed partial class StylesheetParser
                         nt.NamespaceUri = xdn;
                 }
             }
-            else if (se.NodeTest is KindTest { Name: NameTest ktName } && !string.IsNullOrEmpty(ktName.Prefix)
-                     && ktName.Prefix != "*" && ktName.NamespaceUri == null)
+            else if (se.NodeTest is KindTest kindTest)
             {
-                // element(x:foo) / attribute(x:foo) name test — the XQuery parser leaves
-                // the prefix unresolved for XSLT callers (it can't see the stylesheet's
-                // namespaces). Resolve it here against the XSLT element's in-scope
-                // namespaces, mirroring the NameTest case. Martin Honnen 2026-07-30:
-                // self::attribute(x:expand-text). Element/attribute kind tests default to
-                // NO namespace (not the xpath-default-namespace), so an unprefixed name is
-                // left as-is.
-                var ktNs = context.GetNamespaceOfPrefix(ktName.Prefix)?.NamespaceName;
-                if (ktNs != null)
-                    ktName.NamespaceUri = ktNs;
-                else if (!IsBackwardsCompatible(context))
-                    throw new XsltException($"XPST0081: Namespace prefix '{ktName.Prefix}' has not been declared");
+                ResolveKindTestPrefix(kindTest);
+                // document-node(element(x:report)): the element test inside is matched against
+                // the document element since xquery#282, and its prefix was left unresolved, so
+                // /self::document-node(element(x:report)) matched nothing while
+                // `. instance of document-node(element(x:report))` was true (xquery#292).
+                if (kindTest.DocumentInnerTest is KindTest inner)
+                    ResolveKindTestPrefix(inner);
             }
             return base.VisitStepExpression(se);
+        }
+
+        /// <summary>
+        /// element(x:foo) / attribute(x:foo) name test — the XQuery parser leaves the prefix
+        /// unresolved for XSLT callers (it can't see the stylesheet's namespaces). Resolve it here
+        /// against the XSLT element's in-scope namespaces, mirroring the NameTest case. Martin
+        /// Honnen 2026-07-30: self::attribute(x:expand-text). Element/attribute kind tests default
+        /// to NO namespace (not the xpath-default-namespace), so an unprefixed name is left as-is.
+        /// </summary>
+        private void ResolveKindTestPrefix(KindTest kindTest)
+        {
+            if (kindTest.Name is not NameTest ktName || string.IsNullOrEmpty(ktName.Prefix)
+                || ktName.Prefix == "*" || ktName.NamespaceUri != null)
+                return;
+            var ktNs = context.GetNamespaceOfPrefix(ktName.Prefix)?.NamespaceName;
+            if (ktNs != null)
+                ktName.NamespaceUri = ktNs;
+            else if (!IsBackwardsCompatible(context))
+                throw new XsltException($"XPST0081: Namespace prefix '{ktName.Prefix}' has not been declared");
         }
 
         public override object? VisitInstanceOfExpression(InstanceOfExpression inst)
