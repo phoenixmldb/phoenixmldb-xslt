@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-- **`self::document-node(element(x:N))` matches the document again** (xquery#292, a regression
-  since xquery#282 on main, not in any release). The element test inside `document-node()` in a
-  step is matched against the document element, and its prefix was not resolved against the
-  stylesheet's namespaces, so the step matched nothing while `instance of` was true.
+- **The element test inside `document-node()` in a step is applied** (xquery#292). In a step such
+  as `self::document-node(element(N))` or `child::document-node(element(*, T))`, the element test
+  is matched against the document element, with the prefixes of the stylesheet. In 2.9.0 it was
+  ignored, and the step matched every document node. An undeclared prefix in that inner test is
+  XPST0081.
 
 - **A template walking a string one character at a time is linear, not quadratic** (xquery#287).
   An `xsl:call-template` parameter bound to `substring(...)`, without an `as` type, holds a slice of
