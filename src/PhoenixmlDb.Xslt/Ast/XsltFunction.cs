@@ -54,4 +54,12 @@ public sealed class XsltFunction
     /// Null for functions defined in the consuming stylesheet.
     /// </summary>
     public XsltStylesheet? PackageStylesheet { get; set; }
+
+    /// <summary>
+    /// Declared in an xsl:override: it belongs to the package that uses the package it overrides
+    /// in, not to that package, although it is stored with that package's components. The merge
+    /// of that package leaves <see cref="PackageStylesheet"/> unset for it once, so the merge of
+    /// the using package stamps it (or, in the principal, it stays null like its own components).
+    /// </summary>
+    internal bool DeclaredInOverride { get; set; }
 }

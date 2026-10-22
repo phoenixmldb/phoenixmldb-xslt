@@ -40,16 +40,32 @@ public sealed partial class StylesheetParser
     }
 
 
+    private static void StampTemplate(XsltTemplate template, XsltStylesheet package)
+    {
+        if (template.DeclaredInOverride)
+            template.DeclaredInOverride = false;
+        else
+            template.PackageStylesheet ??= package;
+    }
+
     private static void MergePackageComponents(XsltStylesheet target, XsltStylesheet package)
     {
         // Stamp all components with their originating package for package-local resolution
         // (decimal formats, keys, character maps, outputs, variables)
+        // A component declared in an xsl:override is the using package's (XSLT 3.0 §3.5.3.4):
+        // its key(), format-number() and output names are that package's. It was stamped as the
+        // used package's, so key('id', ...) in an overriding function found no key (override-f-026).
         foreach (var (_, func) in package.Functions)
-            func.PackageStylesheet ??= package;
+        {
+            if (func.DeclaredInOverride)
+                func.DeclaredInOverride = false;
+            else
+                func.PackageStylesheet ??= package;
+        }
         foreach (var (_, tmpl) in package.NamedTemplates)
-            tmpl.PackageStylesheet ??= package;
+            StampTemplate(tmpl, package);
         foreach (var tmpl in package.Templates)
-            tmpl.PackageStylesheet ??= package;
+            StampTemplate(tmpl, package);
 
         // Named templates: merge all except abstract (private templates may be called
         // by public templates via xsl:call-template from the same package).

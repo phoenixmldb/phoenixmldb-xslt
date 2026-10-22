@@ -106,6 +106,14 @@ public sealed class XsltTemplate
     public XsltStylesheet? PackageStylesheet { get; set; }
 
     /// <summary>
+    /// Declared in an xsl:override: it belongs to the package that uses the package it overrides
+    /// in, not to that package, although it is stored with that package's components. The merge
+    /// of that package leaves <see cref="PackageStylesheet"/> unset for it once, so the merge of
+    /// the using package stamps it (or, in the principal, it stays null like its own components).
+    /// </summary>
+    internal bool DeclaredInOverride { get; set; }
+
+    /// <summary>
     /// Import precedence of this template rule for conflict resolution (XSLT 3.0 §6.6.2).
     /// Higher wins. Defaults to 0. A template rule brought in via xsl:use-package has a
     /// LOWER precedence than the using package's own declarations (including rules supplied
