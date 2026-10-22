@@ -1096,9 +1096,15 @@ internal sealed class StreamingXmlProcessor
         {
             if (_accCurrentValues[i] is AccumulatorDeferredError)
             {
-                // Propagate error state to node value map
+                // Propagate error state to node value map: the before-value at a start, and the
+                // after-value at an end (an ancestor of the failing node kept its earlier value).
                 if (phase == AccumulatorPhase.Start)
                     _accNodeValueMaps[i][nodeId] = (before: _accCurrentValues[i], after: _accCurrentValues[i]);
+                else
+                {
+                    var existing = _accNodeValueMaps[i].GetValueOrDefault(nodeId, (before: _accCurrentValues[i], after: _accCurrentValues[i]));
+                    _accNodeValueMaps[i][nodeId] = (existing.before, after: _accCurrentValues[i]);
+                }
                 continue;
             }
 

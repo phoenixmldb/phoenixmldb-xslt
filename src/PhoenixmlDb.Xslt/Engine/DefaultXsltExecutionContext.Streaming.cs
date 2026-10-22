@@ -839,9 +839,13 @@ internal sealed partial class DefaultXsltExecutionContext
             return;
         frame.EndState[i] = 1;
         var currentValues = frame.CurrentValues;
-        // Skip evaluation if the accumulator is in error state
+        // Skip evaluation if the accumulator is in error state. The error is still this node's
+        // after-value: a rule inside the node failed, and the value after it is that failure. The
+        // after-value kept the start phase's provisional entry, so accumulator-after on an
+        // ancestor of the failing node read the value from before the error (W3C accumulator-031).
         if (currentValues[i] is AccumulatorDeferredError)
         {
+            frame.NodeValueMaps[i][frame.NodeId] = (frame.NodeValueMaps[i][frame.NodeId].before, after: currentValues[i]);
             frame.EndState[i] = 2;
             return;
         }
