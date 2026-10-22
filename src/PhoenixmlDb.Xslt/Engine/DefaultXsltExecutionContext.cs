@@ -2274,6 +2274,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var before = tree.NodesHere;
             var accumulated = _sequenceAccumulator;
             var itemsBefore = accumulated?.Count ?? 0;
+            var textStart = _output.Length;
+            var textDepth = _serializingElementDepth;
             await body().ConfigureAwait(false);
             if (!ReferenceEquals(tree, _activeTreeConstructor))
                 return;
@@ -2290,6 +2292,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // text of the same content, read again, would give an untyped tree.
                 if (_untypedRtfFlipActive)
                     _untypedRtfFlipDivergent = true;
+            }
+            // The body of a template with as=, inside a tree being built: its result is read from
+            // the text it writes when the body ends, not from the tree, so the element validated
+            // above was read back untyped (W3C as-3701). The element constructed at the top of the
+            // body goes into the sequence as the validated element, in place of its text.
+            if (instructionName is "literal result element" or "xsl:element"
+                && _currentAsBodyCapture is { } asBody && ReferenceEquals(asBody.Accumulator, accumulated)
+                && textDepth == 0 && _output.Length > textStart && tree.NodesHere == before + 1
+                && accumulated!.Count == itemsBefore && tree.NodeHere(before) is Xdm.Nodes.XdmElement typedElement)
+            {
+                _output.Length = textStart;
+                AppendToSeqAccumulator(typedElement);
             }
             return;
         }

@@ -4093,6 +4093,7 @@ public sealed class XsltTransformEngine
                 try
                 {
                     var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
+                    context.CheckKindTestTypes(value, global.As, global.Name);
                     context.GlobalVariables[global.Name] = context.CastToDeclaredSchemaType(
                         DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
                 }
@@ -4551,6 +4552,7 @@ public sealed class XsltTransformEngine
                 try
                 {
                     var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
+                    context.CheckKindTestTypes(value, global.As, global.Name);
                     context.GlobalVariables[global.Name] = context.CastToDeclaredSchemaType(
                         DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
                 }
