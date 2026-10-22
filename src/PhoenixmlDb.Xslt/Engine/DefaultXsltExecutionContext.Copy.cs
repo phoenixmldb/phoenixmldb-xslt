@@ -795,6 +795,9 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
         var copyNs = instruction.CopyNamespaces ?? true;
+        if ((instruction.Validation ?? _stylesheet.DefaultValidation) == Ast.ValidationMode.Preserve
+            && instruction.ValidationType is null && _nodeStore is not null)
+            CheckNamespaceSensitiveCopy(result, copyNs, "xsl:copy-of");
         // A document node copied with validation is validated as a document (XSLT 3.0
         // §25.4.2): the identity constraints apply, so duplicate IDs and dangling IDREFs are
         // XTTE1555. Its content was validated as a fragment, which does not check them.
@@ -1112,6 +1115,58 @@ internal sealed partial class DefaultXsltExecutionContext
         return false;
     }
 
+
+    /// <summary>
+    /// XTTE0950 (XSLT 3.0 §11.9.2): with validation="preserve", a copy keeps the type annotations,
+    /// so content typed xs:QName or xs:NOTATION must keep the namespace bindings its value needs.
+    /// It is an error to copy a node with such content under copy-namespaces="no", or to copy such
+    /// an attribute without its parent element.
+    /// </summary>
+    private void CheckNamespaceSensitiveCopy(object? result, bool copyNamespaces, string instructionName)
+    {
+        foreach (var item in result as IEnumerable<object?> ?? [result])
+        {
+            if (item is XdmAttribute attribute)
+            {
+                if (IsNamespaceSensitiveType(attribute.TypeAnnotation))
+                    throw Error($"XTTE0950: {instructionName} with validation=\"preserve\" copies the attribute " +
+                        $"'{attribute.LocalName}', whose type {attribute.TypeAnnotation} is namespace-sensitive, without its parent element");
+            }
+            else if (!copyNamespaces && item is XdmNode node && HasNamespaceSensitiveContent(node))
+            {
+                throw Error($"XTTE0950: {instructionName} with validation=\"preserve\" and copy-namespaces=\"no\" " +
+                    "copies a node whose content is namespace-sensitive (xs:QName or xs:NOTATION)");
+            }
+        }
+    }
+
+    private bool HasNamespaceSensitiveContent(XdmNode root)
+    {
+        // Iterative: a copied tree can be deeper than the stack allows recursion.
+        var pending = new Stack<XdmNode>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+            if (node is XdmElement element)
+            {
+                if (IsNamespaceSensitiveType(element.TypeAnnotation))
+                    return true;
+                foreach (var attribute in _nodeStore!.GetAttributes(element))
+                    if (IsNamespaceSensitiveType(attribute.TypeAnnotation))
+                        return true;
+            }
+            if (node is XdmElement or XdmDocument)
+                foreach (var child in _nodeStore!.GetChildren(node))
+                    if (child is XdmElement)
+                        pending.Push(child);
+        }
+        return false;
+    }
+
+    private static bool IsNamespaceSensitiveType(Xdm.XdmTypeName type)
+        => type == Xdm.XdmTypeName.QName
+           || (type.Namespace == Xdm.XdmTypeName.QName.Namespace && type.LocalName == "NOTATION");
 
     /// <summary>
     /// Deep-clones a source node subtree directly into the node store — the node-model
