@@ -1310,6 +1310,31 @@ public sealed partial class StylesheetParser
     }
 
 
+    /// <summary>
+    /// The type name of element(N, T), and whether T is followed by "?"
+    /// (element(N, T?) admits a nilled element). The type was dropped, so element(*, xs:integer)
+    /// accepted any element (W3C error-0570b). Only a prefixed or Q{} name is taken: an
+    /// unprefixed one needs the schema state of the stylesheet, and keeps the old, untyped test.
+    /// </summary>
+    private static (Xdm.XdmTypeName? Type, bool Nillable) KindTestTypeName(string inner, int commaIdx, XElement? context)
+    {
+        if (commaIdx < 0)
+            return (null, false);
+        var typePart = inner[(commaIdx + 1)..].Trim();
+        var nillable = typePart.EndsWith('?');
+        if (nillable)
+            typePart = typePart[..^1].TrimEnd();
+        if (!typePart.StartsWith("Q{", StringComparison.Ordinal) && !typePart.Contains(':', StringComparison.Ordinal))
+            return (null, false);
+        var (local, uri) = SplitPrefixedName(typePart, context);
+        if (uri is null || local.Length == 0)
+            return (null, false);
+        var ns = uri == "http://www.w3.org/2001/XMLSchema"
+            ? NamespaceId.Xsd
+            : XQuery.XsdSchemaProvider.TypeNamespaceId(uri);
+        return (new Xdm.XdmTypeName(ns, local), nillable);
+    }
+
     private static XdmSequenceType ParseSequenceType(string type, XElement? context = null)
     {
         // Simplified - would use full type parser
@@ -1486,14 +1511,24 @@ public sealed partial class StylesheetParser
             var commaIdx = inner.IndexOf(',', StringComparison.Ordinal);
             var namePart = commaIdx >= 0 ? inner[..commaIdx].Trim() : inner;
             if (namePart == "*" || string.IsNullOrEmpty(namePart))
-                return new XdmSequenceType { ItemType = ItemType.Element, Occurrence = occurrence };
+            {
+                var (anyElementType, anyElementNillable) = KindTestTypeName(inner, commaIdx, context);
+                return new XdmSequenceType
+                {
+                    ItemType = ItemType.Element, Occurrence = occurrence,
+                    TypeAnnotation = anyElementType, TypeAnnotationNillable = anyElementNillable,
+                };
+            }
             var (localName, nsUri) = SplitPrefixedName(namePart, context);
+            var (elementType, elementNillable) = KindTestTypeName(inner, commaIdx, context);
             return new XdmSequenceType
             {
                 ItemType = ItemType.Element,
                 Occurrence = occurrence,
                 ElementName = localName,
                 ElementNamespace = nsUri,
+                TypeAnnotation = elementType,
+                TypeAnnotationNillable = elementNillable,
             };
         }
 
@@ -1525,6 +1560,9 @@ public sealed partial class StylesheetParser
             var inner = type[10..^1].Trim();
             var commaIdx3 = inner.IndexOf(',', StringComparison.Ordinal);
             var namePart = commaIdx3 >= 0 ? inner[..commaIdx3].Trim() : inner;
+            // The type of attribute(N, T) is not taken yet: an attribute made by xsl:attribute
+            // type="T" inside an element under construction is written as text and loses its
+            // annotation, so checking T would refuse such attributes.
             if (namePart == "*" || string.IsNullOrEmpty(namePart))
                 return new XdmSequenceType { ItemType = ItemType.Attribute, Occurrence = occurrence };
             var (attrLocal, attrNs) = SplitPrefixedName(namePart, context);

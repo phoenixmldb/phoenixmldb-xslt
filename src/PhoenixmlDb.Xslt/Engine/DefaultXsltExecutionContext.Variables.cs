@@ -1325,13 +1325,14 @@ internal sealed partial class DefaultXsltExecutionContext
                         var matches = (targetType, item) switch
                         {
                             (ItemType.Element, XdmElement el) =>
-                                instruction.As.ElementName == null || el.LocalName == instruction.As.ElementName,
+                                (instruction.As.ElementName == null || el.LocalName == instruction.As.ElementName)
+                                && MatchesKindTestType(el, instruction.As),
                             (ItemType.Text, XdmText) => true,
                             (ItemType.Text, string) => true,
                             (ItemType.Text, Xdm.TextNodeItem) => true,
                             (ItemType.Comment, XdmComment) => true,
                             (ItemType.ProcessingInstruction, XdmProcessingInstruction) => true,
-                            (ItemType.Attribute, XdmAttribute) => true,
+                            (ItemType.Attribute, XdmAttribute at) => MatchesKindTestType(at, instruction.As),
                             (ItemType.SchemaAttribute, XdmAttribute) => true,
                             (ItemType.SchemaElement, XdmElement) => true,
                             (ItemType.Document, XdmDocument doc) =>
@@ -1350,12 +1351,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 var matches = (targetType, value) switch
                 {
                     (ItemType.Element, XdmElement el) =>
-                        instruction.As.ElementName == null || el.LocalName == instruction.As.ElementName,
+                        (instruction.As.ElementName == null || el.LocalName == instruction.As.ElementName)
+                        && MatchesKindTestType(el, instruction.As),
                     (ItemType.Text, XdmText) => true,
                     (ItemType.Text, Xdm.TextNodeItem) => true,
                     (ItemType.Comment, XdmComment) => true,
                     (ItemType.ProcessingInstruction, XdmProcessingInstruction) => true,
-                    (ItemType.Attribute, XdmAttribute) => true,
+                    (ItemType.Attribute, XdmAttribute at) => MatchesKindTestType(at, instruction.As),
                             (ItemType.SchemaAttribute, XdmAttribute) => true,
                             (ItemType.SchemaElement, XdmElement) => true,
                     (ItemType.Document, XdmDocument doc) =>

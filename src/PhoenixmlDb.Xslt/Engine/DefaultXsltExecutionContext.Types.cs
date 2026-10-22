@@ -1561,6 +1561,37 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     /// <summary>
+    /// XTTE0570 for the value of a global variable with select= and as="element(N, T)" or
+    /// "attribute(N, T)": each node's type annotation must match T. The select value of a global
+    /// variable was not checked against a node type at all (W3C error-0570b).
+    /// </summary>
+    internal void CheckKindTestTypes(object? value, XdmSequenceType? asType, QName name)
+    {
+        if (asType is not { TypeAnnotation: not null, ItemType: ItemType.Element or ItemType.Attribute })
+            return;
+        foreach (var item in value as object?[] ?? [value])
+        {
+            if (item is XdmElement or XdmAttribute && !MatchesKindTestType(item, asType))
+                throw Error($"XTTE0570: Variable ${name.LocalName} requires a node of type {asType.TypeAnnotation} but got a node annotated "
+                    + (item is XdmElement e ? e.TypeAnnotation : ((XdmAttribute)item).TypeAnnotation));
+        }
+    }
+
+    /// <summary>
+    /// The type part of element(N, T) and attribute(N, T): the node's annotation is T or derived
+    /// from it, and element(N, T) excludes a nilled element. True when the test names no type.
+    /// </summary>
+    private bool MatchesKindTestType(object node, XdmSequenceType targetType)
+    {
+        if (targetType.TypeAnnotation is not { } requiredType || node is not (XdmElement or XdmAttribute))
+            return true;
+        if (!XQuery.Execution.TypeCastHelper.MatchesTypeAnnotation(node, requiredType, _schemaProvider))
+            return false;
+        return targetType.TypeAnnotationNillable || node is not XdmElement element
+            || !XQuery.Execution.TypeCastHelper.IsNilled(element, _nodeStore is null ? null : _nodeStore.GetNode);
+    }
+
+    /// <summary>
     /// Per XSLT 3.0 §3.7 (sequence-type matching): validates a single value against a node-typed
     /// declaration, including element/attribute name and namespace constraints (element(QName),
     /// attribute(QName), document-node(element(QName)), processing-instruction("name")).
@@ -1600,8 +1631,17 @@ internal sealed partial class DefaultXsltExecutionContext
             _ => false
         };
 
+        // element(N, T) and attribute(N, T): the node's type annotation must be T or derived from
+        // it, and element(N, T) excludes a nilled element. Only the name was checked, so an element
+        // annotated xs:NMTOKEN was accepted as element(*, xs:integer) (W3C error-0570b).
+        var annotationMismatch = matches && !MatchesKindTestType(node, targetType);
+        if (annotationMismatch)
+            matches = false;
+
         if (!matches)
         {
+            if (annotationMismatch)
+                throw Error($"{errorCode}: {contextName} requires a node of type {targetType.TypeAnnotation} but got a node annotated {(node is XdmElement e ? e.TypeAnnotation : ((XdmAttribute)node).TypeAnnotation)}");
             var what = node switch
             {
                 XdmElement el => el.Prefix != null
