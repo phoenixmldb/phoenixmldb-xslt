@@ -131,7 +131,14 @@ public sealed partial class StylesheetParser
         // Enable mode reference tracking for declared-modes validation
         var prevModeReferences = _usedModeReferences;
         if (declaredModes)
+        {
             _usedModeReferences = new List<(QName, SourceLocation?)>();
+            // The default-mode attribute names a mode: with declared-modes="yes" it must be
+            // declared (XTSE3085). It was not counted, so an undeclared default mode reached the
+            // run and failed there as XTDE0044/XTDE0045 (W3C package-914d/e).
+            if (stylesheetDefaultMode is { } namedDefaultMode)
+                _usedModeReferences.Add((namedDefaultMode, GetSourceLocation(element)));
+        }
 
         // Pre-scan for xsl:import-schema to suppress XTSE1660 when present
         _hasImportSchema = element.Elements(XsltNs + "import-schema").Any();
