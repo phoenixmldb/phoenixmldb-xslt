@@ -1387,6 +1387,7 @@ public sealed partial class StylesheetParser
                 case "template":
                 {
                     var overrideTemplate = ParseTemplate(child);
+                    overrideTemplate.DeclaredInOverride = true;
                     if (overrideTemplate.Name is { } templateName)
                     {
                         // XTSE0770: Duplicate override of same component
@@ -1484,6 +1485,7 @@ public sealed partial class StylesheetParser
                 case "function":
                 {
                     var overrideFunc = ParseFunction(child);
+                    overrideFunc.DeclaredInOverride = true;
                     var key = (overrideFunc.Name, overrideFunc.Parameters.Count);
                     // XTSE0770: Duplicate override
                     if (!overriddenFunctions.Add(key))
