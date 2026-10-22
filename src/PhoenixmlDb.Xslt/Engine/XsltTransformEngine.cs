@@ -4073,6 +4073,7 @@ public sealed class XsltTransformEngine
             // (override-v-001/003/004).
             var savedGlobalPkg = context._currentGlobalPackage;
             context._currentGlobalPackage = global.PackageStylesheet;
+            var absentFocus = PushLibraryGlobalFocus(context, global);
             // If this global is an overriding xsl:variable that references $xsl:original,
             // evaluate the overridden variable and bind $xsl:original for its select/content.
             var xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
@@ -4443,6 +4444,8 @@ public sealed class XsltTransformEngine
             finally
             {
                 context._currentGlobalPackage = savedGlobalPkg;
+                if (absentFocus)
+                    context.PopContextItem();
                 if (xslOrigScopePushed)
                     context.PopScope();
                 if (globalSbu != null)
@@ -4507,6 +4510,20 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// A global variable or parameter of a library package has no context item: the global
+    /// context item is the principal package's (XSLT 3.0 §2.3.2), so `.` in it is XPDY0002. The
+    /// principal's context item was in scope, so count(//*) counted the principal source (W3C
+    /// package-912). An overriding variable is the using package's and keeps the focus.
+    /// </summary>
+    private static bool PushLibraryGlobalFocus(DefaultXsltExecutionContext context, GlobalDeclaration global)
+    {
+        if (global.PackageStylesheet is null || global.OriginalDeclaration is XsltVariable { OriginalVariable: not null })
+            return false;
+        context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+        return true;
+    }
+
+    /// <summary>
     /// Initializes a single pending global variable on demand (lazy evaluation).
     /// Called by GetVariable when a variable isn't in GlobalVariables but is in _pendingGlobals.
     /// </summary>
@@ -4534,6 +4551,7 @@ public sealed class XsltTransformEngine
         // select may reference a private sibling of the used package — override-v-001/003/004).
         var savedGlobalPkg = context._currentGlobalPackage;
         context._currentGlobalPackage = global.PackageStylesheet;
+        var absentFocus = PushLibraryGlobalFocus(context, global);
         // Bind $xsl:original if this is an overriding xsl:variable referencing it.
         var xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
         try
@@ -4595,6 +4613,8 @@ public sealed class XsltTransformEngine
         finally
         {
             context._currentGlobalPackage = savedGlobalPkg;
+            if (absentFocus)
+                context.PopContextItem();
             if (xslOrigScopePushed)
                 context.PopScope();
             if (globalSbu != null)
