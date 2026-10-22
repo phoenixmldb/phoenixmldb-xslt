@@ -3245,8 +3245,45 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 && annotation == Xdm.XdmTypeName.Untyped)
                 sequence[i] = ValidateBuiltDocument(copied, mode, instructionName, location, type);
             else if (sequence[i] is Xdm.Nodes.XdmElement element)
-                sequence[i] = ValidateBuiltElement(element, mode, instructionName, location, type);
+            {
+                var validated = ValidateBuiltElement(element, mode, instructionName, location, type);
+                if (!ReferenceEquals(validated, element))
+                    CarryAccumulatorValues(element, validated);
+                sequence[i] = validated;
+            }
         }
+    }
+
+    /// <summary>
+    /// A validated element is a new tree read from the text of the one built. Values that
+    /// accumulators have on the built tree (xsl:copy-of copy-accumulators="yes") are those of the
+    /// validated one too, element by element: they were lost, and accumulator-before on the copy
+    /// was computed from the copy instead of taken from its source (W3C accumulator-070).
+    /// Validation keeps the elements and their order, so the n-th element of one is the n-th of
+    /// the other; if the two trees do not have the same elements, nothing is carried.
+    /// </summary>
+    private void CarryAccumulatorValues(Xdm.Nodes.XdmElement built, Xdm.Nodes.XdmElement validated)
+    {
+        if (_accumulatorValues is not { Count: > 0 } || _nodeStore is null
+            || !_accumulatorValues.Values.Any(values => values.ContainsKey(built.Id)))
+            return;
+        var mapping = new Dictionary<NodeId, NodeId>();
+        var pending = new Stack<(Xdm.Nodes.XdmElement From, Xdm.Nodes.XdmElement To)>();
+        pending.Push((built, validated));
+        while (pending.Count > 0)
+        {
+            var (from, to) = pending.Pop();
+            if (from.LocalName != to.LocalName || from.Namespace != to.Namespace)
+                return;
+            mapping[from.Id] = to.Id;
+            var fromChildren = from.Children.Select(_nodeStore.GetNode).OfType<Xdm.Nodes.XdmElement>().ToList();
+            var toChildren = to.Children.Select(_nodeStore.GetNode).OfType<Xdm.Nodes.XdmElement>().ToList();
+            if (fromChildren.Count != toChildren.Count)
+                return;
+            for (var c = 0; c < fromChildren.Count; c++)
+                pending.Push((fromChildren[c], toChildren[c]));
+        }
+        CopyAccumulatorValues(mapping);
     }
 
     /// <summary>
