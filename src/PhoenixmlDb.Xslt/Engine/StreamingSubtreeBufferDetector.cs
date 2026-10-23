@@ -846,6 +846,11 @@ internal static class StreamingSubtreeBufferDetector
                         if (fc.Arguments.Count > 0 && NavigatesInput(fc.Arguments[0]))
                             return true;
                         break;
+                    case AbsorbingKind.NoWatcherAnyArgument:
+                        foreach (var arg in fc.Arguments)
+                            if (NavigatesInput(arg))
+                                return true;
+                        break;
                     case AbsorbingKind.WatcherBacked:
                         if (fc.Arguments.Count > 0
                             && NavigatesInput(fc.Arguments[0])
@@ -925,7 +930,7 @@ internal static class StreamingSubtreeBufferDetector
             && NavigatesInput(fc.Arguments[collationArgIndex]);
     }
 
-    private enum AbsorbingKind { None, NoWatcher, WatcherBacked }
+    private enum AbsorbingKind { None, NoWatcher, NoWatcherAnyArgument, WatcherBacked }
 
     /// <summary>
     /// Classifies an fn:-namespace function call by its absorbing-aggregation family.
@@ -946,6 +951,13 @@ internal static class StreamingSubtreeBufferDetector
                 or "boolean" or "not" or "exists" or "empty"
                 or "one-or-more" or "exactly-one" or "zero-or-one"
                 => AbsorbingKind.NoWatcher,
+
+            // Comparisons whose input-navigating operand can be any argument: the search
+            // value of index-of($seq, /a/b), either side of deep-equal. Without a watcher the
+            // operand was evaluated against the empty document, so index-of found nothing and
+            // deep-equal compared only the literals (W3C sf-index-of-002, sf-deep-equal-012).
+            "deep-equal" or "index-of"
+                => AbsorbingKind.NoWatcherAnyArgument,
 
             // Aggregations the scanner streams via a watcher when the operand is a bare
             // downward path; buffer only the operand shapes the watcher rejects.
