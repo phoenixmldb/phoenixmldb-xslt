@@ -755,6 +755,19 @@ public sealed partial class StylesheetParser
                                 $"XTSE0020: Invalid value '{exposeComponent}' for the component attribute of "
                                 + "xsl:expose; must be one of template, function, attribute-set, variable, mode or *",
                                 GetSourceLocation(child));
+                        // XTSE3022: component="*" selects every kind, so only a wildcard name can
+                        // mean anything (§3.6.3.1). Checked here, per element, before the
+                        // visibility consistency of the exposed components (W3C expose-914).
+                        if (exposeComponent == "*" && child.Attribute("names")?.Value is { } exposeNames)
+                        {
+                            foreach (var token in exposeNames.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                if (!IsAcceptWildcard(token))
+                                    throw new XsltException(
+                                        $"XTSE3022: xsl:expose with component=\"*\" must use a wildcard name, not '{token}'",
+                                        GetSourceLocation(child));
+                            }
+                        }
                     }
                     ValidateExposeNames(child);
                     // Collect expose declarations — applied after all components are parsed
