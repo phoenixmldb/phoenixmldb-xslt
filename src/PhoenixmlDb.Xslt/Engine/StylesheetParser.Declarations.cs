@@ -1534,6 +1534,12 @@ public sealed partial class StylesheetParser
                     {
                         if (packageStylesheet.Variables[i].Name.Equals(overrideVar.Name))
                         {
+                            // XTSE3060: Can only override public or abstract components, as for
+                            // templates and functions; a final variable was overridden (W3C accept-007).
+                            if (packageStylesheet.Variables[i].Visibility is Visibility.Private or Visibility.Final)
+                                throw new XsltException(
+                                    $"XTSE3060: Cannot override variable '{overrideVar.Name.LocalName}' which has visibility '{packageStylesheet.Variables[i].Visibility.ToString().ToUpperInvariant()}'",
+                                    GetSourceLocation(child));
                             RequireSameDeclaredType(overrideVar.As, packageStylesheet.Variables[i].As, overrideVar.Name, child);
                             overrideVar.OriginalVariable = packageStylesheet.Variables[i];
                             // An overriding variable targets a provided component of the used
