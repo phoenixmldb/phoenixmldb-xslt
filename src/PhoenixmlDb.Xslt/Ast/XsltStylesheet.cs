@@ -345,6 +345,12 @@ public sealed class XsltStylesheet
     public XdmSequenceType? GlobalContextItemAs { get; set; }
 
     /// <summary>
+    /// The as attribute of xsl:global-context-item with its whitespace removed ("item()" when
+    /// absent): what XTSE3087's consistency check across modules compares.
+    /// </summary>
+    public string? GlobalContextItemAsText { get; set; }
+
+    /// <summary>
     /// Package catalog for resolving xsl:use-package and fn:transform package-name references.
     /// Set during parsing when a package catalog is available.
     /// </summary>

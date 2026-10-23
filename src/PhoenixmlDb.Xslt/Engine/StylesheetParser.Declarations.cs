@@ -717,11 +717,16 @@ public sealed partial class StylesheetParser
                         _ => ContextItemUse.Optional
                     };
                     stylesheet.GlobalContextItemUse = useValue;
+                    // Whitespace in the as attribute is not significant (§3.5.6), and an absent
+                    // one means item(): the consistency check across modules compares this.
+                    stylesheet.GlobalContextItemAsText = gciAs is null
+                        ? "item()"
+                        : string.Concat(gciAs.Where(c => !char.IsWhiteSpace(c)));
                     if (gciAs != null)
                     {
                         var savedNsContext = _nsContext;
                         _nsContext = child;
-                        stylesheet.GlobalContextItemAs = ParseSequenceType(gciAs, child);
+                        stylesheet.GlobalContextItemAs = ParseSequenceType(gciAs.Trim(), child);
                         _nsContext = savedNsContext;
                     }
                     break;
@@ -1726,7 +1731,6 @@ public sealed partial class StylesheetParser
     private static void ValidateAccept(XElement acceptElement, XsltStylesheet packageStylesheet,
         HashSet<QName>? overriddenTemplateNames = null, HashSet<(QName, int)>? overriddenFunctionKeys = null)
     {
-        _ = overriddenFunctionKeys;
         var component = acceptElement.Attribute("component")?.Value;
         var names = acceptElement.Attribute("names")?.Value;
         var visibilityStr = acceptElement.Attribute("visibility")?.Value;
@@ -1783,6 +1787,13 @@ public sealed partial class StylesheetParser
                         _ = int.TryParse(token[(hashIdx + 1)..], out arity);
                     }
                     var funcName = ResolveAcceptTokenQName(funcToken, acceptElement);
+                    // XTSE3051 for functions too: a name without an arity matches every arity
+                    // (W3C accept-916: local:foo#0 accepted and overridden).
+                    if (overriddenFunctionKeys != null
+                        && overriddenFunctionKeys.Any(k => k.Item1.Equals(funcName) && (arity < 0 || k.Item2 == arity)))
+                        throw new XsltException(
+                            $"XTSE3051: Component '{token}' in xsl:accept is also declared in xsl:override",
+                            location);
                     foreach (var (fkey, func) in packageStylesheet.Functions)
                     {
                         if (fkey.Name.Equals(funcName) && (arity < 0 || fkey.Arity == arity))
