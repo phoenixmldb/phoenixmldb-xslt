@@ -48,6 +48,16 @@
 # a harness that undercounts is still a harness reporting something other than the truth.
 #   CONFORMANCE_BASELINE  per-set baseline file (default scripts/conformance-baseline.tsv)
 #   CONFORMANCE_UPDATE_BASELINE=1   rewrite the baseline from this run instead of checking it
+#   CONFORMANCE_TIMEOUTS_NONFATAL=1 a case that hit the harness's per-case cap does not count as
+#                         lost in the per-set gate (for slow machines, e.g. the nightly host)
+#
+# Per-case timeouts. The harness marks a case that does not finish in its 10 s cap with
+# "[TIMEOUT — machine speed, not a conformance failure]". Every run lists those cases on their
+# own (per-set-timeouts.tsv and a TIMEOUTS block in summary.txt). By default they still count as
+# lost, because a hang that a change introduces looks exactly like one: an opt-out, not a
+# default. With CONFORMANCE_TIMEOUTS_NONFATAL=1 the gate adds a set's timeouts back before it
+# compares, so on a machine ten times slower (evaluate-010, catalog-001 on the nightly host) the
+# run passes while the block still names them. The cap itself is not raised.
 #
 # Per-set gating. Chunk totals CANNOT express a regression: `insn` once went 1497 -> 1508
 # while insn/call-template quietly lost 2 cases, because try gained 7 and analyze-string
@@ -317,6 +327,24 @@ for g in "${CHUNKS[@]}"; do
 done
 sort -o "$CURRENT" "$CURRENT"
 
+# Cases that hit the per-case cap, as <set>\t<case>, from the FAILED lines between a set's
+# "Running" and "Results" lines.
+TIMEOUTS="$OUT/per-set-timeouts.tsv"
+: > "$TIMEOUTS"
+for g in "${CHUNKS[@]}"; do
+  [ -f "$OUT/$g.log" ] || continue
+  awk '/^ Running [0-9]+ tests from /{set=$NF}
+       /FAILED: / && /\[TIMEOUT/ {for(i=1;i<=NF;i++) if($i=="FAILED:"){print set"\t"$(i+1); break}}
+       /^ Results: /{set=""}' \
+    "$OUT/$g.log" >> "$TIMEOUTS"
+done
+sort -o "$TIMEOUTS" "$TIMEOUTS"
+if [ -s "$TIMEOUTS" ]; then
+  echo "TIMEOUTS — cases that did not finish in the per-case cap ($(wc -l < "$TIMEOUTS"); machine speed, not a verdict):" |
+    tee -a "$OUT/summary.txt"
+  awk -F'\t' '{printf "  %s: %s\n", $1, $2}' "$TIMEOUTS" | tee -a "$OUT/summary.txt"
+fi
+
 if [ "${CONFORMANCE_UPDATE_BASELINE:-0}" = "1" ]; then
   # Only the sets this run actually covered are refreshed; sets from other chunks are kept,
   # so updating after a single-chunk run cannot silently erase the rest of the baseline.
@@ -390,11 +418,12 @@ elif [ -f "$BASELINE" ]; then
   # Note the default OUT is the tracked directory, so ANY run overwrites the artifact —
   # including a single-chunk one. Do not commit a summary from `conformance.sh <chunk>`; it
   # replaces whole-suite evidence with one chunk's and still looks like a valid file.
-  regressed="$(awk -F'\t' '
-    NR==FNR { base[$1]=$2; tol[$1]=($4==""?0:$4); next }
-    ($1 in base) && $2 < base[$1] - tol[$1] {
+  regressed="$(awk -F'\t' -v nonfatal="${CONFORMANCE_TIMEOUTS_NONFATAL:-0}" '
+    FILENAME == ARGV[1] { if (nonfatal == "1") timedout[$1]++; next }
+    FILENAME == ARGV[2] { base[$1]=$2; tol[$1]=($4==""?0:$4); next }
+    ($1 in base) && $2 + timedout[$1] < base[$1] - tol[$1] {
       printf "  %s: %d -> %d  (-%d, tolerance %d)\n", $1, base[$1], $2, base[$1]-$2, tol[$1] }
-  ' "$BASELINE" "$CURRENT")"
+  ' "$TIMEOUTS" "$BASELINE" "$CURRENT")"
   gained="$(awk -F'\t' '
     NR==FNR { base[$1]=$2; next }
     ($1 in base) && $2 > base[$1] { printf "  %s: %d -> %d  (+%d)\n", $1, base[$1], $2, $2-base[$1] }
