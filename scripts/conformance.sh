@@ -314,6 +314,18 @@ for g in "${CHUNKS[@]}"; do
   printf '%-7s %4ds  %s\n' "$g" "$d" "$line" | tee -a "$OUT/summary.txt"
 done
 
+# ---- known test defects ------------------------------------------------------
+# W3C cases whose expected result contradicts the Recommendation (KnownTestDefects.cs holds each
+# with its evidence). They still count as failed — the per-set numbers include them — and are
+# listed here with their count so that a reader can subtract them knowingly, not silently.
+defects="$(for g in "${CHUNKS[@]}"; do [ -f "$OUT/$g.log" ] && grep -h 'FAILED: .*\[KNOWN TEST DEFECT' "$OUT/$g.log"; done |
+           sed 's/^ *FAILED: \([^ ]*\).*\[KNOWN TEST DEFECT — \(.*\)\]$/  \1: \2/' | sort -u)"
+if [ -n "$defects" ]; then
+  echo "KNOWN TEST DEFECTS — counted as failed, expected result contradicts the spec ($(printf '%s\n' "$defects" | wc -l)):" |
+    tee -a "$OUT/summary.txt"
+  printf '%s\n' "$defects" | tee -a "$OUT/summary.txt"
+fi
+
 # ---- per-set regression gate -------------------------------------------------
 # Pair each "Running N tests from <set>" with the "Results: X/Y passed" that follows it.
 BASELINE="${CONFORMANCE_BASELINE:-$ROOT/scripts/conformance-baseline.tsv}"
