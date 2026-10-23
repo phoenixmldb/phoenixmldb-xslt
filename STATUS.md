@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-23 11:45 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-23 21:28 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-10-23 11:45 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 4 | 0 |
+| phoenixmldb-xslt | 4 | 1 |
 | phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
@@ -31,6 +31,10 @@ Generated 2026-10-23 11:45 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-xslt**
+
+- [448] conformance.sh: list per-case timeouts; opt-in to keep them out of the per-set gate
 
 ## Defect register
 
