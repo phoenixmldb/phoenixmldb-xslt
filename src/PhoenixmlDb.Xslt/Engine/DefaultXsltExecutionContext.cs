@@ -5123,7 +5123,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             };
         }
 
-        object key = keyVal ?? throw Error("XTDE3365: Map entry key must not be empty");
+        // The key is converted to xs:anyAtomicType by the function conversion rules (XSLT 3.0
+        // §21.2), so an empty key is a type error, not the duplicate-key error XTDE3365.
+        object key = keyVal ?? throw Error("XPTY0004: The key of xsl:map-entry must be a single atomic value, "
+                                           + "but the key expression produced an empty sequence");
 
         // Evaluate the value
         object? value = null;
