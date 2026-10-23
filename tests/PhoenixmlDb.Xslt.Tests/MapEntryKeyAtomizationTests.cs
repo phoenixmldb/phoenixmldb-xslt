@@ -165,4 +165,20 @@ public sealed class MapEntryKeyAtomizationTests : IDisposable
             """);
         (await act.Should().ThrowAsync<XsltException>()).WithMessage("*XPTY0004*");
     }
+
+    /// <summary>
+    /// An empty key fails the conversion to xs:anyAtomicType: XPTY0004, not XTDE3365 (that code is
+    /// for duplicate keys). W3C maps-909.
+    /// </summary>
+    [Fact]
+    public async Task An_empty_key_is_XPTY0004()
+    {
+        var act = async () => await RunAsync("""
+            <xsl:variable name="m2" as="map(*)">
+              <xsl:map><xsl:map-entry key="(1 to 3)[. lt 0]" select="'V'"/></xsl:map>
+            </xsl:variable>
+            <out v="{map:size($m2)}"/>
+            """);
+        (await act.Should().ThrowAsync<XsltException>()).WithMessage("*XPTY0004*");
+    }
 }
