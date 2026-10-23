@@ -73,7 +73,11 @@ public sealed partial class StylesheetParser
         // XTSE0010: static variable must not have content body (must use select)
         // Evaluate use-when on child elements first — excluded elements don't count as content
         if (isStatic && element.Nodes().Any(n => (n is XElement el && ShouldIncludeElement(el)) || (n is XText t && !string.IsNullOrWhiteSpace(t.Value))))
-            throw new XsltException("XTSE0010: A variable with static='yes' must not have content (use the 'select' attribute instead)", location);
+            // With a select attribute too, it is the general rule that applies (XSLT 3.0 §9.3):
+            // select and non-empty content is XTSE0620 (W3C use-when-0431).
+            throw element.Attribute("select") != null
+                ? new XsltException("XTSE0620: A variable with static='yes' has both a select attribute and content", location)
+                : new XsltException("XTSE0010: A variable with static='yes' must not have content (use the 'select' attribute instead)", location);
 
         // XTSE0090: visibility is not allowed on static variables
         if (isStatic && element.Attribute("visibility") != null)
@@ -139,7 +143,11 @@ public sealed partial class StylesheetParser
         // XTSE0010: static param must not have content body (must use select)
         // Evaluate use-when on child elements first — excluded elements don't count as content
         if (isStatic && element.Nodes().Any(n => (n is XElement el && ShouldIncludeElement(el)) || (n is XText t && !string.IsNullOrWhiteSpace(t.Value))))
-            throw new XsltException("XTSE0010: A parameter with static='yes' must not have content (use the 'select' attribute instead)", location);
+            // With a select attribute too, it is the general rule that applies (XSLT 3.0 §9.3):
+            // select and non-empty content is XTSE0620 (W3C use-when-0431).
+            throw element.Attribute("select") != null
+                ? new XsltException("XTSE0620: A parameter with static='yes' has both a select attribute and content", location)
+                : new XsltException("XTSE0010: A parameter with static='yes' must not have content (use the 'select' attribute instead)", location);
 
         // XTSE0020: tunnel is not allowed on static params
         if (isStatic && tunnelAttr != null && tunnelAttr.Value.Trim() is "yes" or "true" or "1")

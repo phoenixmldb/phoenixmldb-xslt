@@ -55,6 +55,11 @@ public sealed partial class StylesheetParser
         {
             bool b => b,
             double d => d != 0.0 && !double.IsNaN(d),
+            float f => f != 0f && !float.IsNaN(f),
+            long l => l != 0,
+            int i => i != 0,
+            decimal m => m != 0m,
+            System.Numerics.BigInteger bi => !bi.IsZero,
             string s => s.Length > 0,
             null => false,
             _ => true

@@ -3734,6 +3734,9 @@ public sealed partial class StylesheetParser
         string str => str,
         double d when !double.IsInfinity(d) && !double.IsNaN(d) && d == Math.Floor(d) && Math.Abs(d) < 1e15
             => ((long)d).ToString(System.Globalization.CultureInfo.InvariantCulture),
+        // The XPath string value: 1.50 is "1.5", not the CLR's "1.50".
+        decimal or long or int or System.Numerics.BigInteger
+            => PhoenixmlDb.XQuery.Functions.ConcatFunction.XQueryStringValue(value),
         IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
         System.Collections.IEnumerable seq and not string
             => string.Join(" ", seq.Cast<object?>().Select(StaticValueToString)),
@@ -4088,6 +4091,11 @@ public sealed partial class StylesheetParser
         value switch
         {
             double d => d,
+            long l => l,
+            int i => i,
+            decimal m => (double)m,
+            float f => f,
+            System.Numerics.BigInteger bi => (double)bi,
             bool b => b ? 1.0 : 0.0,
             string s => double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : double.NaN,
             null => 0.0,
