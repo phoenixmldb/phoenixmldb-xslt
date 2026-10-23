@@ -372,18 +372,7 @@ public sealed class XsltTestRunner
             var pkgVersion = pkgElem.Attribute("package-version")?.Value;
             if (pkgFile != null)
             {
-                var pkgPath = Path.Combine(basePath, pkgFile);
-                if (pkgUri == null)
-                    pkgUri = ReadPackageNameFromFile(pkgPath);
-                if (pkgUri != null)
-                {
-                    if (!env.Packages.TryGetValue(pkgUri, out var existing))
-                    {
-                        existing = [];
-                        env.Packages[pkgUri] = existing;
-                    }
-                    existing.Add((pkgVersion, pkgPath));
-                }
+                RegisterPackage(env, pkgUri, pkgVersion, Path.Combine(basePath, pkgFile));
             }
         }
 
@@ -675,19 +664,7 @@ public sealed class XsltTestRunner
                     var pkgVersion = pkgElem.Attribute("package-version")?.Value;
                     if (pkgFile != null)
                     {
-                        var pkgPath = Path.Combine(basePath, pkgFile);
-                        // If no URI specified, try to read it from the package file's name attribute
-                        if (pkgUri == null)
-                            pkgUri = ReadPackageNameFromFile(pkgPath);
-                        if (pkgUri != null)
-                        {
-                            if (!test.Environment.Packages.TryGetValue(pkgUri, out var existing))
-                            {
-                                existing = [];
-                                test.Environment.Packages[pkgUri] = existing;
-                            }
-                            existing.Add((pkgVersion, pkgPath));
-                        }
+                        RegisterPackage(test.Environment, pkgUri, pkgVersion, Path.Combine(basePath, pkgFile));
                     }
                 }
             }
@@ -911,6 +888,25 @@ public sealed class XsltTestRunner
     /// Reads the package name (name attribute) from an xsl:package file.
     /// Used when the test definition doesn't specify a uri attribute.
     /// </summary>
+    /// <summary>
+    /// Makes a secondary package findable under the catalog's uri and under the name its
+    /// xsl:package declares. The two usually agree; where they do not, xsl:use-package names the
+    /// package as it declares itself (W3C accept-916: catalog uri package-915, name
+    /// http://localhost/pkg), and a lookup by the catalog uri alone found nothing (XTSE3000).
+    /// </summary>
+    private static void RegisterPackage(XsltEnvironment env, string? catalogUri, string? version, string path)
+    {
+        foreach (var uri in new[] { catalogUri, ReadPackageNameFromFile(path) }.Where(u => u != null).Distinct())
+        {
+            if (!env.Packages.TryGetValue(uri!, out var existing))
+            {
+                existing = [];
+                env.Packages[uri!] = existing;
+            }
+            existing.Add((version, path));
+        }
+    }
+
     private static string? ReadPackageNameFromFile(string filePath)
     {
         try

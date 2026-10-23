@@ -259,6 +259,7 @@ public sealed partial class StylesheetParser
         {
             target.GlobalContextItemUse = package.GlobalContextItemUse;
             target.GlobalContextItemAs = package.GlobalContextItemAs;
+            target.GlobalContextItemAsText = package.GlobalContextItemAsText;
         }
     }
 
@@ -807,17 +808,20 @@ public sealed partial class StylesheetParser
                 // Both modules declare xsl:global-context-item — check consistency
                 if (target.GlobalContextItemUse != source.GlobalContextItemUse)
                     throw new XsltException("XTSE3087: Inconsistent xsl:global-context-item declarations across stylesheet modules");
-                // Check consistency of the 'as' type across modules
-                var targetAs = target.GlobalContextItemAs?.ToString();
-                var sourceAs = source.GlobalContextItemAs?.ToString();
+                // Check consistency of the 'as' type across modules. The parsed type's ToString()
+                // dropped the element test, so document-node(element(customer)) and
+                // document-node(element(supplier)) compared equal (W3C glob-cxt-item-007).
+                var targetAs = target.GlobalContextItemAsText ?? "item()";
+                var sourceAs = source.GlobalContextItemAsText ?? "item()";
                 if (targetAs != sourceAs)
-                    throw new XsltException($"XTSE3087: Inconsistent xsl:global-context-item 'as' type across stylesheet modules ('{targetAs ?? "item()"}' vs '{sourceAs ?? "item()"}')");
+                    throw new XsltException($"XTSE3087: Inconsistent xsl:global-context-item 'as' type across stylesheet modules ('{targetAs}' vs '{sourceAs}')");
 
             }
             else
             {
                 target.GlobalContextItemUse = source.GlobalContextItemUse;
                 target.GlobalContextItemAs = source.GlobalContextItemAs;
+                target.GlobalContextItemAsText = source.GlobalContextItemAsText;
             }
         }
 

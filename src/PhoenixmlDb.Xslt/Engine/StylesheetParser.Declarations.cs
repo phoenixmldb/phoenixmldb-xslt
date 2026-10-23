@@ -717,11 +717,16 @@ public sealed partial class StylesheetParser
                         _ => ContextItemUse.Optional
                     };
                     stylesheet.GlobalContextItemUse = useValue;
+                    // Whitespace in the as attribute is not significant (§3.5.6), and an absent
+                    // one means item(): the consistency check across modules compares this.
+                    stylesheet.GlobalContextItemAsText = gciAs is null
+                        ? "item()"
+                        : string.Concat(gciAs.Where(c => !char.IsWhiteSpace(c)));
                     if (gciAs != null)
                     {
                         var savedNsContext = _nsContext;
                         _nsContext = child;
-                        stylesheet.GlobalContextItemAs = ParseSequenceType(gciAs, child);
+                        stylesheet.GlobalContextItemAs = ParseSequenceType(gciAs.Trim(), child);
                         _nsContext = savedNsContext;
                     }
                     break;
