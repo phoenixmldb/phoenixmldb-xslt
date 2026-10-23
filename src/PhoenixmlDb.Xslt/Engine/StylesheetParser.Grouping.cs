@@ -1370,14 +1370,19 @@ public sealed partial class StylesheetParser
     }
 
 
+    private static bool IsStaticNumber(object? value)
+        => value is double or long or int or decimal or float or System.Numerics.BigInteger;
+
     private static int CompareValues(object? left, object? right)
     {
         // If both are numeric, compare numerically
         if (left is double ld && right is double rd)
             return ld.CompareTo(rd);
 
-        // If one is numeric and other is string, convert string to number
-        if (left is double || right is double)
+        // If one is numeric and other is string, convert string to number. Any numeric type:
+        // literals keep their xs:integer / xs:decimal type now, and a long compared as a string
+        // put "10" before "9".
+        if (IsStaticNumber(left) || IsStaticNumber(right))
         {
             var l = ToDouble(left);
             var r = ToDouble(right);

@@ -78,14 +78,25 @@ public sealed partial class StylesheetParser
         // …nor a resource limit: a regex that ran into its match timeout did not fail to be
         // static, it was stopped, and quietly carrying on would load the stylesheet with that
         // expression's value simply missing.
+        // …nor an arithmetic or cast error (FOAR0001 for 1 div 0, FORG0001 for a bad cast): a
+        // dynamic error in a static expression is a static error with the same code (XSLT 3.0
+        // §9.7), not a sign that the expression could not be evaluated here. Only these families:
+        // a read the resource policy refused must stay "not evaluable", or its message would tell
+        // a use-when probe which file it named (XsltResourcePolicyEnforcementTests).
         catch (Exception ex) when (ex is not OutOfMemoryException && ex is not XsltException { ErrorCode: "XPST0017" }
-            && !ResourceLimitFailure.Is(ex))
+            && !ResourceLimitFailure.Is(ex)
+            && !IsStaticValueError(ex))
 #pragma warning restore CA1031
         {
             value = null;
             return false;
         }
     }
+
+    private static bool IsStaticValueError(Exception ex)
+        => ex is PhoenixmlDb.XQuery.Execution.XQueryRuntimeException { ErrorCode: { } code }
+           && (code.StartsWith("FOAR", StringComparison.Ordinal) || code.StartsWith("FOCA", StringComparison.Ordinal)
+               || code.StartsWith("FORG", StringComparison.Ordinal));
 
     private StaticRuntime? _staticRuntime;
 

@@ -388,11 +388,13 @@ public sealed partial class StylesheetParser
             case BooleanLiteral bl:
                 return bl.Value;
 
+            // Literals keep their XPath type: 1 is an xs:integer and 1.5 an xs:decimal. They were
+            // xs:double, so a static variable select="1" was no xs:integer and $v div 0 gave INF.
             case IntegerLiteral il:
-                return il.Value is long lv ? (double)lv : Convert.ToDouble(il.Value, System.Globalization.CultureInfo.InvariantCulture);
+                return il.Value;
 
             case DecimalLiteral dl:
-                return (double)dl.Value;
+                return dl.Value;
 
             case DoubleLiteral dbl:
                 return dbl.Value;
@@ -407,7 +409,8 @@ public sealed partial class StylesheetParser
                 var operand = EvaluateStaticExpression(ue.Operand, context);
                 if (ue.Operator == UnaryOperator.Not)
                     return !CoerceToBoolean(operand);
-                return ue.Operator == UnaryOperator.Minus ? -ToDouble(operand) : ToDouble(operand);
+                // Unary plus and minus keep the operand's numeric type: the runtime evaluator.
+                throw new InvalidOperationException("Unary arithmetic is evaluated by the runtime evaluator");
 
             case BinaryExpression be:
                 return EvaluateStaticBinary(be, context);
@@ -498,18 +501,18 @@ public sealed partial class StylesheetParser
             return left || CoerceToBoolean(EvaluateStaticExpression(be.Right, context));
         }
 
+        // Arithmetic goes to the runtime evaluator, which has the XPath types: here every operand
+        // became an xs:double, so 1 div 0 gave INF instead of FOAR0001 (W3C package-version-909)
+        // and 2 + 3 gave a double.
+        if (be.Operator is BinaryOperator.Add or BinaryOperator.Subtract or BinaryOperator.Multiply
+            or BinaryOperator.Divide or BinaryOperator.IntegerDivide or BinaryOperator.Modulo)
+            throw new InvalidOperationException("Arithmetic is evaluated by the runtime evaluator");
+
         var leftVal = EvaluateStaticExpression(be.Left, context);
         var rightVal = EvaluateStaticExpression(be.Right, context);
 
         return be.Operator switch
         {
-            // Arithmetic
-            BinaryOperator.Add => ToDouble(leftVal) + ToDouble(rightVal),
-            BinaryOperator.Subtract => ToDouble(leftVal) - ToDouble(rightVal),
-            BinaryOperator.Multiply => ToDouble(leftVal) * ToDouble(rightVal),
-            BinaryOperator.Divide => ToDouble(leftVal) / ToDouble(rightVal),
-            BinaryOperator.IntegerDivide => (double)(long)(ToDouble(leftVal) / ToDouble(rightVal)),
-            BinaryOperator.Modulo => ToDouble(leftVal) % ToDouble(rightVal),
 
             // Value comparisons
             BinaryOperator.Equal => CompareValues(leftVal, rightVal) == 0,
