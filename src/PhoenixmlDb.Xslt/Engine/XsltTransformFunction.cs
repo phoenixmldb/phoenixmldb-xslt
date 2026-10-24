@@ -136,7 +136,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
 
             // Load the stylesheet content from the resolved URI
             if (baseUri != null && baseUri.IsFile)
-                stylesheetXml = await System.IO.File.ReadAllTextAsync(baseUri.LocalPath).ConfigureAwait(false);
+                stylesheetXml = await ReadStylesheetFileAsync(baseUri.LocalPath).ConfigureAwait(false);
             else if (baseUri != null && (baseUri.Scheme == Uri.UriSchemeHttp || baseUri.Scheme == Uri.UriSchemeHttps))
             {
                 // HTTP(S) stylesheet-location: consult preload cache first, then fetch.
@@ -162,7 +162,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                 }
             }
             else if (baseUri != null)
-                stylesheetXml = await System.IO.File.ReadAllTextAsync(resolvedUri).ConfigureAwait(false);
+                stylesheetXml = await ReadStylesheetFileAsync(resolvedUri).ConfigureAwait(false);
             else
             {
                 // Try as file path
@@ -170,7 +170,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
                     ? System.IO.Path.GetDirectoryName(new Uri(staticBase).LocalPath) ?? "."
                     : ".";
                 var fullPath = System.IO.Path.Combine(dir, resolvedUri);
-                stylesheetXml = await System.IO.File.ReadAllTextAsync(fullPath).ConfigureAwait(false);
+                stylesheetXml = await ReadStylesheetFileAsync(fullPath).ConfigureAwait(false);
                 baseUri = new Uri(fullPath);
             }
         }
@@ -772,6 +772,20 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
         };
     }
 
-
-
+    /// <summary>
+    /// Reads the stylesheet a stylesheet-location names. A file that cannot be read is FOXT0002,
+    /// an invalid parameter to the transformation (W3C transform-001); the .NET exception, with
+    /// no error code, reached the caller instead.
+    /// </summary>
+    private static async Task<string> ReadStylesheetFileAsync(string path)
+    {
+        try
+        {
+            return await System.IO.File.ReadAllTextAsync(path).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
+        {
+            throw new XsltException($"FOXT0002: Cannot read the stylesheet at stylesheet-location '{path}': {ex.Message}", ex);
+        }
+    }
 }
