@@ -78,6 +78,13 @@ internal sealed class XsltDeepEqualFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
     {
         if (a is null && b is null)
             return true;
+        // FOTY0015: a function item (other than a map or array) cannot be compared (F&O 3.1
+        // §14.2.1). It was atomized, which raised FOTY0013 (W3C higher-order-functions-054); the
+        // XQuery fn:deep-equal already reported FOTY0015. Checked per item, so a function inside
+        // an array or map is caught too.
+        if (a is PhoenixmlDb.XQuery.Ast.XQueryFunction || b is PhoenixmlDb.XQuery.Ast.XQueryFunction)
+            throw new PhoenixmlDb.XQuery.Execution.XQueryRuntimeException("FOTY0015",
+                "fn:deep-equal cannot be applied to function items");
         if (a is null || b is null)
             return false;
 

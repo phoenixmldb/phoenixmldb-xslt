@@ -545,8 +545,12 @@ public sealed class XsltTransformer
                 }
                 catch (PhoenixmlDb.XQuery.SchemaException ex)
                 {
+                    // An inline schema that does not compile is a synthetic schema document that
+                    // breaks the schema construction constraints: XTSE0220 (§3.15), not XQuery's
+                    // XQST0059 (W3C error-0220a: two global declarations of one element).
+                    var code = ex.ErrorCode == "XQST0059" ? "XTSE0220" : ex.ErrorCode;
                     throw new XsltException(
-                        $"{ex.ErrorCode}: xsl:import-schema failed for namespace '{import.TargetNamespace}': {ex.Message}",
+                        $"{code}: xsl:import-schema failed for namespace '{import.TargetNamespace}': {ex.Message}",
                         import.Location);
                 }
                 continue;

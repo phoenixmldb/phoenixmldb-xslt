@@ -180,11 +180,13 @@ public sealed class SchemaAwareGapTests : IDisposable
             </xsl:import-schema>
             """, "x")).Should().Contain("XTSE0215");
 
+    // An unresolvable type reference breaks the schema construction constraints, so the code is
+    // XSLT's XTSE0220 (§3.15); XQuery's XQST0059 was reported until W3C error-0220a.
     [Fact]
     public async Task An_inline_schema_that_does_not_compile_is_reported()
         => (await ErrorAsync("""
             <xsl:import-schema namespace="urn:t">
               <xs:schema targetNamespace="urn:t"><xs:element name="n" type="t:nosuch"/></xs:schema>
             </xsl:import-schema>
-            """, "x")).Should().Contain("XQST0059");
+            """, "x")).Should().Contain("XTSE0220");
 }
