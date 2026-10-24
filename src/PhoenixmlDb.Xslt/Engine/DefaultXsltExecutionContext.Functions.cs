@@ -1889,8 +1889,17 @@ internal sealed partial class DefaultXsltExecutionContext
         var xpathResult = await EvaluateAsync(instruction.Xpath).ConfigureAwait(false);
         var xpathStr = StringValueOf(xpathResult);
 
-        var schemaAware = instruction.SchemaAware is { } schemaAwareAvt
-            && (await EvaluateAvtAsync(schemaAwareAvt).ConfigureAwait(false)).Trim() is "yes" or "true" or "1";
+        var schemaAware = false;
+        if (instruction.SchemaAware is { } schemaAwareAvt)
+        {
+            var schemaAwareValue = (await EvaluateAvtAsync(schemaAwareAvt).ConfigureAwait(false)).Trim();
+            schemaAware = schemaAwareValue switch
+            {
+                "yes" or "true" or "1" => true,
+                "no" or "false" or "0" => false,
+                _ => throw Error($"XTDE0030: The effective value of the schema-aware attribute ('{schemaAwareValue}') is not a valid xs:boolean value (yes|no|true|false|1|0)"),
+            };
+        }
 
         // Determine namespace bindings for the dynamic expression.
         // Per XSLT 3.0 §19.4: namespace-context provides an element whose in-scope namespaces

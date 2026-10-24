@@ -124,6 +124,13 @@ public sealed partial class StylesheetParser
         var withParamsAttr = element.Attribute("with-params");
         var asAttr = element.Attribute("as");
         var schemaAwareAttr = element.Attribute("schema-aware");
+        // A boolean attribute (yes|no|true|false|1|0): a literal value outside that set is a static
+        // error; one computed by an AVT is checked when it is evaluated (W3C evaluate-038, -014).
+        if (schemaAwareAttr != null && !schemaAwareAttr.Value.Contains('{', StringComparison.Ordinal)
+            && schemaAwareAttr.Value.Trim() is not ("yes" or "no" or "true" or "false" or "1" or "0"))
+            throw new XsltException(
+                $"XTSE0020: Invalid value '{schemaAwareAttr.Value}' for the schema-aware attribute of xsl:evaluate (must be yes, no, true, false, 1 or 0)",
+                location);
         var collationAttr = element.Attribute("default-collation");
 
         // Parse with-param children
