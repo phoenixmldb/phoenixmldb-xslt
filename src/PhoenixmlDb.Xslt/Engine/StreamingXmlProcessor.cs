@@ -278,7 +278,7 @@ internal sealed class StreamingXmlProcessor
                                 {
                                     skipAttrDict = new Dictionary<string, string>(skipAttrs.Count, StringComparer.Ordinal);
                                     foreach (var attr in skipAttrs)
-                                        skipAttrDict[attr.LocalName] = attr.StringValue ?? "";
+                                        skipAttrDict[AttributeKey(attr.LocalName, attr.NamespaceUri, attr.Prefix)] = attr.StringValue ?? "";
                                 }
                                 _matchPrefix = skipCtx.Prefix;
                                 _matchNamespaceUri = skipCtx.NamespaceUri;
@@ -400,7 +400,7 @@ internal sealed class StreamingXmlProcessor
                             {
                                 attrDict = new Dictionary<string, string>(attrs.Count, StringComparer.Ordinal);
                                 foreach (var attr in attrs)
-                                    attrDict[attr.LocalName] = attr.StringValue ?? "";
+                                    attrDict[AttributeKey(attr.LocalName, attr.NamespaceUri, attr.Prefix)] = attr.StringValue ?? "";
                             }
                             _matchPrefix = current.Prefix;
                             _matchNamespaceUri = current.NamespaceUri;
@@ -1566,13 +1566,14 @@ internal sealed class StreamingXmlProcessor
                 foreach (var (k, v) in attrs)
                 {
                     var attrId = _nodeStore.NextId();
+                    var (attrNs, attrPrefix, attrLocal) = ParseAttributeKey(k);
                     _nodeStore.Register(new XdmAttribute
                     {
                         Id = attrId,
                         Document = documentId,
-                        Namespace = _nodeStore.InternNamespace(string.Empty),
-                        LocalName = k,
-                        Prefix = null,
+                        Namespace = _nodeStore.InternNamespace(attrNs),
+                        LocalName = attrLocal,
+                        Prefix = attrPrefix,
                         Value = v,
                         Parent = ancestorId
                     });
@@ -1602,8 +1603,29 @@ internal sealed class StreamingXmlProcessor
         if (attrs is not { Count: > 0 }) return null;
         var dict = new Dictionary<string, string>(attrs.Count, StringComparer.Ordinal);
         foreach (var attr in attrs)
-            dict[attr.LocalName] = attr.StringValue ?? "";
+            dict[AttributeKey(attr.LocalName, attr.NamespaceUri, attr.Prefix)] = attr.StringValue ?? "";
         return dict;
+    }
+
+    /// <summary>
+    /// The key of an attribute in the name → value maps the streaming pass keeps per element: the
+    /// local name for an attribute in no namespace, Q{uri}prefix:local for one in a namespace.
+    /// The maps were keyed by local name alone, so the nodes built from them put every attribute
+    /// in no namespace: a streamed copy of xml:lang="de" was lang="de", and validating it against
+    /// a schema that declares xml:lang failed (W3C si-copy-of-111, -115).
+    /// </summary>
+    internal static string AttributeKey(string localName, string? namespaceUri, string? prefix)
+        => string.IsNullOrEmpty(namespaceUri) ? localName : $"Q{{{namespaceUri}}}{prefix}:{localName}";
+
+    /// <summary>The namespace URI, prefix and local name an <see cref="AttributeKey"/> holds.</summary>
+    internal static (string NamespaceUri, string? Prefix, string LocalName) ParseAttributeKey(string key)
+    {
+        if (!key.StartsWith("Q{", StringComparison.Ordinal))
+            return ("", null, key);
+        var close = key.IndexOf('}', StringComparison.Ordinal);
+        var qname = key[(close + 1)..];
+        var colon = qname.IndexOf(':', StringComparison.Ordinal);
+        return (key[2..close], colon > 0 ? qname[..colon] : null, qname[(colon + 1)..]);
     }
 
     private void FireWatchers(string elementName, IReadOnlyDictionary<string, string>? attributes, string? textContent)
@@ -1974,13 +1996,14 @@ internal sealed class StreamingXmlProcessor
             foreach (var (k, v) in attrs)
             {
                 var attrId = _nodeStore.NextId();
+                var (attrNs, attrPrefix, attrLocal) = ParseAttributeKey(k);
                 _nodeStore.Register(new XdmAttribute
                 {
                     Id = attrId,
                     Document = documentId,
-                    Namespace = _nodeStore.InternNamespace(string.Empty),
-                    LocalName = k,
-                    Prefix = null,
+                    Namespace = _nodeStore.InternNamespace(attrNs),
+                    LocalName = attrLocal,
+                    Prefix = attrPrefix,
                     Value = v,
                     Parent = elemId
                 });
@@ -2451,13 +2474,14 @@ internal sealed class StreamingXmlProcessor
             foreach (var (k, v) in attributes)
             {
                 var attrId = _nodeStore.NextId();
+                var (attrNs, attrPrefix, attrLocal) = ParseAttributeKey(k);
                 var attr = new XdmAttribute
                 {
                     Id = attrId,
                     Document = documentId,
-                    Namespace = _nodeStore.InternNamespace(string.Empty),
-                    LocalName = k,
-                    Prefix = null,
+                    Namespace = _nodeStore.InternNamespace(attrNs),
+                    LocalName = attrLocal,
+                    Prefix = attrPrefix,
                     Value = v,
                     Parent = elemId
                 };
@@ -2600,13 +2624,14 @@ internal sealed class StreamingXmlProcessor
             foreach (var (k, v) in frame.Attributes)
             {
                 var attrId = _nodeStore.NextId();
+                var (attrNs, attrPrefix, attrLocal) = ParseAttributeKey(k);
                 var attr = new XdmAttribute
                 {
                     Id = attrId,
                     Document = documentId,
-                    Namespace = _nodeStore.InternNamespace(string.Empty),
-                    LocalName = k,
-                    Prefix = null,
+                    Namespace = _nodeStore.InternNamespace(attrNs),
+                    LocalName = attrLocal,
+                    Prefix = attrPrefix,
                     Value = v,
                     Parent = elemId
                 };
