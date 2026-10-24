@@ -114,6 +114,13 @@ public sealed class XsltTemplate
     internal bool DeclaredInOverride { get; set; }
 
     /// <summary>
+    /// Whether an xsl:accept rule set this template's visibility in the using package. A public or
+    /// final template of a used package that no rule matches is private there (XSLT 3.0
+    /// §3.6.2.4), whatever its own visibility attribute says.
+    /// </summary>
+    internal bool VisibilityFromAccept { get; set; }
+
+    /// <summary>
     /// Import precedence of this template rule for conflict resolution (XSLT 3.0 §6.6.2).
     /// Higher wins. Defaults to 0. A template rule brought in via xsl:use-package has a
     /// LOWER precedence than the using package's own declarations (including rules supplied

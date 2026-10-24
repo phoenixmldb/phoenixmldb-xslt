@@ -481,7 +481,7 @@ public sealed class XsltTransformEngine
                 throw InitialTemplateNotFound(initialTemplate.Value);
             if (_stylesheet.IsPackage
                 && _stylesheet.NamedTemplates.TryGetValue(initialTemplate.Value, out var tmpl)
-                && tmpl.VisibilityAttr is not ("public" or "final"))
+                && !IsEntryPointVisible(tmpl))
                 throw new XsltException($"XTDE0040: Initial template '{initialTemplate.Value.LocalName}' is not public");
 
             // Convert initial template parameters to xsl:with-param entries.
@@ -1210,7 +1210,7 @@ public sealed class XsltTransformEngine
                 throw InitialTemplateNotFound(initialTemplate);
             if (_stylesheet.IsPackage
                 && _stylesheet.NamedTemplates.TryGetValue(initialTemplate, out var rawTmpl)
-                && rawTmpl.VisibilityAttr is not ("public" or "final"))
+                && !IsEntryPointVisible(rawTmpl))
                 throw new XsltException($"XTDE0040: Initial template '{initialTemplate.LocalName}' is not public");
             if (!options.HasSourceDocument)
                 context.PushContextItem(
@@ -1328,6 +1328,19 @@ public sealed class XsltTransformEngine
         Xdm.Nodes.XdmDocument d => d.Children,
         _ => System.Array.Empty<NodeId>(),
     };
+
+    /// <summary>
+    /// Whether a named template of the principal package can be its initial template: public or
+    /// final there. A template from a used package is private in the using package unless an
+    /// xsl:accept rule says otherwise, so its own visibility attribute is not the answer (W3C
+    /// accept-913: the used package's public xsl:initial-template, never accepted, is XTDE0040).
+    /// </summary>
+    private static bool IsEntryPointVisible(XsltTemplate template)
+    {
+        if (template.VisibilityAttr is not ("public" or "final"))
+            return false;
+        return template.PackageStylesheet is null || template.DeclaredInOverride || template.VisibilityFromAccept;
+    }
 
     /// <summary>
     /// XTDE0040 for an initial template that does not exist. All three entry points (Transform,
