@@ -21,7 +21,7 @@ env:
 
 jobs:
   build:
-    runs-on: ${{ fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -134,7 +134,7 @@ jobs:
   # Conformance (W3C XSLT 3.0 / QT3) is not run here either: it needs a ~470 MB suite
   # checkout and takes ~9 min per TFM. It lives in conformance.yml.
   test:
-    runs-on: ${{ fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -163,7 +163,7 @@ jobs:
   # A `publish` dependency: a red Windows run stops a tag reaching nuget.org, the same as Linux.
   # Made so once the first measurement was clean and its one finding (#197) was fixed.
   test-windows:
-    runs-on: ${{ fromJSON(vars.WINDOWS_RUNS_ON || '"windows-latest"') }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'windows-latest' || fromJSON(vars.WINDOWS_RUNS_ON || '"windows-latest"') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -229,7 +229,7 @@ jobs:
   publish:
     needs: [build, test, test-windows]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
     permissions:
       contents: read
       id-token: write
