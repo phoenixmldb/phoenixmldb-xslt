@@ -1847,7 +1847,11 @@ public sealed partial class StylesheetParser
 
         foreach (var name in package.NamedTemplates.Keys.ToList())
             if (TryResolveAcceptVisibility(rules, "template", name, package.NamedTemplates[name].Visibility, out var vis))
-                package.NamedTemplates[name] = CloneTemplateWithVisibility(package.NamedTemplates[name], vis);
+            {
+                var accepted = CloneTemplateWithVisibility(package.NamedTemplates[name], vis);
+                accepted.VisibilityFromAccept = true;
+                package.NamedTemplates[name] = accepted;
+            }
 
         foreach (var key in package.Functions.Keys.ToList())
             if (TryResolveAcceptVisibility(rules, "function", key.Name, package.Functions[key].Visibility, out var vis, key.Arity))
