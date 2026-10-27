@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-27 12:20 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-27 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,7 +17,7 @@ Generated 2026-10-27 12:20 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
-| phoenixmldb-xquery | 0 | 0 |
+| phoenixmldb-xquery | 0 | 1 |
 | phoenixmldb-xslt | 4 | 0 |
 | phoenixmldb-cli | 0 | 0 |
 
@@ -31,6 +31,10 @@ Generated 2026-10-27 12:20 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-xquery**
+
+- [327] QT3 harness: an '&' in an XPath assertion is a literal character
 
 ## Defect register
 
