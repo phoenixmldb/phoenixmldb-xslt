@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-10-27 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-10-28 13:03 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,9 +17,9 @@ Generated 2026-10-27 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
-| phoenixmldb-xquery | 0 | 1 |
+| phoenixmldb-xquery | 0 | 0 |
 | phoenixmldb-xslt | 4 | 0 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -32,9 +32,9 @@ Generated 2026-10-27 22:20 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-xquery**
+**phoenixmldb-cli**
 
-- [327] QT3 harness: an '&' in an XPath assertion is a literal character
+- [22] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
