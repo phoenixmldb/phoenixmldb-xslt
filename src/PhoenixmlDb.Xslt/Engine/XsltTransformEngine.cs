@@ -6175,6 +6175,11 @@ public sealed class XsltTransformEngine
 
     private static XdmNode? ConvertXmlNode(XmlNode xmlNode, XdmInMemoryStore store, NodeId parentId, DocumentId docId, string? documentBaseUri = null)
     {
+        // One frame per element of the source, before any template runs: a stack overflow here
+        // cannot be caught, and it takes the process with it.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            throw new XsltException("XTDE0000: The source document is nested too deeply to load on this thread's stack.");
+
         switch (xmlNode.NodeType)
         {
             case XmlNodeType.Element:
