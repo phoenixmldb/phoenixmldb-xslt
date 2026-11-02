@@ -184,4 +184,35 @@ public sealed class LargeStackFallbackTests
         await loading;
         (await t.TransformAsync("<r/>")).Trim().Should().Be("loaded");
     }
+
+    [Fact]
+    public void A_source_too_deep_for_the_stack_is_a_catchable_error()
+    {
+        const string stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:template match="/"><xsl:apply-templates/></xsl:template>
+              <xsl:template match="*"><x><xsl:apply-templates/></x></xsl:template>
+            </xsl:stylesheet>
+            """;
+        const int depth = 100_000;
+        var source = string.Concat(Enumerable.Repeat("<a>", depth)) + string.Concat(Enumerable.Repeat("</a>", depth));
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            LargeStack.ForceInline.Value = true;
+#pragma warning disable CA1031 // reported on the test thread below
+            try
+            {
+                var t = new XsltTransformer();
+                t.LoadStylesheetAsync(stylesheet).GetAwaiter().GetResult();
+                t.TransformAsync(source).GetAwaiter().GetResult();
+            }
+            catch (Exception ex) { failure = ex; }
+#pragma warning restore CA1031
+        }, 1024 * 1024);
+        thread.Start();
+        thread.Join();
+
+        failure.Should().BeOfType<XsltException>().Which.Message.Should().Contain("XTDE0000");
+    }
 }
