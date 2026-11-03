@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-02 16:06 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-03 01:02 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -65,10 +65,10 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 11323/11539 (98.13%)** across 225 test-sets,
+- **W3C XSLT 3.0 — 11406/11539 (98.85%)** across 225 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 30145/31024 (97.17%)** across 428 test-sets,
+- **W3C QT3 baseline — 30348/31024 (97.82%)** across 428 test-sets,
   same file, same ratchet.
 - **W3C QT3 / XQuery — figure not readable** from
   `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
