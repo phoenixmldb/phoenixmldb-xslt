@@ -1,6 +1,94 @@
 # Release History
 
-## Unreleased
+## 3.0.0 — 2026-11-04
+
+Requires PhoenixmlDb.XQuery 3.0.0 and PhoenixmlDb.Core 2.6.0. Tail calls, a large drop in W3C
+failures, package checks, and typed results. W3C XSLT: 132 failing of 11,539, measured on a host
+in UTC (2.9.0: 216). One of the 132 is a known defect in the test (accumulator-073). date-014
+assumes UTC, and it fails on a host in another timezone.
+
+### Security: CPU use of XPath compilation with untrusted expressions (GHSA-6342-6rv2-xj9j)
+
+Only hosts that compile stylesheets or `xsl:evaluate` expressions from untrusted parties are
+affected. With PhoenixmlDb.XQuery 3.0.0, a chain of `=>` arrows compiles in linear time, and a
+long chain of predicates compiles much faster. See
+[GHSA-6342-6rv2-xj9j](https://github.com/phoenixmldb/phoenixmldb-xslt/security/advisories/GHSA-6342-6rv2-xj9j)
+for the details and workarounds.
+
+### Breaking — read this before upgrading
+
+- **The namespace sets of three AST types are read-only.** `XsltElement.InScopeNamespaces`,
+  `XsltAttribute.InScopeNamespaces` and `XsltLiteralResultElement.NamespaceDeclarations` are
+  `IReadOnlyDictionary<string, string>`, not `Dictionary<string, string>`. Equal sets in a module are
+  one shared object (#403), so a write to one would change every instruction that shares it. Code
+  that reads them, or sets them with a `Dictionary`, compiles as before; code that changes them, or
+  takes them as a `Dictionary`, does not, and the change is binary-breaking.
+- **`as="element(N, T)"` checks the type annotation** (#438): a stylesheet that declares a wrong
+  type in this form can fail where it did not. See "Types and validation".
+- **A `document-node(element(N, T))` pattern tests the type of the document element**
+  (xquery#276, #412): a rule for a schema type does not match a source that is not validated. See
+  "Types and validation".
+- **PhoenixmlDb.XQuery 3.0.0 has its own behaviour changes**, for example XPDY0130 for an expression
+  nested too deeply for the stack, and FODC0005 for a colon in the first segment of a relative
+  `fn:doc` reference. See the PhoenixmlDb.XQuery 3.0.0 notes.
+
+### Packages
+
+- **`xsl:override`: an overriding function or template belongs to the using package** (#441), so
+  its `key()`, `format-number()` and output names resolve there.
+- **A global variable or parameter of a library package has no context item** (#444): a path from
+  it is XPDY0002.
+- **`default-mode` is a use of the mode it names** (#440): with `declared-modes="yes"`, an undeclared
+  mode is XTSE3085.
+- **A used package's template is private unless an `xsl:accept` rule raises it** (#454): such an
+  initial template is XTDE0040.
+- XTSE3087 compares the declared types of `xsl:global-context-item`, and whitespace in `as` is not
+  significant; XTSE3051 covers a function that is accepted and overridden (#451).
+- XTSE3022 for `xsl:expose component="*"` with an explicit name; XTSE3060 for overriding a private
+  or final variable (#452).
+
+### Types and validation
+
+- **`as="element(N, T)"` checks the type annotation** (#438) for local variables, global `select`
+  variables and parameters, and excludes a nilled element for `element(N, T)`. A template with `as`
+  keeps the annotation on its result. **Stylesheets that declare a wrong type in this form can fail
+  where they did not.** `attribute(N, T)` keeps the untyped test (known issue #439, open).
+- XTTE0950 for namespace-sensitive content under `validation="preserve"` (#437).
+- **A `document-node(element(N, T))` or `document-node(element(*, T))` pattern tests the type of
+  the document element** (xquery#276, #412). 2.9.0 ignores the type, so such a rule matches every
+  document, also one that is not validated. In 3.0.0 a document that is not validated does not match
+  a rule for a schema type, and the transformation can give other output. Validate the source
+  (`XsltTransformer.SourceValidation`, or the CLI option `--validation strict`) to get the typed
+  match. W3C match-142, 143, 159, 160, 161, 163, 201 and 202, with a validated source.
+- **`xsl:copy-of copy-accumulators="yes"` with validation keeps the source's values** (#443).
+
+### Static expressions
+
+- **Static expressions keep XPath number types** (#450): literals keep their type, and arithmetic
+  uses the XPath rules, so `1 div 0` in a shadow attribute is FOAR0001. An arithmetic or cast error
+  in a static expression is a static error with that code. A static variable or parameter with
+  `select` and content is XTSE0620.
+
+### Streaming
+
+- **`deep-equal` and `index-of` operands that read the input are buffered** (#447).
+- **Attributes keep their namespace in nodes built from the streaming pass** (#456): a streamed copy
+  of `xml:lang` stays `xml:lang`.
+
+### Other behaviour
+
+- **A source too deep for the stack is a catchable error** (#458).
+- **A one-slash `file:` schema location is absolute** (#396).
+- **Accumulators: a failure inside a node is the after-value of its ancestors** (#442).
+- XPTY0004 for an empty `xsl:map-entry` key (#446).
+- XTSE0020 for an invalid literal `schema-aware` value on `xsl:evaluate`, and XTDE0030 for a computed
+  one (#453).
+- FOTY0015 for `fn:deep-equal` on function items, including inside arrays and maps; FOXT0002 for an
+  unreadable `fn:transform` stylesheet-location; XTSE0220 for an inline `xs:schema` that does not
+  compile (#455).
+- MessagePack 2.5.307 in the language server, for GHSA-qhrr-8q5h-9q3h (#408).
+
+### Also in this release
 
 - **Tail calls of stylesheet functions** (xquery#296). A call to a stylesheet function in tail
   position of a stylesheet function's body (the select of the xsl:sequence the body evaluates
@@ -122,18 +210,12 @@
 - **The in-scope namespaces of each stylesheet element are worked out once** (#401). Each instruction
   and XPath expression walked its ancestors' attributes for them. For a generated Schematron
   validator of 2.3 MB, a compile now allocates 419 MB, not 465 MB (-10%).
-- **Breaking: the namespace sets of three AST types are read-only.** `XsltElement.InScopeNamespaces`,
-  `XsltAttribute.InScopeNamespaces` and `XsltLiteralResultElement.NamespaceDeclarations` are
-  `IReadOnlyDictionary<string, string>`, not `Dictionary<string, string>`. Equal sets in a module are
-  one shared object (#403), so a write to one would change every instruction that shares it. Code
-  that reads them, or sets them with a `Dictionary`, compiles as before; code that changes them, or
-  takes them as a `Dictionary`, does not, and the change is binary-breaking.
-- **`suppress-indentation` with the html method matches names as HTML does** (#400). An element in no
+- **`suppress-indentation` with the html method matches names as HTML does** (#400, which stays open). An element in no
   namespace or the XHTML namespace is matched by local name without case; any other element by its
   expanded QName, its prefix resolved through the namespace declarations of the output. The names
   were matched by local name only and with case, so `suppress-indentation="div"` also suppressed
   `x:div` in another namespace, and `"DIV"` did not suppress `<div>`.
-- **`indent="yes"` for the xml and xhtml methods is one streaming pass** (#400, part 1). The result
+- **`indent="yes"` for the xml and xhtml methods is one streaming pass** (#400, part 1; the issue stays open). The result
   was read into an `XDocument` and written again, then the text was passed over once more for
   `suppress-indentation`. It now goes once through an `XmlReader` and `XmlWriter`, with the same
   bytes; the pass allocates 56% less (12.6 MB against 28.7 MB for a 1.8 MB result).
