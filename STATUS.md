@@ -1,16 +1,16 @@
 # Status
 
-Generated 2026-11-03 23:27 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-04 14:39 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.6.0 | ? | **repo is at ?, nuget.org has 2.6.0** |
-| `PhoenixmlDb.XQuery` | 2.9.0 | ? | **repo is at ?, nuget.org has 2.9.0** |
-| `PhoenixmlDb.Xslt` | 2.9.0 | 2.9.0 | current |
-| `xquery4` | 2.9.0 | ? | **repo is at ?, nuget.org has 2.9.0** |
-| `xslt` | 2.9.0 | 2.9.0 | current |
+| `PhoenixmlDb.XQuery` | 3.0.0 | ? | **repo is at ?, nuget.org has 3.0.0** |
+| `PhoenixmlDb.Xslt` | 3.0.0 | 3.0.0 | current |
+| `xquery4` | 3.0.0 | ? | **repo is at ?, nuget.org has 3.0.0** |
+| `xslt` | 3.0.0 | 3.0.0 | current |
 
 ## Open work
 
@@ -19,7 +19,7 @@ Generated 2026-11-03 23:27 UTC by `scripts/status.sh`. Do not edit by hand.
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
 | phoenixmldb-xslt | 4 | 0 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
 
@@ -31,10 +31,6 @@ Generated 2026-11-03 23:27 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-cli**
-
-- [24] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
