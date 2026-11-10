@@ -112,6 +112,25 @@ public sealed class StreamedComputedAggregateTests : IDisposable
         streamed.Outcome.Should().Be(tree.Outcome);
     }
 
+    [Fact]
+    public async Task A_text_value_template_streams_as_in_the_report()
+    {
+        // The shape of xslt#462: the aggregate in a text value template.
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="xs" expand-text="yes">
+              <xsl:mode streamable="yes"/>
+              <xsl:template match="/"><sum>{sum(root/item/xs:decimal(.))}</sum></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var tree = await RunAsync(stylesheet, Numbers, disableStreaming: true);
+        var streamed = await RunAsync(stylesheet, Numbers, disableStreaming: false);
+
+        streamed.Outcome.Should().Be(tree.Outcome).And.Contain("<sum>6.5</sum>");
+        streamed.Streamed.Should().BeTrue();
+    }
+
     private static string DocumentRule(string select) => $"""
         <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
             xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="xs">
