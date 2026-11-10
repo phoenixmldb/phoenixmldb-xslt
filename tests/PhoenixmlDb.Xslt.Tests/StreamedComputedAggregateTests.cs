@@ -60,17 +60,17 @@ public sealed class StreamedComputedAggregateTests : IDisposable
         { "max(root/item/xs:date(.))", Dates },
         { "min(root/item/xs:date(.))", Dates },
         { "sum(root/item/xs:dayTimeDuration(.))", Durations },
+        // A leading "/" in the document rule is the document node itself (xslt#468).
+        { "sum(/root/item/xs:decimal(.))", Numbers },
+        { "sum(//item/xs:decimal(.))", Recursive },
     };
 
-    // Parity only. The aggregate inside another expression, and an absolute or // path in the
-    // document rule, are not streamed there; they must still answer as on a tree, and in
-    // xsl:source-document they take the fold.
+    // Parity only. The aggregate inside another expression is not streamed in the document
+    // rule; it must still answer as on a tree, and in xsl:source-document it takes the fold.
     public static TheoryData<string, string> Other => new()
     {
         { "sum(root/item/xs:integer(.)) instance of xs:integer", Integers },
         { "sum(root/item/xs:decimal(.)) instance of xs:decimal", Numbers },
-        { "sum(/root/item/xs:decimal(.))", Numbers },
-        { "sum(//item/xs:decimal(.))", Recursive },
     };
 
     public static TheoryData<string, string> All

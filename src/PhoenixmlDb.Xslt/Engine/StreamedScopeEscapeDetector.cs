@@ -33,9 +33,163 @@ internal static class StreamedScopeEscapeDetector
     private static bool Compute(XsltStylesheet stylesheet)
     {
         foreach (var template in StreamableModeRules(stylesheet))
-            if (Escapes(template.Body, new HashSet<object>(ReferenceEqualityComparer.Instance)))
+        {
+            var contextRoots = MatchesOnlyDocument(template.Match)
+                ? ContextRootPaths(template.Body)
+                : NoPaths;
+            if (Escapes(template.Body, new HashSet<object>(ReferenceEqualityComparer.Instance), contextRoots))
                 return true;
+        }
         return false;
+    }
+
+    private static readonly HashSet<PathExpression> NoPaths = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Whether a match pattern matches document nodes only: <c>/</c>, <c>document-node()</c>,
+    /// <c>document-node(element(x))</c>, with or without predicates.
+    /// </summary>
+    internal static bool MatchesOnlyDocument(XsltPattern? pattern)
+        => pattern is PathPattern { Steps: [{ Axis: Axis.Self, NodeTest: KindTest { Kind: XdmNodeKind.Document },
+            DescendantSeparator: false, IsRootFunction: false }] };
+
+    /// <summary>
+    /// The absolute paths of a rule for the document node that are evaluated with that document
+    /// node as the context item. A leading "/" is <c>root(.)</c>, and where the context item is a
+    /// document node it is that node itself (XSLT 3.0 §19.8.8.8, §19.8.9.18): <c>/root/item</c> and
+    /// <c>//item</c> read the matched node's own subtree, as <c>root/item</c> and <c>.//item</c> do.
+    /// Only places known to keep the rule's focus are visited. Anything else (a step, a predicate,
+    /// the right of "!", the body of xsl:for-each, an inline function) has another focus, where "/"
+    /// is the root of another node, so a path there still counts as leaving the match.
+    /// </summary>
+    private static HashSet<PathExpression> ContextRootPaths(XsltSequenceConstructor? body)
+    {
+        var found = new HashSet<PathExpression>(ReferenceEqualityComparer.Instance);
+        AddFromBody(body, found);
+        return found;
+    }
+
+    private static void AddFromBody(XsltSequenceConstructor? body, HashSet<PathExpression> found)
+    {
+        if (body is null)
+            return;
+        foreach (var instruction in body.Instructions)
+        {
+            switch (instruction)
+            {
+                case XsltValueOf v:
+                    AddFromExpression(v.Select, found);
+                    AddFromBody(v.Content, found);
+                    AddFromAvt(v.Separator, found);
+                    break;
+                case XsltSequence sq:
+                    AddFromExpression(sq.Select, found);
+                    AddFromBody(sq.Content, found);
+                    break;
+                case XsltCopyOf co:
+                    AddFromExpression(co.Select, found);
+                    break;
+                case XsltTextValueTemplate tvt:
+                    AddFromAvt(tvt.Template, found);
+                    break;
+                case XsltLiteralResultElement lre:
+                    foreach (var avt in lre.Attributes.Values)
+                        AddFromAvt(avt, found);
+                    AddFromBody(lre.Content, found);
+                    break;
+                case XsltIf i:
+                    AddFromExpression(i.Test, found);
+                    AddFromBody(i.Then, found);
+                    break;
+                case XsltChoose c:
+                    foreach (var when in c.When)
+                    {
+                        AddFromExpression(when.Test, found);
+                        AddFromBody(when.Body, found);
+                    }
+                    AddFromBody(c.Otherwise, found);
+                    break;
+                case XsltVariableInstruction var:
+                    AddFromExpression(var.Select, found);
+                    AddFromBody(var.Content, found);
+                    break;
+                // The select only: a sort key, a grouping key and the body are evaluated with
+                // each selected item as focus.
+                case XsltApplyTemplates at:
+                    AddFromExpression(at.Select, found);
+                    break;
+                case XsltForEach fe:
+                    AddFromExpression(fe.Select, found);
+                    break;
+                case XsltForEachGroup feg:
+                    AddFromExpression(feg.Select, found);
+                    break;
+                case XsltIterate it:
+                    AddFromExpression(it.Select, found);
+                    break;
+            }
+        }
+    }
+
+    private static void AddFromAvt(XsltAttributeValueTemplate? avt, HashSet<PathExpression> found)
+    {
+        if (avt is null)
+            return;
+        foreach (var part in avt.Parts)
+            if (part is AvtExpression ae)
+                AddFromExpression(ae.Expression, found);
+    }
+
+    private static void AddFromExpression(XQueryExpression? expr, HashSet<PathExpression> found)
+    {
+        switch (expr)
+        {
+            case PathExpression { IsAbsolute: true, InitialExpression: null, Steps.Count: > 0 } path:
+                // The steps after the "/" have each step's result as focus, and are not visited.
+                // "/" alone selects the matched node itself and is left to the tree.
+                found.Add(path);
+                break;
+            case PathExpression { IsAbsolute: false, InitialExpression: { } initial }:
+                AddFromExpression(initial, found);
+                break;
+            case FunctionCallExpression fc:
+                foreach (var arg in fc.Arguments)
+                    AddFromExpression(arg, found);
+                break;
+            case BinaryExpression b:
+                AddFromExpression(b.Left, found);
+                AddFromExpression(b.Right, found);
+                break;
+            case UnaryExpression u:
+                AddFromExpression(u.Operand, found);
+                break;
+            case SequenceExpression seq:
+                foreach (var item in seq.Items)
+                    AddFromExpression(item, found);
+                break;
+            case StringConcatExpression sc:
+                foreach (var operand in sc.Operands)
+                    AddFromExpression(operand, found);
+                break;
+            case SimpleMapExpression sm:
+                // The right operand has each item of the left as focus.
+                AddFromExpression(sm.Left, found);
+                break;
+            case IfExpression ie:
+                AddFromExpression(ie.Condition, found);
+                AddFromExpression(ie.Then, found);
+                AddFromExpression(ie.Else, found);
+                break;
+            case CastExpression ce:
+                AddFromExpression(ce.Expression, found);
+                break;
+            case TreatExpression te:
+                AddFromExpression(te.Expression, found);
+                break;
+            case InstanceOfExpression io:
+                AddFromExpression(io.Expression, found);
+                break;
+        }
     }
 
     /// <summary>The template rules that take part in a mode declared streamable.</summary>
@@ -63,16 +217,16 @@ internal static class StreamedScopeEscapeDetector
     }
 
     /// <summary>Walks an instruction tree: its XPath expressions, AVT parts and nested instructions.</summary>
-    private static bool Escapes(object? node, HashSet<object> seen)
+    private static bool Escapes(object? node, HashSet<object> seen, HashSet<PathExpression> contextRoots)
     {
         switch (node)
         {
             case null:
                 return false;
             case XQueryExpression expr:
-                return ExpressionEscapes(expr);
+                return ExpressionEscapes(expr, contextRoots);
             case AvtExpression avt:
-                return ExpressionEscapes(avt.Expression);
+                return ExpressionEscapes(avt.Expression, contextRoots);
             case string or QName or ValueType:
                 return false;
         }
@@ -81,7 +235,7 @@ internal static class StreamedScopeEscapeDetector
         if (node is IEnumerable items)
         {
             foreach (var item in items)
-                if (Escapes(item, seen))
+                if (Escapes(item, seen, contextRoots))
                     return true;
             return false;
         }
@@ -92,26 +246,26 @@ internal static class StreamedScopeEscapeDetector
         {
             if (property.GetIndexParameters().Length > 0)
                 continue;
-            if (Escapes(property.GetValue(node), seen))
+            if (Escapes(property.GetValue(node), seen, contextRoots))
                 return true;
         }
         return false;
     }
 
-    private static bool ExpressionEscapes(XQueryExpression expr)
+    private static bool ExpressionEscapes(XQueryExpression expr, HashSet<PathExpression> contextRoots)
     {
-        var walker = new EscapeWalker();
+        var walker = new EscapeWalker(contextRoots);
         walker.Walk(expr);
         return walker.Escapes;
     }
 
-    private sealed class EscapeWalker : XQueryExpressionWalker
+    private sealed class EscapeWalker(HashSet<PathExpression> contextRoots) : XQueryExpressionWalker
     {
         public bool Escapes { get; private set; }
 
         public override object? VisitPathExpression(PathExpression expr)
         {
-            if (expr.IsAbsolute)
+            if (expr.IsAbsolute && !contextRoots.Contains(expr))
                 Escapes = true;
             // Climbing, then descending again: ../* reads the parent's other children.
             var climbed = false;
