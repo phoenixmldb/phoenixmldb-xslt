@@ -1050,22 +1050,7 @@ public sealed class XsltTransformer
         var result = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
 
         // If a handler is set, write secondary results to the provided writers
-        if (ResultDocumentHandler != null)
-        {
-            foreach (var (href, content) in engine.SecondaryResultDocuments)
-            {
-                var writer = ResultDocumentHandler(href);
-                await writer.WriteAsync(content).ConfigureAwait(false);
-                await writer.FlushAsync(ct).ConfigureAwait(false);
-            }
-            SecondaryResultDocuments = new Dictionary<string, string>();
-            PrincipalResultTree = null;
-        }
-        else
-        {
-            SecondaryResultDocuments = engine.SecondaryResultDocuments;
-        PrincipalResultTree = engine.PrincipalResultTree;
-        }
+        await PublishSecondaryResultsAsync(engine, ct).ConfigureAwait(false);
         return result;
     }
 
@@ -1211,22 +1196,7 @@ public sealed class XsltTransformer
             result = await engine.TransformAsync("<empty/>", options).ConfigureAwait(false);
         }
 
-        if (ResultDocumentHandler != null)
-        {
-            foreach (var (href, content) in engine.SecondaryResultDocuments)
-            {
-                var writer = ResultDocumentHandler(href);
-                await writer.WriteAsync(content).ConfigureAwait(false);
-                await writer.FlushAsync(ct).ConfigureAwait(false);
-            }
-            SecondaryResultDocuments = new Dictionary<string, string>();
-            PrincipalResultTree = null;
-        }
-        else
-        {
-            SecondaryResultDocuments = engine.SecondaryResultDocuments;
-        PrincipalResultTree = engine.PrincipalResultTree;
-        }
+        await PublishSecondaryResultsAsync(engine, ct).ConfigureAwait(false);
         return result;
     }
 
@@ -1554,11 +1524,19 @@ public sealed class XsltTransformer
         });
 
     /// <summary>
-    /// Transforms XML from a <see cref="TextReader"/> source.
+    /// Transforms XML from a <see cref="TextReader"/> source. When the initial mode is
+    /// streamable the input is streamed from the reader, as by the <see cref="Stream"/>
+    /// overloads; otherwise it is read whole and transformed in memory.
     /// </summary>
     public async Task<string> TransformAsync(TextReader inputXml, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(inputXml);
+        if (WillStreamFromReader())
+        {
+            using var result = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+            await StreamTransformAsync(inputXml, result, ct).ConfigureAwait(false);
+            return result.ToString();
+        }
         var xml = await inputXml.ReadToEndAsync(ct).ConfigureAwait(false);
         return await TransformAsync(xml, ct).ConfigureAwait(false);
     }
@@ -1585,11 +1563,19 @@ public sealed class XsltTransformer
 
     /// <summary>
     /// Transforms XML from a <see cref="TextReader"/> and writes to a <see cref="TextWriter"/>.
+    /// When the initial mode is streamable the input is streamed from the reader and the result
+    /// written as it is produced, as by the <see cref="Stream"/> overloads; otherwise the input
+    /// is read whole and transformed in memory.
     /// </summary>
     public async Task TransformAsync(TextReader inputXml, TextWriter output, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(inputXml);
         ArgumentNullException.ThrowIfNull(output);
+        if (WillStreamFromReader())
+        {
+            await StreamTransformAsync(inputXml, output, ct).ConfigureAwait(false);
+            return;
+        }
         var xml = await inputXml.ReadToEndAsync(ct).ConfigureAwait(false);
         var result = await TransformAsync(xml, ct).ConfigureAwait(false);
         await output.WriteAsync(result).ConfigureAwait(false);
@@ -1611,22 +1597,64 @@ public sealed class XsltTransformer
         if (_stylesheet == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
-        var readerSettings = new XmlReaderSettings
-        {
-            DtdProcessing = AllowDtdProcessing ? DtdProcessing.Parse : DtdProcessing.Ignore,
-            Async = true,
-            CloseInput = false,
-        };
-        using var xmlReader = XmlReader.Create(inputXml, readerSettings,
+        using var xmlReader = XmlReader.Create(inputXml, StreamedSourceReaderSettings(),
             _sourceDocumentUri?.AbsoluteUri ?? "");
+        await StreamTransformAsync(xmlReader, output, ct).ConfigureAwait(false);
+    }
+
+    // The TextReader overloads read the input to its end before they transformed it, so with a
+    // streamable stylesheet the whole input was held as one string, and memory grew with the
+    // input: the CLI, which writes standard output through them, peaked at 331 MiB on 4 million
+    // items, against 100 MiB for the same run written to a file through a Stream (xslt#464).
+    private bool WillStreamFromReader() => !DisableStreaming && IsInitialModeStreamable();
+
+    private async Task StreamTransformAsync(TextReader inputXml, TextWriter output, CancellationToken ct)
+    {
+        using var xmlReader = XmlReader.Create(inputXml, StreamedSourceReaderSettings(),
+            _sourceDocumentUri?.AbsoluteUri ?? "");
+        await StreamTransformAsync(xmlReader, output, ct).ConfigureAwait(false);
+    }
+
+    private XmlReaderSettings StreamedSourceReaderSettings() => new()
+    {
+        DtdProcessing = AllowDtdProcessing ? DtdProcessing.Parse : DtdProcessing.Ignore,
+        Async = true,
+        CloseInput = false,
+    };
+
+    private async Task StreamTransformAsync(XmlReader xmlReader, TextWriter output, CancellationToken ct)
+    {
+        if (_stylesheet == null)
+            throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
         var options = BuildTransformOptions(hasSource: true, rawBox: null, ct: ct);
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
         await engine.TransformAsync(xmlReader, output, options).ConfigureAwait(false);
+        await PublishSecondaryResultsAsync(engine, ct).ConfigureAwait(false);
+    }
 
-        // Surface secondary results to the facade, mirroring the buffered TransformAsync overloads.
-        SecondaryResultDocuments = engine.SecondaryResultDocuments;
-        PrincipalResultTree = engine.PrincipalResultTree;
+    /// <summary>
+    /// Hands the secondary result documents to <see cref="ResultDocumentHandler"/> when one is
+    /// set, and otherwise keeps them in <see cref="SecondaryResultDocuments"/>.
+    /// </summary>
+    private async Task PublishSecondaryResultsAsync(XsltTransformEngine engine, CancellationToken ct)
+    {
+        if (ResultDocumentHandler != null)
+        {
+            foreach (var (href, content) in engine.SecondaryResultDocuments)
+            {
+                var writer = ResultDocumentHandler(href);
+                await writer.WriteAsync(content).ConfigureAwait(false);
+                await writer.FlushAsync(ct).ConfigureAwait(false);
+            }
+            SecondaryResultDocuments = new Dictionary<string, string>();
+            PrincipalResultTree = null;
+        }
+        else
+        {
+            SecondaryResultDocuments = engine.SecondaryResultDocuments;
+            PrincipalResultTree = engine.PrincipalResultTree;
+        }
     }
 
     /// <summary>

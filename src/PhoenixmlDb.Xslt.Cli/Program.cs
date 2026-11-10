@@ -321,12 +321,19 @@ try
             }
             else
             {
+                // Written as it is produced: collected into one string first, the result and the
+                // whole input were held in memory, which then grew with the input (xslt#464).
                 using var inputStream = File.OpenRead(sourcePath);
                 using var inputReader = new StreamReader(inputStream);
-                var streamResult = await transformer.TransformAsync(inputReader).ConfigureAwait(true);
-                Console.Write(streamResult);
-                if (streamResult.Length > 0 && streamResult[^1] != '\n')
-                    Console.WriteLine();
+                var stdoutWriter = new StreamWriter(
+                    Console.OpenStandardOutput(), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                await using (stdoutWriter.ConfigureAwait(true))
+                {
+                    using var stdout = new LastCharWriter(stdoutWriter);
+                    await transformer.TransformAsync(inputReader, stdout).ConfigureAwait(true);
+                    if (stdout.Last is { } last && last != '\n')
+                        await stdout.WriteLineAsync().ConfigureAwait(true);
+                }
             }
             streamTransformSw.Stop();
 
@@ -833,4 +840,69 @@ file sealed class CliOptions
             Verbose = verbose
         };
     }
+}
+
+/// <summary>
+/// Passes text through to <paramref name="inner"/>, which it does not own, and remembers the last
+/// character written, so that output written as it is produced can end with a newline as output
+/// written at once does.
+/// </summary>
+file sealed class LastCharWriter(TextWriter inner) : TextWriter
+{
+    public char? Last { get; private set; }
+
+    public override System.Text.Encoding Encoding => inner.Encoding;
+
+    public override void Write(char value)
+    {
+        inner.Write(value);
+        Last = value;
+    }
+
+    public override void Write(char[] buffer, int index, int count)
+    {
+        inner.Write(buffer, index, count);
+        if (count > 0) Last = buffer[index + count - 1];
+    }
+
+    public override void Write(string? value)
+    {
+        inner.Write(value);
+        if (!string.IsNullOrEmpty(value)) Last = value[^1];
+    }
+
+    // TextWriter's own async methods run the synchronous ones on a pool thread, one task per call.
+    public override Task WriteAsync(char value)
+    {
+        Last = value;
+        return inner.WriteAsync(value);
+    }
+
+    public override Task WriteAsync(string? value)
+    {
+        if (!string.IsNullOrEmpty(value)) Last = value[^1];
+        return inner.WriteAsync(value);
+    }
+
+    public override Task WriteAsync(char[] buffer, int index, int count)
+    {
+        if (count > 0) Last = buffer[index + count - 1];
+        return inner.WriteAsync(buffer, index, count);
+    }
+
+    public override Task WriteAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default)
+    {
+        if (!buffer.IsEmpty) Last = buffer.Span[^1];
+        return inner.WriteAsync(buffer, cancellationToken);
+    }
+
+    public override Task WriteLineAsync()
+    {
+        Last = '\n';
+        return inner.WriteLineAsync();
+    }
+
+    public override void Flush() => inner.Flush();
+
+    public override Task FlushAsync() => inner.FlushAsync();
 }
