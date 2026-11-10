@@ -382,6 +382,22 @@ internal sealed class StreamingExpressionScanner
     {
         switch (expr)
         {
+            // An aggregate over a value computed from each element (xslt#462): folded as the
+            // elements are read, so memory does not grow with their number.
+            case FunctionCallExpression foldCall when TryRecognizeFoldedAggregate(foldCall) is { } fold:
+                _watchers.Add(new StreamWatcher
+                {
+                    SourceExpression = expr,
+                    ContextRootDepth = _contextRootDepth,
+                    PathMatcher = new StreamPathMatcher(fold.Path.Path),
+                    Aggregation = fold.Aggregation,
+                    FoldTails = fold.Tails,
+                    SumDefaultExpression = fold.Aggregation == WatcherAggregation.Sum && foldCall.Arguments.Count > 1
+                        ? foldCall.Arguments[1]
+                        : null
+                });
+                return;
+
             // Recognized aggregation patterns: count(path), sum(path), max(path), etc.
             case FunctionCallExpression fc when IsAggregationFunction(fc):
                 var aggType = GetAggregationType(fc);
@@ -752,6 +768,149 @@ internal sealed class StreamingExpressionScanner
             case FilterExpression filterExpr:
                 ScanExpression(filterExpr.Primary);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// An aggregate the streaming pass folds as it reads: <c>sum</c>, <c>count</c>, <c>max</c> or
+    /// <c>min</c> over the typed values of the elements a downward path selects, each passed
+    /// through <see cref="Tails"/> in order. An empty <see cref="Tails"/> means the typed value
+    /// itself (<c>sum(data(root/item))</c>).
+    /// </summary>
+    internal sealed record FoldedAggregate(
+        WatcherAggregation Aggregation,
+        ExtractedPath Path,
+        IReadOnlyList<XQueryExpression> Tails);
+
+    /// <summary>
+    /// Recognizes an aggregate whose argument computes a value from each selected element:
+    /// <c>sum(root/item/xs:decimal(.))</c>, <c>sum(root/item!number())</c>,
+    /// <c>max(a/b/xs:date(.))</c>, <c>sum(data(root/item))</c>. Without this, such an argument
+    /// had no streamed form, so the whole input was read into a tree first (xslt#462); a bare
+    /// path (<c>sum(root/item)</c>) is the older watcher's and is not matched here.
+    /// <para>
+    /// The step after the path must only atomize the element (see <see cref="IsAtomizingTail"/>),
+    /// because it is evaluated with the element's typed value, not the element, as context: that
+    /// is the same for <c>xs:decimal(.)</c> or <c>number()</c>, but not for <c>name()</c> or
+    /// <c>@id</c>. The path must select elements without predicates. The detector and the
+    /// planner use this same test, so a shape is streamed exactly when the scanner folds it.
+    /// </para>
+    /// </summary>
+    internal static FoldedAggregate? TryRecognizeFoldedAggregate(FunctionCallExpression fc)
+    {
+        if (fc.Name.Namespace != NamespaceId.None
+            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            return null;
+        WatcherAggregation aggregation;
+        switch (fc.Name.LocalName)
+        {
+            case "sum" when fc.Arguments.Count == 1
+                || (fc.Arguments.Count == 2 && fc.Arguments[1] is IntegerLiteral or DecimalLiteral
+                    or DoubleLiteral or StringLiteral or VariableReference or EmptySequence):
+                aggregation = WatcherAggregation.Sum;
+                break;
+            // max and min with a collation argument are not folded.
+            case "count" or "max" or "min" when fc.Arguments.Count == 1:
+                aggregation = fc.Name.LocalName switch
+                {
+                    "count" => WatcherAggregation.Count,
+                    "max" => WatcherAggregation.Max,
+                    _ => WatcherAggregation.Min,
+                };
+                break;
+            default:
+                return null;
+        }
+
+        var argument = fc.Arguments[0];
+        var tails = new List<XQueryExpression>();
+        XQueryExpression source;
+        if (argument is SimpleMapExpression)
+        {
+            // path!t1!t2 parses as SimpleMap(SimpleMap(path, t1), t2); path/xs:decimal(.) parses
+            // as SimpleMap(path, xs:decimal(.)) too.
+            var current = argument;
+            while (current is SimpleMapExpression map)
+            {
+                if (!IsAtomizingTail(map.Right)) return null;
+                tails.Add(map.Right);
+                current = map.Left;
+            }
+            tails.Reverse();
+            source = current;
+        }
+        else if (argument is FunctionCallExpression { Arguments.Count: 1 } data
+            && data.Name.LocalName == "data"
+            && (data.Name.Namespace == NamespaceId.None
+                || data.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+        {
+            source = data.Arguments[0];
+        }
+        else
+        {
+            return null;
+        }
+
+        if (source is not PathExpression path || !IsDownwardPath(path)) return null;
+        if (ExtractPathFromExpression(path) is not { } extracted) return null;
+        // Element leaves only, with no predicate anywhere: the fold has no hook for a predicate,
+        // and an attribute or text() leaf takes another capture path.
+        if (extracted.Attribute != null || extracted.TextNodeTail
+            || extracted.Predicates.Count > 0 || extracted.IntermediatePredicates.Count > 0)
+            return null;
+        foreach (var step in path.Steps)
+            if (step.Predicates.Count > 0 || step.Axis == Axis.Attribute) return null;
+        return new FoldedAggregate(aggregation, extracted, tails);
+    }
+
+    /// <summary>
+    /// True when <paramref name="tail"/> reads its context item only by atomizing it, so that
+    /// evaluating it with an element's typed value as context gives what it gives with the
+    /// element. Stricter than <see cref="IsPerItemAtomicTail"/>, which also accepts any
+    /// zero-argument function: <c>name()</c>, <c>position()</c> or <c>base-uri()</c> mean
+    /// something else, or fail, on an atomic value.
+    /// </summary>
+    private static bool IsAtomizingTail(XQueryExpression tail)
+    {
+        switch (tail)
+        {
+            case ContextItemExpression:
+            case StringLiteral or IntegerLiteral or DecimalLiteral or DoubleLiteral:
+                return true;
+            case CastExpression cast:
+                return IsAtomizingTail(cast.Expression);
+            case CastableExpression castable:
+                return IsAtomizingTail(castable.Expression);
+            case UnaryExpression unary:
+                return IsAtomizingTail(unary.Operand);
+            case BinaryExpression bin
+                when bin.Operator is BinaryOperator.Add or BinaryOperator.Subtract
+                    or BinaryOperator.Multiply or BinaryOperator.Divide
+                    or BinaryOperator.IntegerDivide or BinaryOperator.Modulo:
+                return IsAtomizingTail(bin.Left) && IsAtomizingTail(bin.Right);
+            case FunctionCallExpression fc:
+            {
+                var ns = fc.Name.Namespace;
+                if (ns == NamespaceId.Xsd || ns == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+                    return fc.Arguments.Count == 1 && IsAtomizingTail(fc.Arguments[0]);
+                if (ns != NamespaceId.None && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+                    return false;
+                // The functions here atomize their argument, or with none take the string or
+                // typed value of the context item; each gives the same for an element as for
+                // its typed value.
+                bool known = fc.Name.LocalName switch
+                {
+                    "number" or "string" or "data" or "normalize-space" or "string-length" => fc.Arguments.Count <= 1,
+                    "upper-case" or "lower-case" or "abs" or "floor" or "ceiling" or "round" => fc.Arguments.Count == 1,
+                    _ => false,
+                };
+                if (!known) return false;
+                foreach (var arg in fc.Arguments)
+                    if (!IsAtomizingTail(arg)) return false;
+                return true;
+            }
+            default:
+                return false;
         }
     }
 

@@ -78,6 +78,11 @@ namespace PhoenixmlDb.Xslt.Engine.Streamability;
 /// element or an attribute), so a leading "/" is a climb to the root and not the context node
 /// (§19.8.8.8).
 /// </param>
+/// <param name="FoldsComputedAggregates">
+/// Without <paramref name="BySpec"/>: the plan is for the document level, where the streaming
+/// pass folds an aggregate over a value computed from each element (xslt#462). Such a call is
+/// then grounded and consuming; see StreamingExpressionScanner.TryRecognizeFoldedAggregate.
+/// </param>
 public readonly record struct StreamingContext(
     Posture ContextPosture,
     bool InStreamedScope,
@@ -90,7 +95,8 @@ public readonly record struct StreamingContext(
     XsltStylesheet? Stylesheet = null,
     bool AfterConsumingSibling = false,
     IReadOnlySet<object>? Handled = null,
-    bool ContextIsNeverDocument = false);
+    bool ContextIsNeverDocument = false,
+    bool FoldsComputedAggregates = false);
 
 /// <summary>
 /// Compositional streamability classifier for the XPath/XQuery <b>expression</b> language,
@@ -441,6 +447,13 @@ public static class StreamabilityClassifier
 
     private static PostureSweep ClassifyFunctionCall(FunctionCallExpression fc, StreamingContext ctx)
     {
+        // The document-level plan (FoldsComputedAggregates): an aggregate over a value computed
+        // from each element is folded by the streaming pass as it reads (xslt#462), so it is
+        // grounded and consuming like the bare-path aggregate. Only the shapes the scanner folds.
+        if (ctx.FoldsComputedAggregates && !ctx.BySpec && ctx.InStreamedScope
+            && StreamingExpressionScanner.TryRecognizeFoldedAggregate(fc) is not null)
+            return Grounded(Sweep.Consuming);
+
         // §19.8: a constructor-function call in the XSD namespace (xs:decimal(…), xs:integer(…),
         // xs:date(…), xs:NMTOKENS(…), …) atomizes its single operand and yields a grounded
         // atomic/list result — identical streamability to a CastExpression. Route it through the

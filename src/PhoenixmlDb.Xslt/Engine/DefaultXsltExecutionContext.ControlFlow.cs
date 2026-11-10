@@ -209,6 +209,27 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
     /// <summary>
+    /// Applies fn:sum, fn:max or fn:min to <paramref name="items"/>, for an aggregate the
+    /// streaming pass folds (xslt#462). The library's function is called, in this
+    /// transformation's context (default collation, resource policy), so the typing, promotion
+    /// and errors are those of the same call over the whole sequence.
+    /// </summary>
+    internal async ValueTask<object?> InvokeFoldAggregateAsync(WatcherAggregation aggregation, object?[] items)
+    {
+        var name = aggregation switch
+        {
+            WatcherAggregation.Sum => "sum",
+            WatcherAggregation.Max => "max",
+            WatcherAggregation.Min => "min",
+            _ => throw new InvalidOperationException($"No folded form of {aggregation}."),
+        };
+        var fn = _functionLibrary.Resolve(new QName(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, name), 1)
+            ?? throw new InvalidOperationException($"fn:{name}#1 is not in the function library.");
+        using var execContext = MinimalQueryContext();
+        return await fn.InvokeAsync([items], execContext).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Attempts to evaluate a function call by resolving all its arguments from
     /// stream watchers or literals, then invoking the function directly.
     /// Returns (true, value) if all arguments were resolvable; (false, null) otherwise.

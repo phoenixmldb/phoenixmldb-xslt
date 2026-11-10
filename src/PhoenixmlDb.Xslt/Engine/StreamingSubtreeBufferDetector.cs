@@ -852,6 +852,10 @@ internal static class StreamingSubtreeBufferDetector
                                 return true;
                         break;
                     case AbsorbingKind.WatcherBacked:
+                        // An aggregate over a value computed from each element streams as a
+                        // fold (xslt#462): the shapes the scanner folds, and only those.
+                        if (StreamingExpressionScanner.TryRecognizeFoldedAggregate(fc) is not null)
+                            return false;
                         if (fc.Arguments.Count > 0
                             && NavigatesInput(fc.Arguments[0])
                             && !IsBarePathOperand(fc.Arguments[0]))
