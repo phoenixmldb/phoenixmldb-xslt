@@ -59,12 +59,12 @@ public class LastTransformStreamedTests
     [Fact]
     public async Task A_document_rule_the_streaming_pass_cannot_answer_is_not_streamed()
     {
-        // A computed last step (xs:decimal(.)) is not streamed at the document level (xslt#462).
+        // A for expression over the input is not streamed at the document level.
         var transformer = await Load("""
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
                 xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="xs">
               <xsl:mode streamable="yes"/>
-              <xsl:template match="/"><sum><xsl:value-of select="sum(root/item/xs:decimal(.))"/></sum></xsl:template>
+              <xsl:template match="/"><sum><xsl:value-of select="sum(for $i in root/item return xs:decimal($i))"/></sum></xsl:template>
             </xsl:stylesheet>
             """);
 

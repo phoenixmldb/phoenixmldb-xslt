@@ -246,7 +246,8 @@ public sealed class XsltTransformer
     /// is set, and when the rule for the document node does something that the streaming pass
     /// cannot do correctly. <see cref="HasStreamableMode"/> tells what the stylesheet declares;
     /// this property tells what the last transformation did. It is reset at the start of each
-    /// transformation, so it is false after one that failed before it streamed.
+    /// transformation and set at its end, also when it fails: true then if the input was being
+    /// streamed when the error came.
     /// </remarks>
     public bool LastTransformStreamed { get; private set; }
 
@@ -1061,8 +1062,15 @@ public sealed class XsltTransformer
 
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
         // No input — use empty document
-        var result = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
-        LastTransformStreamed = engine.StreamedPrincipalInput;
+        string result;
+        try
+        {
+            result = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
+        }
+        finally
+        {
+            LastTransformStreamed = engine.StreamedPrincipalInput;
+        }
 
         // If a handler is set, write secondary results to the provided writers
         await PublishSecondaryResultsAsync(engine, ct).ConfigureAwait(false);
@@ -1117,8 +1125,15 @@ public sealed class XsltTransformer
         var options = BuildTransformOptions(hasSource: inputXml != null, rawBox: rawBox, ct: ct);
 
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
-        var serialized = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
-        LastTransformStreamed = engine.StreamedPrincipalInput;
+        string serialized;
+        try
+        {
+            serialized = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
+        }
+        finally
+        {
+            LastTransformStreamed = engine.StreamedPrincipalInput;
+        }
 
         SecondaryResultDocuments = engine.SecondaryResultDocuments;
         PrincipalResultTree = engine.PrincipalResultTree;
@@ -1647,8 +1662,14 @@ public sealed class XsltTransformer
 
         var options = BuildTransformOptions(hasSource: true, rawBox: null, ct: ct);
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
-        await engine.TransformAsync(xmlReader, output, options).ConfigureAwait(false);
-        LastTransformStreamed = engine.StreamedPrincipalInput;
+        try
+        {
+            await engine.TransformAsync(xmlReader, output, options).ConfigureAwait(false);
+        }
+        finally
+        {
+            LastTransformStreamed = engine.StreamedPrincipalInput;
+        }
         await PublishSecondaryResultsAsync(engine, ct).ConfigureAwait(false);
     }
 
