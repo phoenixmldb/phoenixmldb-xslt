@@ -5913,7 +5913,8 @@ public sealed class XsltTransformEngine
         // (xslt#298).
         if (StreamabilityChecker.HasSeveralConsumingOperands(body))
             return true;
-        if (StreamingPlanner.Plan(body, new StreamingContext(Posture.Striding, InStreamedScope: true))
+        if (StreamingPlanner.Plan(body, new StreamingContext(Posture.Striding, InStreamedScope: true,
+                FoldsComputedAggregates: true))
             == StreamingPlan.BufferWholeInput)
             return true;
         // The live reader is for the shapes it is proven on. A read of the input that nothing

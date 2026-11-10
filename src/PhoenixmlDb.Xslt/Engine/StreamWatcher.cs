@@ -54,6 +54,39 @@ internal sealed class StreamWatcher
     public bool ClimbAttributeWildcard { get; init; }
 
     /// <summary>
+    /// Set for an aggregate folded as the elements are read (xslt#462): the steps that compute
+    /// each item from a matched element, applied in order with the element's typed value as the
+    /// first context. Empty means the typed value itself. Null for every other watcher. See
+    /// <see cref="StreamingExpressionScanner.TryRecognizeFoldedAggregate"/>.
+    /// </summary>
+    public IReadOnlyList<PhoenixmlDb.XQuery.Ast.XQueryExpression>? FoldTails { get; init; }
+
+    /// <summary>True when this watcher folds computed items (<see cref="FoldTails"/> is set).</summary>
+    public bool IsFold => FoldTails != null;
+
+    // The running result of a folded sum, max or min: the aggregate of every item so far, as the
+    // library's own function computed it. Meaningful only when _count > 0.
+    private object? _foldPartial;
+
+    /// <summary>
+    /// The sequence to apply the aggregate function to for the next folded
+    /// <paramref name="item"/>: the running result and the item, or the item alone for the first.
+    /// That is the left-to-right definition of fn:sum, and gives fn:max and fn:min the answer
+    /// of one call over all the items, with the same errors. Nothing else is kept.
+    /// </summary>
+    public object?[] FoldArguments(object item) => _count == 0 ? [item] : [_foldPartial, item];
+
+    /// <summary>Records the aggregate of the items folded so far, one item more than before.</summary>
+    public void CommitFold(object? result)
+    {
+        _foldPartial = result;
+        _count++;
+    }
+
+    /// <summary>Counts one more folded item (for count, which needs no function call).</summary>
+    public void CountFolded() => _count++;
+
+    /// <summary>
     /// For StringJoin: the separator string.
     /// </summary>
     public string? Separator { get; init; }
@@ -505,6 +538,17 @@ internal sealed class StreamWatcher
     /// </summary>
     public object? GetResult()
     {
+        if (IsFold)
+        {
+            return Aggregation switch
+            {
+                WatcherAggregation.Count => _count,
+                // fn:sum(()) is xs:integer 0; the two-argument form's default is evaluated by
+                // the caller (SumIsEmpty), as for the unfolded watcher.
+                WatcherAggregation.Sum => _count > 0 ? _foldPartial : SumDefaultExpression == null ? 0L : null,
+                _ => _count > 0 ? _foldPartial : null,
+            };
+        }
         return Aggregation switch
         {
             WatcherAggregation.Count => _count,
@@ -693,6 +737,7 @@ internal sealed class StreamWatcher
     public void Reset()
     {
         _count = 0;
+        _foldPartial = null;
         _sum = 0;
         _max = null;
         _min = null;

@@ -1751,12 +1751,14 @@ internal sealed class StreamingXmlProcessor
                 // needs only the matched element's ATTRIBUTES — fully known at StartElement
                 // — and no text content or subtree. Capture it immediately below; building a
                 // subtree per match on a 100k-row doc would blow the streaming timeout.
-                bool defer = watcher.CaptureMatchedNode
+                // A folded aggregate computes its items from the element's string value, which
+                // is complete at EndElement.
+                bool defer = watcher.IsFold || (watcher.CaptureMatchedNode
                     ? (watcher.Predicates.Count > 0 || watcher.IntermediatePredicates.Count > 0)
                     : watcher.ValueAttribute == null
                     ? (WatcherNeedsTextContent(watcher) || watcher.Predicates.Count > 0
                         || watcher.IntermediatePredicates.Count > 0)
-                    : (watcher.Predicates.Count > 0 || watcher.IntermediatePredicates.Count > 0);
+                    : (watcher.Predicates.Count > 0 || watcher.IntermediatePredicates.Count > 0));
                 if (defer)
                 {
                     // Defer the OnElementMatch until EndElement so accumulated text
@@ -2032,6 +2034,84 @@ internal sealed class StreamingXmlProcessor
     /// (and therefore needs deferral until EndElement). Count alone doesn't need
     /// text — only the value-consuming aggregations do.
     /// </summary>
+    /// <summary>
+    /// Folds one matched element into an aggregate over values computed from each element
+    /// (xslt#462). The element's typed value (its string value as xs:untypedAtomic: the input
+    /// is not validated when it is streamed) goes through the watcher's steps in order, and each
+    /// resulting item is folded at once, so nothing is kept per element. The steps only atomize
+    /// their context (StreamingExpressionScanner.IsAtomizingTail), so the typed value gives
+    /// what the element would.
+    /// </summary>
+    private async ValueTask FoldMatchAsync(StreamWatcher watcher, string stringValue)
+    {
+        List<object?> items = [new Xdm.XsUntypedAtomic(stringValue)];
+        if (watcher.FoldTails is { Count: > 0 } tails)
+        {
+            // As for leaf predicates: the steps read only the pushed context item, so they take
+            // the plain evaluation path, not the watcher substitution of the streamed body.
+            var prevStreaming = _context._isStreamingExecution;
+            var prevWatchers = _context._activeStreamWatchers;
+            _context._isStreamingExecution = false;
+            _context._activeStreamWatchers = null;
+            try
+            {
+                foreach (var tail in tails)
+                {
+                    var next = new List<object?>();
+                    for (var k = 0; k < items.Count; k++)
+                    {
+                        _context.PushContextItem(items[k], k + 1, items.Count);
+                        try
+                        {
+                            AddFoldItems(next, await _context.EvaluateAsync(tail).ConfigureAwait(false));
+                        }
+                        finally
+                        {
+                            _context.PopContextItem();
+                        }
+                    }
+                    items = next;
+                }
+            }
+            finally
+            {
+                _context._activeStreamWatchers = prevWatchers;
+                _context._isStreamingExecution = prevStreaming;
+            }
+        }
+
+        foreach (var item in items)
+        {
+            if (item is null) continue;
+            if (watcher.Aggregation == WatcherAggregation.Count)
+                watcher.CountFolded();
+            else
+                watcher.CommitFold(await _context.InvokeFoldAggregateAsync(
+                    watcher.Aggregation, watcher.FoldArguments(item)).ConfigureAwait(false));
+        }
+    }
+
+    // A step's result is one item, null for the empty sequence, or a sequence. An XDM array is a
+    // List<object?> and is one item; the steps a fold accepts do not make one.
+    private static void AddFoldItems(List<object?> into, object? result)
+    {
+        switch (result)
+        {
+            case null:
+                return;
+            case string or List<object?>:
+                into.Add(result);
+                return;
+            case IEnumerable<object?> sequence:
+                foreach (var item in sequence)
+                    if (item is not null) into.Add(item);
+                return;
+            default:
+                into.Add(result);
+                return;
+        }
+    }
+
     private static bool WatcherNeedsTextContent(StreamWatcher watcher) => watcher.Aggregation switch
     {
         WatcherAggregation.Sum or WatcherAggregation.Max or WatcherAggregation.Min
@@ -2181,6 +2261,13 @@ internal sealed class StreamingXmlProcessor
         {
             var entry = _pendingTextWatcherMatches[i];
             if (entry.Depth != pendingDepth || entry.ElementName != localName) continue;
+
+            if (entry.Watcher.IsFold)
+            {
+                await FoldMatchAsync(entry.Watcher, entry.TextBuffer.ToString()).ConfigureAwait(false);
+                _pendingTextWatcherMatches.RemoveAt(i);
+                continue;
+            }
 
             // Materialize FIRST when predicates are present (or when the
             // Sequence/Snapshot path needs it anyway) so predicates can be
