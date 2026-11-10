@@ -339,8 +339,15 @@ try
 
             if (options.Timing)
             {
+                // The streaming branch is taken for any streamable stylesheet, but the engine
+                // reads the input whole when the stylesheet starts at a named template or when
+                // the streaming pass cannot answer the rule for the document node. The label said
+                // "(streaming)" for those runs too (xslt#463).
+                var how = transformer.LastTransformStreamed
+                    ? "(streaming)"
+                    : "(not streamed: the input was read into memory)";
                 await Console.Error.WriteLineAsync(
-                    $"  transform: {streamTransformSw.Elapsed.TotalMilliseconds,6:F1} ms  (streaming)")
+                    $"  transform: {streamTransformSw.Elapsed.TotalMilliseconds,6:F1} ms  {how}")
                     .ConfigureAwait(true);
             }
         }

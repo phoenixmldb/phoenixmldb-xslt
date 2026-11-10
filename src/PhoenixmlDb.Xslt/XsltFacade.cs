@@ -237,6 +237,20 @@ public sealed class XsltTransformer
     public int MaxResultDocuments { get; set; } = 1000;
 
     /// <summary>
+    /// True when the last transformation read its principal input by streaming it; false when
+    /// the input was read whole into an in-memory tree, or no transformation has run.
+    /// </summary>
+    /// <remarks>
+    /// A streamable stylesheet does not always stream. The input is read whole when the
+    /// stylesheet starts at a named template or a function, when <see cref="DisableStreaming"/>
+    /// is set, and when the rule for the document node does something that the streaming pass
+    /// cannot do correctly. <see cref="HasStreamableMode"/> tells what the stylesheet declares;
+    /// this property tells what the last transformation did. It is reset at the start of each
+    /// transformation, so it is false after one that failed before it streamed.
+    /// </remarks>
+    public bool LastTransformStreamed { get; private set; }
+
+    /// <summary>
     /// True when the loaded stylesheet declares at least one streamable mode (either an
     /// explicit <c>&lt;xsl:mode streamable="yes"/&gt;</c> declaration or a streamable
     /// default mode). The CLI uses this signal to auto-select the streaming
@@ -1048,6 +1062,7 @@ public sealed class XsltTransformer
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
         // No input — use empty document
         var result = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
+        LastTransformStreamed = engine.StreamedPrincipalInput;
 
         // If a handler is set, write secondary results to the provided writers
         await PublishSecondaryResultsAsync(engine, ct).ConfigureAwait(false);
@@ -1103,6 +1118,7 @@ public sealed class XsltTransformer
 
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
         var serialized = await engine.TransformAsync(inputXml ?? "<empty/>", options).ConfigureAwait(false);
+        LastTransformStreamed = engine.StreamedPrincipalInput;
 
         SecondaryResultDocuments = engine.SecondaryResultDocuments;
         PrincipalResultTree = engine.PrincipalResultTree;
@@ -1373,6 +1389,8 @@ public sealed class XsltTransformer
     /// </summary>
     private XsltTransformOptions BuildTransformOptions(bool hasSource, RawResultBox? rawBox, CancellationToken ct)
     {
+        // Every transformation builds its options here first, so this resets the flag for each.
+        LastTransformStreamed = false;
         var paramDict = new Dictionary<QName, object?>();
         foreach (var (name, value) in _typedParameters)
             paramDict[new QName(NamespaceId.None, name)] = value;
@@ -1630,6 +1648,7 @@ public sealed class XsltTransformer
         var options = BuildTransformOptions(hasSource: true, rawBox: null, ct: ct);
         var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
         await engine.TransformAsync(xmlReader, output, options).ConfigureAwait(false);
+        LastTransformStreamed = engine.StreamedPrincipalInput;
         await PublishSecondaryResultsAsync(engine, ct).ConfigureAwait(false);
     }
 
