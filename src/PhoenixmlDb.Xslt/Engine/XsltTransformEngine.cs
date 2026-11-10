@@ -5485,6 +5485,13 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// True once the principal input has been read by the streaming pass. False when the input
+    /// was read whole into a tree, which happens for a stylesheet that the streaming pass cannot
+    /// answer, for an entry at a named template or a function, and for DisableStreaming.
+    /// </summary>
+    internal bool StreamedPrincipalInput { get; private set; }
+
+    /// <summary>
     /// Core streaming pass shared by <see cref="TransformStreamingAsync(string, XsltTransformOptions?)"/>
     /// and <see cref="TransformAsync(XmlReader, TextWriter, XsltTransformOptions?)"/>. The caller
     /// owns the <see cref="XmlReader"/> lifetime and the result <see cref="StringBuilder"/>.
@@ -5498,6 +5505,7 @@ public sealed class XsltTransformEngine
         TextWriter? outputSink,
         XsltTransformOptions? options)
     {
+        StreamedPrincipalInput = true;
         options ??= new XsltTransformOptions();
 
         // Streaming is invoked with an XML source document, so mark it as present.
