@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-10 14:58 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-10 23:28 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -25,7 +25,7 @@ Generated 2026-11-10 14:58 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [462] Streaming: xsl:source-document streamable="yes" builds the whole document in memory
+- [468] Streaming: in match="/", an aggregate over an absolute or // path reads the input into memory
 - [461] Streaming: accumulator-after() at the document level buffers the whole input
 - [445] Nightly regression report
 - [439] attribute(N, T) is not checked against T: xsl:attribute type= loses its annotation inside an element under construction
