@@ -1052,6 +1052,13 @@ public sealed class XsltTransformer
     /// from a native message loop, say — is therefore on a pool thread after the await and must
     /// marshal UI work (dialogs, editor calls) back to the UI thread itself.
     /// </para>
+    /// <para>
+    /// <b>A busy thread pool.</b> Completing the task also takes a thread-pool thread, so in a
+    /// host whose pool is saturated a finished transformation waits for one before the caller sees
+    /// its result. A host that cannot rely on a free pool thread can call
+    /// <see cref="Transform(string?, CancellationToken)"/> on a thread of its own: the result comes
+    /// back on that thread, without the pool.
+    /// </para>
     /// </remarks>
     public async Task<string> TransformAsync(string? inputXml, CancellationToken ct = default)
     {
