@@ -13,8 +13,10 @@ namespace PhoenixmlDb.Xslt.Tests;
 /// limit used to build a trace of 1 to 4 MB and spend up to 20 seconds on the way out, and a
 /// cancellation at that depth took seconds to stop the work. Most of these tests assert the
 /// trace length: it is what the time follows, and unlike the time it does not depend on the
-/// machine.
+/// machine. The class runs alone: the one test that measures time took 1.9 s in parallel with
+/// the rest of the suite on a CI runner, against 47 to 87 ms alone.
 /// </remarks>
+[Collection(nameof(RecursionFailureTraceSerial))]
 public sealed class RecursionFailureTraceTests
 {
     private const int MaxTraceLength = 200_000;
@@ -128,3 +130,6 @@ public sealed class RecursionFailureTraceTests
         sinceCancel.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1.5));
     }
 }
+
+[CollectionDefinition(nameof(RecursionFailureTraceSerial), DisableParallelization = true)]
+public sealed class RecursionFailureTraceSerial;
