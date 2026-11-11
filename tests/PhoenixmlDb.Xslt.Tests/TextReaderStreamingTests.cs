@@ -76,6 +76,52 @@ public class TextReaderStreamingTests
         input.ReadWhole.Should().BeTrue();
     }
 
+    private const string StreamableJson = """
+        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+          <xsl:mode streamable="yes"/>
+          <xsl:output method="json" indent="no"/>
+          <xsl:template match="/"><xsl:apply-templates select="root"/></xsl:template>
+          <xsl:template match="root"><xsl:sequence select="array { item ! xs:integer(.) }"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema"/></xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    [Theory]
+    [InlineData("reader")]
+    [InlineData("reader-to-writer")]
+    [InlineData("stream")]
+    public async Task A_streamed_json_result_reaches_the_caller(string overload)
+    {
+        // The JSON is serialized after the streaming pass, and with a writer it stayed in the
+        // engine's buffer: the caller got no output at all (W3C si-fork-815).
+        var transformer = await Load(StreamableJson);
+        const string xml = "<root><item>1</item><item>2</item><item>3</item></root>";
+        string result;
+        switch (overload)
+        {
+            case "reader":
+                result = await transformer.TransformAsync(new StringReader(xml), TestContext.Current.CancellationToken);
+                break;
+            case "reader-to-writer":
+                using (var writer = new StringWriter())
+                {
+                    await transformer.TransformAsync(new StringReader(xml), writer, TestContext.Current.CancellationToken);
+                    result = writer.ToString();
+                }
+                break;
+            default:
+                using (var input = new MemoryStream(Encoding.UTF8.GetBytes(xml)))
+                using (var writer = new StringWriter())
+                {
+                    await transformer.TransformAsync(input, writer, TestContext.Current.CancellationToken);
+                    result = writer.ToString();
+                }
+                break;
+        }
+        result.Should().Be("[1,2,3]");
+        transformer.LastTransformStreamed.Should().BeTrue();
+    }
+
     private static async Task<XsltTransformer> Load(string stylesheet)
     {
         var transformer = new XsltTransformer();

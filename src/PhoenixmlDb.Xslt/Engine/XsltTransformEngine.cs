@@ -1784,6 +1784,27 @@ public sealed class XsltTransformEngine
     }
 
     /// <summary>
+    /// <see cref="FinalizeJsonOutput"/> for the streaming pass, which also writes the result to
+    /// <paramref name="outputSink"/> when the caller gave one. The JSON is serialized after the
+    /// last drain, so with a sink it stayed in the buffer and the caller got no output at all
+    /// (W3C si-fork-815, once the TextReader overloads streamed).
+    /// </summary>
+    private static async Task FinalizeJsonOutputAsync(
+        DefaultXsltExecutionContext context,
+        StringBuilder outputBuilder,
+        TextWriter? outputSink,
+        XsltOutput? principalOutput,
+        XdmInMemoryStore? nodeStore,
+        XsltTransformOptions options)
+    {
+        FinalizeJsonOutput(context, outputBuilder, principalOutput, nodeStore, options);
+        if (outputSink is null || outputBuilder.Length == 0)
+            return;
+        await outputSink.WriteAsync(outputBuilder.ToString()).ConfigureAwait(false);
+        outputBuilder.Clear();
+    }
+
+    /// <summary>
     /// Serializes a non-empty list of JSON-family items (map / array / atomic) into
     /// <paramref name="outputBuilder"/> per the principal output's method, indent, and
     /// allow-duplicate-names settings. Shared by <see cref="FinalizeJsonOutput"/> and the
@@ -5448,8 +5469,12 @@ public sealed class XsltTransformEngine
         // on the same input as text was right. The input is read whole for such a stylesheet,
         // and for an entry at a named template or a function, which does not start at the
         // document node at all.
+        // A source to be validated is validated as a tree, as the overloads that take the input
+        // as text do: the streaming pass reads the input unvalidated, so a schema-aware rule saw
+        // no type annotations (W3C si-apply-templates-012, once the TextReader overloads streamed).
         if (options?.DisableStreaming == true
             || options?.InitialTemplate != null || options?.InitialFunction != null
+            || options?.SourceValidation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax
             || !StreamingPassAnswersRight(options))
         {
             var text = new StringBuilder();
@@ -5788,7 +5813,7 @@ public sealed class XsltTransformEngine
             await context.DrainStreamingOutputAsync(options.CancellationToken).ConfigureAwait(false);
 
             if (isStreamingJsonOutput)
-                FinalizeJsonOutput(context, outputBuilder, streamingPrincipalOutput, nodeStore, options);
+                await FinalizeJsonOutputAsync(context, outputBuilder, outputSink, streamingPrincipalOutput, nodeStore, options).ConfigureAwait(false);
 
             SecondaryResultDocuments = context.SecondaryResults;
 
@@ -5813,7 +5838,7 @@ public sealed class XsltTransformEngine
         await context.DrainStreamingOutputAsync(options.CancellationToken).ConfigureAwait(false);
 
         if (isStreamingJsonOutput)
-            FinalizeJsonOutput(context, outputBuilder, streamingPrincipalOutput, nodeStore, options);
+            await FinalizeJsonOutputAsync(context, outputBuilder, outputSink, streamingPrincipalOutput, nodeStore, options).ConfigureAwait(false);
 
         // Surface secondary results to the engine regardless of sink mode.
         SecondaryResultDocuments = context.SecondaryResults;
