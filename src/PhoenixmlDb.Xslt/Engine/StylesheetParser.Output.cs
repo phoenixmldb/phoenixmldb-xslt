@@ -171,12 +171,17 @@ public sealed partial class StylesheetParser
             throw new XsltException("xsl:source-document requires href attribute", location);
 
         var useAccumulators = new List<QName>();
+        var useAllAccumulators = false;
         if (useAccumulatorsAttr != null)
         {
             foreach (var name in useAccumulatorsAttr.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             {
                 if (name == "#all")
-                    continue; // Will be handled at runtime by using all declared accumulators
+                {
+                    // Every declared accumulator, resolved at run time against the stylesheet.
+                    useAllAccumulators = true;
+                    continue;
+                }
                 useAccumulators.Add(ParseQName(name, element));
             }
         }
@@ -196,7 +201,8 @@ public sealed partial class StylesheetParser
             Validation = ParseValidationMode(validationAttr) ?? Ast.ValidationMode.Strip,
             Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
             BaseUri = ResolveEffectiveBaseUri(element),
-            UseAccumulators = useAccumulators
+            UseAccumulators = useAccumulators,
+            UseAllAccumulators = useAllAccumulators
         };
 
         // XTSE3430: Check streamability of the body when streamable="yes".
@@ -219,6 +225,7 @@ public sealed partial class StylesheetParser
                     Content = result.Content,
                     BaseUri = result.BaseUri,
                     UseAccumulators = result.UseAccumulators,
+                    UseAllAccumulators = result.UseAllAccumulators,
                     StreamabilityError = ex.Message
                 };
             }
