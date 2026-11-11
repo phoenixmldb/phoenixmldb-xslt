@@ -45,6 +45,12 @@ internal sealed class StreamingXmlProcessor
     private object?[]? _accCurrentValues;
     private Dictionary<NodeId, (object? before, object? after)>[]? _accNodeValueMaps;
 
+    // Nodes of the pass whose end has been reached. Their values are dropped at the next
+    // accumulator event: by then whatever was evaluated for the node, its template body
+    // included, has finished, and a streamed node that has passed cannot be reached again
+    // (xslt#461). Kept, the values of every node of the input made memory grow with it.
+    private readonly List<NodeId> _accEndedNodes = [];
+
     // Stream watchers for consuming sub-expression evaluation
     private readonly IReadOnlyList<StreamWatcher>? _watchers;
 
@@ -182,6 +188,15 @@ internal sealed class StreamingXmlProcessor
         // Initialize accumulator state
         await InitializeAccumulatorsAsync().ConfigureAwait(false);
 
+        // A pass over a whole document starts and ends at its document node: the rules of
+        // the accumulators for "/" apply there, and accumulator-after() on the document node,
+        // after its children have been read, is answered from the value at its end (xslt#461).
+        // The pass started at the first element and recorded nothing for the document node,
+        // so the value came from an empty tree, and such a body was read into memory instead.
+        var streamedDocument = reader.ReadState == ReadState.Initial ? _context._activeStreamingDocument : null;
+        if (streamedDocument is not null)
+            await FireAccumulatorRulesAsync(streamedDocument, streamedDocument.Id, AccumulatorPhase.Start).ConfigureAwait(false);
+
         // Set streaming execution flag so built-in templates skip child recursion
         var previousStreamingFlag = _context._isStreamingExecution;
         _context._isStreamingExecution = true;
@@ -212,6 +227,8 @@ internal sealed class StreamingXmlProcessor
                 }
                 else if (!await reader.ReadAsync().ConfigureAwait(false))
                 {
+                    if (streamedDocument is not null)
+                        await FireAccumulatorRulesAsync(streamedDocument, streamedDocument.Id, AccumulatorPhase.End).ConfigureAwait(false);
                     break;
                 }
                 ct.ThrowIfCancellationRequested();
@@ -1066,10 +1083,20 @@ internal sealed class StreamingXmlProcessor
     /// the streaming forward pass. Stores before/after values so that
     /// accumulator-before() and accumulator-after() work correctly.
     /// </summary>
-    private async ValueTask FireAccumulatorRulesAsync(object node, NodeId nodeId, AccumulatorPhase phase)
+    private async ValueTask FireAccumulatorRulesAsync(object node, NodeId nodeId, AccumulatorPhase phase, bool live = true)
     {
         if (_accCurrentValues == null || _accNodeValueMaps == null || _accumulators.Count == 0)
             return;
+
+        if (live && _accEndedNodes.Count > 0)
+        {
+            foreach (var ended in _accEndedNodes)
+                foreach (var map in _accNodeValueMaps)
+                    map.Remove(ended);
+            _accEndedNodes.Clear();
+        }
+        if (live && phase == AccumulatorPhase.End && node is not XdmDocument)
+            _accEndedNodes.Add(nodeId);
 
         // Lazy-cache the 5 delegates: method-group conversions allocate fresh delegates
         // per call, and this method fires once per node during streaming. Captured
@@ -1180,13 +1207,14 @@ internal sealed class StreamingXmlProcessor
         if (node == null)
             return;
 
-        await FireAccumulatorRulesAsync(node, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
+        // The nodes of a buffered copy stay readable while the body runs on it: not live.
+        await FireAccumulatorRulesAsync(node, nodeId, AccumulatorPhase.Start, live: false).ConfigureAwait(false);
         if (node is Xdm.Nodes.XdmElement elem)
         {
             foreach (var childId in elem.Children)
                 await ReplayAccumulatorNodeAsync(childId).ConfigureAwait(false);
         }
-        await FireAccumulatorRulesAsync(node, nodeId, AccumulatorPhase.End).ConfigureAwait(false);
+        await FireAccumulatorRulesAsync(node, nodeId, AccumulatorPhase.End, live: false).ConfigureAwait(false);
     }
 
 

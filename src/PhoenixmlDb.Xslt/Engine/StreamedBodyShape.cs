@@ -121,6 +121,67 @@ internal static class StreamedBodyShape
         return Streamability.StreamabilityClassifier.Classify(body, context).Sweep == Streamability.Sweep.Motionless;
     }
 
+    private static readonly ConditionalWeakTable<XsltSequenceConstructor, StrongBox<bool>> _answeredAfterThePass = new();
+
+    /// <summary>
+    /// True when a body whose context is the streamed document node reads nothing of the input
+    /// but accumulator-after() of that node: <c>&lt;sum&gt;{accumulator-after('total')}&lt;/sum&gt;</c>.
+    /// The call consumes the document (§19.8.9.1), and no instruction of the body walks it, so the
+    /// pass is run first and the body after it, reading the values the pass recorded at the
+    /// document node's end (xslt#461). Both document-level dispatches and the decision to read
+    /// the input whole ask this, so that they agree.
+    /// </summary>
+    public static bool IsAnsweredAfterThePass(XsltSequenceConstructor body, XsltStylesheet stylesheet)
+        => _answeredAfterThePass.GetValue(body, b => new StrongBox<bool>(AnsweredAfterThePass(b, stylesheet))).Value;
+
+    private static bool AnsweredAfterThePass(XsltSequenceConstructor body, XsltStylesheet stylesheet)
+    {
+        var scan = new StreamingExpressionScanner().ScanWithSubscriptions(body);
+        if (scan.Watchers is { Count: > 0 } || scan.Subscriptions is { Count: > 0 })
+            return false;
+        var applies = new List<XsltInstruction>();
+        CollectDocumentApplyTemplates(body, applies);
+        if (applies.Count > 0 || ContainsApplyTemplates(body))
+            return false;
+        // Asked as if the document had been read, nothing is left to buffer for.
+        if (StreamingSubtreeBufferDetector.BodyRequiresWholeInput(body, consumed: true)
+            || StreamabilityChecker.HasSeveralConsumingOperands(body))
+            return false;
+        // And the value after the document is what reads it: the body consumes, and it is
+        // motionless once the document node counts as consumed, which changes nothing but
+        // accumulator-after() of the context node (§19.8.9.1).
+        var context = new Streamability.StreamingContext(
+            Streamability.Posture.Striding, InStreamedScope: true, BySpec: true,
+            Functions: stylesheet.Functions, Stylesheet: stylesheet);
+        return Streamability.StreamabilityClassifier.Classify(body, context).Sweep == Streamability.Sweep.Consuming
+            && Streamability.StreamabilityClassifier.Classify(body, context with { AfterConsumingSibling = true }).Sweep
+                == Streamability.Sweep.Motionless;
+    }
+
+    /// <summary>Whether an xsl:apply-templates stands anywhere in the instruction tree.</summary>
+    private static bool ContainsApplyTemplates(object? node)
+    {
+        switch (node)
+        {
+            case null or string or ValueType or XQueryExpression:
+                return false;
+            case XsltApplyTemplates:
+                return true;
+            case IEnumerable items:
+                foreach (var item in items)
+                    if (ContainsApplyTemplates(item))
+                        return true;
+                return false;
+            case XsltInstruction or XsltWhen or XsltWithParam or XsltSort or XsltParam:
+                foreach (var property in node.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                    if (property.GetIndexParameters().Length == 0 && ContainsApplyTemplates(property.GetValue(node)))
+                        return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
     private static void CollectDocumentApplyTemplates(XsltInstruction? node, List<XsltInstruction> applies)
     {
         switch (node)

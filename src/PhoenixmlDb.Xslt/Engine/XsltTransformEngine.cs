@@ -5720,8 +5720,11 @@ public sealed class XsltTransformEngine
                     context._activeStreamingProcessor = null;
                     context._activeStreamingReader = null;
 
-                    if (docSubscriptions == null && docWatchers != null)
+                    if (docSubscriptions == null
+                        && (docWatchers != null || StreamedBodyShape.IsAnsweredAfterThePass(docNodeTemplate.Body, _stylesheet)))
                     {
+                        // The same holds for accumulator-after() of the document node, which
+                        // has its value once the pass has reached the end (xslt#461).
                         // Consuming aggregates (sum(//x), count(//*), …): the forward pass
                         // FIRST, so the watchers have seen the document, THEN the body, which
                         // reads their results — the order the xsl:source-document path uses.
@@ -5904,6 +5907,10 @@ public sealed class XsltTransformEngine
     /// </summary>
     internal static bool DocLevelWholeInputBuffer(Ast.XsltSequenceConstructor? body, XsltStylesheet stylesheet)
     {
+        // accumulator-after() of the document node and nothing else read: the pass runs first,
+        // then the body (xslt#461). The dispatches make the same test.
+        if (body is not null && StreamedBodyShape.IsAnsweredAfterThePass(body, stylesheet))
+            return false;
         if (StreamingSubtreeBufferDetector.RequiresWholeInputBuffer(body))
             return true;
         if (body is null)

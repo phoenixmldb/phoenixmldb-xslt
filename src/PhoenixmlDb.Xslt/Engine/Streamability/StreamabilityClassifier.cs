@@ -454,6 +454,16 @@ public static class StreamabilityClassifier
             && StreamingExpressionScanner.TryRecognizeFoldedAggregate(fc) is not null)
             return Grounded(Sweep.Consuming);
 
+        // The document-level plan: accumulator-after() of the document node after an earlier
+        // instruction has read the document is answered from the value the pass records at its
+        // end (xslt#461). The rule of §19.8.9.1, as the classification by the specification has it.
+        if (ctx.FoldsComputedAggregates && !ctx.BySpec && ctx.InStreamedScope && ctx.AfterConsumingSibling
+            && fc.Arguments.Count == 1
+            && (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Fn || fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.None)
+            && fc.Name.LocalName == "accumulator-after"
+            && Classify(fc.Arguments[0], ctx).Sweep == Sweep.Motionless)
+            return Grounded(Sweep.Motionless);
+
         // §19.8: a constructor-function call in the XSD namespace (xs:decimal(…), xs:integer(…),
         // xs:date(…), xs:NMTOKENS(…), …) atomizes its single operand and yields a grounded
         // atomic/list result — identical streamability to a CastExpression. Route it through the
@@ -1797,6 +1807,14 @@ public static class StreamabilityClassifier
     }
 
     /// <summary>
+    /// Whether the instruction is one that something else carries out, or a literal result
+    /// element whose content runs one whatever happens.
+    /// </summary>
+    private static bool RunsHandled(XsltInstruction insn, IReadOnlySet<object> handled)
+        => handled.Contains(insn)
+            || (insn is XsltLiteralResultElement lre && lre.Content.Instructions.Any(i => RunsHandled(i, handled)));
+
+    /// <summary>
     /// Computes the composed <see cref="PostureSweep"/> of a sequence-constructor body per
     /// §19.8: fold over its child instructions — posture widens over the children, sweep is
     /// the worst of the children's sweeps. An empty (or grounded-only) body is
@@ -1826,7 +1844,12 @@ public static class StreamabilityClassifier
             if (ps.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ps.Posture))
                 return NotStreamable();
             sweep = CombineSweep(sweep, ps.Sweep);
-            if (ctx.BySpec && ps.Sweep == Sweep.Consuming)
+            // An instruction that something else carries out is classified motionless, but the
+            // executor runs it here and it reads the context node all the same: an
+            // xsl:apply-templates of the document's children, then accumulator-after() of the
+            // document node (xslt#461).
+            if ((ctx.BySpec || ctx.FoldsComputedAggregates)
+                && (ps.Sweep == Sweep.Consuming || (ctx.Handled is { } handled && RunsHandled(child, handled))))
                 localCtx = localCtx with { AfterConsumingSibling = true };
 
             // §19.8: an in-body xsl:variable / xsl:param DECLARATION emits nothing into the

@@ -40,6 +40,24 @@ public sealed class XsltSourceDocument : XsltInstruction
     public List<QName> UseAccumulators { get; init; } = new();
 
     /// <summary>
+    /// <c>use-accumulators="#all"</c>: every accumulator the stylesheet declares. The names are
+    /// not known where the attribute is read, since declarations may follow.
+    /// </summary>
+    public bool UseAllAccumulators { get; init; }
+
+    /// <summary>The accumulators that apply to the document, by name or through #all.</summary>
+    internal IEnumerable<XsltAccumulator> ApplicableAccumulators(XsltStylesheet stylesheet)
+    {
+        if (UseAllAccumulators)
+            return stylesheet.Accumulators.Values;
+        var named = new List<XsltAccumulator>();
+        foreach (var name in UseAccumulators)
+            if (stylesheet.Accumulators.TryGetValue(name, out var accumulator))
+                named.Add(accumulator);
+        return named;
+    }
+
+    /// <summary>
     /// Deferred XTSE3430 streamability error message. When set, the instruction
     /// throws at runtime instead of parse time, allowing shared stylesheets
     /// with multiple templates to compile even if some templates are non-streamable.

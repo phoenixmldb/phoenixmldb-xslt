@@ -1776,6 +1776,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 Content = body,
                 BaseUri = instruction.BaseUri,
                 UseAccumulators = instruction.UseAccumulators,
+                UseAllAccumulators = instruction.UseAllAccumulators,
                 Location = instruction.Location,
                 Version = instruction.Version,
                 DefaultCollation = instruction.DefaultCollation,
@@ -1933,16 +1934,10 @@ internal sealed partial class DefaultXsltExecutionContext
                 var streamNodeStore = _nodeStore ?? new XdmInMemoryStore();
                 _templateIndex.ResolvePatternNamespaces(streamNodeStore.InternNamespace);
 
-                // Resolve accumulators for streaming
-                var streamAccumulators = new List<XsltAccumulator>();
-                if (instruction.UseAccumulators.Count > 0)
-                {
-                    foreach (var accName in instruction.UseAccumulators)
-                    {
-                        if (_stylesheet.Accumulators.TryGetValue(accName, out var acc))
-                            streamAccumulators.Add(acc);
-                    }
-                }
+                // Resolve accumulators for streaming. With #all the pass ran none: a streamed node
+                // has no subtree to compute a value from afterwards, so the values it reported were
+                // those of an empty tree (xslt#461).
+                var streamAccumulators = instruction.ApplicableAccumulators(_stylesheet).ToList();
 
                 // Pre-scan for consuming expressions that need stream watchers
                 var scanner = new StreamingExpressionScanner();
@@ -1957,7 +1952,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 // shouldn't fire on non-subscribed/non-watched elements/text during
                 // the streaming pass — only the accumulation/dispatch driven by the
                 // scanned instructions should run).
-                bool subscriptionOnly = (subscriptions.Count > 0 || watchers.Count > 0)
+                // accumulator-after() of the document node, and nothing else read: the pass
+                // first, dispatching nothing, then the body, which reads the value recorded at
+                // the end (xslt#461).
+                var answeredAfterThePass = instruction.Content != null
+                    && StreamedBodyShape.IsAnsweredAfterThePass(instruction.Content, _stylesheet);
+                bool subscriptionOnly = (subscriptions.Count > 0 || watchers.Count > 0 || answeredAfterThePass)
                     && instruction.Content != null
                     && !ContentContainsApplyTemplates(instruction.Content);
 
@@ -2013,7 +2013,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         && subscriptions.All(s => s.InlineDriven);
 
                     bool processorRanForSubscriptions = false;
-                    if ((watchers.Count > 0 || subscriptions.Count > 0) && instruction.Content != null
+                    if ((watchers.Count > 0 || subscriptions.Count > 0 || answeredAfterThePass) && instruction.Content != null
                         && !ContentContainsApplyTemplates(instruction.Content)
                         && !allInlineDriven)
                     {
@@ -2139,17 +2139,9 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Pre-compute accumulators if use-accumulators is specified
         var previousAccumulatorValues = _accumulatorValues;
-        if (instruction.UseAccumulators.Count > 0)
-        {
-            var accumulators = new List<XsltAccumulator>();
-            foreach (var accName in instruction.UseAccumulators)
-            {
-                if (_stylesheet.Accumulators.TryGetValue(accName, out var acc))
-                    accumulators.Add(acc);
-            }
-            if (accumulators.Count > 0)
-                await PreComputeAccumulatorsAsync(xdmDoc, accumulators, nodeStore).ConfigureAwait(false);
-        }
+        var accumulators = instruction.ApplicableAccumulators(_stylesheet).ToList();
+        if (accumulators.Count > 0)
+            await PreComputeAccumulatorsAsync(xdmDoc, accumulators, nodeStore).ConfigureAwait(false);
 
         // If a fragment identifier is present, find the element with matching xml:id
         object contextItem = xdmDoc;
