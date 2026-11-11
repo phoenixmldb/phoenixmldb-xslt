@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-10 23:28 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-11 14:29 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,21 +18,23 @@ Generated 2026-11-10 23:28 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 6 | 0 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-xslt | 4 | 0 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
-- [468] Streaming: in match="/", an aggregate over an absolute or // path reads the input into memory
-- [461] Streaming: accumulator-after() at the document level buffers the whole input
 - [445] Nightly regression report
 - [439] attribute(N, T) is not checked against T: xsl:attribute type= loses its annotation inside an element under construction
 - [400] Serializer: indent while writing; no reparse, suppress-indentation by QName
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-cli**
+
+- [27] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
