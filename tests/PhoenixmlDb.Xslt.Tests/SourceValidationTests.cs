@@ -22,7 +22,7 @@ public sealed class SourceValidationTests : IDisposable
     private const string Valid = "<o:order xmlns:o=\"urn:o\" id=\"a1\"><o:qty>12</o:qty></o:order>";
     private const string Invalid = "<o:order xmlns:o=\"urn:o\"><o:qty>many</o:qty></o:order>";
 
-    private async Task<XsltTransformer> LoadAsync(string body, string modeAttributes = "")
+    private async Task<XsltTransformer> LoadAsync(string body, string modeAttributes = "", string rules = "")
     {
         var xsd = Path.Combine(_dir, "order.xsd");
         await File.WriteAllTextAsync(xsd, """
@@ -42,6 +42,7 @@ public sealed class SourceValidationTests : IDisposable
               <xsl:import-schema namespace="urn:o" schema-location="{xsd.Replace("\\", "/", StringComparison.Ordinal)}"/>
               <xsl:mode {modeAttributes}/>
               <xsl:template match="/">{body}</xsl:template>
+              {rules}
             </xsl:stylesheet>
             """);
         return t;
@@ -59,6 +60,44 @@ public sealed class SourceValidationTests : IDisposable
         var t = await LoadAsync(Types);
         t.SourceValidation = mode;
         (await t.TransformAsync(Valid)).Should().Be("<r>true true true true true 13</r>");
+    }
+
+    [Theory]
+    [InlineData("reader")]
+    [InlineData("reader-to-writer")]
+    [InlineData("stream")]
+    public async Task A_validated_source_has_typed_nodes_in_a_streamable_mode(string overload)
+    {
+        // The overloads that stream read the input unvalidated: once the TextReader overloads
+        // streamed, a schema-aware rule in a streamable mode saw an untyped source (W3C
+        // si-apply-templates-012). A source to be validated is validated as a tree.
+        // The rule for o:order streams; its result is the order's type, which only validation gives.
+        var t = await LoadAsync("<xsl:apply-templates/>", "streamable=\"yes\"",
+            "<xsl:template match=\"o:order\"><r>{. instance of element(*, o:orderType)}</r></xsl:template>");
+        t.SourceValidation = ValidationMode.Strict;
+        string result;
+        switch (overload)
+        {
+            case "reader":
+                result = await t.TransformAsync(new StringReader(Valid), TestContext.Current.CancellationToken);
+                break;
+            case "reader-to-writer":
+                using (var writer = new StringWriter())
+                {
+                    await t.TransformAsync(new StringReader(Valid), writer, TestContext.Current.CancellationToken);
+                    result = writer.ToString();
+                }
+                break;
+            default:
+                using (var input = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Valid)))
+                using (var writer = new StringWriter())
+                {
+                    await t.TransformAsync(input, writer, TestContext.Current.CancellationToken);
+                    result = writer.ToString();
+                }
+                break;
+        }
+        result.Should().Be("<r>true</r>");
     }
 
     [Theory]
