@@ -631,6 +631,22 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private const int MaxRecursionDepth = 1200;
 
+    // How many levels of recursion an exception's stack trace may span. See ShedsStackTrace.
+    private const int StackTraceSpan = 8;
+
+    /// <summary>
+    /// Whether a failure leaving this level of recursion should be thrown afresh, which drops its
+    /// stack trace. Each async frame it leaves copies that trace on the way out, and a level is
+    /// about 15 frames, so without this a failure at the depth limit spends seconds unwinding, on
+    /// a trace of megabytes, and the time grows with the square of the depth. A cancellation at
+    /// that depth has to wait for the same unwinding. An error of the transformation says where
+    /// it happened without its trace; any other exception is an engine defect and keeps it.
+    /// </summary>
+    private bool ShedsStackTrace(Exception ex) =>
+        _recursionDepth % StackTraceSpan == 0
+        && ex is XsltException or PhoenixmlDb.XQuery.Functions.XQueryException
+            or PhoenixmlDb.XQuery.Execution.XQueryRuntimeException or OperationCanceledException;
+
     // Synchronous waits on async work in progress on THIS thread's stack (a lazy variable's value,
     // a key or pattern predicate evaluated from synchronous code). EnsureStackAsync never yields
     // inside one: the waiter would block on an unfinished task, which a single-threaded runtime

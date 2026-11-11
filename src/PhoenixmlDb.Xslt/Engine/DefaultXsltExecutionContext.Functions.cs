@@ -2686,6 +2686,12 @@ internal sealed partial class DefaultXsltExecutionContext
             _pendingFunctionTailCall = null;
             try
             { await func.Body.ExecuteAsync(this).ConfigureAwait(false); }
+#pragma warning disable CA2200 // Dropping the trace is the point: see ShedsStackTrace.
+            catch (Exception ex) when (ShedsStackTrace(ex))
+            {
+                throw ex;
+            }
+#pragma warning restore CA2200
             finally
             {
                 tailCall = _pendingFunctionTailCall;

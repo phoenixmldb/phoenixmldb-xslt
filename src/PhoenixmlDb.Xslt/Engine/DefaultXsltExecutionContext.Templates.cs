@@ -36,6 +36,12 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             await ApplyTemplatesCoreAsync(select, mode, sorts, withParams).ConfigureAwait(false);
         }
+#pragma warning disable CA2200 // Dropping the trace is the point: see ShedsStackTrace.
+        catch (Exception ex) when (ShedsStackTrace(ex))
+        {
+            throw ex;
+        }
+#pragma warning restore CA2200
         finally
         {
             _recursionDepth--;
@@ -824,6 +830,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 // An unmatched comment or processing instruction produces nothing.
             }
         }
+#pragma warning disable CA2200 // Dropping the trace is the point: see ShedsStackTrace.
+        catch (Exception ex) when (ShedsStackTrace(ex))
+        {
+            throw ex;
+        }
+#pragma warning restore CA2200
         finally
         {
             if (pushBarrier)
@@ -1628,11 +1640,15 @@ internal sealed partial class DefaultXsltExecutionContext
                         _effectiveVersionStack.Pop();
                 }
             }
-            catch
+#pragma warning disable CA2200 // Dropping the trace is the point: see ShedsStackTrace.
+            catch (Exception ex)
             {
                 _pendingTailCall = null;
+                if (ShedsStackTrace(ex))
+                    throw ex;
                 throw;
             }
+#pragma warning restore CA2200
             finally
             {
                 if (template.ContextItemUse == ContextItemUse.Absent || makeContextAbsent)
