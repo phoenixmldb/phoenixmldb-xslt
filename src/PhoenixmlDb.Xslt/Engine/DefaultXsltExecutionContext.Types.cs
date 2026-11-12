@@ -138,6 +138,8 @@ internal sealed partial class DefaultXsltExecutionContext
 
     public override bool IsBackwardsCompatibleMode => IsBackwardsCompatible;
 
+    internal override int? MaxStringLength => _queryLimits.MaxStringLength;
+
 
     /// <summary>
     /// Checks if a namespace binding (prefix → uri) is already in scope from an ancestor element.

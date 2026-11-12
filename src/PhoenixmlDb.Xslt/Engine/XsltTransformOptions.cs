@@ -261,6 +261,20 @@ public sealed class XsltTransformOptions
     public TimeSpan? RegexMatchTimeout { get; init; }
 
     /// <summary>
+    /// Longest string, in UTF-16 code units, that one string-building operation may produce:
+    /// the XPath functions and operators that build strings (<c>concat</c>, <c>string-join</c>,
+    /// <c>||</c>, <c>codepoints-to-string</c>, <c>replace</c> and others), the value of
+    /// <c>xsl:value-of</c>, <c>xsl:attribute</c>, <c>xsl:comment</c>,
+    /// <c>xsl:processing-instruction</c> and <c>xsl:namespace</c>, attribute value templates, and
+    /// the text that is joined into one text node. An operation that would go past the limit
+    /// fails with FOER0000 (an <see cref="XsltException"/>) before it builds the string, or while
+    /// it builds it. The limit is per string; <see cref="MaxOutputSize"/> limits the serialized
+    /// result. Default: <c>null</c>, no limit. A host that runs untrusted stylesheets should set
+    /// it. See <see cref="PhoenixmlDb.XQuery.Execution.QueryExecutionLimits.MaxStringLength"/>.
+    /// </summary>
+    public int? MaxStringLength { get; init; }
+
+    /// <summary>
     /// XPath expression to evaluate against the source document to determine the initial context node.
     /// When null, the document root is used. Example: "/doc" selects the document element named "doc".
     /// </summary>

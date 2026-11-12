@@ -716,6 +716,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
             value = StringValueOf(result);
+            CheckStringLength(value.Length, "xsl:comment");
         }
         else if (instruction.Content != null)
         {

@@ -186,6 +186,7 @@ public sealed class XsltTransformProvider : ITransformProvider
         {
             ResourcePolicy = policy,
             RegexMatchTimeout = callingQuery?.Limits.RegexMatchTimeout,
+            MaxStringLength = callingQuery?.Limits.MaxStringLength,
         };
         // Under a policy, a package catalog named by the caller's vendor options is not honoured:
         // it would choose files to load outside the policy.

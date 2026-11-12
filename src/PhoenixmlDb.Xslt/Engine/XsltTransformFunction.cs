@@ -407,6 +407,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             // The nested transformation is part of this one: it stops at the same regex match
             // timeout and on the same cancellation. It had neither.
             RegexMatchTimeout = _context._options.RegexMatchTimeout,
+            MaxStringLength = _context._options.MaxStringLength,
             CancellationToken = _context._options.CancellationToken,
         };
 

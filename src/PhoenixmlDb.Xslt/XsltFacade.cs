@@ -304,6 +304,12 @@ public sealed class XsltTransformer
     public TimeSpan? RegexMatchTimeout { get; set; }
 
     /// <summary>
+    /// Longest string one string-building operation may produce; see
+    /// <see cref="XsltTransformOptions.MaxStringLength"/>. Default: <c>null</c> (no limit).
+    /// </summary>
+    public int? MaxStringLength { get; set; }
+
+    /// <summary>
     /// Pre-fetched contents for URIs that <c>xsl:import</c> / <c>xsl:include</c> /
     /// <c>fn:doc()</c> would otherwise need to fetch over HTTP synchronously.
     /// Required on Blazor WebAssembly, which cannot block the calling thread; ignored
@@ -1468,6 +1474,7 @@ public sealed class XsltTransformer
             ResourcePolicy = ResourcePolicy,
             AllowedOutputMethods = AllowedOutputMethods,
             RegexMatchTimeout = RegexMatchTimeout,
+            MaxStringLength = MaxStringLength,
             PreloadedResources = PreloadedResources,
             XQueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal),
             ReturnRawXdm = rawBox != null,

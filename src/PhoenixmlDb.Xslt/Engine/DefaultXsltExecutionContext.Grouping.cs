@@ -253,7 +253,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// remove zero-length text nodes, then join remaining items with separator.
     /// Plain strings (from xsl:sequence of atomic values) are NOT merged with text nodes.
     /// </summary>
-    private static string MergeSimpleContent(List<object?> items, string separator)
+    private string MergeSimpleContent(List<object?> items, string separator)
     {
         // Step 1: Merge adjacent text nodes (TextNodeItem, XdmText, XdmNode text)
         var merged = new List<object?>();
@@ -263,11 +263,13 @@ internal sealed partial class DefaultXsltExecutionContext
             if (item is Xdm.TextNodeItem tni)
             {
                 textRun ??= new System.Text.StringBuilder();
+                CheckStringLength((long)textRun.Length + (tni.Value?.Length ?? 0), "Text node content");
                 textRun.Append(tni.Value);
             }
             else if (item is Xdm.Nodes.XdmText xt)
             {
                 textRun ??= new System.Text.StringBuilder();
+                CheckStringLength((long)textRun.Length + (xt.Value?.Length ?? 0), "Text node content");
                 textRun.Append(xt.Value);
             }
             else
@@ -287,7 +289,7 @@ internal sealed partial class DefaultXsltExecutionContext
             merged.Add(textRun.ToString());
 
         // Step 3: Convert to strings and join with separator
-        return string.Join(separator, merged.Select(StringValueOf));
+        return JoinWithinLimit(separator, merged.Select(StringValueOf), "Simple content");
     }
 
 

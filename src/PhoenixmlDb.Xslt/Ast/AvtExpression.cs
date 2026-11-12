@@ -16,10 +16,10 @@ public sealed class AvtExpression : AvtPart
     public override async ValueTask<string> EvaluateAsync(XsltExecutionContext context)
     {
         var result = await context.EvaluateAsync(Expression).ConfigureAwait(false);
-        return StringifyResult(result, context.IsBackwardsCompatibleMode);
+        return StringifyResult(result, context.IsBackwardsCompatibleMode, context.MaxStringLength);
     }
 
-    private static string StringifyResult(object? result, bool backwardsCompatible = false)
+    private static string StringifyResult(object? result, bool backwardsCompatible = false, int? maxLength = null)
     {
         return result switch
         {
@@ -49,9 +49,9 @@ public sealed class AvtExpression : AvtPart
             TimeSpan ts => System.Xml.XmlConvert.ToString(ts),
             // XSLT 2.0 spec §7.6.2: in backwards-compat mode, only the first item is used
             object[] arr when backwardsCompatible => arr.Length > 0 ? StringifyResult(arr[0]) : "",
-            object[] arr => StringifySequence(arr),
+            object[] arr => StringifySequence(arr, maxLength),
             IEnumerable<object?> seq when backwardsCompatible => StringifyResult(seq.FirstOrDefault()),
-            IEnumerable<object?> seq => StringifySequence(seq.ToArray()),
+            IEnumerable<object?> seq => StringifySequence(seq.ToArray(), maxLength),
             _ => result.ToString() ?? ""
         };
     }
@@ -62,7 +62,7 @@ public sealed class AvtExpression : AvtPart
     /// 2. Remove zero-length text nodes
     /// 3. Join remaining items with space separator
     /// </summary>
-    private static string StringifySequence(object?[] items)
+    private static string StringifySequence(object?[] items, int? maxLength)
     {
         // A text node counts whether it is still the internal TextNodeItem marker or a
         // materialized XdmText. Matching only the marker meant a function that returned real text
@@ -88,7 +88,7 @@ public sealed class AvtExpression : AvtPart
         }
 
         if (!hasTextNodeItems)
-            return string.Join(" ", items.Select(x => StringifyResult(x)));
+            return JoinWithinLimit(items.Select(x => StringifyResult(x)), maxLength);
 
         // §5.7.2: merge adjacent TextNodeItems, remove zero-length ones, join with space
         var processed = new List<string>();
@@ -99,7 +99,10 @@ public sealed class AvtExpression : AvtPart
             if (IsTextNode(item))
             {
                 textRun ??= new System.Text.StringBuilder();
-                textRun.Append(TextValue(item));
+                var text = TextValue(item);
+                if (maxLength is int max && (long)textRun.Length + text.Length > max)
+                    throw TooLong(max, (long)textRun.Length + text.Length);
+                textRun.Append(text);
             }
             else
             {
@@ -117,8 +120,31 @@ public sealed class AvtExpression : AvtPart
         if (textRun != null && textRun.Length > 0)
             processed.Add(textRun.ToString());
 
-        return string.Join(" ", processed);
+        return JoinWithinLimit(processed, maxLength);
     }
+
+    /// <summary>Joins with single spaces, and stops before the result passes <paramref name="maxLength"/>.</summary>
+    private static string JoinWithinLimit(IEnumerable<string> parts, int? maxLength)
+    {
+        if (maxLength is not int max)
+            return string.Join(" ", parts);
+        var sb = new System.Text.StringBuilder();
+        var first = true;
+        foreach (var part in parts)
+        {
+            long next = (long)sb.Length + (first ? 0 : 1) + part.Length;
+            if (next > max)
+                throw TooLong(max, next);
+            if (!first) sb.Append(' ');
+            sb.Append(part);
+            first = false;
+        }
+        return sb.ToString();
+    }
+
+    private static Engine.XsltException TooLong(int max, long length)
+        => new($"FOER0000: A value template would build a string of at least {length} characters, " +
+               $"more than XsltTransformOptions.MaxStringLength ({max})");
 
     private static string FormatDateTimeOffset(DateTimeOffset dto)
     {
