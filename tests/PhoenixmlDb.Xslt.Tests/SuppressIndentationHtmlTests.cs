@@ -69,8 +69,8 @@ public class SuppressIndentationHtmlTests
         var big = sb.ToString();
 
         var work = Transform(Stylesheet(method, big));
-        var completed = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(60)));
-        completed.Should().BeSameAs(work, "suppress-indentation serialization must terminate, not hang");
+        var completed = await TaskTimeout.FinishesWithinAsync(work, TimeSpan.FromSeconds(60));
+        completed.Should().BeTrue("suppress-indentation serialization must terminate, not hang");
 
         var result = await work;
         result.Should().Contain($"<p>{big}</p>");
