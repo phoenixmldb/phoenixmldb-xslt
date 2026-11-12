@@ -79,4 +79,59 @@ public sealed class EvaluateFunctionAvailabilityTests
     [Fact]
     public async Task PrivateFunctionItemPassedIn_IsCallable()
         => (await EvaluateAsync("$fn(21)", """<xsl:with-param name="fn" select="f:unstated#1"/>""")).Should().Be("42");
+
+    // fn:function-lookup reaches the same functions by a dynamic name. Inside the target it found
+    // and called document(), which a direct call refuses: two spellings of one call disagreed
+    // (W3C evaluate-048, spec bug 30049). The document is a local file, so no test needs a network.
+    private static string LocalDocumentUri()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"phx-eval-lookup-{Guid.NewGuid():N}.xml");
+        File.WriteAllText(path, "<found/>");
+        return new Uri(path).AbsoluteUri;
+    }
+
+    private const string Fn = "'http://www.w3.org/2005/xpath-functions'";
+
+    [Theory]
+    [InlineData("document")]
+    [InlineData("key")]
+    [InlineData("current")]
+    [InlineData("system-property")]
+    public async Task FunctionLookupOfXsltFunction_InTarget_IsXTDE3160(string local)
+    {
+        var uri = LocalDocumentUri();
+        var call = local switch
+        {
+            "document" => $"('{uri}')",
+            "key" => "('k', 'a')",
+            "current" => "()",
+            _ => "('xsl:version')",
+        };
+        var arity = local switch { "key" => 2, "current" => 0, _ => 1 };
+        var act = () => EvaluateAsync($"function-lookup(QName({Fn}, '{local}'), {arity}){call}");
+        (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("XTDE3160");
+    }
+
+    [Fact]
+    public async Task FunctionLookupOfFoFunction_InTarget_StillWorks()
+        => (await EvaluateAsync($"function-lookup(QName({Fn}, 'abs'), 1)(-2)")).Should().Be("2");
+
+    /// <summary>document#1 made in the stylesheet and passed in is a value, and callable.</summary>
+    [Fact]
+    public async Task DocumentItemPassedIn_IsCallable()
+    {
+        var uri = LocalDocumentUri();
+        (await EvaluateAsync($"name($d('{uri}')/*)", """<xsl:with-param name="d" select="document#1"/>"""))
+            .Should().Be("found");
+    }
+
+    /// <summary>function-lookup#2 made in the stylesheet has the stylesheet's static context.</summary>
+    [Fact]
+    public async Task FunctionLookupItemPassedIn_FindsDocument()
+    {
+        var uri = LocalDocumentUri();
+        (await EvaluateAsync($"name($fl(QName({Fn}, 'document'), 1)('{uri}')/*)",
+                """<xsl:with-param name="fl" select="function-lookup#2"/>"""))
+            .Should().Be("found");
+    }
 }

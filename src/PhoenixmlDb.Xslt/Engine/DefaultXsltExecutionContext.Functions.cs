@@ -3033,21 +3033,9 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         internal string? Found { get; private set; }
 
-        // The XSLT-defined functions in the fn namespace (XSLT 3.0 Appendix G.2) minus those that
-        // F&O 3.1 also defines (json-to-xml, xml-to-json, collation-key), which §10.4.1 keeps.
-        private static readonly HashSet<string> XsltOnlyFunctions = new(StringComparer.Ordinal)
-        {
-            "accumulator-after", "accumulator-before", "available-system-properties", "copy-of",
-            "current", "current-group", "current-grouping-key", "current-merge-group",
-            "current-merge-key", "current-output-uri", "document", "element-available",
-            "function-available", "key", "regex-group", "snapshot", "stream-available",
-            "system-property", "type-available", "unparsed-entity-public-id", "unparsed-entity-uri",
-        };
-
         private void Check(QName name, int arity)
         {
-            if ((name.Namespace == NamespaceId.None || name.Namespace == NamespaceId.Fn)
-                && XsltOnlyFunctions.Contains(name.LocalName))
+            if (XsltEvaluateUnavailable.IsXsltOnlyFunction(name))
             {
                 Found ??= name.LocalName;
                 return;

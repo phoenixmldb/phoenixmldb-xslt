@@ -1087,6 +1087,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         lib.Register(new XsltCurrentMergeKeyFunction(this));
         lib.Register(new XsltRegexGroupFunction(this));
         lib.Register(new XsltFunctionAvailableFunction(lib));
+        lib.Register(new XsltFunctionLookupFunction());
         lib.Register(new XsltElementAvailableFunction(_stylesheet.ExtensionElementPrefixes, () => DynamicEvaluationDisabled));
         lib.Register(new XsltSystemPropertyFunction(() => DynamicEvaluationDisabled));
         lib.Register(new XsltCollection0Function(this));
