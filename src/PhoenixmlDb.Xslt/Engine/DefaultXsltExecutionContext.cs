@@ -2802,7 +2802,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 // watcher captures), not text nodes, and those were joined with spaces (W3C
                 // si-value-of-047). Their string values are the text nodes' values; for real text
                 // nodes this is what the merge below produces anyway.
-                value = string.Concat(textArr.Where(i => i is not null).Select(i => StringValueOf(i!)));
+                value = JoinWithinLimit("", textArr.Where(i => i is not null).Select(i => StringValueOf(i!)), "xsl:value-of");
             }
             else if (result is object?[] arr)
             {
@@ -3149,6 +3149,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             var result = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
             value = StringValueOf(result);
+            CheckStringLength(value.Length, "xsl:processing-instruction");
         }
         else if (instruction.Content != null)
         {

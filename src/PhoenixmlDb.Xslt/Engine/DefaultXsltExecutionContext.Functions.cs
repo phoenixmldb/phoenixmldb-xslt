@@ -2123,7 +2123,11 @@ internal sealed partial class DefaultXsltExecutionContext
 
         var sb = new StringBuilder();
         foreach (var part in parts)
-            sb.Append(await part.EvaluateAsync(this).ConfigureAwait(false));
+        {
+            var text = await part.EvaluateAsync(this).ConfigureAwait(false);
+            CheckStringLength((long)sb.Length + text.Length, "An attribute value template");
+            sb.Append(text);
+        }
         return sb.ToString();
     }
 

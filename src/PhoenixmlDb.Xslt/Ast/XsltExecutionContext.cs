@@ -17,6 +17,9 @@ public abstract class XsltExecutionContext
     /// <summary>Whether the current context is in XSLT 1.0 backwards-compatible mode.</summary>
     public abstract bool IsBackwardsCompatibleMode { get; }
 
+    /// <summary>See <see cref="Engine.XsltTransformOptions.MaxStringLength"/>; <c>null</c> for no limit.</summary>
+    internal virtual int? MaxStringLength => null;
+
     /// <summary>Push an effective version override onto the version stack.</summary>
     public virtual void PushVersion(string version) { }
 

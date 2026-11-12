@@ -803,8 +803,40 @@ internal sealed partial class DefaultXsltExecutionContext
     internal IReadOnlySet<OutputMethod>? AllowedOutputMethods { get; }
 
     // Limits for the XPath evaluations this transformation runs. Only the regex match timeout
-    // differs from the engine defaults; see XsltTransformOptions.RegexMatchTimeout.
+    // and the string length limit differ from the engine defaults; see XsltTransformOptions.
     private readonly PhoenixmlDb.XQuery.Execution.QueryExecutionLimits _queryLimits;
+
+    /// <summary>
+    /// Throws FOER0000 when a string of <paramref name="length"/> characters that
+    /// <paramref name="operation"/> would build is longer than <see cref="XsltTransformOptions.MaxStringLength"/>.
+    /// </summary>
+    private void CheckStringLength(long length, string operation)
+    {
+        if (_queryLimits.MaxStringLength is int max && length > max)
+            throw new XsltException(
+                $"FOER0000: {operation} would build a string of at least {length} characters, more than " +
+                $"XsltTransformOptions.MaxStringLength ({max})");
+    }
+
+    /// <summary>
+    /// Joins <paramref name="parts"/> with <paramref name="separator"/>, and stops before the
+    /// result goes past <see cref="XsltTransformOptions.MaxStringLength"/>.
+    /// </summary>
+    private string JoinWithinLimit(string separator, IEnumerable<string> parts, string operation)
+    {
+        if (_queryLimits.MaxStringLength is null)
+            return string.Join(separator, parts);
+        var sb = new System.Text.StringBuilder();
+        var first = true;
+        foreach (var part in parts)
+        {
+            CheckStringLength((long)sb.Length + (first ? 0 : separator.Length) + part.Length, operation);
+            if (!first) sb.Append(separator);
+            sb.Append(part);
+            first = false;
+        }
+        return sb.ToString();
+    }
 
     /// <summary>
     /// The error for a regex match that ran past <see cref="XsltTransformOptions.RegexMatchTimeout"/>:
@@ -1149,8 +1181,13 @@ internal sealed partial class DefaultXsltExecutionContext
         _ct = options.CancellationToken;
         AllowedOutputMethods = options.AllowedOutputMethods;
         _queryLimits = options.RegexMatchTimeout == PhoenixmlDb.XQuery.Execution.QueryExecutionLimits.Default.RegexMatchTimeout
+                       && options.MaxStringLength == PhoenixmlDb.XQuery.Execution.QueryExecutionLimits.Default.MaxStringLength
             ? PhoenixmlDb.XQuery.Execution.QueryExecutionLimits.Default
-            : new PhoenixmlDb.XQuery.Execution.QueryExecutionLimits { RegexMatchTimeout = options.RegexMatchTimeout };
+            : new PhoenixmlDb.XQuery.Execution.QueryExecutionLimits
+            {
+                RegexMatchTimeout = options.RegexMatchTimeout,
+                MaxStringLength = options.MaxStringLength,
+            };
         // Validation matches the schema's pattern facets inside the provider, where no
         // per-evaluation limit reaches.
         if (options.RegexMatchTimeout is { } regexLimit)
