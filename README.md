@@ -34,9 +34,8 @@ raised; the confirming run is the one committed. Eleven chunks, **zero timeouts*
 **Since 2026-09-17: 492 failing → 155**, on the same 10,839-case denominator, so the two figures are
 directly comparable. The rest of this section is the history behind that denominator.
 
-The same harness runs QT3 through the XSLT engine's XQuery: **30,009/31,024 (96.7%), 1,015 failing**.
-That's a different QT3 count from the XQuery repo's own figure, because each harness measures a
-different case set.
+QT3 (XQuery) is not measured in this repo. Its figure comes from the XQuery repo's runner:
+see [phoenixmldb-xquery](https://github.com/phoenixmldb/phoenixmldb-xquery).
 
 > **History (2026-09-17): the percentage fell and the engine improved.** It read 97.1% against a denominator of 10,672
 > on 2026-09-15. The harness ran two sets the W3C catalog does not declare, skipped cases in one it
@@ -65,14 +64,6 @@ worse than a smaller number that counts it, so the smaller honest one is publish
 project reaches XQuery through the `src/PhoenixmlDb.XQuery` symlink, so a local run measures
 whatever that working tree is checked out at. The figure above is against `phoenixmldb-xquery`
 **main** at 1.8.0, which is the intended basis.
-
-**A worked example of why the basis is stated and not assumed.** That checkout was found sitting
-detached at the v1.7.0 release commit, 27 behind main, left over from an A/B three days earlier.
-Measured there, the suite reported **21 test-sets below baseline, 34 cases** — which reads
-exactly like a regression, and QT3 alone accounted for 28 of it. Restoring the checkout to main
-cleared 18 of the 21 sets and returned QT3 to 29,534 on the nose. Same engine throughout; only
-the dependency source had moved. A per-set gate cannot distinguish "the code got worse" from
-"a sibling checkout moved", so the environment has to be part of the reading.
 
 The baseline records the **minimum across full runs, not the best one seen**. Repeated sweeps
 agree on every set but one: `insn/call-template` alternates between 38 and 37, and the baseline
@@ -164,9 +155,8 @@ tracked in [BUGS.md](BUGS.md).
 ### Reproducing these numbers
 
 ```bash
-./scripts/fetch-conformance-suites.sh   # clones xslt30-test + qt3tests into TestData/
-./scripts/conformance.sh                # W3C XSLT groups; writes conformance-results/summary.txt
-./scripts/conformance.sh --all          # adds the XQuery (QT3) suite, as CI runs it
+./scripts/fetch-conformance-suites.sh   # clones xslt30-test into TestData/
+./scripts/conformance.sh                # W3C XSLT groups, as CI runs it; writes conformance-results/summary.txt
 phxspec --census $(find test -maxdepth 1 -name '*.xspec' | sort)   # from an xspec checkout
 ```
 

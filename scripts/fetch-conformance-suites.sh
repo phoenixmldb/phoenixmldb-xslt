@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# Fetches the W3C conformance suites this repo measures against.
+# Fetches the W3C XSLT 3.0 conformance suite this repo measures against. QT3 is measured
+# in the XQuery repo, so it is not fetched here.
 #
-# The suites are pinned to exact revisions. That pin is the point: a conformance
+# The suite is pinned to an exact revision. That pin is the point: a conformance
 # percentage is not reproducible, and two runs are not comparable, unless the suite
 # revision is known. Bump a SHA deliberately, in its own commit, and re-baseline.
 #
-# The suites are never committed (~470 MB, ~30,000 files) and never copied into the
-# test output — see ConformanceSuites.cs. Point the tests at them with:
+# The suite is never committed (~470 MB, ~30,000 files) and never copied into the
+# test output — see ConformanceSuites.cs. Point the tests at it with:
 #
 #   export XSLT30_TEST_SUITE=<repo>/tests/PhoenixmlDb.Conformance.Tests/TestData/xslt30-test
-#   export QT3_TEST_SUITE=<repo>/tests/PhoenixmlDb.Conformance.Tests/TestData/qt3tests
 #
-# Without those, the fixtures fall back to the same paths beside the test assembly,
-# and if neither exists the suites report as unavailable and the tests skip quietly.
+# Without it, the fixtures fall back to the same path beside the test assembly,
+# and if neither exists the suite reports as unavailable and the tests skip quietly.
 set -euo pipefail
 
 XSLT30_SHA=fddf1cf920087e791f13315d68dfbe874d97dc56
-QT3_SHA=201a6e466940cdfc727f4babfedcde5332b9f578
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$ROOT/tests/PhoenixmlDb.Conformance.Tests/TestData"
@@ -43,13 +42,11 @@ fetch() {
 
 mkdir -p "$DEST"
 fetch xslt30-test https://github.com/w3c/xslt30-test.git "$XSLT30_SHA"
-fetch qt3tests    https://github.com/w3c/qt3tests.git    "$QT3_SHA"
 
 cat <<EOF
 
-Suites ready under $DEST
+Suite ready under $DEST
 Run conformance with:
   XSLT30_TEST_SUITE="$DEST/xslt30-test" \\
-  QT3_TEST_SUITE="$DEST/qt3tests" \\
   dotnet test tests/PhoenixmlDb.Conformance.Tests
 EOF

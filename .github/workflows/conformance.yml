@@ -1,14 +1,16 @@
 name: Conformance
 
-# Split out from ci.yml on cost, not importance. The W3C suites are ~470 MB and the
-# XSLT half alone runs ~7 min per target framework, the QT3 half longer again — too
-# slow to sit in front of every push. ci.yml keeps the fast suites and is what gates
-# the NuGet publish; this workflow is the deeper, slower check.
+# Split out from ci.yml on cost, not importance. The W3C XSLT suite is ~470 MB and a
+# full sweep is too slow to sit in front of every push. ci.yml keeps the fast suites and
+# is what gates the NuGet publish; this workflow is the deeper, slower check.
 #
 # NOTE: running on a tag records conformance for that release but does NOT gate the
 # publish, which lives in ci.yml and completes independently. That is deliberate —
-# gating a release on a ~30 min run was judged not worth it. Revisit if a release
-# ever ships a conformance regression.
+# gating a release on this run was judged not worth it. Revisit if a release ever
+# ships a conformance regression.
+#
+# QT3 is not run here. The XQuery repo runs and gates it with its own runner, so there
+# is one QT3 figure from one harness.
 
 on:
   schedule:
@@ -34,10 +36,10 @@ env:
 jobs:
   conformance:
     runs-on: ${{ fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
-    # Measured, not guessed: the engine repo's equivalent full run took 1h29m, and this
-    # repo's exceeded 40 min before a local timeout cut it short — QT3 is the long pole
-    # in both. 90 was set before either had ever completed and would kill the job.
-    timeout-minutes: 150
+    # Measured: run 43012598353 (2026-11-11) took 10 min in all, of which the eleven XSLT
+    # chunks were ~2.5 min; setup, build and the suite fetch are the rest. 60 leaves room
+    # for a slow or cold runner and still stops a stuck job.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -70,7 +72,7 @@ jobs:
       # seconds having executed nothing. Fail loudly instead.
       - name: Verify suites are present
         run: |
-          for s in xslt30-test qt3tests; do
+          for s in xslt30-test; do
             if [ ! -e "$SUITE_DIR/$s/catalog.xml" ]; then
               echo "::error::$s missing or incomplete at $SUITE_DIR/$s — refusing to report a green run that tested nothing"
               exit 1
@@ -87,10 +89,6 @@ jobs:
       # burned 47 minutes and reported nothing usable. Chunked, a bad chunk costs its own
       # timeout and the rest still run, still report, and still upload.
       #
-      # --all is XSLT chunks PLUS xqts. The old command had no filter, so it ran the
-      # XQuery suite too; the script's bare default is XSLT-only, and using it here would
-      # have quietly dropped QT3 coverage from the nightly.
-      #
       # net10.0 only, which the script hard-codes. The library multi-targets, but
       # conformance is a property of the engine rather than the target framework, and
       # running both doubles an already-long job.
@@ -101,15 +99,11 @@ jobs:
       - name: Conformance
         env:
           CONFORMANCE_CONFIG: Release
-          # Measured per chunk on this HEAD: slowest XSLT chunk is strm1 at ~8m30s, the
-          # rest well under. 15 min leaves headroom on a slower runner while still cutting
-          # off a chunk that is genuinely stuck.
-          # xqts needs well over 900s; it was being killed at 99.4% complete every run,
-          # which is what turned this whole workflow red. Everything else finishes in under a
-          # minute, so a longer cap costs nothing for the other eleven chunks.
-          CONFORMANCE_TIMEOUT: '2400'
+          # Per chunk. The slowest XSLT chunk took 27 s in run 43012598353 and ~8m30s on
+          # the slowest runner seen. 15 min leaves headroom and still cuts off a stuck chunk.
+          CONFORMANCE_TIMEOUT: '900'
           CONFORMANCE_OUT: ${{ github.workspace }}/conformance-results
-        run: ./scripts/conformance.sh --all
+        run: ./scripts/conformance.sh
 
       - name: Upload results
         if: always()

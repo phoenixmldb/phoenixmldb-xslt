@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Runs the W3C conformance suites one CHUNK at a time, serially.
+# Runs the W3C XSLT 3.0 conformance suite one CHUNK at a time, serially.
+#
+# QT3 (XQuery) is not run here: the XQuery repo runs and gates it with its own runner.
 #
 # Why chunks. A single `dotnet test --filter "Suite=XSLT"` runs every group in one
 # process and prints nothing until it finishes, so a run that is merely slow is
@@ -22,8 +24,7 @@
 #   ./scripts/conformance.sh                # every XSLT group, in order
 #   ./scripts/conformance.sh expr           # one group
 #   ./scripts/conformance.sh expr fn insn   # several
-#   ./scripts/conformance.sh xqts           # the XQuery (QT3) suite
-#   ./scripts/conformance.sh --all          # XSLT chunks + xqts (what CI runs)
+#   ./scripts/conformance.sh --all          # the same as no arguments (kept for old notes)
 #   ./scripts/conformance.sh --list         # show the chunks
 #
 # Env:
@@ -75,12 +76,6 @@ PROJ="$ROOT/tests/PhoenixmlDb.Conformance.Tests"
 SUITES="$PROJ/TestData"
 TIMEOUT="${CONFORMANCE_TIMEOUT:-900}"
 
-# xqts is 31,470 cases — an order of magnitude past any XSLT chunk — and takes ~37 min on this
-# machine. Under the 900 s default it was killed every time and reported "TIMEOUT", which read
-# as a hang and sat unexplained for weeks; it is NOT hung, it is big, exactly as the strm note
-# below says of streaming. Give it its own budget rather than pushing the global default up and
-# letting a genuinely wedged XSLT chunk sit for an hour. CONFORMANCE_TIMEOUT still overrides.
-XQTS_TIMEOUT="${CONFORMANCE_XQTS_TIMEOUT:-3600}"
 OUT="${CONFORMANCE_OUT:-$ROOT/conformance-results}"
 CONFIG="${CONFORMANCE_CONFIG:-Release}"
 
@@ -105,7 +100,6 @@ ALL_CHUNKS=(attr decl type sandp fn strm1 strm2 strm3 expr misc insn)
 # `XsltStreamingTests` also substring-matches XsltStreamingTests2 and 3.
 filter_for() {
   case "$1" in
-    xqts)  echo "Suite=XQTS" ;;
     strm1) echo "FullyQualifiedName~XsltStreamingTests." ;;
     strm2) echo "FullyQualifiedName~XsltStreamingTests2." ;;
     strm3) echo "FullyQualifiedName~XsltStreamingTests3." ;;
@@ -113,27 +107,22 @@ filter_for() {
   esac
 }
 
-usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [ "${1:-}" = "--list" ] || [ "${1:-}" = "-l" ]; then
   printf 'XSLT chunks (in run order): %s\n' "${ALL_CHUNKS[*]}"
-  printf 'XQuery suite:               xqts   (included by --all)\n'
   exit 0
 fi
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then usage; exit 0; fi
 
-# --all adds the QT3/XQuery suite to the XSLT chunks. It is NOT the bare default: locally
-# you almost always want the XSLT sweep, and xqts roughly doubles the wall clock. CI uses
-# --all so the nightly covers exactly what the pre-chunking `dotnet test <project>` did —
-# that command had no filter, so it ran XQTS too, and defaulting to XSLT-only here would
-# have quietly dropped XQuery coverage from the nightly.
-if [ "${1:-}" = "--all" ]; then set -- "${ALL_CHUNKS[@]}" xqts; fi
+# --all is the same as no arguments: every XSLT chunk.
+if [ "${1:-}" = "--all" ]; then set -- "${ALL_CHUNKS[@]}"; fi
 
 # A missing suite does NOT fail the fixtures — IsTestDataAvailable goes false and every
 # test returns green without executing anything. A green run that tested nothing is the
 # single most expensive failure mode here, so refuse to start.
 missing=0
-for s in xslt30-test qt3tests; do
+for s in xslt30-test; do
   if [ ! -e "$SUITES/$s/catalog.xml" ]; then
     echo "error: $s missing or incomplete at $SUITES/$s" >&2
     missing=1
@@ -146,7 +135,6 @@ if [ "$missing" = 1 ]; then
 fi
 
 export XSLT30_TEST_SUITE="$SUITES/xslt30-test"
-export QT3_TEST_SUITE="$SUITES/qt3tests"
 # ICU is mandatory: invariant globalization silently changes collation and
 # normalize-unicode() results rather than failing, which would quietly move the score.
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
@@ -166,10 +154,10 @@ CHUNKS=("${expanded[@]}")
 # nothing, and look like an infrastructure hiccup rather than the mistake it is.
 for g in "${CHUNKS[@]}"; do
   ok=0
-  for k in "${ALL_CHUNKS[@]}" xqts; do [ "$g" = "$k" ] && ok=1 && break; done
+  for k in "${ALL_CHUNKS[@]}"; do [ "$g" = "$k" ] && ok=1 && break; done
   if [ $ok -eq 0 ]; then
     echo "error: unknown chunk '$g'" >&2
-    echo "valid: ${ALL_CHUNKS[*]} xqts" >&2
+    echo "valid: ${ALL_CHUNKS[*]}" >&2
     exit 2
   fi
 done
@@ -213,7 +201,7 @@ tree_state() { # repo dir
   else echo "$sha (dirty: $changed; src/ clean)$note"; fi
 }
 
-for s in xslt30-test qt3tests; do
+for s in xslt30-test; do
   rev=$(git -C "$SUITES/$s" rev-parse --short HEAD 2>/dev/null || echo "unpinned")
   echo "$s @ $rev" | tee -a "$OUT/summary.txt"
 done
@@ -245,9 +233,7 @@ for g in "${CHUNKS[@]}"; do
   # per-test-set tallies and the `FAILED: <case>` lines with their error codes, which is
   # the only place the real conformance score exists. Without this the sweep can report
   # nine green chunks while hundreds of individual cases fail.
-  # Per-chunk timeout: xqts needs far longer than the XSLT groups (see XQTS_TIMEOUT above).
   chunk_timeout="$TIMEOUT"
-  [ "$g" = "xqts" ] && [ -z "${CONFORMANCE_TIMEOUT:-}" ] && chunk_timeout="$XQTS_TIMEOUT"
 
   timeout "$chunk_timeout" dotnet test "$PROJ/PhoenixmlDb.Conformance.Tests.csproj" \
       -c "$CONFIG" -f net10.0 --no-build --filter "$filter" \
@@ -299,9 +285,8 @@ for g in "${CHUNKS[@]}"; do
                       awk -F/ '{p+=$1; t+=$2} END {print p+0, t+0}')"
   if [ "${ct:-0}" -gt 0 ]; then
     line="$line | $cp/$ct cases $(awk -v p="$cp" -v t="$ct" 'BEGIN{printf "%.1f%%", 100*p/t}')"
-    # The per-test-set "Results:" lines are the XSLT runner's tallies. The XQuery runner
-    # emits far more FAILED lines than it emits Results lines, so a tally that cannot
-    # account for the failures is partial — say so rather than quietly under-reporting.
+    # A tally that cannot account for the failures is partial — say so rather than quietly
+    # under-reporting.
     if [ "$nfail" -gt $((ct - cp)) ]; then
       line="$line, $nfail failed (TALLY PARTIAL — more failures than these test-sets cover)"
     else
@@ -448,8 +433,7 @@ elif [ -f "$BASELINE" ]; then
   # A set with no verdict is worse news than a set with a lower count, so it fails the run too.
   #
   # Only sets whose chunk ran are expected — a single-chunk run must not flag the rest of the
-  # baseline. Ownership: a QT3 set (no tests/ prefix) belongs to xqts; tests/<g>/ belongs to
-  # chunk <g>; the strm sub-chunks list their sets in their test classes, read from source here
+  # baseline. Ownership: tests/<g>/ belongs to chunk <g>; the strm sub-chunks list their sets in their test classes, read from source here
   # so there is no second copy of that list to drift.
   EXPECTED_STRM="$OUT/per-set-expected-strm.txt"
   : > "$EXPECTED_STRM"
@@ -469,8 +453,7 @@ elif [ -f "$BASELINE" ]; then
     FILENAME == ARGV[1] { strm[$1] = 1; next }
     FILENAME == ARGV[2] { cur[$1] = 1; next }
     {
-      if ($1 !~ /^tests\//)          owned = index(ran, " xqts ") > 0
-      else if ($1 ~ /^tests\/strm\//) owned = ($1 in strm)
+      if ($1 ~ /^tests\/strm\//)      owned = ($1 in strm)
       else { split($1, p, "/");       owned = index(ran, " " p[2] " ") > 0 }
       if (owned && !($1 in cur)) printf "  %s: baselined %d, NO RESULT this run\n", $1, $2
     }

@@ -131,7 +131,7 @@ jobs:
   # If a flaky test blocks a release, fix or quarantine the test. That is a worse day than
   # retagging and a much better one than a recall.
   #
-  # Conformance (W3C XSLT 3.0 / QT3) is not run here either: it needs a ~470 MB suite
+  # Conformance (W3C XSLT 3.0) is not run here either: it needs a ~470 MB suite
   # checkout and takes ~9 min per TFM. It lives in conformance.yml.
   test:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
