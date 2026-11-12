@@ -87,23 +87,17 @@ say "## Conformance"
 say ""
 say "Figures are only as good as their provenance, so each carries how and when it was measured."
 say ""
-# The baseline file holds BOTH suites. Summing it whole yields a blended figure that
-# describes neither — so split on the key: xslt30-test rows are paths under tests/, QT3 rows
-# are category/set names. Reporting one number for two corpora would be a new way to be
-# confidently wrong about conformance, which is the thing this file exists to stop.
+# The baseline file holds the xslt30-test sets (paths under tests/). It held QT3 rows too
+# until QT3 moved to the XQuery repo's runner; only tests/ rows are summed, so an old revision
+# or a stray row cannot blend a second corpus into the XSLT figure.
 if [ -f scripts/conformance-baseline.tsv ]; then
   read -r xp xt xn <<<"$(awk -F'\t' '$1 ~ /^tests\// {p+=$2;t+=$3;n++} END{print p+0, t+0, n+0}' scripts/conformance-baseline.tsv)"
-  read -r qp qt qn <<<"$(awk -F'\t' '$1 !~ /^tests\// {p+=$2;t+=$3;n++} END{print p+0, t+0, n+0}' scripts/conformance-baseline.tsv)"
   if [ "${xt:-0}" -gt 0 ]; then
     say "- **W3C XSLT 3.0 — $xp/$xt ($(awk -v p=$xp -v t=$xt 'BEGIN{printf "%.2f", 100*p/t}')%)** across $xn test-sets,"
     say "  from the committed per-set baseline, Release build. A ratchet, not a live run: it"
     say "  records what each set reaches every time."
   else
     say "- **W3C XSLT 3.0 — no rows in the baseline.** Not a claim of 0%."
-  fi
-  if [ "${qt:-0}" -gt 0 ]; then
-    say "- **W3C QT3 baseline — $qp/$qt ($(awk -v p=$qp -v t=$qt 'BEGIN{printf "%.2f", 100*p/t}')%)** across $qn test-sets,"
-    say "  same file, same ratchet."
   fi
 
   # A conformance percentage can move for two completely different reasons: the engine got
@@ -123,14 +117,10 @@ if [ -f scripts/conformance-baseline.tsv ]; then
       say "  nothing moved."
     fi
   else
-    read -r pxt pqt <<<"$(git show "$prev_rev:scripts/conformance-baseline.tsv" 2>/dev/null \
-      | awk -F'\t' '$1 ~ /^tests\// {x+=$3} $1 !~ /^tests\// {q+=$3} END{print x+0, q+0}')"
+    pxt="$(git show "$prev_rev:scripts/conformance-baseline.tsv" 2>/dev/null \
+      | awk -F'\t' '$1 ~ /^tests\// {x+=$3} END{print x+0}')"
     moved=""
     [ "${pxt:-0}" -gt 0 ] && [ "${pxt:-0}" -ne "${xt:-0}" ] && moved="XSLT $pxt -> $xt"
-    if [ "${pqt:-0}" -gt 0 ] && [ "${pqt:-0}" -ne "${qt:-0}" ]; then
-      [ -n "$moved" ] && moved="$moved; "
-      moved="${moved}QT3 $pqt -> $qt"
-    fi
     if [ -n "$moved" ]; then
       say "- **The denominator moved since the previous baseline revision: $moved.** A percentage"
       say "  change across this revision is partly or wholly cases entering or leaving the count,"
@@ -151,8 +141,6 @@ if [ -n "$qt3_line" ]; then
   say "- **W3C QT3 / XQuery** — ${qt3_line//\*\*/}, measured $qt3_date, Release build."
   say "  Verified reproducible from two checkout paths with different execution"
   say "  orders. Source: \`phoenixmldb-xquery/docs/CONFORMANCE.md\`."
-  say "  Do NOT cite the whole-suite test's number — it runs in catalog order with shared state,"
-  say "  scores differently, and its 95% assertion is permanently red (BUGS.md #44)."
 else
   say "- **W3C QT3 / XQuery — figure not readable** from"
   say "  \`phoenixmldb-xquery/docs/CONFORMANCE.md\`. NOT a claim that none exists."

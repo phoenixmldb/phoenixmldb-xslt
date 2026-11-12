@@ -438,9 +438,6 @@ public sealed class XsltTestFixture : IAsyncLifetime
         // tree containing nothing. Every test set then loaded 0 cases, each fixture reported
         // "all filtered by dependencies", and the suite finished "Test Run Successful, 257
         // passed" having executed no conformance case at all.
-        //
-        // The XQuery fixture next door has always probed catalog.xml. This is the same pair
-        // split down the middle, which is the shape of most of this month's harness defects.
         IsTestDataAvailable = File.Exists(Path.Combine(_testDataPath, "catalog.xml"));
 
         var config = new XsltConfiguration

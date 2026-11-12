@@ -72,8 +72,6 @@ Figures are only as good as their provenance, so each carries how and when it wa
 - **W3C XSLT 3.0 — 11406/11539 (98.85%)** across 225 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 baseline — 30348/31024 (97.82%)** across 428 test-sets,
-  same file, same ratchet.
 - **W3C QT3 / XQuery — figure not readable** from
   `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
 
