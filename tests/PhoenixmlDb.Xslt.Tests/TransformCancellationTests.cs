@@ -34,8 +34,8 @@ public class TransformCancellationTests
             catch (Exception e) { return (false, e); }
         });
         cts.CancelAfter(cancelMs);
-        var finished = await Task.WhenAny(run, Task.Delay(60_000));
-        finished.Should().BeSameAs(run, "the transformation was still running 60 s after cancellation");
+        var finished = await TaskTimeout.FinishesWithinAsync(run, TimeSpan.FromSeconds(60));
+        finished.Should().BeTrue("the transformation was still running 60 s after cancellation");
         var (cancelled, other) = await run;
         return (cancelled, sw.ElapsedMilliseconds, other);
     }
@@ -100,9 +100,9 @@ public class TransformCancellationTests
         // Task.Run: TransformAsync runs synchronously into the match, and a match with no
         // timeout would then never hand control back to the watchdog below.
         var run = Task.Run(() => t.TransformAsync("<r/>"));
-        var finished = await Task.WhenAny(run, Task.Delay(30_000));
+        var finished = await TaskTimeout.FinishesWithinAsync(run, TimeSpan.FromSeconds(30));
 
-        finished.Should().BeSameAs(run, "the match should stop at its 500 ms limit");
+        finished.Should().BeTrue("the match should stop at its 500 ms limit");
         var act = async () => await run;
         (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("FOER0000");
     }
@@ -121,9 +121,9 @@ public class TransformCancellationTests
             "<xsl:stylesheet xmlns:xsl='http://www.w3.org/1999/XSL/Transform' version='3.0'>"
             + "<xsl:template match='/'>" + instruction + "</xsl:template></xsl:stylesheet>"));
 
-        var finished = await Task.WhenAny(load, Task.Delay(TimeSpan.FromSeconds(20)));
+        var finished = await TaskTimeout.FinishesWithinAsync(load, TimeSpan.FromSeconds(20));
 
-        finished.Should().BeSameAs(load, $"the match in the {where} should stop at its 500 ms limit");
+        finished.Should().BeTrue($"the match in the {where} should stop at its 500 ms limit");
         var act = async () => await load;
         (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("time limit");
     }
@@ -139,9 +139,9 @@ public class TransformCancellationTests
             </xsl:stylesheet>
             """));
 
-        var finished = await Task.WhenAny(load, Task.Delay(TimeSpan.FromSeconds(20)));
+        var finished = await TaskTimeout.FinishesWithinAsync(load, TimeSpan.FromSeconds(20));
 
-        finished.Should().BeSameAs(load, "the match should stop at its 500 ms limit");
+        finished.Should().BeTrue("the match should stop at its 500 ms limit");
         var act = async () => await load;
         (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("time limit");
     }
@@ -169,9 +169,9 @@ public class TransformCancellationTests
         };
 
         var run = Task.Run(async () => await ((PhoenixmlDb.XQuery.Functions.ITransformProvider)provider).TransformAsync(options, qec));
-        var finished = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20)));
+        var finished = await TaskTimeout.FinishesWithinAsync(run, TimeSpan.FromSeconds(20));
 
-        finished.Should().BeSameAs(run, "the match should stop at the query's 500 ms limit");
+        finished.Should().BeTrue("the match should stop at the query's 500 ms limit");
         var act = async () => await run;
         (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("time limit");
     }
@@ -190,9 +190,9 @@ public class TransformCancellationTests
         t.SetParameter("inner", BacktrackingStylesheet);
 
         var run = Task.Run(() => t.TransformAsync("<r/>"));
-        var finished = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20)));
+        var finished = await TaskTimeout.FinishesWithinAsync(run, TimeSpan.FromSeconds(20));
 
-        finished.Should().BeSameAs(run, "the nested match should stop at the outer 500 ms limit");
+        finished.Should().BeTrue("the nested match should stop at the outer 500 ms limit");
         var act = async () => await run;
         (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("time limit");
     }
@@ -212,9 +212,9 @@ public class TransformCancellationTests
             """);
 
         var run = Task.Run(() => t.TransformAsync("<r/>"));
-        var finished = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20)));
+        var finished = await TaskTimeout.FinishesWithinAsync(run, TimeSpan.FromSeconds(20));
 
-        finished.Should().BeSameAs(run, "the match should stop at its 500 ms limit");
+        finished.Should().BeTrue("the match should stop at its 500 ms limit");
         var act = async () => await run;
         (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("time limit");
     }
@@ -247,9 +247,9 @@ public class TransformCancellationTests
 
             var t = new XsltTransformer { RegexMatchTimeout = TimeSpan.FromMilliseconds(500) };
             var load = Task.Run(() => t.LoadStylesheetAsync(main, new Uri(Path.Combine(dir, "main.xsl"))));
-            var finished = await Task.WhenAny(load, Task.Delay(TimeSpan.FromSeconds(20)));
+            var finished = await TaskTimeout.FinishesWithinAsync(load, TimeSpan.FromSeconds(20));
 
-            finished.Should().BeSameAs(load, $"the match in the {how}ed module's static {where} should stop at its 500 ms limit");
+            finished.Should().BeTrue($"the match in the {how}ed module's static {where} should stop at its 500 ms limit");
             var act = async () => await load;
             (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("time limit");
         }
@@ -272,9 +272,9 @@ public class TransformCancellationTests
             + "</xsl:stylesheet>");
 
         var run = Task.Run(() => t.TransformAsync("<r/>"));
-        var finished = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20)));
+        var finished = await TaskTimeout.FinishesWithinAsync(run, TimeSpan.FromSeconds(20));
 
-        finished.Should().BeSameAs(run, "the match should stop at its 500 ms limit");
+        finished.Should().BeTrue("the match should stop at its 500 ms limit");
         var act = async () => await run;
         (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("time limit");
     }
