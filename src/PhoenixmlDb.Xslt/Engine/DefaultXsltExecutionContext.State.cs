@@ -104,6 +104,12 @@ internal sealed partial class DefaultXsltExecutionContext
     // comparison for that body is skipped (the reparse is a known-wrong oracle for this shape).
     private bool _untypedRtfFlipDivergent;
 
+    // The type annotation an xsl:attribute type= gave an attribute of an element open on the
+    // active tree constructor, by the depth of that element and the attribute's expanded name.
+    // The attribute is written as text, which has no annotations; the element's node gets them
+    // here when it is finished (xslt#439).
+    private Dictionary<(int Depth, NamespaceId Ns, string Local), Xdm.XdmTypeName>? _tcAttributeAnnotations;
+
 
     internal readonly XsltTransformOptions _options;
 

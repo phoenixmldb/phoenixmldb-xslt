@@ -187,7 +187,8 @@ internal sealed class TreeConstructor
     /// <see cref="XdmAttribute"/> nodes registered in the store and referenced by
     /// <see cref="NodeId"/> from <see cref="XdmElement.Attributes"/>, not inline objects.
     /// </summary>
-    public void AddAttribute(NamespaceId ns, string localName, string? prefix, string value)
+    public XdmAttribute AddAttribute(NamespaceId ns, string localName, string? prefix, string value,
+        XdmTypeName? typeAnnotation = null)
     {
         if (_open.Count == 0)
             throw new InvalidOperationException("AddAttribute requires an open element.");
@@ -203,9 +204,11 @@ internal sealed class TreeConstructor
             Prefix = string.IsNullOrEmpty(prefix) ? null : prefix,
             Value = value,
             Parent = frame.Id,
+            TypeAnnotation = typeAnnotation ?? XdmTypeName.UntypedAtomic,
         };
         _store.Register(attr);
         frame.Attributes.Add(id);
+        return attr;
     }
 
     public void AppendComment(string value)

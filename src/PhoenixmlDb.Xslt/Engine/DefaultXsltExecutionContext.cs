@@ -69,8 +69,24 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         tc.SetOpenElementPrefix(colon > 0 ? name[..colon] : null);
         foreach (var (prefix, ns) in nsDecls)
             tc.AddNamespace(prefix, ns);
+        var depth = tc.Depth;
         foreach (var (ns, l, p, v) in attrs)
-            tc.AddAttribute(ns, l, p, v);
+        {
+            Xdm.XdmTypeName? annotation = null;
+            if (_tcAttributeAnnotations is { Count: > 0 } annotations && annotations.Remove((depth, ns, l), out var typeName))
+                annotation = typeName;
+            var attribute = tc.AddAttribute(ns, l, p, v, annotation);
+            if (annotation is not null && _nodeStore is not null)
+            {
+                XQuery.Execution.TypeCastHelper.AnnotatingStores.AddOrUpdate(attribute, _nodeStore);
+                // The text of this element has no annotations: the tree as built is the one to keep.
+                _untypedRtfFlipDivergent = true;
+            }
+        }
+        // What was recorded for an attribute this element did not keep belongs to no later one.
+        if (_tcAttributeAnnotations is { Count: > 0 } stale)
+            foreach (var key in stale.Keys.Where(k => k.Depth >= depth).ToList())
+                stale.Remove(key);
         if (copySourceBaseUri != null)
             tc.SetCopySourceBaseUri(copySourceBaseUri);
         tc.EndElement();
