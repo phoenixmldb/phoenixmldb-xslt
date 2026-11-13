@@ -692,6 +692,24 @@ internal sealed partial class DefaultXsltExecutionContext
             return;
         }
 
+        // The text has no annotation: the element being built on the tree constructor gets it
+        // when it is finished. An attribute of the same name written later replaces this one, so
+        // an untyped one removes what is recorded.
+        if (_activeTreeConstructor is { Depth: > 0 } tc && _nodeStore is not null)
+        {
+            var colonAt = name.IndexOf(':', StringComparison.Ordinal);
+            var attrPrefix = colonAt >= 0 ? name[..colonAt] : null;
+            var attrNs = !string.IsNullOrEmpty(explicitNsUri) ? _nodeStore.InternNamespace(explicitNsUri)
+                : attrPrefix != null && _stylesheet.Namespaces.TryGetValue(attrPrefix, out var attrPrefixUri)
+                    ? _nodeStore.InternNamespace(attrPrefixUri)
+                    : NamespaceId.None;
+            var key = (tc.Depth, attrNs, colonAt >= 0 ? name[(colonAt + 1)..] : name);
+            if (attributeAnnotation is not null)
+                (_tcAttributeAnnotations ??= [])[key] = attributeAnnotation.Value;
+            else
+                _tcAttributeAnnotations?.Remove(key);
+        }
+
         var target = _attributeCollecting ? _collectedAttributes! : _output;
         if (target == _output)
         {
