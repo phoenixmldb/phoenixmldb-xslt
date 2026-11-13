@@ -37,6 +37,12 @@ jobs:
           # because the report would look complete.
           fetch-depth: 0
 
+      # status.sh reads the sibling repos from the directory above this checkout (versions,
+      # and the QT3 figure from phoenixmldb-xquery/docs/CONFORMANCE.md). Without them every
+      # sibling version printed "?" and the QT3 figure "not readable".
+      - name: Clone sibling repos
+        run: ./scripts/clone-siblings.sh phoenixmldb-core phoenixmldb-xquery
+
       - name: Regenerate
         env:
           GH_TOKEN: ${{ github.token }}
