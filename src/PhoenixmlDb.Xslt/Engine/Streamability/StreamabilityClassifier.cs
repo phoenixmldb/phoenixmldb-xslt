@@ -1570,6 +1570,15 @@ public static class StreamabilityClassifier
             // -A/-B positive tests) without any risk of over-accept (nullary ⇒ no operand to consume).
             "current-date" or "current-time" or "current-dateTime" => FnRole.MotionlessGrounded,
 
+            // XSLT §20.3/§20.4: the questions a stylesheet asks of the processor read no input.
+            // available-system-properties() has no operand. The others atomize theirs (a name, an
+            // arity), so a literal argument is motionless and a node argument is read as by any
+            // atomizing function. They had no case here and fell to the default, so a rule for the
+            // document node that printed system-property('xsl:product-name') read the input whole.
+            "available-system-properties" => FnRole.MotionlessGrounded,
+            "system-property" or "function-available" or "element-available" or "type-available"
+                => FnRole.Atomizing,
+
             // §19.8.8: position()/last() require the size/index of the sequence being
             // filtered — knowing last() needs look-ahead to the end of a striding sequence,
             // so a predicate using them cannot be evaluated in a single forward pass. They
