@@ -1643,7 +1643,7 @@ public sealed class XsltTestRunner
         {
             var store = new PhoenixmlDb.XQuery.XdmDocumentStore();
             var engine = new PhoenixmlDb.XQuery.Execution.QueryEngine(nodeProvider: store, documentResolver: store);
-            var compiled = engine.Compile("declare variable $raw external; string(parse-xml-fragment($raw))");
+            var compiled = engine.Compile("declare variable $raw external; string(parse-xml-fragment($raw))", null, ct); // the per-case limit bounds the compile too
             if (!compiled.Success) return message;
             var ctx = engine.CreateContext(cancellationToken: ct);
             ctx.SetExternalVariable("raw", message);
@@ -1687,7 +1687,7 @@ public sealed class XsltTestRunner
                 prolog.Append("declare namespace ").Append(prefix).Append(" = \"")
                     .Append(uri.Replace("\"", "\"\"", StringComparison.Ordinal)).Append("\"; ");
             var ast = parser.Parse(prolog + "declare variable $result external; " + assertion.Value);
-            var compiled = engine.Compile(ast);
+            var compiled = engine.Compile(ast, null, ct); // the per-case limit bounds the compile too
             if (!compiled.Success) return false;
 
             var ctx = engine.CreateContext(initialContextItem: doc, cancellationToken: ct);
