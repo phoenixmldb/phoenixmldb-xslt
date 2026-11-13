@@ -1,5 +1,64 @@
 # Release History
 
+## 3.1.0 — 2026-11-12
+
+Requires PhoenixmlDb.XQuery 3.1.0 and PhoenixmlDb.Core 2.6.0. A limit on the length of built
+strings, and streaming that holds memory flat for more stylesheets. W3C XSLT: 131 failing of
+11,539, measured on a host in UTC (3.0.0: 132).
+
+### New: a limit on the length of a built string
+
+`XsltTransformOptions.MaxStringLength` and `XsltTransformer.MaxStringLength` (`int?`, default
+`null`: no limit) set the longest string, in UTF-16 code units, that one operation may build. Over
+the limit is `FOER0000`.
+
+- XPath expressions apply it through `QueryExecutionLimits.MaxStringLength`: `concat`,
+  `string-join`, `||` and the other string builders.
+- XSLT instructions that join values into one string apply it too: `xsl:value-of`, the content of
+  `xsl:attribute`, `xsl:comment`, `xsl:processing-instruction` and `xsl:namespace`, and attribute
+  and text value templates.
+- `fn:transform` passes the limit to the transformation it starts, in both directions.
+
+`MaxOutputSize` limits only the serialized result. A stylesheet, or a Schematron schema compiled to
+one, can build a very large string from no input, faster than a time limit can cancel it. A host
+that runs untrusted stylesheets sets both limits.
+
+### New: `XsltTransformer.LastTransformStreamed`
+
+A streamable stylesheet does not always stream: an entry at a named template or a function, and a
+rule for the document node that the streaming pass cannot answer, read the input whole. The
+read-only property tells whether the last transformation streamed. The `--timing` label of the
+CLI comes from it.
+
+### Streaming
+
+- **The `TextReader` overloads stream** (#464): with a streamable initial mode, they read from the
+  reader as the `Stream` overloads do. The CLI writes standard output as the result is produced:
+  `sum(root/item)` over 4 million items uses 100 MiB (3.0.0: 331 MiB).
+- **A streamed `xsl:source-document` with `use-accumulators="#all"` runs the accumulators.** In
+  3.0.0 the values on streamed elements were those of an empty tree, with no error.
+- **`accumulator-after()` of the document node streams** (#461): after `xsl:apply-templates`, and
+  as the only read of the input. 3.0.0 read the input into a tree, about 1 GiB per million items.
+- **A leading `/` in a rule for the document node is that node** (#468): in a `match="/"` rule,
+  `sum(/root/item)`, `sum(//item)` and `count(/root/item)` stream, about 100 MiB per million items
+  (3.0.0: about 800 MiB).
+- **An aggregate over a value computed from each element streams** (#462).
+- **With a caller's writer** (#472): `method="json"` output reaches the writer, and a source with
+  strict or lax validation is read whole and validated as a tree.
+
+### Other behaviour
+
+- **`fn:function-lookup` inside `xsl:evaluate` raises XTDE3160 for the XSLT-defined functions**, as
+  a direct call does (XSLT 3.0 §10.4.1; W3C evaluate-048). A `function-lookup#2` item made in the
+  stylesheet keeps the stylesheet's context.
+- A failure deep in recursion returns quickly.
+- The remarks of `TransformAsync` say that completing its task needs a free thread-pool thread.
+
+### Repository
+
+No package change: the conformance run measures the XSLT suite only (QT3 is measured in
+phoenixmldb-xquery), and the tests wait with `Task.WaitAsync` (CA2027).
+
 ## 3.0.0 — 2026-11-04
 
 Requires PhoenixmlDb.XQuery 3.0.0 and PhoenixmlDb.Core 2.6.0. Tail calls, a large drop in W3C
