@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-13 01:08 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-13 14:40 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -8,9 +8,9 @@ Generated 2026-11-13 01:08 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|---|
 | `PhoenixmlDb.Core` | 2.6.0 | 2.6.0 | current |
 | `PhoenixmlDb.XQuery` | 3.1.0 | 3.1.0 | current |
-| `PhoenixmlDb.Xslt` | 3.0.0 | 3.0.0 | current |
+| `PhoenixmlDb.Xslt` | 3.1.0 | 3.1.0 | current |
 | `xquery4` | 3.0.0 | 3.1.0 | **repo is at 3.1.0, nuget.org has 3.0.0** |
-| `xslt` | 3.0.0 | 3.0.0 | current |
+| `xslt` | 3.1.0 | 3.1.0 | current |
 
 ## Open work
 
@@ -18,8 +18,8 @@ Generated 2026-11-13 01:08 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 4 | 1 |
-| phoenixmldb-cli | 0 | 0 |
+| phoenixmldb-xslt | 4 | 0 |
+| phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
@@ -32,9 +32,9 @@ Generated 2026-11-13 01:08 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-xslt**
+**phoenixmldb-cli**
 
-- [479] release: version 3.1.0 on PhoenixmlDb.XQuery 3.1.0; RELEASES.md 3.1.0
+- [28] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
