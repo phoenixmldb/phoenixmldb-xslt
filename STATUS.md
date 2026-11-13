@@ -1,15 +1,15 @@
 # Status
 
-Generated 2026-11-13 00:01 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-13 01:08 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.6.0 | ? | **repo is at ?, nuget.org has 2.6.0** |
-| `PhoenixmlDb.XQuery` | 3.0.0 | ? | **repo is at ?, nuget.org has 3.0.0** |
+| `PhoenixmlDb.Core` | 2.6.0 | 2.6.0 | current |
+| `PhoenixmlDb.XQuery` | 3.1.0 | 3.1.0 | current |
 | `PhoenixmlDb.Xslt` | 3.0.0 | 3.0.0 | current |
-| `xquery4` | 3.0.0 | ? | **repo is at ?, nuget.org has 3.0.0** |
+| `xquery4` | 3.0.0 | 3.1.0 | **repo is at 3.1.0, nuget.org has 3.0.0** |
 | `xslt` | 3.0.0 | 3.0.0 | current |
 
 ## Open work
@@ -18,7 +18,7 @@ Generated 2026-11-13 00:01 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 4 | 0 |
+| phoenixmldb-xslt | 4 | 1 |
 | phoenixmldb-cli | 0 | 0 |
 
 ### Open issues
@@ -31,6 +31,10 @@ Generated 2026-11-13 00:01 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-xslt**
+
+- [479] release: version 3.1.0 on PhoenixmlDb.XQuery 3.1.0; RELEASES.md 3.1.0
 
 ## Defect register
 
@@ -68,8 +72,9 @@ Figures are only as good as their provenance, so each carries how and when it wa
 - **W3C XSLT 3.0 — 11406/11539 (98.85%)** across 225 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **W3C QT3 / XQuery — figure not readable** from
-  `phoenixmldb-xquery/docs/CONFORMANCE.md`. NOT a claim that none exists.
+- **W3C QT3 / XQuery** — 99.90% — 31,294 / 31,325 across all 428 catalog test-sets, measured 2026-11-02, Release build.
+  Verified reproducible from two checkout paths with different execution
+  orders. Source: `phoenixmldb-xquery/docs/CONFORMANCE.md`.
 
 ## Blocked
 
