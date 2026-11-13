@@ -63,6 +63,12 @@ if (options.ShowVersion)
     return 0;
 }
 
+if (options.UnknownArgument is { } unknownArgument)
+{
+    await Console.Error.WriteLineAsync($"Error: {unknownArgument}. Run 'xslt --help' for the options.").ConfigureAwait(true);
+    return 1;
+}
+
 if (options.InvalidValidation is { } invalidValidation)
 {
     await Console.Error.WriteLineAsync($"Error: --validation takes strict or lax, not '{invalidValidation}'").ConfigureAwait(true);
@@ -690,6 +696,7 @@ file sealed class CliOptions
     public PhoenixmlDb.Xslt.Ast.ValidationMode? SourceValidation { get; init; }
     /// <summary>The value given to <c>--validation</c> when it is neither strict nor lax.</summary>
     public string? InvalidValidation { get; init; }
+    public string? UnknownArgument { get; init; }
     public bool ShowHelp { get; init; }
     public bool ShowVersion { get; init; }
     public bool Verbose { get; init; }
@@ -728,6 +735,7 @@ file sealed class CliOptions
         var expectingValidation = false;
         PhoenixmlDb.Xslt.Ast.ValidationMode? sourceValidation = null;
         string? invalidValidation = null;
+        string? unknownArgument = null;
 
         foreach (var arg in args)
         {
@@ -816,11 +824,23 @@ file sealed class CliOptions
                         break;
                     }
 
+                    // An option this tool does not know, or a third argument, is an error. Both were
+                    // ignored: `xslt style.xsl in.xml -d out` ran without -d (there is no -d; the
+                    // option is --output-dir), and the secondary results went to the current
+                    // directory with no message.
+                    if (arg.Length > 1 && arg[0] == '-')
+                    {
+                        unknownArgument ??= $"unknown option '{arg}'";
+                        break;
+                    }
+
                     // Positional arguments: stylesheet first, then source
                     if (stylesheet == null)
                         stylesheet = arg;
                     else if (sourceFile == null)
                         sourceFile = arg;
+                    else
+                        unknownArgument ??= $"unexpected argument '{arg}' (the stylesheet and the source are already given)";
                     break;
             }
         }
@@ -842,6 +862,7 @@ file sealed class CliOptions
             StrictStreaming = strictStreaming,
             SourceValidation = sourceValidation,
             InvalidValidation = expectingValidation ? "" : invalidValidation,
+            UnknownArgument = unknownArgument,
             ShowHelp = showHelp,
             ShowVersion = showVersion,
             Verbose = verbose
