@@ -179,16 +179,19 @@ dotnet tool install -g xslt
 
 ```bash
 # Transform XML with a stylesheet
-xslt -s:stylesheet.xsl input.xml
+xslt stylesheet.xsl input.xml
 
 # Transform with parameters
-xslt -s:stylesheet.xsl -p:name=value input.xml
+xslt -p name=value stylesheet.xsl input.xml
 
 # Call a named template (no source document)
-xslt -s:stylesheet.xsl -it:main
+xslt -it main stylesheet.xsl
+
+# Write the principal result to a file, and xsl:result-document output to a directory
+xslt -o out/result.xml --output-dir out/parts stylesheet.xsl input.xml
 
 # Show timing breakdown
-xslt --timing -s:stylesheet.xsl input.xml
+xslt --timing stylesheet.xsl input.xml
 ```
 
 Run `xslt --help` for the full list of options.
