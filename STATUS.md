@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-13 14:40 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-13 23:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-11-13 14:40 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 4 | 0 |
+| phoenixmldb-xslt | 3 | 0 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
@@ -26,7 +26,6 @@ Generated 2026-11-13 14:40 UTC by `scripts/status.sh`. Do not edit by hand.
 **phoenixmldb-xslt**
 
 - [445] Nightly regression report
-- [439] attribute(N, T) is not checked against T: xsl:attribute type= loses its annotation inside an element under construction
 - [400] Serializer: indent while writing; no reparse, suppress-indentation by QName
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
