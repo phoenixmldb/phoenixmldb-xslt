@@ -402,6 +402,14 @@ internal sealed class StreamingExpressionScanner
             case FunctionCallExpression fc when IsAggregationFunction(fc):
                 var aggType = GetAggregationType(fc);
                 var pathInfo = ExtractPathFromArgument(fc.Arguments[0]);
+                // A text() tail is matched as its parent element, which is one item per
+                // element: right for the leaf's value, wrong for a count of text nodes. An
+                // element may have none (whitespace stripped) or several (mixed content):
+                // count(BOOKS/text()) was 1 with xsl:strip-space and 1 for four text nodes.
+                // Nor is the path below it registered as a sequence: that watcher matches the
+                // same parent elements.
+                if (pathInfo is { TextNodeTail: true } && aggType == WatcherAggregation.Count)
+                    return;
                 if (pathInfo != null)
                 {
                     _watchers.Add(new StreamWatcher
@@ -1500,6 +1508,11 @@ internal sealed class StreamingExpressionScanner
                                 }
                                 return null; // text() not at tail — unsupported
                             }
+                            // Any other kind test (node(), element(), comment(), ...) adds no
+                            // part to the path the matcher keys on, so the step was dropped and
+                            // the path matched its PARENT: count(BOOKS/node()) counted BOOKS.
+                            if (step.NodeTest is not NameTest)
+                                return null;
                             if (step.NodeTest is NameTest nameTest)
                             {
                                 if (pendingDescendant)
