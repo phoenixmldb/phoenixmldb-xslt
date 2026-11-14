@@ -2827,7 +2827,10 @@ public sealed class XsltTransformEngine
                 otherNames.Add((qn.Namespace, qn.LocalName));
         }
 
-        var sb = new StringBuilder(output.Length);
+        // Not sized for the whole result: one buffer that size is a single large-object-heap
+        // array, freed only by a full collection (see ApplyXmlIndentation, #411). With
+        // suppress-indentation, the html passes raised the peak of a 2.3 MB result by 10 MB.
+        var sb = new StringBuilder();
         int suppressDepth = 0; // nesting depth inside suppressed elements
         // The open elements: name, the namespace bindings in scope there, and whether suppressed.
         var open = new Stack<(string Name, Dictionary<string, string> Scope, bool Suppressed)>();
@@ -3153,8 +3156,9 @@ public sealed class XsltTransformEngine
 
     private static string ApplyHtmlIndentation(string output)
     {
-        // Simple HTML indentation: add newlines and indentation before block-level elements
-        var sb = new StringBuilder(output.Length + output.Length / 10);
+        // Simple HTML indentation: add newlines and indentation before block-level elements.
+        // Not sized for the whole result, as in RemoveSuppressedIndentation.
+        var sb = new StringBuilder();
         int depth = 0;
         int i = 0;
         while (i < output.Length)
