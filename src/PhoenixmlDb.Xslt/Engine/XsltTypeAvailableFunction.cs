@@ -33,9 +33,44 @@ internal sealed class XsltTypeAvailableFunction : PhoenixmlDb.XQuery.Ast.XQueryF
         var name = arguments[0]?.ToString() ?? "";
         // XTDE1428: Validate name is a valid EQName
         XsltFunctionValidation.ValidateQNameArgument(name, "XTDE1428", "type-available");
-        var bindings = (context as PhoenixmlDb.XQuery.Execution.QueryExecutionContext)?.PrefixNamespaceBindings;
-        var available = IsBuiltInType(name, prefix => bindings is not null && bindings.TryGetValue(prefix, out var uri) ? uri : null);
+        var queryContext = context as PhoenixmlDb.XQuery.Execution.QueryExecutionContext;
+        var bindings = queryContext?.PrefixNamespaceBindings;
+        string? Resolve(string prefix) => bindings is not null && bindings.TryGetValue(prefix, out var uri) ? uri : null;
+        var available = IsBuiltInType(name, Resolve)
+            || (queryContext?.SchemaProvider is { } schemas && IsSchemaType(name, Resolve, schemas));
         return ValueTask.FromResult<object?>(available);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="name"/> names a type of an imported schema. An unprefixed name is
+    /// in no namespace. Only the built-in types were known, so a user-defined type was never
+    /// available, even in a schema-aware stylesheet that imports it (W3C type-available-0149).
+    /// </summary>
+    internal static bool IsSchemaType(string name, Func<string, string?> resolvePrefix, PhoenixmlDb.XQuery.ISchemaProvider schemas)
+    {
+        string? ns;
+        string local;
+        if (name.StartsWith("Q{", StringComparison.Ordinal))
+        {
+            var close = name.IndexOf('}', StringComparison.Ordinal);
+            if (close < 0)
+                return false;
+            ns = name[2..close];
+            local = name[(close + 1)..];
+        }
+        else if (name.IndexOf(':', StringComparison.Ordinal) is var colon and > 0)
+        {
+            ns = resolvePrefix(name[..colon]);
+            if (ns is null)
+                return false;
+            local = name[(colon + 1)..];
+        }
+        else
+        {
+            ns = "";
+            local = name;
+        }
+        return schemas.HasSchemaType(ns, local);
     }
 
     private const string XsdNamespace = "http://www.w3.org/2001/XMLSchema";
