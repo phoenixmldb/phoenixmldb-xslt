@@ -24,6 +24,16 @@ public sealed class AvtExpression : AvtPart
         return result switch
         {
             null => "",
+            // An attribute or element with a schema type is atomized to its TYPED value, as the
+            // value of an attribute or text value template is (XSLT 3.0 §5.6): its string value
+            // was used, so {$a} for an xs:integer attribute written 0023 gave 0023, not 23
+            // (W3C cvt-025). A list type gives several values, joined with spaces.
+            XdmAttribute attr when PhoenixmlDb.XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(attr.TypeAnnotation)
+                => StringifyResult(PhoenixmlDb.XQuery.Execution.TypeCastHelper.SchemaTypedValue(attr.TypeAnnotation, attr.Value, null, attr),
+                    backwardsCompatible, maxLength),
+            XdmElement elem when PhoenixmlDb.XQuery.Execution.TypeCastHelper.HasSchemaTypedValue(elem.TypeAnnotation)
+                => StringifyResult(PhoenixmlDb.XQuery.Execution.TypeCastHelper.SchemaTypedValue(elem.TypeAnnotation, elem.StringValue, null, elem),
+                    backwardsCompatible, maxLength),
             XdmNode node => node.StringValue,
             TextNodeItem tni => tni.Value,
             // Casting xs:QName to xs:string yields the LEXICAL form (XPath 3.1 §19.2), not
