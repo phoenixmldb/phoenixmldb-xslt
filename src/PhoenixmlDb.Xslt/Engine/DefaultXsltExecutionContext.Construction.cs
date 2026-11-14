@@ -1050,8 +1050,13 @@ internal sealed partial class DefaultXsltExecutionContext
                             children.Add(cn.Id);
                             if (cn is XdmElement && docElementId == NodeId.None)
                                 docElementId = cn.Id;
-                            // Concatenate descendant text values for the document's string value
-                            stringValueBuilder.Append(cn.StringValue);
+                            // The document's string value is that of its text descendants: an
+                            // element child gives its own, a text child its text. A comment or
+                            // processing-instruction child gives nothing; its content was added,
+                            // so xsl:comment over an xsl:document wrote the comment's text too
+                            // (W3C xsl-document-0601).
+                            if (cn is XdmElement or XdmText)
+                                stringValueBuilder.Append(cn.StringValue);
                         }
                     }
                     string? docElemLocalName = docElementId != NodeId.None
