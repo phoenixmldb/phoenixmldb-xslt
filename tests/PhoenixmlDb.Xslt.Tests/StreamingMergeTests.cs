@@ -106,8 +106,8 @@ public class StreamingMergeTests
     public async Task Merge_streaming_two_for_each_source_files_kway_merges_pre_sorted_inputs()
     {
         // Drive xsl:merge through the streaming runtime: each merge-source uses
-        // for-each-source + streamable="yes" + select="item". The XmlReader path
-        // walks each file's child::item without materialising the document.
+        // for-each-source + streamable="yes" + select="a/item". The XmlReader path
+        // walks each file's a/item without materialising the document.
         var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "xsl-merge-" + System.Guid.NewGuid().ToString("N"));
         System.IO.Directory.CreateDirectory(tempDir);
         try
@@ -117,9 +117,9 @@ public class StreamingMergeTests
             await System.IO.File.WriteAllTextAsync(aPath, "<a><item n=\"1\"/><item n=\"3\"/><item n=\"5\"/></a>");
             await System.IO.File.WriteAllTextAsync(bPath, "<b><item n=\"2\"/><item n=\"4\"/><item n=\"6\"/></b>");
 
-            // The select expression on each merge-source is the *child* of the
-            // for-each-source document — i.e. <a> / <b>. The classifier requires
-            // a single child-axis name test, which matches "item".
+            // The select expression starts at the for-each-source DOCUMENT node, so its
+            // first step names the document element (<a> / <b>). It said "item", which
+            // selects nothing there; the streaming reader tested it one level too deep.
             var aUri = new System.Uri(aPath).AbsoluteUri;
             var bUri = new System.Uri(bPath).AbsoluteUri;
             var stylesheet = $$"""
@@ -127,10 +127,10 @@ public class StreamingMergeTests
                     <xsl:template match="/root">
                         <out>
                             <xsl:merge>
-                                <xsl:merge-source streamable="yes" for-each-source="'{{aUri}}'" select="item">
+                                <xsl:merge-source streamable="yes" for-each-source="'{{aUri}}'" select="a/item">
                                     <xsl:merge-key select="@n" data-type="number"/>
                                 </xsl:merge-source>
-                                <xsl:merge-source streamable="yes" for-each-source="'{{bUri}}'" select="item">
+                                <xsl:merge-source streamable="yes" for-each-source="'{{bUri}}'" select="b/item">
                                     <xsl:merge-key select="@n" data-type="number"/>
                                 </xsl:merge-source>
                                 <xsl:merge-action>
