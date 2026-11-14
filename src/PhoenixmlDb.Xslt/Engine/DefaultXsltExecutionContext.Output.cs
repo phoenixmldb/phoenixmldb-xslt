@@ -322,6 +322,10 @@ internal sealed partial class DefaultXsltExecutionContext
         return false;
     }
 
+    // How many elements of the node SerializeNode is copying enclose the current one: 0 at the
+    // node the copy starts from.
+    private int _serializeCopyDepth;
+
     private void SerializeNode(object node, bool copyNamespaces = true, bool faithfulNamespaces = false)
     {
         // SP-B slice 4: node-to-string serialization (xsl:copy-of, sequence-of-nodes, etc.)
@@ -352,6 +356,14 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     var uri = _nodeStore?.GetNamespaceUri(nsDecl.Namespace) ?? "";
                     var prefix = nsDecl.Prefix ?? "";
+
+                    // A default-namespace undeclaration (xmlns="") at the node the copy starts
+                    // from: the copy is added to a new parent and inherits its default namespace,
+                    // so the undeclaration is not copied (W3C namespace-3004, spec bug 5857). An
+                    // unprefixed element in no namespace still gets one below. Further down, the
+                    // parent is copied too, and the undeclaration is kept.
+                    if (prefix.Length == 0 && uri.Length == 0 && _serializeCopyDepth == 0)
+                        continue;
 
                     // When copy-namespaces="no", only emit namespaces that are in use
                     // (element prefix or attribute prefix). A dropped namespace must NOT be
@@ -402,7 +414,13 @@ internal sealed partial class DefaultXsltExecutionContext
                         if (string.IsNullOrEmpty(elemNsUri))
                             needsUndeclaration = true;
                     }
-                    else if (faithfulNamespaces)
+                    // Only below the top of the copy: there the parent is copied with it, and the
+                    // copy keeps the namespaces the original had. The node a copy starts from is
+                    // added to a new parent and inherits that parent's default namespace, so no
+                    // undeclaration: copy-of of a prefixed element whose source parent had a
+                    // default namespace wrote xmlns="" into a result that has one (W3C
+                    // namespace-3004, spec bug 5857).
+                    else if (faithfulNamespaces && _serializeCopyDepth > 0)
                     {
                         // Prefixed element during faithful document copy — the source had
                         // xmlns="" (which GetNamespacesInScope(All) omits during XDM parsing).
@@ -509,6 +527,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         // function doing xsl:copy-of of an element that is itself part of a copy
                         // yielded <ir:base/> where <ir:base>4</ir:base> was required.
                         _serializingElementDepth++;
+                        _serializeCopyDepth++;
                         try
                         {
                             foreach (var child in children)
@@ -517,6 +536,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         finally
                         {
                             _serializingElementDepth--;
+                            _serializeCopyDepth--;
                         }
                         PopOutputNsScope();
                         _sink.EndElement(eName);
