@@ -1707,10 +1707,13 @@ internal sealed partial class DefaultXsltExecutionContext
     /// and not streamed; the validation attribute was ignored, and the document was untyped.
     /// </summary>
     private bool ValidatesSourceDocument(XsltSourceDocument instruction)
-        => instruction.Validation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax && _schemaProvider is not null;
+        => (instruction.Validation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax || instruction.ValidationType is not null)
+            && _schemaProvider is not null;
 
     private XdmDocument ValidatedSourceDocument(XmlDocument doc, XdmInMemoryStore store, XsltSourceDocument instruction, Uri uri)
     {
+        if (instruction.ValidationType is { } type)
+            return TypeValidatedSourceDocument(doc, store, instruction, type, uri);
         var strict = instruction.Validation == Ast.ValidationMode.Strict;
         if (strict && doc.DocumentElement is { } root && !_schemaProvider!.HasElementDeclaration(root.NamespaceURI, root.LocalName))
             throw new XsltException(
@@ -1734,6 +1737,36 @@ internal sealed partial class DefaultXsltExecutionContext
         catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
         {
             throw new XsltException($"{(strict ? "XTTE1510" : "XTTE1515")}: xsl:source-document: the document is not valid: {ex.Message}",
+                instruction.Location);
+        }
+    }
+
+    /// <summary>
+    /// The document read by xsl:source-document with a <c>type</c> attribute: its document
+    /// element validated against that type (XSLT 3.0 §25.4.2), with the annotations the type
+    /// gives. Invalid is XTTE1540, as for the other instructions that validate by type.
+    /// </summary>
+    private XdmDocument TypeValidatedSourceDocument(XmlDocument doc, XdmInMemoryStore store, XsltSourceDocument instruction,
+        Ast.XsltTypeName type, Uri uri)
+    {
+        var text = new StringBuilder();
+        foreach (XmlNode child in doc.ChildNodes)
+        {
+            if (child.NodeType is not (XmlNodeType.DocumentType or XmlNodeType.XmlDeclaration))
+                text.Append(child.OuterXml);
+        }
+        var xml = text.ToString();
+        RunValidation(Ast.ValidationMode.Strict, xml, ValidationKind.Document, "xsl:source-document", instruction.Location, type);
+        try
+        {
+            var validated = _schemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd
+                ? xsd.ValidateAndAnnotate(xml, store, PhoenixmlDb.XQuery.ValidationMode.Strict, type.Namespace, type.LocalName, uri.AbsoluteUri)
+                : _schemaProvider!.ValidateAndAnnotate(xml, store, PhoenixmlDb.XQuery.ValidationMode.Strict, type.Namespace, type.LocalName);
+            return validated as XdmDocument ?? XsltTransformEngine.ConvertToXdm(doc, store, uri.AbsoluteUri);
+        }
+        catch (PhoenixmlDb.XQuery.SchemaValidationException ex)
+        {
+            throw new XsltException($"XTTE1540: xsl:source-document: the document is not valid against its type: {ex.Message}",
                 instruction.Location);
         }
     }
@@ -1773,6 +1806,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 Href = instruction.Href,
                 Streamable = true,
                 Validation = instruction.Validation,
+                ValidationType = instruction.ValidationType,
                 Content = body,
                 BaseUri = instruction.BaseUri,
                 UseAccumulators = instruction.UseAccumulators,
