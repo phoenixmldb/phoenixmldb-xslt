@@ -34,26 +34,35 @@ internal static class XsltMergeStreaming
             if (src.UseAccumulators.Count > 0) return false;
             // A validated document is read into a typed tree, as xsl:source-document's is.
             if (src.Validation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax || src.ValidationType is not null) return false;
-            if (TryGetSimpleChildStep(src.Select) == null) return false;
+            if (TryGetChildSteps(src.Select) == null) return false;
         }
         return true;
     }
 
     /// <summary>
-    /// Returns the single child-axis step inside <paramref name="select"/> when it is a
-    /// streaming-friendly path; otherwise null. Recognised shapes: a single
-    /// <see cref="PathExpression"/> whose only step has <see cref="Axis.Child"/>, a node
-    /// test and no predicates.
+    /// The node tests of <paramref name="select"/> when it is a relative path of child-axis
+    /// steps with no predicates (<c>log/day/record</c>, <c>item</c>); otherwise null. The path
+    /// starts at the document node, so its first step tests the document element.
     /// </summary>
-    internal static NodeTest? TryGetSimpleChildStep(XQueryExpression select)
+    /// <remarks>
+    /// Only a single step was accepted, and the reader then tested it against the CHILDREN of
+    /// the document element: select="item" over &lt;a&gt;&lt;item/&gt;&lt;/a&gt; merged the
+    /// items, where the path selects nothing, while "a/item", which does select them, was not
+    /// streamed at all.
+    /// </remarks>
+    internal static IReadOnlyList<NodeTest>? TryGetChildSteps(XQueryExpression select)
     {
         if (select is not PathExpression path) return null;
         if (path.InitialExpression != null) return null;
         if (path.IsAbsolute) return null;
-        if (path.Steps.Count != 1) return null;
-        var step = path.Steps[0];
-        if (step.Axis != Axis.Child) return null;
-        if (step.Predicates.Count > 0) return null;
-        return step.NodeTest;
+        if (path.Steps.Count == 0) return null;
+        var tests = new List<NodeTest>(path.Steps.Count);
+        foreach (var step in path.Steps)
+        {
+            if (step.Axis != Axis.Child) return null;
+            if (step.Predicates.Count > 0) return null;
+            tests.Add(step.NodeTest);
+        }
+        return tests;
     }
 }
