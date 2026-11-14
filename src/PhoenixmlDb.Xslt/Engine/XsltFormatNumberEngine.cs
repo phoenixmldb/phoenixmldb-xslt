@@ -144,6 +144,23 @@ internal static class XsltFormatNumberEngine
 
     internal static string Format(double value, string picture, XsltDecimalFormat df)
     {
+        // An exponent part (XPath 3.1 §4.7.4): this engine has none, so '0.0000e0' gave
+        // 123.45600 for 123.456, not 1.2346e2 (W3C format-number-069a). XQuery's fn:format-number
+        // has it; it is used when every property of the format is one BMP character, which is
+        // what its decimal format holds.
+        if (picture.Contains(df.ExponentSeparator + df.ZeroDigit, StringComparison.Ordinal)
+            && ToXQueryDecimalFormat(df) is { } properties)
+        {
+            try
+            {
+                return PhoenixmlDb.XQuery.Functions.FormatNumberFunction.FormatNumberImpl(value, picture, properties);
+            }
+            catch (PhoenixmlDb.XQuery.Execution.XQueryRuntimeException e) when (e.ErrorCode == "FODF1310")
+            {
+                throw new XsltException($"FODF1310 XTDE1310: {e.Message}");
+            }
+        }
+
         // Handle special values
         if (double.IsNaN(value))
             return df.NaN;
@@ -193,6 +210,33 @@ internal static class XsltFormatNumberEngine
         if (second.Contains(separator, StringComparison.Ordinal))
             throw new XsltException($"FODF1310 XTDE1310: The picture string contains more than one pattern separator character '{separator}'");
         return [picture[..idx], second];
+    }
+
+    /// <summary>
+    /// The format as XQuery's decimal format, or null when a property is not one BMP character.
+    /// </summary>
+    private static PhoenixmlDb.XQuery.Analysis.DecimalFormatProperties? ToXQueryDecimalFormat(XsltDecimalFormat df)
+    {
+        static bool One(string s) => s.Length == 1;
+        if (!One(df.DecimalSeparator) || !One(df.GroupingSeparator) || !One(df.MinusSign) || !One(df.Percent)
+            || !One(df.PerMille) || !One(df.ZeroDigit) || !One(df.Digit) || !One(df.PatternSeparator)
+            || !One(df.ExponentSeparator))
+            return null;
+        return new PhoenixmlDb.XQuery.Analysis.DecimalFormatProperties
+        {
+            DecimalSeparator = df.DecimalSeparator[0],
+            GroupingSeparator = df.GroupingSeparator[0],
+            Infinity = df.Infinity,
+            MinusSign = df.MinusSign[0],
+            NaN = df.NaN,
+            Percent = df.Percent[0],
+            PerMille = df.PerMille[0],
+            ZeroDigit = df.ZeroDigit[0],
+            ZeroDigitCodePoint = df.ZeroDigit[0],
+            Digit = df.Digit[0],
+            PatternSeparator = df.PatternSeparator[0],
+            ExponentSeparator = df.ExponentSeparator[0],
+        };
     }
 
     private static string FormatSubPicture(double value, string subPic, XsltDecimalFormat df, bool prependMinus)
