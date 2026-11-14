@@ -25,6 +25,12 @@ public sealed class XsltSourceDocument : XsltInstruction
     public ValidationMode Validation { get; init; } = ValidationMode.Strip;
 
     /// <summary>
+    /// The type the <c>type</c> attribute names: the document is validated against it, as
+    /// with <c>validation="strict"</c> but by type (XSLT 3.0 §25.4). Null when there is none.
+    /// </summary>
+    public XsltTypeName? ValidationType { get; init; }
+
+    /// <summary>
     /// Content to execute with the source document.
     /// </summary>
     public XsltSequenceConstructor? Content { get; init; }

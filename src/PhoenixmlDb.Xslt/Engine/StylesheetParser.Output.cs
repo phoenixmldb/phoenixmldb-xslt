@@ -199,6 +199,9 @@ public sealed partial class StylesheetParser
                 || (streamableAttr != null
                     && NormalizeYesNo(streamableAttr.Value, "streamable", "xsl:source-document", element)),
             Validation = ParseValidationMode(validationAttr) ?? Ast.ValidationMode.Strip,
+            // It was not read, so the document was not validated and stayed untyped
+            // (W3C stream-103/104, non-stream-103/104).
+            ValidationType = ParseValidationType(element.Attribute("type"), element),
             Content = element.Nodes().Any() ? ParseSequenceConstructor(element) : null,
             BaseUri = ResolveEffectiveBaseUri(element),
             UseAccumulators = useAccumulators,
@@ -222,6 +225,7 @@ public sealed partial class StylesheetParser
                     Href = result.Href,
                     Streamable = result.Streamable,
                     Validation = result.Validation,
+                    ValidationType = result.ValidationType,
                     Content = result.Content,
                     BaseUri = result.BaseUri,
                     UseAccumulators = result.UseAccumulators,
