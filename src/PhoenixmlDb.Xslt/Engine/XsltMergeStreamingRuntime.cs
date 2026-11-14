@@ -332,6 +332,25 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 // Under a resource policy: resolve, authorise, and read only what was authorised.
                 var baseUri = _ctx.StaticBaseUri is { } sb && Uri.TryCreate(sb, UriKind.Absolute, out var b) ? b : null;
+                if (baseUri == null && PhoenixmlDb.XQuery.Functions.LocationResolver.IsRelativeName(uri))
+                {
+                    // A relative URI with no base: only the host can supply it, by that name. It
+                    // was resolved against the process's working directory, offered to the host
+                    // under that path, and read from there.
+                    _ctx.ApplyEntityPolicy(settings);
+                    settings.CloseInput = true;
+                    try
+                    {
+                        if (PhoenixmlDb.XQuery.Security.ResourceGate.HostContent(policy, uri, _ctx.Caller,
+                                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument) is { } named)
+                            return XmlReader.Create(new System.IO.MemoryStream(named.ReadBytes().Bytes), settings, named.BaseUri.AbsoluteUri);
+                    }
+                    catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+                    {
+                        throw new XsltException($"FODC0002: {e.Message}");
+                    }
+                    throw new XsltException($"FODC0002: {PhoenixmlDb.XQuery.Functions.LocationResolver.NoBaseUri(uri)}");
+                }
                 var target = PhoenixmlDb.XQuery.Security.ResourcePolicy.Resolve(uri, baseUri)
                     ?? throw new XsltException($"FODC0002: Invalid merge source URI '{uri}'");
                 _ctx.ApplyEntityPolicy(settings);
@@ -366,8 +385,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 else
                 {
-                    // Bare relative path with no base — open as filesystem path.
-                    return XmlReader.Create(uri, settings);
+                    // A relative URI with no base names nothing. It was opened as a path in the
+                    // process's working directory.
+                    throw new XsltException($"FODC0002: {PhoenixmlDb.XQuery.Functions.LocationResolver.NoBaseUri(uri)}");
                 }
             }
             if (absUri.IsFile)

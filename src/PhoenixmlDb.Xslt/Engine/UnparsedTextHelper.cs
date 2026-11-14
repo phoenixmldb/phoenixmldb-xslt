@@ -31,6 +31,10 @@ internal static class UnparsedTextHelper
             // A host resolver that is the only source of resources: no file is ever opened here.
             if (policy.ResourceResolver is { SuppliesAllContent: true })
                 return null;
+            // A relative URI with no base names no file. The policy resolved it against the
+            // process's working directory, and the file found there was read.
+            if (baseUri == null && PhoenixmlDb.XQuery.Functions.LocationResolver.IsRelativeName(PhoenixmlDb.XQuery.Functions.LocationResolver.WithAuthority(href)))
+                return null;
             var authorized = policy.TryAuthorize(href, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadText, baseUri);
             return authorized is { IsFile: true } && System.IO.File.Exists(authorized.LocalPath) ? authorized.LocalPath : null;
         }
@@ -55,9 +59,9 @@ internal static class UnparsedTextHelper
             return resolved.IsFile && System.IO.File.Exists(resolved.LocalPath) ? resolved.LocalPath : null;
         }
 
-        // No base URI at all (a stylesheet loaded from a string): the current directory is the
-        // only reference point there is.
-        return System.IO.File.Exists(href) ? href : null;
+        // No base URI at all (a stylesheet loaded from a string): a relative URI names no file.
+        // It was looked for in the process's working directory.
+        return null;
     }
 
     /// <summary>

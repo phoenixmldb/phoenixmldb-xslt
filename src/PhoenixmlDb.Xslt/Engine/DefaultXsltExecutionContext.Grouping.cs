@@ -496,8 +496,19 @@ internal sealed partial class DefaultXsltExecutionContext
                         // (xml:base="../../" plus 'insn/merge/log-file-2.xml') contributed nothing.
                         uri = ResolveAgainstStaticBaseUri(uri);
                         // Under a policy only the resolver that enforces it reads.
-                        var doc = (_policyResolver is { } guarded ? guarded.ResolveDocument(uri, Caller) : _documentResolver.ResolveDocument(uri))
-                            ?? throw Error($"FODC0002: for-each-source document '{uri}' cannot be retrieved");
+                        XdmDocument? doc;
+                        try
+                        {
+                            doc = _policyResolver is { } guarded ? guarded.ResolveDocument(uri, Caller) : _documentResolver.ResolveDocument(uri);
+                        }
+                        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e) when (PhoenixmlDb.XQuery.Functions.LocationResolver.IsRelativeName(uri))
+                        {
+                            // A relative URI here has no base URI to resolve it against: FODC0002,
+                            // as when it is not found. The refusal reached the caller as is.
+                            throw Error($"FODC0002: for-each-source document '{uri}' cannot be retrieved: {e.Message}");
+                        }
+                        if (doc is null)
+                            throw Error($"FODC0002: for-each-source document '{uri}' cannot be retrieved");
                         var sourceMode = source.ValidationType is not null ? Ast.ValidationMode.Strict : source.Validation;
                         if (sourceMode is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax && _schemaProvider is not null)
                             doc = ValidateBuiltDocument(doc, sourceMode.Value, "xsl:merge-source", source.Location, source.ValidationType);

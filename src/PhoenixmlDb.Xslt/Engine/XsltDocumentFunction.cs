@@ -85,7 +85,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
                 uri = nodeBaseUri != null
                     ? ResolveUriAgainstBase(uri, nodeBaseUri)
                     : ResolveUriAgainstStaticBase(uri, qc);
-                var doc = PhoenixmlDb.XQuery.Security.ResourceGate.ResolveDocument(qc.DocumentResolver, uri, PhoenixmlDb.XQuery.Security.ResourceGate.Caller(qc));
+                var doc = ResolveDocument(qc, uri);
                 if (doc != null)
                 {
                     if (fragment != null && qc.DocumentResolver is XsltDocumentResolver xsltResolver
@@ -108,6 +108,23 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
                 throw new XsltException($"FODC0005: Cannot retrieve document at URI '{uri}'");
         }
         return ValueTask.FromResult<object?>(results.ToArray());
+    }
+
+    /// <summary>
+    /// The document at <paramref name="uri"/>. A refusal of a relative URI, which reaches here
+    /// only when there is no base URI to resolve it against, is FODC0005 like any other
+    /// document that cannot be retrieved; it reached the caller as ResourceAccessDeniedException.
+    /// </summary>
+    private static XdmDocument? ResolveDocument(PhoenixmlDb.XQuery.Execution.QueryExecutionContext context, string uri)
+    {
+        try
+        {
+            return PhoenixmlDb.XQuery.Security.ResourceGate.ResolveDocument(context.DocumentResolver!, uri, PhoenixmlDb.XQuery.Security.ResourceGate.Caller(context));
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e) when (PhoenixmlDb.XQuery.Functions.LocationResolver.IsRelativeName(uri))
+        {
+            throw new XsltException($"FODC0005: Cannot retrieve document at URI '{uri}': {e.Message}", e);
+        }
     }
 
     private static ValueTask<object?> LoadSingleDocument(object arg, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
@@ -137,7 +154,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             uri = nodeBaseUri != null
                 ? ResolveUriAgainstBase(uri, nodeBaseUri)
                 : ResolveUriAgainstStaticBase(uri, queryContext);
-            var doc = PhoenixmlDb.XQuery.Security.ResourceGate.ResolveDocument(queryContext.DocumentResolver, uri, PhoenixmlDb.XQuery.Security.ResourceGate.Caller(queryContext));
+            var doc = ResolveDocument(queryContext, uri);
             if (doc != null)
             {
                 // If a fragment identifier is present, select element by ID

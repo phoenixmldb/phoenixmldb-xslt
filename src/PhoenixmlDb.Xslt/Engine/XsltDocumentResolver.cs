@@ -101,6 +101,10 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         try
         {
             var resolvedUri = ResolveUri(uri);
+            // A relative URI with no base to resolve it against is not available. Uri.IsFile
+            // threw InvalidOperationException for it, which reached the caller as is.
+            if (!resolvedUri.IsAbsoluteUri)
+                return false;
             if (resolvedUri.IsFile)
                 return System.IO.File.Exists(resolvedUri.LocalPath);
             if (resolvedUri.Scheme == Uri.UriSchemeHttp || resolvedUri.Scheme == Uri.UriSchemeHttps)
