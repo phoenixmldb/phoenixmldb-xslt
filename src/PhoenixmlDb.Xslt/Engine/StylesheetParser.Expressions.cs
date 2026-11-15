@@ -1270,9 +1270,18 @@ public sealed partial class StylesheetParser
         /// </summary>
         private void ResolveKindTestPrefix(KindTest kindTest)
         {
-            if (kindTest.Name is not NameTest ktName || string.IsNullOrEmpty(ktName.Prefix)
-                || ktName.Prefix == "*" || ktName.NamespaceUri != null)
+            if (kindTest.Name is not NameTest ktName || ktName.NamespaceUri != null || ktName.Prefix == "*")
                 return;
+            if (string.IsNullOrEmpty(ktName.Prefix))
+            {
+                // element(elem): an unprefixed element name takes xpath-default-namespace, as the
+                // same name in a plain step does (XSLT 3.0 §5.1.2). It matched only no-namespace
+                // elements (W3C xpath-default-namespace-0702). attribute(name) does not take it.
+                if (kindTest.Kind == XdmNodeKind.Element && !ktName.IsLocalNameWildcard
+                    && GetXpathDefaultNamespace(context) is { } xdn)
+                    ktName.NamespaceUri = xdn;
+                return;
+            }
             var ktNs = context.GetNamespaceOfPrefix(ktName.Prefix)?.NamespaceName;
             if (ktNs != null)
                 ktName.NamespaceUri = ktNs;
