@@ -357,6 +357,35 @@ public sealed partial class StylesheetParser
 
 
     /// <summary>
+    /// Whether a static parameter's default value can be converted to its declared atomic type.
+    /// The coercion is lenient (it gives back a value it cannot convert), so each item is then
+    /// checked against the type. A node or non-atomic declared type is not judged here.
+    /// </summary>
+    private static bool StaticDefaultMatches(object value, XdmSequenceType type)
+    {
+        if (!DefaultXsltExecutionContext.IsCastableAtomicTypePublic(type.ItemType))
+            return true;
+        object? coerced;
+        try
+        {
+            coerced = DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, type);
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException
+                                   or PhoenixmlDb.XQuery.Execution.XQueryRuntimeException or XsltException)
+        {
+            return false;
+        }
+        foreach (var item in coerced is object?[] items ? items : [coerced])
+        {
+            if (item is null or PhoenixmlDb.Xdm.Nodes.XdmNode or ResultTreeFragment)
+                continue;
+            if (!PhoenixmlDb.XQuery.Execution.TypeCastHelper.MatchesItemType(item, type.ItemType))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Safely evaluates a static param/variable's select expression.
     /// Returns the evaluated value or null if evaluation fails (e.g., complex expressions).
     /// </summary>
