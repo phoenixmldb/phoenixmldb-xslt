@@ -233,6 +233,51 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     /// <summary>
+    /// The value of a body that wrote markup: the nodes the markup holds, parentless, then the
+    /// items the body added that are not text already in the markup; one item unwrapped, more as
+    /// a sequence. Null when the markup is not well-formed (the caller falls back), or holds
+    /// nothing and no item was added. The markup is read inside a synthetic wrapper, so it must
+    /// declare its own namespaces (a body run with the output namespace scopes cleared does).
+    /// </summary>
+    internal object? MarkupAndItemsToValue(string markup, List<object?> items)
+    {
+        try
+        {
+            // Stream-parse via XmlReader rather than allocating a full XmlDocument
+            // and re-converting to XDM. Children parented under the synthetic
+            // wrapper, then unparented before being returned.
+            var settings = new System.Xml.XmlReaderSettings
+            {
+                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                IgnoreWhitespace = false,
+                IgnoreComments = false,
+                IgnoreProcessingInstructions = false,
+            };
+            using var stringReader = new System.IO.StringReader($"<_fn_root_>{markup}</_fn_root_>");
+            using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+            var children = new List<object?>();
+            ReadAsBodyChunkChildren(reader, children);
+            var parsed = new List<object?>();
+            foreach (var child in children)
+            {
+                if (child is XdmNode cn)
+                    cn.Parent = null;
+                parsed.Add(child);
+            }
+            foreach (var item in items)
+            {
+                if (item is not Xdm.TextNodeItem)
+                    parsed.Add(item);
+            }
+            return parsed.Count == 1 ? parsed[0] : parsed.Count > 1 ? parsed.ToArray() : null;
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Evaluates the body content of an xsl:param / xsl:with-param (when no `select`
     /// attribute is present) into a typed value, preserving xsl:sequence-emitted items.
     ///
@@ -2841,41 +2886,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Parse text output to XDM nodes. This handles:
                 // - Functions with node return type (as="node()") — so instance-of checks work
                 // - Functions with no as attribute (XSLT 3.0 §10.3: result used directly)
-                funcResult = null;
-                try
-                {
-                    // Stream-parse via XmlReader rather than allocating a full XmlDocument
-                    // and re-converting to XDM. Children parented under the synthetic
-                    // wrapper, then unparented before being returned as the function result.
-                    var fnSettings = new System.Xml.XmlReaderSettings
-                    {
-                        DtdProcessing = System.Xml.DtdProcessing.Prohibit,
-                        IgnoreWhitespace = false,
-                        IgnoreComments = false,
-                        IgnoreProcessingInstructions = false,
-                    };
-                    using var fnStringReader = new System.IO.StringReader($"<_fn_root_>{textOutput}</_fn_root_>");
-                    using var fnReader = System.Xml.XmlReader.Create(fnStringReader, fnSettings);
-                    var fnChildren = new List<object?>();
-                    ReadAsBodyChunkChildren(fnReader, fnChildren);
-                    var parsedItems = new List<object?>();
-                    foreach (var child in fnChildren)
-                    {
-                        if (child is XdmNode cn)
-                            cn.Parent = null;
-                        parsedItems.Add(child);
-                    }
-                    foreach (var item in accumulatedItems)
-                    {
-                        if (item is not Xdm.TextNodeItem)
-                            parsedItems.Add(item);
-                    }
-                    funcResult = parsedItems.Count == 1 ? parsedItems[0] : parsedItems.Count > 1 ? parsedItems.ToArray() : null;
-                }
-                catch (System.Xml.XmlException)
-                {
-                    // Fall through to RTF wrapping
-                }
+                funcResult = MarkupAndItemsToValue(textOutput, accumulatedItems);
                 funcResult ??= textOutput.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(textOutput) : StripXmlMarkup(textOutput);
             }
             else if (accumulatedItems.Count > 0 && !string.IsNullOrEmpty(textOutput))

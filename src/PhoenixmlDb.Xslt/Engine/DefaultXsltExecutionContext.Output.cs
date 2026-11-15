@@ -1548,20 +1548,26 @@ internal sealed partial class DefaultXsltExecutionContext
                     if (jsonItems.Count > 0)
                     {
                         var rdJsonIndent = (resultIndent ?? matchedOutput?.Indent) == true;
-                        if (jsonItems.Count == 1)
-                            _output.Append(XsltTransformEngine.SerializeItemAsJson(jsonItems[0], false, allowDupNames, indent: rdJsonIndent));
-                        else
+                        var rdKeepsSolidus = Owner!.JsonKeepsSolidus(matchedOutput, effectiveCharMaps);
+                        _output.Append(XsltTransformEngine.WithJsonSolidus(rdKeepsSolidus, () =>
                         {
-                            _output.Append('[');
-                            for (int i = 0; i < jsonItems.Count; i++)
+                            var json = new StringBuilder();
+                            if (jsonItems.Count == 1)
+                                json.Append(XsltTransformEngine.SerializeItemAsJson(jsonItems[0], false, allowDupNames, indent: rdJsonIndent));
+                            else
                             {
-                                if (i > 0) _output.Append(',');
-                                if (rdJsonIndent) { _output.Append('\n'); _output.Append("  "); }
-                                _output.Append(XsltTransformEngine.SerializeItemAsJson(jsonItems[i], false, allowDupNames, indent: rdJsonIndent, depth: 1));
+                                json.Append('[');
+                                for (int i = 0; i < jsonItems.Count; i++)
+                                {
+                                    if (i > 0) json.Append(',');
+                                    if (rdJsonIndent) { json.Append('\n'); json.Append("  "); }
+                                    json.Append(XsltTransformEngine.SerializeItemAsJson(jsonItems[i], false, allowDupNames, indent: rdJsonIndent, depth: 1));
+                                }
+                                if (rdJsonIndent) json.Append('\n');
+                                json.Append(']');
                             }
-                            if (rdJsonIndent) _output.Append('\n');
-                            _output.Append(']');
-                        }
+                            return json.ToString();
+                        }));
                     }
                     else if (!string.IsNullOrEmpty(textContent))
                     {

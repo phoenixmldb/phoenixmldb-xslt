@@ -1611,7 +1611,8 @@ public sealed partial class XsltTransformEngine
                 if (jsonOutDecl?.EffectiveMethod is OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv)
                 {
                     var jsonBuilder = new StringBuilder();
-                    AppendJsonItems(rawItems, jsonBuilder, jsonOutDecl, nodeStore);
+                    AppendJsonItems(rawItems, jsonBuilder, jsonOutDecl, nodeStore,
+                        JsonKeepsSolidus(jsonOutDecl, context.PrincipalOutputCharacterMaps));
                     var jsonOut = jsonBuilder.ToString();
                     // Route JSON-family output through full finalization so character-maps /
                     // normalization / sentinel restore apply. FinalizeOutput only runs the
@@ -1773,7 +1774,8 @@ public sealed partial class XsltTransformEngine
         if (jsonItems.Count == 0)
             return;
 
-        AppendJsonItems(jsonItems, outputBuilder, principalOutput, nodeStore);
+        AppendJsonItems(jsonItems, outputBuilder, principalOutput, nodeStore,
+            context.Owner!.JsonKeepsSolidus(principalOutput, context.PrincipalOutputCharacterMaps));
     }
 
     /// <summary>
@@ -1804,6 +1806,18 @@ public sealed partial class XsltTransformEngine
     /// initial-context-item transform path so both emit identical JSON / Adaptive / CSV.
     /// </summary>
     internal static void AppendJsonItems(
+        List<object?> jsonItems,
+        StringBuilder outputBuilder,
+        XsltOutput? principalOutput,
+        XdmInMemoryStore? nodeStore,
+        bool keepSolidus = false)
+        => WithJsonSolidus(keepSolidus, () =>
+        {
+            AppendJsonItemsCore(jsonItems, outputBuilder, principalOutput, nodeStore);
+            return 0;
+        });
+
+    private static void AppendJsonItemsCore(
         List<object?> jsonItems,
         StringBuilder outputBuilder,
         XsltOutput? principalOutput,
@@ -1865,6 +1879,9 @@ public sealed partial class XsltTransformEngine
     internal static string SerializeItemAsJson(object? item, bool adaptive, bool allowDuplicateNames = false, XdmInMemoryStore? store = null, string? jsonNodeOutputMethod = null, bool indent = false, int depth = 0)
     {
         if (item == null) return "null";
+        // Only the json method escapes the solidus; the adaptive method writes it as it is.
+        if (adaptive && !t_jsonKeepsSolidus)
+            return WithJsonSolidus(true, () => SerializeItemAsJson(item, adaptive, allowDuplicateNames, store, jsonNodeOutputMethod, indent, depth));
 
         // Indent only applies to JSON method (not adaptive). When indenting, expand
         // braces/brackets across lines with two-space indentation per depth level.
@@ -2139,11 +2156,57 @@ public sealed partial class XsltTransformEngine
     private static void AppendEscapedXmlText(System.Text.StringBuilder sb, string value)
         => CharacterEscaper.AppendXmlText(sb, value);
 
+    /// <summary>Whether one of the named character maps, or a map it uses, maps the character.</summary>
+    private static bool MapsCharacter(IEnumerable<QName> names, IReadOnlyDictionary<QName, XsltCharacterMap> maps, int codepoint, HashSet<QName> seen)
+    {
+        foreach (var name in names)
+        {
+            if (!seen.Add(name) || !maps.TryGetValue(name, out var map))
+                continue;
+            if (map.Mappings.ContainsKey(codepoint) || MapsCharacter(map.UseCharacterMaps, maps, codepoint, seen))
+                return true;
+        }
+        return false;
+    }
+
     internal static string JsonEscapeString(string s)
     {
         var sb = new StringBuilder(s.Length + 8);
         XsltXmlToJsonFunction.AppendJsonString(s, sb);
+        // The json output method writes a solidus as \/ (Serialization 3.1 §10), as
+        // PhoenixmlDb.XQuery's serializer does and the QT3 serialization tests expect
+        // ("<a>b<\/a>"); markup in a string then holds no "</" (W3C output-0702). Not where a
+        // character map maps the solidus: that is how a stylesheet keeps it as it is (output-0708).
+        if (!t_jsonKeepsSolidus && s.Contains('/', StringComparison.Ordinal))
+            sb.Replace("/", "\\/");
         return sb.ToString();
+    }
+
+    // Set around one JSON serialization, which is synchronous: whether the character maps in
+    // effect map the solidus, so JsonEscapeString leaves it to them (see there).
+    [ThreadStatic]
+    private static bool t_jsonKeepsSolidus;
+
+    /// <summary>Runs a JSON serialization with the solidus escaped, or left to the character maps.</summary>
+    internal static T WithJsonSolidus<T>(bool keep, Func<T> serialize)
+    {
+        var saved = t_jsonKeepsSolidus;
+        t_jsonKeepsSolidus = keep;
+        try { return serialize(); }
+        finally { t_jsonKeepsSolidus = saved; }
+    }
+
+    /// <summary>
+    /// Whether the character maps the output uses (its own, and extra ones such as those of an
+    /// xsl:result-document) map the solidus.
+    /// </summary>
+    internal bool JsonKeepsSolidus(XsltOutput? decl, IReadOnlyList<QName>? extra)
+    {
+        var maps = new Dictionary<QName, XsltCharacterMap>(decl?.PackageStylesheet?.CharacterMaps ?? _stylesheet.CharacterMaps);
+        foreach (var (k, v) in _runtimeCharacterMaps)
+            maps[k] = v;
+        return maps.Count > 0
+            && MapsCharacter([.. decl?.UseCharacterMaps ?? [], .. extra ?? []], maps, '/', []);
     }
 
     /// <summary>
