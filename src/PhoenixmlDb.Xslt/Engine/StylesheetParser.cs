@@ -807,6 +807,7 @@ public sealed partial class StylesheetParser
                                 throw new XsltException("XTSE0020: Occurrence indicator is not allowed in xsl:context-item/@as",
                                     GetSourceLocation(child));
                             contextItemAs = ParseSequenceType(cleanedAs, child);
+                            RecordSchemaTypeReference(contextItemAs, cleanedAs, child);
                             // XPST0051: If the type is unknown (fell through to ItemType.Item)
                             // and the original string is a prefixed name, the type doesn't exist
                             if (contextItemAs.ItemType == ItemType.Item

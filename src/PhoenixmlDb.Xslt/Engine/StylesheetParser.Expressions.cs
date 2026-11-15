@@ -1339,6 +1339,31 @@ public sealed partial class StylesheetParser
         return (new Xdm.XdmTypeName(ns, local), nillable);
     }
 
+    // Schema type names recorded while parsing, of every module; given to the principal
+    // stylesheet when the parse ends.
+    private readonly List<(string NamespaceUri, string LocalName, SourceLocation? Location)> _schemaTypeReferences = [];
+
+    /// <summary>
+    /// Records the schema type an element(*, T) or attribute(*, T) type names, outside the XML
+    /// Schema namespace, so it can be checked once the schema imports are loaded. The type
+    /// annotation holds only a namespace id, so the URI is taken from the text again.
+    /// </summary>
+    private void RecordSchemaTypeReference(XdmSequenceType parsed, string text, XElement context)
+    {
+        if (parsed.TypeAnnotation is not { } type || type.Namespace == NamespaceId.Xsd)
+            return;
+        var open = text.IndexOf('(', StringComparison.Ordinal);
+        var close = text.LastIndexOf(')');
+        var comma = open < 0 ? -1 : text.IndexOf(',', open);
+        if (comma < 0 || close < comma)
+            return;
+        var typePart = text[(comma + 1)..close].Trim().TrimEnd('?').TrimEnd();
+        var (local, uri) = SplitPrefixedName(typePart, context);
+        if (uri is null || local.Length == 0)
+            return;
+        _schemaTypeReferences.Add((uri, local, GetSourceLocation(context)));
+    }
+
     private static XdmSequenceType ParseSequenceType(string type, XElement? context = null)
     {
         // Simplified - would use full type parser

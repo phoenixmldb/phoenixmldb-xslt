@@ -482,6 +482,7 @@ public sealed class XsltTransformer
         {
             var parsed = parser.Parse(stylesheetXml, baseUri, staticParams);
             ResolveSchemaImports(parsed, baseUri);
+            RequireKnownSchemaTypes(parsed);
             return Task.FromResult(parsed);
         }).ConfigureAwait(false);
         // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
@@ -611,6 +612,23 @@ public sealed class XsltTransformer
                     $"{ex.ErrorCode}: xsl:import-schema failed for namespace '{import.TargetNamespace}': {ex.Message}",
                     import.Location);
             }
+        }
+    }
+
+    /// <summary>
+    /// A schema type an <c>as</c> type names, element(*, T) or attribute(*, T), must be a type of
+    /// the schemas in scope: XPST0008 otherwise (W3C context-item-903). Without a schema provider
+    /// none is in scope. It went unchecked, and the template failed when called, with XTTE0590
+    /// for a context item that could never match.
+    /// </summary>
+    private void RequireKnownSchemaTypes(XsltStylesheet stylesheet)
+    {
+        foreach (var (ns, local, location) in stylesheet.SchemaTypeReferences)
+        {
+            if (SchemaProvider is { } provider && provider.HasSchemaType(ns, local))
+                continue;
+            throw new XsltException(
+                $"XPST0008: The type Q{{{ns}}}{local} is not a type of the schemas in scope", location);
         }
     }
 
