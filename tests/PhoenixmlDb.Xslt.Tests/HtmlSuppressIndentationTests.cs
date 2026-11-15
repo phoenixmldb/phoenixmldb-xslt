@@ -8,6 +8,8 @@ namespace PhoenixmlDb.Xslt.Tests;
 /// is an HTML element, matched without case; any other element is matched by its expanded QName.
 /// The names were matched by local name only and with case, so "div" also suppressed x:div in
 /// another namespace, and "DIV" missed the HTML div.
+/// (An element that is not an HTML inline element, x:div among them, is put on a line of its
+/// own, as Saxon does; see HtmlInlineElements.)
 /// </summary>
 public sealed class HtmlSuppressIndentationTests
 {
@@ -27,10 +29,10 @@ public sealed class HtmlSuppressIndentationTests
     [InlineData("DIV")]
     public async Task An_html_name_suppresses_the_html_element_only(string suppress)
         => (await RunAsync(suppress)).Should().Be(
-            "<html>\n  <body>\n    <div><p>a</p></div><x:div xmlns:x=\"urn:x\">\n    <p>b</p></x:div>\n  </body>\n</html>");
+            "<html>\n  <body>\n    <div><p>a</p></div>\n    <x:div xmlns:x=\"urn:x\">\n      <p>b</p>\n    </x:div>\n  </body>\n</html>");
 
     [Fact]
     public async Task A_prefixed_name_suppresses_the_element_of_that_namespace_only()
         => (await RunAsync("x:div")).Should().Be(
-            "<html>\n  <body>\n    <div>\n      <p>a</p>\n    </div><x:div xmlns:x=\"urn:x\"><p>b</p></x:div>\n  </body>\n</html>");
+            "<html>\n  <body>\n    <div>\n      <p>a</p>\n    </div>\n    <x:div xmlns:x=\"urn:x\"><p>b</p></x:div>\n  </body>\n</html>");
 }
