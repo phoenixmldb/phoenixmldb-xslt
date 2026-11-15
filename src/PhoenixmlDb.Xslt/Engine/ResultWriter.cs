@@ -53,6 +53,8 @@ internal static class ResultWriter
         }
         if (steps.ContentTypeMeta is not null)
             next = C(new ContentTypeMetaStage(next, steps.ContentTypeMeta));
+        if (steps.HtmlForms && steps.Method == OutputMethod.Html)
+            next = C(new BooleanAttributeStage(next));
         if (steps.HtmlForms)
             next = C(new HtmlFormsStage(next, steps.Method == OutputMethod.Xhtml));
         next = C(next);
@@ -503,6 +505,152 @@ internal static class ResultWriter
         }
     }
 
+    // ── 2b. boolean attributes in minimized form (html) ──
+
+    /// <summary>
+    /// The html method writes a boolean attribute whose value is its own name in minimized form:
+    /// <c>&lt;input checked&gt;</c> for <c>checked="checked"</c> (Serialization 3.1 §7.1; W3C
+    /// attribute-0701). Which attribute is boolean depends on the element; the table is the one
+    /// Saxon-HE 12.10 applies, the same for every html version. Names and the value are
+    /// compared without case. The xhtml method never minimizes.
+    /// </summary>
+    private sealed class BooleanAttributeStage(Stage next) : BufferedStage(next)
+    {
+        private static readonly Dictionary<string, string[]> ByElement = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["area"] = ["nohref"],
+            ["audio"] = ["autoplay", "controls", "loop", "muted"],
+            ["button"] = ["autofocus", "disabled", "formnovalidate"],
+            ["details"] = ["open"],
+            ["dialog"] = ["open"],
+            ["dir"] = ["compact"],
+            ["dl"] = ["compact"],
+            ["fieldset"] = ["disabled"],
+            ["form"] = ["novalidate"],
+            ["frame"] = ["noresize"],
+            ["hr"] = ["noshade"],
+            ["img"] = ["ismap"],
+            ["input"] = ["autofocus", "checked", "disabled", "formnovalidate", "multiple", "readonly", "required"],
+            ["keygen"] = ["autofocus", "disabled"],
+            ["menu"] = ["compact"],
+            ["object"] = ["declare", "typemustmatch"],
+            ["ol"] = ["compact", "reversed"],
+            ["optgroup"] = ["disabled"],
+            ["option"] = ["disabled", "selected"],
+            ["script"] = ["async", "defer"],
+            ["select"] = ["autofocus", "disabled", "multiple", "required"],
+            ["td"] = ["nowrap"],
+            ["textarea"] = ["autofocus", "disabled", "readonly", "required"],
+            ["th"] = ["nowrap"],
+            ["track"] = ["default"],
+            ["ul"] = ["compact"],
+            ["video"] = ["autoplay", "controls", "loop", "muted"],
+        };
+
+        private static bool IsBoolean(string element, string attribute)
+            => attribute.Equals("hidden", StringComparison.OrdinalIgnoreCase)
+               || ByElement.TryGetValue(element, out var names)
+                  && Array.Exists(names, n => n.Equals(attribute, StringComparison.OrdinalIgnoreCase));
+
+        protected override int Process(ReadOnlySpan<char> s, bool final)
+        {
+            var i = 0;
+            while (i < s.Length)
+            {
+                if (s[i] != '<')
+                {
+                    var lt = s[i..].IndexOf('<');
+                    var end = lt < 0 ? s.Length : i + lt;
+                    Next.Write(s[i..end]);
+                    i = end;
+                    continue;
+                }
+                if (i + 1 >= s.Length)
+                {
+                    if (!final) return i;
+                    Next.Write(s[i..]);
+                    return s.Length;
+                }
+                if (!char.IsAsciiLetter(s[i + 1]))
+                {
+                    // An end tag, comment, PI or declaration: no attributes to change. Written up
+                    // to the next '<', whose own tag is looked at in turn.
+                    Next.Write('<');
+                    i++;
+                    continue;
+                }
+                // A start tag: find its end, outside quoted values.
+                var p = i + 1;
+                char quote = '\0';
+                while (p < s.Length && (quote != '\0' || s[p] != '>'))
+                {
+                    if (quote != '\0') { if (s[p] == quote) quote = '\0'; }
+                    else if (s[p] is '"' or '\'') quote = s[p];
+                    p++;
+                }
+                if (p >= s.Length)
+                {
+                    if (!final) return i;
+                    Next.Write(s[i..]);
+                    return s.Length;
+                }
+                WriteTag(s[i..(p + 1)]);
+                i = p + 1;
+            }
+            return i;
+        }
+
+        private void WriteTag(ReadOnlySpan<char> tag)
+        {
+            var n = 1;
+            while (n < tag.Length && tag[n] is not (' ' or '\t' or '\n' or '\r' or '/' or '>'))
+                n++;
+            var element = tag[1..n].ToString();
+            if (element.Contains(':', StringComparison.Ordinal))
+            {
+                Next.Write(tag);
+                return;
+            }
+            Next.Write(tag[..n]);
+            var k = n;
+            while (k < tag.Length)
+            {
+                // Whitespace, then name="value" (or a '/' or '>' that ends the tag).
+                var wsStart = k;
+                while (k < tag.Length && tag[k] is ' ' or '\t' or '\n' or '\r')
+                    k++;
+                var nameStart = k;
+                while (k < tag.Length && tag[k] is not ('=' or ' ' or '\t' or '\n' or '\r' or '/' or '>'))
+                    k++;
+                if (k == nameStart || k >= tag.Length || tag[k] != '=' || k + 1 >= tag.Length || tag[k + 1] is not ('"' or '\''))
+                {
+                    // Not an attribute of the form name="value": the rest is written as it is.
+                    Next.Write(tag[wsStart..]);
+                    return;
+                }
+                var name = tag[nameStart..k];
+                var q = tag[k + 1];
+                var valueEnd = tag[(k + 2)..].IndexOf(q);
+                if (valueEnd < 0)
+                {
+                    Next.Write(tag[wsStart..]);
+                    return;
+                }
+                var value = tag.Slice(k + 2, valueEnd);
+                var attrEnd = k + 2 + valueEnd + 1;
+                if (value.Equals(name, StringComparison.OrdinalIgnoreCase) && IsBoolean(element, name.ToString()))
+                {
+                    Next.Write(tag[wsStart..k]);
+                }
+                else
+                {
+                    Next.Write(tag[wsStart..attrEnd]);
+                }
+                k = attrEnd;
+            }
+        }
+    }
+
     // ── 3. the Content-Type meta ──
 
     /// <summary>
@@ -652,6 +800,10 @@ internal static class ResultWriter
         // last '<' (its length, its first characters, its last two characters).
         private char _prev1, _prev2;
         private bool _readAny;
+        // Whether the last thing written was the tag of an inline element (span, a, br, input):
+        // no newline goes between it and a block tag, which would put a space into the inline
+        // content around it (W3C include-0101, attribute-0701; Saxon does the same).
+        private bool _afterInlineTag;
         private int _sinceLt = -1;
         private readonly StringBuilder _ltHead = new();
 
@@ -700,6 +852,8 @@ internal static class ResultWriter
                     var end = lt < 0 ? s.Length : i + lt;
                     Emit(s[i..end]);
                     Read(s[i..end]);
+                    if (end > i)
+                        _afterInlineTag = false;
                     i = end;
                     continue;
                 }
@@ -735,7 +889,7 @@ internal static class ResultWriter
                     }
                 }
 
-                bool isBlock = hasName && XsltTransformEngine.HtmlBlockElements.Contains(elemName.ToString());
+                bool isBlock = hasName && !XsltTransformEngine.HtmlInlineElements.Contains(elemName.ToString());
 
                 bool emptyBlockClose = false;
                 if (isBlock && isClosing && _prev1 == '>' && _sinceLt > 0)
@@ -761,7 +915,7 @@ internal static class ResultWriter
                 {
                     if (isClosing)
                         _depth = Math.Max(0, _depth - 1);
-                    if (!emptyBlockClose && !textContentClose)
+                    if (!emptyBlockClose && !textContentClose && !_afterInlineTag)
                     {
                         if (_wroteAny && _lastOut != '\n')
                             Emit("\n");
@@ -775,6 +929,7 @@ internal static class ResultWriter
 
                 Emit(tag);
                 Read(tag);
+                _afterInlineTag = hasName && !isBlock;
                 i = tagEnd + 1;
             }
             return i;

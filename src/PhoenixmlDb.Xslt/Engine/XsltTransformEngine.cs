@@ -2234,15 +2234,21 @@ public sealed partial class XsltTransformEngine
     }
 
     /// <summary>
-    /// Block-level HTML elements that should be preceded by a newline when indenting HTML output.
+    /// The html method's inline elements: no newline is put before or after their tags when
+    /// indenting, since one would add a space to the text around them. Every other element,
+    /// one not named here or not in HTML at all, is a block, put on a line of its own. This is
+    /// the list Saxon-HE 12.10 uses (probed element by element). The list was the other way
+    /// round, of blocks, and it named br, so a newline went before a br inside text and around
+    /// the tags of elements it did not know (W3C include-0101, attribute-0701).
     /// </summary>
-    internal static readonly HashSet<string> HtmlBlockElements = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> HtmlInlineElements = new(StringComparer.OrdinalIgnoreCase)
     {
-        "html", "head", "body", "div", "p", "table", "thead", "tbody", "tfoot", "tr", "th", "td",
-        "ul", "ol", "li", "dl", "dt", "dd", "h1", "h2", "h3", "h4", "h5", "h6",
-        "section", "article", "header", "footer", "nav", "main", "aside", "details", "summary",
-        "form", "fieldset", "legend", "blockquote", "pre", "figure", "figcaption", "hr", "br",
-        "script", "style", "link", "meta", "title", "base", "noscript"
+        "a", "abbr", "acronym", "applet", "area", "audio", "b", "basefont", "bdi", "bdo", "big", "br",
+        "button", "canvas", "cite", "code", "data", "datalist", "del", "dfn", "em", "embed", "font",
+        "i", "iframe", "img", "input", "ins", "kbd", "label", "map", "mark", "meter", "noscript",
+        "object", "output", "picture", "progress", "q", "ruby", "s", "samp", "script", "select",
+        "small", "span", "strike", "strong", "sub", "sup", "template", "textarea", "time", "tt",
+        "u", "var", "video", "wbr",
     };
 
     /// <summary>

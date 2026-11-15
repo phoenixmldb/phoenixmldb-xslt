@@ -119,7 +119,11 @@ public sealed class StreamingForEachGroupByTests
         {
             var start = s.IndexOf("<group", System.StringComparison.Ordinal);
             var end = s.LastIndexOf("</group>", System.StringComparison.Ordinal);
-            return start >= 0 && end > start ? s[start..(end + 8)] : s;
+            var groups = start >= 0 && end > start ? s[start..(end + 8)] : s;
+            // The whitespace between the groups is indentation, not grouping: the streamed run
+            // does not take the html method from the <html> document element, so it is not
+            // indented, where the plain run is (the groups are on lines of their own).
+            return System.Text.RegularExpressions.Regex.Replace(groups, @">\s+<", "><");
         }
         Groups(streamed).Should().Be(Groups(bufferedResult));
     }
