@@ -144,6 +144,24 @@ public sealed partial class StylesheetParser
             ? loadedAt
             : _baseUri;
 
+    /// <summary>
+    /// The text of a stylesheet module the policy authorised for import, opened and then judged by
+    /// the file actually open. A file that is not the one authorised is refused as an import the
+    /// policy denies.
+    /// </summary>
+    private string ReadAuthorizedModule(Uri moduleUri, string href, XElement element)
+    {
+        try
+        {
+            return PhoenixmlDb.XQuery.Security.AuthorizedFile.ReadAllText(ResourcePolicy, moduleUri,
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ImportStylesheet, href);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+        {
+            throw new XsltException($"XTSE0165: Resource policy denied import access to '{href}'", GetSourceLocation(element));
+        }
+    }
+
     private XElement? ReadModuleForStaticDeclarations(string href, Uri? baseUri, XElement importing, out Uri? moduleUri)
     {
         moduleUri = null;
@@ -162,10 +180,11 @@ public sealed partial class StylesheetParser
         {
             if (ResourcePolicy?.ResourceResolver is { SuppliesAllContent: true }) return null;
             if (moduleUri is not { IsFile: true } || !ModuleExists(moduleUri.LocalPath)) return null;
-            // Under a policy, read the canonical path the check judged (links resolved).
-            xml = File.ReadAllText(ResourcePolicy != null
-                ? PhoenixmlDb.XQuery.Security.ResourcePolicy.CanonicalPath(moduleUri.LocalPath)
-                : moduleUri.LocalPath);
+            // Under a policy the file is opened, then judged by the file actually open: a link put
+            // on the path since the check is not followed out of the allowed roots.
+            xml = ResourcePolicy != null
+                ? ReadAuthorizedModule(moduleUri, href, importing)
+                : File.ReadAllText(moduleUri.LocalPath);
         }
 
         var settings = new System.Xml.XmlReaderSettings
@@ -369,10 +388,11 @@ public sealed partial class StylesheetParser
                 }
             }
             else
-                // Under a policy, read the canonical path the check judged (links resolved).
-                xml = File.ReadAllText(ResourcePolicy != null
-                    ? PhoenixmlDb.XQuery.Security.ResourcePolicy.CanonicalPath(resolvedPath!)
-                    : resolvedPath!);
+                // Under a policy the file is opened, then judged by the file actually open: a link
+                // put on the path since the check is not followed out of the allowed roots.
+                xml = ResourcePolicy != null
+                    ? ReadAuthorizedModule(new Uri(Path.GetFullPath(resolvedPath!)), href, element)
+                    : File.ReadAllText(resolvedPath!);
             var savedBaseUri = _baseUri;
             var savedDefaultMode = _currentDefaultMode;
             // A module the host supplied for an href with no base and no URI of its own gets a
@@ -549,6 +569,21 @@ public sealed partial class StylesheetParser
                         GetSourceLocation(outputElement));
                 else
                     xml = HttpResourceLoader.GetStringSync(resolved, ResourcePolicy);
+            }
+            else if (ResourcePolicy != null)
+            {
+                // Opened, then judged by the file actually open.
+                try
+                {
+                    xml = PhoenixmlDb.XQuery.Security.AuthorizedFile.ReadAllText(ResourcePolicy, resolved,
+                        PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, href);
+                }
+                catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+                {
+                    throw new XsltException(
+                        $"XTSE0010: Resource policy denied access to serialization parameter document '{href}'",
+                        GetSourceLocation(outputElement));
+                }
             }
             else
             {

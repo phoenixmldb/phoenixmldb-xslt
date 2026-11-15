@@ -54,7 +54,7 @@ internal sealed class XsltUnparsedTextLinesFunction : PhoenixmlDb.XQuery.Ast.XQu
             var filePath = UnparsedTextHelper.ResolveFilePath(href, UnparsedTextHelper.StaticBase(_context), _context.Policy);
             if (filePath != null)
             {
-                var text = await UnparsedTextHelper.ReadWithEncodingDetectionAsync(filePath).ConfigureAwait(false);
+                var text = await UnparsedTextHelper.ReadWithEncodingDetectionAsync(filePath, _context.Policy, href).ConfigureAwait(false);
                 UnparsedTextHelper.ValidateTextContent(text);
                 return UnparsedTextHelper.SplitLines(text);
             }

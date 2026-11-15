@@ -83,8 +83,11 @@ internal sealed class XsltStreamAvailableFunction : PhoenixmlDb.XQuery.Ast.XQuer
                 return false;
 
             // Check if the file contains parseable XML
-            var stream = supplied ?? System.IO.File.OpenRead(filePath!);
-            await using var _ = stream.ConfigureAwait(false);
+            // Under a policy the file is opened, then judged by the file actually open; a file
+            // that is not the one authorised is not available.
+            using var stream = supplied ?? OpenFile(filePath!, uri);
+            if (stream is null)
+                return false;
             var settings = new System.Xml.XmlReaderSettings
             {
                 DtdProcessing = System.Xml.DtdProcessing.Ignore,
@@ -107,4 +110,20 @@ internal sealed class XsltStreamAvailableFunction : PhoenixmlDb.XQuery.Ast.XQuer
             return false;
         }
     }
+
+    private System.IO.FileStream? OpenFile(string filePath, string requested)
+    {
+        if (_context.Policy is not { } policy)
+            return System.IO.File.OpenRead(filePath);
+        try
+        {
+            return PhoenixmlDb.XQuery.Security.AuthorizedFile.OpenRead(policy, new Uri(filePath),
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, requested);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException)
+        {
+            return null;
+        }
+    }
+
 }

@@ -703,7 +703,19 @@ public sealed class XsltTransformProvider : ITransformProvider
             throw new XQueryException("FOXT0001", e.Message);
         }
         if (authorized.IsFile)
-            return (await File.ReadAllTextAsync(authorized.LocalPath).ConfigureAwait(false), authorized);
+        {
+            // Opened, then judged by the file actually open: a link put on the path since the
+            // check is not followed out of the allowed roots.
+            try
+            {
+                return (await PhoenixmlDb.XQuery.Security.AuthorizedFile.ReadAllTextAsync(policy, authorized, access, location)
+                    .ConfigureAwait(false), authorized);
+            }
+            catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+            {
+                throw new XQueryException("FOXT0001", e.Message);
+            }
+        }
         if (authorized.Scheme == Uri.UriSchemeHttp || authorized.Scheme == Uri.UriSchemeHttps)
         {
             if (PreloadedResources is { } preloaded && preloaded.TryGet(authorized, out var cached))

@@ -1017,6 +1017,27 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>
+    /// Opens a file that <see cref="AuthorizeResource"/> returned, for reading. Under a resource
+    /// policy it is opened, then judged by the file actually open: a link put on the path since
+    /// the check is not followed out of the allowed roots, and such a file is the dynamic error
+    /// <paramref name="errorCode"/>, naming <paramref name="requested"/> as the stylesheet wrote it.
+    /// </summary>
+    internal System.IO.FileStream OpenAuthorizedFile(Uri authorized, string requested, string errorCode)
+    {
+        if (Policy is not { } policy)
+            return System.IO.File.OpenRead(authorized.LocalPath);
+        try
+        {
+            return PhoenixmlDb.XQuery.Security.AuthorizedFile.OpenRead(policy, authorized,
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, requested);
+        }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw Error($"{errorCode}: {e.Message}");
+        }
+    }
+
+    /// <summary>
     /// Under a resource policy, an XML reader resolves external entities and DTDs only when the
     /// policy allows DTD processing, and then only from locations it allows.
     /// </summary>

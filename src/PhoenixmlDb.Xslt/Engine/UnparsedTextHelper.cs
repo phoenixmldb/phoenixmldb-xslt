@@ -99,6 +99,30 @@ internal static class UnparsedTextHelper
     /// sequence instead, so a missing file became "" and hid whatever made it go missing
     /// (xslt#195: it hid the wrong base URI above).
     /// </summary>
+    /// <summary>
+    /// Reads <paramref name="filePath"/> in <paramref name="encoding"/>. Under a policy the path is
+    /// the one <see cref="ResolveFilePath(string, Uri?, PhoenixmlDb.XQuery.Security.ResourcePolicy?)"/>
+    /// authorised: the file is opened, then judged by the file actually open, so a link put on
+    /// the path since is not followed out of the allowed roots.
+    /// </summary>
+    internal static Task<string> ReadAllTextAsync(string filePath, System.Text.Encoding encoding,
+        PhoenixmlDb.XQuery.Security.ResourcePolicy? policy, string href)
+        => policy is null
+            ? System.IO.File.ReadAllTextAsync(filePath, encoding)
+            : Authorized(() => PhoenixmlDb.XQuery.Security.AuthorizedFile.ReadAllTextAsync(policy, new Uri(filePath),
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadText, href, encoding), href);
+
+    // A file that is not the one authorised is a resource that cannot be retrieved (FOUT1170),
+    // named as the stylesheet asked for it.
+    private static async Task<T> Authorized<T>(Func<Task<T>> read, string href)
+    {
+        try { return await read().ConfigureAwait(false); }
+        catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+        {
+            throw CannotRetrieve(href, e);
+        }
+    }
+
     internal static XsltException CannotRetrieve(string href, Exception? cause = null)
         => new($"FOUT1170: Cannot retrieve the resource '{href}'" + (cause is null ? "" : $": {cause.Message}"));
 
@@ -152,9 +176,13 @@ internal static class UnparsedTextHelper
     /// 2. XML declaration encoding sniffing (for files starting with &lt;?xml)
     /// 3. UTF-8 fallback
     /// </summary>
-    internal static async Task<string> ReadWithEncodingDetectionAsync(string filePath)
+    internal static async Task<string> ReadWithEncodingDetectionAsync(string filePath,
+        PhoenixmlDb.XQuery.Security.ResourcePolicy? policy = null, string? href = null)
     {
-        var bytes = await System.IO.File.ReadAllBytesAsync(filePath).ConfigureAwait(false);
+        var bytes = policy is null
+            ? await System.IO.File.ReadAllBytesAsync(filePath).ConfigureAwait(false)
+            : await Authorized(() => PhoenixmlDb.XQuery.Security.AuthorizedFile.ReadAllBytesAsync(policy, new Uri(filePath),
+                PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadText, href ?? filePath), href ?? filePath).ConfigureAwait(false);
         var encoding = DetectEncoding(bytes);
         var text = encoding.GetString(bytes);
         // Strip BOM character (U+FEFF) if present at start of decoded text

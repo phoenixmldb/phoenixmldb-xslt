@@ -460,7 +460,20 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 var authorized = _ctx.AuthorizeResource(target, PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, "FODC0002");
                 if (authorized.IsFile)
-                    return XmlReader.Create(System.IO.File.OpenRead(authorized.LocalPath), settings, authorized.AbsoluteUri);
+                {
+                    // Opened, then judged by the file actually open.
+                    System.IO.FileStream file;
+                    try
+                    {
+                        file = PhoenixmlDb.XQuery.Security.AuthorizedFile.OpenRead(policy, authorized,
+                            PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, uri);
+                    }
+                    catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e)
+                    {
+                        throw new XsltException($"FODC0002: {e.Message}");
+                    }
+                    return XmlReader.Create(file, settings, authorized.AbsoluteUri);
+                }
                 if (authorized.Scheme is "http" or "https")
                     return XmlReader.Create(HttpDocumentLoader.OpenRead(authorized, policy), settings, authorized.AbsoluteUri);
                 throw new XsltException($"FODC0002: Cannot read merge source '{uri}': unsupported URI scheme '{authorized.Scheme}'");

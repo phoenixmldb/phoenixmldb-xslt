@@ -321,7 +321,13 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
             {
                 if (!System.IO.File.Exists(resolvedUri.LocalPath))
                     return null;
-                xmlContent = System.IO.File.ReadAllText(resolvedUri.LocalPath);
+                // Under a policy the file was authorised before this read: it is opened, then
+                // judged by the file actually open, so a link put on its path since is not
+                // followed out of the allowed roots.
+                xmlContent = Policy is { } policy
+                    ? PhoenixmlDb.XQuery.Security.AuthorizedFile.ReadAllText(policy, resolvedUri,
+                        PhoenixmlDb.XQuery.Security.ResourceAccessKind.ReadDocument, uri)
+                    : System.IO.File.ReadAllText(resolvedUri.LocalPath);
             }
             else
             {

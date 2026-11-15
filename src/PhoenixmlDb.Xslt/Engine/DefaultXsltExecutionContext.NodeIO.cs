@@ -543,7 +543,9 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             else if (resolvedUri.IsFile)
             {
-                xml = System.IO.File.ReadAllText(resolvedUri.LocalPath);
+                using var file = OpenAuthorizedFile(resolvedUri, href, "XTDE0010");
+                using var fileReader = new System.IO.StreamReader(file, detectEncodingFromByteOrderMarks: true);
+                xml = fileReader.ReadToEnd();
             }
             else
             {

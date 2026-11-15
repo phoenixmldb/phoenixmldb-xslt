@@ -1971,7 +1971,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 using System.IO.Stream fileStream = hostSource != null
                     ? new System.IO.MemoryStream(hostSource, writable: false)
-                    : System.IO.File.OpenRead(resolvedUri.LocalPath);
+                    : OpenAuthorizedFile(resolvedUri, href, "FODC0002");
                 var readerSettings = new XmlReaderSettings
                 {
                     DtdProcessing = DtdProcessing.Parse,
@@ -2154,7 +2154,12 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             else if (resolvedUri.IsFile)
             {
-                xmlContent = await System.IO.File.ReadAllTextAsync(resolvedUri.LocalPath).ConfigureAwait(false);
+                var file = OpenAuthorizedFile(resolvedUri, href, "FODC0002");
+                await using (file.ConfigureAwait(false))
+                {
+                    using var fileReader = new System.IO.StreamReader(file, detectEncodingFromByteOrderMarks: true);
+                    xmlContent = await fileReader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
             else
             {
