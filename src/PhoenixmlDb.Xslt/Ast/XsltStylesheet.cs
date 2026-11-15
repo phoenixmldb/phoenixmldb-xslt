@@ -201,6 +201,13 @@ public sealed class XsltStylesheet
     public List<XsltSchemaImport> SchemaImports { get; init; } = new();
 
     /// <summary>
+    /// Schema type names an <c>as</c> type of this module refers to, as element(*, T) or
+    /// attribute(*, T): the type's namespace URI and local name, and where. Each must be a type
+    /// of the schemas in scope, which are known only once the imports are loaded (XPST0008).
+    /// </summary>
+    public List<(string NamespaceUri, string LocalName, SourceLocation? Location)> SchemaTypeReferences { get; init; } = new();
+
+    /// <summary>
     /// Accumulator definitions (XSLT 3.0).
     /// </summary>
     public Dictionary<QName, XsltAccumulator> Accumulators { get; init; } = new();
