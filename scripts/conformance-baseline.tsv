@@ -4,7 +4,7 @@ tests/attr/declared-modes/_declared-modes-test-set.xml	14	14
 tests/attr/disable-output-escaping/_disable-output-escaping-test-set.xml	28	28
 tests/attr/expand-text/_expand-text-test-set.xml	61	62
 tests/attr/match/_match-test-set.xml	282	282
-tests/attr/mode/_mode-test-set.xml	168	168
+tests/attr/mode/_mode-test-set.xml	167	167
 tests/attr/package-version/_package-version-test-set.xml	35	35
 tests/attr/select/_select-test-set.xml	157	157
 tests/attr/shadow/_shadow-test-set.xml	8	8
@@ -24,8 +24,8 @@ tests/decl/context-item/_context-item-test-set.xml	30	31
 tests/decl/expose/_expose-test-set.xml	41	42
 tests/decl/function/_function-test-set.xml	103	104
 tests/decl/global-context-item/_global-context-item-test-set.xml	14	14
-tests/decl/import/_import-test-set.xml	40	40
-tests/decl/include/_include-test-set.xml	13	15
+tests/decl/import/_import-test-set.xml	38	38
+tests/decl/include/_include-test-set.xml	12	14
 tests/decl/namespace-alias/_namespace-alias-test-set.xml	26	26
 tests/decl/output/_output-test-set.xml	218	222
 tests/decl/override/_override-test-set.xml	96	103
@@ -86,7 +86,7 @@ tests/fn/unparsed-text/_unparsed-text-test-set.xml	4	4
 tests/fn/xml-to-json/_xml-to-json-test-set.xml	150	150
 tests/insn/analyze-string/_analyze-string-test-set.xml	53	53
 tests/insn/apply-imports/_apply-imports-test-set.xml	1	1
-tests/insn/apply-templates/_apply-templates-test-set.xml	42	43
+tests/insn/apply-templates/_apply-templates-test-set.xml	38	38
 tests/insn/assert/_assert-test-set.xml	9	9
 tests/insn/attribute/_attribute-test-set.xml	27	28
 tests/insn/call-template/_call-template-test-set.xml	40	41
@@ -112,7 +112,7 @@ tests/insn/try/_try-test-set.xml	37	37
 tests/insn/where-populated/_where-populated-test-set.xml	27	27
 tests/insn/xsl-document/_xsl-document-test-set.xml	24	25
 tests/misc/backwards/_backwards-test-set.xml	45	47
-tests/misc/bug/_bug-test-set.xml	76	78
+tests/misc/bug/_bug-test-set.xml	75	77
 tests/misc/built-in-templates/_built-in-templates-test-set.xml	5	5
 tests/misc/catalog/_catalog-test-set.xml	5	7
 tests/misc/collations/_collations-test-set.xml	42	43

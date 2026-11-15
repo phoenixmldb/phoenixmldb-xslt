@@ -2707,13 +2707,22 @@ public sealed class XsltConfiguration
         // XSLT10+, XSLT20+, XSLT30+ mean "this version and later" — we satisfy these
         // XSLT30 (no +) means "exactly this version" — we satisfy XSLT30 only
         // XSLT10, XSLT20 (no +) mean "exactly this version" — we do NOT satisfy these
-        var hasPlus = value.Contains('+');
-        var versionPart = value.Replace("XSLT", "").Replace("+", "");
-        if (int.TryParse(versionPart, out var version))
+        // The value can be a list: "XSLT10 XSLT20" is a test for 1.0 and 2.0 processors only.
+        // As a whole it did not parse as one version, so it counted as satisfied and those
+        // cases ran on this 3.0 processor (W3C strip-space-019 expects the 2.0 behaviour).
+        var anyParsed = false;
+        var supported = false;
+        foreach (var token in value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
-            var supported = hasPlus ? version <= 30 : version == 30;
-            return dep.Satisfied ? supported : !supported;
+            var hasPlus = token.Contains('+');
+            var versionPart = token.Replace("XSLT", "", StringComparison.OrdinalIgnoreCase).Replace("+", "", StringComparison.Ordinal);
+            if (!int.TryParse(versionPart, out var version))
+                return dep.Satisfied;
+            anyParsed = true;
+            supported |= hasPlus ? version <= 30 : version == 30;
         }
+        if (anyParsed)
+            return dep.Satisfied ? supported : !supported;
 
         return dep.Satisfied;
     }

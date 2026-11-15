@@ -1,22 +1,34 @@
 xslt30-test @ fddf1cf
-xslt      @ 689e597
-xquery    @ d2f4b28 (source)
+xslt      @ 2f70ed0 (dirty: scripts/ tests/; src/ clean)
+xquery    @ 5150a28 (source)
 core      @ e7403a7 (source)
 
-attr       9s  fixture Successful (18 tests) | 1439/1460 cases 98.6%, 21 failed
-decl       6s  fixture Successful (20 tests) | 1105/1133 cases 97.5%, 28 failed
-type       3s  fixture Successful (9 tests) | 799/806 cases 99.1%, 7 failed
+attr      10s  fixture Successful (18 tests) | 1442/1458 cases 98.9%, 16 failed
+decl       5s  fixture Successful (20 tests) | 1103/1129 cases 97.7%, 26 failed
+type       4s  fixture Successful (9 tests) | 800/806 cases 99.3%, 6 failed
 sandp      1s  fixture Successful (25 tests)
-fn        11s  fixture Successful (36 tests) | 1292/1308 cases 98.8%, 16 failed
-strm1     27s  fixture Successful (36 tests) | 722/725 cases 99.6%, 3 failed
+fn        10s  fixture Successful (36 tests) | 1294/1307 cases 99.0%, 13 failed
+strm1     30s  fixture Successful (36 tests) | 722/725 cases 99.6%, 3 failed
 strm2     23s  fixture Successful (26 tests) | 894/903 cases 99.0%, 9 failed
-strm3     29s  fixture Successful (26 tests) | 900/906 cases 99.3%, 6 failed
-expr       3s  fixture Successful (14 tests) | 699/706 cases 99.0%, 7 failed
-misc      19s  fixture Successful (22 tests) | 1931/1945 cases 99.3%, 14 failed
-insn       8s  fixture Successful (27 tests) | 1626/1647 cases 98.7%, 21 failed
+strm3     29s  fixture Successful (26 tests) | 900/902 cases 99.8%, 2 failed
+expr       4s  fixture Successful (14 tests) | 700/704 cases 99.4%, 4 failed
+misc      20s  fixture Successful (22 tests) | 1931/1944 cases 99.3%, 13 failed
+insn       9s  fixture Successful (27 tests) | 1629/1641 cases 99.3%, 12 failed
 KNOWN TEST DEFECTS — counted as failed, expected result contradicts the spec (1):
   accumulator-073: qt4cg/xslt40-test#13, w3c/xslt30-test#50
 per-set GAINS:
+  tests/attr/expand-text/_expand-text-test-set.xml: 61 -> 62  (+1)
+  tests/attr/static/_static-test-set.xml: 46 -> 47  (+1)
+  tests/attr/streamable/_streamable-test-set.xml: 134 -> 135  (+1)
+  tests/attr/xpath-default-namespace/_xpath-default-namespace-test-set.xml: 25 -> 26  (+1)
+  tests/decl/context-item/_context-item-test-set.xml: 30 -> 31  (+1)
+  tests/expr/math/_math-test-set.xml: 153 -> 154  (+1)
+  tests/fn/format-number/_format-number-test-set.xml: 66 -> 67  (+1)
+  tests/fn/type-available/_type-available-test-set.xml: 4 -> 5  (+1)
+  tests/insn/source-document/_source-document-test-set.xml: 53 -> 59  (+6)
+  tests/insn/xsl-document/_xsl-document-test-set.xml: 24 -> 25  (+1)
+  tests/misc/collations/_collations-test-set.xml: 42 -> 43  (+1)
   tests/strm/si-value-of/_si-value-of-test-set.xml: 38 -> 39  (+1)
+  tests/type/namespace/_namespace-test-set.xml: 186 -> 187  (+1)
 
-11 chunk(s) in 2m19s — logs in /tmp/claude-1000/-mnt-data-repos-phoenixml/6370f868-6a32-4a4e-8204-cc51815975f5/scratchpad/st/phoenixmldb-xslt/conformance-results
+11 chunk(s) in 2m25s — logs in /tmp/claude-1000/-mnt-data-repos-phoenixml/6370f868-6a32-4a4e-8204-cc51815975f5/scratchpad/st/phoenixmldb-xslt/conformance-results
