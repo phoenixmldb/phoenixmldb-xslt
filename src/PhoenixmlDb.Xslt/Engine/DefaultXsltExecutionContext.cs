@@ -5179,6 +5179,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _sequenceAccumulator = new List<object?>();
             // Save/clear _output so text content is captured for the map entry value
             var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
+            // The markup the content writes is read back into nodes on its own, so its literal
+            // result elements must declare their namespaces themselves, as in a function body.
+            var savedNsScopes = new List<Dictionary<string, string>>(_outputNsScopes);
+            _outputNsScopes.Clear();
             _temporaryOutputDepth++;
             try
             {
@@ -5186,8 +5190,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var items = _sequenceAccumulator;
                 if (items.Count == 0 && savedScope.WrittenLength > 0)
                 {
-                    // Text-only content — use the text as the value
-                    value = savedScope.GetWritten();
+                    // Content that wrote markup gives the nodes it constructed, as a sequence
+                    // constructor does (XSLT 3.0 §21.1.2): <xsl:map-entry><html>...</html> is an
+                    // element. The markup itself was the value, a string, so
+                    // json-node-output-method did not apply to it and `instance of node()` was
+                    // false (W3C output-0702). Text only stays the text, as before.
+                    var written = savedScope.GetWritten();
+                    value = written.Contains('<', StringComparison.Ordinal)
+                        ? MarkupAndItemsToValue(written, items) ?? new ResultTreeFragment(written)
+                        : written;
                 }
                 else
                 {
@@ -5202,6 +5213,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             finally
             {
                 _temporaryOutputDepth--;
+                _outputNsScopes.Clear();
+                foreach (var scope in savedNsScopes.AsEnumerable().Reverse())
+                    _outputNsScopes.Push(scope);
                 savedScope.Dispose();
                 _sequenceAccumulator = savedAccum;
             }
