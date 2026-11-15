@@ -6294,7 +6294,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Extracts the literal value from an attribute's <c>=value</c> segment (e.g. <c>="foo"</c>),
     /// stripping the leading <c>=</c>, surrounding whitespace, and quote characters.
     /// </summary>
-    private static string ExtractQuotedValue(string eqValue)
+    internal static string ExtractQuotedValue(string eqValue)
     {
         int start = -1;
         char quote = '"';
@@ -6324,106 +6324,5 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
 
-    /// <summary>
-    /// Inserts a meta element with Content-Type as the first child of head elements.
-    /// Per XSLT serialization spec: when include-content-type is "yes" (default for html/xhtml).
-    /// </summary>
-    internal static string InsertContentTypeMeta(string output, XsltOutput outputDecl)
-    {
-        var encoding = outputDecl.Encoding ?? "UTF-8";
-        var mediaType = outputDecl.MediaType ?? "text/html";
-        var content = $"{mediaType}; charset={encoding}";
-
-        string metaElement;
-        if (outputDecl.EffectiveMethod == OutputMethod.Xhtml)
-            metaElement = $"<meta http-equiv=\"Content-Type\" content=\"{content}\" />";
-        else
-            metaElement = $"<meta http-equiv=\"Content-Type\" content=\"{content}\">";
-
-        // Find <head> or <head ...> tags and insert meta as first child.
-        // Per XSLT 3.0 §27.6.4 (HTML/XHTML output): the serializer adds a Content-Type
-        // meta only if one is not already present in the head. Without this check,
-        // a stylesheet that emits its own meta (e.g. Docbook TNG's XHTML-style
-        // `<meta http-equiv="Content-Type" content="…" />`) ends up with two of them.
-        var result = output;
-        var searchFrom = 0;
-        while (true)
-        {
-            var idx = result.IndexOf("<head", searchFrom, StringComparison.OrdinalIgnoreCase);
-            if (idx < 0) break;
-
-            var afterName = idx + 5; // length of "<head"
-            if (afterName >= result.Length) break;
-
-            var ch = result[afterName];
-            if (ch == '>' || ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
-            {
-                // Find closing > of the opening tag
-                var closeTag = result.IndexOf('>', afterName);
-                if (closeTag >= 0 && result[closeTag - 1] != '/') // not self-closing
-                {
-                    // Locate the matching </head> and search the head's content for an
-                    // existing Content-Type meta. If found, skip insertion for this head.
-                    var endHead = result.IndexOf("</head", closeTag + 1, StringComparison.OrdinalIgnoreCase);
-                    var headEndAbs = endHead > 0 ? endHead : result.Length;
-                    var existing = FindContentTypeMetaSpan(result, closeTag + 1, headEndAbs);
-                    if (existing.Start < 0)
-                    {
-                        // No Content-Type meta present: insert one as the first child of head.
-                        result = result.Insert(closeTag + 1, metaElement);
-                        searchFrom = closeTag + 1 + metaElement.Length;
-                        continue;
-                    }
-                    // Per the serialization spec (§HTML/XHTML output), an existing
-                    // http-equiv="Content-Type" meta is REPLACED by the serializer's computed
-                    // value (correct media type + charset) rather than left as-is or duplicated
-                    // (output-0143/0144/0157/0158; keeps DocBook TNG to a single correct meta).
-                    result = result.Remove(existing.Start, existing.Length).Insert(existing.Start, metaElement);
-                    searchFrom = existing.Start + metaElement.Length;
-                    continue;
-                }
-            }
-            searchFrom = afterName;
-        }
-        return result;
-    }
-
-
-    /// <summary>
-    /// Locates an existing http-equiv="Content-Type" meta element within result[from..end)
-    /// and returns its absolute (start, length) span, or (-1, 0) if none is present.
-    /// Attribute names/values are matched case-insensitively per HTML rules.
-    /// </summary>
-    private static (int Start, int Length) FindContentTypeMetaSpan(string s, int from, int end)
-    {
-        var i = from;
-        while (i < end)
-        {
-            var lt = s.IndexOf('<', i);
-            if (lt < 0 || lt >= end) break;
-            i = lt;
-            if (i + 5 <= end
-                && (s[i + 1] == 'm' || s[i + 1] == 'M')
-                && (s[i + 2] == 'e' || s[i + 2] == 'E')
-                && (s[i + 3] == 't' || s[i + 3] == 'T')
-                && (s[i + 4] == 'a' || s[i + 4] == 'A')
-                && (i + 5 == end || s[i + 5] == ' ' || s[i + 5] == '\t' || s[i + 5] == '\n'
-                    || s[i + 5] == '\r' || s[i + 5] == '/' || s[i + 5] == '>'))
-            {
-                var gt = s.IndexOf('>', i);
-                if (gt < 0 || gt >= end) break;
-                var tag = s.AsSpan(i, gt + 1 - i);
-                if (tag.IndexOf("http-equiv", StringComparison.OrdinalIgnoreCase) >= 0
-                    && tag.IndexOf("Content-Type", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    return (i, gt + 1 - i);
-                }
-                i = gt + 1;
-                continue;
-            }
-            i++;
-        }
-        return (-1, 0);
-    }
 
 }

@@ -1516,7 +1516,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// a default <c>xmlns</c> declaration (prefixes are stripped); elements in any other namespace
     /// are foreign content and keep their prefixes (XML rules).
     /// </summary>
-    private static readonly System.Collections.Generic.HashSet<string> Html5ContentNamespaces = new(StringComparer.Ordinal)
+    internal static readonly System.Collections.Generic.HashSet<string> Html5ContentNamespaces = new(StringComparer.Ordinal)
     {
         "http://www.w3.org/1999/xhtml",
         "http://www.w3.org/2000/svg",
