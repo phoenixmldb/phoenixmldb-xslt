@@ -1826,12 +1826,15 @@ public sealed class XsltTransformer
             var nsId = namespaceUri != null
                 ? StylesheetParser.ResolveNamespaceUri(namespaceUri)
                 : NamespaceId.None;
-            return new QName(nsId, localName, prefix);
+            // The URI the caller gave goes with the name. Without it, matching resolved the
+            // PREFIX through the stylesheet's own bindings, so "my:temp" in one namespace found
+            // the stylesheet's my:temp in another (W3C call-template-0105 expects XTDE0040).
+            return new QName(nsId, localName, prefix) { ExpandedNamespace = string.IsNullOrEmpty(namespaceUri) ? null : namespaceUri };
         }
         var nsIdFallback = namespaceUri != null
             ? StylesheetParser.ResolveNamespaceUri(namespaceUri)
             : NamespaceId.None;
-        return new QName(nsIdFallback, name);
+        return new QName(nsIdFallback, name) { ExpandedNamespace = string.IsNullOrEmpty(namespaceUri) ? null : namespaceUri };
     }
 }
 
