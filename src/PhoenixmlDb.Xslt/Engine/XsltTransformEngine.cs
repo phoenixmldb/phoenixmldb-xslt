@@ -19,7 +19,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// <summary>
 /// XSLT transformation engine.
 /// </summary>
-public sealed class XsltTransformEngine
+public sealed partial class XsltTransformEngine
 {
     private readonly XsltStylesheet _stylesheet;
     private readonly TemplateIndex _templateIndex;
@@ -937,8 +937,7 @@ public sealed class XsltTransformEngine
                 if (kind != FinalizeKind.ResultDocument)
                     output = DefaultXsltExecutionContext.StripXmlMarkup(output);
             }
-            else if ((outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml)
-                     && !foreignXhtmlRoot)
+            else
             {
                 // HTML/XHTML methods: elements in the HTML5 content namespaces (XHTML, SVG, MathML)
                 // that are bound via a prefix in the result tree are serialized in the conventional
@@ -947,28 +946,22 @@ public sealed class XsltTransformEngine
                 // (Serialization 3.0 XHTML output method; output-0211/0221/0225/0226, output-0602a/
                 // 0602b/0603a). The HTML method performs the same prefix normalization as XHTML (W3C
                 // decl/output MHK ruling 2019-04-11: the spec is inadequate for HTML here and the
-                // XHTML rules are treated as definitive). Runs before PostProcessHtmlOutput/DOCTYPE
-                // emission so void-element handling and the HTML5 DOCTYPE name see the stripped local
-                // names. Foreign-namespace elements keep their prefixes (XML rules).
-                output = DefaultXsltExecutionContext.RedefaultXhtmlNamespaces(output);
-                output = DefaultXsltExecutionContext.PostProcessHtmlOutput(output, outputDecl.EffectiveMethod);
-            }
-
-            // Insert <meta http-equiv="Content-Type"> in <head> when include-content-type is yes (default)
-            if ((outputDecl.EffectiveMethod == OutputMethod.Html || outputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
-                !foreignXhtmlRoot &&
-                outputDecl.IncludeContentType != false)
-            {
-                output = DefaultXsltExecutionContext.InsertContentTypeMeta(output, outputDecl);
-            }
-
-            // Apply indentation. Per XSLT 3.0 §20: default is yes for html/xhtml, no for xml.
-            var effectiveIndent = outputDecl.Indent
-                ?? (outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
-            if (effectiveIndent &&
-                outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
-            {
-                output = ApplyIndentation(output, outputDecl.EffectiveMethod, outputDecl.SuppressIndentation);
+                // XHTML rules are treated as definitive). It comes before the void-element forms and
+                // the DOCTYPE, so they see the local names. Foreign-namespace elements keep their
+                // prefixes (XML rules). The Content-Type meta goes in <head> when include-content-type
+                // is yes (the default). Indentation: per XSLT 3.0 §20 the default is yes for
+                // html/xhtml, no for xml. The result writer does all of these in one pass.
+                var html = outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml && !foreignXhtmlRoot;
+                var effectiveIndent = outputDecl.Indent
+                    ?? (outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
+                var steps = new ResultWriter.Steps(
+                    outputDecl.EffectiveMethod,
+                    RedefaultNamespaces: html,
+                    HtmlForms: html,
+                    ContentTypeMeta: html && outputDecl.IncludeContentType != false ? outputDecl : null,
+                    Indent: effectiveIndent && outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html,
+                    outputDecl.SuppressIndentation);
+                output = ResultWriter.Write(output, steps);
             }
         }
 
@@ -1106,7 +1099,7 @@ public sealed class XsltTransformEngine
         // HTML output method: script and style are CDATA (raw-text) elements \u2014 their content is
         // serialized verbatim with no XML escaping (Serialization 3.0, HTML output; output-0154/
         // 0159). The element tree is escaped as normal XML up to this point so every preceding
-        // tag-scanning post-processor (PostProcessHtmlOutput, InsertContentTypeMeta, indentation,
+        // tag-scanning step (the result writer: html forms, Content-Type meta, indentation;
         // EscapeUriAttributes) sees well-formed markup; only now, as the final step, is the
         // XML-escaping of script/style *content* reversed so <, >, & appear literally.
         if (outputDecl?.EffectiveMethod == OutputMethod.Html)
@@ -2011,9 +2004,9 @@ public sealed class XsltTransformEngine
                     // Reuse the primary html/xhtml serialization: void-element minimization and the
                     // injected Content-Type <meta> as the first child of <head> (same treatment the
                     // non-streaming primary path applies).
-                    markup = DefaultXsltExecutionContext.PostProcessHtmlOutput(markup, htmlMethod);
-                    markup = DefaultXsltExecutionContext.InsertContentTypeMeta(
-                        markup, new XsltOutput { Method = htmlMethod });
+                    markup = ResultWriter.Write(markup, new ResultWriter.Steps(
+                        htmlMethod, RedefaultNamespaces: false, HtmlForms: true,
+                        ContentTypeMeta: new XsltOutput { Method = htmlMethod }, Indent: false, SuppressIndentation: null));
                     return $"\"{JsonEscapeString(markup)}\"";
                 }
                 // text method: use string value
@@ -2243,7 +2236,7 @@ public sealed class XsltTransformEngine
     /// <summary>
     /// Block-level HTML elements that should be preceded by a newline when indenting HTML output.
     /// </summary>
-    private static readonly HashSet<string> HtmlBlockElements = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> HtmlBlockElements = new(StringComparer.OrdinalIgnoreCase)
     {
         "html", "head", "body", "div", "p", "table", "thead", "tbody", "tfoot", "tr", "th", "td",
         "ul", "ol", "li", "dl", "dt", "dd", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -2785,189 +2778,8 @@ public sealed class XsltTransformEngine
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Applies indentation to serialized output when xsl:output indent="yes" is specified.
-    /// For XML/XHTML, re-parses and re-serializes with XmlWriter indentation.
-    /// For HTML, adds newlines and indentation before block-level elements.
-    /// </summary>
-    internal static string ApplyIndentation(string output, OutputMethod method, HashSet<QName>? suppressIndentation = null)
-    {
-        if (method is OutputMethod.Xml or OutputMethod.Xhtml)
-            return ApplyXmlIndentation(output, suppressIndentation);
-        else if (method == OutputMethod.Html)
-        {
-            var result = ApplyHtmlIndentation(output);
-            if (suppressIndentation != null && suppressIndentation.Count > 0)
-                result = RemoveSuppressedIndentation(result, suppressIndentation);
-            return result;
-        }
-        return output;
-    }
-
-    /// <summary>
-    /// Post-processes indented output to remove indentation whitespace inside elements
-    /// listed in suppress-indentation. Collapses added whitespace-only text nodes
-    /// between child elements back to no whitespace.
-    /// </summary>
-    private static string RemoveSuppressedIndentation(string output, HashSet<QName> suppressedElements)
-    {
-        // The html method's names: an element in no namespace or the XHTML namespace is an HTML
-        // element, and its name is matched without case (HTML elements are written unprefixed).
-        // Any other element is matched by its expanded QName, its prefix resolved through the
-        // namespace declarations of the tags around it. The names were matched by local name
-        // only, so suppress-indentation="title" also suppressed svg:title, and "P" missed <p>.
-        var htmlNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var otherNames = new HashSet<(NamespaceId, string)>();
-        var xhtml = StylesheetParser.ResolveNamespaceUri("http://www.w3.org/1999/xhtml");
-        foreach (var qn in suppressedElements)
-        {
-            if (qn.Namespace == NamespaceId.None || qn.Namespace == xhtml)
-                htmlNames.Add(qn.LocalName);
-            else
-                otherNames.Add((qn.Namespace, qn.LocalName));
-        }
-
-        // Not sized for the whole result: one buffer that size is a single large-object-heap
-        // array, freed only by a full collection (see ApplyXmlIndentation, #411). With
-        // suppress-indentation, the html passes raised the peak of a 2.3 MB result by 10 MB.
-        var sb = new StringBuilder();
-        int suppressDepth = 0; // nesting depth inside suppressed elements
-        // The open elements: name, the namespace bindings in scope there, and whether suppressed.
-        var open = new Stack<(string Name, Dictionary<string, string> Scope, bool Suppressed)>();
-        var rootScope = new Dictionary<string, string>(StringComparer.Ordinal);
-        int pos = 0;
-        while (pos < output.Length)
-        {
-            if (output[pos] == '<')
-            {
-                var tagEnd = output.IndexOf('>', pos);
-                if (tagEnd < 0) { sb.Append(output, pos, output.Length - pos); break; }
-
-                bool isClosing = pos + 1 < output.Length && output[pos + 1] == '/';
-                bool isSelfClosing = output[tagEnd - 1] == '/';
-                bool isComment = pos + 3 < output.Length && output[pos + 1] == '!' && output[pos + 2] == '-';
-                bool isPI = pos + 1 < output.Length && output[pos + 1] == '?';
-                bool isDoctype = pos + 1 < output.Length && output[pos + 1] == '!';
-
-                // Extract element name
-                string? elemName = null;
-                if (!isComment && !isPI && !isDoctype)
-                {
-                    int nameStart = isClosing ? pos + 2 : pos + 1;
-                    int nameEnd2 = nameStart;
-                    while (nameEnd2 <= tagEnd && nameEnd2 < output.Length
-                           && output[nameEnd2] != ' ' && output[nameEnd2] != '>'
-                           && output[nameEnd2] != '/' && output[nameEnd2] != '\t'
-                           && output[nameEnd2] != '\n' && output[nameEnd2] != '\r')
-                        nameEnd2++;
-                    if (nameEnd2 > nameStart)
-                        elemName = output[nameStart..nameEnd2];
-                }
-
-                if (isClosing && elemName != null)
-                {
-                    // Close up to the element this end tag names; an end tag with no open element
-                    // of its name closes nothing.
-                    if (open.Any(o => string.Equals(o.Name, elemName, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        while (open.Count > 0)
-                        {
-                            var closed = open.Pop();
-                            if (closed.Suppressed)
-                                suppressDepth = Math.Max(0, suppressDepth - 1);
-                            if (string.Equals(closed.Name, elemName, StringComparison.OrdinalIgnoreCase))
-                                break;
-                        }
-                    }
-                }
-
-                sb.Append(output, pos, tagEnd - pos + 1);
-                var tag = output.AsSpan(pos, tagEnd - pos + 1);
-                pos = tagEnd + 1;
-
-                if (!isClosing && elemName != null)
-                {
-                    var scope = open.Count > 0 ? open.Peek().Scope : rootScope;
-                    var declared = NamespaceDeclarationsOf(tag);
-                    if (declared.Count > 0)
-                    {
-                        scope = new Dictionary<string, string>(scope, StringComparer.Ordinal);
-                        foreach (var (prefix, uri) in declared)
-                            scope[prefix] = uri;
-                    }
-                    var colon = elemName.IndexOf(':', StringComparison.Ordinal);
-                    var prefixOf = colon > 0 ? elemName[..colon] : "";
-                    var local = colon > 0 ? elemName[(colon + 1)..] : elemName;
-                    var uriOf = scope.TryGetValue(prefixOf, out var u) ? u : "";
-                    var ns = StylesheetParser.ResolveNamespaceUri(uriOf);
-                    var suppressed = colon < 0 && (ns == NamespaceId.None || ns == xhtml)
-                        ? htmlNames.Contains(local)
-                        : otherNames.Contains((ns, local)) || ((ns == NamespaceId.None || ns == xhtml) && htmlNames.Contains(local));
-                    // A void element (<br>, <meta>) has no end tag in HTML output and opens nothing.
-                    if (!isSelfClosing && !(colon < 0 && DefaultXsltExecutionContext.HtmlVoidElements.Contains(local)))
-                    {
-                        open.Push((elemName, scope, suppressed));
-                        if (suppressed)
-                            suppressDepth++;
-                    }
-                }
-            }
-            else if (suppressDepth > 0)
-            {
-                // Inside a suppressed element.
-                if (output[pos] == ' ' || output[pos] == '\t' || output[pos] == '\n' || output[pos] == '\r')
-                {
-                    // Whitespace run. The indentation the indenter inserted before a suppressed
-                    // element's closing tag is always a newline followed by spaces ('\n' + indent).
-                    // When a whitespace run both contains a newline and precedes a tag, only the
-                    // part from the FIRST newline onward is inserted indentation to drop; anything
-                    // before that newline is significant text whitespace (e.g. a trailing space in
-                    // the source content) and must be preserved. A run with no newline, or one not
-                    // followed by a tag, is entirely significant text whitespace.
-                    int wsStart = pos;
-                    int firstNewline = -1;
-                    while (pos < output.Length && (output[pos] == ' ' || output[pos] == '\t'
-                           || output[pos] == '\n' || output[pos] == '\r'))
-                    {
-                        if (firstNewline < 0 && (output[pos] == '\n' || output[pos] == '\r'))
-                            firstNewline = pos;
-                        pos++;
-                    }
-                    bool precedesTag = pos < output.Length && output[pos] == '<';
-                    if (firstNewline >= 0 && precedesTag)
-                    {
-                        // Preserve the significant prefix before the inserted indentation; drop the
-                        // '\n' + indent that the indenter added.
-                        if (firstNewline > wsStart)
-                            sb.Append(output, wsStart, firstNewline - wsStart);
-                    }
-                    else
-                    {
-                        sb.Append(output, wsStart, pos - wsStart);
-                    }
-                }
-                else
-                {
-                    // Non-whitespace text content inside a suppressed element: preserve it
-                    // verbatim and advance. (The previous code did not advance pos here, so the
-                    // first text character inside a suppressed element — e.g. the 'L' of a
-                    // <p>Lorem…</p> under suppress-indentation="p" — spun the loop forever:
-                    // the decl/output-0725/0726 hang.)
-                    sb.Append(output[pos]);
-                    pos++;
-                }
-            }
-            else
-            {
-                sb.Append(output[pos]);
-                pos++;
-            }
-        }
-        return sb.ToString();
-    }
-
     /// <summary>The namespace declarations of one start tag: prefix ("" for the default) and URI.</summary>
-    private static List<(string Prefix, string Uri)> NamespaceDeclarationsOf(ReadOnlySpan<char> tag)
+    internal static List<(string Prefix, string Uri)> NamespaceDeclarationsOf(ReadOnlySpan<char> tag)
     {
         var found = new List<(string, string)>();
         foreach (System.Text.RegularExpressions.Match m in s_namespaceDeclaration.Matches(tag.ToString()))
@@ -2994,7 +2806,7 @@ public sealed class XsltTransformEngine
     /// and not in an element that has text (mixed content), nor in anything inside it, until that
     /// element ends. A suppress-indentation element counts as one with text.
     /// </remarks>
-    private static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null)
+    internal static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null)
     {
         // The XML declaration is written as it is, then a newline, and the rest is read from
         // after it and the line ends that follow it. The text is not copied to do so: the
@@ -3152,119 +2964,6 @@ public sealed class XsltTransformEngine
             return output;
         }
         return buffer.ToString();
-    }
-
-    private static string ApplyHtmlIndentation(string output)
-    {
-        // Simple HTML indentation: add newlines and indentation before block-level elements.
-        // Not sized for the whole result, as in RemoveSuppressedIndentation.
-        var sb = new StringBuilder();
-        int depth = 0;
-        int i = 0;
-        while (i < output.Length)
-        {
-            if (output[i] == '<')
-            {
-                // Find the end of the tag
-                var tagEnd = output.IndexOf('>', i);
-                if (tagEnd < 0)
-                {
-                    sb.Append(output, i, output.Length - i);
-                    break;
-                }
-
-                var tag = output.AsSpan(i, tagEnd - i + 1);
-                bool isClosing = tag.Length > 1 && tag[1] == '/';
-                bool isSelfClosing = tag[^2] == '/' || tag.EndsWith("/>".AsSpan());
-                bool isComment = tag.StartsWith("<!--".AsSpan());
-                bool isDoctype = tag.StartsWith("<!DOCTYPE".AsSpan(), StringComparison.OrdinalIgnoreCase);
-                bool isProcessingInstruction = tag.Length > 1 && tag[1] == '?';
-
-                // Extract the element name
-                string? elemName = null;
-                if (!isComment && !isDoctype && !isProcessingInstruction)
-                {
-                    int nameStart = isClosing ? 2 : 1;
-                    int nameEnd = nameStart;
-                    while (nameEnd < tag.Length && tag[nameEnd] != ' ' && tag[nameEnd] != '>'
-                           && tag[nameEnd] != '/' && tag[nameEnd] != '\t' && tag[nameEnd] != '\n')
-                        nameEnd++;
-                    if (nameEnd > nameStart)
-                        elemName = tag[nameStart..nameEnd].ToString();
-                }
-
-                bool isBlock = elemName != null && HtmlBlockElements.Contains(elemName);
-
-                // An empty block element (start tag immediately followed by its end tag, e.g.
-                // <title></title> produced by PostProcessHtmlOutput from <title/>) must serialize
-                // inline: the HTML serializer does not insert indentation between a start tag and
-                // its matching end tag when there is no content (result-document-0209/0214/0223/
-                // 0224 assert an exact <title></title>). Detect this by checking that the tag
-                // immediately preceding this closing tag in the source is the matching opening tag.
-                bool emptyBlockClose = false;
-                if (isBlock && isClosing && elemName != null && i > 0 && output[i - 1] == '>')
-                {
-                    var prevStart = output.LastIndexOf('<', i - 1);
-                    if (prevStart >= 0)
-                    {
-                        var prevTag = output.AsSpan(prevStart, i - prevStart);
-                        bool prevClosing = prevTag.Length > 1 && prevTag[1] == '/';
-                        bool prevSelfClosing = prevTag.Length > 1 && prevTag[^2] == '/';
-                        if (!prevClosing && !prevSelfClosing)
-                        {
-                            int pn = 1, pe = 1;
-                            while (pe < prevTag.Length && prevTag[pe] != ' ' && prevTag[pe] != '>'
-                                   && prevTag[pe] != '/' && prevTag[pe] != '\t' && prevTag[pe] != '\n')
-                                pe++;
-                            emptyBlockClose = pe > pn
-                                && prevTag[pn..pe].Equals(elemName.AsSpan(), StringComparison.OrdinalIgnoreCase);
-                        }
-                    }
-                }
-
-                // A block element whose closing tag is immediately preceded by character data
-                // (e.g. <body>hello</body>, <h1>Section 1 of 3</h1>, <p>x</p>) serializes inline:
-                // the HTML serializer must not insert a newline between an element's text content
-                // and its closing tag, which would inject insignificant whitespace into the
-                // element's string value (result-document-0701 serialization match; result-
-                // document-1301 assert-xml). Only a '>' (child-element boundary) or existing '\n'
-                // immediately before the close keeps the normal block indentation.
-                bool textContentClose = isBlock && isClosing && !emptyBlockClose && i > 0
-                    && output[i - 1] != '>' && !char.IsWhiteSpace(output[i - 1]);
-
-                if (isBlock)
-                {
-                    if (isClosing)
-                        depth = Math.Max(0, depth - 1);
-
-                    // Add newline and indentation before block elements, except when closing an
-                    // empty element inline (emptyBlockClose) or an element with text content
-                    // (textContentClose).
-                    if (!emptyBlockClose && !textContentClose)
-                    {
-                        if (sb.Length > 0 && sb[^1] != '\n')
-                            sb.Append('\n');
-                        sb.Append(' ', depth * 2);
-                    }
-
-                    // A void element (<meta>, <link>, <hr>, <br>) has no end tag in HTML output, so
-                    // it opens no level; counting it pushed everything after it one level deeper
-                    // for the rest of the document.
-                    if (!isClosing && !isSelfClosing
-                        && !DefaultXsltExecutionContext.HtmlVoidElements.Contains(elemName!))
-                        depth++;
-                }
-
-                sb.Append(output, i, tagEnd - i + 1);
-                i = tagEnd + 1;
-            }
-            else
-            {
-                sb.Append(output[i]);
-                i++;
-            }
-        }
-        return sb.ToString();
     }
 
     /// <summary>
