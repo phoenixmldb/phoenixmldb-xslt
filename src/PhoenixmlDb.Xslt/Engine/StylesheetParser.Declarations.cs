@@ -420,6 +420,14 @@ public sealed partial class StylesheetParser
                         if (_externalStaticParamNames.Contains(paramKey.LocalName))
                             break;
                         var newParamVal = EvaluateStaticSelectSafe(param.Select, child);
+                        // Not supplied, so the default is the value; when it cannot be converted
+                        // to the declared type the parameter in effect had to be supplied: XTDE0050
+                        // (W3C static-013; Saxon raises the same). It was not checked, and the
+                        // value failed later in whatever used it ("Arithmetic operators are not
+                        // defined for xs:date").
+                        if (param.As != null && newParamVal != null && !StaticDefaultMatches(newParamVal, param.As))
+                            throw new XsltException($"XTDE0050: The static parameter '{paramKey.LocalName}' is not supplied, and its default value does not match the required type {param.As}",
+                                GetSourceLocation(child));
                         // XTSE3450: check same as for variables
                         if (_importedStaticVarNames.TryGetValue(paramKey, out var importedParamIsVariable))
                         {
