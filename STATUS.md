@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-15 14:01 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-15 22:54 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,18 +18,22 @@ Generated 2026-11-15 14:01 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 3 | 0 |
+| phoenixmldb-xslt | 3 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
+- [499] Serializer: extension parameters for indent characters, attribute wrapping and namespace order (#400 part 2)
 - [445] Nightly regression report
-- [400] Serializer: indent while writing; no reparse, suppress-indentation by QName
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
+
+**phoenixmldb-xslt**
+
+- [505] conformance: a source with no role is the principal only if no other is
 
 **phoenixmldb-cli**
 
@@ -68,9 +72,12 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 11406/11539 (98.85%)** across 225 test-sets,
+- **W3C XSLT 3.0 — 11397/11529 (98.86%)** across 225 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
+- **The denominator moved since the previous baseline revision: XSLT 11539 -> 11529.** A percentage
+  change across this revision is partly or wholly cases entering or leaving the count,
+  NOT necessarily the engine. Compare pass counts, not percentages, across this line.
 - **W3C QT3 / XQuery** — 99.90% — 31,294 / 31,325 across all 428 catalog test-sets, measured 2026-11-02, Release build.
   Verified reproducible from two checkout paths with different execution
   orders. Source: `phoenixmldb-xquery/docs/CONFORMANCE.md`.
