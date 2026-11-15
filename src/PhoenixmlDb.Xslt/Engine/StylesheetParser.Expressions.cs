@@ -226,13 +226,8 @@ public sealed partial class StylesheetParser
                                 if (extNs == null)
                                     throw new XsltException($"XTSE1430: Namespace prefix '{p}' used in extension-element-prefixes is not declared",
                                         GetSourceLocation(element));
-                                // XTSE0800: A reserved namespace must not be used as an extension namespace
-                                if (extNs.NamespaceName is "http://www.w3.org/1999/XSL/Transform"
-                                    or "http://www.w3.org/2001/XMLSchema"
-                                    or "http://www.w3.org/2001/XMLSchema-instance"
-                                    or "http://www.w3.org/XML/1998/namespace")
-                                    throw new XsltException($"XTSE0800: The namespace '{extNs.NamespaceName}' is a reserved namespace and must not be used as an extension element namespace",
-                                        GetSourceLocation(element));
+                                if (ReservedExtensionNamespaceError(element, extNs.NamespaceName) is { } reserved)
+                                    throw new XsltException(reserved, GetSourceLocation(element));
                                 excludedUris.Add(extNs.NamespaceName);
                             }
                             else if (element.GetDefaultNamespace().NamespaceName is { Length: > 0 } extDefault)

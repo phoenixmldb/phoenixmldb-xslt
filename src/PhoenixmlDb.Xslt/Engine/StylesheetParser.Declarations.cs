@@ -10,6 +10,27 @@ namespace PhoenixmlDb.Xslt.Engine;
 
 public sealed partial class StylesheetParser
 {
+    /// <summary>
+    /// The error for a reserved namespace named in [xsl:]extension-element-prefixes, or null.
+    /// Naming it is XTSE0085; using an element in it as an extension instruction is XTSE0800
+    /// (XSLT 3.0 §3.3.1, §24.2). Where the stylesheet does both, that use is the one reported
+    /// (W3C extension-functions-0105), and where it only names the namespace, XTSE0085
+    /// (math-3702); Saxon reports both. It was always XTSE0800. The elements of the XSLT
+    /// namespace are not extension instructions, so naming it is XTSE0085.
+    /// </summary>
+    private static string? ReservedExtensionNamespaceError(XElement scope, string nsUri)
+    {
+        if (nsUri is not ("http://www.w3.org/1999/XSL/Transform"
+            or "http://www.w3.org/2001/XMLSchema"
+            or "http://www.w3.org/2001/XMLSchema-instance"
+            or "http://www.w3.org/XML/1998/namespace"))
+            return null;
+        if (nsUri != "http://www.w3.org/1999/XSL/Transform"
+            && scope.Descendants().Any(e => e.Name.NamespaceName == nsUri))
+            return $"XTSE0800: An element in the reserved namespace '{nsUri}' is used as an extension instruction";
+        return $"XTSE0085: The namespace '{nsUri}' is reserved and must not be named in extension-element-prefixes";
+    }
+
 
     /// <summary>
     /// Parses an XSLT stylesheet from an XElement.
@@ -220,14 +241,9 @@ public sealed partial class StylesheetParser
                 if (ns == null)
                     throw new XsltException($"XTSE1430: Namespace prefix '{prefix}' used in extension-element-prefixes is not declared",
                         GetSourceLocation(element));
-                // XTSE0800: A reserved namespace must not be used as an extension namespace
                 var nsUri = ns.NamespaceName;
-                if (nsUri is "http://www.w3.org/1999/XSL/Transform"
-                    or "http://www.w3.org/2001/XMLSchema"
-                    or "http://www.w3.org/2001/XMLSchema-instance"
-                    or "http://www.w3.org/XML/1998/namespace")
-                    throw new XsltException($"XTSE0800: The namespace '{nsUri}' is a reserved namespace and must not be used as an extension element namespace",
-                        GetSourceLocation(element));
+                if (ReservedExtensionNamespaceError(element, nsUri) is { } reserved)
+                    throw new XsltException(reserved, GetSourceLocation(element));
                 // Store the namespace URI so we can match regardless of prefix used
                 stylesheet.ExtensionElementPrefixes.Add(nsUri);
             }
