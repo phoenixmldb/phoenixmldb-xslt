@@ -74,8 +74,15 @@ public sealed partial class StylesheetParser
             if (template.Visibility is not (Visibility.Abstract or Visibility.Hidden))
                 target.NamedTemplates.TryAdd(name, template);
             else if (template.Visibility is Visibility.Abstract)
+            {
                 target.AbstractTemplateNames.Add(name);
+                target.AbstractTemplates.TryAdd(name, template);
+            }
         }
+        foreach (var (name, template) in package.AbstractTemplates)
+            target.AbstractTemplates.TryAdd(name, template);
+        foreach (var (key, function) in package.AbstractFunctions)
+            target.AbstractFunctions.TryAdd(key, function);
         foreach (var name in package.AbstractTemplateNames)
             target.AbstractTemplateNames.Add(name);
         foreach (var key in package.AbstractFunctionKeys)
@@ -97,7 +104,10 @@ public sealed partial class StylesheetParser
             if (func.Visibility is not (Visibility.Abstract or Visibility.Hidden))
                 target.Functions.TryAdd(key, func);
             else if (func.Visibility is Visibility.Abstract)
+            {
                 target.AbstractFunctionKeys.Add(key);
+                target.AbstractFunctions.TryAdd(key, func);
+            }
         }
 
         // Variables: merge all except abstract (private variables may be referenced
