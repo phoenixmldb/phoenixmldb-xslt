@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-15 22:54 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-16 15:56 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,13 +18,16 @@ Generated 2026-11-15 22:54 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 3 | 1 |
+| phoenixmldb-xslt | 6 | 1 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
+- [523] fn:analyze-string returns a .NET XElement that fails `instance of element()`
+- [520] Streamed copy-of(path) held in a variable is not constant-memory
+- [516] Temporary trees stay in the node store until the transform ends
 - [499] Serializer: extension parameters for indent characters, attribute wrapping and namespace order (#400 part 2)
 - [445] Nightly regression report
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
@@ -37,7 +40,7 @@ Generated 2026-11-15 22:54 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-cli**
 
-- [28] build: Bump the phoenixmldb-engines group with 2 updates
+- [29] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
