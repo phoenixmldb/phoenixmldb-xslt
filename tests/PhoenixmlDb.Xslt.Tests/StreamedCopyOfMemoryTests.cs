@@ -79,6 +79,12 @@ public sealed class StreamedCopyOfMemoryTests : IDisposable
             "992 994 996 998 1000" },
         { "<xsl:variable name='c' select='copy-of(root/item/@v[. &lt; -990])'/><xsl:value-of select='$c'/>",
             "-992 -994 -996 -998 -1000" },
+        // An aggregate over copy-of() or snapshot() of a path read the whole input (xslt#526).
+        { "<xsl:value-of select='count(copy-of(root/item[@v &lt; -990]/@v))'/>", "5" },
+        { "<xsl:value-of select='sum(copy-of(root/item[@v &lt; -990]/@v))'/>", "-4980" },
+        { "<xsl:value-of select='max(snapshot(root/item/@v))'/>", "999" },
+        { "<xsl:value-of select='string-join(copy-of(root/item[@v &lt; -990]), \",\")'/>", "992,994,996,998,1000" },
+        { "<xsl:value-of select='count(copy-of(root/item))'/>", "1000" },
     };
 
     [Theory]

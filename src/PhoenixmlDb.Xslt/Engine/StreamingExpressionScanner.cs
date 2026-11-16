@@ -401,7 +401,7 @@ internal sealed class StreamingExpressionScanner
             // Recognized aggregation patterns: count(path), sum(path), max(path), etc.
             case FunctionCallExpression fc when IsAggregationFunction(fc):
                 var aggType = GetAggregationType(fc);
-                var pathInfo = ExtractPathFromArgument(fc.Arguments[0]);
+                var pathInfo = ExtractPathFromArgument(AggregateOperand(fc.Arguments[0]));
                 // A text() tail is matched as its parent element, which is one item per
                 // element: right for the leaf's value, wrong for a count of text nodes. An
                 // element may have none (whitespace stripped) or several (mixed content):
@@ -957,6 +957,19 @@ internal sealed class StreamingExpressionScanner
         => expr is FunctionCallExpression { Arguments.Count: 1 } fc
             && IsSnapshotFunction(fc)
             && ExtractPathFromArgument(fc.Arguments[0]) != null;
+
+    /// <summary>
+    /// The operand an aggregate reads its values from: <c>copy-of(path)</c> and
+    /// <c>snapshot(path)</c> give the values <c>path</c> gives, so count(), sum(), max() and the
+    /// rest are computed over the path. The call was read as an operand no watcher captures,
+    /// and the body was run on the whole input read into memory: 1.25 GiB for
+    /// <c>count(copy-of(root/item[@v &lt; 0]/@v))</c> over 1M items (xslt#526).
+    /// </summary>
+    internal static XQueryExpression AggregateOperand(XQueryExpression operand)
+        => operand is FunctionCallExpression { Arguments.Count: 1 } fc && IsSnapshotFunction(fc)
+            && fc.Arguments[0] is PathExpression path && IsDownwardPath(path)
+            ? path
+            : operand;
 
     private static bool IsSnapshotFunction(FunctionCallExpression fc)
     {

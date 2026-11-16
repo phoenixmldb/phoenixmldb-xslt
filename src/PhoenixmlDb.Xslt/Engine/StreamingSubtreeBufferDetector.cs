@@ -893,7 +893,7 @@ internal static class StreamingSubtreeBufferDetector
                             return false;
                         if (fc.Arguments.Count > 0
                             && NavigatesInput(fc.Arguments[0])
-                            && !IsBarePathOperand(fc.Arguments[0]))
+                            && !IsBarePathOperand(StreamingExpressionScanner.AggregateOperand(fc.Arguments[0])))
                             return true;
                         break;
                 }
