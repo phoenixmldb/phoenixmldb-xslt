@@ -63,6 +63,23 @@ internal static class StreamingSubtreeMaterializer
                     var isEmpty = reader.IsEmptyElement;
                     var parent = stack.Peek();
                     var frame = ReadElementStart(reader, store, documentId, parent.Id);
+                    // In document 0 the namespace axis reads an element's own declarations with no
+                    // walk up its ancestors (as for a constructed element), so each element carries
+                    // its full in-scope set, as CloneSubtreeDeep gives a clone there. A child that
+                    // inherited a binding only from the subtree root lost it: a copy of
+                    // <b:B g:id="1"> under a root that bound g was written without xmlns:g, which
+                    // is not namespace-well-formed (W3C si-element-049).
+                    if (documentId.Value == 0)
+                    {
+                        foreach (var inherited in parent.NamespaceDeclarations)
+                        {
+                            var overridden = false;
+                            foreach (var own in frame.NamespaceDeclarations)
+                                if (own.Prefix == inherited.Prefix) { overridden = true; break; }
+                            if (!overridden)
+                                frame.NamespaceDeclarations.Add(inherited);
+                        }
+                    }
                     if (isEmpty)
                     {
                         var elem = FinalizeFrame(frame, store);
