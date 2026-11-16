@@ -72,6 +72,43 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// Begins sequence collection that keeps the order of the items and the markup written
+    /// between them, as an <c>as="item()*"</c> body does: the raw principal result of the
+    /// adaptive method is a sequence in which an element can come after an atomic value
+    /// (XSLT 3.0 §2.4, build-tree defaults to no). The markup was written to the output and the
+    /// items collected apart, so the two could not be put back in order, and the markup was
+    /// dropped when there were items (W3C character-map-026).
+    /// </summary>
+    public void BeginOrderedSequenceCollection()
+    {
+        BeginSequenceCollection();
+        _currentAsBodyCapture = new AsBodyCapture
+        {
+            Accumulator = _sequenceAccumulator!,
+            OutputBaseLen = _output.Length,
+            AttrDepthAtStart = _collectedAttributesStack.Count,
+        };
+    }
+
+    /// <summary>
+    /// Ends a <see cref="BeginOrderedSequenceCollection"/> collection: the items, with the nodes
+    /// of the markup written meanwhile woven in where they were written, and that markup taken
+    /// out of the output. Null when the collection was not an ordered one; it is then still open.
+    /// </summary>
+    public List<object?>? EndOrderedSequenceCollection()
+    {
+        if (_currentAsBodyCapture is not { } capture || !ReferenceEquals(capture.Accumulator, _sequenceAccumulator))
+            return null;
+        _currentAsBodyCapture = null;
+        var items = EndSequenceCollection();
+        var start = Math.Min(capture.OutputBaseLen, _output.Length);
+        var markup = _output.ToString(start, _output.Length - start);
+        _output.Length = start;
+        return AssembleAsBodyResultItems(markup, items, capture.Positions, capture.ConsumedTo);
+    }
+
+
     private void PushOutputNsScope(Dictionary<string, string> nsBindings)
     {
         _outputNsScopes.Push(nsBindings);
