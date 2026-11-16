@@ -402,7 +402,7 @@ public sealed partial class XsltTransformEngine
         }
 
         // Check if output method is JSON or Adaptive — enable sequence collection
-        var principalOutput = _stylesheet.Outputs.FirstOrDefault();
+        var principalOutput = _stylesheet.PrincipalOutput;
         var isJsonOutput = principalOutput?.EffectiveMethod is OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv;
         if (isJsonOutput)
             context.BeginSequenceCollection();
@@ -607,7 +607,7 @@ public sealed partial class XsltTransformEngine
 
         // Apply output method post-processing
         // When result-document claimed primary output with a named format, use that declaration
-        var outputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+        var outputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
         return FinalizeOutput(output, outputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary, context.AllowedOutputMethods);
     }
 
@@ -1607,7 +1607,7 @@ public sealed partial class XsltTransformEngine
             // JSON input fed through TransformAsync(XdmSequence)).
             if (!options.ReturnRawXdm)
             {
-                var jsonOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+                var jsonOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
                 if (jsonOutDecl?.EffectiveMethod is OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv)
                 {
                     var jsonBuilder = new StringBuilder();
@@ -1642,7 +1642,7 @@ public sealed partial class XsltTransformEngine
         // path applies — otherwise serialized output produced from a non-node (e.g. JSON-map)
         // initial context item ignored xsl:output indent="yes", character maps, normalization,
         // etc. (Martin Honnen 2026-06-12).
-        var rawOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+        var rawOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
         return FinalizeOutput(serialized, rawOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary, context.AllowedOutputMethods);
     }
 
@@ -5390,7 +5390,7 @@ public sealed partial class XsltTransformEngine
         // callers consuming the writer get a well-formed prologue.
         if (outputSink != null)
         {
-            var prologDecl = _stylesheet.Outputs.FirstOrDefault();
+            var prologDecl = _stylesheet.PrincipalOutput;
             if (prologDecl != null &&
                 (prologDecl.EffectiveMethod == OutputMethod.Xml || prologDecl.EffectiveMethod == OutputMethod.Xhtml) &&
                 prologDecl.OmitXmlDeclaration != true)
@@ -5439,7 +5439,7 @@ public sealed partial class XsltTransformEngine
         // Without this, top-level CreateMapAsync sees a null accumulator and falls
         // through to its adaptive-text branch (unquoted string values, no indent).
         // Reported by Martin Honnen against streamed JSON output.
-        var streamingPrincipalOutput = _stylesheet.Outputs.FirstOrDefault();
+        var streamingPrincipalOutput = _stylesheet.PrincipalOutput;
         var isStreamingJsonOutput = streamingPrincipalOutput?.EffectiveMethod is OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv;
         if (isStreamingJsonOutput)
             context.BeginSequenceCollection();
@@ -5593,7 +5593,7 @@ public sealed partial class XsltTransformEngine
                 return;
 
             var docOutput = outputBuilder.ToString();
-            var docOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+            var docOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
             docOutput = FinalizeOutput(docOutput, docOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered, context.AllowedOutputMethods);
             outputBuilder.Clear();
             outputBuilder.Append(docOutput);
@@ -5633,7 +5633,7 @@ public sealed partial class XsltTransformEngine
         // normalization \u2014 that divergence was the bug. FinalizeOutput only runs the indentation
         // step for XML/HTML/XHTML methods, so JSON already serialized via FinalizeJsonOutput above
         // is not re-indented or corrupted.
-        var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
+        var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
         output = FinalizeOutput(output, streamOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered, context.AllowedOutputMethods);
 
         // Replace the builder's contents with the post-processed output so the calling

@@ -3749,7 +3749,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         bool? byteOrderMark = null, bool? escapeUriAttributes = null,
         string? htmlVersion = null)
     {
-        var baseOutput = _stylesheet.Outputs.FirstOrDefault();
+        var baseOutput = _stylesheet.PrincipalOutput;
         return new Ast.XsltOutput
         {
             // A null method leaves EffectiveMethod at its default (xml), so the XML
