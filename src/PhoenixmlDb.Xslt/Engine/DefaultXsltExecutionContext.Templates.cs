@@ -719,8 +719,12 @@ internal sealed partial class DefaultXsltExecutionContext
                             // If no match, shallow-skip does nothing for attributes
                         }
                     }
-                    // In streaming mode, child recursion is handled by the streaming loop.
-                    if (!_isStreamingExecution)
+                    // In streaming mode the loop reads the children next and offers each one to
+                    // matching. Not for an element already read whole (a nested
+                    // xsl:apply-templates reads each child that way): the loop has passed its
+                    // children, and no rule below it ran. The built-in shallow-copy makes the same
+                    // test.
+                    if (!_isStreamingExecution || _streamingDispatchElementMaterialized)
                         await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 }
                 break;
