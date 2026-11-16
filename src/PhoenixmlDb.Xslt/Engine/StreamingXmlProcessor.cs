@@ -281,7 +281,14 @@ internal sealed class StreamingXmlProcessor
                             skipCtx.Attributes = skipAttrs;
                             skipCtx.NamespaceDeclarations = skipNsDecls;
                             skipCtx.Depth = elementDepth;
+                            skipCtx.Parent = ancestorStack.Count > 0 ? ancestorStack.Peek() : null;
                             var skipXdm = MaterializeElement(skipCtx);
+                            // Its parent, as on the path below: an accumulator pattern with more
+                            // than one step (header-item/id/text()) matched no element of a
+                            // subtree a template rule skipped (W3C accumulator-077s).
+                            skipXdm.Parent = ancestorStack.Count > 0
+                                ? ancestorStack.Peek().NodeId
+                                : EnsureStreamingRootDocId();
                             await FireAccumulatorRulesAsync(skipXdm, nodeId, AccumulatorPhase.Start).ConfigureAwait(false);
                             // Fire stream watchers in the suppressed branch too — when a
                             // parent template was deferred (consuming aggregates pending
@@ -1121,47 +1128,8 @@ internal sealed class StreamingXmlProcessor
             IdPatternEvaluator = _accMatchIdPatternEvaluator,
         };
 
-        for (var i = 0; i < _accumulators.Count; i++)
-        {
-            if (_accCurrentValues[i] is AccumulatorDeferredError)
-            {
-                // Propagate error state to node value map: the before-value at a start, and the
-                // after-value at an end (an ancestor of the failing node kept its earlier value).
-                if (phase == AccumulatorPhase.Start)
-                    _accNodeValueMaps[i][nodeId] = (before: _accCurrentValues[i], after: _accCurrentValues[i]);
-                else
-                {
-                    var existing = _accNodeValueMaps[i].GetValueOrDefault(nodeId, (before: _accCurrentValues[i], after: _accCurrentValues[i]));
-                    _accNodeValueMaps[i][nodeId] = (existing.before, after: _accCurrentValues[i]);
-                }
-                continue;
-            }
-
-            var acc = _accumulators[i];
-            if (DefaultXsltExecutionContext.SelectAccumulatorRule(acc, phase, node, matchContext) is { } rule)
-            {
-                try
-                {
-                    _accCurrentValues[i] = await _context.EvaluateAccumulatorRuleAsync(
-                        node, rule, _accCurrentValues[i], acc).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (AccumulatorDeferredError.IsDeferrable(ex))
-                {
-                    _accCurrentValues[i] = new AccumulatorDeferredError(ex);
-                }
-            }
-
-            // Store values: start phase sets before-value, end phase updates after-value
-            if (phase == AccumulatorPhase.Start)
-            {
-                _accNodeValueMaps[i][nodeId] = (before: _accCurrentValues[i], after: _accCurrentValues[i]);
-            }
-            else
-            {
-                var existing = _accNodeValueMaps[i].GetValueOrDefault(nodeId, (before: _accCurrentValues[i], after: _accCurrentValues[i]));
-                _accNodeValueMaps[i][nodeId] = (existing.before, after: _accCurrentValues[i]);
-            }
-        }
+        await _context.RunStreamedAccumulatorPhaseAsync(node, nodeId, matchContext,
+            _accumulators, _accCurrentValues, _accNodeValueMaps, phase).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1201,6 +1169,41 @@ internal sealed class StreamingXmlProcessor
             _accNodeValueMaps[i][bufferedRoot.Id] = (before[i], _accCurrentValues[i]);
     }
 
+
+    /// <summary>
+    /// Runs the pass's accumulators over an element a nested xsl:apply-templates read from the
+    /// reader whole, before its template runs: the start phase, its descendants, the end phase,
+    /// all from the pass's running values. The forward pass never sees such an element, and its
+    /// values were computed over the copy alone, from the initial value: a counter of id1 end
+    /// tags gave 2 at the end of the second of two fields elements where 3 were read (W3C
+    /// accumulator-079s). Call <see cref="ForgetAccumulatorValues"/> once the template is done.
+    /// </summary>
+    internal async ValueTask CarryAccumulatorsOverDispatchedElementAsync(Xdm.Nodes.XdmElement element)
+    {
+        if (_accCurrentValues == null || _accNodeValueMaps == null || _accumulators.Count == 0)
+            return;
+        await ReplayAccumulatorNodeAsync(element.Id).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Removes the values recorded for an element and its descendants, so that elements read
+    /// whole one after another do not keep a value per node to the end of the pass.
+    /// </summary>
+    internal void ForgetAccumulatorValues(Xdm.Nodes.XdmNode node)
+    {
+        if (_accNodeValueMaps == null)
+            return;
+        foreach (var map in _accNodeValueMaps)
+            map.Remove(node.Id);
+        if (node is Xdm.Nodes.XdmElement element)
+        {
+            foreach (var childId in element.Children)
+            {
+                if (_nodeStore.GetNode(childId) is { } child)
+                    ForgetAccumulatorValues(child);
+            }
+        }
+    }
 
     /// <summary>Replays one skipped node and its descendants into the accumulator state.</summary>
     private async ValueTask ReplayAccumulatorNodeAsync(NodeId nodeId)

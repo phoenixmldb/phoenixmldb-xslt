@@ -2129,6 +2129,10 @@ internal sealed partial class DefaultXsltExecutionContext
                     // ancestor chain, and in the same pair of files.
                     var deferredBefore = _streamingDeferredExecutions.Count;
                     var openBeforeDispatch = _streamingOpenElements.Count;
+                    // The pass never reads this element: carry its accumulators over it here.
+                    var accumulatorOwner = _accumulatorStreamOwner;
+                    if (accumulatorOwner != null)
+                        await accumulatorOwner.CarryAccumulatorsOverDispatchedElementAsync(elem).ConfigureAwait(false);
                     try
                     {
                         await MatchAndExecuteStreamingNodeAsync(elem, mode, position).ConfigureAwait(false);
@@ -2155,6 +2159,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         var qn = _streamingOpenElements.Pop();
                         WriteStreamingEndTag(qn);
                     }
+                    accumulatorOwner?.ForgetAccumulatorValues(elem);
                     break;
                 }
                 case System.Xml.XmlNodeType.Text:
