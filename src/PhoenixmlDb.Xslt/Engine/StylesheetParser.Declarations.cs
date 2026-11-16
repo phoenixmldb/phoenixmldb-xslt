@@ -1448,10 +1448,13 @@ public sealed partial class StylesheetParser
                         }
                         if (original is not null)
                         {
-                            // XTSE3060: Can only override public or abstract components
-                            if (original.Visibility is Visibility.Private or Visibility.Final)
+                            // XTSE3060: Can only override public or abstract components. In an
+                            // xsl:package a template with no visibility attribute is private (§3.5);
+                            // it reads as public, the default elsewhere (W3C override-t-010).
+                            if (original.Visibility is Visibility.Private or Visibility.Final
+                                || (original.VisibilityAttr is null && packageStylesheet.IsPackage))
                                 throw new XsltException(
-                                    $"XTSE3060: Cannot override template '{templateName.LocalName}' which has visibility '{original.Visibility.ToString().ToUpperInvariant()}'",
+                                    $"XTSE3060: Cannot override template '{templateName.LocalName}' which has visibility '{(original.VisibilityAttr is null ? "PRIVATE" : original.Visibility.ToString().ToUpperInvariant())}'",
                                     GetSourceLocation(child));
                             // XTSE3070: Override signature must be compatible with original
                             ValidateOverrideSignature(overrideTemplate, original, templateName, child);
@@ -1550,10 +1553,12 @@ public sealed partial class StylesheetParser
                     }
                     if (original is not null)
                     {
-                        // XTSE3060: Can only override public or abstract components
-                        if (original.Visibility is Visibility.Private or Visibility.Final)
+                        // XTSE3060: Can only override public or abstract components; in an
+                        // xsl:package an unstated visibility is private (§3.5).
+                        var unstatedInPackage = !original.VisibilityStated && packageStylesheet.IsPackage;
+                        if (original.Visibility is Visibility.Private or Visibility.Final || unstatedInPackage)
                             throw new XsltException(
-                                $"XTSE3060: Cannot override function '{overrideFunc.Name.LocalName}' which has visibility '{original.Visibility.ToString().ToUpperInvariant()}'",
+                                $"XTSE3060: Cannot override function '{overrideFunc.Name.LocalName}' which has visibility '{(unstatedInPackage ? "PRIVATE" : original.Visibility.ToString().ToUpperInvariant())}'",
                                 GetSourceLocation(child));
                         // XTSE3070: Override signature must be compatible
                         ValidateOverrideFunctionSignature(overrideFunc, original, child);
