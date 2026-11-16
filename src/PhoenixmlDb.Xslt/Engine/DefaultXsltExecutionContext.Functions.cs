@@ -1282,6 +1282,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     var savedForAttr = _output.ToString();
                     _output.Clear();
 
+                    // The set's xsl:attribute instructions must write to _output, which is captured
+                    // for the element. In a variable's body a sequence accumulator is active, and an
+                    // xsl:attribute there became a free attribute item of the variable's value: the
+                    // set's attributes left the element and landed on whatever the value was copied
+                    // into (DocBook FO header tables; W3C docbook-002).
+                    var savedAccumulatorForAttr = _sequenceAccumulator;
+                    _sequenceAccumulator = null;
+
                     // The swapped-out state below is restored in the finally: expanding an attribute set can throw
                     // (XTDE0640 for a circular reference, XTDE3052 for an abstract set with no implementation), and an
                     // early exit used to leave _scopes holding only the fresh scope. Unwinding then reached the
@@ -1339,6 +1347,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
                     finally
                     {
+                        _sequenceAccumulator = savedAccumulatorForAttr;
                         _output.Clear();
                         _output.Append(savedForAttr);
 
