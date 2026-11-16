@@ -610,7 +610,8 @@ public sealed partial class XsltTransformEngine
         // Apply output method post-processing
         // When result-document claimed primary output with a named format, use that declaration
         var outputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.Outputs.FirstOrDefault();
-        return FinalizeOutput(output, outputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary, context.AllowedOutputMethods);
+        return FinalizeOutput(output, outputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary, context.AllowedOutputMethods,
+            explicitResultDocument: context.PrimaryOutputClaimedByResultDocument);
     }
 
     /// <summary>
@@ -874,7 +875,7 @@ public sealed partial class XsltTransformEngine
     };
 
     internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind,
-        IReadOnlySet<OutputMethod>? allowedMethods = null)
+        IReadOnlySet<OutputMethod>? allowedMethods = null, bool explicitResultDocument = false)
     {
         RequireSupportedHtmlVersion(outputDecl);
         // Default output method (Serialization 4.0 §Default Output Method): when no method was
@@ -892,7 +893,8 @@ public sealed partial class XsltTransformEngine
         // results therefore keep their existing (xml-default) serialization byte-for-byte.
         if (kind == FinalizeKind.Primary
             && (outputDecl == null || outputDecl.Method == null)
-            && ResolveDefaultOutputMethod(output) is OutputMethod defaultedMethod)
+            && ResolveDefaultOutputMethod(output) is OutputMethod defaultedMethod
+            && !(defaultedMethod == OutputMethod.Xhtml && !explicitResultDocument && IsVersion10(_stylesheet.Version)))
         {
             outputDecl = outputDecl?.CloneWithMethod(defaultedMethod)
                 ?? new XsltOutput { Method = defaultedMethod };
@@ -2550,6 +2552,16 @@ public sealed partial class XsltTransformEngine
     /// <c>null</c> (keep the xml default) for any other document element or a foreign-namespace
     /// <c>html</c>.
     /// </summary>
+    /// <summary>
+    /// True when a version attribute says 1.0. An XHTML <c>html</c> document element defaults the
+    /// principal result to the xhtml method, except when the principal stylesheet module's
+    /// effective version is 1.0: the method stays xml (XSLT 3.0 §26.1, W3C backwards-019; Saxon
+    /// does the same). The rule is for a result generated implicitly: one an explicit
+    /// xsl:result-document wrote keeps xhtml (backwards-019b).
+    /// </summary>
+    private static bool IsVersion10(string? version)
+        => decimal.TryParse(version, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var v) && v == 1.0m;
+
     private static OutputMethod? ResolveDefaultOutputMethod(string output)
     {
         var searchStart = 0;
