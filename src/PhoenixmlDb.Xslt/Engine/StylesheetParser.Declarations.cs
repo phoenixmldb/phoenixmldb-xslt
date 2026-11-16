@@ -1257,7 +1257,7 @@ public sealed partial class StylesheetParser
                 packageStylesheet.AbstractFunctionKeys.Add(functionKey);
         }
         if (acceptElements.Count > 0)
-            ApplyAcceptVisibilities(acceptElements, packageStylesheet);
+            ApplyAcceptVisibilities(acceptElements, packageStylesheet, overriddenSymbols);
         // Accepting a component AS abstract makes the using package abstract in turn, so it
         // cannot be executed: XTSE3080 (accept-904/908/912/914). Accepting the same component as
         // hidden does not — it stays executable, and calling the component is XTDE3052
@@ -1870,7 +1870,15 @@ public sealed partial class StylesheetParser
     /// QName is more specific than a partial wildcard (prefix:* / *:local / Q{uri}*), which is
     /// more specific than "*". Among equally-specific matches, the last in document order wins.
     /// </summary>
-    private static void ApplyAcceptVisibilities(List<XElement> acceptElements, XsltStylesheet package)
+    /// <remarks>
+    /// A component this xsl:use-package overrides is not accepted: the override is the using
+    /// package's own, with its own visibility (§3.5.3.3; a name that matches it is XTSE3051, and a
+    /// wildcard does not reach it). names="*" visibility="hidden" hid the override too, so a
+    /// package used twice, overriding t in one use and u in the other, had neither (W3C
+    /// override-t-014).
+    /// </remarks>
+    private static void ApplyAcceptVisibilities(List<XElement> acceptElements, XsltStylesheet package,
+        HashSet<(string, QName, int)> overridden)
     {
         var rules = new List<AcceptRule>();
         var order = 0;
@@ -1889,7 +1897,7 @@ public sealed partial class StylesheetParser
         }
 
         foreach (var name in package.NamedTemplates.Keys.ToList())
-            if (TryResolveAcceptVisibility(rules, "template", name, package.NamedTemplates[name].Visibility, out var vis))
+            if (!overridden.Contains(("T", name, 0)) && TryResolveAcceptVisibility(rules, "template", name, package.NamedTemplates[name].Visibility, out var vis))
             {
                 var accepted = CloneTemplateWithVisibility(package.NamedTemplates[name], vis);
                 accepted.VisibilityFromAccept = true;
@@ -1897,19 +1905,19 @@ public sealed partial class StylesheetParser
             }
 
         foreach (var key in package.Functions.Keys.ToList())
-            if (TryResolveAcceptVisibility(rules, "function", key.Name, package.Functions[key].Visibility, out var vis, key.Arity))
+            if (!overridden.Contains(("F", key.Name, key.Arity)) && TryResolveAcceptVisibility(rules, "function", key.Name, package.Functions[key].Visibility, out var vis, key.Arity))
                 package.Functions[key] = CloneFunctionWithVisibility(package.Functions[key], vis);
 
         for (var i = 0; i < package.Variables.Count; i++)
-            if (TryResolveAcceptVisibility(rules, "variable", package.Variables[i].Name, package.Variables[i].Visibility, out var vis))
+            if (!overridden.Contains(("V", package.Variables[i].Name, 0)) && TryResolveAcceptVisibility(rules, "variable", package.Variables[i].Name, package.Variables[i].Visibility, out var vis))
                 package.Variables[i] = CloneVariableWithVisibility(package.Variables[i], vis);
 
         foreach (var name in package.AttributeSets.Keys.ToList())
-            if (TryResolveAcceptVisibility(rules, "attribute-set", name, package.AttributeSets[name].Visibility, out var vis))
+            if (!overridden.Contains(("A", name, 0)) && TryResolveAcceptVisibility(rules, "attribute-set", name, package.AttributeSets[name].Visibility, out var vis))
                 package.AttributeSets[name] = CloneAttributeSetWithVisibility(package.AttributeSets[name], vis);
 
         foreach (var name in package.Modes.Keys.ToList())
-            if (TryResolveAcceptVisibility(rules, "mode", name, package.Modes[name].Visibility, out var vis))
+            if (!overridden.Contains(("M", name, 0)) && TryResolveAcceptVisibility(rules, "mode", name, package.Modes[name].Visibility, out var vis))
             {
                 var mode = package.Modes[name];
                 package.Modes[name] = new Ast.XsltMode
