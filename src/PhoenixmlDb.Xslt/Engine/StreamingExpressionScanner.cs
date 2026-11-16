@@ -957,7 +957,7 @@ internal sealed class StreamingExpressionScanner
     /// (distinct from the wrapping <see cref="IsSnapshotFunction"/> form
     /// <c>copy-of(path)</c>).
     /// </summary>
-    private static bool IsTrailingSnapshotStep(XQueryExpression expr)
+    internal static bool IsTrailingSnapshotStep(XQueryExpression expr)
     {
         return expr is FunctionCallExpression fc
             && fc.Arguments.Count == 0
