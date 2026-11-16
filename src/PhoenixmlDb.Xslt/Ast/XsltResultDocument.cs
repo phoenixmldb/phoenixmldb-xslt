@@ -35,6 +35,9 @@ public sealed class XsltResultDocument : XsltInstruction
     /// output methods a value &gt;= 5.0 selects HTML5 serialization, which emits <c>&lt;!DOCTYPE html&gt;</c>
     /// (result-document-0242 / 0244).</summary>
     public XsltAttributeValueTemplate? HtmlVersion { get; init; }
+
+    /// <summary>The normalization-form attribute (AVT): NFC, NFD, NFKC, NFKD, fully-normalized or none.</summary>
+    internal XsltAttributeValueTemplate? NormalizationForm { get; init; }
     public XsltAttributeValueTemplate? DoctypePublic { get; init; }
     public XsltAttributeValueTemplate? DoctypeSystem { get; init; }
     /// <summary>The <c>media-type</c> serialization attribute (may be an AVT); drives the
