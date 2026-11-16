@@ -330,6 +330,16 @@ internal sealed partial class DefaultXsltExecutionContext
         // result, and a body that really does produce an attribute for an
         // `as="document-node()"` parameter is caught by the type check on the resulting value.
         var typedBody = EnterTypedBody(null);
+        // Record where in the markup each accumulated item was added, so text kept apart from
+        // the markup can be put back in its place (below).
+        var savedCapture = _currentAsBodyCapture;
+        var capture = new AsBodyCapture
+        {
+            Accumulator = _sequenceAccumulator,
+            OutputBaseLen = savedLen,
+            AttrDepthAtStart = _collectedAttributesStack.Count,
+        };
+        _currentAsBodyCapture = capture;
         List<object?> captured;
         try
         {
@@ -339,11 +349,40 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             captured = _sequenceAccumulator;
             _sequenceAccumulator = savedAccumulator;
+            _currentAsBodyCapture = savedCapture;
             ExitTypedBody(typedBody);
             _temporaryOutputDepth--;
         }
         var content = _output.ToString(savedLen, _output.Length - savedLen);
         _output.Length = savedLen;
+        // xsl:text and xsl:value-of text goes to the accumulator only, while elements go to the
+        // markup. When the items are all such text and there is markup too, the value is the
+        // markup with the text put back where it was written. The items alone were returned, so
+        // <xsl:param name="p"><xsl:text>[</xsl:text><b/><xsl:text>]</xsl:text></xsl:param> was
+        // "[]" (DocBook's biblioentry.label; W3C docbook-001).
+        if (captured.Count > 0 && content.Length > 0
+            && captured.TrueForAll(static item => item is Xdm.TextNodeItem)
+            && capture.Positions.Count == captured.Count)
+        {
+            var woven = new StringBuilder(content.Length + 16);
+            var cursor = 0;
+            for (var i = 0; i < captured.Count; i++)
+            {
+                var position = Math.Min(capture.Positions[i], content.Length);
+                if (position > cursor)
+                {
+                    woven.Append(content, cursor, position - cursor);
+                    cursor = position;
+                }
+                if (i < capture.ConsumedTo.Count && capture.ConsumedTo[i] > cursor)
+                    cursor = Math.Min(capture.ConsumedTo[i], content.Length); // already in the markup
+                else
+                    woven.Append(EscapeText(((Xdm.TextNodeItem)captured[i]!).Value));
+            }
+            woven.Append(content, cursor, content.Length - cursor);
+            content = woven.ToString();
+            captured.Clear();
+        }
         if (captured.Count > 0)
         {
             // Typed items captured — return them (single-item unwrapped, multi as array).
