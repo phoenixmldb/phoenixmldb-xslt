@@ -112,6 +112,14 @@ internal sealed class StreamWatcher
     public bool LeafPredicateOnElement { get; init; }
 
     /// <summary>
+    /// How the position of the matched element is counted for its own positional predicate
+    /// (<c>ITEM[1]</c> in <c>BOOKS/ITEM[1]/@CAT</c>): 0, the predicate is not positional; 1, among
+    /// its siblings of the same name; 2, among all its element siblings (a <c>*</c> step). The
+    /// predicate was evaluated at position 1 for every match, so <c>ITEM[1]</c> kept them all.
+    /// </summary>
+    public int LeafPositionKind { get; init; }
+
+    /// <summary>
     /// Motionless predicates carried by ancestor (intermediate) element steps of the
     /// matched path — e.g. the <c>[@CAT='P']</c> on <c>ITEM</c> in
     /// <c>BOOKLIST/BOOKS/ITEM[@CAT='P']/PRICE</c>. Each entry records how many element

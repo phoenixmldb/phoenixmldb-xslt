@@ -422,7 +422,9 @@ internal sealed class StreamingXmlProcessor
                             _matchPrefix = current.Prefix;
                             _matchNamespaceUri = current.NamespaceUri;
                             _matchInScopeNamespaces = CaptureInScopeNamespaces(reader);
+                            _matchPosition = (siblingCount, currentNamePos);
                             FireWatchers(current.LocalName, attrDict, null);
+                            _matchPosition = default;
                         }
 
                         // Group B — non-consuming inspection subscriptions. An
@@ -1233,6 +1235,9 @@ internal sealed class StreamingXmlProcessor
         public required StreamWatcher Watcher;
         public required int Depth;
         public required string ElementName;
+        // The matched element's position among its element siblings and among its siblings of
+        // the same name; (0, 0) where it was not counted.
+        public (int ElementPos, int NamePos) Position;
         public Dictionary<string, string>? Attributes;
         // Namespace channel (#192): the matched element's prefix / namespace-URI and
         // its in-scope namespace bindings, captured at StartElement so the materialized
@@ -1312,6 +1317,10 @@ internal sealed class StreamingXmlProcessor
     }
 
     private readonly List<PendingTextWatcherMatch> _pendingTextWatcherMatches = [];
+
+    // The element whose start tag the watchers are fired for: its sibling positions (see
+    // PendingTextWatcherMatch.Position). Default where they were not counted.
+    private (int ElementPos, int NamePos) _matchPosition;
 
     // Namespace channel (#192): the prefix / namespace-URI and in-scope namespace
     // bindings of the element currently being fired through the watcher pipeline,
@@ -1846,7 +1855,8 @@ internal sealed class StreamingXmlProcessor
                         InScopeNamespaces = _matchInScopeNamespaces,
                         ReservedSlot = reservedSlot,
                         SubtreeStack = subtreeStack,
-                        IntermediateAncestors = intermediateAncestors
+                        IntermediateAncestors = intermediateAncestors,
+                        Position = _matchPosition
                     });
                 }
                 else if (watcher.CaptureMatchedNode)
@@ -2369,6 +2379,22 @@ internal sealed class StreamingXmlProcessor
             if (entry.Watcher.Predicates.Count > 0 && predicateEvalContext != null)
             {
                 XdmNode predicateContext = predicateEvalContext;
+                // A positional predicate on the matched element sees the element's position among
+                // its siblings; any other predicate (or an uncounted match) position 1, as before.
+                // The size is not known while streaming: it is given as the position, so last()
+                // keeps its earlier result.
+                var leafPosition = 1;
+                var leafPositional = false;
+                var predicateOnElement = entry.Watcher.ValueAttribute == null || entry.Watcher.LeafPredicateOnElement;
+                if (predicateOnElement && entry.Watcher.LeafPositionKind != 0)
+                {
+                    var counted = entry.Watcher.LeafPositionKind == 2 ? entry.Position.ElementPos : entry.Position.NamePos;
+                    if (counted > 0)
+                    {
+                        leafPosition = counted;
+                        leafPositional = true;
+                    }
+                }
                 var prevStreaming = _context._isStreamingExecution;
                 _context._isStreamingExecution = false;
                 // Suspend the active watcher list for the duration of predicate
@@ -2385,13 +2411,18 @@ internal sealed class StreamingXmlProcessor
                 // finally so watcher accumulation for other consumers is unaffected.)
                 var prevWatchers = _context._activeStreamWatchers;
                 _context._activeStreamWatchers = null;
-                _context.PushContextItem(predicateContext, 1, 1);
+                _context.PushContextItem(predicateContext, leafPosition, leafPosition);
                 _context.PushCurrentItem(predicateContext);
                 try
                 {
                     foreach (var pred in entry.Watcher.Predicates)
                     {
-                        if (!await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false))
+                        // [N] is position() = N, as for an ancestor step; its effective boolean
+                        // value is true for any N but 0.
+                        var ok = leafPositional && pred is IntegerLiteral or DecimalLiteral or DoubleLiteral
+                            ? NumericLiteralEqualsPosition(pred, leafPosition)
+                            : await _context.EvaluateBooleanAsync(pred).ConfigureAwait(false);
+                        if (!ok)
                         {
                             predicatesPass = false;
                             break;
