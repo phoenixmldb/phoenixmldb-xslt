@@ -168,7 +168,15 @@ public sealed partial class StylesheetParser
         // set that is not overridden remains unusable — record its name so a reference to it
         // at runtime raises XTDE3052 rather than silently applying nothing (accept-911).
         foreach (var (_, attrSet) in package.AttributeSets)
+        {
             attrSet.PackageStylesheet ??= package;
+            // A set an xsl:override replaced is the package's too: expanded through
+            // use-attribute-sets="xsl:original", its own use-attribute-sets resolve in the
+            // package, where its private sets are. It was not stamped, they were looked up in
+            // the using package, and their attributes were lost (W3C override-as-002).
+            for (var original = attrSet.OriginalAttributeSet; original is not null; original = original.OriginalAttributeSet)
+                original.PackageStylesheet ??= package;
+        }
         foreach (var (name, attrSet) in package.AttributeSets)
         {
             if (attrSet.Visibility is Visibility.Abstract || attrSet.IsAbstract)
