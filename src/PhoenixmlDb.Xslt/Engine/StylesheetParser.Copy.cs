@@ -28,7 +28,9 @@ public sealed partial class StylesheetParser
         Name = f.Name, As = f.As, Parameters = f.Parameters, Body = f.Body,
         Override = f.Override, Visibility = v, Cache = f.Cache,
         NewEachTime = f.NewEachTime, Streamability = f.Streamability,
-        OriginalFunction = f.OriginalFunction
+        OriginalFunction = f.OriginalFunction,
+        // Given by an xsl:expose or xsl:accept.
+        VisibilityStated = true,
     };
 
 

@@ -98,6 +98,8 @@ public sealed partial class StylesheetParser
                 target.Functions.TryAdd(key, func);
             else if (func.Visibility is Visibility.Abstract)
                 target.AbstractFunctionKeys.Add(key);
+            else
+                target.HiddenFunctionKeys.Add(key);
         }
 
         // Variables: merge all except abstract (private variables may be referenced

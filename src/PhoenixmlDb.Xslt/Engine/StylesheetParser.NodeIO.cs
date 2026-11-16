@@ -71,6 +71,7 @@ public sealed partial class StylesheetParser
             ValidateNoAbstractComponents(stylesheet);
         ValidateOutputCharacterMapReferences(stylesheet);
         ValidatePatternFunctionReferences(stylesheet);
+        ValidateCallsToInaccessibleFunctions(stylesheet);
         ValidateStreamableTemplates(stylesheet);
         return stylesheet;
     }
@@ -95,6 +96,7 @@ public sealed partial class StylesheetParser
         ValidateDecimalFormats(stylesheet);
         ValidateAttributeSetReferences(stylesheet);
         ValidatePatternFunctionReferences(stylesheet);
+        ValidateCallsToInaccessibleFunctions(stylesheet);
         ValidateStreamableTemplates(stylesheet);
         return stylesheet;
     }

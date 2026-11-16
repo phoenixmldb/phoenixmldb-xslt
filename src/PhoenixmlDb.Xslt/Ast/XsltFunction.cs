@@ -62,4 +62,17 @@ public sealed class XsltFunction
     /// the using package stamps it (or, in the principal, it stays null like its own components).
     /// </summary>
     internal bool DeclaredInOverride { get; set; }
+
+    /// <summary>
+    /// The visibility was given by an xsl:accept of the using package. A function accepted as
+    /// private is usable in that package, unlike one that is private in its own (§3.5.3.2).
+    /// </summary>
+    internal bool VisibilityFromAccept { get; set; }
+
+    /// <summary>
+    /// The visibility was stated: by the visibility attribute, or by an xsl:expose or xsl:accept.
+    /// An unstated one reads as public, which is the default outside a package; in an xsl:package
+    /// the default is private (§3.5).
+    /// </summary>
+    internal bool VisibilityStated { get; set; }
 }

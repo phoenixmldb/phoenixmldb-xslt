@@ -109,6 +109,12 @@ public sealed class XsltStylesheet
     public HashSet<(QName Name, int Arity)> AbstractFunctionKeys { get; init; } = new();
 
     /// <summary>
+    /// Functions of used packages that an xsl:accept hid: not components of this package, so a
+    /// call to one from it is XPST0017 (see StylesheetParser.ValidateCallsToInaccessibleFunctions).
+    /// </summary>
+    internal HashSet<(QName Name, int Arity)> HiddenFunctionKeys { get; } = new();
+
+    /// <summary>
     /// True when an xsl:accept in this package accepts a component with visibility="abstract".
     /// That makes this package abstract in turn, so it cannot be executed: XTSE3080.
     /// </summary>
