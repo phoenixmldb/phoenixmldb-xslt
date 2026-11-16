@@ -1046,6 +1046,9 @@ internal sealed partial class DefaultXsltExecutionContext
     // XTDE1490: Set when an explicit xsl:result-document href="" has claimed the primary output
     private bool _primaryOutputClaimedByResultDocument;
 
+    /// <summary>True when an explicit xsl:result-document wrote the principal result.</summary>
+    internal bool PrimaryOutputClaimedByResultDocument => _primaryOutputClaimedByResultDocument;
+
     private XsltOutput? _primaryOutputMatchedDeclaration;
 
     // Pending primary output from nested xsl:result-document href="" inside a secondary redirect
