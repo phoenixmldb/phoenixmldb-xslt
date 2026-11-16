@@ -3197,6 +3197,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             var savedElemDepth = _serializingElementDepth;
             var savedLastWasNode = _simpleContentLastWasNode;
             var savedAtomic = _lastResultWasAtomic;
+            // The content's own output starts here. An element in the content takes the text
+            // written before it from the logical start, which was the enclosing scope's: text
+            // written before the comment or PI went into it (W3C bug-0305, `+<xsl:comment>`).
+            var savedLogicalStart = _outputLogicalStart;
+            _outputLogicalStart = _output.Length;
             _sequenceAccumulator = new List<object?>();
             _collectTextAsSequenceItems = true;
             _serializingElementDepth = 0;
@@ -3210,6 +3215,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             finally
             {
                 _textContentDepth--;
+                _outputLogicalStart = savedLogicalStart;
                 _collectTextAsSequenceItems = savedCollectText;
                 _serializingElementDepth = savedElemDepth;
                 _simpleContentLastWasNode = savedLastWasNode;
