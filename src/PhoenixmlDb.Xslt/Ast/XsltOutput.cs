@@ -112,6 +112,51 @@ public sealed class XsltOutput
     /// those of its matched xsl:output) during content emission, without mutating the shared
     /// xsl:output AST node. Every other serialization parameter is preserved unchanged.
     /// </summary>
+    /// <summary>
+    /// This output definition with the serialization attributes an xsl:result-document gives
+    /// itself put over it; a null argument keeps this definition's value. An href-less
+    /// xsl:result-document whose definition was the unnamed or a named xsl:output used that
+    /// definition as it was, so its own indent, omit-xml-declaration, standalone, encoding,
+    /// byte-order-mark and normalization-form were dropped (W3C normalize-unicode-016; Saxon
+    /// applies them).
+    /// </summary>
+    internal XsltOutput WithResultDocumentOverrides(
+        OutputMethod? method, bool? omitXmlDeclaration, bool? indent, bool? standalone, bool standaloneSpecified,
+        string? version, string? mediaType, bool? includeContentType, bool? byteOrderMark,
+        bool? escapeUriAttributes, string? htmlVersion, string? normalizationForm, string? encoding)
+    {
+        var clone = new XsltOutput
+        {
+            Name = Name,
+            Method = method ?? Method,
+            Version = version ?? Version,
+            Encoding = encoding ?? Encoding,
+            OmitXmlDeclaration = omitXmlDeclaration ?? OmitXmlDeclaration,
+            Standalone = standaloneSpecified ? standalone : Standalone,
+            DoctypePublic = DoctypePublic,
+            DoctypeSystem = DoctypeSystem,
+            Indent = indent ?? Indent,
+            MediaType = mediaType ?? MediaType,
+            IncludeContentType = includeContentType ?? IncludeContentType,
+            EscapeUriAttributes = escapeUriAttributes ?? EscapeUriAttributes,
+            UndeclarePrefixes = UndeclarePrefixes,
+            NormalizationForm = normalizationForm ?? NormalizationForm,
+            ItemSeparator = ItemSeparator,
+            HtmlVersion = htmlVersion ?? HtmlVersion,
+            BuildTree = BuildTree,
+            AllowDuplicateNames = AllowDuplicateNames,
+            ByteOrderMark = byteOrderMark ?? ByteOrderMark,
+            JsonNodeOutputMethod = JsonNodeOutputMethod,
+        };
+        clone.ImportPrecedence = ImportPrecedence;
+        clone.CdataSectionElements = CdataSectionElements;
+        clone.PackageStylesheet = PackageStylesheet;
+        clone.SuppressIndentation = SuppressIndentation;
+        foreach (var m in UseCharacterMaps)
+            clone.UseCharacterMaps.Add(m);
+        return clone;
+    }
+
     internal XsltOutput CloneWithCdataSectionElements(HashSet<QName> cdataSectionElements)
     {
         var clone = new XsltOutput

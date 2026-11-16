@@ -3753,8 +3753,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         bool? standalone = null, bool standaloneSpecified = false, string? version = null,
         string? mediaType = null, bool? includeContentType = null,
         bool? byteOrderMark = null, bool? escapeUriAttributes = null,
-        string? htmlVersion = null)
+        string? htmlVersion = null, string? normalizationForm = null, string? encoding = null,
+        Ast.XsltOutput? matched = null)
     {
+        // The result-document's matched xsl:output (its format, or the unnamed one) with the
+        // result-document's own attributes put over it, rather than the matched one as it was.
+        if (matched is not null)
+            return matched.WithResultDocumentOverrides(method, omitXmlDecl, indent, standalone, standaloneSpecified,
+                version, mediaType, includeContentType, byteOrderMark, escapeUriAttributes, htmlVersion,
+                normalizationForm, encoding);
         var baseOutput = _stylesheet.PrincipalOutput;
         return new Ast.XsltOutput
         {
@@ -3762,7 +3769,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // declaration is still emitted for an href-less result-document with no method.
             Method = method,
             OmitXmlDeclaration = omitXmlDecl ?? baseOutput?.OmitXmlDeclaration,
-            Encoding = baseOutput?.Encoding,
+            Encoding = encoding ?? baseOutput?.Encoding,
             // An explicit standalone on xsl:result-document (including "omit" → null) overrides
             // the stylesheet-level xsl:output; otherwise inherit the base value.
             Standalone = standaloneSpecified ? standalone : baseOutput?.Standalone,
@@ -3779,6 +3786,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // xsl:output; otherwise inherit (result-document-0256/0258/0260/1203, -0264/0266/0268).
             ByteOrderMark = byteOrderMark ?? baseOutput?.ByteOrderMark,
             EscapeUriAttributes = escapeUriAttributes ?? baseOutput?.EscapeUriAttributes,
+            NormalizationForm = normalizationForm ?? baseOutput?.NormalizationForm,
         };
     }
 

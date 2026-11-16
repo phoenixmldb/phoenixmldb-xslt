@@ -142,6 +142,7 @@ public sealed partial class StylesheetParser
             OutputVersion = element.Attribute("output-version") is { } ov ? ParseAvt(ov.Value, element, ov) : null,
             Indent = indentAttr != null ? ParseAvt(indentAttr.Value, element, indentAttr) : null,
             HtmlVersion = htmlVersionAttr != null ? ParseAvt(htmlVersionAttr.Value, element, htmlVersionAttr) : null,
+            NormalizationForm = element.Attribute("normalization-form") is { } nf ? ParseAvt(nf.Value, element, nf) : null,
             DoctypePublic = rdDoctypePublic != null ? ParseAvt(rdDoctypePublic.Value, element, rdDoctypePublic) : null,
             DoctypeSystem = rdDoctypeSystem != null ? ParseAvt(rdDoctypeSystem.Value, element, rdDoctypeSystem) : null,
             MediaType = mediaTypeAttr != null ? ParseAvt(mediaTypeAttr.Value, element, mediaTypeAttr) : null,

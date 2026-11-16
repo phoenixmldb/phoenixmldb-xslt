@@ -1269,6 +1269,17 @@ internal sealed partial class DefaultXsltExecutionContext
             ? (await EvaluateAvtAsync(instruction.HtmlVersion).ConfigureAwait(false)).Trim()
             : null;
 
+        // normalization-form on xsl:result-document (AVT) was not read at all, so the result was
+        // not normalized (W3C normalize-unicode-016). It wins over the matched xsl:output.
+        // encoding on xsl:result-document (AVT) was not read either.
+        string? resultEncoding = instruction.Encoding != null
+            ? (await EvaluateAvtAsync(instruction.Encoding).ConfigureAwait(false)).Trim()
+            : null;
+
+        string? resultNormalizationForm = instruction.NormalizationForm != null
+            ? (await EvaluateAvtAsync(instruction.NormalizationForm).ConfigureAwait(false)).Trim()
+            : null;
+
         // Evaluate doctype-public / doctype-system from xsl:result-document (AVTs). When present
         // (even as a zero-length string, per erratum E31), they override the matched xsl:output.
         string? resultDoctypePublic = instruction.DoctypePublic != null
@@ -1613,7 +1624,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     Indent = resultIndent ?? matchedOutput?.Indent,
                     HtmlVersion = resultHtmlVersion ?? rdBaseOutput?.HtmlVersion,
                     OmitXmlDeclaration = resultOmitXmlDecl ?? rdBaseOutput?.OmitXmlDeclaration,
-                    Encoding = rdBaseOutput?.Encoding,
+                    Encoding = resultEncoding ?? rdBaseOutput?.Encoding,
                     Version = resultVersion ?? rdBaseOutput?.Version,
                     Standalone = resultStandaloneSpecified ? resultStandalone : rdBaseOutput?.Standalone,
                     DoctypePublic = resultDoctypePublic ?? rdBaseOutput?.DoctypePublic,
@@ -1621,7 +1632,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     MediaType = resultMediaType ?? rdBaseOutput?.MediaType,
                     IncludeContentType = resultIncludeContentType ?? rdBaseOutput?.IncludeContentType,
                     EscapeUriAttributes = resultEscapeUriAttributes ?? rdBaseOutput?.EscapeUriAttributes,
-                    NormalizationForm = rdBaseOutput?.NormalizationForm,
+                    NormalizationForm = resultNormalizationForm ?? rdBaseOutput?.NormalizationForm,
                     ByteOrderMark = resultByteOrderMark ?? rdBaseOutput?.ByteOrderMark,
                     // CDATA wrapping is applied at emission time (via _activeResultDocumentOutput), not
                     // in FinalizeOutput; carry the effective union here for declaration consistency.
@@ -1649,11 +1660,11 @@ internal sealed partial class DefaultXsltExecutionContext
                 // output-version/omit-xml-declaration (not the xsl:output default). A null method
                 // still defaults to xml, so the XML declaration is emitted even with no attributes.
                 _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
-                    matchedOutput
-                    ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
+                    CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
                         resultStandalone, resultStandaloneSpecified, resultVersion,
                         resultMediaType, resultIncludeContentType,
-                        resultByteOrderMark, resultEscapeUriAttributes, resultHtmlVersion),
+                        resultByteOrderMark, resultEscapeUriAttributes, resultHtmlVersion, resultNormalizationForm,
+                        resultEncoding, matchedOutput),
                     resultDoctypePublic, resultDoctypeSystem);
             }
             else
@@ -1662,11 +1673,11 @@ internal sealed partial class DefaultXsltExecutionContext
                 // result-document href="", preventing further implicit writes
                 _primaryOutputClaimedByResultDocument = true;
                 _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
-                    matchedOutput
-                    ?? CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
+                    CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
                         resultStandalone, resultStandaloneSpecified, resultVersion,
                         resultMediaType, resultIncludeContentType,
-                        resultByteOrderMark, resultEscapeUriAttributes, resultHtmlVersion),
+                        resultByteOrderMark, resultEscapeUriAttributes, resultHtmlVersion, resultNormalizationForm,
+                        resultEncoding, matchedOutput),
                     resultDoctypePublic, resultDoctypeSystem);
             }
         }
