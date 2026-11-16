@@ -111,6 +111,16 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     taggedItems.Add((iterators[si].CurrentItem!, iterators[si].SourceIndex));
                     await iterators[si].AdvanceAsync().ConfigureAwait(false);
+                    // Each input sequence must be in order under the merge keys (XSLT 3.0
+                    // §15.4.2). The next item's key is never below the one just taken: a
+                    // Swedish-sorted list merged by codepoint or a German collation was merged
+                    // as if in order (W3C merge-072/074). The unstreamed merge checks this too.
+                    if (iterators[si].HasCurrent
+                        && CompareMergeKeys(iterators[si].CurrentKey!, bestKey!, keyOrders, keyDataTypes, keyCollations) < 0)
+                    {
+                        var source = instruction.Sources[iterators[si].SourceIndex];
+                        throw Error($"XTDE2220: Merge source '{source.Name ?? ("source " + iterators[si].SourceIndex)}' is not correctly sorted");
+                    }
                 }
             }
 
