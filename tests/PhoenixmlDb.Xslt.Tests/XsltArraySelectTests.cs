@@ -59,12 +59,8 @@ public class XsltArraySelectTests
     public async Task Composite_yes_produces_one_member()
     {
         var result = await Run("""<xsl:array select="1 to 5" composite="yes"/>""");
-        // The member is a SEQUENCE, so adaptive should render it parenthesized —
-        // [(1,2,3,4,5)]. It currently renders with brackets, which misreports the member's
-        // type; see BUGS.md #11. Pinned as the count, which is what composite governs:
-        // one member, not five.
-        result.Should().NotBe("[1,2,3,4,5]");
-        result.Should().StartWith("[[").And.EndWith("]]");
+        // One member, a SEQUENCE, which the adaptive method writes in parentheses (BUGS.md #11).
+        result.Should().Be("[(1,2,3,4,5)]");
     }
 
     // The sequence-constructor forms must keep working — select is an addition, not a

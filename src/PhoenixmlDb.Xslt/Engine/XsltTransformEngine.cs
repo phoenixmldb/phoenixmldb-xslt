@@ -404,7 +404,9 @@ public sealed partial class XsltTransformEngine
         // Check if output method is JSON or Adaptive — enable sequence collection
         var principalOutput = _stylesheet.Outputs.FirstOrDefault();
         var isJsonOutput = principalOutput?.EffectiveMethod is OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv;
-        if (isJsonOutput)
+        if (principalOutput?.EffectiveMethod == OutputMethod.Adaptive)
+            context.BeginOrderedSequenceCollection();
+        else if (isJsonOutput)
             context.BeginSequenceCollection();
 
         // §5.7.2 sequence normalization: the item-separator serialization parameter
@@ -1753,6 +1755,11 @@ public sealed partial class XsltTransformEngine
         XdmInMemoryStore? nodeStore,
         XsltTransformOptions options)
     {
+        if (context.EndOrderedSequenceCollection() is { } ordered)
+        {
+            FinalizeAdaptiveOutput(context, ordered, outputBuilder, principalOutput, nodeStore, options);
+            return;
+        }
         var jsonItems = context.EndSequenceCollection();
         if (options.ReturnRawXdm)
         {
@@ -1776,6 +1783,67 @@ public sealed partial class XsltTransformEngine
 
         AppendJsonItems(jsonItems, outputBuilder, principalOutput, nodeStore,
             context.Owner!.JsonKeepsSolidus(principalOutput, context.PrincipalOutputCharacterMaps));
+    }
+
+    /// <summary>
+    /// The principal result of the adaptive method: the items in the order they were written,
+    /// each serialized as Serialization 3.1 §10 says, as PhoenixmlDb.XQuery's serializer does
+    /// (QT3 measures it). A node goes by the xml method, with an XML declaration unless
+    /// omit-xml-declaration is yes; a string is quoted; a map is <c>map{...}</c>; the items are
+    /// separated by the item-separator, a newline by default. The json item writer was used
+    /// instead, and it wrote strings bare and maps as JSON objects (W3C character-map-026,
+    /// output-0721).
+    /// </summary>
+    private static void FinalizeAdaptiveOutput(
+        DefaultXsltExecutionContext context,
+        List<object?> items,
+        StringBuilder outputBuilder,
+        XsltOutput? principalOutput,
+        XdmInMemoryStore? nodeStore,
+        XsltTransformOptions options)
+    {
+        items.RemoveAll(static item => item is null);
+        if (options.ReturnRawXdm)
+        {
+            object? rawValue = items.Count switch
+            {
+                0 => null,
+                1 => items[0],
+                _ => items.ToArray()
+            };
+            options.RawResult.Value = WrapNodesForCrossStoreTransport(rawValue, context);
+        }
+        if (items.Count == 0)
+            return;
+        if (nodeStore is null)
+        {
+            AppendJsonItems(items, outputBuilder, principalOutput, nodeStore, keepSolidus: true);
+            return;
+        }
+        var separator = principalOutput?.ItemSeparator;
+        var serializer = new PhoenixmlDb.XQuery.XQueryResultSerializer(nodeStore, new PhoenixmlDb.XQuery.SerializationOptions
+        {
+            Method = PhoenixmlDb.XQuery.OutputMethod.Adaptive,
+            MethodDeclared = true,
+            AdaptiveQuoteStrings = true,
+            OmitXmlDeclaration = true,
+            Indent = principalOutput?.Indent == true,
+        });
+        // Each node is serialized by the xml method on its own, so each has its own XML
+        // declaration (Saxon writes one before every node but an attribute; output-0721). The
+        // XQuery serializer writes one only for a document node, so it is written here.
+        // A node inside an array or map does not get one.
+        var declaration = principalOutput?.OmitXmlDeclaration == true
+            ? null
+            : $"<?xml version=\"{principalOutput?.Version ?? "1.0"}\" encoding=\"{principalOutput?.Encoding ?? "UTF-8"}\"?>";
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (i > 0)
+                outputBuilder.Append(separator is null or "#absent" ? "\n" : separator);
+            if (declaration is not null && items[i] is XdmNode and not (XdmAttribute or XdmNamespace))
+                outputBuilder.Append(declaration);
+            outputBuilder.Append(serializer.Serialize(items[i]));
+        }
     }
 
     /// <summary>
