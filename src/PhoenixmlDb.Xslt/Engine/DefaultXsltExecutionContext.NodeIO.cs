@@ -279,6 +279,44 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>The document node of a temporary tree that holds only text.</summary>
+    private XdmDocument BuildTextOnlyDocument(ResultTreeFragment rtf)
+    {
+        var store = _nodeStore!;
+        var value = rtf.XmlContent.Contains('&', StringComparison.Ordinal)
+            ? DecodeSerializedText(rtf.XmlContent)
+            : rtf.XmlContent;
+        var documentId = store.NextId();
+        var children = new List<NodeId>(1);
+        if (value.Length > 0)
+        {
+            var text = new XdmText
+            {
+                Id = store.NextId(),
+                Document = new DocumentId(1),
+                Parent = documentId,
+                Value = value,
+            };
+            store.Register(text);
+            children.Add(text.Id);
+        }
+        var document = new XdmDocument
+        {
+            StringValueResolver = store.StringValueResolver,
+            Id = documentId,
+            Document = new DocumentId(1),
+            Parent = NodeId.None,
+            DocumentElement = NodeId.None,
+            DocumentUri = null,
+            Children = children,
+        };
+        document.BaseUri = rtf.BaseUri;
+        document._stringValue = value;
+        store.Register(document);
+        return document;
+    }
+
+
     /// <summary>
     /// Parses a ResultTreeFragment (temporary tree) into an XDM document node.
     /// This allows RTFs to be processed by apply-templates.
@@ -291,6 +329,17 @@ internal sealed partial class DefaultXsltExecutionContext
         // Return cached parse result to preserve node identity across accesses
         if (rtf.CachedDocumentNode is XdmDocument cached)
             return cached;
+
+        // A temporary tree of text only — a variable or parameter body like <xsl:param>5</…> —
+        // is a document node with one text node (none when empty). It is built directly: as XML
+        // it is not well-formed, so the parse below threw, caught, and parsed it again wrapped,
+        // for each one, which made such a body several times slower than a select= value.
+        if (!rtf.XmlContent.Contains('<', StringComparison.Ordinal))
+        {
+            var textOnly = BuildTextOnlyDocument(rtf);
+            rtf.CachedDocumentNode = textOnly;
+            return textOnly;
+        }
 
         try
         {

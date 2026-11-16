@@ -360,7 +360,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // markup with the text put back where it was written. The items alone were returned, so
         // <xsl:param name="p"><xsl:text>[</xsl:text><b/><xsl:text>]</xsl:text></xsl:param> was
         // "[]" (DocBook's biblioentry.label; W3C docbook-001).
-        if (captured.Count > 0 && content.Length > 0
+        if (captured.Count > 0
             && captured.TrueForAll(static item => item is Xdm.TextNodeItem)
             && capture.Positions.Count == captured.Count)
         {
@@ -388,10 +388,10 @@ internal sealed partial class DefaultXsltExecutionContext
             // Typed items captured — return them (single-item unwrapped, multi as array).
             return captured.Count == 1 ? captured[0] : captured.ToArray();
         }
-        // Fall back to text content as untyped atomic / RTF.
-        return content.Contains('<', StringComparison.Ordinal)
-            ? (object)new ResultTreeFragment(content)
-            : new Xdm.XsUntypedAtomic(StripXmlMarkup(content));
+        // A body with no as= makes a temporary tree, a document node, even when it holds only
+        // text (XSLT 3.0 §9.4), as a variable's body does. Text alone was an untypedAtomic, so
+        // $p/node() raised XPTY0019 (Saxon: one text node).
+        return new ResultTreeFragment(content);
     }
 
 
@@ -2467,6 +2467,13 @@ internal sealed partial class DefaultXsltExecutionContext
                     return sequenceItems[0];
                 return sequenceItems.Count > 0 ? sequenceItems.ToArray() : Array.Empty<object?>();
             }
+
+            // No as=: a temporary tree, built as a parameter's default is (text, elements and
+            // text from xsl:text kept in order). The branch below kept either the accumulated
+            // items or the markup, so text with elements lost one or the other, and text alone
+            // was not a document node.
+            if (param.As == null)
+                return await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
 
             var savedScope2 = new XsltTransformEngine.ScopedOutputBuffer(_output);
             var savedLogicalStart2 = _outputLogicalStart;
