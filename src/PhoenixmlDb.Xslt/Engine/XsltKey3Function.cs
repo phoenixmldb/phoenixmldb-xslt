@@ -58,8 +58,11 @@ internal sealed class XsltKey3Function : PhoenixmlDb.XQuery.Ast.XQueryFunction
         // Resolve key name using shared resolver (handles namespace-prefixed names)
         var keyFunc = new XsltKeyFunction(_context);
         var keyDef = keyFunc.ResolveKeyDefinition(keyName);
+        // No key of this name in the calling package is XTDE1260, as for key#2. It gave the
+        // empty sequence, so a key of a used package, which is local to that package (§3.6.2),
+        // looked as if it were found and matched nothing (W3C use-package-105).
         if (keyDef == null)
-            return Array.Empty<object>();
+            throw new XsltException($"XTDE1260: No xsl:key declaration found with name '{keyName}'");
 
         if (_context._nodeStore == null)
             return Array.Empty<object>();
