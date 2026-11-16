@@ -1238,6 +1238,9 @@ internal sealed class StreamingXmlProcessor
         // The matched element's position among its element siblings and among its siblings of
         // the same name; (0, 0) where it was not counted.
         public (int ElementPos, int NamePos) Position;
+        // For a Sequence watcher over elements (the streamed nodes themselves): the synthesized
+        // chain of the elements open at the match, to be the parent of the materialized node.
+        public NodeId? AncestorParent;
         public Dictionary<string, string>? Attributes;
         // Namespace channel (#192): the matched element's prefix / namespace-URI and
         // its in-scope namespace bindings, captured at StartElement so the materialized
@@ -1562,6 +1565,28 @@ internal sealed class StreamingXmlProcessor
         snapshot.Parent = SynthesizeAncestorChain();
     }
 
+    // The ancestor chain last synthesized for a Sequence watcher match, and the open element it
+    // was built under: siblings matched while that element is open share one chain, and so the
+    // same ancestor nodes.
+    private (long OpenId, NodeId? Parent)? _sharedAncestorChain;
+
+    /// <summary>
+    /// The synthesized chain of the elements open now, for a node a Sequence watcher delivers. The
+    /// node stands for the streamed one, whose ancestors are reachable (upward navigation is
+    /// motionless), so <c>//* ! count(ancestor-or-self::*)</c> counts them: each match had no
+    /// parent, and every count was 1 (W3C sx-bang-006). Built when the match starts, so its nodes
+    /// precede the match's in document order.
+    /// </summary>
+    private NodeId? SharedAncestorChain()
+    {
+        var openId = _ancestorOpenIds.Count > 0 ? _ancestorOpenIds[^1] : -1;
+        if (_sharedAncestorChain is { } cached && cached.OpenId == openId)
+            return cached.Parent;
+        var parent = SynthesizeAncestorChain();
+        _sharedAncestorChain = (openId, parent);
+        return parent;
+    }
+
     /// <summary>
     /// Synthesizes the ancestor chain from the currently-open stream elements
     /// (<see cref="_ancestorNames"/>/<see cref="_ancestorAttributes"/>, outermost
@@ -1856,7 +1881,11 @@ internal sealed class StreamingXmlProcessor
                         ReservedSlot = reservedSlot,
                         SubtreeStack = subtreeStack,
                         IntermediateAncestors = intermediateAncestors,
-                        Position = _matchPosition
+                        Position = _matchPosition,
+                        AncestorParent = watcher.Aggregation == WatcherAggregation.Sequence
+                            && watcher.ValueAttribute == null && watcher.ClimbAxis == ClimbAxisKind.None
+                            ? SharedAncestorChain()
+                            : null
                     });
                 }
                 else if (watcher.CaptureMatchedNode)
@@ -2364,6 +2393,8 @@ internal sealed class StreamingXmlProcessor
                         rootFrame.FlushPendingText(MakeStreamingText);
                         materialized = MaterializeSubtreeFrame(rootFrame);
                     }
+                    if (materialized != null && entry.AncestorParent is { } matchAncestors)
+                        materialized.Parent = matchAncestors;
                 }
             }
 
