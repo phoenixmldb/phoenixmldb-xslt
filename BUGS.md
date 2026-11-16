@@ -107,6 +107,8 @@ where the wrong code looked right.
 `<xsl:array select="1 to 5" composite="yes"/>` gives `[[1,2,3,4,5]]`; the member is a
 SEQUENCE, so it should be `[(1,2,3,4,5)]`. Same family as #10, on the XSLT serializer side.
 Narrow — composite="yes" is rare — but it misreports the member's type.
+**Fixed 2026-11-15:** the principal adaptive result is serialized by PhoenixmlDb.XQuery's
+serializer, which writes `[(1,2,3,4,5)]`.
 
 ### 12. `inherit-namespaces` appears not to be honoured on `xsl:element`
 Constructing `<xsl:element name="p:outer" namespace="urn:p" inherit-namespaces="no">` with a
