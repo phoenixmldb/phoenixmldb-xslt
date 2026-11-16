@@ -624,6 +624,13 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private static string? StreamingForEachGroupSelectLeafName(XQueryExpression select)
     {
+        // `record/copy-of()` parses as a simple map of the path through copy-of(): the leaf is
+        // the path's. Unrecognized, it gave no name filter, so every child was a member and the
+        // grouping key ran against the wrong elements: select="transaction/copy-of()" grouped
+        // <account-number> too, whose missing @date was an empty key, XTTE1100 (si-group-026).
+        if (select is PhoenixmlDb.XQuery.Ast.SimpleMapExpression map
+            && StreamingExpressionScanner.IsTrailingSnapshotStep(map.Right))
+            select = map.Left;
         if (select is not PhoenixmlDb.XQuery.Ast.PathExpression path || path.Steps.Count == 0)
             return null;
 
