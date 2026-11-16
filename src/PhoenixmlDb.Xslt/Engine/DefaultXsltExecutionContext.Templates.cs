@@ -2164,6 +2164,10 @@ internal sealed partial class DefaultXsltExecutionContext
                         WriteStreamingEndTag(qn);
                     }
                     accumulatorOwner?.ForgetAccumulatorValues(elem);
+                    // The child was read whole for its template alone, which is done: nothing
+                    // refers to it now. Each one stayed in the node store to the end of the
+                    // transform, 942 MiB for 1M items (xslt#529).
+                    ReleaseDispatchedSubtree(elem);
                     break;
                 }
                 case System.Xml.XmlNodeType.Text:
@@ -2193,6 +2197,28 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+
+    /// <summary>
+    /// Removes from the node store an element a nested xsl:apply-templates read whole, with its
+    /// attributes and descendants, once its template is done.
+    /// </summary>
+    private void ReleaseDispatchedSubtree(Xdm.Nodes.XdmNode node)
+    {
+        if (_nodeStore is not { } store)
+            return;
+        if (node is Xdm.Nodes.XdmElement element)
+        {
+            foreach (var attr in element.Attributes)
+                store.Unregister(attr);
+            foreach (var childId in element.Children)
+            {
+                if (store.GetNode(childId) is { } child)
+                    ReleaseDispatchedSubtree(child);
+            }
+        }
+        _bufferedSubtreeOrigin?.Remove(node.Id);
+        store.Unregister(node.Id);
+    }
 
     /// <summary>
     /// A select that is a union of predicate-free child steps whose tests depend only on node kind
