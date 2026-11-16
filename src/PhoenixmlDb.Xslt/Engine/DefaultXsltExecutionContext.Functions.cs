@@ -294,6 +294,30 @@ internal sealed partial class DefaultXsltExecutionContext
     /// buffer. After execution, prefer the accumulator items when present (they retain
     /// type), otherwise fall back to the output text wrapped as untyped atomic.
     /// </summary>
+    /// <summary>
+    /// Runs a parameter's body with no enclosing output namespace scopes. Its markup is read back
+    /// on its own, so its elements must declare their namespaces themselves, as in a variable's
+    /// body. Under the caller's scopes an element in the default namespace that an enclosing
+    /// result element had declared wrote no declaration and came back in no namespace:
+    /// <c>&lt;xsl:param name="p"&gt;&lt;abbr/&gt;&lt;/xsl:param&gt;</c> under xmlns="...xhtml"
+    /// gave <c>&lt;abbr xmlns=""&gt;</c> (DocBook's inline.charseq; W3C docbook-001).
+    /// </summary>
+    private async ValueTask ExecuteWithOwnNamespaceScopesAsync(XsltSequenceConstructor body)
+    {
+        var savedNsScopes = new List<Dictionary<string, string>>(_outputNsScopes);
+        _outputNsScopes.Clear();
+        try
+        {
+            await body.ExecuteAsync(this).ConfigureAwait(false);
+        }
+        finally
+        {
+            _outputNsScopes.Clear();
+            foreach (var scope in savedNsScopes.AsEnumerable().Reverse())
+                _outputNsScopes.Push(scope);
+        }
+    }
+
     internal async ValueTask<object?> EvaluateBodyContentToValueAsync(XsltSequenceConstructor body)
     {
         var savedAccumulator = _sequenceAccumulator;
@@ -309,7 +333,7 @@ internal sealed partial class DefaultXsltExecutionContext
         List<object?> captured;
         try
         {
-            await body.ExecuteAsync(this).ConfigureAwait(false);
+            await ExecuteWithOwnNamespaceScopesAsync(body).ConfigureAwait(false);
         }
         finally
         {
@@ -2329,7 +2353,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 var typedBody = EnterTypedBody(param.As);
                 _temporaryOutputDepth++;
                 try
-                { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
+                { await ExecuteWithOwnNamespaceScopesAsync(param.Content).ConfigureAwait(false); }
                 finally
                 {
                     _temporaryOutputDepth--;
@@ -2405,7 +2429,7 @@ internal sealed partial class DefaultXsltExecutionContext
             _sequenceAccumulator = new List<object?>();
             _temporaryOutputDepth++;
             try
-            { await param.Content.ExecuteAsync(this).ConfigureAwait(false); }
+            { await ExecuteWithOwnNamespaceScopesAsync(param.Content).ConfigureAwait(false); }
             finally { _temporaryOutputDepth--; }
             var contentAccum = _sequenceAccumulator;
             _sequenceAccumulator = savedAccum2;
