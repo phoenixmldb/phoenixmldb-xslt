@@ -6007,7 +6007,7 @@ public sealed partial class XsltTransformEngine
     }
 
     /// <summary>Whether a module of the stylesheet has input-type-annotations="strip".</summary>
-    private static bool StripsInputTypeAnnotations(Ast.XsltStylesheet stylesheet)
+    internal static bool StripsInputTypeAnnotations(Ast.XsltStylesheet stylesheet)
     {
         if (stylesheet.InputTypeAnnotations == Ast.TypeAnnotations.Strip)
             return true;

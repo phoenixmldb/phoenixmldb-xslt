@@ -27,6 +27,11 @@ public sealed class TypedPatternTests : IDisposable
             <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:t" xmlns:t="urn:t" elementFormDefault="qualified">
               <xs:simpleType name="part"><xs:restriction base="xs:string"><xs:pattern value="\d{3}-[A-Z]{2}"/></xs:restriction></xs:simpleType>
               <xs:simpleType name="partOrInt"><xs:union memberTypes="t:part xs:integer"/></xs:simpleType>
+              <xs:complexType name="docType"><xs:sequence>
+                <xs:element name="p" type="t:part" maxOccurs="unbounded"/>
+                <xs:element name="d" type="xs:decimal"/>
+                <xs:element name="u" type="t:partOrInt"/>
+              </xs:sequence><xs:attribute name="code" type="t:part"/></xs:complexType>
               <xs:element name="doc"><xs:complexType><xs:sequence>
                 <xs:element name="p" type="t:part" maxOccurs="unbounded"/>
                 <xs:element name="d" type="xs:decimal"/>
@@ -145,6 +150,31 @@ public sealed class TypedPatternTests : IDisposable
     public async Task Input_type_annotations_strip_takes_the_annotations_away()
         => (await RunAsync(Rules, Source, stylesheetAttributes: "input-type-annotations=\"strip\""))
             .Should().Be("<r>[other code][other t:p][other t:d][other t:u]</r>");
+
+    /// <summary>
+    /// A document xsl:source-document validates is read untyped too (W3C streamable-147). It
+    /// kept its annotations, so <c>data(t:d) instance of xs:decimal</c> was true.
+    /// </summary>
+    [Theory]
+    [InlineData("validation=\"strict\"", "", "true")]
+    [InlineData("validation=\"strict\"", "input-type-annotations=\"strip\"", "false")]
+    [InlineData("validation=\"lax\"", "input-type-annotations=\"strip\"", "false")]
+    [InlineData("type=\"t:docType\"", "", "true")]
+    [InlineData("type=\"t:docType\"", "input-type-annotations=\"strip\"", "false")]
+    public async Task Input_type_annotations_strip_applies_to_xsl_source_document(string validation, string attributes, string typed)
+    {
+        await File.WriteAllTextAsync(Path.Combine(_dir, "s.xml"),
+            "<t:doc xmlns:t=\"urn:t\" code=\"123-AB\"><t:p>123-AB</t:p><t:d>1.10</t:d><t:u>100</t:u></t:doc>",
+            TestContext.Current.CancellationToken);
+        var href = new Uri(Path.Combine(_dir, "s.xml")).AbsoluteUri;
+        foreach (var streamable in new[] { "no", "yes" })
+        {
+            (await RunAsync($$"""
+                    <xsl:template match="/"><r><xsl:source-document href="{{href}}" streamable="{{streamable}}" {{validation}}><xsl:value-of select="data(t:doc/t:d) instance of xs:decimal"/></xsl:source-document></r></xsl:template>
+                    """, "<x/>", validation: null, stylesheetAttributes: attributes))
+                .Should().Be($"<r>{typed}</r>", $"streamable=\"{streamable}\"");
+        }
+    }
 
     [Fact]
     public async Task A_global_temporary_tree_keeps_the_annotations_of_what_was_validated_in_it()

@@ -1766,6 +1766,14 @@ internal sealed partial class DefaultXsltExecutionContext
         var mode = strict ? PhoenixmlDb.XQuery.ValidationMode.Strict : PhoenixmlDb.XQuery.ValidationMode.Lax;
         try
         {
+            // input-type-annotations="strip" in any module (XSLT 3.0 §4.3): the document is
+            // validated, and then read untyped, as the principal source and fn:doc() are. It
+            // kept its annotations here (W3C streamable-147).
+            if (XsltTransformEngine.StripsInputTypeAnnotations(_stylesheet))
+            {
+                _schemaProvider!.ValidateXml(text.ToString(), mode);
+                return XsltTransformEngine.ConvertToXdm(doc, store, uri.AbsoluteUri);
+            }
             var validated = _schemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd
                 ? xsd.ValidateAndAnnotate(text.ToString(), store, mode, null, null, uri.AbsoluteUri)
                 : _schemaProvider!.ValidateAndAnnotate(text.ToString(), store, mode, null, null);
@@ -1794,6 +1802,9 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         var xml = text.ToString();
         RunValidation(Ast.ValidationMode.Strict, xml, ValidationKind.Document, "xsl:source-document", instruction.Location, type);
+        // Validated above; input-type-annotations="strip" reads it untyped (XSLT 3.0 §4.3).
+        if (XsltTransformEngine.StripsInputTypeAnnotations(_stylesheet))
+            return XsltTransformEngine.ConvertToXdm(doc, store, uri.AbsoluteUri);
         try
         {
             var validated = _schemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd
