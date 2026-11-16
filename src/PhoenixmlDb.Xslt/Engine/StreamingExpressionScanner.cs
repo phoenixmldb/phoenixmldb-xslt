@@ -422,6 +422,7 @@ internal sealed class StreamingExpressionScanner
                         Predicates = pathInfo.Value.Predicates,
                         IntermediatePredicates = pathInfo.Value.IntermediatePredicates,
                         LeafPredicateOnElement = pathInfo.Value.LeafPredicateOnElement,
+                        LeafPositionKind = pathInfo.Value.LeafPositionKind,
                         Separator = aggType == WatcherAggregation.StringJoin && fc.Arguments.Count > 1
                             ? ExtractStringLiteral(fc.Arguments[1])
                             : null,
@@ -455,7 +456,8 @@ internal sealed class StreamingExpressionScanner
                         ValueAttribute = headPathInfo.Value.Attribute,
                         Predicates = headPathInfo.Value.Predicates,
                         IntermediatePredicates = headPathInfo.Value.IntermediatePredicates,
-                        LeafPredicateOnElement = headPathInfo.Value.LeafPredicateOnElement
+                        LeafPredicateOnElement = headPathInfo.Value.LeafPredicateOnElement,
+                        LeafPositionKind = headPathInfo.Value.LeafPositionKind
                     });
                     return;
                 }
@@ -475,7 +477,8 @@ internal sealed class StreamingExpressionScanner
                         ValueAttribute = seqPath.Value.Attribute,
                         Predicates = seqPath.Value.Predicates,
                         IntermediatePredicates = seqPath.Value.IntermediatePredicates,
-                        LeafPredicateOnElement = seqPath.Value.LeafPredicateOnElement
+                        LeafPredicateOnElement = seqPath.Value.LeafPredicateOnElement,
+                        LeafPositionKind = seqPath.Value.LeafPositionKind
                     });
                     return;
                 }
@@ -516,7 +519,8 @@ internal sealed class StreamingExpressionScanner
                         ValueAttribute = snapPath.Value.Attribute,
                         Predicates = snapPath.Value.Predicates,
                         IntermediatePredicates = snapPath.Value.IntermediatePredicates,
-                        LeafPredicateOnElement = snapPath.Value.LeafPredicateOnElement
+                        LeafPredicateOnElement = snapPath.Value.LeafPredicateOnElement,
+                        LeafPositionKind = snapPath.Value.LeafPositionKind
                     });
                     return;
                 }
@@ -1263,7 +1267,9 @@ internal sealed class StreamingExpressionScanner
         // attribute-step predicate sees the standalone attribute node (<c>.</c> = its value).
         // Collapsing them made <c>elem[@a op x]/@a</c> filter every match to false (the
         // predicate's <c>@a</c> found nothing on an attribute-node context). sf-copy-of-003.
-        bool LeafPredicateOnElement = false);
+        bool LeafPredicateOnElement = false,
+        // See StreamWatcher.LeafPositionKind.
+        int LeafPositionKind = 0);
 
     /// <summary>
     /// A motionless predicate carried by an ancestor (intermediate) element step of
@@ -1410,6 +1416,7 @@ internal sealed class StreamingExpressionScanner
         // attribute tail below, this signals the processor to evaluate the predicate
         // against the host element, not the standalone attribute node. sf-copy-of-003.
         bool leafPredicateFromElementStep = false;
+        int leafPositionKind = 0;
         List<IntermediatePredicate>? intermediatePredicates = null;
 
         var current = expr;
@@ -1527,6 +1534,10 @@ internal sealed class StreamingExpressionScanner
                             {
                                 predicates = step.Predicates;
                                 leafPredicateFromElementStep = true;
+                                // A positional predicate on the matched child-axis element counts
+                                // it among its siblings (ITEM[1]: the first ITEM of its parent).
+                                if (ArePredicatesForwardCountablePositional(step.Predicates))
+                                    leafPositionKind = step.NodeTest is NameTest { IsLocalNameWildcard: true } ? 2 : 1;
                             }
                             else if (si != lastElementStepIdx && step.Predicates.Count > 0)
                             {
@@ -1627,7 +1638,8 @@ internal sealed class StreamingExpressionScanner
             predicates,
             (IReadOnlyList<IntermediatePredicate>?)intermediatePredicates ?? Array.Empty<IntermediatePredicate>(),
             textNodeTail,
-            LeafPredicateOnElement: leafPredicateFromElementStep && attribute != null && predicates.Count > 0);
+            LeafPredicateOnElement: leafPredicateFromElementStep && attribute != null && predicates.Count > 0,
+            LeafPositionKind: leafPositionKind);
     }
 
     /// <summary>
