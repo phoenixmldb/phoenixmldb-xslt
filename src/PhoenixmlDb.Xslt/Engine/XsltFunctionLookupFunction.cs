@@ -17,9 +17,16 @@ internal sealed class XsltFunctionLookupFunction : XQueryFunction
     // is the stylesheet's, so it finds the XSLT functions even when it is called inside the target.
     private readonly bool _madeOutsideEvaluate;
 
-    public XsltFunctionLookupFunction() { }
+    // The transform, to see the stylesheet functions as the calling package sees them.
+    private readonly DefaultXsltExecutionContext? _transform;
 
-    private XsltFunctionLookupFunction(bool madeOutsideEvaluate) => _madeOutsideEvaluate = madeOutsideEvaluate;
+    public XsltFunctionLookupFunction(DefaultXsltExecutionContext? transform = null) => _transform = transform;
+
+    private XsltFunctionLookupFunction(DefaultXsltExecutionContext? transform, bool madeOutsideEvaluate)
+    {
+        _transform = transform;
+        _madeOutsideEvaluate = madeOutsideEvaluate;
+    }
 
     public override QName Name => _inner.Name;
     public override XdmSequenceType ReturnType => _inner.ReturnType;
@@ -27,7 +34,7 @@ internal sealed class XsltFunctionLookupFunction : XQueryFunction
 
     public override XQueryFunction BindCreationContext(PhoenixmlDb.XQuery.Ast.ExecutionContext context)
         => context is QueryExecutionContext { InsideXslEvaluate: false }
-            ? new XsltFunctionLookupFunction(madeOutsideEvaluate: true)
+            ? new XsltFunctionLookupFunction(_transform, madeOutsideEvaluate: true)
             : this;
 
     public override ValueTask<object?> InvokeAsync(IReadOnlyList<object?> arguments, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
@@ -38,7 +45,62 @@ internal sealed class XsltFunctionLookupFunction : XQueryFunction
             && (arguments[0] is object?[] { Length: 1 } one ? one[0] : arguments[0]) is QName name
             && XsltEvaluateUnavailable.IsXsltOnlyFunction(name))
             throw new XsltException($"XTDE3160: The function {name.LocalName}() is not available within xsl:evaluate");
+        if (StylesheetFunctionAsSeenByCaller(arguments, context) is { } seen)
+            return ValueTask.FromResult(seen.Function is { } function
+                ? (object?)new XsltUserFunctionAdapter(function, _transform!).BindCreationContext(context)
+                : null);
         return _inner.InvokeAsync(arguments, context);
+    }
+
+    /// <summary>
+    /// For a stylesheet function, the declaration the package that calls function-lookup sees
+    /// under that name and arity, or no function. A package sees its own functions and the
+    /// public ones of the packages it uses: not a private function of a used package, not an
+    /// abstract one. In a used package the function is the package's own declaration, not the
+    /// override a using package gives it (W3C function-lookup-004/005). Every function of every
+    /// package was found, and an overridden one was the override. Null for a name that is not a
+    /// stylesheet function, which the XQuery lookup answers.
+    /// </summary>
+    private (Ast.XsltFunction? Function, bool Found)? StylesheetFunctionAsSeenByCaller(
+        IReadOnlyList<object?> arguments, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+    {
+        if (_transform is null || context is not QueryExecutionContext qec || arguments.Count < 2)
+            return null;
+        if ((arguments[0] is object?[] { Length: 1 } n ? n[0] : arguments[0]) is not QName name)
+            return null;
+        var arityArg = arguments[1] is object?[] { Length: 1 } a ? a[0] : arguments[1];
+        if (arityArg is null or object?[])
+            return null;
+        int arity;
+        try { arity = Convert.ToInt32(arityArg, System.Globalization.CultureInfo.InvariantCulture); }
+        catch (Exception e) when (e is InvalidCastException or FormatException or OverflowException) { return null; }
+
+        Ast.XsltFunction? declared;
+        switch (qec.Functions.Resolve(name, arity))
+        {
+            case XsltUserFunctionAdapter user:
+                declared = user.Function;
+                break;
+            case XsltAbstractFunctionAdapter:
+                return (null, true);
+            default:
+                return null;
+        }
+        var package = XsltFormatNumberEngine.GetCurrentPackageStylesheet(_transform);
+        var visible = (package ?? _transform._stylesheet).Functions;
+        if (!visible.TryGetValue((declared.Name, arity), out var seen))
+            return (null, true);
+        // An override a using package gave the function stands in this package's table; it
+        // belongs to that package, and keeps the declaration it replaced.
+        while (package is not null && seen is { OriginalFunction: { } original }
+            && !ReferenceEquals(seen.PackageStylesheet, package))
+            seen = original;
+        if (seen is null || seen.Visibility is Ast.Visibility.Abstract or Ast.Visibility.Hidden)
+            return (null, true);
+        // A private function of a used package is that package's alone.
+        if (seen.Visibility is Ast.Visibility.Private && !ReferenceEquals(seen.PackageStylesheet, package))
+            return (null, true);
+        return (seen, true);
     }
 }
 
