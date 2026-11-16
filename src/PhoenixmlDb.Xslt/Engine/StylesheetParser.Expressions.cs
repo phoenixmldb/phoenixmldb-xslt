@@ -1070,6 +1070,7 @@ public sealed partial class StylesheetParser
                     ? GetXpathDefaultNamespace(scope)
                     : scope.GetNamespaceOfPrefix(prefix)?.NamespaceName)
                 : _expressionParser.Parse(expression);
+            parsed = CopyOfSequenceDistributor.Instance.Rewrite(parsed);
             // Where the module this expression is written in was read from: the URI the
             // document (or external entity) was loaded at, which xml:base does not change.
             // Every expression of a stylesheet is parsed here, so every one carries it, and a
