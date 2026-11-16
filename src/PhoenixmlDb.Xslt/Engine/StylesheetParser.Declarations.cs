@@ -1437,8 +1437,16 @@ public sealed partial class StylesheetParser
                             throw new XsltException(
                                 $"XTSE0770: Duplicate override of template '{templateName.LocalName}'",
                                 GetSourceLocation(child));
-                        // Named template override — must match an existing component
-                        if (packageStylesheet.NamedTemplates.TryGetValue(templateName, out var original))
+                        // Named template override — must match an existing component: one of
+                        // the package, or an abstract one it took from a package it uses.
+                        var original = packageStylesheet.NamedTemplates.GetValueOrDefault(templateName);
+                        if (original is null
+                            && packageStylesheet.AbstractTemplates.TryGetValue(templateName, out var inherited))
+                        {
+                            original = inherited;
+                            packageStylesheet.AbstractTemplateNames.Remove(templateName);
+                        }
+                        if (original is not null)
                         {
                             // XTSE3060: Can only override public or abstract components
                             if (original.Visibility is Visibility.Private or Visibility.Final)
@@ -1534,7 +1542,13 @@ public sealed partial class StylesheetParser
                         throw new XsltException(
                             $"XTSE0770: Duplicate override of function '{overrideFunc.Name.LocalName}#{overrideFunc.Parameters.Count}'",
                             GetSourceLocation(child));
-                    if (packageStylesheet.Functions.TryGetValue(key, out var original))
+                    var original = packageStylesheet.Functions.GetValueOrDefault(key);
+                    if (original is null && packageStylesheet.AbstractFunctions.TryGetValue(key, out var inheritedFunction))
+                    {
+                        original = inheritedFunction;
+                        packageStylesheet.AbstractFunctionKeys.Remove(key);
+                    }
+                    if (original is not null)
                     {
                         // XTSE3060: Can only override public or abstract components
                         if (original.Visibility is Visibility.Private or Visibility.Final)

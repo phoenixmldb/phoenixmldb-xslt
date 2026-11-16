@@ -109,6 +109,17 @@ public sealed class XsltStylesheet
     public HashSet<(QName Name, int Arity)> AbstractFunctionKeys { get; init; } = new();
 
     /// <summary>
+    /// The abstract templates and functions of used packages, kept with their declarations so
+    /// that a package using this one can override them (§3.5.3.3): only their names were kept,
+    /// and an override of an abstract component that came through a package in between matched
+    /// nothing, XTSE3058 (W3C override-t-003a).
+    /// </summary>
+    internal Dictionary<QName, XsltTemplate> AbstractTemplates { get; } = new();
+
+    /// <inheritdoc cref="AbstractTemplates"/>
+    internal Dictionary<(QName Name, int Arity), XsltFunction> AbstractFunctions { get; } = new();
+
+    /// <summary>
     /// Functions of used packages that an xsl:accept hid: not components of this package, so a
     /// call to one from it is XPST0017 (see StylesheetParser.ValidateCallsToInaccessibleFunctions).
     /// </summary>
