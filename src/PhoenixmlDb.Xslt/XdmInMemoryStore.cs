@@ -54,6 +54,13 @@ public sealed class XdmInMemoryStore : INodeBuilder
     public XdmNode? GetNode(NodeId id) => _nodes.GetValueOrDefault(id);
 
     /// <summary>
+    /// Removes a node the engine built for a moment only, such as the context of a streamed
+    /// predicate, so that streaming memory does not grow with the input (xslt#520). Its
+    /// attributes and children are separate entries: remove them too.
+    /// </summary>
+    internal void Unregister(NodeId id) => _nodes.Remove(id);
+
+    /// <summary>
     /// Computes an element's or document node's string value from its children in this store,
     /// for nodes built without one. Give it to every element and document node the engine
     /// constructs: <c>StringValueResolver = store.StringValueResolver</c>.

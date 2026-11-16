@@ -1137,6 +1137,33 @@ internal static class StreamingSubtreeBufferDetector
     }
 
     /// <summary>
+    /// True when every path in <paramref name="expr"/> starts at a variable: <c>$extra/@v</c>,
+    /// <c>copy-of($extra/@v)</c>. Such an operand reads the variable's value, not the streamed
+    /// input, though <see cref="NavigatesInput"/> counts every path.
+    /// </summary>
+    private static bool ReadsOnlyVariables(XQueryExpression expr) => expr switch
+    {
+        VariableReference => true,
+        PathExpression { InitialExpression: VariableReference } => true,
+        FunctionCallExpression fc => fc.Arguments.All(a => !NavigatesInput(a) || ReadsOnlyVariables(a)),
+        SequenceExpression seq => seq.Items.All(a => !NavigatesInput(a) || ReadsOnlyVariables(a)),
+        _ => false,
+    };
+
+    /// <summary>
+    /// True when a comma-sequence operand that reads the input is copy-of() or snapshot() of a
+    /// path that a Snapshot watcher captures, and the path is one that streams when the call
+    /// stands alone: no positional predicate on it, no climbing or attribute-from-the-past
+    /// step that would send the call itself to the buffer.
+    /// </summary>
+    private static bool StreamsAsSnapshotOperand(XQueryExpression item)
+        => StreamingExpressionScanner.IsSnapshotWatcherShape(item)
+            && !SelectHasPositionalPredicateOnInputPath(item)
+            && !SelectAbsorbsInput(item)
+            && !SelectNavigatesViaClimbingAxis(item)
+            && !SelectCopiesWholeContextItem(item);
+
+    /// <summary>
     /// True when <paramref name="arg"/> is a single <see cref="PathExpression"/> — the shape
     /// the streaming pass already drives directly off the live reader for a watcher-backed
     /// aggregation, whether or not the scanner registers a watcher for it. This deliberately
@@ -1226,10 +1253,18 @@ internal static class StreamingSubtreeBufferDetector
             // `(EXPR treat as T)` or `(A union B)` is still recognised).
             case SequenceExpression seq when seq.Items.Count == 1:
                 return SelectNavigatesViaUnstreamableOperator(seq.Items[0]);
+            // One operand that a Snapshot watcher captures whole, with grounded operands beside
+            // it, streams: the rewriter puts the watcher's nodes in its place, as it does for
+            // the same copy-of() alone. (copy-of(path), $extra) read the whole input into
+            // memory first: 1.26 GiB for 1M items (xslt#520).
             case SequenceExpression seq when seq.Items.Count >= 2:
-                foreach (var item in seq.Items)
-                    if (NavigatesInput(item)) return true;
-                return false;
+                var navigating = seq.Items.Where(i => NavigatesInput(i) && !ReadsOnlyVariables(i)).ToList();
+                return navigating.Count switch
+                {
+                    0 => false,
+                    1 => !StreamsAsSnapshotOperand(navigating[0]),
+                    _ => true,
+                };
 
             // `OPERATOR ! name(.)` / `OPERATOR ! local-name()` — the streaming context flows
             // through the simple-map Left, so peel to the operator on the left. (A bare-path

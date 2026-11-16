@@ -689,6 +689,15 @@ internal sealed class StreamWatcher
     public void DiscardSequenceSlot(int index)
     {
         if (index < 0 || index >= _items.Count) return;
+        // The last slot has no later one to keep in place: remove it, so that a predicate
+        // that rejects most of a large input leaves no tombstone per element (xslt#520).
+        if (index == _items.Count - 1)
+        {
+            _items.RemoveAt(index);
+            if (_snapshots.Count > index)
+                _snapshots.RemoveRange(index, _snapshots.Count - index);
+            return;
+        }
         _items[index] = _slotTombstone;
         if (_snapshots.Count > index)
             _snapshots[index] = null!;

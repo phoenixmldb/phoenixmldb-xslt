@@ -1899,6 +1899,13 @@ internal sealed class StreamingXmlProcessor
                 else
                 {
                     watcher.OnElementMatch(elementName, attributes, textContent);
+                    // copy-of(path/@v) returns the attribute nodes. The value alone was kept,
+                    // and a Snapshot result has nodes only when there is one per value: the
+                    // variable was empty, with no predicate on the path (xslt#520).
+                    if (watcher.Aggregation is WatcherAggregation.Snapshot
+                        && watcher.ValueAttribute is { } snapshotAttribute
+                        && attributes?.GetValueOrDefault(snapshotAttribute) is { } snapshotValue)
+                        watcher.OnLeafElementCaptured(MaterializeStandaloneAttribute(snapshotAttribute, snapshotValue));
                 }
             }
 
@@ -2251,6 +2258,7 @@ internal sealed class StreamingXmlProcessor
                 _context.PopCurrentItem();
                 _context.PopContextItem();
                 _context._isStreamingExecution = prevStreaming;
+                ReleaseTransient(ancElem);
             }
             if (!pass) return false;
         }
@@ -2481,6 +2489,9 @@ internal sealed class StreamingXmlProcessor
                     .ConfigureAwait(false);
             }
 
+            // The predicate's context node was built for the test alone (xslt#520).
+            ReleaseTransient(attrPredicateContext);
+
             if (!predicatesPass)
             {
                 // Discard the reserved slot if any, and skip slot population /
@@ -2488,6 +2499,7 @@ internal sealed class StreamingXmlProcessor
                 // still needs to be removed at loop end.
                 if (entry.ReservedSlot >= 0)
                     entry.Watcher.DiscardSequenceSlot(entry.ReservedSlot);
+                ReleaseTransient(materialized);
                 _pendingTextWatcherMatches.RemoveAt(i);
                 continue;
             }
@@ -2511,6 +2523,12 @@ internal sealed class StreamingXmlProcessor
                     entry.Watcher.FillSnapshotSlot(entry.ReservedSlot, materialized);
                 else
                     entry.Watcher.OnLeafElementCaptured(materialized);
+            }
+            // An aggregate (count, sum, ...) keeps the value only: the element was built for
+            // its predicates (xslt#520).
+            else if (entry.Watcher.ValueAttribute == null)
+            {
+                ReleaseTransient(materialized);
             }
             // Snapshot over an ATTRIBUTE leaf — copy-of(path/@attr): fn:copy-of returns the
             // selected attribute NODES, and a typed `attribute()*` variable + data() consumer
@@ -2754,6 +2772,28 @@ internal sealed class StreamingXmlProcessor
     /// host element and all its sibling attributes per match — the O(N) cost that
     /// made predicated attribute-axis paths blow the streaming timeout on large docs.
     /// </summary>
+    /// <summary>
+    /// Removes from the node store a node built for one test during the pass and kept by
+    /// nothing, with its attributes and descendants. Without this every streamed node a
+    /// predicate was tested on stayed in memory to the end of the transform: 1M items with
+    /// <c>sum(root/item[@v &lt; 0]/@v)</c> used 610 MiB instead of 108 MiB (xslt#520).
+    /// </summary>
+    private void ReleaseTransient(XdmNode? node)
+    {
+        switch (node)
+        {
+            case null:
+                return;
+            case XdmElement element:
+                foreach (var attr in element.Attributes)
+                    _nodeStore.Unregister(attr);
+                foreach (var child in element.Children)
+                    ReleaseTransient(_nodeStore.GetNode(child));
+                break;
+        }
+        _nodeStore.Unregister(node.Id);
+    }
+
     private XdmAttribute MaterializeStandaloneAttribute(string localName, string value)
     {
         var attrId = _nodeStore.NextId();

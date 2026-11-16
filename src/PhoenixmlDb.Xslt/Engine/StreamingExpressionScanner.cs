@@ -947,6 +947,17 @@ internal sealed class StreamingExpressionScanner
         };
     }
 
+    /// <summary>
+    /// True when the scanner captures <paramref name="expr"/> whole with a Snapshot watcher:
+    /// copy-of() or snapshot() of a downward path it can match on the reader. The body
+    /// rewriter then puts the watcher's nodes in its place wherever it stands, also as one
+    /// operand of a comma sequence (xslt#520).
+    /// </summary>
+    internal static bool IsSnapshotWatcherShape(XQueryExpression expr)
+        => expr is FunctionCallExpression { Arguments.Count: 1 } fc
+            && IsSnapshotFunction(fc)
+            && ExtractPathFromArgument(fc.Arguments[0]) != null;
+
     private static bool IsSnapshotFunction(FunctionCallExpression fc)
     {
         return fc.Name.LocalName is "snapshot" or "copy-of"

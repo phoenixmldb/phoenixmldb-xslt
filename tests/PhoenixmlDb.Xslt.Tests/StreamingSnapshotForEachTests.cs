@@ -94,16 +94,9 @@ public class StreamingSnapshotForEachTests
     // it. The for-each peel is confined to TryRegisterForEachSubscription; this value-of
     // never reaches that code, so its result MUST be identical before and after the peel.
     //
-    // FIXTURE CORRECTION (cross-checked against the non-streaming engine): the plan's
-    // hand-derived expected value was "<out>Jane John</out>". The non-streaming engine
-    // does produce "Jane John" for this expression, but the STREAMED snapshot watcher for
-    // a bare attribute-leaf snapshot (snapshot(.../@name)) currently emits empty —
-    // "<out/>". That empty result is a PRE-EXISTING streamed-watcher gap (the watcher
-    // captures attribute leaves as strings without an aggregation in this value-of
-    // context), wholly independent of the for-each peel and present identically before
-    // and after this change. We pin the watcher's actual streamed behavior so the canary
-    // is a true "unchanged-by-the-peel" invariant; the streamed-watcher attribute-leaf
-    // gap is out of scope for the sf-snapshot for-each slice.
+    // The value is the attributes' values, as the non-streaming engine gives. The streamed
+    // watcher kept only the values of a bare attribute-leaf snapshot, and a snapshot result
+    // has nodes only, so this gave "<out/>" until xslt#520.
     [Fact]
     public async Task ValueOfSnapshot_WatcherPath_Unchanged()
     {
@@ -119,6 +112,6 @@ public class StreamingSnapshotForEachTests
             </xsl:stylesheet>
             """;
         var r = await Run(sheet, Works, "w.xml");
-        r.Trim().Should().Be("<out/>");
+        r.Trim().Should().Be("<out>Jane John</out>");
     }
 }
