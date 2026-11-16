@@ -37,7 +37,6 @@ internal sealed class XsltGenerateIdFunction : PhoenixmlDb.XQuery.Ast.XQueryFunc
         var node = arguments[0];
         if (node is null)
             return ValueTask.FromResult<object?>("");
-        // Use the hash code as a stable identifier
-        return ValueTask.FromResult<object?>($"d{node.GetHashCode():x}");
+        return ValueTask.FromResult<object?>(GeneratedNodeIds.For(node));
     }
 }
