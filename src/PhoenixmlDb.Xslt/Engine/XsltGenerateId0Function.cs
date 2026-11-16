@@ -38,6 +38,6 @@ internal sealed class XsltGenerateId0Function : PhoenixmlDb.XQuery.Ast.XQueryFun
         var node = XQueryFocus.ItemOrNull(context) ?? _context.ContextItem;
         if (node is null)
             return ValueTask.FromResult<object?>("");
-        return ValueTask.FromResult<object?>($"d{node.GetHashCode():x}");
+        return ValueTask.FromResult<object?>(GeneratedNodeIds.For(node));
     }
 }
