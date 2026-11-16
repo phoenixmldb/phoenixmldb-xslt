@@ -746,6 +746,11 @@ internal sealed partial class DefaultXsltExecutionContext
             var savedElemDepth = _serializingElementDepth;
             var savedLastWasNode = _simpleContentLastWasNode;
             var savedAtomic = _lastResultWasAtomic;
+            // The content's own output starts here. An element in the content takes the text
+            // written before it from the logical start, which was the enclosing scope's: text
+            // written before the comment or PI went into it (W3C bug-0305, `+<xsl:comment>`).
+            var savedLogicalStart = _outputLogicalStart;
+            _outputLogicalStart = _output.Length;
             _sequenceAccumulator = new List<object?>();
             _collectTextAsSequenceItems = true;
             _serializingElementDepth = 0;
@@ -759,6 +764,7 @@ internal sealed partial class DefaultXsltExecutionContext
             finally
             {
                 _textContentDepth--;
+                _outputLogicalStart = savedLogicalStart;
                 _collectTextAsSequenceItems = savedCollectText;
                 _serializingElementDepth = savedElemDepth;
                 _simpleContentLastWasNode = savedLastWasNode;
@@ -1306,11 +1312,14 @@ internal sealed partial class DefaultXsltExecutionContext
             // When collecting simple content items, atomized elements are separate items
             if (_collectTextAsSequenceItems && _sequenceAccumulator != null && _serializingElementDepth == 0)
             {
-                var pending = _output.ToString();
+                // Slice and truncate from the current scope's base, as xsl:element does: the
+                // whole buffer took the text written before the comment or PI (bug-0305).
+                var pendingBase = Math.Clamp(_outputLogicalStart, 0, _output.Length);
+                var pending = _output.ToString(pendingBase, _output.Length - pendingBase);
                 if (pending.Length > 0)
                 {
                     AppendToSeqAccumulator(new Xdm.TextNodeItem(pending));
-                    _output.Clear();
+                    _output.Length = pendingBase;
                 }
                 _collectTextAsSequenceItems = false;
                 try
@@ -1321,8 +1330,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     _collectTextAsSequenceItems = true;
                 }
-                var elementText = _output.ToString();
-                _output.Clear();
+                var elementBase = Math.Clamp(_outputLogicalStart, 0, _output.Length);
+                var elementText = _output.ToString(elementBase, _output.Length - elementBase);
+                _output.Length = elementBase;
                 if (elementText.Length > 0)
                     AppendToSeqAccumulator(elementText);
                 return;
