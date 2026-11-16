@@ -680,14 +680,17 @@ public sealed partial class StylesheetParser
             }
             merged.CdataSectionElements = cdataElements;
 
-            // Union use-character-maps
-            foreach (var o in outputList)
+            // use-character-maps: the concatenation of every declaration's list, in order of
+            // increasing import precedence (declaration order within one precedence), so the
+            // highest-precedence maps come last and their mappings win (XSLT 3.0 §26, W3C
+            // output-0308). A name listed again later moves to its later place: the later
+            // occurrence decides, and each map is applied once.
+            var concatenated = outputList.OrderByDescending(o => o.ImportPrecedence)
+                .SelectMany(o => o.UseCharacterMaps).ToList();
+            for (var i = 0; i < concatenated.Count; i++)
             {
-                foreach (var m in o.UseCharacterMaps)
-                {
-                    if (!merged.UseCharacterMaps.Contains(m))
-                        merged.UseCharacterMaps.Add(m);
-                }
+                if (concatenated.IndexOf(concatenated[i], i + 1) < 0)
+                    merged.UseCharacterMaps.Add(concatenated[i]);
             }
 
             // Union suppress-indentation from all declarations
