@@ -1382,6 +1382,33 @@ public static class StreamabilityClassifier
     }
 
     /// <summary>
+    /// §19.8.5.5: the type-adjusted posture and sweep of the body of a function declared
+    /// streamability="shallow-descent". A reference to the streaming parameter (the first) is
+    /// striding and motionless; the other parameters are grounded. The function is
+    /// guaranteed-streamable when the result is striding, and motionless or consuming.
+    /// </summary>
+    /// <remarks>
+    /// The type adjustment with respect to the declared return type uses absorption for an
+    /// atomic type, as §19.8.1 defines it. For a type that admits nodes it keeps the posture: by
+    /// the letter of the definition that usage is navigation, which would make every striding
+    /// body free-ranging, also those the W3C suite and Saxon accept (su-shallow-descent-001, -101).
+    /// </remarks>
+    internal static PostureSweep ClassifyShallowDescentBody(XsltFunction function, StreamingContext ctx)
+    {
+        var streaming = function.Parameters[0].Name.LocalName;
+        var body = Classify(function.Body, ctx with
+        {
+            ContextPosture = Posture.Grounded,
+            InStreamedScope = true,
+            BySpec = true,
+            Vars = (ctx.Vars ?? ImmutableDictionary<string, Posture>.Empty).SetItem(streaming, Posture.Striding),
+        });
+        return IsAtomicType(function.As)
+            ? GeneralRule([(body, 'A')], atMostOneItem: false)
+            : body;
+    }
+
+    /// <summary>
     /// The stylesheet function a call names. A name in a namespace the stylesheet declares
     /// itself can reach the classifier with the namespace as text and no identifier, so a
     /// lookup by identifier is followed by one on the namespace name.

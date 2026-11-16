@@ -13,6 +13,8 @@ public sealed partial class StylesheetParser
 
     private static void ValidateStreamableTemplates(XsltStylesheet stylesheet)
     {
+        ValidateShallowDescentFunctions(stylesheet);
+
         // Collect all streamable mode names
         var streamableModes = new HashSet<QName>();
         foreach (var (name, mode) in stylesheet.Modes)
@@ -66,6 +68,30 @@ public sealed partial class StylesheetParser
     /// <summary>
     /// Parses xsl:stream — an alias for xsl:source-document with streamable="yes" (XSLT 3.0 §8.4).
     /// </summary>
+    /// <summary>
+    /// XTSE3430 for a function declared streamability="shallow-descent" whose body does not meet
+    /// the rule of its category (§19.8.5.5): its type-adjusted posture must be striding and its
+    /// sweep motionless or consuming. sum($n) is grounded, and was accepted (W3C
+    /// su-shallow-descent-902). Checked once the stylesheet is whole, so that a call in the body
+    /// to another stylesheet function, or to itself, is classified by its declaration.
+    /// </summary>
+    private static void ValidateShallowDescentFunctions(XsltStylesheet stylesheet)
+    {
+        foreach (var function in stylesheet.Functions.Values)
+        {
+            if (function.Streamability != "shallow-descent" || function.Parameters.Count == 0
+                || function.PackageStylesheet is not null)
+                continue;
+            var result = Streamability.StreamabilityClassifier.ClassifyShallowDescentBody(function,
+                new Streamability.StreamingContext(Streamability.Posture.Grounded, InStreamedScope: true,
+                    BySpec: true, Functions: stylesheet.Functions, Stylesheet: stylesheet));
+            if (result.Posture != Streamability.Posture.Striding
+                || result.Sweep is not (Streamability.Sweep.Motionless or Streamability.Sweep.Consuming))
+                throw new XsltException(
+                    $"XTSE3430: The body of function {function.Name.LocalName}#{function.Parameters.Count} with streamability=\"shallow-descent\" is not guaranteed streamable: it is {result.Posture} and {result.Sweep}, where the category requires striding, and motionless or consuming (XSLT 3.0 §19.8.5.5)");
+        }
+    }
+
     private XsltSourceDocument ParseStream(XElement element, SourceLocation? location)
         => ParseSourceDocument(element, location, forceStreamable: true);
 
