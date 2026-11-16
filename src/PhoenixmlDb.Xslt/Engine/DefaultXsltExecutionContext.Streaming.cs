@@ -852,7 +852,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // ancestor of the failing node read the value from before the error (W3C accumulator-031).
         if (currentValues[i] is AccumulatorDeferredError)
         {
-            frame.NodeValueMaps[i][frame.NodeId] = (frame.NodeValueMaps[i][frame.NodeId].before, after: currentValues[i]);
+            frame.NodeValueMaps[i][frame.NodeId] = (BeforeValue(frame, i), after: currentValues[i]);
             frame.EndState[i] = 2;
             return;
         }
@@ -878,10 +878,53 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         }
         // Update this accumulator's after-value immediately so subsequent accumulators can see it
-        frame.NodeValueMaps[i][frame.NodeId] = (frame.NodeValueMaps[i][frame.NodeId].before, after: currentValues[i]);
+        frame.NodeValueMaps[i][frame.NodeId] = (BeforeValue(frame, i), after: currentValues[i]);
         frame.EndState[i] = 2;
     }
 
+
+    /// <summary>
+    /// This node's before-value of accumulator <paramref name="i"/>; the running value where no
+    /// start phase recorded one (the streamed document node, a node the pass entered unseen).
+    /// </summary>
+    private static object? BeforeValue(AccumulatorWalkFrame frame, int i)
+        => frame.NodeValueMaps[i].TryGetValue(frame.NodeId, out var values) ? values.before : frame.CurrentValues[i];
+
+    /// <summary>
+    /// Runs one phase of the accumulators at a node the streaming pass has reached, on the same
+    /// terms as the tree walk: a rule that asks for another accumulator's value at this node runs
+    /// that one first. The pass ran them in declaration order, so an end rule reading a
+    /// later-declared accumulator's after-value read the value from before the node's
+    /// descendants: () for the first header-item in W3C accumulator-077s.
+    /// </summary>
+    internal async ValueTask RunStreamedAccumulatorPhaseAsync(object node, NodeId nodeId, XsltContext matchContext,
+        IReadOnlyList<XsltAccumulator> accumulators, object?[] currentValues,
+        Dictionary<NodeId, (object? before, object? after)>[] nodeValueMaps, AccumulatorPhase phase)
+    {
+        var frame = new AccumulatorWalkFrame(node, nodeId, matchContext, accumulators, currentValues, nodeValueMaps);
+        var savedFrame = _accumulatorWalkFrame;
+        _accumulatorWalkFrame = frame;
+        try
+        {
+            if (phase == AccumulatorPhase.Start)
+            {
+                for (var i = 0; i < accumulators.Count; i++)
+                    await RunAccumulatorStartPhaseAsync(frame, i).ConfigureAwait(false);
+            }
+            else
+            {
+                // The start phase ran at the start tag.
+                Array.Fill(frame.StartState, (byte)2);
+                frame.InEndPhase = true;
+                for (var i = 0; i < accumulators.Count; i++)
+                    await RunAccumulatorEndPhaseAsync(frame, i).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _accumulatorWalkFrame = savedFrame;
+        }
+    }
 
     /// <summary>
     /// Before a rule reads another accumulator's value at the node the walk is visiting, runs
