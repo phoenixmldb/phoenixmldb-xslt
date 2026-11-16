@@ -1606,7 +1606,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // not applied; the effective list (parameter-document maps first, then direct
                 // use-character-maps) is now supplied so a parameter-document targeting a secondary
                 // result document also rewrites its serialized output (§27.1).
-                var rdBaseOutput = matchedOutput ?? _stylesheet.Outputs.FirstOrDefault();
+                var rdBaseOutput = matchedOutput ?? _stylesheet.PrincipalOutput;
                 var rdOutputDecl = new Ast.XsltOutput
                 {
                     Method = resultMethod ?? matchedOutput?.Method,
@@ -1626,7 +1626,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // CDATA wrapping is applied at emission time (via _activeResultDocumentOutput), not
                     // in FinalizeOutput; carry the effective union here for declaration consistency.
                     CdataSectionElements = effectiveCdata ?? matchedOutput?.CdataSectionElements,
-                    SuppressIndentation = matchedOutput?.SuppressIndentation ?? _stylesheet.Outputs.FirstOrDefault()?.SuppressIndentation,
+                    SuppressIndentation = matchedOutput?.SuppressIndentation ?? _stylesheet.PrincipalOutput?.SuppressIndentation,
                 };
                 secondaryContent = Owner!.FinalizeOutput(
                     secondaryContent, rdOutputDecl, effectiveCharMaps, XsltTransformEngine.FinalizeKind.ResultDocument,

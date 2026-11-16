@@ -162,6 +162,14 @@ public sealed class XsltStylesheet
     public List<XsltOutput> Outputs { get; init; } = new();
 
     /// <summary>
+    /// The unnamed output definition, which serializes the principal result (XSLT 3.0 §26);
+    /// null when the stylesheet has no unnamed xsl:output. A named one is never it: the first
+    /// declaration was taken, so a named xsl:output written before the unnamed one serialized the
+    /// principal result (W3C output-0134, a named text output emptied an xhtml result).
+    /// </summary>
+    internal XsltOutput? PrincipalOutput => Outputs.Find(static o => o.Name is null);
+
+    /// <summary>
     /// Imported stylesheets (lower precedence).
     /// </summary>
     public List<XsltStylesheet> Imports { get; init; } = new();

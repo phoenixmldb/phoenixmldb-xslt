@@ -559,7 +559,7 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         if (_outputElementStack.Count == 0)
             return false;
-        var outputDecl = _activeResultDocumentOutput ?? _stylesheet.Outputs.FirstOrDefault();
+        var outputDecl = _activeResultDocumentOutput ?? _stylesheet.PrincipalOutput;
         if (outputDecl?.CdataSectionElements == null || outputDecl.CdataSectionElements.Count == 0)
             return false;
         var currentElem = _outputElementStack.Peek();
