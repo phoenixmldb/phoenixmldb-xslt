@@ -1906,7 +1906,11 @@ public sealed partial class StylesheetParser
 
         foreach (var key in package.Functions.Keys.ToList())
             if (!overridden.Contains(("F", key.Name, key.Arity)) && TryResolveAcceptVisibility(rules, "function", key.Name, package.Functions[key].Visibility, out var vis, key.Arity))
-                package.Functions[key] = CloneFunctionWithVisibility(package.Functions[key], vis);
+            {
+                var accepted = CloneFunctionWithVisibility(package.Functions[key], vis);
+                accepted.VisibilityFromAccept = true;
+                package.Functions[key] = accepted;
+            }
 
         for (var i = 0; i < package.Variables.Count; i++)
             if (!overridden.Contains(("V", package.Variables[i].Name, 0)) && TryResolveAcceptVisibility(rules, "variable", package.Variables[i].Name, package.Variables[i].Visibility, out var vis))
@@ -2730,6 +2734,7 @@ public sealed partial class StylesheetParser
             Override = ParseYesNo(overrideAttr) ?? true,
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
             VisibilityAttr = element.Attribute("visibility")?.Value,
+            VisibilityStated = element.Attribute("visibility") is not null,
             Cache = ParseYesNo(cacheAttr) ?? false,
             NewEachTime = newEachTime,
             Streamability = streamabilityValue,
