@@ -1856,6 +1856,12 @@ public sealed partial class StylesheetParser
                         throw new XsltException(
                             $"XTSE3051: Component '{token}' in xsl:accept is also declared in xsl:override",
                             location);
+                    // XTSE3030: must match an existing component, as for templates and variables
+                    // (§3.5.3.2). A name without an arity matches the function of any arity.
+                    if (!packageStylesheet.Functions.Keys.Any(k => k.Name.Equals(funcName) && (arity < 0 || k.Arity == arity)))
+                        throw new XsltException(
+                            $"XTSE3030: xsl:accept names function '{token}' which does not exist in the used package",
+                            location);
                     foreach (var (fkey, func) in packageStylesheet.Functions)
                     {
                         if (fkey.Name.Equals(funcName) && (arity < 0 || fkey.Arity == arity))
