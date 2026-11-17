@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-17 01:52 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-17 16:08 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -9,7 +9,7 @@ Generated 2026-11-17 01:52 UTC by `scripts/status.sh`. Do not edit by hand.
 | `PhoenixmlDb.Core` | 2.6.0 | 2.6.0 | current |
 | `PhoenixmlDb.XQuery` | 3.1.0 | 3.1.0 | current |
 | `PhoenixmlDb.Xslt` | 3.1.0 | 3.1.0 | current |
-| `xquery4` | 3.0.0 | 3.1.0 | **repo is at 3.1.0, nuget.org has 3.0.0** |
+| `xquery4` | 3.1.0 | 3.1.0 | current |
 | `xslt` | 3.1.0 | 3.1.0 | current |
 
 ## Open work
@@ -18,15 +18,14 @@ Generated 2026-11-17 01:52 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 8 | 2 |
-| phoenixmldb-cli | 0 | 1 |
+| phoenixmldb-xslt | 7 | 0 |
+| phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
-- [544] Public component of a used package is visible two packages up without xsl:accept (Saxon: XTSE0650, §3.5.3.2)
-- [543] xsl:accept function name without #arity is accepted; Saxon gives XTSE3020 (erratum E36)
+- [550] An as= type name that no schema defines gives no error; spec and Saxon: XPST0051
 - [542] Evaluate global variables lazily (order between trees: sx-union-012/017/022/035, square-array-201)
 - [523] fn:analyze-string returns a .NET XElement that fails `instance of element()`
 - [516] Temporary trees stay in the node store until the transform ends
@@ -35,15 +34,6 @@ Generated 2026-11-17 01:52 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
 
 ### Open PRs
-
-**phoenixmldb-xslt**
-
-- [547] xsl:accept naming a function the used package lacks is XTSE3030 (part of #543)
-- [505] conformance: a source with no role is the principal only if no other is
-
-**phoenixmldb-cli**
-
-- [29] build: Bump the phoenixmldb-engines group with 2 updates
 
 ## Defect register
 
