@@ -1000,6 +1000,11 @@ internal sealed partial class DefaultXsltExecutionContext
                 // are copied directly (built-in shallow-copy for attributes); attributes with
                 // a matching user template have their template output as child content.
                 List<(XsltTemplate template, XdmAttribute attr)>? templateMatches = null;
+                // The attributes that no template matches, copied. Held until the templates have
+                // run: one of them may make an attribute of the same name, and only the last of
+                // two attributes with one expanded name takes effect (§11.3). Both were written,
+                // which is not well-formed (xslt#551).
+                List<(string Name, string Value)>? copiedAttributes = null;
                 if (_nodeStore != null)
                 {
                     foreach (var attr in _nodeStore.EnumerateAttributes(elem))
@@ -1018,9 +1023,15 @@ internal sealed partial class DefaultXsltExecutionContext
                             var attrName = !string.IsNullOrEmpty(attrPrefix)
                                 ? $"{attrPrefix}:{attr.LocalName}"
                                 : attr.LocalName;
-                            _sink.Attribute(attrName, attr.Value);
+                            (copiedAttributes ??= new()).Add((attrName, attr.Value));
                         }
                     }
+                }
+                // Without a matched template the source element's own attributes cannot collide.
+                if (templateMatches is null && copiedAttributes is not null)
+                {
+                    foreach (var (copiedName, copiedValue) in copiedAttributes)
+                        _sink.Attribute(copiedName, copiedValue);
                 }
 
                 // Execute user templates for matched attributes using attribute collection
@@ -1069,7 +1080,16 @@ internal sealed partial class DefaultXsltExecutionContext
                     var collectedAttrs = _collectedAttributesStack.Pop();
                     templateChildContent = scope.GetWritten();
                     scope.Dispose();
-                    _sink.RawText(collectedAttrs.ToString());
+                    var attributes = new Dictionary<string, string>();
+                    if (copiedAttributes is not null)
+                    {
+                        foreach (var (copiedName, copiedValue) in copiedAttributes)
+                            attributes[copiedName] = EscapeAttributeValue(copiedValue);
+                    }
+                    ParseAttributeString(collectedAttrs.ToString(), attributes);
+                    DeduplicateByExpandedName(attributes, qname);
+                    foreach (var (attributeName, attributeValue) in attributes)
+                        _sink.RawText($" {attributeName}=\"{attributeValue}\"");
                 }
 
                 _sink.StartElementClose(false);

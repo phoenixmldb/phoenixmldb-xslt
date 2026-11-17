@@ -719,6 +719,73 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Parses a raw attribute string (e.g., ' color="black" size="14pt"') into a dictionary.
     /// Last occurrence of same name wins.
     /// </summary>
+    /// <summary>
+    /// XSLT 3.0 §11.3: "Where the sequence contains two or more attribute nodes with the same
+    /// expanded QName, the one that comes last is the only one that takes effect." The
+    /// attributes of an element under construction are collected by their lexical names, so
+    /// two prefixes for one namespace (p:a and q:a) both stayed, and the result was not
+    /// namespace-well-formed (xslt#551). A prefix is resolved by the declarations collected
+    /// with the attributes, then by the output scope; one that resolves nowhere is compared by
+    /// its lexical name. A namespace declaration that only a dropped attribute used goes too,
+    /// unless the element's own name uses it. <paramref name="elementNamespaces"/> are the
+    /// bindings a literal result element brings from the stylesheet.
+    /// </summary>
+    private void DeduplicateByExpandedName(Dictionary<string, string> attributes, string elementName,
+        Dictionary<string, string>? elementNamespaces = null)
+    {
+        if (attributes.Count < 2)
+            return;
+        var lastNameOf = new Dictionary<(string Namespace, string Local), string>();
+        foreach (var name in attributes.Keys)
+        {
+            if (IsNamespaceDeclaration(name))
+                continue;
+            lastNameOf[ExpandedName(name)] = name;
+        }
+        if (lastNameOf.Count == attributes.Count(a => !IsNamespaceDeclaration(a.Key)))
+            return;
+
+        var keep = new HashSet<string>(lastNameOf.Values, StringComparer.Ordinal);
+        var dropped = attributes.Keys.Where(name => !IsNamespaceDeclaration(name) && !keep.Contains(name)).ToList();
+        foreach (var name in dropped)
+            attributes.Remove(name);
+        var elementColon = elementName.IndexOf(':', StringComparison.Ordinal);
+        var elementPrefix = elementColon > 0 ? elementName[..elementColon] : "";
+        foreach (var prefix in dropped.Select(PrefixOf).Where(p => p.Length > 0).Distinct(StringComparer.Ordinal))
+        {
+            if (prefix != elementPrefix && !keep.Any(name => PrefixOf(name) == prefix))
+                attributes.Remove("xmlns:" + prefix);
+        }
+
+        (string Namespace, string Local) ExpandedName(string name)
+        {
+            var colon = name.IndexOf(':', StringComparison.Ordinal);
+            if (colon <= 0)
+                return ("", name);
+            var prefix = name[..colon];
+            var local = name[(colon + 1)..];
+            if (attributes.TryGetValue("xmlns:" + prefix, out var declared))
+                return (declared, local);
+            if (elementNamespaces is not null && elementNamespaces.TryGetValue(prefix, out var onElement))
+                return (onElement, local);
+            foreach (var scope in _outputNsScopes)
+            {
+                if (scope.TryGetValue(prefix, out var scoped))
+                    return (scoped, local);
+            }
+            return ("\u0000" + prefix, local);
+        }
+
+        static bool IsNamespaceDeclaration(string name)
+            => name == "xmlns" || name.StartsWith("xmlns:", StringComparison.Ordinal);
+
+        static string PrefixOf(string name)
+        {
+            var colon = name.IndexOf(':', StringComparison.Ordinal);
+            return colon > 0 ? name[..colon] : "";
+        }
+    }
+
     private static void ParseAttributeString(string attrString, Dictionary<string, string> target)
     {
         var pos = 0;
