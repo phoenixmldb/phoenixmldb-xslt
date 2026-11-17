@@ -152,11 +152,13 @@ public sealed class XsltTransformer
     public TimeSpan? ImplicitTimezone { get; set; }
 
     /// <summary>
-    /// When <c>true</c>, a template rule of a streamable mode, or the body of an
-    /// <c>xsl:source-document</c> with <c>streamable="yes"</c>, that is not guaranteed-streamable
-    /// makes the transformation fail with XTSE3430, as XSLT 3.0 §19.10 requires of a streaming
-    /// processor. Off by default: the engine then runs it on a buffered copy of the matched
-    /// subtree, or on a tree, and the result is the same. Has no effect together with
+    /// A template rule of a streamable mode, or the body of an <c>xsl:source-document</c> with
+    /// <c>streamable="yes"</c>, that is not guaranteed-streamable makes the transformation fail
+    /// with XTSE3430, as XSLT 3.0 §19.10 requires of a streaming processor. By default that is
+    /// reported only where the rules of §19.8 that the engine models are certain of it; where the
+    /// answer depends on a construct the analysis does not model, the engine runs the rule on a
+    /// buffered copy of the matched subtree, or on a tree, and the result is the same. When
+    /// <c>true</c>, those are reported too. Neither applies together with
     /// <see cref="DisableStreaming"/>, which asks for tree evaluation.
     /// </summary>
     /// <remarks>
@@ -171,6 +173,13 @@ public sealed class XsltTransformer
     /// <c>xsl:apply-templates</c> names a streamable mode.</para>
     /// </remarks>
     public bool StrictStreamability { get; set; }
+
+    /// <summary>
+    /// For the engine's own tests: no XTSE3430 from the analysis of §19.8, also where it is
+    /// certain, so that a rule that is not guaranteed-streamable runs on the buffered copy as
+    /// it did before the check was on by default. Ignored with <see cref="StrictStreamability"/>.
+    /// </summary>
+    internal bool StreamingFallback { get; set; }
     private bool _allowRemoteXInclude;
     private PhoenixmlDb.Core.Xml.IXmlResourceResolver? _xIncludeResolver;
     private string? _sourceSelect;
@@ -1479,6 +1488,7 @@ public sealed class XsltTransformer
             SourceValidation = SourceValidation,
             DocumentValidation = DocumentValidation,
             StrictStreamability = StrictStreamability,
+            StreamingFallback = StreamingFallback,
             AllowRemoteXInclude = _allowRemoteXInclude,
             XIncludeResolver = _xIncludeResolver,
             HasSourceDocument = hasSource,

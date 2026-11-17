@@ -20,7 +20,7 @@ public class StreamedRuleOutsideMatchTests
 
     private static async Task<string> RunAsync(string body)
     {
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync($"""
             <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0" expand-text="yes">
               <xsl:output omit-xml-declaration="yes"/>

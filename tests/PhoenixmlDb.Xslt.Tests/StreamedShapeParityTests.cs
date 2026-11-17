@@ -164,7 +164,7 @@ public class StreamedShapeParityTests
 
     private static async Task<string> RunAsync(string rules, bool tree)
     {
-        var t = new XsltTransformer { DisableStreaming = tree };
+        var t = new XsltTransformer { StreamingFallback = true, DisableStreaming = tree };
         await t.LoadStylesheetAsync($"{Head}{rules}</xsl:stylesheet>");
         return await t.TransformAsync(Input);
     }
@@ -192,7 +192,7 @@ public class StreamedShapeParityTests
     public async Task A_rule_for_the_document_node_gives_the_tree_result_from_a_stream_to_a_writer(string body)
     {
         var rules = $"<xsl:template match=\"/\">{body}</xsl:template>";
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync($"{Head}{rules}</xsl:stylesheet>");
         using var input = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Input));
         using var output = new StringWriter();
@@ -204,7 +204,7 @@ public class StreamedShapeParityTests
     [MemberData(nameof(ElementCases))]
     public async Task A_rule_for_an_element_gives_the_tree_result_from_a_stream_to_a_writer(string site, string rules)
     {
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync($"{Head}{rules}</xsl:stylesheet>");
         using var input = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Input));
         using var output = new StringWriter();
@@ -220,7 +220,7 @@ public class StreamedShapeParityTests
         await File.WriteAllTextAsync(path, Input, TestContext.Current.CancellationToken);
         try
         {
-            var t = new XsltTransformer();
+            var t = new XsltTransformer { StreamingFallback = true };
             await t.LoadStylesheetAsync(
                 $"{Head}<xsl:template name=\"main\"><xsl:source-document streamable=\"yes\" href=\"{new Uri(path).AbsoluteUri}\">{body}</xsl:source-document></xsl:template></xsl:stylesheet>");
             t.SetInitialTemplate("main");

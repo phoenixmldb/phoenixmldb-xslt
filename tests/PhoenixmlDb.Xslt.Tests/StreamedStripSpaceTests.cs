@@ -40,7 +40,7 @@ public sealed class StreamedStripSpaceTests : IDisposable
             """;
         var path = Path.Combine(_dir, $"s-{s}.xsl");
         await File.WriteAllTextAsync(path, xsl);
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(xsl, new Uri(path));
         t.SetInitialTemplate("main");
         return await t.TransformAsync("<dummy/>");

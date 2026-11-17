@@ -34,7 +34,7 @@ public sealed class SourceValidationTests : IDisposable
               </xs:complexType>
             </xs:schema>
             """, TestContext.Current.CancellationToken);
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync($"""
             <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:o="urn:o"
                             xmlns:xs="http://www.w3.org/2001/XMLSchema" version="3.0" expand-text="yes" exclude-result-prefixes="#all">
@@ -175,7 +175,7 @@ public sealed class SourceValidationTests : IDisposable
               </xs:sequence><xs:attribute name="id" type="xs:ID"/></xs:complexType></xs:element>
             </xs:schema>
             """, TestContext.Current.CancellationToken);
-        var t = new XsltTransformer { SourceValidation = ValidationMode.Strict };
+        var t = new XsltTransformer { StreamingFallback = true, SourceValidation = ValidationMode.Strict };
         await t.LoadStylesheetAsync($$"""
             <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema"
                             version="3.0" expand-text="yes" exclude-result-prefixes="#all">

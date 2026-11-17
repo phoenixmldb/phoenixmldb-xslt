@@ -7,8 +7,10 @@ namespace PhoenixmlDb.Xslt.Tests;
 /// <summary>
 /// <see cref="XsltTransformer.StrictStreamability"/>: a template rule of a streamable mode with
 /// more than one instruction reading the children of the matched node is not guaranteed-streamable
-/// (XSLT 3.0 §19.8.4.1). By default the engine runs it on a buffered copy of the matched subtree
-/// and the result is right; under the strict option it reports XTSE3430 (xslt#295).
+/// (XSLT 3.0 §19.8.4.1). The engine reports XTSE3430 for it by default, where the modelled rules
+/// of §19.8 are certain of it, and under the strict option also where they are not. The internal
+/// fallback switch runs such a rule on a buffered copy of the matched subtree, and the result is
+/// right (xslt#295).
 /// </summary>
 public class StrictStreamabilityTests
 {
@@ -28,11 +30,12 @@ public class StrictStreamabilityTests
         return t;
     }
 
-    private static async Task<string> RunAsync(string body, bool strict = false, bool disableStreaming = false)
+    private static async Task<string> RunAsync(string body, bool strict = false, bool disableStreaming = false, bool fallback = false)
     {
         var t = await LoadAsync(body);
         t.StrictStreamability = strict;
         t.DisableStreaming = disableStreaming;
+        t.StreamingFallback = fallback;
         return (await t.TransformAsync(Input)).Trim();
     }
 
@@ -120,10 +123,23 @@ public class StrictStreamabilityTests
         (await run.Should().ThrowAsync<XsltException>()).Which.Message.Should().StartWith("XTSE3430");
     }
 
+    /// <summary>
+    /// The modelled rules of §19.8 are certain of each of these, so the default check reports
+    /// them as the strict one does.
+    /// </summary>
     [Theory]
     [MemberData(nameof(NotStreamableForAnotherReason))]
-    public async Task By_default_those_rules_run_and_give_the_tree_answer(string body)
-        => (await RunAsync(body)).Should().Be(await RunAsync(body, disableStreaming: true));
+    public async Task By_default_those_rules_are_XTSE3430(string body)
+    {
+        var run = () => RunAsync(body);
+        (await run.Should().ThrowAsync<XsltException>()).Which.Message.Should().StartWith("XTSE3430");
+    }
+
+    /// <summary>The engine's buffered evaluation of such a rule, which the default no longer reaches for these.</summary>
+    [Theory]
+    [MemberData(nameof(NotStreamableForAnotherReason))]
+    public async Task With_the_fallback_those_rules_give_the_tree_answer(string body)
+        => (await RunAsync(body, fallback: true)).Should().Be(await RunAsync(body, disableStreaming: true));
 
     [Theory]
     [MemberData(nameof(StreamableByTheFullRules))]
@@ -140,8 +156,16 @@ public class StrictStreamabilityTests
 
     [Theory]
     [MemberData(nameof(SeveralConsumingOperands))]
-    public async Task By_default_the_same_rule_runs_and_gives_the_tree_answer(string body)
-        => (await RunAsync(body)).Should().Be(await RunAsync(body, disableStreaming: true));
+    public async Task By_default_the_same_rule_is_XTSE3430(string body)
+    {
+        var run = () => RunAsync(body);
+        (await run.Should().ThrowAsync<XsltException>()).Which.Message.Should().StartWith("XTSE3430");
+    }
+
+    [Theory]
+    [MemberData(nameof(SeveralConsumingOperands))]
+    public async Task With_the_fallback_the_same_rule_gives_the_tree_answer(string body)
+        => (await RunAsync(body, fallback: true)).Should().Be(await RunAsync(body, disableStreaming: true));
 
     [Theory]
     [MemberData(nameof(SeveralConsumingOperands))]
@@ -154,8 +178,8 @@ public class StrictStreamabilityTests
         => (await RunAsync(body, strict: true)).Should().Be(await RunAsync(body, disableStreaming: true));
 
     [Fact]
-    public async Task The_reported_stylesheet_gives_the_complete_output_by_default()
-        => (await RunAsync("<a>{foo}</a><b>{bar}</b>")).Should().Be(
+    public async Task The_reported_stylesheet_gives_the_complete_output_with_the_fallback()
+        => (await RunAsync("<a>{foo}</a><b>{bar}</b>", fallback: true)).Should().Be(
             """<root><item><a>f1</a><b>b1</b></item><item><a>f2</a><b>b2</b></item></root>""");
 
     [Fact]
@@ -195,7 +219,7 @@ public class StrictStreamabilityTests
     [Fact]
     public async Task A_document_rule_with_several_consuming_operands_gives_the_complete_output()
     {
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(DocumentRule);
         (await t.TransformAsync(Input)).Trim().Should().Be(DocumentRuleOutput);
     }
@@ -203,10 +227,23 @@ public class StrictStreamabilityTests
     [Fact]
     public async Task So_does_the_stream_overload()
     {
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(DocumentRule);
         using var input = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Input));
         (await t.TransformAsync(input)).Trim().Should().Be(DocumentRuleOutput);
+    }
+
+    /// <summary>
+    /// By default the document rule is XTSE3430: two xsl:apply-templates that read the
+    /// children of the document node are two consuming operands (§19.8.3).
+    /// </summary>
+    [Fact]
+    public async Task By_default_the_document_rule_is_XTSE3430()
+    {
+        var t = new XsltTransformer();
+        await t.LoadStylesheetAsync(DocumentRule);
+        var run = () => t.TransformAsync(Input);
+        (await run.Should().ThrowAsync<XsltException>()).Which.Message.Should().StartWith("XTSE3430");
     }
 
     [Fact]

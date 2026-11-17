@@ -117,7 +117,7 @@ public class StreamedRuleParityTests
 
     private static async Task<string> RunAsync(string match, string body, bool tree)
     {
-        var t = new XsltTransformer { DisableStreaming = tree };
+        var t = new XsltTransformer { StreamingFallback = true, DisableStreaming = tree };
         await t.LoadStylesheetAsync($"{Head}<xsl:template match='{match}'>{body}</xsl:template></xsl:stylesheet>");
         return await t.TransformAsync(Input);
     }
@@ -135,7 +135,7 @@ public class StreamedRuleParityTests
         await File.WriteAllTextAsync(path, Input, TestContext.Current.CancellationToken);
         try
         {
-            var t = new XsltTransformer();
+            var t = new XsltTransformer { StreamingFallback = true };
             await t.LoadStylesheetAsync(
                 $"{Head}<xsl:template name='main'><xsl:source-document streamable='yes' href='{new Uri(path).AbsoluteUri}'>{body}</xsl:source-document></xsl:template></xsl:stylesheet>");
             t.SetInitialTemplate("main");
@@ -153,7 +153,7 @@ public class StreamedRuleParityTests
     [InlineData("nothing", "")]
     public async Task A_streamed_for_each_runs_its_body_only_for_the_children_its_select_names(string name, string expected)
     {
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(
             $"{Head}<xsl:template match='item[@id = \"1\"]'><r><xsl:for-each select='{name}'>{{.}}</xsl:for-each></r></xsl:template><xsl:template match='item'/></xsl:stylesheet>");
         (await t.TransformAsync(Input)).Should().Contain(expected.Length == 0 ? "<r/>" : $"<r>{expected}</r>");

@@ -36,7 +36,7 @@ public sealed class StreamingAccumulatorValueTests
               <xsl:template match="fig"><xsl:value-of select="accumulator-before('figNr')"/><xsl:value-of select="@alt"/><xsl:text> </xsl:text></xsl:template>
             </xsl:stylesheet>
             """;
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(ss);
         return (streamed ? await t.TransformAsync(new StringReader(Source)) : await t.TransformAsync(Source)).Trim();
     }
@@ -75,7 +75,7 @@ public sealed class StreamingAccumulatorValueTests
               <xsl:template match="chap"><xsl:value-of select="accumulator-after('figNr'), count(.//fig)"/><xsl:text> </xsl:text></xsl:template>
             </xsl:stylesheet>
             """;
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(ss);
         const string oneChap = """<doc><chap><div><fig alt="a"/></div><div><fig alt="b"/></div></chap></doc>""";
         (await t.TransformAsync(new StringReader(oneChap))).Trim().Should().Be("2 2");

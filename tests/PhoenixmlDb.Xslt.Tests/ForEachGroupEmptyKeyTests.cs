@@ -46,7 +46,7 @@ public class ForEachGroupEmptyKeyTests
     [InlineData(true)]
     public async Task ForEachGroup_GroupBy_AllEmptyKeys_ProducesNoGroups(bool streamable)
     {
-        var transformer = new XsltTransformer();
+        var transformer = new XsltTransformer { StreamingFallback = true };
         await transformer.LoadStylesheetAsync(AllEmptyKeysStylesheet(streamable));
         var result = await transformer.TransformAsync(Input);
 
@@ -87,7 +87,7 @@ public class ForEachGroupEmptyKeyTests
     [InlineData(true)]
     public async Task ForEachGroup_GroupBy_MixedKeys_ExcludesEmptyKeyItems(bool streamable)
     {
-        var transformer = new XsltTransformer();
+        var transformer = new XsltTransformer { StreamingFallback = true };
         await transformer.LoadStylesheetAsync(MixedKeysStylesheet(streamable));
         var result = await transformer.TransformAsync(MixedInput);
 
@@ -149,7 +149,7 @@ public class ForEachGroupEmptyKeyTests
     [InlineData(true)]
     public async Task ForEachGroup_GroupAdjacent_EmptyKey_RaisesXTTE1100(bool streamable)
     {
-        var transformer = new XsltTransformer();
+        var transformer = new XsltTransformer { StreamingFallback = true };
 
         // Under streamable=yes the rejection happens at LOAD time, so the throw has to be
         // allowed to come from either call.
@@ -192,7 +192,7 @@ public class ForEachGroupEmptyKeyTests
     [InlineData(true)]
     public async Task ForEachGroup_GroupAdjacent_BooleanKey_StillGroups(bool streamable)
     {
-        var transformer = new XsltTransformer();
+        var transformer = new XsltTransformer { StreamingFallback = true };
         await transformer.LoadStylesheetAsync(AdjacentBooleanKeyStylesheet(streamable));
         var result = await transformer.TransformAsync(AdjacentInput);
 
@@ -235,7 +235,7 @@ public class ForEachGroupEmptyKeyTests
     [InlineData(true, "array{}")]
     public async Task ForEachGroup_GroupAdjacent_EmptyArrayKey_RaisesXTTE1100(bool streamable, string key)
     {
-        var transformer = new XsltTransformer();
+        var transformer = new XsltTransformer { StreamingFallback = true };
         await transformer.LoadStylesheetAsync(AdjacentKeyStylesheet(streamable, key));
 
         Func<Task> act = () => transformer.TransformAsync(AdjacentInput);

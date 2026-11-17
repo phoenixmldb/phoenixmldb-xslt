@@ -20,7 +20,7 @@ public class StreamingRootTemplateTests
 {
     private static async Task<string> Run(string ss, string xml)
     {
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(ss);
         return await t.TransformAsync(xml);
     }

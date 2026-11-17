@@ -632,10 +632,12 @@ static void PrintUsage()
           --strict-streaming Report XTSE3430 for a template in a streamable mode, or
                              an xsl:source-document streamable="yes" body, that is
                              not guaranteed streamable by the rules of XSLT 3.0
-                             section 19.8, instead of running it on a buffered
-                             copy. A few constructs beyond those rules that this
-                             engine streams correctly are accepted. No effect with
-                             --no-stream.
+                             section 19.8, also where the answer depends on a
+                             construct the analysis does not model (by default
+                             only certain answers are reported, and the others
+                             run on a buffered copy). A few constructs beyond
+                             those rules that this engine streams correctly are
+                             accepted. No effect with --no-stream.
           --validation <strict|lax>
                              Validate the source document against the schemas the
                              stylesheet imports, so its nodes are typed. An invalid
