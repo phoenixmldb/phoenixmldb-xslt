@@ -1830,6 +1830,12 @@ internal sealed partial class DefaultXsltExecutionContext
         // buffer). See sf-boolean-107 / sf-not-107.
         var savedOutputLen = _output.Length;
         var savedAttrStackDepth = _collectedAttributesStack.Count;
+        // The sequence being built around the xsl:try (an as="xs:string*" variable's items).
+        // An error leaving a function body left the FUNCTION's accumulator installed, so the
+        // catch and everything after it wrote into a list nobody read: the variable kept only
+        // later items ("1 caught3" for three iterations; Saxon "3 caught1 ok caught3").
+        var savedAccumulator = _sequenceAccumulator;
+        var savedAccumulatorCount = savedAccumulator?.Count ?? 0;
         // Safety net for scopes an INTERRUPTED nested construct pushed and never popped
         // (a for-each inside the try that threw mid-iteration). The try body's own scope is
         // handled by the push/pop around ExecuteAsync below; this catches the rest, the same
@@ -1892,6 +1898,11 @@ internal sealed partial class DefaultXsltExecutionContext
         catch (Exception ex) when (!DeferredGlobalError.IsMarked(ex)
             && ex is XsltException or XQuery.Execution.XQueryRuntimeException or XQuery.Functions.XQueryException or InvalidOperationException or FormatException or OverflowException or ArgumentException or NullReferenceException or ArithmeticException)
         {
+            // Whatever installed its own accumulator inside the try and did not get to restore
+            // it is undone; items the failed body added are discarded with its output.
+            _sequenceAccumulator = savedAccumulator;
+            if (instruction.Rollback && savedAccumulator is not null && savedAccumulator.Count > savedAccumulatorCount)
+                savedAccumulator.RemoveRange(savedAccumulatorCount, savedAccumulator.Count - savedAccumulatorCount);
             // Discard output produced during failed try block (rollback-output behavior).
             // Restore from snapshot because _output may have been replaced by nested
             // element constructors whose assembly code was skipped by the exception.
