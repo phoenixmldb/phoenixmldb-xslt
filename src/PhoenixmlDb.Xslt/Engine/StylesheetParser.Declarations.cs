@@ -1796,10 +1796,15 @@ public sealed partial class StylesheetParser
         var component = acceptElement.Attribute("component")?.Value;
         var names = acceptElement.Attribute("names")?.Value;
         var visibilityStr = acceptElement.Attribute("visibility")?.Value;
-        if (component == null || names == null || visibilityStr == null) return;
+        var location = GetSourceLocation(acceptElement);
+        // §3.5.3.2: component, names and visibility are all required (XTSE0010).
+        if (component is null || names is null || visibilityStr is null)
+        {
+            var missing = component is null ? "component" : names is null ? "names" : "visibility";
+            throw new XsltException($"XTSE0010: xsl:accept must have a {missing} attribute", location);
+        }
 
         var visibility = ParseVisibility(visibilityStr);
-        var location = GetSourceLocation(acceptElement);
 
         foreach (var token in names.Split(WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
         {
@@ -1843,28 +1848,31 @@ public sealed partial class StylesheetParser
                     var funcToken = token;
                     var arity = -1;
                     var hashIdx = token.IndexOf('#', StringComparison.Ordinal);
-                    if (hashIdx >= 0)
-                    {
-                        funcToken = token[..hashIdx];
-                        _ = int.TryParse(token[(hashIdx + 1)..], out arity);
-                    }
+                    // A name with no arity identifies no function (§3.5.3.1, as draft erratum
+                    // XT30.E36 states it and the W3C suite follows: expose-926), so it matches no
+                    // component of the used package: XTSE3030, the code §3.5.3.2 gives for
+                    // xsl:accept. Saxon-HE 12.10 reports XTSE3020 here, the xsl:expose code.
+                    if (hashIdx < 0)
+                        throw new XsltException(
+                            $"XTSE3030: xsl:accept component=\"function\" names '{token}' without an arity; a function is named with its arity, for example names=\"{token}#1\"",
+                            location);
+                    funcToken = token[..hashIdx];
+                    _ = int.TryParse(token[(hashIdx + 1)..], out arity);
                     var funcName = ResolveAcceptTokenQName(funcToken, acceptElement);
-                    // XTSE3051 for functions too: a name without an arity matches every arity
-                    // (W3C accept-916: local:foo#0 accepted and overridden).
+                    // XTSE3051 for functions too (W3C accept-916: local:foo#0 accepted and overridden).
                     if (overriddenFunctionKeys != null
-                        && overriddenFunctionKeys.Any(k => k.Item1.Equals(funcName) && (arity < 0 || k.Item2 == arity)))
+                        && overriddenFunctionKeys.Any(k => k.Item1.Equals(funcName) && k.Item2 == arity))
                         throw new XsltException(
                             $"XTSE3051: Component '{token}' in xsl:accept is also declared in xsl:override",
                             location);
-                    // XTSE3030: must match an existing component, as for templates and variables
-                    // (§3.5.3.2). A name without an arity matches the function of any arity.
-                    if (!packageStylesheet.Functions.Keys.Any(k => k.Name.Equals(funcName) && (arity < 0 || k.Arity == arity)))
+                    // XTSE3030: must match an existing component, as for templates and variables (§3.5.3.2).
+                    if (!packageStylesheet.Functions.Keys.Any(k => k.Name.Equals(funcName) && k.Arity == arity))
                         throw new XsltException(
                             $"XTSE3030: xsl:accept names function '{token}' which does not exist in the used package",
                             location);
                     foreach (var (fkey, func) in packageStylesheet.Functions)
                     {
-                        if (fkey.Name.Equals(funcName) && (arity < 0 || fkey.Arity == arity))
+                        if (fkey.Name.Equals(funcName) && fkey.Arity == arity)
                         {
                             if ((func.Visibility == Visibility.Private && visibility is not (Visibility.Private or Visibility.Hidden))
                                 || (func.Visibility == Visibility.Final && visibility == Visibility.Public))
