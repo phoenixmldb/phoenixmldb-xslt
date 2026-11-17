@@ -224,10 +224,15 @@ public sealed class XsltTestRunner
                 StringComparison.OrdinalIgnoreCase);
 
             // Sources with uri but no role are secondary documents (for doc() function),
-            // not the principal source. Only use "." as default when no uri is specified.
+            // not the principal source. With neither, a source is the principal only where the
+            // environment marks no other one: the catalog says role="." is how a source becomes
+            // the context item, and namespace-19 lists namespace-19b.xml (read with doc()) after
+            // its role="." source, which it then replaced (W3C namespace-1901).
             if (role == null)
             {
-                role = uri != null ? uri : ".";
+                var anotherIsPrincipal = elem.Elements(ns + "source")
+                    .Any(s => s != source && s.Attribute("role")?.Value is "." or "principal");
+                role = uri ?? (anotherIsPrincipal && file != null ? file : ".");
             }
 
             if (file != null)
