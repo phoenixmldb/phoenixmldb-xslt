@@ -159,7 +159,8 @@ public sealed class XsltTransformer
     /// answer depends on a construct the analysis does not model, the engine runs the rule on a
     /// buffered copy of the matched subtree, or on a tree, and the result is the same. When
     /// <c>true</c>, those are reported too. Neither applies together with
-    /// <see cref="DisableStreaming"/>, which asks for tree evaluation.
+    /// <see cref="DisableStreaming"/>, which asks for tree evaluation, or with
+    /// <see cref="StreamingFallback"/>, which asks for a buffer.
     /// </summary>
     /// <remarks>
     /// <para>The check is the posture and sweep analysis of XSLT 3.0 §19.8. A template rule is
@@ -175,11 +176,24 @@ public sealed class XsltTransformer
     public bool StrictStreamability { get; set; }
 
     /// <summary>
-    /// For the engine's own tests: no XTSE3430 from the analysis of §19.8, also where it is
-    /// certain, so that a rule that is not guaranteed-streamable runs on the buffered copy as
-    /// it did before the check was on by default. Ignored with <see cref="StrictStreamability"/>.
+    /// When <c>true</c>, a template rule of a streamable mode, or the body of an
+    /// <c>xsl:source-document</c> with <c>streamable="yes"</c>, that is not guaranteed-streamable
+    /// runs on a buffered copy of the matched subtree, or on a tree, instead of failing with
+    /// XTSE3430: the third option of XSLT 3.0 §19.10, to stream what can be streamed. Off by
+    /// default. It takes precedence over <see cref="StrictStreamability"/>.
     /// </summary>
-    internal bool StreamingFallback { get; set; }
+    /// <remarks>
+    /// <para>The memory such a construct needs then grows with the part of the input it buffers,
+    /// up to the whole document. Constructs that are guaranteed-streamable stream as before.</para>
+    /// <para>It covers the analysis of template rules and of <c>xsl:source-document</c> bodies
+    /// made when the transformation starts, whose XTSE3430 message names this setting. The
+    /// checks made when the stylesheet is compiled (streamable accumulators, stylesheet
+    /// functions with a streamability category, streamable attribute sets, merge sources, the
+    /// match patterns of a streamable mode, and some shapes of template bodies) are not
+    /// affected; their messages do not name it.</para>
+    /// <para>Saxon-EE has a setting of the same purpose, the streamingFallback feature.</para>
+    /// </remarks>
+    public bool StreamingFallback { get; set; }
     private bool _allowRemoteXInclude;
     private PhoenixmlDb.Core.Xml.IXmlResourceResolver? _xIncludeResolver;
     private string? _sourceSelect;

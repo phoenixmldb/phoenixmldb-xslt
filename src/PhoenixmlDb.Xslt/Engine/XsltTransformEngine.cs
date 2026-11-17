@@ -272,7 +272,7 @@ public sealed partial class XsltTransformEngine
     /// </summary>
     private void EnsureStrictStreamability(XsltTransformOptions? options)
     {
-        if (options is not ({ DisableStreaming: true } or { StreamingFallback: true, StrictStreamability: false })
+        if (options is not ({ DisableStreaming: true } or { StreamingFallback: true })
             && StrictStreamability.Finding(_stylesheet, certainOnly: options is not { StrictStreamability: true }) is { } finding)
             throw new XsltException(finding.Message, finding.Location);
     }

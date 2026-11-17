@@ -285,6 +285,7 @@ try
         // without this the in-memory call below streamed anyway (xslt#295).
         transformer.DisableStreaming = options.NoStream;
         transformer.StrictStreamability = options.StrictStreaming;
+        transformer.StreamingFallback = options.StreamingFallback;
         transformer.SourceValidation = options.SourceValidation;
 
         // Streaming requires a local file (we hand the path to File.OpenRead). When the
@@ -637,7 +638,14 @@ static void PrintUsage()
                              only certain answers are reported, and the others
                              run on a buffered copy). A few constructs beyond
                              those rules that this engine streams correctly are
-                             accepted. No effect with --no-stream.
+                             accepted. No effect with --no-stream or
+                             --streaming-fallback.
+          --streaming-fallback
+                             Run a template in a streamable mode, or an
+                             xsl:source-document streamable="yes" body, that is
+                             not guaranteed streamable with a buffer of the input
+                             it reads, instead of reporting XTSE3430. Memory then
+                             grows with what is buffered.
           --validation <strict|lax>
                              Validate the source document against the schemas the
                              stylesheet imports, so its nodes are typed. An invalid
@@ -691,6 +699,8 @@ file sealed class CliOptions
     public bool NoStream { get; init; }
     /// <summary>True if the user passed <c>--strict-streaming</c>.</summary>
     public bool StrictStreaming { get; init; }
+    /// <summary>True if the user passed <c>--streaming-fallback</c>.</summary>
+    public bool StreamingFallback { get; init; }
     /// <summary>
     /// <c>--validation strict|lax</c> (or <c>--val:strict</c>, <c>--val:lax</c>): validation of
     /// the source document. Null, the default, leaves the source untyped.
@@ -725,6 +735,7 @@ file sealed class CliOptions
         var stream = false;
         var noStream = false;
         var strictStreaming = false;
+        var streamingFallback = false;
         var showHelp = false;
         var showVersion = false;
         var verbose = false;
@@ -805,6 +816,9 @@ file sealed class CliOptions
                 case "--strict-streaming":
                     strictStreaming = true;
                     break;
+                case "--streaming-fallback":
+                    streamingFallback = true;
+                    break;
                 case "-v" or "--verbose":
                     verbose = true;
                     break;
@@ -862,6 +876,7 @@ file sealed class CliOptions
             Stream = stream,
             NoStream = noStream,
             StrictStreaming = strictStreaming,
+            StreamingFallback = streamingFallback,
             SourceValidation = sourceValidation,
             InvalidValidation = expectingValidation ? "" : invalidValidation,
             UnknownArgument = unknownArgument,
