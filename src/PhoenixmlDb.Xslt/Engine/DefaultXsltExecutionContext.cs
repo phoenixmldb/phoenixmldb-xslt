@@ -1176,8 +1176,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         lib.Register(new XsltStaticBaseUriFunction(this));
         lib.Register(new XsltIdFunction(this));
         lib.Register(new XsltId2Function(this));
-        lib.Register(new XsltAnalyzeStringFunction());
-        lib.Register(new XsltAnalyzeString3Function());
+        lib.Register(new XsltAnalyzeStringFunction(this));
+        lib.Register(new XsltAnalyzeString3Function(this));
 
         // fn:transform — run XSLT transformation from within XPath
         lib.Register(new XsltTransformFunction(this));
