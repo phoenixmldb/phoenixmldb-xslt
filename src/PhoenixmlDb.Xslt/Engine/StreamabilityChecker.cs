@@ -1368,7 +1368,12 @@ internal static class StreamabilityChecker
             // not streamable — unbounded crawling requires buffering the entire document.
             // Note: union-of-striding crawling is NOT checked here — it can be streamed
             // with bounded buffering even when the body is consuming.
-            if (insn.Select != null && ContainsDescendantAxis(insn.Select) && !SelectsAtMostOneItem(insn.Select))
+            // A select whose items are grounded is not a crawl, wherever a descendant step sits
+            // inside it: select="1 to count(.//*)" is a sequence of integers, and the body's "."
+            // is one of them (§19.8.4.18: the rule is about a crawling population; W3C
+            // streamable-077, which Saxon-EE passes).
+            if (insn.Select != null && ContainsDescendantAxis(insn.Select) && !SelectsAtMostOneItem(insn.Select)
+                && !ValueIsGrounded(insn.Select))
             {
                 if (BodyConsumesContext(insn.Body))
                 {
@@ -2596,6 +2601,14 @@ internal static class StreamabilityChecker
             return detector.Found;
         }
 
+        private static bool StartsFromBoundValue(XQueryExpression? initial)
+        {
+            while (initial is FilterExpression filter)
+                initial = filter.Primary;
+            return initial is VariableReference
+                or FunctionCallExpression { Arguments.Count: 0, Name.LocalName: "current-group" };
+        }
+
         public override object? VisitPathExpression(PathExpression expr)
         {
             if (Reason != null || _inGroundingContext) return null;
@@ -2617,6 +2630,14 @@ internal static class StreamabilityChecker
                 _inGroundingContext = oldGrounding;
                 return null;
             }
+
+            // A path that starts from a bound value, not from the candidate node, does not read
+            // the candidate's content: $v/x, or current-group()[1]/Date where the group is of
+            // copied nodes outside this streamed document (W3C si-group-051, which Saxon-EE
+            // passes). Whether such a value can hold streamed nodes is the classifier's to say
+            // (§19.8.4.41 for a variable, §19.8.9.4 for the group); this check cannot see it.
+            if (_inStepPredicate && StartsFromBoundValue(expr.InitialExpression))
+                return null;
 
             // Check if we're in a step predicate and the path accesses child elements
             if (_inStepPredicate)

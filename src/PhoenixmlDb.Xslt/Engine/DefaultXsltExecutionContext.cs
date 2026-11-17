@@ -4747,6 +4747,25 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return result;
         }
 
+        // An attribute is not a child: its candidates are its element's attributes. They were
+        // taken from the children, which do not hold it, so a pattern with two predicates
+        // never matched an attribute (@*[starts-with(local-name(), '_')][namespace-uri() = ''],
+        // W3C evaluate-046).
+        if (node is XdmAttribute)
+        {
+            if (parent is XdmElement element)
+            {
+                foreach (var attribute in _nodeStore.GetAttributes(element))
+                {
+                    if (MatchesNodeTest(attribute, nodeTest))
+                        result.Add(attribute);
+                }
+            }
+            if (result.Count == 0)
+                result.Add(node);
+            return result;
+        }
+
         foreach (var sibling in _nodeStore.GetChildren(parent))
         {
             if (MatchesNodeTest(sibling, nodeTest))

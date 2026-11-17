@@ -3197,6 +3197,10 @@ internal sealed class StreamingXmlProcessor
                 var attrNsId = _nodeStore.InternNamespace(attr.NamespaceUri);
                 var xdmAttr = AcquirePooledAttribute(
                     attr.NodeId, attrNsId, attr.LocalName, attr.Prefix, attr.StringValue ?? string.Empty);
+                // An attribute's parent is its element. The streamed attributes had none, so ".."
+                // from an attribute was empty: a template for @x that read
+                // ../accumulator-before() found no value (W3C evaluate-046).
+                xdmAttr.Parent = ctx.NodeId;
                 _nodeStore.Register(xdmAttr);
                 (attrIds ??= AcquireNodeIdList()).Add(attr.NodeId);
                 (materializedAttrs ??= AcquireXdmAttrList()).Add(xdmAttr);
