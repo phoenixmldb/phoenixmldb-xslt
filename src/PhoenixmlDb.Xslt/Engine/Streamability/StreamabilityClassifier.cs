@@ -217,7 +217,11 @@ public static partial class StreamabilityClassifier
             FlworExpression flwor => ClassifyFlwor(flwor, ctx),
 
             SequenceExpression seq => ClassifySequence(seq.Items, ctx),
-            RangeExpression => Grounded(Sweep.Motionless), // integer range — atomic, no input.
+            // An integer range: grounded, and its operands are atomized as for arithmetic
+            // (§19.8.1), so "1 to count(.//*)" consumes. It was motionless whatever its operands
+            // read, so a rule whose xsl:for-each counted the matched element's descendants ran
+            // on the unread element and counted none (W3C streamable-077).
+            RangeExpression range => ClassifyAtomizingPair(range.Start, range.End, ctx),
 
             // §19.8: cast/castable/treat/instance-of atomize-or-inspect their operand and yield
             // a grounded (atomic/boolean) result; posture collapses to grounded, sweep is the
@@ -748,16 +752,20 @@ public static partial class StreamabilityClassifier
                 return GeneralRule([(Classify(bin.Left, ctx), 'I'), (Classify(bin.Right, ctx), 'I')], atMostOneItem: false);
 
             default:
-            {
-                var la = AtomizeSweep(bin.Left, ctx);
-                var ra = AtomizeSweep(bin.Right, ctx);
-                if (la == Sweep.FreeRanging || ra == Sweep.FreeRanging)
-                    return NotStreamable();
-                if (Consumes(bin.Left, ctx) && Consumes(bin.Right, ctx))
-                    return Grounded(Sweep.FreeRanging);
-                return Grounded(CombineSweep(la, ra));
-            }
+                return ClassifyAtomizingPair(bin.Left, bin.Right, ctx);
         }
+    }
+
+    /// <summary>Two operands that are atomized, with a grounded atomic result.</summary>
+    private static PostureSweep ClassifyAtomizingPair(XQueryExpression left, XQueryExpression right, StreamingContext ctx)
+    {
+        var la = AtomizeSweep(left, ctx);
+        var ra = AtomizeSweep(right, ctx);
+        if (la == Sweep.FreeRanging || ra == Sweep.FreeRanging)
+            return NotStreamable();
+        if (Consumes(left, ctx) && Consumes(right, ctx))
+            return Grounded(Sweep.FreeRanging);
+        return Grounded(CombineSweep(la, ra));
     }
 
     /// <summary>§19.8.8.4, union, intersect and except: the first rule that applies.</summary>

@@ -335,6 +335,47 @@ public static partial class StreamabilityClassifier
             // §19.8.4.10
             case XsltChoose choose:
                 return ClassifyChooseBySpec(choose, ctx);
+            // §19.8.4.3: the select and the regex are absorbed; the two branches are navigated
+            // (they may run more than once), with a grounded context item, a string.
+            case XsltAnalyzeString analyze:
+            {
+                Absorb(operands, analyze.Select, ctx);
+                Absorb(operands, analyze.Regex, ctx);
+                Absorb(operands, analyze.Flags, ctx);
+                var substring = ctx with
+                {
+                    ContextPosture = Posture.Grounded, CurrentGroup = null, ContextHasNoChildren = true,
+                    ContextMayHaveChildren = false, AfterConsumingSibling = false,
+                };
+                if (analyze.MatchingSubstring is { } matching)
+                    operands.Add((Classify(matching, substring), 'N'));
+                if (analyze.NonMatchingSubstring is { } nonMatching)
+                    operands.Add((Classify(nonMatching, substring), 'N'));
+                break;
+            }
+            // §19.8.4.16: the expression text is absorbed; the context item and the parameters
+            // are navigated, so a streamed node cannot be passed to the dynamic expression.
+            case XsltEvaluate evaluate:
+            {
+                Absorb(operands, evaluate.Xpath, ctx);
+                if (evaluate.ContextItem is { } contextItem)
+                    operands.Add((Classify(contextItem, ctx), 'N'));
+                if (evaluate.WithParamsExpr is { } withParams)
+                    operands.Add((Classify(withParams, ctx), 'N'));
+                Absorb(operands, evaluate.BaseUri, ctx);
+                if (evaluate.NamespaceContext is { } namespaceContext)
+                    operands.Add((Classify(namespaceContext, ctx), 'I'));
+                Absorb(operands, evaluate.SchemaAware, ctx);
+                foreach (var parameter in evaluate.WithParams)
+                {
+                    var usage = parameter.As is { } type ? TypeDeterminedUsage(type) : 'N';
+                    if (parameter.Select is { } select)
+                        operands.Add((Classify(select, ctx), usage == 'A' ? Absorption(select, ctx) : usage));
+                    if (parameter.Content is { } content)
+                        operands.Add((Classify(content, ctx), usage == 'A' ? Absorption(content, ctx) : usage));
+                }
+                break;
+            }
             default:
                 return null;
         }

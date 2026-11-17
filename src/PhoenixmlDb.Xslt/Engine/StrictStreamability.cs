@@ -58,7 +58,8 @@ internal static class StrictStreamability
         => instruction is { Streamable: true, Content: { } body }
             ? (certainOnly ? _certainBodies : _bodies).GetValue(instruction, _ => new StrongBox<string?>(
                 // The context item of the body is the document node (§18.1).
-                Reason(body, stylesheet, certainOnly, childType: 'A') is { } reason
+                Reason(body, stylesheet, certainOnly, childType: 'A',
+                    outerGroupIsGrounded: EnclosingGroupIsGrounded(stylesheet, instruction)) is { } reason
                     ? "XTSE3430: The body of xsl:source-document is not guaranteed streamable: " + reason + "." + Remedy
                     : null)).Value
             : null;
@@ -163,11 +164,20 @@ internal static class StrictStreamability
     /// <paramref name="childType"/> is the static type of the context item, as
     /// <see cref="ContextChildType"/> gives it.
     /// </summary>
-    private static string? Reason(XsltSequenceConstructor body, XsltStylesheet stylesheet, bool certainOnly, char childType, bool contextIsNeverDocument = false)
+    /// <remarks>
+    /// <c>outerGroupIsGrounded</c>: the body is that of an xsl:source-document inside an
+    /// xsl:for-each-group whose population is grounded (copies), so current-group() there,
+    /// outside any xsl:for-each-group in the body, is held in memory and does not read the
+    /// streamed document (W3C si-group-051, which Saxon-EE passes; with a streamed population it
+    /// is XTSE3430, si-group-052).
+    /// </remarks>
+    private static string? Reason(XsltSequenceConstructor body, XsltStylesheet stylesheet, bool certainOnly, char childType,
+        bool contextIsNeverDocument = false, bool outerGroupIsGrounded = false)
     {
         var context = new StreamingContext(
             Posture.Striding, InStreamedScope: true, BySpec: true, Functions: stylesheet.Functions, Stylesheet: stylesheet,
-            ContextHasNoChildren: childType == 'I', ContextIsNeverDocument: contextIsNeverDocument)
+            ContextHasNoChildren: childType == 'I', ContextIsNeverDocument: contextIsNeverDocument,
+            InGroundedGroup: outerGroupIsGrounded)
         {
             ContextMayHaveChildren = childType == 'A',
             ForTheCheck = true,
@@ -180,6 +190,56 @@ internal static class StrictStreamability
         if (result.Posture != Posture.Grounded)
             return "it returns nodes of the streamed input; copy them (xsl:copy-of, copy-of(), snapshot()) or return their values";
         return null;
+    }
+
+    private static readonly ConditionalWeakTable<XsltStylesheet, Dictionary<XsltSourceDocument, bool>> _groundedGroups = new();
+
+    /// <summary>
+    /// Whether the nearest xsl:for-each-group that contains this xsl:source-document selects
+    /// grounded items, so that its current group is held in memory. False where there is none.
+    /// </summary>
+    private static bool EnclosingGroupIsGrounded(XsltStylesheet stylesheet, XsltSourceDocument instruction)
+    {
+        var map = _groundedGroups.GetValue(stylesheet, s =>
+        {
+            var found = new Dictionary<XsltSourceDocument, bool>(ReferenceEqualityComparer.Instance);
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            foreach (var template in s.Templates)
+                CollectGroups(template.Body, null, s, seen, found);
+            foreach (var template in s.NamedTemplates.Values)
+                CollectGroups(template.Body, null, s, seen, found);
+            foreach (var function in s.Functions.Values)
+                CollectGroups(function.Body, null, s, seen, found);
+            return found;
+        });
+        return map.TryGetValue(instruction, out var grounded) && grounded;
+    }
+
+    private static void CollectGroups(object? node, XsltForEachGroup? group, XsltStylesheet stylesheet, HashSet<object> seen,
+        Dictionary<XsltSourceDocument, bool> found)
+    {
+        if (node is null or string or ValueType or PhoenixmlDb.XQuery.Ast.XQueryExpression)
+            return;
+        if (!seen.Add(node))
+            return;
+        if (node is System.Collections.IEnumerable items)
+        {
+            foreach (var item in items)
+                CollectGroups(item, group, stylesheet, seen, found);
+            return;
+        }
+        if (node is not (XsltInstruction or XsltWhen))
+            return;
+        if (node is XsltSourceDocument document)
+            found[document] = group is not null && StreamabilityClassifier.Classify(group.Select, new StreamingContext(
+                Posture.Striding, InStreamedScope: true, BySpec: true, Functions: stylesheet.Functions, Stylesheet: stylesheet)).Posture == Posture.Grounded;
+        if (node is XsltForEachGroup nested)
+            group = nested;
+        foreach (var property in node.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length == 0)
+                CollectGroups(property.GetValue(node), group, stylesheet, seen, found);
+        }
     }
 
     /// <summary>
