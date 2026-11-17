@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-16 15:56 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-17 01:52 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,15 +18,17 @@ Generated 2026-11-16 15:56 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 6 | 1 |
+| phoenixmldb-xslt | 8 | 2 |
 | phoenixmldb-cli | 0 | 1 |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
+- [544] Public component of a used package is visible two packages up without xsl:accept (Saxon: XTSE0650, §3.5.3.2)
+- [543] xsl:accept function name without #arity is accepted; Saxon gives XTSE3020 (erratum E36)
+- [542] Evaluate global variables lazily (order between trees: sx-union-012/017/022/035, square-array-201)
 - [523] fn:analyze-string returns a .NET XElement that fails `instance of element()`
-- [520] Streamed copy-of(path) held in a variable is not constant-memory
 - [516] Temporary trees stay in the node store until the transform ends
 - [499] Serializer: extension parameters for indent characters, attribute wrapping and namespace order (#400 part 2)
 - [445] Nightly regression report
@@ -36,6 +38,7 @@ Generated 2026-11-16 15:56 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
+- [547] xsl:accept naming a function the used package lacks is XTSE3030 (part of #543)
 - [505] conformance: a source with no role is the principal only if no other is
 
 **phoenixmldb-cli**
