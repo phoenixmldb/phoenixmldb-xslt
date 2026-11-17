@@ -192,7 +192,7 @@ public sealed class StreamedDocumentAccumulatorTests
     {
         var path = Path.Combine(dir, "s.xsl");
         await File.WriteAllTextAsync(path, stylesheet);
-        var transformer = new XsltTransformer();
+        var transformer = new XsltTransformer { StreamingFallback = true };
         await transformer.LoadStylesheetAsync(stylesheet, new Uri(path));
         transformer.SetInitialTemplate("main");
         return await transformer.TransformAsync("<dummy/>");
@@ -209,7 +209,7 @@ public sealed class StreamedDocumentAccumulatorTests
 
     private static async Task<(string Output, bool Streamed)> RunAsync(string stylesheet, string input, bool disableStreaming)
     {
-        var transformer = new XsltTransformer { DisableStreaming = disableStreaming };
+        var transformer = new XsltTransformer { StreamingFallback = true, DisableStreaming = disableStreaming };
         await transformer.LoadStylesheetAsync(stylesheet);
         using var source = new MemoryStream(Encoding.UTF8.GetBytes(input));
         using var output = new StringWriter();

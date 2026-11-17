@@ -69,6 +69,8 @@ public class StreamableTwoSidedOperandTests
     [InlineData("""<xsl:value-of select="count(//a) = count(//b)"/>""")]
     [InlineData("""<xsl:value-of select="//a lt //b"/>""")]
     [InlineData("""<xsl:sequence select="//a + //b"/>""")]
+    // A comma follows the general rules (§19.8.1): two consuming operands are free-ranging.
+    [InlineData("""<xsl:sequence select="(//a, //b)"/>""")]
     public async Task BothOperandsConsuming_RaisesXTSE3430(string body)
     {
         var ex = await Load(body).ConfigureAwait(true);
@@ -84,8 +86,6 @@ public class StreamableTwoSidedOperandTests
     // A union is ONE traversal, not two — the operands are not independent descents.
     [InlineData("""<xsl:value-of select="//a | //b"/>""")]
     [InlineData("""<xsl:copy-of select="//a except //b"/>""")]
-    // A sequence is a per-item choice, not a second pass.
-    [InlineData("""<xsl:sequence select="(//a, //b)"/>""")]
     public async Task AtMostOneConsumingOperand_IsAccepted(string body)
     {
         (await Load(body).ConfigureAwait(true)).Should().BeNull();

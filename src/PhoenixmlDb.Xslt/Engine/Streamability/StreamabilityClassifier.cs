@@ -96,7 +96,25 @@ public readonly record struct StreamingContext(
     bool AfterConsumingSibling = false,
     IReadOnlySet<object>? Handled = null,
     bool ContextIsNeverDocument = false,
-    bool FoldsComputedAggregates = false);
+    bool FoldsComputedAggregates = false)
+{
+    /// <summary>
+    /// With <see cref="BySpec"/>: the static type of the context item admits an element or a
+    /// document node, so that absorbing it consumes (§19.8.1). False where that is not known;
+    /// see also <see cref="ContextHasNoChildren"/>, which says the opposite is known.
+    /// </summary>
+    internal bool ContextMayHaveChildren { get; init; }
+
+    /// <summary>
+    /// With <see cref="BySpec"/>: the classification is for the XTSE3430 check
+    /// (<c>StrictStreamability</c>), which applies the general rules of §19.8.1 to sequence
+    /// constructors and instructions, infers the static type that absorption depends on, and
+    /// takes the processor extensions that the W3C suite and Saxon expect. The executor chooses
+    /// its plan from the by-specification answer without them, as it did before the check was
+    /// on by default, so that what streams does not change.
+    /// </summary>
+    internal bool ForTheCheck { get; init; }
+}
 
 /// <summary>
 /// Compositional streamability classifier for the XPath/XQuery <b>expression</b> language,
@@ -129,7 +147,7 @@ public readonly record struct StreamingContext(
 /// mis-accepted. Those cases are marked with <c>// TODO</c>.
 /// </para>
 /// </remarks>
-public static class StreamabilityClassifier
+public static partial class StreamabilityClassifier
 {
     /// <summary>
     /// Computes the composed <see cref="PostureSweep"/> of <paramref name="expr"/> in the
@@ -246,7 +264,7 @@ public static class StreamabilityClassifier
             // every unmodelled node kind conservatively as NOT streamable so nothing is
             // silently accepted (§19.8.6: only grounded/striding/crawling/climbing +
             // motionless/consuming is guaranteed streamable).
-            _ => NotStreamable(),
+            _ => Unmodelled(),
         };
     }
 
@@ -423,7 +441,7 @@ public static class StreamabilityClassifier
         var predSweep = Sweep.Motionless;
         foreach (var pred in step.Predicates)
         {
-            var p = Classify(pred, ctx with { ContextPosture = axisPosture, CurrentGroup = null, ContextHasNoChildren = SelectsNoChildren(step), AfterConsumingSibling = false });
+            var p = Classify(pred, ctx with { ContextPosture = axisPosture, CurrentGroup = null, ContextHasNoChildren = SelectsNoChildren(step), ContextMayHaveChildren = Absorption(step, ctx) == 'A', AfterConsumingSibling = false });
             if (!grounded && p.Sweep != Sweep.Motionless)
             {
                 // Consuming/free-ranging predicate on a streamed axis → not guaranteed
@@ -484,6 +502,22 @@ public static class StreamabilityClassifier
         if (ctx.BySpec && BuiltInCall(fc, ctx) is { } bySpec)
             return bySpec;
 
+        // By the specification, a function that the table of §19.8.9 does not list, or that has
+        // a rule of its own the classifier does not write, is classified below by the rules the
+        // executor plans with. They are not the specification's, so "not streamable" from them
+        // is uncertain.
+        if (ctx.BySpec)
+        {
+            var byRole = ClassifyFunctionCallByRole(fc, ctx);
+            if (byRole.Sweep == Sweep.FreeRanging || !IsStreamablePosture(byRole.Posture))
+                Doubt();
+            return byRole;
+        }
+        return ClassifyFunctionCallByRole(fc, ctx);
+    }
+
+    private static PostureSweep ClassifyFunctionCallByRole(FunctionCallExpression fc, StreamingContext ctx)
+    {
         // §19.8 (#143 Phase 1.5): NAMESPACE-AWARE grounding for the map:/array:/math: function
         // libraries. These functions build or query a map/array/number — a brand-new function
         // item or atomic, GROUNDED and detached from the stream (§19.8.2), exactly like the
@@ -629,7 +663,15 @@ public static class StreamabilityClassifier
 
             case FnRole.CurrentGroup:
                 if (ctx.BySpec)
+                {
+                    // §19.8.9.4: the posture and sweep of the population. Where that consumes,
+                    // two uses of the group are two consuming operands; the W3C suite and Saxon
+                    // stream some of those (attributes of the group only, si-fork-814), which
+                    // the classifier does not model, so a verdict that rests on it is uncertain.
+                    if (ctx.CurrentGroup is { Sweep: Sweep.Consuming })
+                        Doubt();
                     return ctx.CurrentGroup ?? (ctx.InGroundedGroup ? Grounded(Sweep.Motionless) : NotStreamable());
+                }
                 // §18.5.4: current-group() yields the buffered group items. Within a streamed
                 // group-adjacent/starting/ending burst these behave like a striding sequence the
                 // processor already holds — motionless (no additional forward stream advance).
@@ -751,7 +793,32 @@ public static class StreamabilityClassifier
         foreach (var binding in q.Bindings)
             operands.Add((Classify(binding.Expression, ctx), 'N'));
         operands.Add((Classify(q.Satisfies, ctx), 'I'));
-        return GeneralRule(operands, atMostOneItem: false);
+        var result = GeneralRule(operands, atMostOneItem: false);
+        if (result.Sweep != Sweep.FreeRanging && result.Posture != Posture.Roaming)
+            return result;
+        return ctx.ForTheCheck ? QuantifiedOverStreamedNodes(q, ctx) ?? result : result;
+    }
+
+    /// <summary>
+    /// A processor extension (§19.10) that the W3C suite expects and Saxon-EE and Exselt make:
+    /// <c>some $t in transaction satisfies $t/@value lt 0</c> is streamable, although the in
+    /// expression has usage navigation (§19.8.8.2), where the condition reads only what the
+    /// node holds when it is reached: it is <c>exists(transaction[@value lt 0])</c>
+    /// (streamable-100, -101, -102). One in clause, a striding in expression, a condition that
+    /// is grounded and motionless with the variable bound to the node.
+    /// </summary>
+    private static PostureSweep? QuantifiedOverStreamedNodes(QuantifiedExpression q, StreamingContext ctx)
+    {
+        if (q.Bindings.Count != 1)
+            return null;
+        var binding = q.Bindings[0];
+        var range = Classify(binding.Expression, ctx);
+        if (range.Posture != Posture.Striding || range.Sweep == Sweep.FreeRanging)
+            return null;
+        var condition = Classify(q.Satisfies, BindVar(ctx, binding.Variable.LocalName, Posture.Striding));
+        return condition is { Posture: Posture.Grounded, Sweep: Sweep.Motionless }
+            ? Grounded(range.Sweep)
+            : null;
     }
 
     /// <summary>A reference to a function that reads the context item, position or size when it is called with this arity.</summary>
@@ -781,7 +848,7 @@ public static class StreamabilityClassifier
         var sweep = primary.Sweep;
         foreach (var pred in filt.Predicates)
         {
-            var p = Classify(pred, ctx with { ContextPosture = primary.Posture, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+            var p = Classify(pred, ctx with { ContextPosture = primary.Posture, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
             if (!grounded && p.Sweep != Sweep.Motionless)
             {
                 return p.Sweep == Sweep.FreeRanging
@@ -802,7 +869,7 @@ public static class StreamabilityClassifier
         if (left.Sweep == Sweep.FreeRanging || !IsStreamablePosture(left.Posture))
             return NotStreamable();
 
-        var right = Classify(sm.Right, ctx with { ContextPosture = left.Posture, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+        var right = Classify(sm.Right, ctx with { ContextPosture = left.Posture, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
         if (right.Sweep == Sweep.FreeRanging || !IsStreamablePosture(right.Posture))
             return NotStreamable();
 
@@ -853,7 +920,7 @@ public static class StreamabilityClassifier
 
                 case WhereClause wc:
                 {
-                    var ws = Classify(wc.Condition, localCtx with { ContextPosture = lastBindingPosture, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+                    var ws = Classify(wc.Condition, localCtx with { ContextPosture = lastBindingPosture, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
                     if (ws.Sweep == Sweep.FreeRanging)
                         return NotStreamable();
                     sweep = CombineSweep(sweep, ws.Sweep);
@@ -862,13 +929,13 @@ public static class StreamabilityClassifier
 
                 default:
                     // TODO(Task 0.4+): order by / group by / count / window / while.
-                    return NotStreamable();
+                    return Unmodelled();
             }
         }
 
         // The return expression's own `.` posture is the last for-binding's item posture
         // (a range variable ranges over individual items of its binding sequence).
-        var ret = Classify(flwor.ReturnExpression, localCtx with { ContextPosture = lastBindingPosture, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+        var ret = Classify(flwor.ReturnExpression, localCtx with { ContextPosture = lastBindingPosture, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
         if (ret.Sweep == Sweep.FreeRanging || !IsStreamablePosture(ret.Posture))
             return NotStreamable();
 
@@ -1101,9 +1168,20 @@ public static class StreamabilityClassifier
         var ps = Classify(e, ctx);
         if (ps.Sweep == Sweep.FreeRanging)
             return Sweep.FreeRanging;
-        return ps.Posture is Posture.Striding or Posture.Crawling
-            ? CombineSweep(ps.Sweep, Sweep.Consuming)
-            : ps.Sweep;
+        if (ps.Posture is not (Posture.Striding or Posture.Crawling))
+            return ps.Sweep;
+        // §19.8.1: absorbing a node that cannot have children is inspection.
+        if (ctx is { BySpec: true, ForTheCheck: true })
+        {
+            switch (Absorption(e, ctx))
+            {
+                case 'I':
+                    return ps.Sweep;
+                case 'a':
+                    return DoubtfulConsuming();
+            }
+        }
+        return CombineSweep(ps.Sweep, Sweep.Consuming);
     }
 
     private static Sweep WorstAtomizeSweep(IReadOnlyList<XQueryExpression> exprs, StreamingContext ctx)
@@ -1314,13 +1392,15 @@ public static class StreamabilityClassifier
             if (!BuiltInFunctionUsages.ByNameAndArity.TryGetValue(name + "#1", out var one))
                 return null;
             operands.Add((new PostureSweep(ctx.ContextPosture, Sweep.Motionless),
-                one[0] == 'A' && ctx.ContextHasNoChildren ? 'I' : one[0]));
+                one[0] == 'A' && ctx.ForTheCheck ? ContextAbsorption(ctx)
+                    : one[0] == 'A' && ctx.ContextHasNoChildren ? 'I' : one[0]));
         }
         else
         {
             for (var i = 0; i < count; i++)
                 operands.Add((Classify(fc.Arguments[i], ctx),
-                    usages[i] == 'A' && ctx.ContextHasNoChildren && fc.Arguments[i] is ContextItemExpression ? 'I' : usages[i]));
+                    usages[i] == 'A' && ctx.ForTheCheck ? Absorption(fc.Arguments[i], ctx)
+                        : usages[i] == 'A' && ctx.ContextHasNoChildren && fc.Arguments[i] is ContextItemExpression ? 'I' : usages[i]));
         }
 
         var result = GeneralRule(operands, atMostOneItem: name is "fn:head" or "fn:exactly-one" or "fn:zero-or-one");
@@ -1338,11 +1418,38 @@ public static class StreamabilityClassifier
     /// </summary>
     private static PostureSweep GeneralRule(List<(PostureSweep Operand, char Usage)> operands, bool atMostOneItem)
     {
+        var result = GeneralRuleCore(operands, atMostOneItem, out var postureMismatchWithClimbing);
+        if (result.Sweep != Sweep.FreeRanging && result.Posture != Posture.Roaming)
+            return result;
+        // The classifier puts an attribute on the climbing posture, where §19.8.8.9 has it
+        // striding: two motionless operands told apart only by that are one posture by the
+        // specification.
+        if (postureMismatchWithClimbing)
+            Doubt();
+        return result;
+    }
+
+    private static Sweep DoubtfulFreeRanging()
+    {
+        Doubt();
+        return Sweep.FreeRanging;
+    }
+
+    private static Sweep DoubtfulConsuming()
+    {
+        Doubt();
+        return Sweep.Consuming;
+    }
+
+    private static PostureSweep GeneralRuleCore(List<(PostureSweep Operand, char Usage)> operands, bool atMostOneItem, out bool postureMismatchWithClimbing)
+    {
+        postureMismatchWithClimbing = false;
         var consuming = 0;
         var consumingAreMotionlessTransmission = true;
         (PostureSweep Operand, char Usage, Sweep Adjusted) only = default;
         Posture? shared = null;
         var samePosture = true;
+        var sawClimbing = false;
 
         foreach (var (operand, usage) in operands)
         {
@@ -1352,7 +1459,17 @@ public static class StreamabilityClassifier
                 : usage switch
                 {
                     'A' => operand.Posture == Posture.Climbing ? operand.Sweep : Sweep.Consuming,
+                    // Absorbed without a known static type: by the specification it may be a
+                    // node that has no children, and absorbing it is then inspection (§19.8.1
+                    // rule 1(b)(iii)(A)). It is taken to consume, and whatever is concluded from
+                    // that, here or in a construct that contains this one, is uncertain.
+                    'a' => operand.Posture == Posture.Climbing ? operand.Sweep : DoubtfulConsuming(),
                     'I' or 'T' => operand.Sweep,
+                    // Navigating a climbing operand is free-ranging (§19.8.1), but the classifier
+                    // puts attributes there, which a processor may bind to a variable at no cost
+                    // (the value is in hand). Whether Saxon does is not established, so the
+                    // verdict is left to the strict check.
+                    'N' when operand.Posture == Posture.Climbing => DoubtfulFreeRanging(),
                     _ => Sweep.FreeRanging,
                 };
             if (adjusted == Sweep.FreeRanging)
@@ -1363,6 +1480,7 @@ public static class StreamabilityClassifier
             only = (operand, usage, adjusted);
             consumingAreMotionlessTransmission &= adjusted == Sweep.Motionless;
             samePosture &= shared is null || shared == operand.Posture;
+            sawClimbing |= operand.Posture == Posture.Climbing;
             shared = operand.Posture;
         }
 
@@ -1370,11 +1488,12 @@ public static class StreamabilityClassifier
             return Grounded(Sweep.Motionless);
         if (consuming > 1)
         {
-            return consumingAreMotionlessTransmission && samePosture
-                ? new PostureSweep(shared!.Value, Sweep.Motionless)
-                : NotStreamable();
+            if (consumingAreMotionlessTransmission && samePosture)
+                return new PostureSweep(shared!.Value, Sweep.Motionless);
+            postureMismatchWithClimbing = consumingAreMotionlessTransmission && sawClimbing;
+            return NotStreamable();
         }
-        if (only.Usage is 'A' or 'I')
+        if (only.Usage is 'A' or 'a' or 'I')
             return Grounded(Sweep.Consuming);
         if (only.Operand.Posture == Posture.Crawling && atMostOneItem)
             return new PostureSweep(Posture.Striding, only.Adjusted);
@@ -1716,6 +1835,8 @@ public static class StreamabilityClassifier
 
         if (ctx.Handled is { } handledInstructions && handledInstructions.Contains(insn))
             return Grounded(Sweep.Motionless);
+        if (ctx is { BySpec: true, ForTheCheck: true } && ClassifyInstructionBySpec(insn, ctx) is { } bySpec)
+            return bySpec;
 
         return insn switch
         {
@@ -1838,7 +1959,7 @@ public static class StreamabilityClassifier
             // xsl:evaluate, xsl:switch, xsl:for-each-member, xsl:number, xsl:perform-sort,
             // xsl:call-template, xsl:next-match, xsl:apply-imports.
             // Conservatively NOT streamable so nothing is silently accepted.
-            _ => NotStreamable(),
+            _ => Unmodelled(),
         };
     }
 
@@ -1862,6 +1983,8 @@ public static class StreamabilityClassifier
     public static PostureSweep Classify(XsltSequenceConstructor body, StreamingContext ctx)
     {
         ArgumentNullException.ThrowIfNull(body);
+        if (ctx is { BySpec: true, ForTheCheck: true })
+            return ClassifySequenceConstructorBySpec(body, ctx);
 
         Posture posture = Posture.Grounded;
         var sweep = Sweep.Motionless;
@@ -1960,7 +2083,7 @@ public static class StreamabilityClassifier
         if ((!IsForEachPopulationPosture(s.Posture) && !crawlingBySpec) || s.Sweep == Sweep.FreeRanging)
             return NotStreamable();
 
-        var body = Classify(fe.Body, ctx with { ContextPosture = s.Posture, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+        var body = Classify(fe.Body, ctx with { ContextPosture = s.Posture, CurrentGroup = null, ContextHasNoChildren = ctx.ForTheCheck && SelectsNoChildren(fe.Select), ContextMayHaveChildren = MayHaveChildren(fe.Select, ctx), AfterConsumingSibling = false });
         if (crawlingBySpec && body.Sweep != Sweep.Motionless)
             return NotStreamable();
         // §19.8.4.18: the posture of the instruction is the posture of its body.
@@ -1990,7 +2113,7 @@ public static class StreamabilityClassifier
         if ((!IsForEachPopulationPosture(s.Posture) && !crawlingBySpec) || s.Sweep == Sweep.FreeRanging)
             return NotStreamable();
 
-        var body = Classify(it.Body, ctx with { ContextPosture = s.Posture, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+        var body = Classify(it.Body, ctx with { ContextPosture = s.Posture, CurrentGroup = null, ContextHasNoChildren = ctx.ForTheCheck && SelectsNoChildren(it.Select), ContextMayHaveChildren = MayHaveChildren(it.Select, ctx), AfterConsumingSibling = false });
         if (crawlingBySpec && body.Sweep != Sweep.Motionless)
             return NotStreamable();
         // Family 5b: body must be grounded (xsl:sequence select="." → striding → rejected,
@@ -2004,7 +2127,7 @@ public static class StreamabilityClassifier
         // it must not itself free-range on the (now consumed) input.
         if (it.OnCompletion is not null)
         {
-            var oc = Classify(it.OnCompletion, ctx with { ContextPosture = Posture.Grounded, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+            var oc = Classify(it.OnCompletion, ctx with { ContextPosture = Posture.Grounded, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
             if (oc.Sweep == Sweep.FreeRanging || !IsStreamablePosture(oc.Posture))
                 return NotStreamable();
             sweep = CombineSweep(sweep, oc.Sweep);
@@ -2052,7 +2175,7 @@ public static class StreamabilityClassifier
         var keyExpr = feg.GroupAdjacent ?? feg.GroupBy;
         if (keyExpr is not null)
         {
-            var k = Classify(keyExpr, ctx with { ContextPosture = s.Posture, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+            var k = Classify(keyExpr, ctx with { ContextPosture = s.Posture, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
             // A consuming (let alone free-ranging) grouping key breaks streamable grouping: the
             // key is evaluated per member and must not itself advance the stream.
             if (k.Sweep != Sweep.Motionless)
@@ -2063,7 +2186,7 @@ public static class StreamabilityClassifier
         // match against the current item is motionless — nothing extra to fold here.
 
         // Inside the body the current group is a striding burst the processor holds.
-        var body = Classify(feg.Body, ctx with { ContextPosture = Posture.Striding, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false });
+        var body = Classify(feg.Body, ctx with { ContextPosture = Posture.Striding, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
         if (body.Sweep == Sweep.FreeRanging || !IsStreamablePosture(body.Posture))
             return NotStreamable();
 
@@ -2110,12 +2233,12 @@ public static class StreamabilityClassifier
         if (feg.GroupBy is not null && !childOfFork)
             return NotStreamable();
         if (key is not null
-            && Classify(key, ctx with { ContextPosture = select.Posture, CurrentGroup = null, ContextHasNoChildren = SelectsNoChildren(feg.Select), AfterConsumingSibling = false }).Sweep != Sweep.Motionless)
+            && Classify(key, ctx with { ContextPosture = select.Posture, CurrentGroup = null, ContextHasNoChildren = SelectsNoChildren(feg.Select), ContextMayHaveChildren = MayHaveChildren(feg.Select, ctx), AfterConsumingSibling = false }).Sweep != Sweep.Motionless)
             return NotStreamable();
         if (feg.Sorts.Count > 0 && !childOfFork)
             return NotStreamable();
 
-        var content = Classify(feg.Body, ctx with { ContextPosture = select.Posture, CurrentGroup = select, InGroundedGroup = false, ContextHasNoChildren = false, AfterConsumingSibling = false });
+        var content = Classify(feg.Body, ctx with { ContextPosture = select.Posture, CurrentGroup = select, InGroundedGroup = false, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
         if (content.Sweep == Sweep.FreeRanging || content.Posture == Posture.Roaming)
             return NotStreamable();
         if (select.Posture == Posture.Crawling && content.Sweep == Sweep.Consuming)
@@ -2262,7 +2385,7 @@ public static class StreamabilityClassifier
             : sort.Content is not null ? Classify(sort.Content, ctx)
             : Grounded(Sweep.Motionless);
         var operands = new List<(PostureSweep Operand, char Usage)> { (input, 'N') };
-        var keyContext = ctx with { ContextPosture = input.Posture, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false };
+        var keyContext = ctx with { ContextPosture = input.Posture, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false };
         foreach (var key in sort.Sorts)
         {
             if (key.Select is not null)
@@ -2316,7 +2439,7 @@ public static class StreamabilityClassifier
 
         if (select.Posture == Posture.Grounded)
         {
-            var groundedContext = ctx with { ContextPosture = Posture.Grounded, CurrentGroup = null, ContextHasNoChildren = false, AfterConsumingSibling = false };
+            var groundedContext = ctx with { ContextPosture = Posture.Grounded, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false };
             foreach (var sort in ap.Sorts)
             {
                 if (sort.Select is not null)

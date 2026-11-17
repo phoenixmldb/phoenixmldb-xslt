@@ -34,30 +34,45 @@ namespace PhoenixmlDb.Xslt.Engine;
 internal static class StrictStreamability
 {
     private static readonly ConditionalWeakTable<XsltStylesheet, StrongBox<XsltException?>> _cache = new();
+    private static readonly ConditionalWeakTable<XsltStylesheet, StrongBox<XsltException?>> _certainCache = new();
 
-    /// <summary>The XTSE3430 error for the first such rule, or null when none is found.</summary>
-    public static XsltException? Finding(XsltStylesheet stylesheet)
-        => _cache.GetValue(stylesheet, s => new StrongBox<XsltException?>(Compute(s))).Value;
+    /// <summary>
+    /// The XTSE3430 error for the first such rule, or null when none is found. With
+    /// <paramref name="certainOnly"/>, only a rule that the modelled rules of §19.8 find not
+    /// guaranteed-streamable, with no construct in the verdict that the classifier does not
+    /// model: that is the check the engine makes by default.
+    /// </summary>
+    public static XsltException? Finding(XsltStylesheet stylesheet, bool certainOnly = false)
+        => (certainOnly ? _certainCache : _cache)
+            .GetValue(stylesheet, s => new StrongBox<XsltException?>(Compute(s, certainOnly))).Value;
 
     private static readonly ConditionalWeakTable<XsltSourceDocument, StrongBox<string?>> _bodies = new();
+    private static readonly ConditionalWeakTable<XsltSourceDocument, StrongBox<string?>> _certainBodies = new();
 
     /// <summary>
     /// The XTSE3430 message for the body of an xsl:source-document with streamable="yes" that is
     /// not guaranteed-streamable, or null. The caller reports it when the instruction runs.
+    /// <paramref name="certainOnly"/> as for the template rules.
     /// </summary>
-    public static string? Finding(XsltStylesheet stylesheet, XsltSourceDocument instruction)
+    public static string? Finding(XsltStylesheet stylesheet, XsltSourceDocument instruction, bool certainOnly = false)
         => instruction is { Streamable: true, Content: { } body }
-            ? _bodies.GetValue(instruction, _ => new StrongBox<string?>(
-                Reason(body, stylesheet) is { } reason
+            ? (certainOnly ? _certainBodies : _bodies).GetValue(instruction, _ => new StrongBox<string?>(
+                // The context item of the body is the document node (§18.1).
+                Reason(body, stylesheet, certainOnly, childType: 'A') is { } reason
                     ? "XTSE3430: The body of xsl:source-document is not guaranteed streamable: " + reason
                     : null)).Value
             : null;
 
-    private static XsltException? Compute(XsltStylesheet stylesheet)
+    private static XsltException? Compute(XsltStylesheet stylesheet, bool certainOnly)
     {
         foreach (var template in StreamedScopeEscapeDetector.StreamableModeRules(stylesheet))
         {
             const string Subject = "XTSE3430: The body of this template in a streamable mode is not guaranteed streamable: ";
+            var reason = Reason(template.Body, stylesheet, certainOnly, ContextChildType(template.Match), MatchesNoDocument(template.Match));
+            // The opt-in check also reports what its two detectors find; the default check
+            // reports only what the classifier is certain of, and uses them for the message.
+            if (certainOnly && reason is null)
+                continue;
             // The two commonest causes have a message of their own.
             if (StreamabilityChecker.HasSeveralConsumingOperands(template.Body))
                 return new XsltException(
@@ -67,10 +82,66 @@ internal static class StrictStreamability
                 return new XsltException(
                     Subject + $"the {AxisName(roaming.Axis)} axis from the matched node reads what the streamed input has passed or not yet reached",
                     roaming.Location ?? template.Body.Location);
-            if (Reason(template.Body, stylesheet, MatchesNoDocument(template.Match)) is { } reason)
+            if (reason is not null)
                 return new XsltException(Subject + reason, template.Body.Location);
         }
         return null;
+    }
+
+    /// <summary>
+    /// The static type of the context item of a template rule, from its match pattern
+    /// (§19.1): 'I' where every node it can match has no children (text, comment, processing
+    /// instruction, attribute, namespace), 'A' where it can match an element or a document
+    /// node, 'a' where the classifier cannot tell.
+    /// </summary>
+    internal static char ContextChildType(XsltPattern? pattern)
+    {
+        switch (pattern)
+        {
+            case UnionPattern union:
+            {
+                var type = 'I';
+                foreach (var alternative in union.Patterns)
+                {
+                    var one = ContextChildType(alternative);
+                    if (one == 'A')
+                        return 'A';
+                    if (one == 'a')
+                        type = 'a';
+                }
+                return type;
+            }
+            case IntersectPattern intersect:
+            {
+                var left = ContextChildType(intersect.Left);
+                var right = ContextChildType(intersect.Right);
+                return left == 'I' || right == 'I' ? 'I' : left == 'A' && right == 'A' ? 'A' : 'a';
+            }
+            case ExceptPattern except:
+                return ContextChildType(except.Left) == 'I' ? 'I' : 'a';
+            case PathPattern { Steps.Count: 0 }:
+                return 'A';
+            case PathPattern { Steps: var steps }:
+            {
+                var last = steps[^1];
+                if (last.IsRootFunction)
+                    return 'A';
+                if (last.Axis is PhoenixmlDb.XQuery.Ast.Axis.Attribute or PhoenixmlDb.XQuery.Ast.Axis.Namespace)
+                    return 'I';
+                return last.NodeTest switch
+                {
+                    PhoenixmlDb.XQuery.Ast.KindTest { Kind: PhoenixmlDb.Core.XdmNodeKind.Text or PhoenixmlDb.Core.XdmNodeKind.Comment
+                        or PhoenixmlDb.Core.XdmNodeKind.ProcessingInstruction or PhoenixmlDb.Core.XdmNodeKind.Attribute
+                        or PhoenixmlDb.Core.XdmNodeKind.Namespace } => 'I',
+                    PhoenixmlDb.XQuery.Ast.NameTest => 'A',
+                    PhoenixmlDb.XQuery.Ast.KindTest { Kind: PhoenixmlDb.Core.XdmNodeKind.Element or PhoenixmlDb.Core.XdmNodeKind.Document
+                        or PhoenixmlDb.Core.XdmNodeKind.None } => 'A',
+                    _ => 'a',
+                };
+            }
+            default:
+                return 'a';
+        }
     }
 
     /// <summary>
@@ -82,12 +153,24 @@ internal static class StrictStreamability
         => pattern is PathPattern { Steps: { Count: > 0 } steps }
             && steps[^1] is { IsRootFunction: false, Axis: PhoenixmlDb.XQuery.Ast.Axis.Child or PhoenixmlDb.XQuery.Ast.Axis.Attribute, NodeTest: PhoenixmlDb.XQuery.Ast.NameTest };
 
-    /// <summary>Why a body with a streamed context node is not guaranteed-streamable, or null when it is.</summary>
-    private static string? Reason(XsltSequenceConstructor body, XsltStylesheet stylesheet, bool contextIsNeverDocument = false)
+    /// <summary>
+    /// Why a body with a streamed context node is not guaranteed-streamable, or null when it is
+    /// (or, with <paramref name="certainOnly"/>, when the classifier is not certain it is not).
+    /// <paramref name="childType"/> is the static type of the context item, as
+    /// <see cref="ContextChildType"/> gives it.
+    /// </summary>
+    private static string? Reason(XsltSequenceConstructor body, XsltStylesheet stylesheet, bool certainOnly, char childType, bool contextIsNeverDocument = false)
     {
-        var result = StreamabilityClassifier.Classify(body, new StreamingContext(
+        var context = new StreamingContext(
             Posture.Striding, InStreamedScope: true, BySpec: true, Functions: stylesheet.Functions, Stylesheet: stylesheet,
-            ContextIsNeverDocument: contextIsNeverDocument));
+            ContextHasNoChildren: childType == 'I', ContextIsNeverDocument: contextIsNeverDocument)
+        {
+            ContextMayHaveChildren = childType == 'A',
+            ForTheCheck = true,
+        };
+        var result = StreamabilityClassifier.ClassifyWithCertainty(() => StreamabilityClassifier.Classify(body, context), out var certain);
+        if (certainOnly && !certain)
+            return null;
         if (result.Sweep == Sweep.FreeRanging || result.Posture == Posture.Roaming)
             return "it needs parts of the streamed input that have passed, or more than one pass (XSLT 3.0 section 19.8: roaming and free-ranging)";
         if (result.Posture != Posture.Grounded)

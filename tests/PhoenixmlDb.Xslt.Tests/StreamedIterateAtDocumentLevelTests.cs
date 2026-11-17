@@ -64,7 +64,7 @@ public class StreamedIterateAtDocumentLevelTests
 
     private static async Task<(string Output, long BytesRead)> RunAsync(string body, int records, bool tree = false)
     {
-        var t = new XsltTransformer { DisableStreaming = tree };
+        var t = new XsltTransformer { StreamingFallback = true, DisableStreaming = tree };
         await t.LoadStylesheetAsync($"""
             <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0" expand-text="yes">
               <xsl:output omit-xml-declaration="yes"/>
@@ -138,7 +138,7 @@ public class StreamedIterateAtDocumentLevelTests
     {
         // Each group is one record. With the whole input read first, nothing is written until
         // the last record has been read.
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync("""
             <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0" expand-text="yes">
               <xsl:output omit-xml-declaration="yes"/>

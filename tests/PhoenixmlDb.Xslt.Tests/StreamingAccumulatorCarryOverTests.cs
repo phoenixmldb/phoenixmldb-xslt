@@ -41,7 +41,7 @@ public sealed class StreamingAccumulatorCarryOverTests
 
     private static async Task<string> RunAsync(bool streamed)
     {
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(Stylesheet(streamed ? "yes" : "no"));
         return (streamed ? await t.TransformAsync(new StringReader(TwoChaps)) : await t.TransformAsync(TwoChaps)).Trim();
     }

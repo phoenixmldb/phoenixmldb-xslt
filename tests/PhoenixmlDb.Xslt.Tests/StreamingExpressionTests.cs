@@ -24,7 +24,7 @@ public class StreamingExpressionTests
 
         try
         {
-            var transformer = new XsltTransformer();
+            var transformer = new XsltTransformer { StreamingFallback = true };
             await transformer.LoadStylesheetAsync(stylesheet, new Uri(tempDir + "/"));
             transformer.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
             return await transformer.TransformAsync((string?)null);

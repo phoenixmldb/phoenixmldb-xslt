@@ -102,7 +102,7 @@ public sealed class StreamedDocumentRuleAbsolutePathTests
 
     private static async Task<(string Output, bool Streamed)> RunAsync(string stylesheet, string input, bool disableStreaming)
     {
-        var transformer = new XsltTransformer { DisableStreaming = disableStreaming };
+        var transformer = new XsltTransformer { StreamingFallback = true, DisableStreaming = disableStreaming };
         await transformer.LoadStylesheetAsync(stylesheet);
         using var source = new MemoryStream(Encoding.UTF8.GetBytes(input));
         using var output = new StringWriter();

@@ -25,7 +25,7 @@ public sealed class StreamingForEachGroupByTests
 {
     private static async Task<string> RunAsync(string input)
     {
-        var transformer = new XsltTransformer();
+        var transformer = new XsltTransformer { StreamingFallback = true };
         await transformer.LoadStylesheetAsync("""
             <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
                 xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="#all">
@@ -97,7 +97,7 @@ public sealed class StreamingForEachGroupByTests
             """;
         var streamed = await RunAsync(input);
 
-        var buffered = new XsltTransformer();
+        var buffered = new XsltTransformer { StreamingFallback = true };
         await buffered.LoadStylesheetAsync("""
             <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3.0"
                 exclude-result-prefixes="#all">

@@ -27,7 +27,7 @@ public class StreamingInspectionSubscriptionTests
         await File.WriteAllTextAsync(Path.Combine(dir, file), inputXml);
         try
         {
-            var t = new XsltTransformer();
+            var t = new XsltTransformer { StreamingFallback = true };
             await t.LoadStylesheetAsync(stylesheet, new Uri(dir + "/"));
             t.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
             return await t.TransformAsync((string?)null);

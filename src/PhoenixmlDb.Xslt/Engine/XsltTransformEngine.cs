@@ -265,13 +265,15 @@ public sealed partial class XsltTransformEngine
     }
 
     /// <summary>
-    /// Reports XTSE3430 for a streamable-mode rule that is not guaranteed-streamable, when the
-    /// caller asked for the strict rule and did not ask for tree evaluation.
+    /// Reports XTSE3430 for a streamable-mode rule that is not guaranteed-streamable, unless the
+    /// caller asked for tree evaluation. By default only a rule that the modelled rules of
+    /// XSLT 3.0 §19.8 find not guaranteed-streamable is reported; under the strict rule, also
+    /// one whose verdict depends on a construct the classifier does not model.
     /// </summary>
     private void EnsureStrictStreamability(XsltTransformOptions? options)
     {
-        if (options is { StrictStreamability: true, DisableStreaming: false }
-            && StrictStreamability.Finding(_stylesheet) is { } finding)
+        if (options is not ({ DisableStreaming: true } or { StreamingFallback: true, StrictStreamability: false })
+            && StrictStreamability.Finding(_stylesheet, certainOnly: options is not { StrictStreamability: true }) is { } finding)
             throw new XsltException(finding.Message, finding.Location);
     }
 

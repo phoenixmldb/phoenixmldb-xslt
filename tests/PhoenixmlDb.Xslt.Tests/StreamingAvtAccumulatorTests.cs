@@ -32,7 +32,7 @@ public sealed class StreamingAvtAccumulatorTests
               <xsl:template match="/">{body}</xsl:template>
             </xsl:stylesheet>
             """;
-        var t = new XsltTransformer();
+        var t = new XsltTransformer { StreamingFallback = true };
         await t.LoadStylesheetAsync(ss);
         return (streamed ? await t.TransformAsync(new StringReader(Source)) : await t.TransformAsync(Source)).Trim();
     }

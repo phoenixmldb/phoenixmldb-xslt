@@ -69,7 +69,7 @@ public class StreamedBodyParityTests
 
     private static async Task<string> RunAsync(string body, bool tree)
     {
-        var t = new XsltTransformer { DisableStreaming = tree };
+        var t = new XsltTransformer { StreamingFallback = true, DisableStreaming = tree };
         await t.LoadStylesheetAsync($"""
             <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema" exclude-result-prefixes="#all" version="3.0" expand-text="yes">
               <xsl:output omit-xml-declaration="yes"/>

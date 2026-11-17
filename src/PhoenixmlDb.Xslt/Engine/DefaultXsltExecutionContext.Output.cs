@@ -1901,11 +1901,11 @@ internal sealed partial class DefaultXsltExecutionContext
         // Deferred XTSE3430 streamability error — throw at runtime instead of parse time
         if (instruction.StreamabilityError != null)
             throw new XsltException(instruction.StreamabilityError, instruction.Location);
-        // Under the strict rule a body that is not guaranteed-streamable is an error here, where
-        // the instruction runs, as the error above is: a stylesheet may hold such an instruction
-        // in a template that is never called.
-        if (_options is { StrictStreamability: true, DisableStreaming: false }
-            && StrictStreamability.Finding(_stylesheet, instruction) is { } notStreamable)
+        // A body that is not guaranteed-streamable is an error here, where the instruction runs,
+        // as the error above is: a stylesheet may hold such an instruction in a template that is
+        // never called. By default only where the modelled rules of §19.8 are certain of it.
+        if (_options is not ({ DisableStreaming: true } or { StreamingFallback: true, StrictStreamability: false })
+            && StrictStreamability.Finding(_stylesheet, instruction, certainOnly: _options is not { StrictStreamability: true }) is { } notStreamable)
             throw new XsltException(notStreamable, instruction.Location);
 
         if (await TryStreamDocumentTemplateBodyAsync(instruction).ConfigureAwait(false))
