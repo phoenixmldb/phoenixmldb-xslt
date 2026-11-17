@@ -52,8 +52,8 @@ public sealed class AcceptOverrideConflictTests : IDisposable
     }
 
     [Theory]
+    // A name without an arity is XTSE3030 before this (AcceptFunctionArityTests).
     [InlineData("f:foo#0")]
-    [InlineData("f:foo")]
     public async Task Accepting_an_overridden_function_is_XTSE3051(string names)
     {
         var act = () => RunAsync(names);
@@ -61,7 +61,7 @@ public sealed class AcceptOverrideConflictTests : IDisposable
     }
 
     [Theory]
-    [InlineData("f:bar")]
+    [InlineData("f:bar#0")]
     [InlineData("f:*")]
     public async Task Accepting_another_function_or_a_wildcard_is_allowed(string names)
         => (await RunAsync(names)).Should().Be("foo2");
