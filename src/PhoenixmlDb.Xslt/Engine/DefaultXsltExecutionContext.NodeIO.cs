@@ -368,56 +368,10 @@ internal sealed partial class DefaultXsltExecutionContext
             // If we wrapped in _rtf_root_, unwrap by promoting its children to be
             // direct children of the document node. This allows XPath like $var/*
             // to return the actual content elements, not the artificial wrapper.
-            if (wasWrapped && xdmDoc.DocumentElement.HasValue && xdmDoc.DocumentElement.Value != NodeId.None)
+            if (wasWrapped)
             {
-                var wrapperElem = _nodeStore.GetNode(xdmDoc.DocumentElement.Value) as XdmElement;
-                if (wrapperElem != null && wrapperElem.LocalName == "_rtf_root_")
-                {
-                    // Reparent _rtf_root_'s children to the document
-                    var newChildren = new List<NodeId>();
-                    foreach (var childId in _nodeStore.GetChildren(wrapperElem).Select(c => c.Id))
-                    {
-                        newChildren.Add(childId);
-                    }
-
-                    // Find the first element child for DocumentElement
-                    var newDocElemId = NodeId.None;
-                    string? newDocElemLocalName = null;
-                    foreach (var childId in newChildren)
-                    {
-                        if (_nodeStore.GetNode(childId) is XdmElement docElem)
-                        {
-                            newDocElemId = childId;
-                            newDocElemLocalName = docElem.LocalName;
-                            break;
-                        }
-                    }
-
-                    // Create an updated document with unwrapped children
-                    // Compute string value as concatenation of all text descendant values
-                    var svBuilder = new System.Text.StringBuilder();
-                    foreach (var childId in newChildren)
-                    {
-                        CollectStringValue(childId, svBuilder);
-                    }
-
-                    var newDoc = new XdmDocument
-                    {
-                        StringValueResolver = _nodeStore.StringValueResolver,
-                        Id = xdmDoc.Id,
-                        Document = xdmDoc.Document,
-                        Parent = xdmDoc.Parent,
-                        DocumentElement = newDocElemId,
-                        DocumentUri = null, // RTFs have no document URI
-                        Children = newChildren,
-                        DocumentElementLocalName = newDocElemLocalName
-                    };
-                    newDoc.BaseUri = rtf.BaseUri;
-                    newDoc._stringValue = svBuilder.ToString();
-                    _nodeStore.Register(newDoc); // Overwrites the old registration
-                    rtf.CachedDocumentNode = newDoc;
-                    return newDoc;
-                }
+                xdmDoc = UnwrapFragment(xdmDoc);
+                xdmDoc.BaseUri = rtf.BaseUri;
             }
 
             rtf.CachedDocumentNode = xdmDoc;
@@ -430,6 +384,49 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+
+    /// <summary>
+    /// A document parsed from a fragment wrapped in <c>_rtf_root_</c> (several top-level nodes,
+    /// or text there), with the wrapper's children made the document's own: $tree/* gives the
+    /// content, not the wrapper. Each child's parent becomes the document; they kept the wrapper
+    /// as parent, so ../ from a top-level node reached it. The same document when there is no
+    /// wrapper.
+    /// </summary>
+    internal XdmDocument UnwrapFragment(XdmDocument xdmDoc)
+    {
+        if (_nodeStore is null || xdmDoc.DocumentElement is not { } wrapperId || wrapperId == NodeId.None
+            || _nodeStore.GetNode(wrapperId) is not XdmElement { LocalName: "_rtf_root_" } wrapper)
+            return xdmDoc;
+        var children = _nodeStore.GetChildren(wrapper).ToList();
+        var newDocElemId = NodeId.None;
+        string? newDocElemLocalName = null;
+        var stringValue = new System.Text.StringBuilder();
+        foreach (var child in children)
+        {
+            child.Parent = xdmDoc.Id;
+            if (newDocElemId == NodeId.None && child is XdmElement element)
+            {
+                newDocElemId = element.Id;
+                newDocElemLocalName = element.LocalName;
+            }
+            CollectStringValue(child.Id, stringValue);
+        }
+        var newDoc = new XdmDocument
+        {
+            StringValueResolver = _nodeStore.StringValueResolver,
+            Id = xdmDoc.Id,
+            Document = xdmDoc.Document,
+            Parent = xdmDoc.Parent,
+            DocumentElement = newDocElemId,
+            DocumentUri = null,
+            Children = children.Select(c => c.Id).ToList(),
+            DocumentElementLocalName = newDocElemLocalName
+        };
+        newDoc.BaseUri = xdmDoc.BaseUri;
+        newDoc._stringValue = stringValue.ToString();
+        _nodeStore.Register(newDoc); // overwrites the wrapped document's registration
+        return newDoc;
+    }
 
     /// <summary>
     /// Reads a full element subtree from the streaming reader starting at the current

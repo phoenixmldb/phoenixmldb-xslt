@@ -21,6 +21,9 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </summary>
 internal sealed class XsltAnalyzeStringFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
+    private readonly DefaultXsltExecutionContext? _transformation;
+    public XsltAnalyzeStringFunction(DefaultXsltExecutionContext? transformation = null) { _transformation = transformation; }
+
     private static readonly System.Xml.Linq.XNamespace FnNs = "http://www.w3.org/2005/xpath-functions";
 
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "analyze-string");
@@ -35,15 +38,17 @@ internal sealed class XsltAnalyzeStringFunction : PhoenixmlDb.XQuery.Ast.XQueryF
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        return AnalyzeStringCore(arguments[0], arguments[1]?.ToString() ?? "", "", context);
+        return AnalyzeStringCore(arguments[0], arguments[1]?.ToString() ?? "", "", context, _transformation);
     }
 
     internal static ValueTask<object?> AnalyzeStringCore(
-        object? inputArg, string pattern, string flags, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+        object? inputArg, string pattern, string flags, PhoenixmlDb.XQuery.Ast.ExecutionContext context,
+        DefaultXsltExecutionContext? transformation)
     {
         try
         {
-            return Analyze(inputArg, pattern, flags, context);
+            var result = Analyze(inputArg, pattern, flags, context);
+            return ValueTask.FromResult(ToXdm(result, transformation));
         }
         catch (System.Text.RegularExpressions.RegexMatchTimeoutException ex)
         {
@@ -51,7 +56,28 @@ internal sealed class XsltAnalyzeStringFunction : PhoenixmlDb.XQuery.Ast.XQueryF
         }
     }
 
-    private static ValueTask<object?> Analyze(
+    /// <summary>
+    /// The result as an XDM element in the transformation's node store. It was returned as a
+    /// System.Xml.Linq element, which no axis step can navigate: analyze-string(…)/* raised
+    /// XPTY0019 in XSLT, while XQuery (whose function returns XDM) gave the children. Like the
+    /// XQuery function, the result is the fn:analyze-string-result element, with no parent.
+    /// </summary>
+    private static object? ToXdm(System.Xml.Linq.XElement result, DefaultXsltExecutionContext? transformation)
+    {
+        if (transformation?._nodeStore is not { } store)
+            return result;
+        var xml = new XmlDocument { PreserveWhitespace = true };
+        xml.LoadXml(result.ToString(System.Xml.Linq.SaveOptions.DisableFormatting));
+        var document = XsltTransformEngine.ConvertToXdm(xml, store, documentUri: null);
+        document.DocumentUri = null;
+        if (document.DocumentElement is not { } root || store.GetNode(root) is not { } element)
+            return document;
+        // The result element has no parent (as in Saxon): ../ and root() stop at it.
+        element.Parent = null;
+        return element;
+    }
+
+    private static System.Xml.Linq.XElement Analyze(
         object? inputArg, string pattern, string flags, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         var input = inputArg?.ToString() ?? "";
@@ -144,7 +170,7 @@ internal sealed class XsltAnalyzeStringFunction : PhoenixmlDb.XQuery.Ast.XQueryF
             result.Add(new System.Xml.Linq.XElement(FnNs + "non-match", input[lastIndex..]));
         }
 
-        return ValueTask.FromResult<object?>(result);
+        return result;
     }
 
     /// <summary>

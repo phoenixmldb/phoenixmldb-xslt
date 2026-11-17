@@ -21,6 +21,9 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </summary>
 internal sealed class XsltAnalyzeString3Function : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
+    private readonly DefaultXsltExecutionContext? _transformation;
+    public XsltAnalyzeString3Function(DefaultXsltExecutionContext? transformation = null) { _transformation = transformation; }
+
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "analyze-string");
     public override XdmSequenceType ReturnType => new() { ItemType = ItemType.Element, Occurrence = Occurrence.ExactlyOne };
     public override IReadOnlyList<FunctionParameterDef> Parameters =>
@@ -34,6 +37,6 @@ internal sealed class XsltAnalyzeString3Function : PhoenixmlDb.XQuery.Ast.XQuery
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        return XsltAnalyzeStringFunction.AnalyzeStringCore(arguments[0], arguments[1]?.ToString() ?? "", arguments[2]?.ToString() ?? "", context);
+        return XsltAnalyzeStringFunction.AnalyzeStringCore(arguments[0], arguments[1]?.ToString() ?? "", arguments[2]?.ToString() ?? "", context, _transformation);
     }
 }

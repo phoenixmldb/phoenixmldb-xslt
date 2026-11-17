@@ -80,7 +80,12 @@ internal sealed class XsltParseXmlFragmentFunction : PhoenixmlDb.XQuery.Ast.XQue
                 var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _context._nodeStore, documentUri: null);
                 xdmDoc.DocumentUri = null;
                 if (wasWrapped)
+                {
+                    // The wrapper parsed a fragment with several top-level nodes; it was left in
+                    // the tree, so parse-xml-fragment("<b/><c/>")/* gave one element, not two.
                     xdmDoc.BaseUri = null;
+                    xdmDoc = _context.UnwrapFragment(xdmDoc);
+                }
                 return ValueTask.FromResult<object?>(xdmDoc);
             }
             // Fallback to LINQ XDocument when no node store available
