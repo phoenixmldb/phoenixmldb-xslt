@@ -57,4 +57,23 @@ public sealed class XsltVariable
     /// (use-package-006 / use-package-007). Mirrors <see cref="XsltAttributeSet.ProvidedByPackage"/>.
     /// </summary>
     public bool ProvidedByPackage { get; set; }
+
+    /// <summary>
+    /// The visibility of this component in the package that uses the package it belongs to, as
+    /// XSLT 3.0 §3.5.3.2 gives it: from the xsl:accept that matches it, or else public and final
+    /// become private and every other visibility hidden. Set at each xsl:use-package, so it is
+    /// the visibility in the package being built; null for a component of that package itself.
+    /// A hidden component cannot be referenced by the using package's own components, also when
+    /// it is public where it is declared (xslt#544).
+    /// </summary>
+    internal Visibility? VisibilityInUsingPackage { get; set; }
+
+    /// <summary>
+    /// The packages whose components may reference this global variable: the one that declares
+    /// it and each using package in which it is not hidden (§3.5.3.2). Null for a variable of the
+    /// principal stylesheet module's own package, which every component may reference.
+    /// </summary>
+#pragma warning disable CA2227 // Built up at each xsl:use-package.
+    internal HashSet<XsltStylesheet>? VisibleTo { get; set; }
+#pragma warning restore CA2227
 }

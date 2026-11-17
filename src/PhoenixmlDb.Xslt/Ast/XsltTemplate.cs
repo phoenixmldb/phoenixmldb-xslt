@@ -121,6 +121,16 @@ public sealed class XsltTemplate
     internal bool VisibilityFromAccept { get; set; }
 
     /// <summary>
+    /// The visibility of this component in the package that uses the package it belongs to, as
+    /// XSLT 3.0 §3.5.3.2 gives it: from the xsl:accept that matches it, or else public and final
+    /// become private and every other visibility hidden. Set at each xsl:use-package, so it is
+    /// the visibility in the package being built; null for a component of that package itself.
+    /// A hidden component cannot be referenced by the using package's own components, also when
+    /// it is public where it is declared (xslt#544).
+    /// </summary>
+    internal Visibility? VisibilityInUsingPackage { get; set; }
+
+    /// <summary>
     /// Import precedence of this template rule for conflict resolution (XSLT 3.0 §6.6.2).
     /// Higher wins. Defaults to 0. A template rule brought in via xsl:use-package has a
     /// LOWER precedence than the using package's own declarations (including rules supplied

@@ -40,7 +40,8 @@ public sealed partial class StylesheetParser
         Static = v.Static, Visibility = vis, BaseUri = v.BaseUri, Version = v.Version,
         IsAbstract = v.IsAbstract || v.Visibility == Ast.Visibility.Abstract,
         ProvidedByPackage = v.ProvidedByPackage,
-        OriginalVariable = v.OriginalVariable, PackageStylesheet = v.PackageStylesheet
+        OriginalVariable = v.OriginalVariable, PackageStylesheet = v.PackageStylesheet,
+        VisibleTo = v.VisibleTo,
     };
 
 

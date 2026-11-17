@@ -364,6 +364,10 @@ public sealed partial class StylesheetParser
             if (spec < 3 && currentVisibility == Visibility.Abstract
                 && rule.Visibility is Visibility.Public or Visibility.Final)
                 continue;
+            // No visibility can be given to a component that is private in the used package
+            // (§3.5.3.2, the table), so a wildcard does not match it either; it stays hidden.
+            if (spec < 3 && currentVisibility is Visibility.Private or Visibility.Hidden)
+                continue;
             // Higher specificity wins; among equal specificity, later document order wins.
             if (spec > bestSpecificity || (spec == bestSpecificity && rule.Order >= bestOrder))
             {

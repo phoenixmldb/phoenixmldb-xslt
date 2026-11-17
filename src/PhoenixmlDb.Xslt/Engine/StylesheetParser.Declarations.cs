@@ -1234,6 +1234,9 @@ public sealed partial class StylesheetParser
                 && DeclaredHere(a.PackageStylesheet))
                 boundaryExposedAttrSets.Add(aname);
 
+        // The visibility of each component in the used package, which xsl:accept and the
+        // default of §3.5.3.2 turn into its visibility here (xslt#544).
+        var inUsedPackage = VisibilitiesInUsedPackage(packageStylesheet);
         var acceptElements = new List<XElement>();
         foreach (var child in element.Elements())
         {
@@ -1257,7 +1260,8 @@ public sealed partial class StylesheetParser
                 packageStylesheet.AbstractFunctionKeys.Add(functionKey);
         }
         if (acceptElements.Count > 0)
-            ApplyAcceptVisibilities(acceptElements, packageStylesheet, overriddenSymbols);
+            ApplyAcceptVisibilities(acceptElements, packageStylesheet, overriddenSymbols, inUsedPackage);
+        RecordVisibilitiesInUsingPackage(packageStylesheet, inUsedPackage, stylesheet, overriddenSymbols);
         // Accepting a component AS abstract makes the using package abstract in turn, so it
         // cannot be executed: XTSE3080 (accept-904/908/912/914). Accepting the same component as
         // hidden does not — it stays executable, and calling the component is XTDE3052
@@ -1835,10 +1839,13 @@ public sealed partial class StylesheetParser
                     // XTSE3040: visibility change must be compatible
                     // Private → anything other than private/hidden is incompatible
                     // Final → public is incompatible (final can't become overridable)
-                    if ((tmpl.Visibility == Visibility.Private && visibility is not (Visibility.Private or Visibility.Hidden))
-                        || (tmpl.Visibility == Visibility.Final && visibility == Visibility.Public))
+                    // A template the used package took from a package it uses has the visibility
+                    // it has there, private unless that package accepted it otherwise (xslt#544).
+                    var templateVisibility = tmpl.PackageStylesheet is not null ? tmpl.VisibilityInUsingPackage ?? tmpl.Visibility : tmpl.Visibility;
+                    if ((templateVisibility == Visibility.Private && visibility is not (Visibility.Private or Visibility.Hidden))
+                        || (templateVisibility == Visibility.Final && visibility == Visibility.Public))
                         throw new XsltException(
-                            $"XTSE3040: Cannot change visibility of {tmpl.Visibility.ToString().ToUpperInvariant()} template '{token}' to {visibility.ToString().ToUpperInvariant()}",
+                            $"XTSE3040: Cannot change visibility of {templateVisibility.ToString().ToUpperInvariant()} template '{token}' to {visibility.ToString().ToUpperInvariant()}",
                             location);
                     break;
                 }
@@ -1874,10 +1881,11 @@ public sealed partial class StylesheetParser
                     {
                         if (fkey.Name.Equals(funcName) && fkey.Arity == arity)
                         {
-                            if ((func.Visibility == Visibility.Private && visibility is not (Visibility.Private or Visibility.Hidden))
-                                || (func.Visibility == Visibility.Final && visibility == Visibility.Public))
+                            var functionVisibility = func.PackageStylesheet is not null ? func.VisibilityInUsingPackage ?? func.Visibility : func.Visibility;
+                            if ((functionVisibility == Visibility.Private && visibility is not (Visibility.Private or Visibility.Hidden))
+                                || (functionVisibility == Visibility.Final && visibility == Visibility.Public))
                                 throw new XsltException(
-                                    $"XTSE3040: Cannot change visibility of {func.Visibility.ToString().ToUpperInvariant()} function '{token}' to {visibility.ToString().ToUpperInvariant()}",
+                                    $"XTSE3040: Cannot change visibility of {functionVisibility.ToString().ToUpperInvariant()} function '{token}' to {visibility.ToString().ToUpperInvariant()}",
                                     location);
                         }
                     }
@@ -1911,8 +1919,15 @@ public sealed partial class StylesheetParser
     /// override-t-014).
     /// </remarks>
     private static void ApplyAcceptVisibilities(List<XElement> acceptElements, XsltStylesheet package,
-        HashSet<(string, QName, int)> overridden)
+        HashSet<(string, QName, int)> overridden, Dictionary<object, Visibility> inUsedPackage)
     {
+        // A component the used package took from a package it uses in turn is accepted against
+        // its visibility in the used package (§3.5.3.2): private there unless that package
+        // accepted it otherwise, so it cannot be accepted as public here (xslt#544). The used
+        // package's own components keep the comparison they had.
+        Visibility Used(object component, XsltStylesheet? owner, Visibility visibility)
+            => owner is not null && inUsedPackage.TryGetValue(component, out var used) ? used : visibility;
+
         var rules = new List<AcceptRule>();
         var order = 0;
         foreach (var elem in acceptElements)
@@ -1930,7 +1945,7 @@ public sealed partial class StylesheetParser
         }
 
         foreach (var name in package.NamedTemplates.Keys.ToList())
-            if (!overridden.Contains(("T", name, 0)) && TryResolveAcceptVisibility(rules, "template", name, package.NamedTemplates[name].Visibility, out var vis))
+            if (!overridden.Contains(("T", name, 0)) && TryResolveAcceptVisibility(rules, "template", name, Used(package.NamedTemplates[name], package.NamedTemplates[name].PackageStylesheet, package.NamedTemplates[name].Visibility), out var vis))
             {
                 var accepted = CloneTemplateWithVisibility(package.NamedTemplates[name], vis);
                 accepted.VisibilityFromAccept = true;
@@ -1938,7 +1953,7 @@ public sealed partial class StylesheetParser
             }
 
         foreach (var key in package.Functions.Keys.ToList())
-            if (!overridden.Contains(("F", key.Name, key.Arity)) && TryResolveAcceptVisibility(rules, "function", key.Name, package.Functions[key].Visibility, out var vis, key.Arity))
+            if (!overridden.Contains(("F", key.Name, key.Arity)) && TryResolveAcceptVisibility(rules, "function", key.Name, Used(package.Functions[key], package.Functions[key].PackageStylesheet, package.Functions[key].Visibility), out var vis, key.Arity))
             {
                 var accepted = CloneFunctionWithVisibility(package.Functions[key], vis);
                 accepted.VisibilityFromAccept = true;
@@ -1946,11 +1961,11 @@ public sealed partial class StylesheetParser
             }
 
         for (var i = 0; i < package.Variables.Count; i++)
-            if (!overridden.Contains(("V", package.Variables[i].Name, 0)) && TryResolveAcceptVisibility(rules, "variable", package.Variables[i].Name, package.Variables[i].Visibility, out var vis))
+            if (!overridden.Contains(("V", package.Variables[i].Name, 0)) && TryResolveAcceptVisibility(rules, "variable", package.Variables[i].Name, Used(package.Variables[i], package.Variables[i].PackageStylesheet, package.Variables[i].Visibility), out var vis))
                 package.Variables[i] = CloneVariableWithVisibility(package.Variables[i], vis);
 
         foreach (var name in package.AttributeSets.Keys.ToList())
-            if (!overridden.Contains(("A", name, 0)) && TryResolveAcceptVisibility(rules, "attribute-set", name, package.AttributeSets[name].Visibility, out var vis))
+            if (!overridden.Contains(("A", name, 0)) && TryResolveAcceptVisibility(rules, "attribute-set", name, Used(package.AttributeSets[name], package.AttributeSets[name].PackageStylesheet, package.AttributeSets[name].Visibility), out var vis))
                 package.AttributeSets[name] = CloneAttributeSetWithVisibility(package.AttributeSets[name], vis);
 
         foreach (var name in package.Modes.Keys.ToList())
@@ -2127,6 +2142,21 @@ public sealed partial class StylesheetParser
 
     private static void ApplyExposeDeclarations(XsltStylesheet stylesheet)
     {
+        // The visibility each component declares, before any xsl:expose: an expose clones the
+        // component with its own visibility, and a later one compared against that as if the
+        // component had declared it, so expose names="*" private followed by component="template"
+        // names="*" public left every template private (W3C expose-002, xslt#544).
+        var declaredTemplates = stylesheet.NamedTemplates.ToDictionary(p => p.Key, p => p.Value.VisibilityAttr);
+        var declaredFunctions = stylesheet.Functions.ToDictionary(p => p.Key, p => p.Value.VisibilityAttr);
+        var declaredVariables = stylesheet.Variables.ConvertAll(v => v.VisibilityAttr);
+        var declaredAttributeSets = stylesheet.AttributeSets.ToDictionary(p => p.Key, p => p.Value.VisibilityAttr);
+        var declaredModes = stylesheet.Modes.ToDictionary(p => p.Key, p => p.Value.VisibilityAttr);
+
+        // §3.5.3.1: an explicit name decides before a wildcard that names a namespace or a local
+        // part, which decides before "*"; among equals, the last in document order. Applied from
+        // the weakest to the strongest, in document order within each, so the decisive one is
+        // applied last.
+        foreach (var precedence in (int[])[1, 2, 3])
         foreach (var expose in stylesheet.ExposeDeclarations)
         {
             if (expose.Component == null || expose.Names == null) continue;
@@ -2135,6 +2165,12 @@ public sealed partial class StylesheetParser
 
             foreach (var token in nameTokens)
             {
+                var tokenPrecedence = token == "*" ? 1
+                    : token.EndsWith(":*", StringComparison.Ordinal) || token.StartsWith("*:", StringComparison.Ordinal)
+                        || (token.StartsWith("Q{", StringComparison.Ordinal) && token.EndsWith("}*", StringComparison.Ordinal)) ? 2
+                    : 3;
+                if (tokenPrecedence != precedence)
+                    continue;
                 // §3.6.3.1 names four wildcard forms, not two: "*", and "a wildcard match that
                 // specifies either the namespace part of the component name or the local part of
                 // the name (for example, prefix:* or *:local or Q{uri}*)". Only "*" and "prefix:*"
@@ -2238,7 +2274,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    if (!ExposeApplies(tmpl.Visibility, name, tmpl.VisibilityAttr)) continue;
+                                    if (!ExposeApplies(tmpl.Visibility, name, declaredTemplates.GetValueOrDefault(name))) continue;
                                     stylesheet.NamedTemplates[name] = CloneTemplateWithVisibility(tmpl, visibility);
                                 }
                             }
@@ -2266,7 +2302,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(key.Name, funcToken, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    if (!ExposeApplies(func.Visibility, key.Name, func.VisibilityAttr)) continue;
+                                    if (!ExposeApplies(func.Visibility, key.Name, declaredFunctions.GetValueOrDefault(key))) continue;
                                     stylesheet.Functions[key] = CloneFunctionWithVisibility(func, visibility);
                                 }
                             }
@@ -2278,7 +2314,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(stylesheet.Variables[i].Name, token, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    if (!ExposeApplies(stylesheet.Variables[i].Visibility, stylesheet.Variables[i].Name, stylesheet.Variables[i].VisibilityAttr)) continue;
+                                    if (!ExposeApplies(stylesheet.Variables[i].Visibility, stylesheet.Variables[i].Name, i < declaredVariables.Count ? declaredVariables[i] : stylesheet.Variables[i].VisibilityAttr)) continue;
                                     var exposedVar = CloneVariableWithVisibility(stylesheet.Variables[i], visibility);
                                     // Record that xsl:expose explicitly set this variable's boundary
                                     // visibility, so the use-package capture treats an exposed
@@ -2297,7 +2333,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    if (!ExposeApplies(attrSet.Visibility, name, attrSet.VisibilityAttr)) continue;
+                                    if (!ExposeApplies(attrSet.Visibility, name, declaredAttributeSets.GetValueOrDefault(name))) continue;
                                     stylesheet.AttributeSets[name] = CloneAttributeSetWithVisibility(attrSet, visibility);
                                 }
                             }
@@ -2308,7 +2344,7 @@ public sealed partial class StylesheetParser
                                 if (MatchesExposePattern(name, token, isWildcard, expose.Element))
                                 {
                                     tokenMatchedSomething = true;
-                                    if (!ExposeApplies(mode.Visibility, name, mode.VisibilityAttr)) continue;
+                                    if (!ExposeApplies(mode.Visibility, name, declaredModes.GetValueOrDefault(name))) continue;
                                     stylesheet.Modes[name] = new Ast.XsltMode
                                     {
                                         Name = mode.Name,

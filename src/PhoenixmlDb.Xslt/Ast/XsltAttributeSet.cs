@@ -58,4 +58,14 @@ public sealed class XsltAttributeSet
     /// and must not leak into the using package (override-as-005).
     /// </summary>
     public bool ProvidedByPackage { get; set; }
+
+    /// <summary>
+    /// The visibility of this component in the package that uses the package it belongs to, as
+    /// XSLT 3.0 §3.5.3.2 gives it: from the xsl:accept that matches it, or else public and final
+    /// become private and every other visibility hidden. Set at each xsl:use-package, so it is
+    /// the visibility in the package being built; null for a component of that package itself.
+    /// A hidden component cannot be referenced by the using package's own components, also when
+    /// it is public where it is declared (xslt#544).
+    /// </summary>
+    internal Visibility? VisibilityInUsingPackage { get; set; }
 }
