@@ -4598,6 +4598,12 @@ public sealed partial class XsltTransformEngine
                 var content = outputBuilder.ToString(savedLen, outputBuilder.Length - savedLen);
                 outputBuilder.Length = savedLen;
                 var globalBaseUri = XsltTransformEngine.UriString(global.BaseUri) ?? stylesheetBaseUri;
+                // The content is the body's SERIALIZED output, so a text value bound from it must
+                // have its references decoded: a global <xsl:variable as="xs:string">^[^&amp;]</...>
+                // held the 9 characters "^[^&amp;]", where a local variable held "^[^&]".
+                var text = content.Contains('<', StringComparison.Ordinal)
+                    ? content
+                    : DefaultXsltExecutionContext.DecodeSerializedText(content);
                 // XSLT 2.0: variables with content and no 'as' always create a temporary tree
                 if (global.As == null)
                     context.GlobalVariables[global.Name] = new ResultTreeFragment(content, globalBaseUri)
@@ -4670,7 +4676,7 @@ public sealed partial class XsltTransformEngine
                         Id = textId,
                         Document = DocumentId.None,
                         Parent = NodeId.None,
-                        Value = content
+                        Value = text
                     };
                     context._nodeStore.Register(globalText);
                     context.GlobalVariables[global.Name] = globalText;
@@ -4777,19 +4783,19 @@ public sealed partial class XsltTransformEngine
                             // A derived built-in type (as="xs:int") is cast to itself, not to the
                             // base type it maps to.
                             coerced = global.As.LocalTypeName is { } derived
-                                && PhoenixmlDb.XQuery.Execution.TypeCastHelper.BuiltInTypedValue(derived, content) is { } derivedValue
+                                && PhoenixmlDb.XQuery.Execution.TypeCastHelper.BuiltInTypedValue(derived, text) is { } derivedValue
                                 ? derivedValue
-                                : PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(content, global.As.ItemType);
+                                : PhoenixmlDb.XQuery.Execution.TypeCastHelper.CastValue(text, global.As.ItemType);
                         }
                         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
                         { _ = ex; coerced = null; }
-                        context.GlobalVariables[global.Name] = coerced ?? (object)content;
+                        context.GlobalVariables[global.Name] = coerced ?? (object)text;
                     }
                     else
                     {
                         context.GlobalVariables[global.Name] = content.Contains('<', StringComparison.Ordinal)
                             ? new ResultTreeFragment(content)
-                            : (object)content;
+                            : (object)text;
                     }
                 }
     }

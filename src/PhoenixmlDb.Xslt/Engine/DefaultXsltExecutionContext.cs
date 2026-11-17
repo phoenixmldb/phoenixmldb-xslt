@@ -848,7 +848,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
     /// <summary>Decodes the character and entity references of serialized XML text.</summary>
-    private static string DecodeSerializedText(string text)
+    internal static string DecodeSerializedText(string text)
     {
         try
         {
