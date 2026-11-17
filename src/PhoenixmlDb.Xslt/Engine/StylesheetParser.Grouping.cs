@@ -48,6 +48,18 @@ public sealed partial class StylesheetParser
             template.PackageStylesheet ??= package;
     }
 
+    /// <summary>
+    /// The visibility in the using package of a component that arrives by two paths (a package
+    /// used twice, through two packages): the wider of the two, so that neither path's own
+    /// references are refused (§3.5.3.2). Null, a component of the using package, is the widest.
+    /// </summary>
+    private static Visibility? Wider(Visibility? a, Visibility? b)
+        => a is null || b is null ? null
+            : a is Visibility.Hidden ? b
+            : b is Visibility.Hidden ? a
+            : a is Visibility.Private ? b
+            : a;
+
     private static void MergePackageComponents(XsltStylesheet target, XsltStylesheet package)
     {
         // Stamp all components with their originating package for package-local resolution
@@ -72,7 +84,10 @@ public sealed partial class StylesheetParser
         foreach (var (name, template) in package.NamedTemplates)
         {
             if (template.Visibility is not (Visibility.Abstract or Visibility.Hidden))
-                target.NamedTemplates.TryAdd(name, template);
+            {
+                if (!target.NamedTemplates.TryAdd(name, template))
+                    target.NamedTemplates[name].VisibilityInUsingPackage = Wider(target.NamedTemplates[name].VisibilityInUsingPackage, template.VisibilityInUsingPackage);
+            }
             else if (template.Visibility is Visibility.Abstract)
             {
                 target.AbstractTemplateNames.Add(name);
@@ -102,7 +117,10 @@ public sealed partial class StylesheetParser
         foreach (var (key, func) in package.Functions)
         {
             if (func.Visibility is not (Visibility.Abstract or Visibility.Hidden))
-                target.Functions.TryAdd(key, func);
+            {
+                if (!target.Functions.TryAdd(key, func))
+                    target.Functions[key].VisibilityInUsingPackage = Wider(target.Functions[key].VisibilityInUsingPackage, func.VisibilityInUsingPackage);
+            }
             else if (func.Visibility is Visibility.Abstract)
             {
                 target.AbstractFunctionKeys.Add(key);
@@ -140,6 +158,17 @@ public sealed partial class StylesheetParser
                 }
                 else
                 {
+                    // The same global reached by two paths (a package used twice, through two
+                    // packages): each path's packages may reference it (xslt#544).
+                    var claimed = target.Variables.First(v => v.Name.Equals(variable.Name));
+                    if (claimed.VisibleTo is { } claimedVisibleTo)
+                    {
+                        if (variable.VisibleTo is { } visibleTo)
+                            claimedVisibleTo.UnionWith(visibleTo);
+                        else
+                            claimed.VisibleTo = null;
+                    }
+                    claimed.VisibilityInUsingPackage = Wider(claimed.VisibilityInUsingPackage, variable.VisibilityInUsingPackage);
                     // A same-named global already claimed the principal QName slot (this happens
                     // in a diamond where two packages each expose a same-named global with a
                     // different value — use-package-175/176). Globals are package-local, so keep
@@ -186,7 +215,10 @@ public sealed partial class StylesheetParser
             // "private" is still usable (accept-002); a set declared private in the USED
             // package is not provided and stays package-local (override-as-005).
             else if (attrSet.ProvidedByPackage && attrSet.Visibility is not Visibility.Hidden)
-                target.AttributeSets.TryAdd(name, attrSet);
+            {
+                if (!target.AttributeSets.TryAdd(name, attrSet))
+                    target.AttributeSets[name].VisibilityInUsingPackage = Wider(target.AttributeSets[name].VisibilityInUsingPackage, attrSet.VisibilityInUsingPackage);
+            }
         }
 
         // Keys: merge into the principal registry (so eager namespace resolution and the

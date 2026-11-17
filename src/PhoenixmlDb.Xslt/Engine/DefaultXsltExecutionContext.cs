@@ -1252,6 +1252,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             && _stylesheet.PackagePrivateGlobals.TryGetValue(name, out var owningPackage)
             && !ReferenceEquals(CurrentComponentPackage(), owningPackage))
             throw Error($"XPST0008: Variable ${name.LocalName} is not visible (private to its package)");
+        if (GlobalIsHiddenFrom(name, CurrentComponentPackage()))
+            throw Error($"XPST0008: Variable ${name.LocalName} is not visible here (a global of a used package is visible only where it is accepted)");
 
         if (GlobalVariables.TryGetValue(name, out var globalValue))
         {
@@ -3869,6 +3871,33 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// xsl:function or template on the call stack), or null when executing a component of
     /// the principal package. Used for package-local resolution of accumulators.
     /// </summary>
+    private Dictionary<QName, HashSet<Ast.XsltStylesheet>>? _globalsVisibleTo;
+
+    /// <summary>
+    /// Whether the global variable of this name is hidden in the package of the calling
+    /// component (XSLT 3.0 §3.5.3.2): it belongs to a used package, and that package or one
+    /// between did not accept it as public or final, so the caller's package cannot see it
+    /// (xslt#544). A component of the principal package has no package of its own.
+    /// </summary>
+    private bool GlobalIsHiddenFrom(QName name, Ast.XsltStylesheet? caller)
+    {
+        _globalsVisibleTo ??= BuildGlobalsVisibleTo(_stylesheet);
+        return _globalsVisibleTo.Count > 0
+            && _globalsVisibleTo.TryGetValue(name, out var visibleTo)
+            && !visibleTo.Contains(caller ?? _stylesheet);
+
+        static Dictionary<QName, HashSet<Ast.XsltStylesheet>> BuildGlobalsVisibleTo(Ast.XsltStylesheet stylesheet)
+        {
+            var visibleTo = new Dictionary<QName, HashSet<Ast.XsltStylesheet>>();
+            foreach (var variable in stylesheet.Variables)
+            {
+                if (variable.VisibleTo is { } packages && !packages.Contains(stylesheet))
+                    visibleTo.TryAdd(variable.Name, packages);
+            }
+            return visibleTo;
+        }
+    }
+
     internal Ast.XsltStylesheet? CurrentComponentPackage()
     {
         if (_currentXsltFunctionStack.Count > 0)

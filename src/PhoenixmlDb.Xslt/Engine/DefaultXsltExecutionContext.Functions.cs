@@ -1028,6 +1028,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 && privateGlobals.TryGetValue(name, out var owner)
                 && !ReferenceEquals(currentPkgForGlobals, owner))
                 continue;
+            // Likewise a global that is hidden in the calling package by §3.5.3.2 (xslt#544).
+            if (GlobalIsHiddenFrom(name, CurrentComponentPackage()))
+                continue;
             // A global bound to a LazyValue is deferred: either an abstract-variable proxy
             // (XTDE3052) or one whose eager initializer failed and must re-raise at the point of
             // reference. ConvertRtfForXQuery passes LazyValue through untouched, so binding it

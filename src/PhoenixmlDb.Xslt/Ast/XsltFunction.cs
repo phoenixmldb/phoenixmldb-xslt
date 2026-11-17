@@ -70,6 +70,16 @@ public sealed class XsltFunction
     internal bool VisibilityFromAccept { get; set; }
 
     /// <summary>
+    /// The visibility of this component in the package that uses the package it belongs to, as
+    /// XSLT 3.0 §3.5.3.2 gives it: from the xsl:accept that matches it, or else public and final
+    /// become private and every other visibility hidden. Set at each xsl:use-package, so it is
+    /// the visibility in the package being built; null for a component of that package itself.
+    /// A hidden component cannot be referenced by the using package's own components, also when
+    /// it is public where it is declared (xslt#544).
+    /// </summary>
+    internal Visibility? VisibilityInUsingPackage { get; set; }
+
+    /// <summary>
     /// The visibility was stated: by the visibility attribute, or by an xsl:expose or xsl:accept.
     /// An unstated one reads as public, which is the default outside a package; in an xsl:package
     /// the default is private (§3.5).
