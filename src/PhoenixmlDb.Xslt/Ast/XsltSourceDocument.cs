@@ -51,15 +51,26 @@ public sealed class XsltSourceDocument : XsltInstruction
     /// </summary>
     public bool UseAllAccumulators { get; init; }
 
-    /// <summary>The accumulators that apply to the document, by name or through #all.</summary>
-    internal IEnumerable<XsltAccumulator> ApplicableAccumulators(XsltStylesheet stylesheet)
+    /// <summary>
+    /// The accumulators that apply to the document, by name or through #all. A name is resolved
+    /// in the package of the component that runs the instruction: accumulators are local to
+    /// their package, and one that the using package also declares by that name is kept under
+    /// another (<see cref="XsltStylesheet.PackageAccumulatorRemap"/>), as accumulator-after()
+    /// resolves it. The document was given the using package's, and the call found its own not
+    /// applicable: XTDE3362 (W3C override-misc-007).
+    /// </summary>
+    internal IEnumerable<XsltAccumulator> ApplicableAccumulators(XsltStylesheet stylesheet, XsltStylesheet? callingPackage = null)
     {
         if (UseAllAccumulators)
             return stylesheet.Accumulators.Values;
         var named = new List<XsltAccumulator>();
         foreach (var name in UseAccumulators)
-            if (stylesheet.Accumulators.TryGetValue(name, out var accumulator))
+        {
+            var key = callingPackage is not null && stylesheet.PackageAccumulatorRemap.TryGetValue((callingPackage, name), out var remapped)
+                ? remapped : name;
+            if (stylesheet.Accumulators.TryGetValue(key, out var accumulator))
                 named.Add(accumulator);
+        }
         return named;
     }
 

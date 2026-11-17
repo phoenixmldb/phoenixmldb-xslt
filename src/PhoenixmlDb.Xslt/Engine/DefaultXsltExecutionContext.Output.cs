@@ -2019,7 +2019,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Resolve accumulators for streaming. With #all the pass ran none: a streamed node
                 // has no subtree to compute a value from afterwards, so the values it reported were
                 // those of an empty tree (xslt#461).
-                var streamAccumulators = instruction.ApplicableAccumulators(_stylesheet).ToList();
+                var streamAccumulators = instruction.ApplicableAccumulators(_stylesheet, CurrentComponentPackage()).ToList();
 
                 // Pre-scan for consuming expressions that need stream watchers
                 var scanner = new StreamingExpressionScanner();
@@ -2226,7 +2226,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Pre-compute accumulators if use-accumulators is specified
         var previousAccumulatorValues = _accumulatorValues;
-        var accumulators = instruction.ApplicableAccumulators(_stylesheet).ToList();
+        var accumulators = instruction.ApplicableAccumulators(_stylesheet, CurrentComponentPackage()).ToList();
         if (accumulators.Count > 0)
             await PreComputeAccumulatorsAsync(xdmDoc, accumulators, nodeStore).ConfigureAwait(false);
 

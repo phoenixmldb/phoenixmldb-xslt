@@ -1485,6 +1485,26 @@ public sealed partial class StylesheetParser
             };
         }
 
+        // An unprefixed type name (as="u6") is in the xpath-default-namespace, by default no
+        // namespace (XSLT 3.0 §5.1.2); one the schema defines. It was taken for item(), so two
+        // different union types compared as the same type and an override that changed the type
+        // of a variable was accepted (W3C override-v-006).
+        if (context != null && type.Length > 0 && !type.Contains('(', StringComparison.Ordinal)
+            && !type.Contains(':', StringComparison.Ordinal) && !type.Contains('{', StringComparison.Ordinal)
+            && System.Xml.XmlConvert.IsNCNameChar(type[0]) && !char.IsDigit(type[0])
+            && type.All(System.Xml.XmlConvert.IsNCNameChar))
+        {
+            var defaultNamespace = GetXpathDefaultNamespace(context) ?? "";
+            if (defaultNamespace != "http://www.w3.org/2001/XMLSchema")
+                return new XdmSequenceType
+                {
+                    ItemType = ItemType.AnyAtomicType,
+                    Occurrence = occurrence,
+                    SchemaTypeNamespace = defaultNamespace,
+                    SchemaTypeLocalName = type,
+                };
+        }
+
         // Handle parameterized map types: map(xs:string, xs:boolean)
         if (type.StartsWith("map(", StringComparison.Ordinal) && type.EndsWith(')') && type != "map(*)")
         {
