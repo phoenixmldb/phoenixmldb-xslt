@@ -2739,7 +2739,15 @@ internal sealed partial class DefaultXsltExecutionContext
                     SetVariable(param.Name, value);
                     continue;
                 }
-                if (param.As != null && IsStrictAtomicType(param.As.ItemType))
+                if (param.As is { SchemaTypeLocalName: not null })
+                {
+                    // A type a schema defines (as="u1", a union of xs:decimal and xs:double): a
+                    // node is atomized and an untyped value cast to that type, the first member
+                    // type that accepts it for a union (XSLT 3.0 §5.4.1). It was bound untyped,
+                    // so `$x instance of xs:decimal` was false (W3C override-f-031).
+                    value = CastToDeclaredSchemaType(ApplyFunctionConversionRules(value, param.As), param.As);
+                }
+                else if (param.As != null && IsStrictAtomicType(param.As.ItemType))
                 {
                     // Apply function conversion rules: atomize nodes, coerce to target type
                     value = ApplyFunctionConversionRules(value, param.As);

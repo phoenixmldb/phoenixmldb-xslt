@@ -62,6 +62,16 @@ public sealed partial class StylesheetParser
 
     private static void MergePackageComponents(XsltStylesheet target, XsltStylesheet package)
     {
+        // The schemas a used package imports define the types its components declare
+        // (as="u1"): without them a value converted to such a type at run time was left as it
+        // was (W3C override-f-031). One schema provider serves the whole transformation, so the
+        // package's imports join the using package's.
+        foreach (var import in SchemaImportsOf(package))
+        {
+            if (!target.SchemaImports.Contains(import))
+                target.SchemaImports.Add(import);
+        }
+
         // Stamp all components with their originating package for package-local resolution
         // (decimal formats, keys, character maps, outputs, variables)
         // A component declared in an xsl:override is the using package's (XSLT 3.0 §3.5.3.4):

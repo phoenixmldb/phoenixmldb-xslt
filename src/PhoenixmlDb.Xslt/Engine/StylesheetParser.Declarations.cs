@@ -1163,7 +1163,7 @@ public sealed partial class StylesheetParser
                             break;
                     }
                 }
-                ApplyOverrides(child, packageStylesheet);
+                ApplyOverrides(child, packageStylesheet, stylesheet);
             }
         }
 
@@ -1375,7 +1375,7 @@ public sealed partial class StylesheetParser
     /// Applies xsl:override children to a package stylesheet — replaces matching
     /// components and stores originals for xsl:original resolution.
     /// </summary>
-    private void ApplyOverrides(XElement overrideElement, XsltStylesheet packageStylesheet)
+    private void ApplyOverrides(XElement overrideElement, XsltStylesheet packageStylesheet, XsltStylesheet stylesheet)
     {
         // Track overridden components for XTSE0770 duplicate detection
         var overriddenTemplates = new HashSet<QName>();
@@ -1592,7 +1592,7 @@ public sealed partial class StylesheetParser
                                 throw new XsltException(
                                     $"XTSE3060: Cannot override variable '{overrideVar.Name.LocalName}' which has visibility '{packageStylesheet.Variables[i].Visibility.ToString().ToUpperInvariant()}'",
                                     GetSourceLocation(child));
-                            RequireSameDeclaredType(overrideVar.As, packageStylesheet.Variables[i].As, overrideVar.Name, child);
+                            RequireSameDeclaredType(overrideVar.As, packageStylesheet.Variables[i].As, overrideVar.Name, child, stylesheet, packageStylesheet);
                             overrideVar.OriginalVariable = packageStylesheet.Variables[i];
                             // An overriding variable targets a provided component of the used
                             // package, so it is itself visible across the boundary (accept-040/046).
@@ -1607,7 +1607,7 @@ public sealed partial class StylesheetParser
                     var paramIndex = replaced ? -1 : packageStylesheet.Parameters.FindIndex(p => p.Name.Equals(overrideVar.Name));
                     if (paramIndex >= 0)
                     {
-                        RequireSameDeclaredType(overrideVar.As, packageStylesheet.Parameters[paramIndex].As, overrideVar.Name, child);
+                        RequireSameDeclaredType(overrideVar.As, packageStylesheet.Parameters[paramIndex].As, overrideVar.Name, child, stylesheet, packageStylesheet);
                         packageStylesheet.Parameters.RemoveAt(paramIndex);
                         overrideVar.ProvidedByPackage = true;
                         packageStylesheet.Variables.Add(overrideVar);
@@ -1623,7 +1623,7 @@ public sealed partial class StylesheetParser
                     {
                         if (packageStylesheet.Parameters[i].Name.Equals(overrideParam.Name))
                         {
-                            RequireSameDeclaredType(overrideParam.As, packageStylesheet.Parameters[i].As, overrideParam.Name, child);
+                            RequireSameDeclaredType(overrideParam.As, packageStylesheet.Parameters[i].As, overrideParam.Name, child, stylesheet, packageStylesheet);
                             packageStylesheet.Parameters[i] = overrideParam;
                             replaced = true;
                             break;
@@ -1635,7 +1635,7 @@ public sealed partial class StylesheetParser
                     var variableIndex = replaced ? -1 : packageStylesheet.Variables.FindIndex(v => v.Name.Equals(overrideParam.Name));
                     if (variableIndex >= 0)
                     {
-                        RequireSameDeclaredType(overrideParam.As, packageStylesheet.Variables[variableIndex].As, overrideParam.Name, child);
+                        RequireSameDeclaredType(overrideParam.As, packageStylesheet.Variables[variableIndex].As, overrideParam.Name, child, stylesheet, packageStylesheet);
                         packageStylesheet.Variables.RemoveAt(variableIndex);
                         packageStylesheet.Parameters.Add(overrideParam);
                     }
@@ -1676,11 +1676,19 @@ public sealed partial class StylesheetParser
     /// <summary>
     /// XTSE3070: an overriding variable or parameter declares the same type as the component it
     /// overrides (XSLT 3.0 §3.5.3.4); no as= is item()*. A different type was accepted (W3C
-    /// override-v-006/007).
+    /// override-v-006/007). Two types are identical when each is a subtype of the other
+    /// (§3.5.3.3): two plain union types are, when they have the same member types, whatever
+    /// their names and the order of the members (W3C override-v-005). Each is looked up in the
+    /// schemas of the package that declares it.
     /// </summary>
-    private static void RequireSameDeclaredType(XdmSequenceType? overriding, XdmSequenceType? original, QName name, XElement element)
+    private static void RequireSameDeclaredType(XdmSequenceType? overriding, XdmSequenceType? original, QName name, XElement element,
+        XsltStylesheet overridingPackage, XsltStylesheet originalPackage)
     {
-        if (TypeKey(overriding) != TypeKey(original))
+        if (TypeKey(overriding) != TypeKey(original)
+            && !(overriding is not null && original is not null && overriding.Occurrence == original.Occurrence
+                && UnionMemberTypes(overriding, overridingPackage) is { } overridingMembers
+                && UnionMemberTypes(original, originalPackage) is { } originalMembers
+                && overridingMembers.SetEquals(originalMembers)))
             throw new XsltException(
                 $"XTSE3070: The overriding declaration of ${name.LocalName} has a different type ({TypeKey(overriding)}) from the overridden one ({TypeKey(original)})",
                 GetSourceLocation(element));
