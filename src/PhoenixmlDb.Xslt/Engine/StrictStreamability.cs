@@ -59,9 +59,13 @@ internal static class StrictStreamability
             ? (certainOnly ? _certainBodies : _bodies).GetValue(instruction, _ => new StrongBox<string?>(
                 // The context item of the body is the document node (§18.1).
                 Reason(body, stylesheet, certainOnly, childType: 'A') is { } reason
-                    ? "XTSE3430: The body of xsl:source-document is not guaranteed streamable: " + reason
+                    ? "XTSE3430: The body of xsl:source-document is not guaranteed streamable: " + reason + "." + Remedy
                     : null)).Value
             : null;
+
+    /// <summary>The way to run such a construct anyway, which every message of this check names.</summary>
+    internal const string Remedy =
+        " To run it with a buffer instead of streaming it, set StreamingFallback (xslt command line: --streaming-fallback).";
 
     private static XsltException? Compute(XsltStylesheet stylesheet, bool certainOnly)
     {
@@ -76,14 +80,14 @@ internal static class StrictStreamability
             // The two commonest causes have a message of their own.
             if (StreamabilityChecker.HasSeveralConsumingOperands(template.Body))
                 return new XsltException(
-                    Subject + "more than one instruction reads the children of the matched node, and the streamed input passes once",
+                    Subject + "more than one instruction reads the children of the matched node, and the streamed input passes once." + Remedy,
                     template.Body.Location);
             if (RoamingAxisDetector.First(template.Body) is { } roaming)
                 return new XsltException(
-                    Subject + $"the {AxisName(roaming.Axis)} axis from the matched node reads what the streamed input has passed or not yet reached",
+                    Subject + $"the {AxisName(roaming.Axis)} axis from the matched node reads what the streamed input has passed or not yet reached." + Remedy,
                     roaming.Location ?? template.Body.Location);
             if (reason is not null)
-                return new XsltException(Subject + reason, template.Body.Location);
+                return new XsltException(Subject + reason + "." + Remedy, template.Body.Location);
         }
         return null;
     }

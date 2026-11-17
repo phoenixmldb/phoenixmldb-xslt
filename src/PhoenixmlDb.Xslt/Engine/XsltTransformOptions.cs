@@ -167,7 +167,8 @@ public sealed class XsltTransformOptions
     /// answer depends on a construct the analysis does not model, the engine runs the rule on a
     /// buffered copy of the matched subtree, or on a tree, and the result is the same. When
     /// <c>true</c>, those are reported too. Neither applies together with
-    /// <see cref="DisableStreaming"/>, which asks for tree evaluation.
+    /// <see cref="DisableStreaming"/>, which asks for tree evaluation, or with
+    /// <see cref="StreamingFallback"/>, which asks for a buffer.
     /// </summary>
     /// <remarks>
     /// <para>The check is the posture and sweep analysis of XSLT 3.0 §19.8. A template rule is
@@ -182,8 +183,13 @@ public sealed class XsltTransformOptions
     /// </remarks>
     public bool StrictStreamability { get; init; }
 
-    /// <summary>See <see cref="XsltTransformer.StreamingFallback"/>.</summary>
-    internal bool StreamingFallback { get; init; }
+    /// <summary>
+    /// When <c>true</c>, a template rule of a streamable mode, or the body of an
+    /// <c>xsl:source-document</c> with <c>streamable="yes"</c>, that is not guaranteed-streamable
+    /// runs with a buffer instead of failing with XTSE3430. Off by default; takes precedence over
+    /// <see cref="StrictStreamability"/>. See <see cref="XsltTransformer.StreamingFallback"/>.
+    /// </summary>
+    public bool StreamingFallback { get; init; }
 
     /// <summary>
     /// When <see cref="ExpandXInclude"/> is on, controls whether remote (<c>http:</c>/<c>https:</c>)
