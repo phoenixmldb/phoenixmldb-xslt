@@ -40,7 +40,7 @@ internal static class ResultWriter
         var redefault = steps.RedefaultNamespaces && markup.Contains("xmlns:", StringComparison.Ordinal);
 
         if (!redefault && !steps.HtmlForms && steps.ContentTypeMeta is null && !htmlIndent)
-            return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(markup, steps.SuppressIndentation) : markup;
+            return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(markup, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml) : markup;
 
         var sink = new Sink();
         Stage C(Stage stage) => chunk > 0 ? new Chunker(stage, chunk) : stage;
@@ -68,7 +68,7 @@ internal static class ResultWriter
         var text = sink.ToString();
         // XmlWriter's indentation reads the text the other steps wrote: an XmlReader needs it
         // whole, and when it is not well-formed the result is that text, unindented.
-        return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(text, steps.SuppressIndentation) : text;
+        return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(text, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml) : text;
     }
 
     // ── stages ──
