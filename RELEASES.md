@@ -2,7 +2,7 @@
 
 ## 3.2.0 — 2026-11-18
 
-Requires PhoenixmlDb.XQuery 3.2.0 and PhoenixmlDb.Core 2.6.0. Streamability errors by default, the
+Requires PhoenixmlDb.XQuery 3.2.0 and PhoenixmlDb.Core 2.6.1. Streamability errors by default, the
 package rules of XSLT 3.0 §3.5, and a security update for hosts that use a `ResourcePolicy`. W3C
 XSLT 3.0: 57 failing of 11,518 applicable cases (3.1.0: 131 failing of 11,539). The applicable
 count leaves out the XSLT 1.0 and 2.0 cases and the cases ruled not applicable
