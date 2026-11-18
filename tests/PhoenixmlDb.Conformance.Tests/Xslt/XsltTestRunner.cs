@@ -29,6 +29,23 @@ public sealed class XsltTestRunner
     /// </summary>
     public HashSet<string> MissingTestSets { get; } = [];
 
+    /// <summary>
+    /// For each test-set file: a line for each case that is not run because it names a corpus
+    /// file that does not exist in this checkout. Such a case cannot pass on any processor; it
+    /// is a defect of the corpus, so it is not counted, and each test class prints these lines
+    /// so that the exclusion is visible in the log and in conformance.sh's summary.
+    /// </summary>
+    private readonly Dictionary<string, List<string>> _corpusFileMissing = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The "NOT RUN" lines for the cases of <paramref name="catalogRelativePath"/> that name a
+    /// corpus file that does not exist. Empty when there are none.
+    /// </summary>
+    public IReadOnlyList<string> CorpusFileMissingLines(string catalogRelativePath)
+        => _corpusFileMissing.TryGetValue(Path.Combine(_testDataPath, catalogRelativePath), out var lines)
+            ? lines
+            : [];
+
     public XsltTestRunner(string testDataPath, XsltConfiguration? config = null)
     {
         _testDataPath = testDataPath;
@@ -169,6 +186,14 @@ public sealed class XsltTestRunner
                 }
                 if (ShouldRunTest(test))
                 {
+                    var missing = MissingCorpusFiles(testCaseElem, doc.Root!, ns, basePath);
+                    if (missing.Count > 0)
+                    {
+                        if (!_corpusFileMissing.TryGetValue(testSetPath, out var lines))
+                            _corpusFileMissing[testSetPath] = lines = [];
+                        lines.Add($"NOT RUN: {test.Name}  [CORPUS FILE MISSING — {string.Join(", ", missing)}]");
+                        continue;
+                    }
                     testCases.Add(test);
                 }
             }
@@ -925,6 +950,46 @@ public sealed class XsltTestRunner
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The files that a test case names (in the case, and in the shared environment it refers
+    /// to) and that do not exist under the test-set directory. A value with a URI scheme is not
+    /// a corpus file, and <c>&lt;output file&gt;</c> names where a result would be written, not
+    /// an input, so neither is checked. A fragment (<c>doc.xml#id</c>) is removed first.
+    /// </summary>
+    /// <remarks>
+    /// W3C system-property-999gen is the case this exists for: its last assertion reads
+    /// <c>_system-property-test-set.xml</c> from its own directory, and the suite has no such
+    /// file there (BUGS.md #117), so no processor can pass it. The rule is general: any case
+    /// that names a file the corpus does not contain is reported, not run.
+    /// </remarks>
+    private static List<string> MissingCorpusFiles(XElement testCaseElem, XElement root, XNamespace ns, string basePath)
+    {
+        var elements = testCaseElem.Descendants().ToList();
+        var envRef = testCaseElem.Element(ns + "environment")?.Attribute("ref")?.Value;
+        if (envRef != null)
+        {
+            var named = root.Elements(ns + "environment")
+                .FirstOrDefault(e => string.Equals(e.Attribute("name")?.Value, envRef, StringComparison.Ordinal));
+            if (named != null)
+                elements.AddRange(named.Descendants());
+        }
+
+        var missing = new List<string>();
+        foreach (var element in elements)
+        {
+            if (element.Name == ns + "output")
+                continue;
+            var file = element.Attribute("file")?.Value;
+            if (string.IsNullOrEmpty(file) || file.Contains(':', StringComparison.Ordinal))
+                continue;
+            var hash = file.IndexOf('#', StringComparison.Ordinal);
+            var local = hash >= 0 ? file[..hash] : file;
+            if (!File.Exists(Path.Combine(basePath, local)) && !missing.Contains(file, StringComparer.Ordinal))
+                missing.Add(file);
+        }
+        return missing;
     }
 
     private bool ShouldRunTest(XsltTestCase test)

@@ -60,6 +60,8 @@ public class XsltStreamingTests3 : IClassFixture<XsltTestFixture>
 
         var testCases = await _fixture.LoadTestSetAsync(testSetPath);
         _output.WriteLine($"Running {testCases.Count} tests from {testSetPath}");
+        foreach (var line in _fixture.Runner.CorpusFileMissingLines(testSetPath))
+            _output.WriteLine(line);
 
         var passed = 0;
         var failed = 0;
