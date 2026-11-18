@@ -311,6 +311,18 @@ if [ -n "$defects" ]; then
   printf '%s\n' "$defects" | tee -a "$OUT/summary.txt"
 fi
 
+# ---- cases not run: a corpus file is missing ---------------------------------
+# A case that names a file the corpus does not contain cannot pass on any processor, so the
+# runner does not run or count it (XsltTestRunner.MissingCorpusFiles). It is listed here so that
+# the exclusion stays visible in the published figure.
+notrun="$(for g in "${CHUNKS[@]}"; do [ -f "$OUT/$g.log" ] && grep -h 'NOT RUN: .*\[CORPUS FILE MISSING' "$OUT/$g.log"; done |
+          sed 's/^ *NOT RUN: \([^ ]*\).*\[CORPUS FILE MISSING — \(.*\)\]$/  \1: \2/' | sort -u)"
+if [ -n "$notrun" ]; then
+  echo "NOT RUN — the case names a corpus file that does not exist ($(printf '%s\n' "$notrun" | wc -l)):" |
+    tee -a "$OUT/summary.txt"
+  printf '%s\n' "$notrun" | tee -a "$OUT/summary.txt"
+fi
+
 # ---- per-set regression gate -------------------------------------------------
 # Pair each "Running N tests from <set>" with the "Results: X/Y passed" that follows it.
 BASELINE="${CONFORMANCE_BASELINE:-$ROOT/scripts/conformance-baseline.tsv}"

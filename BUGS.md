@@ -7363,9 +7363,17 @@ safe today — but a BOM in front of piped XML is not a thing to leave depending
 internals staying as they are. Verified after the change that piped output still begins
 `3c 6f 75 74 3e` and not `ef bb bf`.
 
-### 117. `system-property-999gen` cannot pass as the suite ships it — recorded, not fixed (2026-09-29)
+### 117. `system-property-999gen` cannot pass as the suite ships it — not run, reported (2026-11-17)
 
-**Status: not a processor defect. Recorded for #13's "fixed or recorded with a reason".**
+**Status: not a processor defect. Resolved in the harness (Lucas, 2026-11-17: "fix the test
+harness").** A case that names a file the corpus does not contain is not run and not counted.
+The runner (`MissingCorpusFiles`) checks every `file` that the case and its shared environment
+name, except `<output file>` and values with a URI scheme. Each test class prints
+`NOT RUN: <case>  [CORPUS FILE MISSING — <file>]`, and `conformance.sh` lists these cases in
+its summary. In the 260 test sets that the harness runs, this case is the only one the rule
+affects. Effect: one failure and one applicable case fewer (`system-property-gen` 165/165).
+
+The record from 2026-09-29 follows.
 
 `fn/system-property-gen` is commented out of the W3C `catalog.xml` (line 97); we run it anyway, on
 purpose (entry above: *"Do not decide `system-property-gen` for the number"*). Its 999gen case runs
