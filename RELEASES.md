@@ -1,5 +1,183 @@
 # Release History
 
+## 3.2.0 — 2026-11-18
+
+Requires PhoenixmlDb.XQuery 3.2.0 and PhoenixmlDb.Core 2.6.0. Streamability errors by default, the
+package rules of XSLT 3.0 §3.5, and a security update for hosts that use a `ResourcePolicy`. W3C
+XSLT 3.0: 57 failing of 11,518 applicable cases (3.1.0: 131 failing of 11,539). The applicable
+count leaves out the XSLT 1.0 and 2.0 cases and the cases ruled not applicable
+(`scripts/conformance.sh` lists each one with its reason).
+
+The changes to XPath functions and to serialization that come from PhoenixmlDb.XQuery 3.2.0 apply
+here too: see its release notes.
+
+### Security: a file that changes between the policy check and the read (GHSA-5wrq-f8xr-54w5)
+
+Only hosts that use a `ResourcePolicy`, and whose allowed roots untrusted parties can write to,
+are affected. The library opens a file first, and the policy then judges the path of the file
+that is open, as the operating system reports it. A symbolic link put in place of the file, or of
+a directory on its path, after the check is not followed. This applies to `fn:unparsed-text` and
+`fn:unparsed-text-lines`, `fn:document` and collections, `xsl:source-document`, `xsl:merge`
+sources, `fn:stream-available`, `fn:transform`, `xsl:import` and `xsl:include`, and serialization
+parameter documents. Content that the host's resource resolver supplies, and locations that the
+host maps, do not change. It requires PhoenixmlDb.XQuery 3.2.0 (GHSA-v27x-ffg3-3wqq). See
+[GHSA-5wrq-f8xr-54w5](https://github.com/phoenixmldb/phoenixmldb-xslt/security/advisories/GHSA-5wrq-f8xr-54w5).
+
+### Breaking — read this when you upgrade
+
+- **A stylesheet that is not guaranteed streamable gives XTSE3430 by default** (#545). A
+  streamable mode, a streamed `xsl:source-document` or a streamable function whose body breaks the
+  rules of XSLT 3.0 §19.8 gives XTSE3430 at compile time. 3.1.0 reads the input into a buffer and
+  gives no error. Examples:
+  - two `xsl:copy-of` of the context node in one `xsl:for-each`;
+  - two aggregates over the streamed input in sibling variables;
+  - a template rule in a streamable mode whose body is `xsl:call-template`, when the called
+    template has no `xsl:context-item use="prohibited"` (§19.8.4.9: the context item has
+    navigation usage). To call such a template, ground the node first:
+    `<xsl:for-each select="copy-of(.)"><xsl:call-template name="t"/></xsl:for-each>`;
+  - SchXslt2 validators built with `schxslt:streamable=true`.
+
+  To run such a stylesheet with a buffer, set `XsltTransformer.StreamingFallback` or
+  `XsltTransformOptions.StreamingFallback` (`xslt --streaming-fallback`, #546), or
+  `DisableStreaming`. `StreamingFallback` takes precedence over `StrictStreamability`. The message
+  of the error names the setting. The setting covers template rules in a streamable mode and
+  `xsl:source-document` bodies. The compile-time checks of accumulators, functions with a
+  streamability category, attribute sets, merge sources and match patterns do not change. The
+  check gives an error only when every rule in its verdict is modelled. `--strict-streaming` does
+  not change.
+- **A component of a used package is visible only as `xsl:use-package` and `xsl:accept` give it**
+  (XSLT 3.0 §3.5.3.2, #548, #538). A stylesheet that uses a component of a package that it does not
+  use directly, or a private component of a used package, gives XTSE0650 (template), XPST0017
+  (function), XTSE0710 (attribute set) or XPST0008 (variable). To keep the component visible, add
+  `xsl:accept` with `visibility="public"` in the package between. A later `xsl:expose` wildcard
+  does not change the visibility that an earlier `xsl:expose` gives. A package that is used by two
+  paths keeps the wider visibility. Modes are not checked.
+- **`xsl:accept` names a function with its arity** (#547). A function name without `#arity`, or a
+  name that matches no function of the used package (`p:f#5` with no `f#5`), gives XTSE3030.
+  Example: `<xsl:accept component="function" names="my-public-func#1" visibility="public"/>`. An
+  `xsl:accept` without `component`, `names` or `visibility` gives XTSE0010. Saxon-HE 12.10 gives
+  XTSE3020 for the name without arity; this library gives the code of the specification.
+- **An `as=` type name that no schema in scope defines gives XPST0051** (#558). This applies to
+  variables, function and template parameters, function results, and inside `array()`, `map()` and
+  function types, with or without `?` or `*`, prefixed or not. Example:
+  `<xsl:variable name="v" as="nosuch" select="1"/>`. With `fn:transform`, schema imports are not
+  loaded, so only `xs:` names are checked there. Saxon-HE 12.10 gives the same code.
+- **The `xslt` tool refuses an unknown option and a third argument** (#481): exit code 1 and a
+  message. Example: `xslt style.xsl in.xml -d out` gives an error; the option is `--output-dir`.
+- **A relative URI with no base URI gives an error** (#485). A stylesheet compiled from a string
+  with no base URI does not read from the process working directory. `doc()` gives FODC0002,
+  `document()` gives FODC0005, `unparsed-text()`, `unparsed-text-lines()` and `json-doc()` give
+  FOUT1170, and `doc-available()` and `unparsed-text-available()` return false. An `xsl:merge`
+  source, streamed or not, gives FODC0005 or FODC0002. This applies with and without a resource
+  policy. Host-supplied content and mapped locations do not change. To read a local file, set a
+  base URI or give an absolute URI. The `xslt` tool sets file base URIs.
+- **Indented XML output has the layout of Saxon** (#559). With `indent="yes"` and the xml method,
+  an empty element is `<e/>` (3.1.0: `<e />`), and the document element starts on the line after
+  the XML declaration. Text directly after the declaration gets no line break. The xhtml method
+  keeps `<br />`. The indent width (2 spaces) does not change. A test that compares indented output
+  byte for byte must update its expected files.
+- **Error codes at compile time:** a static parameter whose default value does not match its type
+  gives XTDE0050 (#497); a reserved namespace in `extension-element-prefixes` gives XTSE0085
+  (#498); an unknown schema type in `xsl:context-item/@as` gives XPST0008 (#500); `key()` with an
+  undeclared key name gives XTDE1260 (#537); an override of a component that is private by default
+  gives XTSE3060 (#540). A stylesheet that compiled with one of these errors gets the error.
+
+### Packages
+
+- An unprefixed type name in `as=` names a schema type in the `xpath-default-namespace` (§5.1.2).
+  Two union types with the same member types are identical (§3.5.3.3), in any order (#549).
+- The schemas of a used package are available at run time. A function parameter of a schema type
+  casts an untyped value to that type (#549).
+- `use-accumulators` on `xsl:source-document` uses the accumulator of the package that runs the
+  instruction (#549).
+- Inside a used package, `function-lookup()` finds the functions that the package sees (#534).
+- `xsl:accept` does not change a component that `xsl:use-package` overrides (#535).
+- A package can override an abstract component that its used package inherits (#539).
+- `xsl:original` in an attribute set brings the attribute sets that the original uses (#541).
+
+### Streaming
+
+- A question to the processor in a streamed rule streams (#480): `system-property()`,
+  `function-available()`, `element-available()`, `type-available()` and
+  `available-system-properties()` read no input. Over 1,000,000 items, an `accumulator-after()`
+  total followed by `system-property('xsl:product-name')` peaks at 106 MiB (3.1.0: 986 MiB).
+  Reported by Martin Honnen.
+- Constant memory over 1,000,000 items:
+  - streamed `copy-of(path)` in a variable, and in a sequence such as `(copy-of(path), $x)`:
+    approx. 105 MiB (3.1.0: 650 MiB and 1.26 GiB) (#525);
+  - streamed `count(copy-of(path))`: approx. 102 MiB (3.1.0: 1.25 GiB) (#532);
+  - a streamed nested `xsl:apply-templates`: approx. 98 MiB (3.1.0: 932 MiB) (#533).
+- Streamed `count()` over a path that ends in `text()` or `node()` counts those nodes (#486).
+- Streamed `xsl:merge` (#488): a `select` is matched from the document node, a `select` with more
+  than one step streams, the documents of one `xsl:merge-source` are merged in key order, and
+  merged items keep their ancestors. An input that is not in merge-key order gives XTDE2220
+  (#531).
+- `xsl:source-document type=` validates the document against the named type (#487).
+  `input-type-annotations="strip"` applies to `xsl:source-document` (#527).
+- Streamed `copy-of()` and `snapshot()` over a sequence such as `(streamed-path, $x)` give the
+  nodes in order (#518). A copy from a streamed snapshot keeps its namespaces in scope (#522).
+- A streamed `xsl:for-each-group select="t/copy-of()"` groups only the selected elements (#519).
+- A streamed positional predicate on the last step of a path (`ITEM[2]`, `ITEM[1]/@CAT`) selects
+  only the elements at that position (#521).
+- Nodes that a streamed descendant path selects keep their ancestors, so upward navigation works
+  (#524). Streamed attributes have their parent element (#552).
+- Streamed accumulators give the same values as the same accumulators over a tree (#528).
+- In a streamable mode with `on-no-match="shallow-skip"`, template rules below an unmatched
+  element run when a nested `xsl:apply-templates` reads that element (#530).
+- The streamability check models `xsl:analyze-string` and `xsl:evaluate`, and a range such as
+  `1 to count(.//*)` is not a crawl (#552). A shallow-descent function whose body is not striding
+  gives XTSE3430 (#536).
+
+### Serialization and output
+
+- html output writes no whitespace in inline content and minimizes boolean attributes (#502).
+- `xsl:map-entry` content gives nodes, and the json method escapes the solidus (#503).
+- An initial template, mode or function name keeps its namespace (#504).
+- `use-character-maps` on `xsl:output` concatenate in import precedence order (#506).
+- The adaptive principal result keeps item order and adaptive forms (#507). The principal result
+  uses the unnamed `xsl:output` (#508). `xsl:result-document` applies its own serialization
+  attributes (#511).
+- A version 1.0 stylesheet keeps the xml method for an XHTML `<html>` root (#509).
+- Text that precedes a comment or processing instruction stays outside it (#510).
+- One result writer does the HTML and XHTML prefix removal, empty and void element forms, the
+  Content-Type meta element and indentation in one pass (#496). html `indent="yes"` does not
+  size a buffer for the whole result (#484).
+- Of two attributes with one expanded name, only the last is written (XSLT 3.0 §11.3, #553).
+
+### Also in this release
+
+- `xsl:attribute type=` keeps its type annotation inside an element under construction (#483).
+  `as="attribute(N, T)"` checks T: an attribute that is not of type T gives XTTE0570.
+- `type-available()` knows the types of an imported schema (#489). An attribute value template
+  or a text value template uses the typed value of a schema-typed node (#490).
+- `format-number()` formats the exponent part of a picture (#491).
+- The string value of an `xsl:document` result does not include comments and processing
+  instructions (#492).
+- `xsl:copy-of` does not copy a default-namespace undeclaration (`xmlns=""`) to a new parent
+  (#493).
+- `element(name)` in a kind test uses `xpath-default-namespace` (#495).
+- Parameter and variable bodies: a literal result element in an `xsl:param` or `xsl:with-param`
+  body gets the default namespace in scope (#512); `xsl:text` and elements together in a parameter
+  body are all kept, in order (#513); attributes from an attribute set stay on their element in a
+  variable body (#514). A local `xsl:param` or `xsl:with-param` whose body is only text gives a
+  document node, as `xsl:variable` does (#515).
+- `generate-id()` gives a different id for each node (#517). The form of an id changes.
+- `fn:analyze-string()` returns an element with no parent, so `analyze-string($s, $re)/*` works,
+  and `parse-xml-fragment("<b/><c/>")/*` gives two elements (#554).
+- A global `xsl:variable` whose body is text, and a variable with `as="text()"`, decode character
+  and entity references: `&amp;amp;` gives `&amp;` (#555).
+- `xsl:catch` of an error raised inside an `xsl:function` keeps the items that the `xsl:try` body
+  writes ahead of the error (#556).
+- An attribute pattern with two or more predicates matches (#552).
+- DocBook xslTNG output equals the expected output of its test suite in the cases that the
+  release gate samples, except for the timestamp.
+
+### `xslt` tool
+
+- Runs on PhoenixmlDb.Xslt 3.2.0 and PhoenixmlDb.XQuery 3.2.0. Includes the fixes for
+  GHSA-5wrq-f8xr-54w5 and GHSA-v27x-ffg3-3wqq.
+- `--streaming-fallback` (#546). An unknown option or a third argument is an error (#481).
+
 ## 3.1.0 — 2026-11-12
 
 Requires PhoenixmlDb.XQuery 3.1.0 and PhoenixmlDb.Core 2.6.0. A limit on the length of built
