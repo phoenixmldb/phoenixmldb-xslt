@@ -3579,7 +3579,7 @@ public sealed partial class StylesheetParser
     /// "xs:anyAtomicType?, item()*". Respects nested parentheses so types like
     /// "function(xs:string) as xs:boolean" are not split incorrectly.
     /// </summary>
-    private static List<XdmSequenceType> ParseFunctionParameterTypes(string paramsPart, XElement? context)
+    private List<XdmSequenceType> ParseFunctionParameterTypes(string paramsPart, XElement? context)
     {
         var result = new List<XdmSequenceType>();
         int depth = 0;

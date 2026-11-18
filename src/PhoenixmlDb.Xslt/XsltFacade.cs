@@ -653,6 +653,17 @@ public sealed class XsltTransformer
             throw new XsltException(
                 $"XPST0008: The type Q{{{ns}}}{local} is not a type of the schemas in scope", location);
         }
+        // An atomic or union type an `as` names (as="my:t", as="t"): XPST0051 unless a schema in
+        // scope defines it (XPath 3.1 §2.5.4; Saxon "Unknown simple type"). It was accepted, and
+        // the value was kept as it was (xslt#550).
+        foreach (var (ns, local, location) in stylesheet.AtomicTypeReferences)
+        {
+            if (SchemaProvider is { } provider
+                && (provider.GetSchemaSimpleType(ns, local) is not null || provider.HasSchemaType(ns, local)))
+                continue;
+            throw new XsltException(
+                $"XPST0051: Q{{{ns}}}{local} is not an atomic or union type of the schemas in scope", location);
+        }
     }
 
     private static IEnumerable<XsltSchemaImport> EnumerateAllSchemaImports(XsltStylesheet stylesheet)

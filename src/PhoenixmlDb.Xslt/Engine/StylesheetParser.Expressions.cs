@@ -1344,6 +1344,27 @@ public sealed partial class StylesheetParser
     // stylesheet when the parse ends.
     private readonly List<(string NamespaceUri, string LocalName, SourceLocation? Location)> _schemaTypeReferences = [];
 
+    // Atomic or union type names an `as` type names that are not built in (as="my:t", as="t"),
+    // of every module: each must be a simple type of the schemas in scope, which are known only
+    // once the imports are loaded (XPST0051, XPath 3.1 §2.5.4).
+    private readonly List<(string NamespaceUri, string LocalName, SourceLocation? Location)> _atomicTypeReferences = [];
+
+    /// <summary>
+    /// The XSD built-in type names. An xs: name outside this set names no type at all, so a
+    /// SequenceType that uses it is XPST0051 whatever the schemas (Saxon: "Unknown atomic type").
+    /// </summary>
+    private static readonly HashSet<string> XsdBuiltInTypeNames = new(StringComparer.Ordinal)
+    {
+        "anyType", "anySimpleType", "anyAtomicType", "untyped", "untypedAtomic", "error", "numeric",
+        "string", "normalizedString", "token", "language", "NMTOKEN", "NMTOKENS", "Name", "NCName",
+        "ID", "IDREF", "IDREFS", "ENTITY", "ENTITIES", "boolean", "decimal", "integer",
+        "nonPositiveInteger", "negativeInteger", "long", "int", "short", "byte", "nonNegativeInteger",
+        "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte", "positiveInteger", "float",
+        "double", "duration", "yearMonthDuration", "dayTimeDuration", "dateTime", "dateTimeStamp",
+        "time", "date", "gYearMonth", "gYear", "gMonthDay", "gDay", "gMonth", "hexBinary",
+        "base64Binary", "anyURI", "QName", "NOTATION",
+    };
+
     /// <summary>
     /// Records the schema type an element(*, T) or attribute(*, T) type names, outside the XML
     /// Schema namespace, so it can be checked once the schema imports are loaded. The type
@@ -1365,7 +1386,7 @@ public sealed partial class StylesheetParser
         _schemaTypeReferences.Add((uri, local, GetSourceLocation(context)));
     }
 
-    private static XdmSequenceType ParseSequenceType(string type, XElement? context = null)
+    private XdmSequenceType ParseSequenceType(string type, XElement? context = null)
     {
         // Simplified - would use full type parser
         var occurrence = Occurrence.ExactlyOne;
@@ -1476,6 +1497,7 @@ public sealed partial class StylesheetParser
             && typeNamespace.NamespaceName.Length > 0
             && typeNamespace.NamespaceName != "http://www.w3.org/2001/XMLSchema")
         {
+            _atomicTypeReferences.Add((typeNamespace.NamespaceName, type[(typeColon + 1)..], GetSourceLocation(context)));
             return new XdmSequenceType
             {
                 ItemType = ItemType.AnyAtomicType,
@@ -1496,6 +1518,8 @@ public sealed partial class StylesheetParser
         {
             var defaultNamespace = GetXpathDefaultNamespace(context) ?? "";
             if (defaultNamespace != "http://www.w3.org/2001/XMLSchema")
+            {
+                _atomicTypeReferences.Add((defaultNamespace, type, GetSourceLocation(context)));
                 return new XdmSequenceType
                 {
                     ItemType = ItemType.AnyAtomicType,
@@ -1503,6 +1527,7 @@ public sealed partial class StylesheetParser
                     SchemaTypeNamespace = defaultNamespace,
                     SchemaTypeLocalName = type,
                 };
+            }
         }
 
         // Handle parameterized map types: map(xs:string, xs:boolean)
@@ -1516,6 +1541,10 @@ public sealed partial class StylesheetParser
                 var valueTypeStr = inner[(commaIdx + 1)..].Trim();
                 var keyType = ParseAtomicItemType(keyTypeStr);
                 var valueType = ParseAtomicItemType(valueTypeStr);
+                // The two names are read above without the schemas; an unknown one is XPST0051 as
+                // anywhere else in a SequenceType (as="map(xs:string, nosuch)" was accepted).
+                _ = ParseSequenceType(keyTypeStr, context);
+                _ = ParseSequenceType(valueTypeStr, context);
                 return new XdmSequenceType
                 {
                     ItemType = ItemType.Map,
@@ -1658,7 +1687,14 @@ public sealed partial class StylesheetParser
 
         // Handle parameterized array(TYPE) and map(KEY, VALUE) forms
         if (type.StartsWith("array(", StringComparison.Ordinal) && type.EndsWith(')'))
+        {
+            // The member type is not kept, but an unknown type name in it is XPST0051 as
+            // anywhere else in a SequenceType (as="array(nosuch)" was accepted, xslt#550).
+            var member = type[6..^1].Trim();
+            if (member.Length > 0 && member != "*")
+                _ = ParseSequenceType(member, context);
             return new XdmSequenceType { ItemType = ItemType.Array, Occurrence = occurrence };
+        }
         if (type.StartsWith("map(", StringComparison.Ordinal) && type.EndsWith(')'))
             return new XdmSequenceType { ItemType = ItemType.Map, Occurrence = occurrence };
 
@@ -1716,6 +1752,15 @@ public sealed partial class StylesheetParser
                 }
                 return new XdmSequenceType { ItemType = ItemType.Function, Occurrence = occurrence };
             }
+        }
+
+        // An xs: name that is not an XSD built-in type names no type (as="xs:nosuch"). It fell to
+        // the switch's item() default, so any value was accepted (xslt#550).
+        if (type.StartsWith("xs:", StringComparison.Ordinal) && !type.Contains('(', StringComparison.Ordinal)
+            && !XsdBuiltInTypeNames.Contains(type[3..]))
+        {
+            throw new XsltException(
+                $"XPST0051: {type} is not an XSD built-in type", context is null ? null : GetSourceLocation(context));
         }
 
         var itemType = type switch
