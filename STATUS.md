@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-18 00:59 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-18 15:45 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,19 +18,18 @@ Generated 2026-11-18 00:59 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 6 | 0 |
+| phoenixmldb-xslt | 5 | 0 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
-- [550] An as= type name that no schema defines gives no error; spec and Saxon: XPST0051
 - [542] Evaluate global variables lazily (order between trees: sx-union-012/017/022/035, square-array-201)
 - [516] Temporary trees stay in the node store until the transform ends
 - [499] Serializer: extension parameters for indent characters, attribute wrapping and namespace order (#400 part 2)
 - [445] Nightly regression report
-- [13] Backlog triage: 548 failing W3C cases, 217 of them wrong error codes
+- [13] Backlog triage: 57 failing W3C XSLT cases (11,461/11,518 applicable pass)
 
 ### Open PRs
 
@@ -67,10 +66,10 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 11397/11529 (98.86%)** across 225 test-sets,
+- **W3C XSLT 3.0 — 11397/11528 (98.86%)** across 225 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **The denominator moved since the previous baseline revision: XSLT 11539 -> 11529.** A percentage
+- **The denominator moved since the previous baseline revision: XSLT 11529 -> 11528.** A percentage
   change across this revision is partly or wholly cases entering or leaving the count,
   NOT necessarily the engine. Compare pass counts, not percentages, across this line.
 - **W3C QT3 / XQuery** — 99.90% — 31,294 / 31,325 across all 428 catalog test-sets, measured 2026-11-02, Release build.
