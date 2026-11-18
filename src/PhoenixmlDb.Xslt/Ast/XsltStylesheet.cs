@@ -233,6 +233,12 @@ public sealed class XsltStylesheet
     public List<(string NamespaceUri, string LocalName, SourceLocation? Location)> SchemaTypeReferences { get; init; } = new();
 
     /// <summary>
+    /// Atomic or union type names, not built in, that an <c>as</c> type of this module uses
+    /// (as="my:t", as="t"): each must be a simple type of the schemas in scope (XPST0051).
+    /// </summary>
+    internal List<(string NamespaceUri, string LocalName, SourceLocation? Location)> AtomicTypeReferences { get; } = new();
+
+    /// <summary>
     /// Accumulator definitions (XSLT 3.0).
     /// </summary>
     public Dictionary<QName, XsltAccumulator> Accumulators { get; init; } = new();

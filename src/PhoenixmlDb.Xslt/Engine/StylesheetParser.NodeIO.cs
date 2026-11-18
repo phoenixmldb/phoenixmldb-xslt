@@ -58,6 +58,7 @@ public sealed partial class StylesheetParser
 
         var stylesheet = ParseStylesheet(doc.Root!);
         stylesheet.SchemaTypeReferences.AddRange(_schemaTypeReferences);
+        stylesheet.AtomicTypeReferences.AddRange(_atomicTypeReferences);
         // Store the package catalog on the stylesheet for fn:transform package-name resolution
         if (_packageCatalog != null)
             stylesheet.PackageCatalog = _packageCatalog;
@@ -93,6 +94,7 @@ public sealed partial class StylesheetParser
 
         var stylesheet = ParseStylesheet(doc.Root!);
         stylesheet.SchemaTypeReferences.AddRange(_schemaTypeReferences);
+        stylesheet.AtomicTypeReferences.AddRange(_atomicTypeReferences);
         ValidateDecimalFormats(stylesheet);
         ValidateAttributeSetReferences(stylesheet);
         ValidatePatternFunctionReferences(stylesheet);
