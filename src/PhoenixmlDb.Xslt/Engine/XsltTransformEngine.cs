@@ -1046,6 +1046,13 @@ public sealed partial class XsltTransformEngine
             if (outputDecl.Standalone.HasValue)
                 decl += outputDecl.Standalone.Value ? " standalone=\"yes\"" : " standalone=\"no\"";
             decl += "?>";
+            // Indented output starts the markup that follows on a line of its own, as Saxon writes
+            // it; it followed the declaration on the same line. Text that follows it (output that
+            // is not a well-formed document) is not changed: a newline there would be content
+            // (W3C whitespace-022/023).
+            var indented = outputDecl.Indent ?? (outputDecl.EffectiveMethod == OutputMethod.Xhtml);
+            if (indented && output.Length > 0 && output[0] == '<')
+                decl += "\n";
             output = decl + output;
         }
 
@@ -2957,7 +2964,14 @@ public sealed partial class XsltTransformEngine
     /// and not in an element that has text (mixed content), nor in anything inside it, until that
     /// element ends. A suppress-indentation element counts as one with text.
     /// </remarks>
-    internal static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null)
+    /// <param name="output">The serialized result.</param>
+    /// <param name="suppressIndentation">Elements whose content is not indented.</param>
+    /// <param name="xhtml">
+    /// True for the XHTML method, whose empty elements keep the space before <c>/&gt;</c>
+    /// (<c>&lt;br /&gt;</c>, for HTML user agents); the XML method writes <c>&lt;e/&gt;</c>, as
+    /// it does unindented and as Saxon does.
+    /// </param>
+    internal static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null, bool xhtml = false)
     {
         // The XML declaration is written as it is, then a newline, and the rest is read from
         // after it and the line ends that follow it. The text is not copied to do so: the
@@ -3054,6 +3068,15 @@ public sealed partial class XsltTransformEngine
                         if (empty)
                         {
                             xw.WriteEndElement();
+                            // XmlWriter always writes "<e />". The XML method writes "<e/>", as the
+                            // unindented output does: indent="yes" changed the empty tags too.
+                            if (!xhtml)
+                            {
+                                xw.Flush();
+                                var n = buffer.Length;
+                                if (n >= 3 && buffer[n - 3] == ' ' && buffer[n - 2] == '/' && buffer[n - 1] == '>')
+                                    buffer.Remove(n - 3, 1);
+                            }
                             break;
                         }
                         open.Push((mixed, hasContent));

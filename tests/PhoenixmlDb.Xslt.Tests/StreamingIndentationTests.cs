@@ -26,15 +26,15 @@ public sealed class StreamingIndentationTests
     [Fact]
     public async Task Elements_are_indented_and_mixed_content_is_not()
         => (await RunAsync("", "<r><a><b/></a><m>text<c><d/></c></m></r>"))
-            .Should().Be("<r>\n  <a>\n    <b />\n  </a>\n  <m>text<c><d /></c></m>\n</r>");
+            .Should().Be("<r>\n  <a>\n    <b/>\n  </a>\n  <m>text<c><d/></c></m>\n</r>");
 
     [Fact]
     public async Task Suppress_indentation_matches_the_expanded_name()
         => (await RunAsync("suppress-indentation='p'", "<r><p><a/></p><x:p xmlns:x='urn:x'><a/></x:p></r>"))
-            .Should().Be("<r>\n  <p><a /></p>\n  <x:p xmlns:x=\"urn:x\">\n    <a />\n  </x:p>\n</r>");
+            .Should().Be("<r>\n  <p><a/></p>\n  <x:p xmlns:x=\"urn:x\">\n    <a/>\n  </x:p>\n</r>");
 
     [Fact]
     public async Task Suppress_indentation_names_a_namespaced_element_by_its_namespace()
         => (await RunAsync("suppress-indentation='x:p'", "<r><p><a/></p><x:p xmlns:x='urn:x'><a/></x:p></r>"))
-            .Should().Be("<r>\n  <p>\n    <a />\n  </p>\n  <x:p xmlns:x=\"urn:x\"><a /></x:p>\n</r>");
+            .Should().Be("<r>\n  <p>\n    <a/>\n  </p>\n  <x:p xmlns:x=\"urn:x\"><a/></x:p>\n</r>");
 }
