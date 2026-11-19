@@ -216,6 +216,43 @@ try
         transformer.SetInitialMode(mName, mNs);
     }
 
+    // --global-context-item: a separate global context item (XSLT 3.0 §2.3.2), a local path or an
+    // http(s):// URL. A streamed source cannot be the global context item, so this is how a
+    // stylesheet whose globals read "." runs with a streamed source.
+    if (options.GlobalContextItem != null)
+    {
+        string gciXml;
+        Uri gciUri;
+        try
+        {
+            if (Uri.TryCreate(options.GlobalContextItem, UriKind.Absolute, out var gciAbs)
+                && (gciAbs.Scheme == Uri.UriSchemeHttp || gciAbs.Scheme == Uri.UriSchemeHttps))
+            {
+                using var gciHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                gciHttp.DefaultRequestHeaders.UserAgent.ParseAdd("PhoenixmlDb.Xslt");
+                gciXml = await gciHttp.GetStringAsync(gciAbs).ConfigureAwait(true);
+                gciUri = gciAbs;
+            }
+            else
+            {
+                var gciPath = Path.GetFullPath(options.GlobalContextItem);
+                if (!File.Exists(gciPath))
+                {
+                    await Console.Error.WriteLineAsync($"Error: Global context item file not found: {options.GlobalContextItem}").ConfigureAwait(true);
+                    return 1;
+                }
+                gciXml = await PhoenixmlDb.Xslt.XmlSourceReader.ReadAsync(gciPath).ConfigureAwait(true);
+                gciUri = new Uri(gciPath);
+            }
+            transformer.SetGlobalContextItem(gciXml, gciUri);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Xml.XmlException or IOException)
+        {
+            await Console.Error.WriteLineAsync($"Error: Cannot read the global context item '{options.GlobalContextItem}': {ex.Message}").ConfigureAwait(true);
+            return 1;
+        }
+    }
+
     // Load source document — accept either a local path or an http(s):// URL, mirroring
     // the stylesheet-loading code path. Streaming mode (-s) requires a local file because
     // we hand File.OpenRead to the streaming transformer; an HTTP source is downloaded
@@ -646,6 +683,13 @@ static void PrintUsage()
                              not guaranteed streamable with a buffer of the input
                              it reads, instead of reporting XTSE3430. Memory then
                              grows with what is buffered.
+          --global-context-item <path>
+                             Use the document at this path or http(s) URL as the
+                             global context item: the context item of global
+                             variables and parameters. A streamed source cannot
+                             be the global context item (XSLT 3.0 section 2.3.2),
+                             so use this when a stylesheet with a streamable
+                             initial mode has globals that read the context item.
           --validation <strict|lax>
                              Validate the source document against the schemas the
                              stylesheet imports, so its nodes are typed. An invalid
@@ -699,6 +743,8 @@ file sealed class CliOptions
     public bool NoStream { get; init; }
     /// <summary>True if the user passed <c>--strict-streaming</c>.</summary>
     public bool StrictStreaming { get; init; }
+    /// <summary><c>--global-context-item</c>: a path or URI of an XML document whose document node is the global context item.</summary>
+    public string? GlobalContextItem { get; init; }
     /// <summary>True if the user passed <c>--streaming-fallback</c>.</summary>
     public bool StreamingFallback { get; init; }
     /// <summary>
@@ -746,6 +792,8 @@ file sealed class CliOptions
         var expectingTemplate = false;
         var expectingMode = false;
         var expectingValidation = false;
+        var expectingGlobalContextItem = false;
+        string? globalContextItem = null;
         PhoenixmlDb.Xslt.Ast.ValidationMode? sourceValidation = null;
         string? invalidValidation = null;
         string? unknownArgument = null;
@@ -756,6 +804,7 @@ file sealed class CliOptions
             if (expectingOutputDir) { outputDir = arg; expectingOutputDir = false; continue; }
             if (expectingTemplate) { initialTemplate = arg; expectingTemplate = false; continue; }
             if (expectingMode) { initialMode = arg; expectingMode = false; continue; }
+            if (expectingGlobalContextItem) { globalContextItem = arg; expectingGlobalContextItem = false; continue; }
             if (expectingValidation)
             {
                 sourceValidation = ValidationMode(arg);
@@ -812,6 +861,9 @@ file sealed class CliOptions
                     break;
                 case "--no-stream":
                     noStream = true;
+                    break;
+                case "--global-context-item":
+                    expectingGlobalContextItem = true;
                     break;
                 case "--strict-streaming":
                     strictStreaming = true;
@@ -877,6 +929,7 @@ file sealed class CliOptions
             NoStream = noStream,
             StrictStreaming = strictStreaming,
             StreamingFallback = streamingFallback,
+            GlobalContextItem = globalContextItem,
             SourceValidation = sourceValidation,
             InvalidValidation = expectingValidation ? "" : invalidValidation,
             UnknownArgument = unknownArgument,
