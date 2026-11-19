@@ -17,10 +17,17 @@ using OrderedXdmMap = PhoenixmlDb.XQuery.Execution.OrderedXdmMap;
 namespace PhoenixmlDb.Xslt.Engine;
 
 /// <summary>
-/// Wraps a callable item in a coercion wrapper per XSLT 3.0 §5.4.11.
-/// At invocation time, validates return value against the declared return type.
-/// Argument type mismatches are detected naturally when the inner callable rejects them.
+/// Wraps a callable item in a coercion wrapper (function coercion, XPath 3.1 §3.1.5.3; XSLT 3.0
+/// §5.4.11). At invocation time each argument is converted to the wrapper's parameter type
+/// (xs:untypedAtomic is cast, numerics are promoted) before the inner callable gets it, and the
+/// return value is checked against the declared return type.
 /// </summary>
+/// <remarks>
+/// The arguments were passed through as they were. Bound to function(xs:double),
+/// function($x as xs:float) then got an xs:decimal and promoted it to xs:float itself; the
+/// wrapper must give it an xs:double, which it cannot take: XPTY0004 (W3C
+/// higher-order-functions-066, as Saxon-HE 12.10).
+/// </remarks>
 internal sealed class FunctionCoercionWrapper : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
     private readonly PhoenixmlDb.XQuery.Ast.XQueryFunction _innerFunction;
@@ -56,14 +63,54 @@ internal sealed class FunctionCoercionWrapper : PhoenixmlDb.XQuery.Ast.XQueryFun
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
-        // Pass arguments through — atomization, untypedAtomic casting, and numeric
-        // promotion are handled by the dynamic function call mechanism
-        var result = await _innerFunction.InvokeAsync(arguments, context).ConfigureAwait(false);
+        var converted = new object?[arguments.Count];
+        for (var i = 0; i < arguments.Count; i++)
+            converted[i] = i < _declaredParamTypes.Count
+                ? ConvertArgument(arguments[i], _declaredParamTypes[i].ItemType)
+                : arguments[i];
+        var result = await _innerFunction.InvokeAsync(converted, context).ConfigureAwait(false);
 
         // Validate return value against declared return type
         ValidateCoercedReturnValue(result, _declaredReturnType, _innerFunction.Name.LocalName);
 
         return result;
+    }
+
+    /// <summary>
+    /// The function conversion rules for one argument, as far as they change the value: an
+    /// xs:untypedAtomic is cast to an atomic parameter type, and a numeric is promoted to
+    /// xs:double, xs:float or xs:decimal. Anything else is passed on for the inner callable to
+    /// check.
+    /// </summary>
+    private static object? ConvertArgument(object? value, ItemType target)
+    {
+        if (value is object?[] items)
+        {
+            object?[]? copy = null;
+            for (var i = 0; i < items.Length; i++)
+            {
+                var c = ConvertArgument(items[i], target);
+                if (!ReferenceEquals(c, items[i]))
+                    (copy ??= (object?[])items.Clone())[i] = c;
+            }
+            return copy ?? value;
+        }
+        if (value is null || target is ItemType.Item or ItemType.AnyAtomicType
+            || XQuery.Execution.TypeCastHelper.MatchesItemType(value, target))
+            return value;
+        if (value is XsUntypedAtomic && target is not (ItemType.Node or ItemType.Element or ItemType.Attribute
+                or ItemType.Text or ItemType.Document or ItemType.Comment or ItemType.ProcessingInstruction
+                or ItemType.Function or ItemType.Map or ItemType.Array))
+            return XQuery.Execution.TypeCastHelper.CastValue(value, target);
+        var promotable = target switch
+        {
+            ItemType.Double => value is int or long or float or decimal or BigInteger,
+            ItemType.Float => value is int or long or decimal or BigInteger,
+            ItemType.Decimal => value is int or long or BigInteger,
+            ItemType.String => value is XsAnyUri,
+            _ => false,
+        };
+        return promotable ? XQuery.Execution.TypeCastHelper.PromoteNumeric(value, target) : value;
     }
 
     private static void ValidateCoercedReturnValue(object? result, XdmSequenceType declaredReturn, string funcName)

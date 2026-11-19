@@ -1207,6 +1207,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // nothing returns Array.Empty, while the same param written select="()" returns null.
         if (value is object?[] { Length: 0 })
             return value;
+        if (targetType is { ItemType: ItemType.Function, FunctionParameterTypes: not null })
+            return CoerceFunctionItems(value, targetType);
         // For sequence types (*, +), coerce each item individually rather than
         // joining the whole array into a single value (e.g., xs:string* should
         // produce an array of strings, not one space-joined string).
@@ -1345,6 +1347,8 @@ internal sealed partial class DefaultXsltExecutionContext
 
     internal static object? CoerceSelectValueToDeclaredType(object? value, XdmSequenceType? asType)
     {
+        if (asType is { ItemType: ItemType.Function, FunctionParameterTypes: not null } && value != null)
+            return CoerceFunctionItems(value, asType); // a global variable of a typed function type
         if (asType == null || value == null || !IsCastableAtomicType(asType.ItemType))
             return value;
         return CoerceToType(value, asType);
@@ -1683,6 +1687,36 @@ internal sealed partial class DefaultXsltExecutionContext
         return true;
     }
 
+
+    /// <summary>
+    /// Function coercion (XPath 3.1 §3.1.5.3), part of the function conversion rules: a function
+    /// item whose signature does not match a typed function type is wrapped in one that has that
+    /// signature (<see cref="FunctionCoercionWrapper"/>). A variable, parameter or with-param of a
+    /// typed function type kept the item as it was. A function item of the wrong arity is left for
+    /// the type check to reject.
+    /// </summary>
+    internal static object? CoerceFunctionItems(object? value, XdmSequenceType targetType)
+    {
+        var parameterTypes = targetType.FunctionParameterTypes!;
+        object? Coerce(object? item) =>
+            item is XQueryFunction fn
+                && fn.Arity == parameterTypes.Count
+                && !XQuery.Execution.TypeCastHelper.MatchesFunctionType(fn, parameterTypes, targetType.FunctionReturnType)
+                ? new FunctionCoercionWrapper(fn, parameterTypes, targetType.FunctionReturnType ?? XdmSequenceType.ZeroOrMoreItems)
+                : item;
+        if (value is object?[] items)
+        {
+            object?[]? coerced = null;
+            for (var i = 0; i < items.Length; i++)
+            {
+                var c = Coerce(items[i]);
+                if (!ReferenceEquals(c, items[i]))
+                    (coerced ??= (object?[])items.Clone())[i] = c;
+            }
+            return coerced ?? value;
+        }
+        return Coerce(value);
+    }
 
     /// <summary>
     /// Validates the return value of an xsl:function against its declared as type (XTTE0780).

@@ -1331,6 +1331,11 @@ internal sealed partial class DefaultXsltExecutionContext
                     + "but the supplied value is an empty sequence");
             }
 
+            // A typed function type wraps a function item whose signature differs (function
+            // coercion, see CoerceFunctionItems).
+            if (instruction.As is { ItemType: ItemType.Function, FunctionParameterTypes: not null })
+                value = CoerceFunctionItems(value, instruction.As);
+
             // schema-element() and schema-attribute() are node types as well: a body making an
             // attribute for as="schema-attribute(N)" was built as a temporary tree, and a
             // document node cannot hold an attribute (XTDE0420, W3C as-3602).
