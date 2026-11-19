@@ -1089,7 +1089,7 @@ public class XsltTransformerIntegrationTests
         await t.LoadStylesheetAsync("""
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
                             xmlns:f="urn:f" xmlns:xs="http://www.w3.org/2001/XMLSchema">
-              <xsl:function name="f:answer" as="xs:integer"><xsl:sequence select="42"/></xsl:function>
+              <xsl:function name="f:answer" as="xs:integer" visibility="public"><xsl:sequence select="42"/></xsl:function>
             </xsl:stylesheet>
             """);
         t.SetInitialFunction("answer", namespaceUri: "urn:f");
@@ -1464,7 +1464,7 @@ public class XsltTransformerIntegrationTests
                             xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
                             xmlns:xs="http://www.w3.org/2001/XMLSchema"
                             xmlns:f="http://example.com/f">
-              <xsl:function name="f:check" as="xs:boolean">
+              <xsl:function name="f:check" as="xs:boolean" visibility="public">
                 <xsl:sequence select="true()"/>
               </xsl:function>
             </xsl:stylesheet>
