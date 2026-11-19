@@ -17,9 +17,8 @@ public sealed class XsltVariable
 
     /// <summary>
     /// For a static variable, the value its select gave at compile time, when that is a single
-    /// string, boolean or numeric value. A static variable's value is fixed when the stylesheet
-    /// is compiled, when only static variables are in scope (XSLT 3.0 §9.7): a non-static
-    /// global of the same name and higher precedence must not change it (W3C static-027).
+    /// string, boolean or numeric value. Used only where evaluating the select again at run time
+    /// would read a different binding (see <c>GlobalDeclaration.FixedStaticValue</c>).
     /// </summary>
     internal object? CompileTimeValue { get; set; }
     public Visibility Visibility { get; init; } = Visibility.Private;
