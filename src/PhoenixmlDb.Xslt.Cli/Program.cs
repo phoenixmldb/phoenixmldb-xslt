@@ -81,6 +81,10 @@ if (options.ShowHelp || options.Stylesheet == null)
     return options.ShowHelp ? 0 : 1;
 }
 
+// Every output file (-o, and each xsl:result-document) is written to a temporary file next to it
+// and moved into place only when the whole run has succeeded. A failure leaves no partial file and
+// no old file changed; the temporary files are deleted in the finally below.
+var staged = new StagedOutputFiles();
 try
 {
     var totalSw = Stopwatch.StartNew();
@@ -348,7 +352,7 @@ try
                     var dir = Path.GetDirectoryName(path);
                     if (dir != null && !Directory.Exists(dir))
                         Directory.CreateDirectory(dir);
-                    return new StreamWriter(File.Create(path));
+                    return staged.Track(new StreamWriter(File.Create(staged.Stage(path))));
                 };
             }
 
@@ -363,7 +367,7 @@ try
                 // The file is created when the first output arrives: a transformation that fails
                 // before it writes (XTDE3086, a static error found at the start) left an empty
                 // file, or emptied a file of the same name.
-                using var outputStream = new CreateOnWriteFileStream(outputPath);
+                using var outputStream = new CreateOnWriteFileStream(staged.Stage(outputPath));
                 await transformer.TransformAsync(inputStream, outputStream).ConfigureAwait(true);
                 outputStream.EnsureCreated();
             }
@@ -462,7 +466,7 @@ try
             var outputDir = Path.GetDirectoryName(outputPath);
             if (outputDir != null && !Directory.Exists(outputDir))
                 Directory.CreateDirectory(outputDir);
-            await File.WriteAllTextAsync(outputPath, result).ConfigureAwait(true);
+            await File.WriteAllTextAsync(staged.Stage(outputPath), result).ConfigureAwait(true);
         }
         else
         {
@@ -485,7 +489,7 @@ try
             var secondaryDir = Path.GetDirectoryName(secondaryPath);
             if (secondaryDir != null && !Directory.Exists(secondaryDir))
                 Directory.CreateDirectory(secondaryDir);
-            await File.WriteAllTextAsync(secondaryPath, content).ConfigureAwait(true);
+            await File.WriteAllTextAsync(staged.Stage(secondaryPath), content).ConfigureAwait(true);
 
             if (options.Verbose)
                 await Console.Error.WriteLineAsync($"  wrote: {secondaryPath}").ConfigureAwait(true);
@@ -516,6 +520,7 @@ try
             .ConfigureAwait(true);
     }
 
+    staged.Commit();
     return 0;
 }
 catch (PhoenixmlDb.Xslt.Engine.XsltException ex)
@@ -591,6 +596,11 @@ catch (Exception ex)
     else
         await Console.Error.WriteLineAsync("(run with --verbose for the stack trace)").ConfigureAwait(true);
     return 2;
+}
+finally
+{
+    // Deletes the temporary files of a run that did not reach Commit.
+    staged.Dispose();
 }
 
 // Turns an xsl:result-document href into a filesystem path.
@@ -1063,5 +1073,91 @@ file sealed class CreateOnWriteFileStream(string path) : Stream
     {
         if (_file is not null) await _file.DisposeAsync().ConfigureAwait(false);
         await base.DisposeAsync().ConfigureAwait(false);
+    }
+}
+
+/// <summary>
+/// Output files written to temporary files in their own directories and moved into place together
+/// by <see cref="Commit"/>, once the whole run has succeeded. <see cref="Dispose"/> deletes the
+/// temporary files that were not committed: after a failed run, no partial file is left and an
+/// existing file of the same name is unchanged.
+/// </summary>
+file sealed class StagedOutputFiles : IDisposable
+{
+    private readonly Dictionary<string, string> _tempByFinal = new(StringComparer.Ordinal);
+
+    /// <summary>The temporary path to write for <paramref name="finalPath"/>.</summary>
+    public string Stage(string finalPath)
+    {
+        var full = Path.GetFullPath(finalPath);
+        var dir = Path.GetDirectoryName(full)!;
+        if (_tempByFinal.Remove(full, out var previous))
+            TryDelete(previous);
+        var temp = Path.Combine(dir, $".{Path.GetFileName(full)}.{Guid.NewGuid():N}.tmp");
+        _tempByFinal[full] = temp;
+        return temp;
+    }
+
+    private readonly List<IDisposable> _writers = [];
+
+    /// <summary>
+    /// Keeps a writer the library was handed for a staged file, so it is closed before the file
+    /// is moved: the library writes and flushes a result-document writer but does not dispose it.
+    /// </summary>
+    public TextWriter Track(TextWriter writer)
+    {
+        _writers.Add(writer);
+        return writer;
+    }
+
+    private void CloseWriters(bool afterFailure = false)
+    {
+        foreach (var writer in _writers)
+        {
+            try
+            {
+                writer.Dispose();
+            }
+            catch (IOException) when (afterFailure)
+            {
+                // The run has already failed; its staged files are deleted next.
+            }
+        }
+        _writers.Clear();
+    }
+
+    /// <summary>Moves every staged file into place, replacing an existing file.</summary>
+    public void Commit()
+    {
+        CloseWriters();
+        foreach (var (final, temp) in _tempByFinal.ToList())
+        {
+            if (File.Exists(temp))
+                File.Move(temp, final, overwrite: true);
+            _tempByFinal.Remove(final);
+        }
+    }
+
+    public void Dispose()
+    {
+        CloseWriters(afterFailure: true);
+        foreach (var temp in _tempByFinal.Values)
+            TryDelete(temp);
+        _tempByFinal.Clear();
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+            // Best effort: a temporary file that cannot be deleted is left behind, never moved into place.
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 }
