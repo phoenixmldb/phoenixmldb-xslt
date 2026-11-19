@@ -1,12 +1,12 @@
 # Status
 
-Generated 2026-11-19 00:27 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-19 15:50 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.6.1 | 2.6.1 | current |
+| `PhoenixmlDb.Core` | 2.6.2 | 2.6.2 | current |
 | `PhoenixmlDb.XQuery` | 3.2.0 | 3.2.0 | current |
 | `PhoenixmlDb.Xslt` | 3.2.0 | 3.2.0 | current |
 | `xquery4` | 3.2.0 | 3.2.0 | current |
@@ -18,7 +18,7 @@ Generated 2026-11-19 00:27 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 7 | 0 |
+| phoenixmldb-xslt | 7 | 1 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
@@ -34,6 +34,10 @@ Generated 2026-11-19 00:27 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 57 failing W3C XSLT cases (11,461/11,518 applicable pass)
 
 ### Open PRs
+
+**phoenixmldb-xslt**
+
+- [569] build: Bump the phoenixmldb-engines group with 1 update
 
 ## Defect register
 
