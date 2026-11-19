@@ -1600,6 +1600,15 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         if (asType is null)
             return;
+        // schema-element(N) and schema-attribute(N) need the schema's declaration of N (and its
+        // substitution group), which the matcher does not have; as for a local variable, only
+        // the node kind and the cardinality are checked (W3C as-1810, as-3201, as-3502).
+        if (asType.ItemType is ItemType.SchemaElement or ItemType.SchemaAttribute)
+            asType = new XdmSequenceType
+            {
+                ItemType = asType.ItemType == ItemType.SchemaElement ? ItemType.Element : ItemType.Attribute,
+                Occurrence = asType.Occurrence,
+            };
         var items = value switch
         {
             null => [],
