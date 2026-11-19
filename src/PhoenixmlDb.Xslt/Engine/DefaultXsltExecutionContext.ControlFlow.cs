@@ -1201,6 +1201,31 @@ internal sealed partial class DefaultXsltExecutionContext
     /// xsl:with-param bindings overwrite them on each iteration. xsl:on-completion
     /// runs after the last item (or on early break — same as non-streaming impl).
     /// </summary>
+    /// <summary>
+    /// The value of an <c>xsl:next-iteration/xsl:with-param</c>, converted first to the
+    /// with-param's own <c>as</c> type and then to the <c>as</c> type of the matching
+    /// <c>xsl:iterate/xsl:param</c>, by the function conversion rules (XSLT 3.0 §9.3, §8.3).
+    /// The with-param's type was not applied, so <c>select="$total, @len" as="xs:double*"</c>
+    /// kept the attribute node (W3C iterate-039); the streamed loop applied neither type.
+    /// </summary>
+    private object? ConvertNextIterationValue(XsltIterate instruction, XsltWithParam withParam, object? value)
+    {
+        // A value the type does not allow is XTTE0570 for the with-param, which is a
+        // variable-binding element (§9.3), and XTTE0590 for the xsl:param, as for a template's.
+        if (withParam.As != null)
+        {
+            value = CoerceToType(value, withParam.As);
+            ValidateValueMatchesType(value, withParam.As, "XTTE0570", $"xsl:with-param ${withParam.Name.LocalName}");
+        }
+        var declared = instruction.Params.FirstOrDefault(p => p.Name == withParam.Name);
+        if (declared?.As != null)
+        {
+            value = CoerceToType(value, declared.As);
+            ValidateValueMatchesType(value, declared.As, "XTTE0590", $"Parameter ${withParam.Name.LocalName}");
+        }
+        return value;
+    }
+
     private async ValueTask IterateStreamingAsync(XsltIterate instruction)
     {
         var reader = _activeStreamingReader!;
@@ -1319,7 +1344,7 @@ internal sealed partial class DefaultXsltExecutionContext
                             value = await EvaluateBodyContentToValueAsync(p.Content).ConfigureAwait(false);
                         else
                             value = null;
-                        newValues.Add((p.Name, value));
+                        newValues.Add((p.Name, ConvertNextIterationValue(instruction, p, value)));
                     }
                     foreach (var (name, value) in newValues)
                         SetVariable(name, value);
@@ -1772,13 +1797,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         {
                             value = null;
                         }
-                        // Apply type coercion based on the matching xsl:param's as type
-                        var matchingParam = instruction.Params.FirstOrDefault(p => p.Name == param.Name);
-                        if (matchingParam?.As != null && value != null)
-                        {
-                            value = CoerceToType(value, matchingParam.As);
-                        }
-                        newValues.Add((param.Name, value));
+                        newValues.Add((param.Name, ConvertNextIterationValue(instruction, param, value)));
                     }
                     // Now apply all new values
                     foreach (var (name, val) in newValues)

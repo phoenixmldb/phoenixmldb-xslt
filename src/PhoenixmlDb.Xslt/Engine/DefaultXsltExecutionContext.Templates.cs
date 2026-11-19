@@ -727,6 +727,11 @@ internal sealed partial class DefaultXsltExecutionContext
                     if (!_isStreamingExecution || _streamingDispatchElementMaterialized)
                         await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
                 }
+                else if (node is List<object?> array)
+                {
+                    // An array: apply templates to its members (XSLT 3.0 §6.7.5).
+                    await ApplyBuiltInToArrayMembersAsync(array, mode, withParams).ConfigureAwait(false);
+                }
                 break;
             case OnNoMatchBehavior.Fail:
                 // XsltException, not InvalidOperationException: this is a spec-defined dynamic
@@ -848,6 +853,56 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// The built-in rule for an array in the text-only-copy and shallow-skip modes (XSLT 3.0
+    /// §6.7.1, §6.7.5): <c>&lt;xsl:apply-templates select="?*" mode="#current"/&gt;</c>, with the
+    /// parameters the rule was given. The rule did nothing, so <c>apply-templates</c> on an array
+    /// of elements matched none of them (W3C arrays-301, arrays-302).
+    /// </summary>
+    private async ValueTask ApplyBuiltInToArrayMembersAsync(List<object?> array, QName? mode, List<XsltWithParam> withParams)
+    {
+        await EnsureStackAsync().ConfigureAwait(false);
+        if (_recursionDepth >= MaxRecursionDepth)
+            throw RecursionLimitExceeded("xsl:apply-templates");
+
+        // ?* is the members' items in order; a member is a sequence, and an empty one adds nothing.
+        var items = new List<object>(array.Count);
+        foreach (var member in array)
+        {
+            if (member is object?[] sequence)
+            {
+                foreach (var item in sequence)
+                    if (item != null)
+                        items.Add(item);
+            }
+            else if (member != null)
+            {
+                items.Add(member);
+            }
+        }
+
+        var preEvaluatedParams = withParams.Count > 0 ? new Dictionary<QName, object?>() : null;
+        foreach (var param in withParams)
+            preEvaluatedParams![param.Name] = await EvaluateWithParamAsync(param).ConfigureAwait(false);
+
+        _recursionDepth++;
+        try
+        {
+            var position = 0;
+            var lastWasAtomic = false;
+            foreach (var item in items)
+            {
+                position++;
+                lastWasAtomic = await ApplyTemplatesToNodeAsync(
+                    item, position, items.Count, mode, withParams, preEvaluatedParams, lastWasAtomic).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _recursionDepth--;
+        }
+    }
+
     private async ValueTask ApplyBuiltInTextOnlyCopyAsync(object node, QName? mode, List<XsltWithParam> withParams)
     {
         switch (node)
@@ -907,8 +962,14 @@ internal sealed partial class DefaultXsltExecutionContext
                 // XSLT 3.0 §6.7: Namespace nodes produce no text output
                 break;
             default:
-                // XSLT 3.0 §6.7: Function items (maps, arrays, functions) — no action
-                if (node is IDictionary<object, object?> or List<object?> or XQueryFunction)
+                // An array: apply templates to its members (XSLT 3.0 §6.7.1).
+                if (node is List<object?> array)
+                {
+                    await ApplyBuiltInToArrayMembersAsync(array, mode, withParams).ConfigureAwait(false);
+                    break;
+                }
+                // Other function items (maps, functions): no action (XSLT 3.0 §6.7.1)
+                if (node is IDictionary<object, object?> or XQueryFunction)
                     break;
                 // Atomic values: output string value (XSLT 3.0 §6.7)
                 if (node is not XdmNode)
