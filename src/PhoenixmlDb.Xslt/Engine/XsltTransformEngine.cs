@@ -4021,7 +4021,11 @@ public sealed partial class XsltTransformEngine
                 context._globalsBeingEvaluated.Add(global.Name);
                 try
                 {
-                    var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
+                    // A static variable keeps the value it was given at compile time (see
+                    // XsltVariable.CompileTimeValue).
+                    var value = global.OriginalDeclaration is Ast.XsltVariable { Static: true, CompileTimeValue: { } fixedValue }
+                        ? fixedValue
+                        : await context.EvaluateAsync(global.Select).ConfigureAwait(false);
                     context.CheckKindTestTypes(value, global.As, global.Name);
                     var bound = context.CastToDeclaredSchemaType(
                         DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
@@ -4502,7 +4506,11 @@ public sealed partial class XsltTransformEngine
                 context._globalsBeingEvaluated.Add(global.Name);
                 try
                 {
-                    var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
+                    // A static variable keeps the value it was given at compile time (see
+                    // XsltVariable.CompileTimeValue).
+                    var value = global.OriginalDeclaration is Ast.XsltVariable { Static: true, CompileTimeValue: { } fixedValue }
+                        ? fixedValue
+                        : await context.EvaluateAsync(global.Select).ConfigureAwait(false);
                     context.CheckKindTestTypes(value, global.As, global.Name);
                     var bound = context.CastToDeclaredSchemaType(
                         DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
