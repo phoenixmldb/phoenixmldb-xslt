@@ -1747,9 +1747,15 @@ public sealed class XsltTestRunner
             // compares against TAB,LF,LF and cannot match however right the engine is. That is
             // the SAME defect this session fixed in the XSLT engine, reproduced here in the
             // harness — and it masked the engine fix completely.
+            // An assert is an XPath expression, and XPath has no entity references: the catalog's
+            // XML parser has already decoded "&amp;" to "&", so a string literal such as
+            // "Special characters$&" holds a bare ampersand. Parsed with XQuery's rules that is a
+            // syntax error, and the assert failed however right the result (W3C regex-070l).
+            // AllowRawAmpersand takes string literals verbatim; the prolog below stays XQuery.
             var parser = new PhoenixmlDb.XQuery.Parser.XQueryParserFacade
             {
                 AllowNamespaceAxis = true,
+                AllowRawAmpersand = true,
                 NormalizeLineEndings = false
             };
             var prolog = new System.Text.StringBuilder();
