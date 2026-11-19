@@ -416,6 +416,8 @@ public sealed partial class StylesheetParser
                                     GetSourceLocation(child));
                         }
                         _staticVariables[varKey] = newVal;
+                        if (newVal is string or bool or long or int or System.Numerics.BigInteger or decimal or double or float)
+                            variable.CompileTimeValue = newVal;
                     }
                     break;
 

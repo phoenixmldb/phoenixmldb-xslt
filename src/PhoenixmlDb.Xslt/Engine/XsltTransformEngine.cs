@@ -3859,6 +3859,7 @@ public sealed partial class XsltTransformEngine
         var globals = new List<GlobalDeclaration>();
         var seenNames = new HashSet<QName>();
         CollectGlobalDeclarations(_stylesheet, globals, seenNames);
+        FixStaticValuesThatReadNonStaticGlobals(globals);
 
         // Build dependency graph: which globals does each global depend on?
         var globalNames = new HashSet<QName>(globals.Select(g => g.Name));
@@ -4021,7 +4022,8 @@ public sealed partial class XsltTransformEngine
                 context._globalsBeingEvaluated.Add(global.Name);
                 try
                 {
-                    var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
+                    var value = global.FixedStaticValue
+                        ?? await context.EvaluateAsync(global.Select).ConfigureAwait(false);
                     context.CheckKindTestTypes(value, global.As, global.Name);
                     var bound = context.CastToDeclaredSchemaType(
                         DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
@@ -4502,7 +4504,8 @@ public sealed partial class XsltTransformEngine
                 context._globalsBeingEvaluated.Add(global.Name);
                 try
                 {
-                    var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
+                    var value = global.FixedStaticValue
+                        ?? await context.EvaluateAsync(global.Select).ConfigureAwait(false);
                     context.CheckKindTestTypes(value, global.As, global.Name);
                     var bound = context.CastToDeclaredSchemaType(
                         DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
@@ -4881,6 +4884,29 @@ public sealed partial class XsltTransformEngine
                         deps.Add(varDep);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Sets <see cref="GlobalDeclaration.FixedStaticValue"/> for each static variable whose
+    /// select reads a global that the winning declarations make non-static.
+    /// </summary>
+    private static void FixStaticValuesThatReadNonStaticGlobals(List<GlobalDeclaration> globals)
+    {
+        var nonStatic = globals
+            .Where(g => g.OriginalDeclaration is not (Ast.XsltVariable { Static: true } or Ast.XsltParam { Static: true }))
+            .Select(g => g.Name)
+            .ToHashSet();
+        if (nonStatic.Count == 0)
+            return;
+        foreach (var global in globals)
+        {
+            if (global.OriginalDeclaration is not Ast.XsltVariable { Static: true, CompileTimeValue: { } value } || global.Select is null)
+                continue;
+            var collector = new DependencyCollector();
+            collector.Walk(global.Select);
+            if (collector.VariableRefs.Overlaps(nonStatic))
+                global.FixedStaticValue = value;
         }
     }
 

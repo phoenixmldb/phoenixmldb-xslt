@@ -14,6 +14,13 @@ public sealed class XsltVariable
     public XQueryExpression? Select { get; init; }
     public XsltSequenceConstructor? Content { get; init; }
     public bool Static { get; init; }
+
+    /// <summary>
+    /// For a static variable, the value its select gave at compile time, when that is a single
+    /// string, boolean or numeric value. Used only where evaluating the select again at run time
+    /// would read a different binding (see <c>GlobalDeclaration.FixedStaticValue</c>).
+    /// </summary>
+    internal object? CompileTimeValue { get; set; }
     public Visibility Visibility { get; init; } = Visibility.Private;
     /// <summary>Raw visibility attribute value (null when absent). Distinguishes an
     /// explicitly-declared public/final component from the parser's public default,

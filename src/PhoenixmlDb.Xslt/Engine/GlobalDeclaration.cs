@@ -35,4 +35,13 @@ internal sealed class GlobalDeclaration
     /// reference to a private sibling global resolves (private-across-boundary enforcement).
     /// </summary>
     public XsltStylesheet? PackageStylesheet { get; init; }
+
+    /// <summary>
+    /// The compile-time value of a static variable whose select reads a global that, at run
+    /// time, is a non-static declaration of higher import precedence. A static variable's value
+    /// is fixed at compile time, when only static variables are in scope (XSLT 3.0 §9.7), so
+    /// evaluating it again would read the wrong binding (W3C static-027). Null otherwise: then
+    /// the select is evaluated at run time, which agrees with the compile-time value.
+    /// </summary>
+    public object? FixedStaticValue { get; set; }
 }
