@@ -324,13 +324,19 @@ public sealed partial class XsltTransformEngine
 
         // When there is no source document, the context item is absent during global variable
         // evaluation (XSLT 3.0 §5.4.1: global variables are evaluated with the initial focus).
-        if (!options.HasSourceDocument)
+        // It is absent too when the source is the streamed input of a streamable initial mode
+        // (§2.3.2), also when the engine reads that input into a tree because the streaming pass
+        // cannot answer the stylesheet: the result must not depend on that choice. A global that
+        // reads the context item then raises XPDY0002, as in the streaming pass and as Saxon-EE
+        // does; it took the whole document instead.
+        var absentGlobalFocus = !options.HasSourceDocument || options.GlobalFocusAbsent;
+        if (absentGlobalFocus)
             context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
 
         // Initialize global parameters and variables in dependency order
         await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
 
-        if (!options.HasSourceDocument)
+        if (absentGlobalFocus)
             context.PopContextItem();
 
         // Bind initial parameters as global variables (overriding stylesheet defaults)
@@ -347,7 +353,7 @@ public sealed partial class XsltTransformEngine
         EnforceGlobalContextItem(options);
 
         // xsl:global-context-item type checking
-        if (_stylesheet.GlobalContextItemAs != null && options.HasSourceDocument)
+        if (_stylesheet.GlobalContextItemAs != null && options.HasSourceDocument && !options.GlobalFocusAbsent)
         {
             var typeMatches = XQuery.Execution.TypeCastHelper.MatchesSequenceItemType(source, _stylesheet.GlobalContextItemAs);
 
@@ -5208,6 +5214,8 @@ public sealed partial class XsltTransformEngine
             || (options?.HasSourceDocument == false
                 && _stylesheet.NamedTemplates.Keys.Any(k => k.LocalName == "initial-template"));
         var initialModeKey = options?.InitialMode ?? new QName(NamespaceId.None, "");
+        if (options != null)
+            options.GlobalFocusAbsent = SourceIsStreamedInput(options, entryIsInitialTemplate);
         // DisableStreaming: the caller asked for tree evaluation (the CLI's --no-stream). Without
         // it a streamable initial mode always took the streaming pass here, so --no-stream changed
         // nothing (xslt#295).
@@ -5369,6 +5377,20 @@ public sealed partial class XsltTransformEngine
             context._streamingOutputHeld--;
         }
     }
+
+    /// <summary>
+    /// Whether the source of this transformation is the streamed input of a streamable initial
+    /// mode, so that there is no global context item (XSLT 3.0 §2.3.2; §2.3.3 Note). That is the
+    /// case unless the caller asked for tree evaluation (<see cref="XsltTransformOptions.DisableStreaming"/>),
+    /// supplied a global context item of its own, or started at a named template or a function,
+    /// where the source is the global context item and not an initial match selection. It does not
+    /// depend on whether the engine then streams the input or reads it into a tree.
+    /// </summary>
+    private bool SourceIsStreamedInput(XsltTransformOptions options, bool entryIsInitialTemplate)
+        => !options.DisableStreaming
+            && options.GlobalContextItem == null
+            && !entryIsInitialTemplate
+            && IsInitialModeStreamable(options.InitialMode);
 
     /// <summary>
     /// Whether the streaming pass from the document node gives the right result for this
