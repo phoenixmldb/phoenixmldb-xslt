@@ -90,24 +90,37 @@ public sealed class SubstringRecursionTests
                 </xsl:template>
                 """)).Should().Be("true true bcd! true 98 1 bcd BCD bcd bcd  cd true");
 
-    // A parameter declared as="xs:string" holds the slice as well (xquery#293); a type derived
-    // from xs:string casts, and holds the string.
+    // A parameter declared as="xs:string" holds the slice as well (xquery#293). A type derived
+    // from xs:string casts an untyped value; the slice of substring() is an xs:string, which the
+    // function conversion rules do not cast to xs:token (XTTE0590, as Saxon-HE 12.10 gives).
     [Theory]
     [InlineData("")]
     [InlineData(" as=\"xs:string\"")]
     public async Task The_walk_over_a_long_string_is_linear_with_or_without_xs_string(string asString)
         => await AssertLinear(asString);
 
-    [Fact]
-    public async Task A_parameter_of_a_type_derived_from_xs_string_casts_the_value()
-        => (await Run("""
-                <xsl:call-template name="tok"><xsl:with-param name="t" select="substring('  a  b ', 1)"/></xsl:call-template>
-                """, """
+    private const string TokenTemplate = """
                 <xsl:template name="tok">
                   <xsl:param name="t" as="xs:token"/>
                   <xsl:value-of select="'[' || $t || ']', $t instance of xs:token"/>
                 </xsl:template>
-                """)).Should().Be("[a b] true");
+                """;
+
+    [Fact]
+    public async Task A_parameter_of_a_type_derived_from_xs_string_casts_an_untyped_value()
+        => (await Run("""
+                <xsl:call-template name="tok"><xsl:with-param name="t" select="xs:untypedAtomic(substring('  a  b ', 1))"/></xsl:call-template>
+                """, TokenTemplate)).Should().Be("[a b] true");
+
+    [Fact]
+    public async Task A_parameter_of_a_type_derived_from_xs_string_does_not_cast_the_slice_of_an_xs_string()
+    {
+        var act = () => Run("""
+                <xsl:call-template name="tok"><xsl:with-param name="t" select="substring('  a  b ', 1)"/></xsl:call-template>
+                """, TokenTemplate);
+
+        (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("XTTE0590");
+    }
 
     [Fact]
     public async Task The_walk_over_a_long_string_is_linear()
