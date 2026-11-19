@@ -360,8 +360,12 @@ try
                 if (outputDir != null && !Directory.Exists(outputDir))
                     Directory.CreateDirectory(outputDir);
                 using var inputStream = File.OpenRead(sourcePath);
-                using var outputStream = File.Create(outputPath);
+                // The file is created when the first output arrives: a transformation that fails
+                // before it writes (XTDE3086, a static error found at the start) left an empty
+                // file, or emptied a file of the same name.
+                using var outputStream = new CreateOnWriteFileStream(outputPath);
                 await transformer.TransformAsync(inputStream, outputStream).ConfigureAwait(true);
+                outputStream.EnsureCreated();
             }
             else
             {
@@ -1003,4 +1007,61 @@ file sealed class LastCharWriter(TextWriter inner) : TextWriter
     public override void Flush() => inner.Flush();
 
     public override Task FlushAsync() => inner.FlushAsync();
+}
+
+/// <summary>
+/// A write-only file stream that creates its file at the first write, or when
+/// <see cref="EnsureCreated"/> is called after a transformation that wrote nothing.
+/// </summary>
+file sealed class CreateOnWriteFileStream(string path) : Stream
+{
+    private FileStream? _file;
+
+    private FileStream File => _file ??= System.IO.File.Create(path);
+
+    /// <summary>Creates the file if no output arrived, so a successful empty result gives an empty file.</summary>
+    public void EnsureCreated() => _ = File;
+
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => true;
+    public override long Length => _file?.Length ?? 0;
+    public override long Position { get => _file?.Position ?? 0; set => throw new NotSupportedException(); }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        if (count > 0) File.Write(buffer, offset, count);
+    }
+
+    public override void Write(ReadOnlySpan<byte> buffer)
+    {
+        if (!buffer.IsEmpty) File.Write(buffer);
+    }
+
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        => count > 0 ? File.WriteAsync(buffer, offset, count, cancellationToken) : Task.CompletedTask;
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        => buffer.IsEmpty ? ValueTask.CompletedTask : File.WriteAsync(buffer, cancellationToken);
+
+    public override void Flush() => _file?.Flush();
+
+    public override Task FlushAsync(CancellationToken cancellationToken)
+        => _file?.FlushAsync(cancellationToken) ?? Task.CompletedTask;
+
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _file?.Dispose();
+        base.Dispose(disposing);
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        if (_file is not null) await _file.DisposeAsync().ConfigureAwait(false);
+        await base.DisposeAsync().ConfigureAwait(false);
+    }
 }

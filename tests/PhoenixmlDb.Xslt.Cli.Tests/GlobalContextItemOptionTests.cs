@@ -58,9 +58,7 @@ public sealed class GlobalContextItemOptionTests : IDisposable
         exit.Should().NotBe(0);
         error.Should().Contain("XTDE3086").And.Contain("--global-context-item").And.Contain("--no-stream");
         output.Should().BeEmpty();
-        // The CLI creates the -o file before the transformation starts; nothing is written to it.
-        var outFile = Path.Combine(_dir, "out.txt");
-        (File.Exists(outFile) ? new FileInfo(outFile).Length : 0).Should().Be(0);
+        File.Exists(Path.Combine(_dir, "out.txt")).Should().BeFalse();
     }
 
     [Fact]
