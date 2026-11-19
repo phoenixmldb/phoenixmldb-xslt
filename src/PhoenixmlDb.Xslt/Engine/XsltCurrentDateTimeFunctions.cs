@@ -12,7 +12,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 // CurrentDateTimeSnapshot shared by the whole transformation instead. The values are built exactly as the XQuery
 // versions build them.
 
-/// <summary>fn:current-dateTime() as xs:dateTime, stable for the whole transformation.</summary>
+/// <summary>fn:current-dateTime() as xs:dateTimeStamp, stable for the whole transformation.</summary>
 internal sealed class XsltCurrentDateTimeFunction(CurrentDateTimeSnapshot snapshot) : XQueryFunction
 {
     public override QName Name => new(FunctionNamespaces.Fn, "current-dateTime");
@@ -20,7 +20,8 @@ internal sealed class XsltCurrentDateTimeFunction(CurrentDateTimeSnapshot snapsh
     public override IReadOnlyList<FunctionParameterDef> Parameters => [];
 
     public override ValueTask<object?> InvokeAsync(IReadOnlyList<object?> arguments, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
-        => ValueTask.FromResult<object?>(new Xdm.XsDateTime(snapshot.Now, true));
+        // F&O 3.1 §15.3.1: fn:current-dateTime() as xs:dateTimeStamp.
+        => ValueTask.FromResult<object?>(new Xdm.XsDateTime(snapshot.Now, true) { IsDateTimeStamp = true });
 }
 
 /// <summary>fn:current-date() as xs:date, stable for the whole transformation.</summary>

@@ -1786,6 +1786,9 @@ public sealed partial class StylesheetParser
             "xs:boolean" => ItemType.Boolean,
             "xs:date" => ItemType.Date,
             "xs:dateTime" => ItemType.DateTime,
+            // Derived from xs:dateTime (a timezone is required). It fell to item(), so
+            // as="xs:dateTimeStamp" took any value, 1 and 'abc' among them.
+            "xs:dateTimeStamp" => ItemType.DateTime,
             "xs:time" => ItemType.Time,
             "xs:anyAtomicType" => ItemType.AnyAtomicType,
             "xs:untypedAtomic" => ItemType.UntypedAtomic,
@@ -1839,6 +1842,7 @@ public sealed partial class StylesheetParser
         "normalizedString", "token", "language", "NMTOKEN", "Name", "NCName", "ID", "IDREF", "ENTITY",
         "long", "int", "short", "byte", "nonNegativeInteger", "positiveInteger", "nonPositiveInteger",
         "negativeInteger", "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte",
+        "dateTimeStamp",
     };
 
 
