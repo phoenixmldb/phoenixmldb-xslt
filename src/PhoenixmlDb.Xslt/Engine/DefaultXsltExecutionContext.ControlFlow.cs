@@ -1322,6 +1322,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 PushCurrentItem(elem);
                 var savedStreaming = _isStreamingExecution;
                 _isStreamingExecution = false; // body iterates a buffered element
+                // The body's locals get a scope of their own, as in IterateAsync (iterate-018).
+                PushScope();
+                List<(QName Name, object? Value)>? newValues = null;
                 try
                 {
                     await instruction.Body.ExecuteAsync(this).ConfigureAwait(false);
@@ -1334,7 +1337,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     // Evaluate all next-iteration with-param values BEFORE writing them,
                     // so params don't see each other's new values during evaluation.
-                    var newValues = new List<(QName Name, object? Value)>();
+                    newValues = new List<(QName Name, object? Value)>();
                     foreach (var p in next.WithParams)
                     {
                         object? value;
@@ -1346,15 +1349,17 @@ internal sealed partial class DefaultXsltExecutionContext
                             value = null;
                         newValues.Add((p.Name, ConvertNextIterationValue(instruction, p, value)));
                     }
-                    foreach (var (name, value) in newValues)
-                        SetVariable(name, value);
                 }
                 finally
                 {
+                    PopScope();
                     _isStreamingExecution = savedStreaming;
                     PopCurrentItem();
                     PopContextItem();
                 }
+                if (newValues != null)
+                    foreach (var (name, value) in newValues)
+                        SetVariable(name, value);
                 if (brokeOut)
                     break;
             }
@@ -1761,6 +1766,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 position++;
                 PushContextItem(item, position, itemCount > 0 ? itemCount : position);
                 PushCurrentItem(item); // For XSLT current() function
+                // The body's local variables live in a scope of their own, one per iteration. In
+                // the parameters' scope, an xsl:variable with a parameter's name replaced the
+                // parameter, and the next iteration started from the local value (W3C
+                // iterate-018). The new parameter values are set after this scope is gone.
+                PushScope();
+                List<(QName Name, object? Value)>? newValues = null;
 
                 try
                 {
@@ -1776,7 +1787,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // Evaluate ALL with-param values first using old parameter values,
                     // then set them all at once. This ensures params don't see each other's
                     // new values during evaluation (XSLT spec requirement).
-                    var newValues = new List<(QName Name, object? Value)>();
+                    newValues = new List<(QName Name, object? Value)>();
                     foreach (var param in next.WithParams)
                     {
                         object? value;
@@ -1799,17 +1810,17 @@ internal sealed partial class DefaultXsltExecutionContext
                         }
                         newValues.Add((param.Name, ConvertNextIterationValue(instruction, param, value)));
                     }
-                    // Now apply all new values
-                    foreach (var (name, val) in newValues)
-                    {
-                        SetVariable(name, val);
-                    }
                 }
                 finally
                 {
+                    PopScope();
                     PopCurrentItem();
                     PopContextItem();
                 }
+                // Now apply all new values, in the parameters' scope
+                if (newValues != null)
+                    foreach (var (name, val) in newValues)
+                        SetVariable(name, val);
             }
 
             // On completion - only runs if iteration completed normally (not via xsl:break)
@@ -1914,7 +1925,11 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         // A deferred GLOBAL variable error is declined here: it notionally occurred before the
         // transformation began, so xsl:try must not catch it however late the lazy rethrow lands.
+        // xsl:break and xsl:next-iteration are not errors: they pass through with the output the
+        // try body wrote before them. Taken as errors, they rolled that output back, and no
+        // xsl:catch matched, so <pos/><xsl:break/> inside xsl:try lost the pos (W3C iterate-035).
         catch (Exception ex) when (!DeferredGlobalError.IsMarked(ex)
+            && ex is not (BreakException or NextIterationException)
             && ex is XsltException or XQuery.Execution.XQueryRuntimeException or XQuery.Functions.XQueryException or InvalidOperationException or FormatException or OverflowException or ArgumentException or NullReferenceException or ArithmeticException)
         {
             // Whatever installed its own accumulator inside the try and did not get to restore
