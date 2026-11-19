@@ -236,6 +236,14 @@ public sealed class XsltTransformOptions
     public bool HasSourceDocument { get; set; }
 
     /// <summary>
+    /// The source is the streamed input of a streamable initial mode, so global variables and
+    /// parameters are evaluated with no context item: XSLT 3.0 §2.3.2 does not allow a node of a
+    /// streamed document as the global context item. Set by the engine for each transformation
+    /// that takes the source as text, a reader or a stream.
+    /// </summary>
+    internal bool GlobalFocusAbsent { get; set; }
+
+    /// <summary>
     /// Cancellation token for cooperative cancellation of transformation.
     /// When cancelled, the transformation throws OperationCanceledException.
     /// </summary>
