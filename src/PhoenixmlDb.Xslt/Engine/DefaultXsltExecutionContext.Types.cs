@@ -1279,8 +1279,10 @@ internal sealed partial class DefaultXsltExecutionContext
             ItemType.Decimal => value is decimal or int or long ? value : decimal.TryParse(StringValueOf(value), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : value,
             // Delegate double/float to the canonical caster so INF/-INF/NaN lexical forms and
             // numeric promotion are handled (attr/as-0113 func3: xs:double('INF')).
-            ItemType.Double => value is double ? value : TryCastToAtomicLenient(value, ItemType.Double),
-            ItemType.Float => value is float ? value : TryCastToAtomicLenient(value, ItemType.Float),
+            // A derived integer (xs:int, xs:short, ...) is promoted as the xs:integer it is; the
+            // caster did not take an XsTypedInteger, so as="xs:double" select="xs:int(3)" was XTTE0570.
+            ItemType.Double => value is double ? value : TryCastToAtomicLenient(value is Xdm.XsTypedInteger di ? di.Value : value, ItemType.Double),
+            ItemType.Float => value is float ? value : TryCastToAtomicLenient(value is Xdm.XsTypedInteger fi ? fi.Value : value, ItemType.Float),
             ItemType.Boolean => CoerceToBoolean(value),
             ItemType.GYear => value is Xdm.XsGYear ? value : new Xdm.XsGYear(StringValueOf(value)),
             ItemType.GYearMonth => value is Xdm.XsGYearMonth ? value : new Xdm.XsGYearMonth(StringValueOf(value)),
@@ -1390,8 +1392,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 continue;
             var promoted = asType.ItemType switch
             {
-                ItemType.Double => item is long or int or decimal or System.Numerics.BigInteger or float,
-                ItemType.Float => item is long or int or decimal or System.Numerics.BigInteger,
+                // A derived integer (xs:int, xs:short, ...) is an XsTypedInteger.
+                ItemType.Double => item is long or int or decimal or System.Numerics.BigInteger or float or Xdm.XsTypedInteger,
+                ItemType.Float => item is long or int or decimal or System.Numerics.BigInteger or Xdm.XsTypedInteger,
                 ItemType.String => item is Xdm.XsAnyUri,
                 _ => false,
             };

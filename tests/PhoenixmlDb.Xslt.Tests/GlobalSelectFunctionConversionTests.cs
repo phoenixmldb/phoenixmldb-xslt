@@ -43,6 +43,10 @@ public class GlobalSelectFunctionConversionTests
     [InlineData("xs:string", "xs:untypedAtomic('u')", "u")]
     [InlineData("xs:integer?", "()", "")]
     [InlineData("xs:double", "xs:float('1.5')", "1.5")]
+    [InlineData("xs:double", "xs:int(3)", "3")]
+    [InlineData("xs:float", "xs:short(3)", "3")]
+    [InlineData("xs:decimal", "xs:int(3)", "3")]
+    [InlineData("xs:integer", "xs:int(12)", "12")]
     public async Task A_value_the_rules_convert_is_converted(string asType, string select, string expected)
         => (await Run(Var(asType, select))).Should().Be(expected);
 
@@ -62,6 +66,13 @@ public class GlobalSelectFunctionConversionTests
 
         (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("XTTE0570");
     }
+
+    [Theory]
+    [InlineData("xs:double", "xs:int(3)")]
+    [InlineData("xs:float", "xs:short(3)")]
+    public async Task A_promoted_derived_integer_is_of_the_declared_type(string asType, string select)
+        => (await Run($"""<xsl:variable name="w" as="{asType}" select="{select}"/><xsl:variable name="v" select="$w instance of {asType}"/>"""))
+            .Should().Be("true");
 
     [Fact]
     public async Task A_parameter_default_of_another_type_is_XTTE0590()

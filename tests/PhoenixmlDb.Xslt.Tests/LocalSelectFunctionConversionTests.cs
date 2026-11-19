@@ -41,6 +41,11 @@ public class LocalSelectFunctionConversionTests
     [InlineData("""<xsl:apply-templates select="parse-xml('&lt;e/&gt;')/e" mode="m"><xsl:with-param name="p" select="2"/></xsl:apply-templates>""", "2")]
     [InlineData("""<xsl:iterate select="1,2"><xsl:param name="p" as="xs:integer" select="0"/><xsl:value-of select="$p"/><xsl:next-iteration><xsl:with-param name="p" select="$p + 1"/></xsl:next-iteration></xsl:iterate>""", "01")]
     [InlineData("""<xsl:iterate select="1"><xsl:param name="p" as="xs:integer" select="$d/r/@n"/><xsl:value-of select="$p"/></xsl:iterate>""", "12")]
+    [InlineData("""<xsl:variable name="v" as="xs:double" select="xs:int(3)"/><xsl:value-of select="$v instance of xs:double, $v"/>""", "true 3")]
+    [InlineData("""<xsl:variable name="v" as="xs:float" select="xs:short(3)"/><xsl:value-of select="$v instance of xs:float, $v"/>""", "true 3")]
+    [InlineData("""<xsl:variable name="v" as="xs:decimal" select="xs:int(3)"/><xsl:value-of select="$v"/>""", "3")]
+    [InlineData("""<xsl:apply-templates select="parse-xml('&lt;e/&gt;')/e" mode="m"><xsl:with-param name="p" select="xs:int(3)"/></xsl:apply-templates>""", "3")]
+    [InlineData("""<xsl:iterate select="1"><xsl:param name="p" as="xs:double" select="xs:byte(3)"/><xsl:value-of select="$p"/></xsl:iterate>""", "3")]
     public async Task A_value_the_rules_convert_is_converted(string body, string expected)
         => (await Run(body)).Should().Be(expected);
 
