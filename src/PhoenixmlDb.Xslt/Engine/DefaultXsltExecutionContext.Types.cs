@@ -1351,6 +1351,11 @@ internal sealed partial class DefaultXsltExecutionContext
             return CoerceFunctionItems(value, asType); // a global variable of a typed function type
         if (asType == null || value == null || !IsCastableAtomicType(asType.ItemType))
             return value;
+        // Two or more items for "T" or "T?" are a type error, not one value: CoerceToType's
+        // scalar arms take the string value of the whole array, which joined ('a', 'b') into
+        // "a b" for as="xs:string?". Left as it is, the caller's type check reports it.
+        if (value is object?[] { Length: > 1 } && asType.Occurrence is Occurrence.ExactlyOne or Occurrence.ZeroOrOne)
+            return value;
         return CoerceToType(value, asType);
     }
 
@@ -1581,6 +1586,44 @@ internal sealed partial class DefaultXsltExecutionContext
                 throw Error($"XTTE0570: Variable ${name.LocalName} requires a node of type {asType.TypeAnnotation} but got a node annotated "
                     + (item is XdmElement e ? e.TypeAnnotation : ((XdmAttribute)item).TypeAnnotation));
         }
+    }
+
+    /// <summary>
+    /// XTTE0570 (a variable, XSLT 3.0 §9.3) or XTTE0590 (a parameter's default value, which is its
+    /// supplied value, §9.2.1) when the value of a global with select= and as=, after the
+    /// function conversion rules, is not an instance of the declared type. Only
+    /// the annotation of element(N, T) and attribute(N, T) was checked, so as="xs:integer"
+    /// select="'a'" bound the string and as="attribute(*, T)" accepted an element (W3C
+    /// error-0570a). Values the engine represents with XSLT-only item kinds are left alone.
+    /// </summary>
+    internal void CheckGlobalSelectValue(object? value, XdmSequenceType? asType, QName name, bool isParam)
+    {
+        if (asType is null)
+            return;
+        // schema-element(N) and schema-attribute(N) need the schema's declaration of N (and its
+        // substitution group), which the matcher does not have; as for a local variable, only
+        // the node kind and the cardinality are checked (W3C as-1810, as-3201, as-3502).
+        if (asType.ItemType is ItemType.SchemaElement or ItemType.SchemaAttribute)
+            asType = new XdmSequenceType
+            {
+                ItemType = asType.ItemType == ItemType.SchemaElement ? ItemType.Element : ItemType.Attribute,
+                Occurrence = asType.Occurrence,
+            };
+        var items = value switch
+        {
+            null => [],
+            object?[] many => many,
+            _ => new[] { value },
+        };
+        foreach (var item in items)
+        {
+            if (item is ResultTreeFragment or Xdm.TextNodeItem)
+                return;
+        }
+        if (!XQuery.Execution.TypeCastHelper.MatchesType(items, asType, _schemaProvider,
+                nodeResolver: _nodeStore is null ? null : _nodeStore.GetNode))
+            throw Error((isParam ? "XTTE0590: Parameter $" : "XTTE0570: Variable $") + $"{name.LocalName} requires {asType} but the supplied value is "
+                + DescribeSequenceForDiagnostics(items));
     }
 
     /// <summary>

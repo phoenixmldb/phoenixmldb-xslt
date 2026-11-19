@@ -4023,8 +4023,10 @@ public sealed partial class XsltTransformEngine
                 {
                     var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
                     context.CheckKindTestTypes(value, global.As, global.Name);
-                    context.GlobalVariables[global.Name] = context.CastToDeclaredSchemaType(
+                    var bound = context.CastToDeclaredSchemaType(
                         DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
+                    context.CheckGlobalSelectValue(bound, global.As, global.Name, global.IsParam);
+                    context.GlobalVariables[global.Name] = bound;
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
             }
@@ -4422,8 +4424,11 @@ public sealed partial class XsltTransformEngine
             {
                 object? value;
                 if (variable.Select != null)
+                {
                     value = DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(
                         await context.EvaluateAsync(variable.Select).ConfigureAwait(false), variable.As);
+                    context.CheckGlobalSelectValue(value, variable.As, variable.Name, isParam: false);
+                }
                 else if (variable.Content != null)
                     value = await context.EvaluateSequenceConstructorAsync(variable.Content).ConfigureAwait(false);
                 else
@@ -4499,8 +4504,10 @@ public sealed partial class XsltTransformEngine
                 {
                     var value = await context.EvaluateAsync(global.Select).ConfigureAwait(false);
                     context.CheckKindTestTypes(value, global.As, global.Name);
-                    context.GlobalVariables[global.Name] = context.CastToDeclaredSchemaType(
+                    var bound = context.CastToDeclaredSchemaType(
                         DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
+                    context.CheckGlobalSelectValue(bound, global.As, global.Name, global.IsParam);
+                    context.GlobalVariables[global.Name] = bound;
                 }
                 finally { context._globalsBeingEvaluated.Remove(global.Name); }
             }
