@@ -1214,12 +1214,16 @@ internal sealed partial class DefaultXsltExecutionContext
         // variable-binding element (§9.3), and XTTE0590 for the xsl:param, as for a template's.
         if (withParam.As != null)
         {
+            if (withParam.IsFromSelect)
+                RequireFunctionConversion(value, withParam.As, "XTTE0570", $"xsl:with-param ${withParam.Name.LocalName}");
             value = CoerceToType(value, withParam.As);
             ValidateValueMatchesType(value, withParam.As, "XTTE0570", $"xsl:with-param ${withParam.Name.LocalName}");
         }
         var declared = instruction.Params.FirstOrDefault(p => p.Name == withParam.Name);
         if (declared?.As != null)
         {
+            if (withParam.IsFromSelect && withParam.As == null)
+                RequireFunctionConversion(value, declared.As, "XTTE0590", $"Parameter ${withParam.Name.LocalName}");
             value = CoerceToType(value, declared.As);
             ValidateValueMatchesType(value, declared.As, "XTTE0590", $"Parameter ${withParam.Name.LocalName}");
         }
@@ -1303,7 +1307,10 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             object? value;
             if (param.Select != null)
+            {
                 value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} initial value");
+            }
             else if (param.Content != null)
                 value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
             else
@@ -1744,6 +1751,7 @@ internal sealed partial class DefaultXsltExecutionContext
             if (param.Select != null)
             {
                 value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} initial value");
             }
             else if (param.Content != null)
             {

@@ -414,6 +414,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         var value = preEvaluatedParams![param.Name];
                         if (templateParam.As != null)
                         {
+                            if (param.IsFromSelect)
+                                RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                             value = CoerceToType(value, templateParam.As);
                             ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
                                 $"Parameter ${param.Name.LocalName}");
@@ -447,6 +449,7 @@ internal sealed partial class DefaultXsltExecutionContext
                             var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
                             if (param.As != null)
                             {
+                                RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} default value");
                                 value = CoerceToType(value, param.As);
                                 ValidateValueMatchesType(value, param.As, "XTTE0600",
                                     $"Parameter ${param.Name.LocalName} default value");
@@ -1524,6 +1527,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         // would make its string (xquery#293).
                         if (param.As != null && value is not PhoenixmlDb.XQuery.Execution.StringSlice)
                         {
+                            if (withParam.IsFromSelect)
+                                RequireFunctionConversion(value, param.As, "XTTE0590", $"Parameter ${param.Name.LocalName}");
                             value = CoerceToType(value, param.As);
                             ValidateValueMatchesType(value, param.As, "XTTE0590",
                                 $"Parameter ${param.Name.LocalName}");
@@ -1553,6 +1558,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
                         if (param.As != null)
                         {
+                            RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} default value");
                             value = CoerceToType(value, param.As);
                             ValidateValueMatchesType(value, param.As, "XTTE0600",
                                 $"Parameter ${param.Name.LocalName} default value");
@@ -1925,6 +1931,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         else if (p.Select != null)
                         {
                             var value = await EvaluateAsync(p.Select).ConfigureAwait(false);
+                            RequireFunctionConversion(value, p.As, "XTTE0600", $"Parameter ${p.Name.LocalName} default value");
                             SetVariable(p.Name, value);
                         }
                     }
@@ -2033,6 +2040,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         else if (param.Select != null)
                         {
                             var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                            RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} default value");
                             SetVariable(param.Name, value);
                         }
                     }

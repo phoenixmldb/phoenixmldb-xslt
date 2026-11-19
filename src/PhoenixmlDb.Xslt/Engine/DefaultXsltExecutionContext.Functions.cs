@@ -593,6 +593,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                         if (templateParam.As != null)
                         {
+                            if (param.IsFromSelect)
+                                RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                             value = CoerceToType(value, templateParam.As);
                             ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
                                 $"Parameter ${param.Name.LocalName}");
@@ -2335,6 +2337,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 As = p.As,
                 Tunnel = p.Tunnel,
                 FromRuntimeOptions = p.FromRuntimeOptions,
+                ValueFromSelect = p.Select != null,
                 RuntimeValue = await EvaluateWithParamAsync(p).ConfigureAwait(false),
                 HasRuntimeValue = true,
             });
@@ -2362,6 +2365,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             _stringSliceRequested = mayBindSlice && param.As is null;
             var selected = await EvaluateAsync(param.Select).ConfigureAwait(false);
+            RequireFunctionConversion(selected, param.As, "XTTE0570", $"xsl:with-param ${param.Name.LocalName}");
             // An atomic as= type: the nodes selected are atomized to their typed values, which
             // are converted to the type (XSLT 3.0 §9.3). The nodes were passed on, so
             // `$p instance of xs:int` was false for a validated element of type xs:int.

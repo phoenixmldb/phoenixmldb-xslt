@@ -1531,6 +1531,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                 if (templateParam.As != null)
                 {
+                    if (param.IsFromSelect)
+                        RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                     value = CoerceToType(value, templateParam.As);
                     ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
                         $"Parameter ${param.Name.LocalName}");
@@ -1557,6 +1559,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var defaultVal = await EvaluateAsync(param.Select).ConfigureAwait(false);
                     if (param.As != null)
                     {
+                        RequireFunctionConversion(defaultVal, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} default value");
                         defaultVal = CoerceToType(defaultVal, param.As);
                         ValidateValueMatchesType(defaultVal, param.As, "XTTE0600",
                             $"Parameter ${param.Name.LocalName} default value");
@@ -1710,6 +1713,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                 if (templateParam.As != null)
                 {
+                    if (param.IsFromSelect)
+                        RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                     value = CoerceToType(value, templateParam.As);
                     ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
                         $"Parameter ${param.Name.LocalName}");

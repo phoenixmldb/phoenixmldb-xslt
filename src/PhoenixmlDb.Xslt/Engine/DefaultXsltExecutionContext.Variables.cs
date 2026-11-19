@@ -387,6 +387,7 @@ internal sealed partial class DefaultXsltExecutionContext
             try
             {
                 value = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
+                RequireFunctionConversion(value, instruction.As, "XTTE0570", $"Variable ${instruction.Name.LocalName}");
             }
             catch (XsltException ex) when (
                 ex.Message.Contains("not defined", StringComparison.Ordinal)
@@ -1543,6 +1544,7 @@ internal sealed partial class DefaultXsltExecutionContext
         if (instruction.Select != null)
         {
             value = await EvaluateAsync(instruction.Select).ConfigureAwait(false);
+            RequireFunctionConversion(value, instruction.As, "XTTE0600", $"Parameter ${instruction.Name.LocalName} default value");
         }
         else if (instruction.Content != null)
         {

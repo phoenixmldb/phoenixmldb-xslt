@@ -1362,6 +1362,20 @@ internal sealed partial class DefaultXsltExecutionContext
     internal static object? CoerceGlobalSelectValue(object? value, XdmSequenceType? asType)
         => ConvertsByFunctionConversionRules(value, asType) ? CoerceSelectValueToDeclaredType(value, asType) : value;
 
+    /// <summary>
+    /// <paramref name="code"/> when the value of a <c>select</c> expression cannot be converted to
+    /// the declared type by the function conversion rules (see <see cref="CoerceGlobalSelectValue"/>):
+    /// XTTE0570 for a variable, XTTE0590 for a supplied parameter value, XTTE0600 for a parameter's
+    /// default, as Saxon-HE 12.10 gives. Such a value was cast: a local
+    /// <c>as="xs:integer" select="'12'"</c> gave 12.
+    /// </summary>
+    internal void RequireFunctionConversion(object? value, XdmSequenceType? asType, string code, string what)
+    {
+        if (!ConvertsByFunctionConversionRules(value, asType))
+            throw Error($"{code}: {what} requires {asType} but the supplied value is "
+                + DescribeSequenceForDiagnostics(value is object?[] many ? many : [value]));
+    }
+
     private static bool ConvertsByFunctionConversionRules(object? value, XdmSequenceType? asType)
     {
         if (asType == null || value == null || !IsCastableAtomicType(asType.ItemType)
