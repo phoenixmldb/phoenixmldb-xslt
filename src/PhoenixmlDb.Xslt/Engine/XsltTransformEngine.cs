@@ -436,7 +436,7 @@ public sealed partial class XsltTransformEngine
             if (!_stylesheet.Functions.TryGetValue(funcKey, out var func))
                 throw new XsltException(
                     $"XTDE0041: No public stylesheet function '{funcName.LocalName}' with arity {arity} is available");
-            if (func.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
+            if (!IsInvocableAsInitialFunction(func))
                 throw new XsltException(
                     $"XTDE0041: Stylesheet function '{funcName.LocalName}' is not public");
             // Mirror the TransformRawAsync path (line ~637): if any args arrived as
@@ -1183,7 +1183,7 @@ public sealed partial class XsltTransformEngine
             // visibility half meant fn:transform happily invoked a PRIVATE package function
             // and returned its value, so a caller testing that private functions are
             // unreachable got a result instead of an error.
-            if (func.Visibility is not (Ast.Visibility.Public or Ast.Visibility.Final))
+            if (!IsInvocableAsInitialFunction(func))
                 throw new XsltException(
                     $"XTDE0041: Stylesheet function '{funcName.LocalName}' is not public");
             // Translate XdmNode arguments into this engine's node store so XPath/xsl:evaluate
@@ -1442,10 +1442,27 @@ public sealed partial class XsltTransformEngine
         };
 
     /// <summary>
+    /// Whether a function can be the initial function: its visibility is public or final (XTDE0041).
+    /// A function with no visibility attribute is private, in a stylesheet as in a package (§3.5.3.1,
+    /// "Otherwise, private"); Saxon-HE 12.10 also refuses it. The engine reads an unstated
+    /// visibility as public elsewhere, so that xsl:evaluate can call ordinary stylesheet
+    /// functions, and that let a private function be the initial function (W3C
+    /// initial-function-905). A function from a used package has its visibility in this package.
+    /// </summary>
+    private static bool IsInvocableAsInitialFunction(Ast.XsltFunction func)
+    {
+        var visibility = func.PackageStylesheet is not null
+            ? func.VisibilityInUsingPackage ?? func.Visibility
+            : func.VisibilityStated || func.VisibilityAttr is not null ? func.Visibility : Ast.Visibility.Private;
+        return visibility is Ast.Visibility.Public or Ast.Visibility.Final;
+    }
+
+    /// <summary>
     /// Re-anchors any <see cref="CrossStoreNodeRef"/> in a parameter value into
     /// <paramref name="store"/>, recursing through sequences. Values carrying no wrapper pass
     /// through untouched.
     /// </summary>
+
     internal static object? UnwrapCrossStoreValue(object? value, XdmInMemoryStore? store)
     {
         if (store == null) return value;
