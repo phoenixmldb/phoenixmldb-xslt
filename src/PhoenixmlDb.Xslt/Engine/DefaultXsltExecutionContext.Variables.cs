@@ -829,6 +829,14 @@ internal sealed partial class DefaultXsltExecutionContext
                             sequenceItems.Add(textContent);
                         }
                     }
+                    // The same for an atomic type: xsl:value-of select="''" makes a zero-length text
+                    // node, whose atomized value is the zero-length xs:untypedAtomic (W3C select-2303).
+                    else if (sequenceItems.Count == 0 && textContent != null && textContent.Length == 0
+                        && bodyAlwaysTextCount > 0
+                        && instruction.As != null && IsCastableAtomicType(instruction.As.ItemType))
+                    {
+                        sequenceItems.Add(new Xdm.XsUntypedAtomic(""));
+                    }
                 }
 
                 // SP-B slice 5a: deliver the natively-built node roots as the authoritative result

@@ -2410,10 +2410,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 // seam via <xsl:with-param name="extra-attributes" as="attribute()*"> bodies.
                 var typedBody = EnterTypedBody(param.As);
                 _temporaryOutputDepth++;
+                var alwaysTextBefore = _alwaysTextInstructionCount;
+                var bodyAlwaysTextCount = 0;
                 try
                 { await ExecuteWithOwnNamespaceScopesAsync(param.Content).ConfigureAwait(false); }
                 finally
                 {
+                    bodyAlwaysTextCount = _alwaysTextInstructionCount - alwaysTextBefore;
                     _temporaryOutputDepth--;
                     ExitTypedBody(typedBody);
                 }
@@ -2461,6 +2464,12 @@ internal sealed partial class DefaultXsltExecutionContext
                         ? new Xdm.TextNodeItem(StripXmlMarkup(textContent))
                         : new Xdm.XsUntypedAtomic(StripXmlMarkup(textContent)));
                 }
+
+                // xsl:value-of select="''" makes a zero-length text node: for an atomic type, the
+                // zero-length xs:untypedAtomic.
+                if (sequenceItems.Count == 0 && string.IsNullOrEmpty(textContent) && bodyAlwaysTextCount > 0
+                    && param.As != null && IsCastableAtomicType(param.As.ItemType))
+                    sequenceItems.Add(new Xdm.XsUntypedAtomic(""));
 
                 _sequenceAccumulator = savedAccumulator;
                 // Apply as="ATOMIC*" coercion per item (atomize + cast). The sequence branch

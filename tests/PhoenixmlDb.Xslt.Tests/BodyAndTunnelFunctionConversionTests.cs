@@ -24,6 +24,7 @@ public class BodyAndTunnelFunctionConversionTests
               <xsl:template name="t"><xsl:param name="p" as="xs:integer"/><xsl:value-of select="$p"/></xsl:template>
               <xsl:template name="mid"><xsl:call-template name="tt"/></xsl:template>
               <xsl:template name="tt"><xsl:param name="p" as="xs:integer" tunnel="yes"/><xsl:value-of select="$p"/></xsl:template>
+              <xsl:template name="ts"><xsl:param name="p" as="xs:string"/><xsl:value-of select="string-length($p)"/></xsl:template>
               <xsl:template name="xsl:initial-template">{body}</xsl:template>
             </xsl:stylesheet>
             """);
@@ -43,6 +44,10 @@ public class BodyAndTunnelFunctionConversionTests
     [InlineData("""<xsl:call-template name="mid"><xsl:with-param name="p" tunnel="yes"><xsl:sequence select="'12'"/></xsl:with-param></xsl:call-template>""", "12")]
     [InlineData("""<xsl:call-template name="t"><xsl:with-param name="p" as="xs:integer">12</xsl:with-param></xsl:call-template>""", "12")]
     [InlineData("""<xsl:call-template name="t"><xsl:with-param name="p"><xsl:sequence select="'12'"/></xsl:with-param></xsl:call-template>""", "12")]
+    // xsl:value-of select="''" makes a zero-length text node, so the value is the zero-length string,
+    // not the empty sequence (W3C select-2303, message-0304, match-249).
+    [InlineData("""<xsl:variable name="v" as="xs:string"><xsl:value-of select="''"/></xsl:variable><xsl:value-of select="string-length($v)"/>""", "0")]
+    [InlineData("""<xsl:call-template name="ts"><xsl:with-param name="p" as="xs:string"><xsl:value-of select="''"/></xsl:with-param></xsl:call-template>""", "0")]
     public async Task A_value_the_rules_convert_is_converted(string body, string expected)
         => (await Run(body)).Should().Be(expected);
 
