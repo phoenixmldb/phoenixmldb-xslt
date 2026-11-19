@@ -1388,6 +1388,10 @@ public sealed partial class StylesheetParser
 
     private XdmSequenceType ParseSequenceType(string type, XElement? context = null)
     {
+        // Whitespace around a SequenceType is allowed, and the indicator tests below read the
+        // last character: as="(function(xs:double) as xs:double)* " lost its occurrence and its
+        // function signature to the trailing space (W3C higher-order-functions-066).
+        type = type.Trim();
         // Simplified - would use full type parser
         var occurrence = Occurrence.ExactlyOne;
 
