@@ -420,7 +420,8 @@ internal sealed partial class DefaultXsltExecutionContext
             var isSequenceType = instruction.As != null &&
                 (instruction.As.Occurrence == Occurrence.ZeroOrMore
                 || instruction.As.Occurrence == Occurrence.OneOrMore
-                || isNodeItemType);
+                || isNodeItemType
+                || IsCastableAtomicType(instruction.As.ItemType));
 
             if (isSequenceType)
             {
@@ -708,6 +709,13 @@ internal sealed partial class DefaultXsltExecutionContext
                             Parent = NodeId.None,
                             Value = StripXmlMarkup(chunk)
                         });
+                    }
+                    else if (instruction.As != null && IsCastableAtomicType(instruction.As.ItemType))
+                    {
+                        // A text node of the body, atomized: xs:untypedAtomic (XSLT 3.0 §9.4), which
+                        // the function conversion rules cast. As a plain string it could not be told
+                        // from an xs:string that xsl:sequence produced, which they do not cast.
+                        sequenceItems.Add(new Xdm.XsUntypedAtomic(StripXmlMarkup(chunk)));
                     }
                     else
                     {
@@ -1414,6 +1422,10 @@ internal sealed partial class DefaultXsltExecutionContext
 
             if (!isNodeType)
             {
+                // The function conversion rules, for a body's value as for a select's: an
+                // xs:string that xsl:sequence produced is not cast to xs:integer.
+                RequireFunctionConversion(value, instruction.As, "XTTE0570", $"Variable ${instruction.Name.LocalName}");
+
                 // RTF values need atomization: extract string content and coerce
                 if (value is ResultTreeFragment rtf)
                 {

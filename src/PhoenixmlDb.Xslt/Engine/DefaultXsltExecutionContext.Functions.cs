@@ -580,7 +580,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
-                    _scopes.Peek().TunnelParameters[param.Name] = value;
+                    _scopes.Peek().TunnelParameters[param.Name] = TunnelTableValue(param, value);
                 }
                 // Bind forwarded non-tunnel params to matching template params.
                 foreach (var param in forwardedParams)
@@ -593,7 +593,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                         if (templateParam.As != null)
                         {
-                            if (param.IsFromSelect)
+                            if (param.ConvertsStrictly)
                                 RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                             value = CoerceToType(value, templateParam.As);
                             ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
@@ -2394,8 +2394,11 @@ internal sealed partial class DefaultXsltExecutionContext
             var oneNode = param.As is { Occurrence: Occurrence.ExactlyOne or Occurrence.ZeroOrOne,
                 ItemType: ItemType.Element or ItemType.SchemaElement or ItemType.Attribute or ItemType.SchemaAttribute
                     or ItemType.Text or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Node };
+            // An atomic type with one item takes this route too: on the other, an xsl:sequence item
+            // was written out as text, and an xs:string could not be told from untyped content.
             var isSequenceType = oneNode || (param.As != null &&
-                (param.As.Occurrence == Occurrence.ZeroOrMore || param.As.Occurrence == Occurrence.OneOrMore));
+                (param.As.Occurrence == Occurrence.ZeroOrMore || param.As.Occurrence == Occurrence.OneOrMore
+                || IsCastableAtomicType(param.As.ItemType)));
 
             if (isSequenceType)
             {
@@ -2466,11 +2469,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 // (attr/as-1001, as-1101).
                 if (param.As != null && IsCastableAtomicType(param.As.ItemType))
                 {
+                    // Text of the body is untyped and is cast; an item of xsl:sequence keeps its type.
+                    RequireFunctionConversion(sequenceItems.ToArray(), param.As, "XTTE0570", $"xsl:with-param ${param.Name.LocalName}");
                     for (var i = 0; i < sequenceItems.Count; i++)
                         if (sequenceItems[i] != null)
                             sequenceItems[i] = CoerceToType(sequenceItems[i], param.As);
                 }
-                if (oneNode && sequenceItems.Count == 1)
+                if ((oneNode || param.As is { Occurrence: Occurrence.ExactlyOne or Occurrence.ZeroOrOne }) && sequenceItems.Count == 1)
                     return sequenceItems[0];
                 return sequenceItems.Count > 0 ? sequenceItems.ToArray() : Array.Empty<object?>();
             }

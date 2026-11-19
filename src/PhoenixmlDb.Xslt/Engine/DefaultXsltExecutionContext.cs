@@ -1531,7 +1531,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                 if (templateParam.As != null)
                 {
-                    if (param.IsFromSelect)
+                    if (param.ConvertsStrictly)
                         RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                     value = CoerceToType(value, templateParam.As);
                     ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
@@ -1544,10 +1544,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             if (!_scopes.Peek().Variables.ContainsKey(param.Name))
             {
-                if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
+                if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue, out var tunnelStrict))
                 {
                     if (param.As != null)
                     {
+                        if (tunnelStrict)
+                            RequireFunctionConversion(tunnelValue, param.As, "XTTE0590", $"Parameter ${param.Name.LocalName}");
                         tunnelValue = CoerceToType(tunnelValue, param.As);
                         ValidateValueMatchesType(tunnelValue, param.As, "XTTE0590",
                             $"Parameter ${param.Name.LocalName}");
@@ -1713,7 +1715,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                 if (templateParam.As != null)
                 {
-                    if (param.IsFromSelect)
+                    if (param.ConvertsStrictly)
                         RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                     value = CoerceToType(value, templateParam.As);
                     ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
