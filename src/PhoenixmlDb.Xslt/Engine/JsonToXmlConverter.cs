@@ -72,6 +72,12 @@ internal static class JsonToXmlConverter
         };
     }
 
+    /// <summary>
+    /// The in-scope namespace of every element of the result, not only the root. The elements are
+    /// constructed (document id 0), and for a constructed element the namespace axis reads the
+    /// complete in-scope set from NamespaceDeclarations, with no walk to the parent: a child had
+    /// "xml" alone, where Saxon gives the default namespace and "xml" (W3C static-030).
+    /// </summary>
     private static NamespaceBinding[] FnNsDeclOf(XdmInMemoryStore store) => new[] { new NamespaceBinding("", FnNsOf(store)) };
 
     private static XdmElement ConvertObject(System.Text.Json.JsonElement je, string? key, XdmInMemoryStore store, string duplicates, bool isRoot = false, bool escape = false)
@@ -112,7 +118,7 @@ internal static class JsonToXmlConverter
             Prefix = null,
             Attributes = attrs,
             Children = children,
-            NamespaceDeclarations = isRoot ? FnNsDeclOf(store) : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
+            NamespaceDeclarations = FnNsDeclOf(store)
         };
         store.Register(elem);
         return elem;
@@ -144,7 +150,7 @@ internal static class JsonToXmlConverter
             Prefix = null,
             Attributes = attrs,
             Children = children,
-            NamespaceDeclarations = isRoot ? FnNsDeclOf(store) : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
+            NamespaceDeclarations = FnNsDeclOf(store)
         };
         store.Register(elem);
         return elem;
@@ -261,7 +267,7 @@ internal static class JsonToXmlConverter
             Prefix = null,
             Attributes = attrs,
             Children = new[] { textId },
-            NamespaceDeclarations = isRoot ? FnNsDeclOf(store) : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty,
+            NamespaceDeclarations = FnNsDeclOf(store),
             _stringValue = textValue
         };
         store.Register(elem);
@@ -286,7 +292,7 @@ internal static class JsonToXmlConverter
             Prefix = null,
             Attributes = attrs,
             Children = System.Collections.Immutable.ImmutableArray<NodeId>.Empty,
-            NamespaceDeclarations = isRoot ? FnNsDeclOf(store) : System.Collections.Immutable.ImmutableArray<NamespaceBinding>.Empty
+            NamespaceDeclarations = FnNsDeclOf(store)
         };
         store.Register(elem);
         return elem;
