@@ -1393,6 +1393,14 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             if (item is null or Xdm.XsUntypedAtomic or ResultTreeFragment or Xdm.TextNodeItem or Xdm.Nodes.XdmNode)
                 continue;
+            if (asType.LocalTypeName == "dateTimeStamp")
+            {
+                // Only an xs:dateTimeStamp (Core's XsDateTime.IsDateTimeStamp), not every
+                // xs:dateTime that has a timezone.
+                if (item is Xdm.XsDateTime { IsDateTimeStamp: true })
+                    continue;
+                return false;
+            }
             if (derivedString is not null)
             {
                 // Only a value of the derived string type, or of a type derived from it.
