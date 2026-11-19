@@ -107,6 +107,7 @@ public sealed class XsltTransformer
     private Uri? _sourceDocumentUri;
     private Uri? _baseOutputUri;
     private bool _expandXInclude;
+    private object? _globalContextItem;
 
     /// <summary>
     /// When <c>true</c>, the string and node transform overloads evaluate against an in-memory tree
@@ -724,6 +725,63 @@ public sealed class XsltTransformer
         // enabling automatic promotion to xs:double for arithmetic
         _typedParameters[name] = new Xdm.XsUntypedAtomic(value);
     }
+
+    /// <summary>
+    /// Sets the global context item to the document node of an XML document: the context item
+    /// while global variables and parameters are evaluated (XSLT 3.0 §2.3.2, §5.4.1). It applies
+    /// to each later transformation.
+    /// </summary>
+    /// <param name="documentXml">The XML document. <c>null</c> removes the global context item.</param>
+    /// <param name="documentUri">The document's URI, used as its base URI and document URI. Optional.</param>
+    /// <remarks>
+    /// <para>
+    /// The global context item is separate from the source. When the initial mode is streamable
+    /// and <see cref="DisableStreaming"/> is off, a streamed source is not the global context item,
+    /// so a global variable that reads the context item raises XPDY0002, and a stylesheet with
+    /// <c>xsl:global-context-item use="required"</c> raises XTDE3086, unless a global context
+    /// item is set here. With <see cref="DisableStreaming"/>, an item set here also takes the
+    /// place of the source as the global context item.
+    /// </para>
+    /// <para>
+    /// A C# <see cref="string"/> argument selects this overload, so the string is read as XML.
+    /// To make an <c>xs:string</c> value the global context item, call
+    /// <see cref="SetGlobalContextItem(object?)"/> with the argument typed as <see cref="object"/>.
+    /// <see cref="SetParameter(string, string)"/> and <see cref="SetParameter(string, object?)"/>
+    /// follow the same rule: the string overload interprets the text, the object overload keeps the value.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="System.Xml.XmlException"><paramref name="documentXml"/> is not well-formed XML.</exception>
+    public void SetGlobalContextItem(string? documentXml, Uri? documentUri = null)
+    {
+        if (documentXml == null)
+        {
+            _globalContextItem = null;
+            return;
+        }
+        // Reject malformed XML here, where the caller can see it; the engine parses it again into
+        // each transformation's own node store.
+        new XmlDocument { PreserveWhitespace = true }.LoadXml(documentXml);
+        _globalContextItem = new Engine.XsltTransformEngine.CrossStoreNodeRef(
+            documentXml, IsElement: false, DocumentUri: documentUri?.AbsoluteUri);
+    }
+
+    /// <summary>
+    /// Sets the global context item to any item: a node, a map, an array or an atomic value
+    /// (XSLT 3.0 §2.3.2, §5.4.1). It applies to each later transformation.
+    /// </summary>
+    /// <param name="item">
+    /// The item. .NET values map to XDM types as for <see cref="SetParameter(string, object?)"/>:
+    /// an <see cref="System.Xml.Linq.XDocument"/> or <see cref="System.Xml.XmlDocument"/> becomes a
+    /// document node, an <see cref="System.Xml.Linq.XElement"/> or <see cref="System.Xml.XmlElement"/>
+    /// an element node, copied into the transformation. <c>null</c> removes the global context item.
+    /// </param>
+    /// <remarks>
+    /// A C# <see cref="string"/> argument selects <see cref="SetGlobalContextItem(string?, Uri?)"/>,
+    /// which reads it as XML. To give a string value, type the argument as <see cref="object"/>.
+    /// See <see cref="SetGlobalContextItem(string?, Uri?)"/> for how the global context item relates
+    /// to a streamed source.
+    /// </remarks>
+    public void SetGlobalContextItem(object? item) => _globalContextItem = item;
 
     /// <summary>
     /// Sets a stylesheet parameter with a typed value, preserving its XDM type.
@@ -1509,6 +1567,7 @@ public sealed class XsltTransformer
             BaseOutputUri = _baseOutputUri,
             ExpandXInclude = _expandXInclude,
             DisableStreaming = DisableStreaming,
+            GlobalContextItem = _globalContextItem,
             ImplicitTimezone = ImplicitTimezone,
             SourceValidation = SourceValidation,
             DocumentValidation = DocumentValidation,

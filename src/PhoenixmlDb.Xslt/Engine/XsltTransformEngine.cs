@@ -322,21 +322,22 @@ public sealed partial class XsltTransformEngine
         context.Owner = this;
         _runtimeCharacterMaps.Clear();
 
-        // When there is no source document, the context item is absent during global variable
-        // evaluation (XSLT 3.0 §5.4.1: global variables are evaluated with the initial focus).
-        // It is absent too when the source is the streamed input of a streamable initial mode
-        // (§2.3.2), also when the engine reads that input into a tree because the streaming pass
-        // cannot answer the stylesheet: the result must not depend on that choice. A global that
-        // reads the context item then raises XPDY0002, as in the streaming pass and as Saxon-EE
-        // does; it took the whole document instead.
-        var absentGlobalFocus = !options.HasSourceDocument || options.GlobalFocusAbsent;
-        if (absentGlobalFocus)
-            context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+        // The focus for global variables (XSLT 3.0 §5.4.1) is the global context item. That is a
+        // separate item when the caller supplied one, and otherwise the source document. It is
+        // absent when there is no source document, and when the source is the streamed input of
+        // a streamable initial mode (§2.3.2), also when the engine reads that input into a tree
+        // because the streaming pass cannot answer the stylesheet: the result must not depend on
+        // that choice. A global that reads an absent context item raises XPDY0002, as in the
+        // streaming pass and as Saxon-EE does; it took the whole document instead.
+        var separateGlobalFocus = ResolveGlobalContextItem(options, nodeStore);
+        var pushGlobalFocus = separateGlobalFocus != null || !options.HasSourceDocument || options.SourceIsStreamed;
+        if (pushGlobalFocus)
+            PushGlobalFocus(context, separateGlobalFocus);
 
         // Initialize global parameters and variables in dependency order
         await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
 
-        if (absentGlobalFocus)
+        if (pushGlobalFocus)
             context.PopContextItem();
 
         // Bind initial parameters as global variables (overriding stylesheet defaults)
@@ -353,31 +354,8 @@ public sealed partial class XsltTransformEngine
         EnforceGlobalContextItem(options);
 
         // xsl:global-context-item type checking
-        if (_stylesheet.GlobalContextItemAs != null && options.HasSourceDocument && !options.GlobalFocusAbsent)
-        {
-            var typeMatches = XQuery.Execution.TypeCastHelper.MatchesSequenceItemType(source, _stylesheet.GlobalContextItemAs);
-
-            // Additional check for document-node(element(name))
-            if (typeMatches && _stylesheet.GlobalContextItemAs.DocumentElementName != null
-                && source is XdmDocument gciDoc)
-            {
-                // Resolve document element via node store
-                XdmElement? docElem = null;
-                if (nodeStore != null)
-                {
-                    docElem = gciDoc.Children
-                        .Select(id => nodeStore.GetNode(id))
-                        .OfType<XdmElement>()
-                        .FirstOrDefault();
-                }
-
-                if (docElem == null || docElem.LocalName != _stylesheet.GlobalContextItemAs.DocumentElementName)
-                    typeMatches = false;
-            }
-
-            if (!typeMatches)
-                throw new XsltException("XTTE0590: The global context item does not match the required type declared by xsl:global-context-item");
-        }
+        CheckGlobalContextItemType(
+            separateGlobalFocus ?? (options.HasSourceDocument && !options.SourceIsStreamed ? source : null), nodeStore);
 
         // Pre-compute accumulators on the source document if the initial mode specifies use-accumulators.
         // This happens after globals (accumulator initial values may reference parameters) but before
@@ -1303,7 +1281,7 @@ public sealed partial class XsltTransformEngine
     /// <see cref="ChildPath"/> is a chain of child indices, not an XPath: indices need no
     /// namespace context at the far end and cannot be ambiguous.
     /// </remarks>
-    internal sealed record CrossStoreNodeRef(string Xml, bool IsElement, int[]? ChildPath = null);
+    internal sealed record CrossStoreNodeRef(string Xml, bool IsElement, int[]? ChildPath = null, string? DocumentUri = null);
 
     /// <summary>
     /// Returns a copy of <paramref name="args"/> with any <see cref="CrossStoreNodeRef"/>
@@ -1429,9 +1407,15 @@ public sealed partial class XsltTransformEngine
     /// </remarks>
     private void EnforceGlobalContextItem(XsltTransformOptions options)
     {
-        var supplied = options.HasSourceDocument || options.GlobalContextItem != null;
+        // A streamed source is not the global context item (XSLT 3.0 §2.3.2): only a separate item counts.
+        var supplied = options.GlobalContextItem != null || (options.HasSourceDocument && !options.SourceIsStreamed);
         if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Required && !supplied)
-            throw new XsltException("XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
+            throw new XsltException(options.SourceIsStreamed
+                ? "XTDE3086: The stylesheet requires a global context item (xsl:global-context-item use=\"required\"), "
+                    + "but the source is streamed, so it cannot be the global context item. Supply a separate global context "
+                    + "item with --global-context-item (XsltTransformer.SetGlobalContextItem), or read the source into memory "
+                    + "with --no-stream (DisableStreaming)."
+                : "XTDE3086: The stylesheet requires a global context item (use=\"required\"), but none was supplied");
         if (_stylesheet.GlobalContextItemUse == Ast.ContextItemUse.Absent && supplied)
             throw new XsltException("XTSE3088: The stylesheet specifies that no global context item should be supplied (use=\"absent\"), but a global context item was provided");
     }
@@ -1441,11 +1425,7 @@ public sealed partial class XsltTransformEngine
     /// re-anchoring a cross-store node into <paramref name="store"/> first.
     /// </summary>
     private static object? ResolveGlobalContextItem(XsltTransformOptions options, XdmInMemoryStore? store)
-        => options.GlobalContextItem switch
-        {
-            CrossStoreNodeRef wrapped when store != null => ReparseCrossStoreNode(wrapped, store),
-            var other => other,
-        };
+        => UnwrapCrossStoreValue(options.GlobalContextItem, store);
 
     /// <summary>
     /// Whether a function can be the initial function: its visibility is public or final (XTDE0041).
@@ -1500,20 +1480,20 @@ public sealed partial class XsltTransformEngine
     }
 
     private static object? ReparseCrossStoreNode(CrossStoreNodeRef wrapped, XdmInMemoryStore store)
-        => ReparseXml(wrapped.Xml, wrapped.IsElement, store);
+        => ReparseXml(wrapped.Xml, wrapped.IsElement, store, wrapped.DocumentUri);
 
     /// <summary>
     /// Parses serialized node markup into <paramref name="store"/>: a document node, or its element when
     /// <paramref name="isElement"/> — the shape the caller supplied.
     /// </summary>
-    private static object? ReparseXml(string? xml, bool isElement, XdmInMemoryStore store)
+    private static object? ReparseXml(string? xml, bool isElement, XdmInMemoryStore store, string? documentUri = null)
     {
         if (string.IsNullOrEmpty(xml)) return null;
         try
         {
             var doc = new XmlDocument { PreserveWhitespace = true };
             doc.LoadXml(xml);
-            var localDoc = ConvertToXdm(doc, store);
+            var localDoc = ConvertToXdm(doc, store, documentUri);
             if (isElement && localDoc.DocumentElement.HasValue)
             {
                 var rootId = localDoc.DocumentElement.Value;
@@ -5215,7 +5195,12 @@ public sealed partial class XsltTransformEngine
                 && _stylesheet.NamedTemplates.Keys.Any(k => k.LocalName == "initial-template"));
         var initialModeKey = options?.InitialMode ?? new QName(NamespaceId.None, "");
         if (options != null)
-            options.GlobalFocusAbsent = SourceIsStreamedInput(options, entryIsInitialTemplate);
+        {
+            options.SourceIsStreamed = SourceIsStreamedInput(options, entryIsInitialTemplate);
+            // Before the input is read: a streamed source cannot satisfy use="required".
+            if (options.SourceIsStreamed)
+                EnforceGlobalContextItem(options);
+        }
         // DisableStreaming: the caller asked for tree evaluation (the CLI's --no-stream). Without
         // it a streamable initial mode always took the streaming pass here, so --no-stream changed
         // nothing (xslt#295).
@@ -5380,17 +5365,58 @@ public sealed partial class XsltTransformEngine
 
     /// <summary>
     /// Whether the source of this transformation is the streamed input of a streamable initial
-    /// mode, so that there is no global context item (XSLT 3.0 §2.3.2; §2.3.3 Note). That is the
-    /// case unless the caller asked for tree evaluation (<see cref="XsltTransformOptions.DisableStreaming"/>),
-    /// supplied a global context item of its own, or started at a named template or a function,
-    /// where the source is the global context item and not an initial match selection. It does not
-    /// depend on whether the engine then streams the input or reads it into a tree.
+    /// mode, so that it is not the global context item (XSLT 3.0 §2.3.2; §2.3.3 Note). That is the
+    /// case unless the caller asked for tree evaluation (<see cref="XsltTransformOptions.DisableStreaming"/>)
+    /// or started at a named template or a function, where the source is the global context item
+    /// and not an initial match selection. It does not depend on whether the engine then streams
+    /// the input or reads it into a tree.
     /// </summary>
     private bool SourceIsStreamedInput(XsltTransformOptions options, bool entryIsInitialTemplate)
         => !options.DisableStreaming
-            && options.GlobalContextItem == null
             && !entryIsInitialTemplate
             && IsInitialModeStreamable(options.InitialMode);
+
+    /// <summary>Pushes the focus for global variables: <paramref name="item"/>, or an absent focus.</summary>
+    private static void PushGlobalFocus(DefaultXsltExecutionContext context, object? item)
+    {
+        if (item != null)
+            context.PushContextItem(item, 1, 1);
+        else
+            context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+    }
+
+    /// <summary>
+    /// XTTE0590 when the global context item does not match the type that
+    /// <c>xsl:global-context-item as=</c> declares. Nothing to check when there is no global
+    /// context item.
+    /// </summary>
+    private void CheckGlobalContextItemType(object? item, XdmInMemoryStore? nodeStore)
+    {
+        if (_stylesheet.GlobalContextItemAs == null || item == null)
+            return;
+        var typeMatches = XQuery.Execution.TypeCastHelper.MatchesSequenceItemType(item, _stylesheet.GlobalContextItemAs);
+
+        // Additional check for document-node(element(name))
+        if (typeMatches && _stylesheet.GlobalContextItemAs.DocumentElementName != null
+            && item is XdmDocument gciDoc)
+        {
+            // Resolve document element via node store
+            XdmElement? docElem = null;
+            if (nodeStore != null)
+            {
+                docElem = gciDoc.Children
+                    .Select(id => nodeStore.GetNode(id))
+                    .OfType<XdmElement>()
+                    .FirstOrDefault();
+            }
+
+            if (docElem == null || docElem.LocalName != _stylesheet.GlobalContextItemAs.DocumentElementName)
+                typeMatches = false;
+        }
+
+        if (!typeMatches)
+            throw new XsltException("XTTE0590: The global context item does not match the required type declared by xsl:global-context-item");
+    }
 
     /// <summary>
     /// Whether the streaming pass from the document node gives the right result for this
@@ -5416,6 +5442,16 @@ public sealed partial class XsltTransformEngine
             throw new XsltException(
                 "TransformAsync(XmlReader, TextWriter) requires a streamable initial mode. " +
                 "For non-streaming transforms use TransformAsync(string) or TransformAsync(XdmNode).");
+
+        // Before the input is read or output is written: a streamed source cannot satisfy
+        // xsl:global-context-item use="required".
+        if (options != null)
+        {
+            options.SourceIsStreamed = SourceIsStreamedInput(
+                options, options.InitialTemplate != null || options.InitialFunction != null);
+            if (options.SourceIsStreamed)
+                EnforceGlobalContextItem(options);
+        }
 
         // The same decision the overloads that take the input as text make. This one made
         // none: it sent every stylesheet to the streaming pass, so a rule for the document node
@@ -5588,11 +5624,13 @@ public sealed partial class XsltTransformEngine
             }
         }
 
-        // In streaming mode, global variables are initialized with absent focus because
-        // the source document has not been read yet. The streaming processor provides
-        // per-node context during execution. This mirrors the call-template invocation
-        // path in the non-streaming TransformAsync (XSLT 3.0 §5.4.1).
-        context.PushContextItem(PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus, 0, 0);
+        // In streaming mode the streamed source is not the global context item (XSLT 3.0
+        // §2.3.2): global variables are evaluated with the separate global context item that the
+        // caller supplied, or with an absent focus. The streaming processor provides per-node
+        // context during execution.
+        options.SourceIsStreamed = true;
+        var globalFocus = ResolveGlobalContextItem(options, nodeStore);
+        PushGlobalFocus(context, globalFocus);
 
         await InitializeGlobalsInDependencyOrderAsync(context, outputBuilder).ConfigureAwait(false);
 
@@ -5610,6 +5648,7 @@ public sealed partial class XsltTransformEngine
 
         // xsl:global-context-item enforcement (same as non-streaming path)
         EnforceGlobalContextItem(options);
+        CheckGlobalContextItemType(globalFocus, nodeStore);
 
         // Resolve applicable accumulators for the streaming pass
         var streamingAccumulators = _stylesheet.Accumulators.Count > 0
