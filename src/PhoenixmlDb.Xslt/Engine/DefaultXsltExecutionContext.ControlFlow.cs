@@ -349,15 +349,41 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     /// <summary>
+    /// A tunnel parameter's value to which the function conversion rules apply when a template
+    /// parameter receives it (<see cref="XsltWithParam.ConvertsStrictly"/>). The table held the bare
+    /// value, so a tunnel parameter could not tell an xs:string from untyped content, and
+    /// select="'12'" passed to as="xs:integer" gave 12 where Saxon-HE 12.10 gives XTTE0590.
+    /// </summary>
+    private sealed record StrictTunnelValue(object? Value);
+
+    /// <summary>The value to store in the tunnel table for <paramref name="withParam"/>.</summary>
+    private static object? TunnelTableValue(XsltWithParam withParam, object? value)
+        => withParam.ConvertsStrictly ? new StrictTunnelValue(value) : value;
+
+    /// <summary>
     /// Searches the scope stack for a tunnel parameter with the given name.
     /// Returns true and the value if found, false otherwise.
     /// </summary>
-    private bool TryGetTunnelParam(QName name, out object? value)
+    private bool TryGetTunnelParam(QName name, out object? value) => TryGetTunnelParam(name, out value, out _);
+
+    /// <summary>
+    /// As <see cref="TryGetTunnelParam(QName, out object?)"/>; <paramref name="strict"/> tells whether the
+    /// function conversion rules apply to the value (see <see cref="StrictTunnelValue"/>).
+    /// </summary>
+    private bool TryGetTunnelParam(QName name, out object? value, out bool strict)
     {
+        strict = false;
         foreach (var scope in _scopes)
         {
             if (scope.TunnelParametersOrNull is { } tunnels && tunnels.TryGetValue(name, out value))
+            {
+                if (value is StrictTunnelValue held)
+                {
+                    value = held.Value;
+                    strict = true;
+                }
                 return true;
+            }
             // Stop at function boundaries — tunnel params don't propagate through functions
             if (scope.IsTunnelBarrier)
                 break;
@@ -1214,12 +1240,16 @@ internal sealed partial class DefaultXsltExecutionContext
         // variable-binding element (§9.3), and XTTE0590 for the xsl:param, as for a template's.
         if (withParam.As != null)
         {
+            if (withParam.IsFromSelect)
+                RequireFunctionConversion(value, withParam.As, "XTTE0570", $"xsl:with-param ${withParam.Name.LocalName}");
             value = CoerceToType(value, withParam.As);
             ValidateValueMatchesType(value, withParam.As, "XTTE0570", $"xsl:with-param ${withParam.Name.LocalName}");
         }
         var declared = instruction.Params.FirstOrDefault(p => p.Name == withParam.Name);
         if (declared?.As != null)
         {
+            if (withParam.IsFromSelect && withParam.As == null)
+                RequireFunctionConversion(value, declared.As, "XTTE0590", $"Parameter ${withParam.Name.LocalName}");
             value = CoerceToType(value, declared.As);
             ValidateValueMatchesType(value, declared.As, "XTTE0590", $"Parameter ${withParam.Name.LocalName}");
         }
@@ -1303,7 +1333,10 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             object? value;
             if (param.Select != null)
+            {
                 value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} initial value");
+            }
             else if (param.Content != null)
                 value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
             else
@@ -1744,6 +1777,7 @@ internal sealed partial class DefaultXsltExecutionContext
             if (param.Select != null)
             {
                 value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} initial value");
             }
             else if (param.Content != null)
             {

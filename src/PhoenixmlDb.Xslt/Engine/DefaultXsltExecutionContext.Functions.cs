@@ -580,7 +580,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                     var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
-                    _scopes.Peek().TunnelParameters[param.Name] = value;
+                    _scopes.Peek().TunnelParameters[param.Name] = TunnelTableValue(param, value);
                 }
                 // Bind forwarded non-tunnel params to matching template params.
                 foreach (var param in forwardedParams)
@@ -593,6 +593,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                         if (templateParam.As != null)
                         {
+                            if (param.ConvertsStrictly)
+                                RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                             value = CoerceToType(value, templateParam.As);
                             ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
                                 $"Parameter ${param.Name.LocalName}");
@@ -2335,6 +2337,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 As = p.As,
                 Tunnel = p.Tunnel,
                 FromRuntimeOptions = p.FromRuntimeOptions,
+                ValueFromSelect = p.Select != null,
                 RuntimeValue = await EvaluateWithParamAsync(p).ConfigureAwait(false),
                 HasRuntimeValue = true,
             });
@@ -2362,6 +2365,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             _stringSliceRequested = mayBindSlice && param.As is null;
             var selected = await EvaluateAsync(param.Select).ConfigureAwait(false);
+            RequireFunctionConversion(selected, param.As, "XTTE0570", $"xsl:with-param ${param.Name.LocalName}");
             // An atomic as= type: the nodes selected are atomized to their typed values, which
             // are converted to the type (XSLT 3.0 §9.3). The nodes were passed on, so
             // `$p instance of xs:int` was false for a validated element of type xs:int.
@@ -2390,8 +2394,11 @@ internal sealed partial class DefaultXsltExecutionContext
             var oneNode = param.As is { Occurrence: Occurrence.ExactlyOne or Occurrence.ZeroOrOne,
                 ItemType: ItemType.Element or ItemType.SchemaElement or ItemType.Attribute or ItemType.SchemaAttribute
                     or ItemType.Text or ItemType.Comment or ItemType.ProcessingInstruction or ItemType.Node };
+            // An atomic type with one item takes this route too: on the other, an xsl:sequence item
+            // was written out as text, and an xs:string could not be told from untyped content.
             var isSequenceType = oneNode || (param.As != null &&
-                (param.As.Occurrence == Occurrence.ZeroOrMore || param.As.Occurrence == Occurrence.OneOrMore));
+                (param.As.Occurrence == Occurrence.ZeroOrMore || param.As.Occurrence == Occurrence.OneOrMore
+                || IsCastableAtomicType(param.As.ItemType)));
 
             if (isSequenceType)
             {
@@ -2403,10 +2410,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 // seam via <xsl:with-param name="extra-attributes" as="attribute()*"> bodies.
                 var typedBody = EnterTypedBody(param.As);
                 _temporaryOutputDepth++;
+                var alwaysTextBefore = _alwaysTextInstructionCount;
+                var bodyAlwaysTextCount = 0;
                 try
                 { await ExecuteWithOwnNamespaceScopesAsync(param.Content).ConfigureAwait(false); }
                 finally
                 {
+                    bodyAlwaysTextCount = _alwaysTextInstructionCount - alwaysTextBefore;
                     _temporaryOutputDepth--;
                     ExitTypedBody(typedBody);
                 }
@@ -2455,6 +2465,12 @@ internal sealed partial class DefaultXsltExecutionContext
                         : new Xdm.XsUntypedAtomic(StripXmlMarkup(textContent)));
                 }
 
+                // xsl:value-of select="''" makes a zero-length text node: for an atomic type, the
+                // zero-length xs:untypedAtomic.
+                if (sequenceItems.Count == 0 && string.IsNullOrEmpty(textContent) && bodyAlwaysTextCount > 0
+                    && param.As != null && IsCastableAtomicType(param.As.ItemType))
+                    sequenceItems.Add(new Xdm.XsUntypedAtomic(""));
+
                 _sequenceAccumulator = savedAccumulator;
                 // Apply as="ATOMIC*" coercion per item (atomize + cast). The sequence branch
                 // previously returned the raw untypedAtomic/string items, so e.g.
@@ -2462,11 +2478,13 @@ internal sealed partial class DefaultXsltExecutionContext
                 // (attr/as-1001, as-1101).
                 if (param.As != null && IsCastableAtomicType(param.As.ItemType))
                 {
+                    // Text of the body is untyped and is cast; an item of xsl:sequence keeps its type.
+                    RequireFunctionConversion(sequenceItems.ToArray(), param.As, "XTTE0570", $"xsl:with-param ${param.Name.LocalName}");
                     for (var i = 0; i < sequenceItems.Count; i++)
                         if (sequenceItems[i] != null)
                             sequenceItems[i] = CoerceToType(sequenceItems[i], param.As);
                 }
-                if (oneNode && sequenceItems.Count == 1)
+                if ((oneNode || param.As is { Occurrence: Occurrence.ExactlyOne or Occurrence.ZeroOrOne }) && sequenceItems.Count == 1)
                     return sequenceItems[0];
                 return sequenceItems.Count > 0 ? sequenceItems.ToArray() : Array.Empty<object?>();
             }

@@ -4012,7 +4012,7 @@ public sealed partial class XsltTransformEngine
                         ?? await context.EvaluateAsync(global.Select).ConfigureAwait(false);
                     context.CheckKindTestTypes(value, global.As, global.Name);
                     var bound = context.CastToDeclaredSchemaType(
-                        DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
+                        DefaultXsltExecutionContext.CoerceGlobalSelectValue(value, global.As), global.As);
                     context.CheckGlobalSelectValue(bound, global.As, global.Name, global.IsParam);
                     context.GlobalVariables[global.Name] = bound;
                 }
@@ -4413,7 +4413,7 @@ public sealed partial class XsltTransformEngine
                 object? value;
                 if (variable.Select != null)
                 {
-                    value = DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(
+                    value = DefaultXsltExecutionContext.CoerceGlobalSelectValue(
                         await context.EvaluateAsync(variable.Select).ConfigureAwait(false), variable.As);
                     context.CheckGlobalSelectValue(value, variable.As, variable.Name, isParam: false);
                 }
@@ -4494,7 +4494,7 @@ public sealed partial class XsltTransformEngine
                         ?? await context.EvaluateAsync(global.Select).ConfigureAwait(false);
                     context.CheckKindTestTypes(value, global.As, global.Name);
                     var bound = context.CastToDeclaredSchemaType(
-                        DefaultXsltExecutionContext.CoerceSelectValueToDeclaredType(value, global.As), global.As);
+                        DefaultXsltExecutionContext.CoerceGlobalSelectValue(value, global.As), global.As);
                     context.CheckGlobalSelectValue(bound, global.As, global.Name, global.IsParam);
                     context.GlobalVariables[global.Name] = bound;
                 }

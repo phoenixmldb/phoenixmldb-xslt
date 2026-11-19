@@ -18,6 +18,22 @@ public sealed class XsltWithParam
     public bool Tunnel { get; init; }
 
     /// <summary>
+    /// The <see cref="RuntimeValue"/> was evaluated from <see cref="Select"/>, so the function
+    /// conversion rules apply to it as it is bound (a value from content is untyped).
+    /// </summary>
+    internal bool ValueFromSelect { get; init; }
+
+    /// <summary>The value comes from a <c>select</c> expression.</summary>
+    internal bool IsFromSelect => Select != null || ValueFromSelect;
+
+    /// <summary>
+    /// The function conversion rules apply to the value as a parameter receives it: it comes from
+    /// <c>select</c>, or the with-param's own <c>as</c> gave it its type. A body without <c>as</c>
+    /// is a temporary tree, which is untyped.
+    /// </summary>
+    internal bool ConvertsStrictly => IsFromSelect || As != null;
+
+    /// <summary>
     /// True when this parameter came from a RUNTIME option rather than a literal
     /// <c>xsl:with-param</c> in a stylesheet — today, fn:transform's <c>template-params</c> and
     /// <c>tunnel-params</c>.

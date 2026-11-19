@@ -1531,6 +1531,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                 if (templateParam.As != null)
                 {
+                    if (param.ConvertsStrictly)
+                        RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                     value = CoerceToType(value, templateParam.As);
                     ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
                         $"Parameter ${param.Name.LocalName}");
@@ -1542,10 +1544,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             if (!_scopes.Peek().Variables.ContainsKey(param.Name))
             {
-                if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
+                if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue, out var tunnelStrict))
                 {
                     if (param.As != null)
                     {
+                        if (tunnelStrict)
+                            RequireFunctionConversion(tunnelValue, param.As, "XTTE0590", $"Parameter ${param.Name.LocalName}");
                         tunnelValue = CoerceToType(tunnelValue, param.As);
                         ValidateValueMatchesType(tunnelValue, param.As, "XTTE0590",
                             $"Parameter ${param.Name.LocalName}");
@@ -1557,6 +1561,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     var defaultVal = await EvaluateAsync(param.Select).ConfigureAwait(false);
                     if (param.As != null)
                     {
+                        RequireFunctionConversion(defaultVal, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} default value");
                         defaultVal = CoerceToType(defaultVal, param.As);
                         ValidateValueMatchesType(defaultVal, param.As, "XTTE0600",
                             $"Parameter ${param.Name.LocalName} default value");
@@ -1710,6 +1715,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 var value = await EvaluateWithParamAsync(param).ConfigureAwait(false);
                 if (templateParam.As != null)
                 {
+                    if (param.ConvertsStrictly)
+                        RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                     value = CoerceToType(value, templateParam.As);
                     ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
                         $"Parameter ${param.Name.LocalName}");
@@ -6002,11 +6009,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             return true;
 
         // Numeric promotion: integer → double/float, decimal → double/float, float → double
-        if (targetType == ItemType.Double && item is int or long or float or decimal)
+        // A derived integer (xs:int, xs:short, ...) is an XsTypedInteger; it was missing here, so
+        // a local as="xs:double" select="xs:int(3)" was XTTE0570.
+        if (targetType == ItemType.Double && item is int or long or float or decimal or System.Numerics.BigInteger or Xdm.XsTypedInteger)
             return true;
-        if (targetType == ItemType.Float && item is int or long)
+        if (targetType == ItemType.Float && item is int or long or decimal or System.Numerics.BigInteger or Xdm.XsTypedInteger)
             return true;
-        if (targetType == ItemType.Decimal && item is int or long)
+        if (targetType == ItemType.Decimal && item is int or long or System.Numerics.BigInteger or Xdm.XsTypedInteger)
             return true;
 
         // UntypedAtomic can be cast to any atomic type

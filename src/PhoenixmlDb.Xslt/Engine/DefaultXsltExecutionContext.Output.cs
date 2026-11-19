@@ -1842,7 +1842,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // document template's body invokes.
         var tunnel = new List<(QName Name, object? Value)>();
         foreach (var p in applyTemplates.WithParams)
-            tunnel.Add((p.Name, await EvaluateWithParamAsync(p).ConfigureAwait(false)));
+            tunnel.Add((p.Name, TunnelTableValue(p, await EvaluateWithParamAsync(p).ConfigureAwait(false))));
         PushScope();
         try
         {

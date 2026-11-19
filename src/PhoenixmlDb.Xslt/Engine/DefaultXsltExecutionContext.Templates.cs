@@ -346,7 +346,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 if (!param.Tunnel) continue; // a plain loop: Where() allocated an iterator and closure per call
                 var value = preEvaluatedParams![param.Name];
-                _scopes.Peek().TunnelParameters[param.Name] = value;
+                _scopes.Peek().TunnelParameters[param.Name] = TunnelTableValue(param, value);
             }
 
             // A typed mode takes no untyped element or attribute, whatever rule would match it.
@@ -414,6 +414,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         var value = preEvaluatedParams![param.Name];
                         if (templateParam.As != null)
                         {
+                            if (param.ConvertsStrictly)
+                                RequireFunctionConversion(value, templateParam.As, "XTTE0590", $"Parameter ${templateParam.Name.LocalName}");
                             value = CoerceToType(value, templateParam.As);
                             ValidateValueMatchesType(value, templateParam.As, "XTTE0590",
                                 $"Parameter ${param.Name.LocalName}");
@@ -428,10 +430,12 @@ internal sealed partial class DefaultXsltExecutionContext
                     if (!_scopes.Peek().Variables.ContainsKey(param.Name))
                     {
                         // For tunnel params not yet bound, check the tunnel param stack
-                        if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
+                        if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue, out var tunnelStrict))
                         {
                             if (param.As != null)
                             {
+                                if (tunnelStrict)
+                                    RequireFunctionConversion(tunnelValue, param.As, "XTTE0590", $"Parameter ${param.Name.LocalName}");
                                 tunnelValue = CoerceToType(tunnelValue, param.As);
                                 ValidateValueMatchesType(tunnelValue, param.As, "XTTE0590",
                                     $"Parameter ${param.Name.LocalName}");
@@ -447,6 +451,7 @@ internal sealed partial class DefaultXsltExecutionContext
                             var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
                             if (param.As != null)
                             {
+                                RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} default value");
                                 value = CoerceToType(value, param.As);
                                 ValidateValueMatchesType(value, param.As, "XTTE0600",
                                     $"Parameter ${param.Name.LocalName} default value");
@@ -1500,7 +1505,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     if (!wp.Tunnel)
                         continue;
                     var value = preEvaluatedParams[wp.Name];
-                    _scopes.Peek().TunnelParameters[wp.Name] = value;
+                    _scopes.Peek().TunnelParameters[wp.Name] = TunnelTableValue(wp, value);
                 }
 
                 // Bind parameters (using pre-evaluated values)
@@ -1524,16 +1529,20 @@ internal sealed partial class DefaultXsltExecutionContext
                         // would make its string (xquery#293).
                         if (param.As != null && value is not PhoenixmlDb.XQuery.Execution.StringSlice)
                         {
+                            if (withParam.ConvertsStrictly)
+                                RequireFunctionConversion(value, param.As, "XTTE0590", $"Parameter ${param.Name.LocalName}");
                             value = CoerceToType(value, param.As);
                             ValidateValueMatchesType(value, param.As, "XTTE0590",
                                 $"Parameter ${param.Name.LocalName}");
                         }
                         SetVariable(param.Name, value);
                     }
-                    else if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue))
+                    else if (param.Tunnel && TryGetTunnelParam(param.Name, out var tunnelValue, out var tunnelStrict))
                     {
                         if (param.As != null)
                         {
+                            if (tunnelStrict)
+                                RequireFunctionConversion(tunnelValue, param.As, "XTTE0590", $"Parameter ${param.Name.LocalName}");
                             tunnelValue = CoerceToType(tunnelValue, param.As);
                             ValidateValueMatchesType(tunnelValue, param.As, "XTTE0590",
                                 $"Parameter ${param.Name.LocalName}");
@@ -1553,6 +1562,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
                         if (param.As != null)
                         {
+                            RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} default value");
                             value = CoerceToType(value, param.As);
                             ValidateValueMatchesType(value, param.As, "XTTE0600",
                                 $"Parameter ${param.Name.LocalName} default value");
@@ -1925,6 +1935,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         else if (p.Select != null)
                         {
                             var value = await EvaluateAsync(p.Select).ConfigureAwait(false);
+                            RequireFunctionConversion(value, p.As, "XTTE0600", $"Parameter ${p.Name.LocalName} default value");
                             SetVariable(p.Name, value);
                         }
                     }
@@ -2033,6 +2044,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         else if (param.Select != null)
                         {
                             var value = await EvaluateAsync(param.Select).ConfigureAwait(false);
+                            RequireFunctionConversion(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} default value");
                             SetVariable(param.Name, value);
                         }
                     }
