@@ -1345,6 +1345,48 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+    /// <summary>
+    /// The value of a global variable or parameter's <c>select</c> converted to its <c>as</c>
+    /// type by the function conversion rules (XSLT 3.0 §9.3, XPath 3.1 §3.1.5.2): an
+    /// <c>xs:untypedAtomic</c> value, or an untyped node, is cast; an integer, decimal or float is
+    /// promoted to <c>xs:double</c> or <c>xs:float</c>; an <c>xs:anyURI</c> is promoted to
+    /// <c>xs:string</c>. Any other atomic value that is not already of the type is returned
+    /// unchanged, so the type check that follows raises XTTE0570 or XTTE0590. Saxon-HE 12.10 does
+    /// the same. It was cast whatever its type: <c>as="xs:integer" select="'12'"</c> gave 12.
+    /// </summary>
+    /// <remarks>
+    /// A type derived from a built-in type by restriction (<c>as="xs:NMTOKEN"</c>,
+    /// <c>as="xs:int"</c>) keeps the cast, because the type check cannot tell a string or integer
+    /// from a value of that type.
+    /// </remarks>
+    internal static object? CoerceGlobalSelectValue(object? value, XdmSequenceType? asType)
+        => ConvertsByFunctionConversionRules(value, asType) ? CoerceSelectValueToDeclaredType(value, asType) : value;
+
+    private static bool ConvertsByFunctionConversionRules(object? value, XdmSequenceType? asType)
+    {
+        if (asType == null || value == null || !IsCastableAtomicType(asType.ItemType)
+            || asType.ItemType is ItemType.AnyAtomicType || asType.LocalTypeName is not null
+            || asType.DerivedIntegerType is not null)
+            return true;
+        foreach (var item in value is object?[] many ? many : [value])
+        {
+            if (item is null or Xdm.XsUntypedAtomic or ResultTreeFragment or Xdm.TextNodeItem or Xdm.Nodes.XdmNode)
+                continue;
+            if (XQuery.Execution.TypeCastHelper.MatchesItemType(item, asType.ItemType))
+                continue;
+            var promoted = asType.ItemType switch
+            {
+                ItemType.Double => item is long or int or decimal or System.Numerics.BigInteger or float,
+                ItemType.Float => item is long or int or decimal or System.Numerics.BigInteger,
+                ItemType.String => item is Xdm.XsAnyUri,
+                _ => false,
+            };
+            if (!promoted)
+                return false;
+        }
+        return true;
+    }
+
     internal static object? CoerceSelectValueToDeclaredType(object? value, XdmSequenceType? asType)
     {
         if (asType is { ItemType: ItemType.Function, FunctionParameterTypes: not null } && value != null)
