@@ -207,7 +207,10 @@ public sealed class TypedPatternTests : IDisposable
     /// A variable or parameter whose select= gives an untyped node or a string, as="xs:NMTOKEN"
     /// (or another type derived from xs:string), holds a value of that type. The value matched the
     /// xs:string the type is reduced to and was kept as a plain string (W3C as-1902). The
-    /// expected values are Saxon-HE 12's.
+    /// expected values are Saxon-HE 12's. An xs:string such as string(/x/@n) is not cast to
+    /// xs:token by the function conversion rules (XTTE0570); Saxon-HE 12.10 answers
+    /// <c>$s instance of xs:token</c> from the declared type without evaluating $s, so it gives no
+    /// error there, but it does give XTTE0570 when the value is used.
     /// </summary>
     [Fact]
     public async Task A_select_for_a_type_derived_from_string_gives_a_value_of_that_type()
@@ -217,7 +220,7 @@ public sealed class TypedPatternTests : IDisposable
                 <xsl:template name="t">
                   <xsl:param name="w" as="xs:Name"/>
                   <xsl:param name="i" select="/x/@i" as="xs:ID"/>
-                  <xsl:variable name="s" select="string(/x/@n)" as="xs:token"/>
+                  <xsl:variable name="s" select="/x/@n" as="xs:token"/>
                   <xsl:value-of select="$g instance of xs:NMTOKEN, $w instance of xs:Name, $i instance of xs:ID, $s instance of xs:token"/>
                 </xsl:template>
                 """, "<x n='ab' i='k1'/>", validation: null)).Should().Be("true true true true");

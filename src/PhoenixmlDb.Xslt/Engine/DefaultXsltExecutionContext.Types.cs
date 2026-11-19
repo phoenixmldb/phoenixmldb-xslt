@@ -1357,9 +1357,10 @@ internal sealed partial class DefaultXsltExecutionContext
     /// the same. It was cast whatever its type: <c>as="xs:integer" select="'12'"</c> gave 12.
     /// </summary>
     /// <remarks>
-    /// A type derived from a built-in type by restriction (<c>as="xs:NMTOKEN"</c>,
-    /// <c>as="xs:int"</c>) keeps the cast, because the type check cannot tell a string or integer
-    /// from a value of that type.
+    /// The rules are the same for a type derived by restriction: an <c>xs:string</c> is not an
+    /// <c>xs:NMTOKEN</c>, so <c>as="xs:NMTOKEN" select="'abc'"</c> is XTTE0570, and an
+    /// <c>xs:integer</c> is not an <c>xs:int</c>. A value of the derived type, or of a type derived
+    /// from it (an <c>xs:ID</c> for <c>xs:NCName</c>), is kept.
     /// </remarks>
     internal static object? CoerceGlobalSelectValue(object? value, XdmSequenceType? asType)
         => ConvertsByFunctionConversionRules(value, asType) ? CoerceSelectValueToDeclaredType(value, asType) : value;
@@ -1381,13 +1382,24 @@ internal sealed partial class DefaultXsltExecutionContext
     private static bool ConvertsByFunctionConversionRules(object? value, XdmSequenceType? asType)
     {
         if (asType == null || value == null || !IsCastableAtomicType(asType.ItemType)
-            || asType.ItemType is ItemType.AnyAtomicType || asType.LocalTypeName is not null
-            || asType.DerivedIntegerType is not null)
+            || asType.ItemType is ItemType.AnyAtomicType)
             return true;
+        // A derived integer type is checked by the type check that follows: it tells an
+        // xs:integer from an xs:int.
+        if (asType.DerivedIntegerType is not null)
+            return true;
+        var derivedString = asType.LocalTypeName is { } local && DerivedStringParent(local) is not null ? local : null;
         foreach (var item in value is object?[] many ? many : [value])
         {
             if (item is null or Xdm.XsUntypedAtomic or ResultTreeFragment or Xdm.TextNodeItem or Xdm.Nodes.XdmNode)
                 continue;
+            if (derivedString is not null)
+            {
+                // Only a value of the derived string type, or of a type derived from it.
+                if (item is Xdm.XsTypedString typed && DerivesFromString(typed.TypeName, derivedString))
+                    continue;
+                return false;
+            }
             if (XQuery.Execution.TypeCastHelper.MatchesItemType(item, asType.ItemType))
                 continue;
             var promoted = asType.ItemType switch
@@ -1402,6 +1414,27 @@ internal sealed partial class DefaultXsltExecutionContext
                 return false;
         }
         return true;
+    }
+
+    /// <summary>The base type of a built-in type derived from xs:string by restriction, or null.</summary>
+    private static string? DerivedStringParent(string typeName) => typeName switch
+    {
+        "normalizedString" => "string",
+        "token" => "normalizedString",
+        "language" or "NMTOKEN" or "Name" => "token",
+        "NCName" => "Name",
+        "ID" or "IDREF" or "ENTITY" => "NCName",
+        _ => null,
+    };
+
+    private static bool DerivesFromString(string typeName, string required)
+    {
+        for (string? t = typeName; t is not null; t = DerivedStringParent(t))
+        {
+            if (t == required)
+                return true;
+        }
+        return false;
     }
 
     internal static object? CoerceSelectValueToDeclaredType(object? value, XdmSequenceType? asType)
