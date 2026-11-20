@@ -7495,3 +7495,22 @@ Two causes, one in each streamed route:
 Found while testing that the tree route's child cursor keeps streamed behaviour unchanged (xslt#588).
 Tests: `StreamedPositionTests` (streamed == unstreamed == Saxon, with text, comments, PIs and
 whitespace-only text).
+
+### 124. A node from another node store is read in the transform's own store — silent wrong data (2026-11-20, open)
+
+Repro (`ForeignNodeParameterTests`, skipped until fixed): transformer A returns the document `<x><y n="1"/><z/><y n="2"/></x>`
+(`TransformToSequenceAsync`); transformer B gets it with `SetParameter("p", doc)` and transforms its own input
+`<r><q/>…</r>`. In B, `name($p/*)` gives `r`, B's OWN root element, and `count($p/x/y)` gives 0. Expected `x` and 2.
+With namespaces (`a:x`, `b:y`) every count is 0.
+
+`SetParameter(name, object)` keeps an `XdmNode` as it is, and `XsltTransformEngine.UnwrapCrossStoreValue` re-anchors only
+`CrossStoreNodeRef`, `XNode` and `XmlNode`. An `XdmNode` does not know its store: its children are `NodeId`s, which the
+transform looks up in ITS store, where the same ids name other nodes. Name tests compare namespace ids
+(`NameTest.Matches`), which differ between stores that interned the URIs in another order. So passing the result of one
+transform to another, a normal pipeline, reads the wrong document with no error. The same applies to every value bound from
+outside: global and initial-template parameters, initial-function arguments, an `XdmNode` global context item; in XQuery,
+to a node bound as an external variable from another store.
+
+Options compared: copying foreign trees at bind time (what `CrossStoreNodeRef` does for fn:transform) loses node identity
+and costs a full copy per transform; nodes that know their store (Core change) keep identity and are the base for fixed
+namespace ids in the compile-once API. Until fixed, a foreign node should be an error, never a silent wrong result.
