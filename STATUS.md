@@ -1,12 +1,12 @@
 # Status
 
-Generated 2026-11-20 00:40 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-20 15:33 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
 | package | published | repo version | state |
 |---|---|---|---|
-| `PhoenixmlDb.Core` | 2.6.2 | 2.6.2 | current |
+| `PhoenixmlDb.Core` | 2.7.0 | 2.7.0 | current |
 | `PhoenixmlDb.XQuery` | 3.2.0 | 3.2.0 | current |
 | `PhoenixmlDb.Xslt` | 3.2.0 | 3.2.0 | current |
 | `xquery4` | 3.2.0 | 3.2.0 | current |
@@ -16,15 +16,16 @@ Generated 2026-11-20 00:40 UTC by `scripts/status.sh`. Do not edit by hand.
 
 | repo | open issues | open PRs |
 |---|---|---|
-| phoenixmldb-core | 0 | 1 |
+| phoenixmldb-core | 0 | 0 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 8 | 1 |
+| phoenixmldb-xslt | 9 | 1 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
+- [582] Schxslt2 transpiled XSLT 3.0 with streaming passing (after an edit) strict streamability analyis of Saxon EE and of go-xml doesn't stream with PhoenixmlDb.Xslt
 - [575] Streamed grouping with xsl:output indent="yes" doesn't indent output but creates one long line
 - [562] square brackets in result URI should not be allowed
 - [561] current-output-uri() doesn't return anything
@@ -36,17 +37,13 @@ Generated 2026-11-20 00:40 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ### Open PRs
 
-**phoenixmldb-core**
-
-- [51] release: 2.7.0
-
 **phoenixmldb-xslt**
 
-- [569] build: Bump the phoenixmldb-engines group with 1 update
+- [588] perf: apply-templates over a node's children dispatches them as it reads them, with no list
 
 ## Defect register
 
-`BUGS.md`: **121** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **122** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
