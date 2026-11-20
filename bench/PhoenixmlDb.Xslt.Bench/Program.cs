@@ -1,3 +1,4 @@
+using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Loggers;
 using BenchmarkDotNet.Running;
@@ -80,6 +81,54 @@ if (args.Length > 0 && args[0] == "micro")
     Array.Sort(samples);
     Console.WriteLine($"  min={samples[0]:F1} med={samples[iterations / 2]:F1} p90={samples[iterations * 9 / 10]:F1} max={samples[iterations - 1]:F1} (ms)");
     Console.WriteLine($"  mean={samples.Average():F1} stddev={Math.Sqrt(samples.Select(x => (x - samples.Average()) * (x - samples.Average())).Sum() / iterations):F1}");
+    return 0;
+}
+
+// "apply-probe" → each ApplyTimeBenchmarks parameter set once, outside BenchmarkDotNet: checks that
+// the generated stylesheet runs, and shows how long the formal run will take.
+if (args.Length > 0 && args[0] == "apply-probe")
+{
+    // apply-probe [sizeKb] [modes] [runs]: one size and mode count, each rule count, several runs.
+    var sizes = args.Length > 1 ? [int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture)] : new[] { 5, 100, 1024, 5120 };
+    var modeCounts = args.Length > 2 ? [int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture)] : new[] { 1, 10 };
+    var runs = args.Length > 3 ? int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture) : 1;
+    foreach (var modes in modeCounts)
+    foreach (var rules in new[] { 5, 50, 400 })
+    foreach (var sizeKb in sizes)
+    {
+        var b = new ApplyTimeBenchmarks { Modes = modes, Rules = rules, SizeKb = sizeKb };
+        var setup = System.Diagnostics.Stopwatch.StartNew();
+        b.Setup();
+        setup.Stop();
+        for (var r = 0; r < runs; r++)
+        {
+            var a0 = GC.GetTotalAllocatedBytes(precise: true);
+            var run = System.Diagnostics.Stopwatch.StartNew();
+            var output = await b.Apply();
+            run.Stop();
+            var alloc = GC.GetTotalAllocatedBytes(precise: true) - a0;
+            Console.WriteLine($"Modes={modes,2} Rules={rules,3} SizeKb={sizeKb,4}: setup {setup.Elapsed.TotalMilliseconds,8:F0} ms, apply {run.Elapsed.TotalMilliseconds,8:F1} ms, alloc {alloc:N0} B, output {output.Length:N0} chars");
+        }
+    }
+    return 0;
+}
+
+// "apply" → ApplyTimeBenchmarks: the time to apply a compiled, validator-shaped stylesheet.
+// It runs in-process, on the runtime of this build (run the net8.0 and net10.0 builds in turn),
+// so that BenchmarkDotNet does not generate and rebuild a child project. The remaining
+// arguments go to BenchmarkDotNet (--filter, --artifacts, --job dry ...).
+if (args.Length > 0 && args[0] == "apply")
+{
+    var applyConfig = ManualConfig.CreateMinimumViable()
+        .AddLogger(ConsoleLogger.Default)
+        .AddDiagnoser(BenchmarkDotNet.Diagnosers.MemoryDiagnoser.Default)
+        .AddExporter(BenchmarkDotNet.Exporters.Csv.CsvExporter.Default)
+        .AddExporter(BenchmarkDotNet.Exporters.MarkdownExporter.GitHub)
+        .AddJob(BenchmarkDotNet.Jobs.Job.Default
+            .WithToolchain(new BenchmarkDotNet.Toolchains.InProcess.Emit.InProcessEmitToolchain(TimeSpan.FromMinutes(30), logOutput: true))
+            .WithStrategy(BenchmarkDotNet.Engines.RunStrategy.Monitoring)
+            .WithLaunchCount(1).WithWarmupCount(2).WithIterationCount(7));
+    BenchmarkSwitcher.FromTypes([typeof(ApplyTimeBenchmarks)]).Run(args[1..], applyConfig);
     return 0;
 }
 
