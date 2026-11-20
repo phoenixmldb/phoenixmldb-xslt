@@ -7539,3 +7539,50 @@ to a node bound as an external variable from another store.
 Options compared: copying foreign trees at bind time (what `CrossStoreNodeRef` does for fn:transform) loses node identity
 and costs a full copy per transform; nodes that know their store (Core change) keep identity and are the base for fixed
 namespace ids in the compile-once API. Until fixed, a foreign node should be an error, never a silent wrong result.
+
+### 125. XQuery Update placed the source nodes themselves, not copies, and changed the input document — fixing (2026-11-20)
+
+Engine: **XQuery** (`InsertOperator`, `ReplaceNodeOperator`, `PendingUpdateApplicator`). Recorded
+here because xquery has no BUGS.md, as #120 is.
+
+XQUF 3.0 §3.2.1 and §3.4.1 copy the insertion and replacement sequences. The engine placed the
+source node objects and set their `Parent` to the target:
+
+```xquery
+let $doc := document { <r><e><a/><b>old</b></e><x>src</x><other>o</other></r> }
+let $orig := $doc/r
+let $c := copy $c := $orig modify (insert node $orig/x into $c/e,
+                                   replace node $c/e/b with $orig/other) return $c
+```
+
+| check | main (8a04748) | spec |
+|---|---|---|
+| `$c/e/x is $orig/x` | true | false |
+| `$c/e/other is $orig/other` | true | false |
+| `$orig/x/.. is $orig` | **false** | true |
+| `$orig/x/.. is $c/e` | **true** | false |
+| `root($orig/x) is $doc` | **false** | true |
+
+The input's child lists look unchanged (`count($orig/x) = 1`), so only identity and upward
+navigation show the damage: silent corruption of the input. All five insert positions and
+`replace node` are affected. Found by the two-store probe for fix B (#124): these were its six
+document-store → overlay registrations.
+
+Not affected: db-engine. Its code applies no pending update list (documents are updated by
+whole-document replacement through its own API), so nothing reaches LMDB this way. The
+6 identity checks of an UNMODIFIED copied node (`$c/a is $orig/a`, parents, roots, order,
+generate-id, original unchanged) all pass on main: the copy bindings were always deep copies.
+
+Fix (branch fix/xquf-copy-insertion-xquery): insert and replace deep-copy their source nodes into
+the update target store when the expression is evaluated, so a later primitive of the same modify
+clause does not reach the copy. Tests: `UpdateContentCopyTests` (8; all 8 fail on main).
+
+Found next to it, not fixed by it (separate entries to follow):
+- `insert node $orig/x/@k into $c/e` places the attribute as a CHILD of `e` (`count($c/e/node())`
+  grows, `$c/e/@k` is empty, serialization drops it). On main the original attribute was also
+  re-parented; with the fix only the misplacement remains.
+- `replace node $c/e/@z with $orig/x/@k` does nothing and reports nothing: the applicator looks
+  for the target among the parent's children, where attributes are not.
+- A top-level updating query (not copy/modify), e.g. `insert node <x/> into <e/>`, exits 0 with no
+  output and no XUST0002 from the CLI, though no store in the repository implements
+  `IUpdatableNodeStore` except the copy/modify overlay. Not yet traced.
