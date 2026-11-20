@@ -1267,9 +1267,23 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // A derived built-in type (as="xs:int", as="xs:NMTOKEN"): the value cast to that type,
         // which is an instance of it. The arms below give the base type's value.
-        if (targetType.LocalTypeName is { } derivedName && value is string or Xdm.XsUntypedAtomic
-            && XQuery.Execution.TypeCastHelper.BuiltInTypedValue(derivedName, StringValueOf(value)) is { } derivedValue)
-            return derivedValue;
+        if (targetType.LocalTypeName is { } derivedName && value is string or Xdm.XsUntypedAtomic)
+        {
+            object? derivedValue;
+            try
+            {
+                derivedValue = XQuery.Execution.TypeCastHelper.BuiltInTypedValue(derivedName, StringValueOf(value));
+            }
+            catch (XQuery.Execution.XQueryRuntimeException)
+            {
+                // Not a value of the type: kept, as the primitive arms below keep it, so the type check
+                // of the binding reports its own code (XTTE0570, XTTE0590, XTTE0600). The cast's
+                // FORG0001 escaped instead, for every binding (as="xs:int" over '99999999999').
+                return value;
+            }
+            if (derivedValue is not null)
+                return derivedValue;
+        }
 
         return itemType switch
         {
@@ -1609,8 +1623,27 @@ internal sealed partial class DefaultXsltExecutionContext
         => occurrence == Occurrence.OneOrMore ? "one or more items" : "exactly one item";
 
 
+    /// <summary>
+    /// <paramref name="errorCode"/> when an item is not a value of a derived built-in type that
+    /// <paramref name="targetType"/> names (xs:int, xs:NCName, xs:dateTimeStamp, ...). A value that the
+    /// type's cast rejected is kept as it was, and matched the base type it is reduced to: as="xs:int"
+    /// over '99999999999' or as="xs:NCName" over '1a' was accepted.
+    /// </summary>
+    internal void CheckDerivedBuiltInType(object? value, XdmSequenceType targetType, string errorCode, string contextName)
+    {
+        if (targetType.LocalTypeName is null || IsNodeType(targetType.ItemType))
+            return;
+        foreach (var item in value as object?[] ?? [value])
+        {
+            if (item is not null && !XQuery.Execution.TypeCastHelper.MatchesType([item], targetType, _schemaProvider))
+                throw Error($"{errorCode}: {contextName} requires {targetType} but the supplied value is "
+                    + DescribeSequenceForDiagnostics([item]));
+        }
+    }
+
     internal void ValidateValueMatchesType(object? value, XdmSequenceType targetType, string errorCode, string contextName)
     {
+        CheckDerivedBuiltInType(value, targetType, errorCode, contextName);
         // Validate node types: when the target is a node type, non-node values must fail.
         // Only apply to with-param/tunnel-param paths (XTTE0590), not default value paths
         // (XTTE0600) since content constructors may not properly capture all node types.

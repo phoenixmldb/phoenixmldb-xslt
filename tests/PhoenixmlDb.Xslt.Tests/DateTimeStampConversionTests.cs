@@ -7,8 +7,7 @@ namespace PhoenixmlDb.Xslt.Tests;
 /// as="xs:dateTimeStamp" takes an xs:dateTimeStamp (the constructor, a cast, fn:current-dateTime()) or
 /// an untyped value with a timezone, which is cast; an xs:dateTime is not converted to it (XTTE0570,
 /// XTTE0590 for a value passed to a parameter). The type fell to item(), so it took any value, 1 and
-/// 'abc' among them. Each shape gives the same result as Saxon-HE 12.10, except that an untyped value
-/// without a timezone raises the cast's FORG0001 where Saxon reports XTTE0570.
+/// 'abc' among them. Each shape gives the same result as Saxon-HE 12.10.
 /// </summary>
 public class DateTimeStampConversionTests
 {
@@ -41,7 +40,7 @@ public class DateTimeStampConversionTests
     [InlineData("""<xsl:variable name="v" as="xs:dateTimeStamp" select="'2026-01-01T00:00:00Z'"/><xsl:value-of select="$v"/>""", "XTTE0570")]
     [InlineData("""<xsl:variable name="v" as="xs:dateTimeStamp" select="xs:dateTime('2026-01-01T00:00:00Z')"/><xsl:value-of select="$v"/>""", "XTTE0570")]
     [InlineData("""<xsl:call-template name="t"><xsl:with-param name="p" select="xs:dateTime('2026-01-01T00:00:00Z')"/></xsl:call-template>""", "XTTE0590")]
-    [InlineData("""<xsl:variable name="v" as="xs:dateTimeStamp" select="$d/r/@n"/><xsl:value-of select="$v"/>""", "FORG0001")]
+    [InlineData("""<xsl:variable name="v" as="xs:dateTimeStamp" select="$d/r/@n"/><xsl:value-of select="$v"/>""", "XTTE0570")]
     public async Task A_value_of_another_type_is_an_error(string body, string code)
     {
         var act = () => Run(body);
