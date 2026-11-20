@@ -778,9 +778,20 @@ internal sealed partial class DefaultXsltExecutionContext
         && GetOnNoMatchBehavior(mode) == OnNoMatchBehavior.TextOnlyCopy;
 
     // Shared empty lists for the built-in rule, which applies templates at every node it visits:
-    // `[]` made a new list each time. Sort and with-param lists are only written by the parser.
-    private static readonly List<XsltSort> NoSorts = [];
-    private static readonly List<XsltWithParam> NoWithParams = [];
+    // `[]` made a new list each time. Sort and with-param lists are only written by the parser
+    // (StylesheetParser*, and XsltTransformEngine for initial-template parameters), each into a new
+    // list; at run time they are only enumerated and counted. The type has to stay List<T>, which
+    // the public XsltExecutionContext signatures take, so each read checks that the list is still
+    // empty: a write by a later change fails at the next built-in rule instead of leaking into
+    // every other transform.
+    private static readonly List<XsltSort> s_noSorts = [];
+    private static readonly List<XsltWithParam> s_noWithParams = [];
+
+    internal static List<XsltSort> NoSorts => s_noSorts.Count == 0 ? s_noSorts : throw SharedListWritten();
+    internal static List<XsltWithParam> NoWithParams => s_noWithParams.Count == 0 ? s_noWithParams : throw SharedListWritten();
+
+    private static InvalidOperationException SharedListWritten() =>
+        new("Internal error: a shared empty sort or with-param list of the built-in template rule was written to.");
 
     /// <summary>
     /// The text-only-copy built-in rule applied to <paramref name="parent"/>'s children, as
