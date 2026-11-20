@@ -7474,3 +7474,24 @@ temporary tree reaches XPath unconverted. About 25 places in the engine also han
 expansion) and would receive a document node instead. That is what the spec describes, but it changes
 each of those paths. Do it as one refactor with its own conformance and real-world checks, not as part
 of a performance change.
+
+### 122. In a streamed pass, position() did not count text, comments or processing instructions — fixed (2026-11-20)
+
+Repro: `<xsl:mode streamable="yes"/>`, `<xsl:template match="i"><xsl:value-of select="position()"/>;</xsl:template>`,
+`<xsl:template match="text()"/>`, input `<r><w>x<i/>y<i/></w><w><i/></w></r>`. Expected (the same stylesheet
+not streamed, and Saxon): `2;4;1;`. A streamed run gave `1;2;1;`.
+
+Two causes, one in each streamed route:
+
+- The forward pass (`StreamingXmlProcessor`) gave a template the element's position among its ELEMENT
+  siblings (`siblingCountByDepth`, which a positional `*` step needs), and text, comments and PIs
+  position 1. Templates now get the position among all dispatched children (`childNodeCountByDepth`);
+  the element-only count is unchanged for path predicates.
+- A template's own apply-templates in a streamed pass (`ApplyTemplatesStreamingAsync`) dispatched
+  elements and text but skipped comments, processing instructions and whitespace-only text, so a later
+  sibling's position was too small and a `comment()` or `processing-instruction()` rule never fired
+  there. It now dispatches all of them, with the streamed parent as their parent.
+
+Found while testing that the tree route's child cursor keeps streamed behaviour unchanged (xslt#588).
+Tests: `StreamedPositionTests` (streamed == unstreamed == Saxon, with text, comments, PIs and
+whitespace-only text).
