@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-19 15:50 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-20 00:40 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -16,15 +16,16 @@ Generated 2026-11-19 15:50 UTC by `scripts/status.sh`. Do not edit by hand.
 
 | repo | open issues | open PRs |
 |---|---|---|
-| phoenixmldb-core | 0 | 0 |
+| phoenixmldb-core | 0 | 1 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 7 | 1 |
+| phoenixmldb-xslt | 8 | 1 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
+- [575] Streamed grouping with xsl:output indent="yes" doesn't indent output but creates one long line
 - [562] square brackets in result URI should not be allowed
 - [561] current-output-uri() doesn't return anything
 - [542] Evaluate global variables lazily (order between trees: sx-union-012/017/022/035, square-array-201)
@@ -34,6 +35,10 @@ Generated 2026-11-19 15:50 UTC by `scripts/status.sh`. Do not edit by hand.
 - [13] Backlog triage: 57 failing W3C XSLT cases (11,461/11,518 applicable pass)
 
 ### Open PRs
+
+**phoenixmldb-core**
+
+- [51] release: 2.7.0
 
 **phoenixmldb-xslt**
 
