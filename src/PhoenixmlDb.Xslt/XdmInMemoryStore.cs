@@ -185,6 +185,34 @@ public sealed class XdmInMemoryStore : INodeBuilder
         }
     }
 
+    /// <summary>The ids of <paramref name="node"/>'s children, as <see cref="GetChildren"/> reads them.</summary>
+    internal static IReadOnlyList<NodeId> ChildIds(XdmNode node) => node switch
+    {
+        XdmDocument doc => doc.Children,
+        XdmElement elem => elem.Children,
+        _ => (IReadOnlyList<NodeId>)[]
+    };
+
+    /// <summary>The child with this id, or null, as <see cref="GetChildren"/> resolves it.</summary>
+    internal XdmNode? ChildNode(NodeId id) => _nodes.TryGetValue(id, out var child) ? child : null;
+
+    /// <summary>
+    /// The children of <paramref name="node"/> as a new list, sized once: what
+    /// <see cref="GetChildren"/> yields, without its iterator. The built-in template rule and
+    /// xsl:apply-templates read a node's children this way at every node they visit.
+    /// </summary>
+    internal List<object> ChildList(XdmNode node)
+    {
+        var childIds = ChildIds(node);
+        var list = new List<object>(childIds.Count);
+        for (var i = 0; i < childIds.Count; i++)
+        {
+            if (_nodes.TryGetValue(childIds[i], out var child))
+                list.Add(child);
+        }
+        return list;
+    }
+
     public IEnumerable<XdmAttribute> GetAttributes(XdmElement elem)
     {
         foreach (var attrId in elem.Attributes)

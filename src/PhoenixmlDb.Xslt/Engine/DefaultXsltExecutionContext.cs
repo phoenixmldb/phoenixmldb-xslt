@@ -1900,7 +1900,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _documentNodeDepth++;
         try
         {
-            await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+            await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
         }
         finally
         {
