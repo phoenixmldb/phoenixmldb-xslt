@@ -2349,9 +2349,15 @@ internal sealed partial class DefaultXsltExecutionContext
                     ReleaseDispatchedSubtree(elem);
                     break;
                 }
+                // Every child the select names takes a position, as in a tree: text (whitespace-only
+                // text too, which is a text node unless xsl:strip-space removes it), comments and
+                // processing instructions. Comments and PIs were skipped, and whitespace-only text
+                // was dropped, so a later sibling's position() was too small and a comment() or
+                // processing-instruction() rule never fired here.
                 case System.Xml.XmlNodeType.Text:
                 case System.Xml.XmlNodeType.CDATA:
                 case System.Xml.XmlNodeType.SignificantWhitespace:
+                case System.Xml.XmlNodeType.Whitespace:
                 {
                     // Apply templates to text node — default rule copies text to output
                     var textNode = new Xdm.Nodes.XdmText
@@ -2360,13 +2366,44 @@ internal sealed partial class DefaultXsltExecutionContext
                         Document = DocumentId.None,
                         Value = reader.Value
                     };
+                    if (streamedParent != null)
+                        textNode.Parent = streamedParent.Id;
                     _nodeStore!.Register(textNode);
                     position++;
                     await MatchAndExecuteStreamingNodeAsync(textNode, mode, position).ConfigureAwait(false);
                     break;
                 }
-                // Comments and PIs skipped — they're not matched by the default rule
-                // for templating in this engine; out of scope for first cut.
+                case System.Xml.XmlNodeType.Comment:
+                {
+                    var comment = new Xdm.Nodes.XdmComment
+                    {
+                        Id = new NodeId(_nextStreamGroupNodeId++),
+                        Document = DocumentId.None,
+                        Value = reader.Value
+                    };
+                    if (streamedParent != null)
+                        comment.Parent = streamedParent.Id;
+                    _nodeStore!.Register(comment);
+                    position++;
+                    await MatchAndExecuteStreamingNodeAsync(comment, mode, position).ConfigureAwait(false);
+                    break;
+                }
+                case System.Xml.XmlNodeType.ProcessingInstruction:
+                {
+                    var pi = new Xdm.Nodes.XdmProcessingInstruction
+                    {
+                        Id = new NodeId(_nextStreamGroupNodeId++),
+                        Document = DocumentId.None,
+                        Target = reader.LocalName,
+                        Value = reader.Value
+                    };
+                    if (streamedParent != null)
+                        pi.Parent = streamedParent.Id;
+                    _nodeStore!.Register(pi);
+                    position++;
+                    await MatchAndExecuteStreamingNodeAsync(pi, mode, position).ConfigureAwait(false);
+                    break;
+                }
             }
         }
         }

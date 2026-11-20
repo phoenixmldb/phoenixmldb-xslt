@@ -66,8 +66,8 @@ public class ApplyTemplatesChildCursorTests
     public async Task StreamedPass_BuiltInRuleAndApplyTemplates_KeepTheirPositions()
     {
         // In a streamed pass the children are taken as a list first (nodes can be released while
-        // templates run); the result must be the same as in a pass that is not streamed. No text
-        // children here: a streamed pass numbers position() without them, which is a separate defect.
+        // templates run); the result must be the same as in a pass that is not streamed. Positions
+        // with text, comments and PIs in a streamed pass: StreamedPositionTests (BUGS.md #122).
         var stylesheet = """
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
               <xsl:output method="text"/>

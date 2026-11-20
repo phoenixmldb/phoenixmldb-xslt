@@ -172,6 +172,18 @@ internal sealed class StreamingXmlProcessor
         // Key = depth, Value = count of child elements seen so far at that depth
         // under the current parent. Reset when the parent's EndElement is encountered.
         var siblingCountByDepth = new Dictionary<int, int>();
+        // A child's position() for the template rule it is dispatched to: its position among ALL
+        // the children of its parent that are dispatched (elements, text, comments, processing
+        // instructions), as apply-templates over node() numbers them in a tree. siblingCountByDepth
+        // counts element children only, which is what a positional * step needs, but templates got
+        // that count, and text, comments and PIs got 1.
+        var childNodeCountByDepth = new Dictionary<int, int>();
+        int NextChildPosition(int depth)
+        {
+            var n = childNodeCountByDepth.GetValueOrDefault(depth) + 1;
+            childNodeCountByDepth[depth] = n;
+            return n;
+        }
 
         // Track per-name sibling position: key = (depth, local name), value = count of
         // child elements of that name seen so far at that depth under the current parent.
@@ -389,6 +401,7 @@ internal sealed class StreamingXmlProcessor
                         current.Parent = ancestorStack.Count > 0 ? ancestorStack.Peek() : null;
                         current.Depth = elementDepth;
                         current.Position = siblingCount;
+                        var templatePosition = NextChildPosition(elementDepth);
 
                         // Match and execute template
                         var xdmElem = MaterializeElement(current);
@@ -738,7 +751,7 @@ internal sealed class StreamingXmlProcessor
                         else
                         {
                             var positionBeforeDispatch = reader is PeekableXmlReader beforeReader ? beforeReader.Position : -1;
-                            wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, current.Position)
+                            wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, templatePosition)
                                 .ConfigureAwait(false);
 
                             // A matched template that never read into this element's children did
@@ -874,6 +887,7 @@ internal sealed class StreamingXmlProcessor
                             // Reset sibling counter for children of this closing element.
                             // Children are at depth = closingContext.Depth + 1.
                             siblingCountByDepth.Remove(closingContext.Depth + 1);
+                            childNodeCountByDepth.Remove(closingContext.Depth + 1);
                             // Reset per-name child counters at that same depth so the next
                             // parent restarts position() from 1. Entries are sparse (one per
                             // distinct child name seen under this parent).
@@ -935,6 +949,7 @@ internal sealed class StreamingXmlProcessor
                         if (ancestorStack.Count == 0)
                             break;
                         var textValue = reader.Value;
+                        var textPosition = NextChildPosition(reader.Depth);
 
                         // Text nodes in streaming: create temporary text node, match templates.
                         // We pool XdmText instances here to avoid per-event GC churn on
@@ -977,7 +992,7 @@ internal sealed class StreamingXmlProcessor
                         // exists; default text rule would otherwise leak whitespace).
                         if (suppressionDepth < 0 && !_subscriptionDispatchOnly)
                         {
-                            await _context.MatchAndExecuteStreamingNodeAsync(textNode, _mode, 1)
+                            await _context.MatchAndExecuteStreamingNodeAsync(textNode, _mode, textPosition)
                                 .ConfigureAwait(false);
                         }
 
@@ -992,6 +1007,7 @@ internal sealed class StreamingXmlProcessor
 
                     case XmlNodeType.Comment:
                     {
+                        var commentPosition = NextChildPosition(reader.Depth);
                         var commentId = new NodeId(_nextNodeId++);
                         var comment = new XdmComment
                         {
@@ -1004,7 +1020,7 @@ internal sealed class StreamingXmlProcessor
                         await FireAccumulatorRulesAsync(comment, commentId, AccumulatorPhase.Start).ConfigureAwait(false);
                         if (suppressionDepth < 0)
                         {
-                            await _context.MatchAndExecuteStreamingNodeAsync(comment, _mode, 1)
+                            await _context.MatchAndExecuteStreamingNodeAsync(comment, _mode, commentPosition)
                                 .ConfigureAwait(false);
                         }
                         await FireAccumulatorRulesAsync(comment, commentId, AccumulatorPhase.End).ConfigureAwait(false);
@@ -1015,6 +1031,7 @@ internal sealed class StreamingXmlProcessor
 
                     case XmlNodeType.ProcessingInstruction:
                     {
+                        var piPosition = NextChildPosition(reader.Depth);
                         var piId = new NodeId(_nextNodeId++);
                         var pi = new XdmProcessingInstruction
                         {
@@ -1028,7 +1045,7 @@ internal sealed class StreamingXmlProcessor
                         await FireAccumulatorRulesAsync(pi, piId, AccumulatorPhase.Start).ConfigureAwait(false);
                         if (suppressionDepth < 0)
                         {
-                            await _context.MatchAndExecuteStreamingNodeAsync(pi, _mode, 1)
+                            await _context.MatchAndExecuteStreamingNodeAsync(pi, _mode, piPosition)
                                 .ConfigureAwait(false);
                         }
                         await FireAccumulatorRulesAsync(pi, piId, AccumulatorPhase.End).ConfigureAwait(false);
