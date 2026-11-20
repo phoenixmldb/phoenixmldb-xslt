@@ -935,6 +935,14 @@ public sealed partial class StylesheetParser
             qname = new QName(NamespaceId.None, name);
         }
 
+        // The XSLT functions a static expression may call (XSLT 3.0 §3.13.1, the static context):
+        // they are not in the XPath library, so function-available('system-property') was false in
+        // use-when (W3C use-when-0407a). current(), key() and the other XSLT functions that need a
+        // dynamic context are not available there, and stay false.
+        if (qname.ExpandedNamespace is null or "http://www.w3.org/2005/xpath-functions"
+            && StaticXsltFunctionArities(qname.LocalName) is var (min, max))
+            return arity < 0 || (arity >= min && arity <= max);
+
         var lib = PhoenixmlDb.XQuery.Functions.FunctionLibrary.Standard;
         if (arity >= 0)
             return lib.Resolve(qname, arity) != null;
@@ -948,6 +956,14 @@ public sealed partial class StylesheetParser
         return false;
     }
 
+
+    /// <summary>The arities of an XSLT function that a static expression may call, or null.</summary>
+    private static (int Min, int Max)? StaticXsltFunctionArities(string localName) => localName switch
+    {
+        "system-property" or "element-available" or "type-available" => (1, 1),
+        "function-available" => (1, 2),
+        _ => null,
+    };
 
     private static bool EvaluateTypeAvailable(string name, XElement context)
         => XsltTypeAvailableFunction.IsBuiltInType(name, prefix => context.GetNamespaceOfPrefix(prefix)?.NamespaceName);
