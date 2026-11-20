@@ -1234,6 +1234,21 @@ internal sealed partial class DefaultXsltExecutionContext
     /// The with-param's type was not applied, so <c>select="$total, @len" as="xs:double*"</c>
     /// kept the attribute node (W3C iterate-039); the streamed loop applied neither type.
     /// </summary>
+    /// <summary>
+    /// The initial value of an <c>xsl:iterate/xsl:param</c>, converted to its <c>as</c> type by the
+    /// function conversion rules and checked against it: a value that does not match is XTTE0600, as
+    /// for a parameter's default (XSLT 3.0 §8.3, §9.3). Neither was done, on the streamed loop or the
+    /// other, so as="xs:integer" select="@a" over a="abc" held the attribute's string; 3.2.0 accepts it.
+    /// </summary>
+    private object? ConvertIterateInitialValue(XsltParam param, object? value)
+    {
+        if (param.As is null)
+            return value;
+        value = CoerceToType(value, param.As);
+        ValidateValueMatchesType(value, param.As, "XTTE0600", $"Parameter ${param.Name.LocalName} initial value");
+        return value;
+    }
+
     private object? ConvertNextIterationValue(XsltIterate instruction, XsltWithParam withParam, object? value)
     {
         // A value the type does not allow is XTTE0570 for the with-param, which is a
@@ -1341,7 +1356,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 value = await EvaluateBodyContentToValueAsync(param.Content).ConfigureAwait(false);
             else
                 value = null;
-            SetVariable(param.Name, value);
+            SetVariable(param.Name, ConvertIterateInitialValue(param, value));
         }
 
         var brokeOut = false;
@@ -1787,7 +1802,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 value = null;
             }
-            SetVariable(param.Name, value);
+            SetVariable(param.Name, ConvertIterateInitialValue(param, value));
         }
 
         try
