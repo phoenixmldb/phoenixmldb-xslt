@@ -922,7 +922,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // onto its name tests, and the names of the variables it references.
         if (!_planCache.TryGetValue(expr, out var cached))
         {
-            cached = new CachedXPathPlan(expr);
+            cached = new CachedXPathPlan();
             _planCache[expr] = cached;
         }
 
@@ -934,17 +934,26 @@ internal sealed partial class DefaultXsltExecutionContext
             cached.NamespaceIdsResolved = true;
         }
 
-        if (cached.Plan is not { } plan)
+        if (cached.Shared is not { } shared)
         {
-            var optimizer = new PhoenixmlDb.XQuery.Optimizer.QueryOptimizer();
-            var optContext = new PhoenixmlDb.XQuery.Optimizer.OptimizationContext { Container = default, BackwardsCompatible = IsBackwardsCompatible, FunctionLibrary = _functionLibrary };
-            plan = optimizer.Optimize(expr, optContext);
-            // The select of the xsl:sequence a stylesheet function evaluates last: its calls in
-            // tail position return a tail-call request to the function's loop (xquery#296).
-            if (tailCallKey is not null)
-                PhoenixmlDb.XQuery.Execution.TailCalls.Mark(plan.Root, tailCallKey);
-            cached.Plan = plan;
+            // Shared by the transforms of this compiled stylesheet. What a plan holds does not depend
+            // on the transform: the function library is used at plan time only for parameter names of
+            // keyword arguments, calls resolve their function from the executing context, and name
+            // tests are read from the expression at run time.
+            if (!SharedPlans.TryGetValue(expr, out shared))
+            {
+                var optimizer = new PhoenixmlDb.XQuery.Optimizer.QueryOptimizer();
+                var optContext = new PhoenixmlDb.XQuery.Optimizer.OptimizationContext { Container = default, BackwardsCompatible = IsBackwardsCompatible, FunctionLibrary = _functionLibrary };
+                var built = optimizer.Optimize(expr, optContext);
+                // The select of the xsl:sequence a stylesheet function evaluates last: its calls in
+                // tail position return a tail-call request to the function's loop (xquery#296).
+                if (tailCallKey is not null)
+                    PhoenixmlDb.XQuery.Execution.TailCalls.Mark(built.Root, tailCallKey);
+                shared = SharedPlans.GetOrAdd(expr, new SharedXPathPlan(built, VariableReferenceCollector.Collect(expr)));
+            }
+            cached.Shared = shared;
         }
+        var plan = shared.Plan;
 
         // Pass the node store directly as the node provider — this preserves INodeBuilder
         // so XQuery constructors can create proper XDM elements instead of serialized strings
@@ -1001,7 +1010,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // to VariableFallback. Convert ResultTreeFragments to XDM documents so XPath can navigate into them.
         var privateGlobals = _stylesheet.PackagePrivateGlobals;
         var currentPkgForGlobals = privateGlobals.Count > 0 ? CurrentComponentPackage() : null;
-        foreach (var name in cached.VariableNames)
+        foreach (var name in shared.VariableNames)
         {
             var foundLocal = false;
             object? local = null;
