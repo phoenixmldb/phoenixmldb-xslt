@@ -7512,6 +7512,10 @@ name wins by qualified-name string) kept only the second of each. Three shapes:
   `urn:two` gave NON-WELL-FORMED output (two `xmlns:p` declarations);
 - a namespace node bound it: `<xsl:namespace name="p" select="'urn:one'"/>` then `p:att` in `urn:two` lost
   the namespace node.
+- the built-in rule (`on-no-match="shallow-copy"` or `"deep-copy"`) copying an attribute: its writer emitted
+  the prefixed name with NO namespace declaration, so a copied `p:a` (urn:one) onto an element where `p` is
+  urn:two silently became `{urn:two}a`. It now uses the same writer as copy-of (`WriteCopiedAttribute`).
+  xsl:copy / xsl:copy-of of an attribute node were already right.
 
 The check now asks whether the prefix is bound to another URI on the element being constructed (its two
 output scopes and its namespace nodes) and, if so, generates a prefix. The underlying fragility, attributes

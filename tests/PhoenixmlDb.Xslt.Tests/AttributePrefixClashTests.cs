@@ -25,6 +25,19 @@ public class AttributePrefixClashTests
         return XElement.Parse(await transformer.TransformAsync("<r/>")); // throws if not well-formed
     }
 
+    // x's p is urn:one, y's p is urn:two: copying x's attribute onto a copy of y clashes on p.
+    private const string Source = """<r xmlns:p="urn:one"><x p:a="1"/><y xmlns:p="urn:two" p:b="2"/></r>""";
+
+    private static async Task<XElement> TransformSourceAsync(string stylesheetBody)
+    {
+        var stylesheet = $"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">{stylesheetBody}</xsl:stylesheet>
+            """;
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(stylesheet);
+        return XElement.Parse(await transformer.TransformAsync(Source));
+    }
+
     private static string[] Attributes(XElement e) =>
         [.. e.Attributes().Where(a => !a.IsNamespaceDeclaration).Select(a => $"{{{a.Name.NamespaceName}}}{a.Name.LocalName}={a.Value}").Order()];
 
@@ -65,5 +78,29 @@ public class AttributePrefixClashTests
     {
         var e = await TransformAsync("""<out><xsl:attribute name="a:att" namespace="urn:u">1</xsl:attribute><xsl:attribute name="b:att" namespace="urn:u">2</xsl:attribute></out>""");
         Attributes(e).Should().Equal("{urn:u}att=2");
+    }
+
+    [Theory]
+    [InlineData("shallow-copy")]
+    [InlineData("deep-copy")]
+    public async Task BuiltInRuleCopyOfAnAttribute_KeepsItsNamespaceUnderAClashingPrefix(string onNoMatch)
+    {
+        // The built-in rule's attribute copy wrote "p:a" with no declaration, so under y's p it
+        // silently became {urn:two}a.
+        var root = await TransformSourceAsync($"""
+            <xsl:mode on-no-match="{onNoMatch}"/>
+            <xsl:template match="/r"><xsl:copy><xsl:apply-templates/></xsl:copy></xsl:template>
+            <xsl:template match="y"><xsl:copy><xsl:apply-templates select="@*, //x/@*"/></xsl:copy></xsl:template>
+            """);
+        Attributes(root.Element("y")!).Should().Equal("{urn:one}a=1", "{urn:two}b=2");
+    }
+
+    [Fact]
+    public async Task CopyOfAnAttributeNode_KeepsItsNamespaceUnderAClashingPrefix()
+    {
+        var y = await TransformSourceAsync("""
+            <xsl:template match="/"><xsl:for-each select="//y"><xsl:copy><xsl:for-each select="@*, //x/@*"><xsl:copy/></xsl:for-each></xsl:copy></xsl:for-each></xsl:template>
+            """);
+        Attributes(y).Should().Equal("{urn:one}a=1", "{urn:two}b=2");
     }
 }

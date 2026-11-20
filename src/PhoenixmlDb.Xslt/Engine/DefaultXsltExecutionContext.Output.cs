@@ -561,47 +561,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (_attributeCollecting && _output.Length > _outputLogicalStart && !IsBackwardsCompatible && _wherePopulatedDepth == 0)
                     throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added", _currentInstructionLocation);
 
-                var target = _attributeCollecting ? _collectedAttributes! : _output;
-                var attrPrefix = attr.Prefix;
-                var attrLocalName = attr.LocalName;
-
-                // Namespace fixup: emit namespace declaration for prefixed attributes
-                if (!string.IsNullOrEmpty(attrPrefix) && attrPrefix != "xml" && _sequenceAccumulator == null)
-                {
-                    var attrNsUri = _nodeStore?.GetNamespaceUri(attr.Namespace) ?? "";
-                    if (!string.IsNullOrEmpty(attrNsUri))
-                    {
-                        if (!IsNamespaceInScope(attrPrefix, attrNsUri))
-                        {
-                            // Check for prefix clash: same prefix bound to different URI
-                            if (IsPrefixInUse(attrPrefix))
-                            {
-                                attrPrefix = GenerateUniquePrefix(attrPrefix);
-                            }
-                            target.Append(" xmlns:");
-                            target.Append(attrPrefix);
-                            target.Append("=\"");
-                            target.Append(EscapeAttributeValue(attrNsUri));
-                            target.Append('"');
-                            if (_outputNsScopes.Count > 0)
-                                _outputNsScopes.Peek()[attrPrefix] = attrNsUri;
-                        }
-                    }
-                }
-
-                var aName = attrPrefix != null ? $"{attrPrefix}:{attrLocalName}" : attrLocalName;
-                if (target == _output)
-                {
-                    _sink.Attribute(aName, attr.Value);
-                }
-                else
-                {
-                    target.Append(' ');
-                    target.Append(aName);
-                    target.Append("=\"");
-                    target.Append(EscapeAttributeValue(attr.Value));
-                    target.Append('"');
-                }
+                WriteCopiedAttribute(attr);
                 break;
             }
 
@@ -2460,6 +2420,58 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Atomic values: serialize as string
         _sink.RawText(StringValueOf(result));
+    }
+
+    /// <summary>
+    /// Writes a copied attribute node to the element under construction (or to the output), with
+    /// namespace fixup: a prefix not yet declared with the attribute's namespace is declared, and a
+    /// prefix already bound to another namespace is replaced by a generated one, so the attribute
+    /// keeps its expanded name. Shared by copy-of / serialization and the built-in rule's shallow
+    /// and deep copy of an attribute, which wrote the prefixed name with no declaration at all.
+    /// </summary>
+    private void WriteCopiedAttribute(XdmAttribute attr)
+    {
+        var target = _attributeCollecting ? _collectedAttributes! : _output;
+        var attrPrefix = attr.Prefix;
+        var attrLocalName = attr.LocalName;
+
+        // Namespace fixup: emit namespace declaration for prefixed attributes
+        if (!string.IsNullOrEmpty(attrPrefix) && attrPrefix != "xml" && _sequenceAccumulator == null)
+        {
+            var attrNsUri = _nodeStore?.GetNamespaceUri(attr.Namespace) ?? "";
+            if (!string.IsNullOrEmpty(attrNsUri))
+            {
+                if (!IsNamespaceInScope(attrPrefix, attrNsUri))
+                {
+                    // Check for prefix clash: same prefix bound to different URI
+                    if (IsPrefixInUse(attrPrefix))
+                    {
+                        attrPrefix = GenerateUniquePrefix(attrPrefix);
+                    }
+                    target.Append(" xmlns:");
+                    target.Append(attrPrefix);
+                    target.Append("=\"");
+                    target.Append(EscapeAttributeValue(attrNsUri));
+                    target.Append('"');
+                    if (_outputNsScopes.Count > 0)
+                        _outputNsScopes.Peek()[attrPrefix] = attrNsUri;
+                }
+            }
+        }
+
+        var aName = attrPrefix != null ? $"{attrPrefix}:{attrLocalName}" : attrLocalName;
+        if (target == _output)
+        {
+            _sink.Attribute(aName, attr.Value);
+        }
+        else
+        {
+            target.Append(' ');
+            target.Append(aName);
+            target.Append("=\"");
+            target.Append(EscapeAttributeValue(attr.Value));
+            target.Append('"');
+        }
     }
 
 }
