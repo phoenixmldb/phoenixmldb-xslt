@@ -34,6 +34,15 @@ public class SharedPlanStoreTests
         GC.Collect();
     }
 
+    // In its own method, not inlined, so that nothing the transforms made is still held by a local
+    // of the test when it collects.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task RunTransformsAsync(XsltTransformer transformer, int count)
+    {
+        for (var i = 0; i < count; i++)
+            await transformer.TransformAsync("<r/>");
+    }
+
     [Fact]
     public async Task PlansOfEvaluatedExpressions_DoNotAccumulateAcrossTransforms()
     {
@@ -48,10 +57,10 @@ public class SharedPlanStoreTests
         FullCollect();
         var before = LiveEntries();
 
-        for (var i = 0; i < 20; i++)
-            await transformer.TransformAsync("<r/>");
+        await RunTransformsAsync(transformer, 20);
         FullCollect();
 
+        // A strong store keeps one more plan per transform (20 here); allow a wide margin below that.
         (LiveEntries() - before).Should().BeLessThan(10, "each transform's evaluated expression is a new object, and its plan goes with it");
     }
 }
