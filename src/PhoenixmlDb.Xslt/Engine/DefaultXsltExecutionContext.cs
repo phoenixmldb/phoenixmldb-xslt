@@ -1997,6 +1997,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Converts ResultTreeFragment values to XDM documents for XQuery evaluation.
     /// This allows XPath expressions like $var/path to navigate into RTFs.
     /// </summary>
+    // Sequences known to hold no temporary tree (see ConvertRtfForXQuery). Keyed by the array, so an
+    // entry goes when the array is collected; shared by every transform, and thread-safe.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object?[], object> s_noTemporaryTree = new();
+    private static readonly object s_noTemporaryTreeMark = new();
+
+    // Below this length a scan is cheaper than the table lookup.
+    private const int NoTemporaryTreeMinLength = 16;
+
     internal object? ConvertRtfForXQuery(object? value)
     {
         if (value is ResultTreeFragment rtf)
@@ -2011,9 +2019,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             // evaluation that read the variable, so a rule reading a global //@id variable for each
             // node was quadratic in the document. The binding is read-only (QueryExecutionContext
             // stores it), so the array can be shared.
+            //
+            // Finding that out is a scan of the whole sequence, and the same variable is bound again
+            // for every evaluation that reads it, so the scan alone was still quadratic. A large
+            // array is scanned once: the answer "no temporary tree" is kept for it. Only that answer
+            // is kept, never a converted array. It cannot go stale: a bound sequence is a finished
+            // value, and no code writes a temporary tree into an array after it is bound (sequences
+            // are built in lists and copied into a new array when the binding is made).
+            if (arr.Length >= NoTemporaryTreeMinLength && s_noTemporaryTree.TryGetValue(arr, out _))
+                return arr;
             var first = Array.FindIndex(arr, static item => item is ResultTreeFragment or object?[]);
             if (first < 0)
+            {
+                if (arr.Length >= NoTemporaryTreeMinLength)
+                    s_noTemporaryTree.AddOrUpdate(arr, s_noTemporaryTreeMark);
                 return arr;
+            }
             var converted = new object?[arr.Length];
             Array.Copy(arr, converted, first);
             for (int i = first; i < arr.Length; i++)

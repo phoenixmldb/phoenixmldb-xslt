@@ -7456,3 +7456,21 @@ which xslt's node store requires (`xsl:value-of` over the result throws), and it
 don't carry XPTY0004 (error-3245a, two unit tests). It is the drift of #115 in both directions.
 Unifying means bringing the XQuery converter up to the xslt copy (string values, error codes), then
 deleting the xslt one, which needs an XQuery release in between.
+
+### 121. Temporary trees are converted for XPath when a variable is read, not when it is bound — recorded, not refactored (2026-11-20)
+
+A variable whose value is a temporary tree (`ResultTreeFragment`), or a sequence that holds one, is
+stored as it is. `ConvertRtfForXQuery` turns each one into a document node every time an XPath
+expression that reads the variable is evaluated. For a sequence, finding out whether there is anything
+to convert means scanning it. That scan is now done once for each large array (the answer "no
+temporary tree" is kept in a `ConditionalWeakTable`), but the design still converts at read time.
+
+The cleaner design converts once, where the value is bound: a bound value would then never hold a
+`ResultTreeFragment`, and a read would neither scan nor copy. It is not done because there are about
+60 places that store a variable or parameter value (locals, globals and lazy globals, template,
+tunnel, function and `xsl:iterate` parameters, static parameters), and a missed one fails silently: a
+temporary tree reaches XPath unconverted. About 25 places in the engine also handle a
+`ResultTreeFragment` item themselves (serialization, `xsl:copy`, string value, `key()`, apply-templates
+expansion) and would receive a document node instead. That is what the spec describes, but it changes
+each of those paths. Do it as one refactor with its own conformance and real-world checks, not as part
+of a performance change.
