@@ -34,8 +34,11 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
-          dotnet-quality: 'preview'
+          # SDK 11 builds (global.json); the 8 and 10 runtimes run the older targets' tests.
+          dotnet-version: |
+            8.0.x
+            10.0.x
+            11.0.x
 
       - name: Resolve and guard version
         id: version
@@ -145,8 +148,51 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
-          dotnet-quality: 'preview'
+          # SDK 11 builds (global.json); the 8 and 10 runtimes run the older targets' tests.
+          dotnet-version: |
+            8.0.x
+            10.0.x
+            11.0.x
+
+      - name: Test
+        run: |
+          dotnet test tests/PhoenixmlDb.Xslt.Tests -c Release
+          dotnet test tests/PhoenixmlDb.Xslt.LanguageServer.Tests -c Release
+          dotnet test tests/PhoenixmlDb.Xslt.Cli.Tests -c Release
+
+  # The same build and tests on SDK 10. global.json pins SDK 11; this job repoints it, so the
+  # projects build net8.0;net10.0 alone (Directory.Build.props adds net11.0 only on SDK 11). It proves
+  # those builds need nothing from SDK 11, and that a host still on SDK 10 can build.
+  build-sdk10:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Select SDK 10
+        run: |
+          python3 - <<'PY'
+          import json
+          g = json.load(open("global.json"))
+          g["sdk"] = {"version": "10.0.100", "rollForward": "latestFeature"}
+          json.dump(g, open("global.json", "w"), indent=2)
+          PY
+          dotnet --version
+          case "$(dotnet --version)" in 10.*) ;; *) echo "::error::expected SDK 10"; exit 1 ;; esac
+
+      - name: Sibling engines from source
+        run: |
+          ./scripts/clone-siblings.sh phoenixmldb-core phoenixmldb-xquery
+
+      - name: Build
+        run: |
+          dotnet build src/PhoenixmlDb.Xslt -c Release
+          dotnet build src/PhoenixmlDb.Xslt.Cli -c Release
 
       - name: Test
         run: |
@@ -174,10 +220,11 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
+          # SDK 11 builds (global.json); the 8 and 10 runtimes run the older targets' tests.
           dotnet-version: |
             8.0.x
             10.0.x
-          dotnet-quality: 'preview'
+            11.0.x
 
       - name: Test
         run: |
@@ -227,7 +274,7 @@ jobs:
           }
 
   publish:
-    needs: [build, test, test-windows]
+    needs: [build, test, test-windows, build-sdk10]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.LINUX_RUNS_ON || '"ubuntu-latest"') }}
     permissions:
@@ -242,8 +289,11 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
-          dotnet-quality: 'preview'
+          # SDK 11 builds (global.json); the 8 and 10 runtimes run the older targets' tests.
+          dotnet-version: |
+            8.0.x
+            10.0.x
+            11.0.x
 
       - name: Login to NuGet via trusted publisher
         id: nuget-login

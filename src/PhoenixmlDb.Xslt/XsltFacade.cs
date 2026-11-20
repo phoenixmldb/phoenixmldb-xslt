@@ -1717,7 +1717,7 @@ public sealed class XsltTransformer
     {
         ArgumentNullException.ThrowIfNull(output);
         var result = await TransformAsync(inputXml, ct).ConfigureAwait(false);
-        await output.WriteAsync(result).ConfigureAwait(false);
+        await output.WriteAsync(result.AsMemory(), ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1737,7 +1737,7 @@ public sealed class XsltTransformer
         }
         var xml = await inputXml.ReadToEndAsync(ct).ConfigureAwait(false);
         var result = await TransformAsync(xml, ct).ConfigureAwait(false);
-        await output.WriteAsync(result).ConfigureAwait(false);
+        await output.WriteAsync(result.AsMemory(), ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1810,7 +1810,7 @@ public sealed class XsltTransformer
             foreach (var (href, content) in engine.SecondaryResultDocuments)
             {
                 var writer = ResultDocumentHandler(href);
-                await writer.WriteAsync(content).ConfigureAwait(false);
+                await writer.WriteAsync(content.AsMemory(), ct).ConfigureAwait(false);
                 await writer.FlushAsync(ct).ConfigureAwait(false);
             }
             SecondaryResultDocuments = new Dictionary<string, string>();
