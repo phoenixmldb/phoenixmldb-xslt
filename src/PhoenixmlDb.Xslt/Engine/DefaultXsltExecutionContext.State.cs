@@ -157,12 +157,37 @@ internal sealed partial class DefaultXsltExecutionContext
     /// What <see cref="EvaluateAsync"/> keeps per expression: the optimized plan, whether the node store's
     /// namespace ids have been interned onto its name tests, and the variable names it references.
     /// </summary>
-    private sealed class CachedXPathPlan(XQueryExpression expr)
+    private sealed class CachedXPathPlan
     {
-        public PhoenixmlDb.XQuery.Execution.ExecutionPlan? Plan { get; set; }
+        /// <summary>The plan and variable names, shared by every transform of the compiled stylesheet.</summary>
+        public SharedXPathPlan? Shared { get; set; }
+        /// <summary>
+        /// Per context: namespace ids come from this transform's node store (first-seen order), and
+        /// are written onto the expression's name tests before the expression is evaluated here.
+        /// Plan operators read them from the name tests at run time, so a shared plan sees them.
+        /// </summary>
         public bool NamespaceIdsResolved { get; set; }
-        public QName[] VariableNames { get; } = VariableReferenceCollector.Collect(expr);
     }
+
+    /// <summary>
+    /// What depends only on the expression: its optimized plan and the names of the variables it
+    /// references. Kept per compiled stylesheet, so a transformer used again does not optimize each
+    /// XPath again for every transform. Built whole before it is published (GetOrAdd).
+    /// </summary>
+    private sealed class SharedXPathPlan(PhoenixmlDb.XQuery.Execution.ExecutionPlan plan, QName[] variableNames)
+    {
+        public PhoenixmlDb.XQuery.Execution.ExecutionPlan Plan { get; } = plan;
+        public QName[] VariableNames { get; } = variableNames;
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<XsltStylesheet,
+        System.Collections.Concurrent.ConcurrentDictionary<XQueryExpression, SharedXPathPlan>> s_sharedPlans = new();
+
+    private System.Collections.Concurrent.ConcurrentDictionary<XQueryExpression, SharedXPathPlan>? _sharedPlans;
+
+    private System.Collections.Concurrent.ConcurrentDictionary<XQueryExpression, SharedXPathPlan> SharedPlans
+        => _sharedPlans ??= s_sharedPlans.GetValue(_stylesheet,
+            static _ => new System.Collections.Concurrent.ConcurrentDictionary<XQueryExpression, SharedXPathPlan>(ReferenceEqualityComparer.Instance));
 
     /// <summary>
     /// Collects the distinct names of every variable reference in an expression, inline function bodies
