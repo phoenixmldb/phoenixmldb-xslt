@@ -7539,3 +7539,106 @@ to a node bound as an external variable from another store.
 Options compared: copying foreign trees at bind time (what `CrossStoreNodeRef` does for fn:transform) loses node identity
 and costs a full copy per transform; nodes that know their store (Core change) keep identity and are the base for fixed
 namespace ids in the compile-once API. Until fixed, a foreign node should be an error, never a silent wrong result.
+
+### 125. XQuery Update placed the source nodes themselves, not copies, and changed the input document — fixing (2026-11-20)
+
+Engine: **XQuery** (`InsertOperator`, `ReplaceNodeOperator`, `PendingUpdateApplicator`). Recorded
+here because xquery has no BUGS.md, as #120 is.
+
+XQUF 3.0 §3.2.1 and §3.4.1 copy the insertion and replacement sequences. The engine placed the
+source node objects and set their `Parent` to the target:
+
+```xquery
+let $doc := document { <r><e><a/><b>old</b></e><x>src</x><other>o</other></r> }
+let $orig := $doc/r
+let $c := copy $c := $orig modify (insert node $orig/x into $c/e,
+                                   replace node $c/e/b with $orig/other) return $c
+```
+
+| check | main (8a04748) | spec |
+|---|---|---|
+| `$c/e/x is $orig/x` | true | false |
+| `$c/e/other is $orig/other` | true | false |
+| `$orig/x/.. is $orig` | **false** | true |
+| `$orig/x/.. is $c/e` | **true** | false |
+| `root($orig/x) is $doc` | **false** | true |
+
+The input's child lists look unchanged (`count($orig/x) = 1`), so only identity and upward
+navigation show the damage: silent corruption of the input. All five insert positions and
+`replace node` are affected. Found by the two-store probe for fix B (#124): these were its six
+document-store → overlay registrations.
+
+Not affected: db-engine. Its code applies no pending update list (documents are updated by
+whole-document replacement through its own API), so nothing reaches LMDB this way. The
+6 identity checks of an UNMODIFIED copied node (`$c/a is $orig/a`, parents, roots, order,
+generate-id, original unchanged) all pass on main: the copy bindings were always deep copies.
+
+Fix (branch fix/xquf-copy-insertion-xquery): insert and replace deep-copy their source nodes into
+the update target store when the expression is evaluated, so a later primitive of the same modify
+clause does not reach the copy. Tests: `UpdateContentCopyTests` (8; all 8 fail on main).
+
+Found next to it, not fixed by it: #126 (attributes), #127 (top-level updates dropped),
+#128 (missing XUDY errors), #129 (rename into a namespace).
+
+### 126. Inserting or replacing an attribute did nothing visible — fixing (2026-11-20)
+
+Engine: **XQuery** (`PendingUpdateApplicator`, `InMemoryUpdatableNodeStore`).
+
+`insert node attribute n {"2"} into $c` (and as first / as last / before / after) appended the
+attribute to the element's CHILD list. Navigation (`$c/@n`) and the serializer read the attribute
+list, so the attribute was invisible and `count($c/node())` grew. `replace node $c/@a with
+attribute n {"2"}` looked for `@a` among the parent's children, did not find it and did nothing.
+Both silent. On main, `insert node $orig/x/@k into $c/e` also re-parented the original attribute
+(#125). `delete node`, `rename node` and `replace value of node` on attributes were correct.
+
+Fix (branch fix/xquf-attribute-insert-replace, after #125): attributes of an insertion sequence go
+to the target's attributes (into / as first / as last) or the target parent's (before / after);
+an attribute target is replaced at its position in its parent's attributes. Tests:
+`AttributeUpdateTests` (11; all 11 fail on the #125 base).
+
+Not done here (new errors, Lucas's ruling first): XUTY0004 (an attribute after a non-attribute in
+an insertion sequence), XUTY0010 / XUTY0011 (attribute and non-attribute mixed in a replacement),
+XUTY0022 (attribute inserted into a document node), XUDY0021 (duplicate attribute names after the
+update), XUDY0030 (attribute inserted before/after a node whose parent is not an element).
+
+### 127. A top-level updating query was dropped silently — recorded, waiting for a ruling (2026-11-20)
+
+Engine: **XQuery** (`QueryEngine`, `ExecutionPlan`, `XdmDocumentStore`).
+
+`insert node <x/> into <e/>` from the CLI: exit 0, no output, no error. Only
+`QueryEngine.ExecuteAsync(...)` applies the pending update list after the query; the CLI, the
+`XQueryFacade` and every caller that runs `ExecutionPlan.ExecuteAsync(context)` collect the list
+and drop it. Where it is applied, a store that cannot be updated raises `XUST0002`, a code that
+XQUF 3.0 does not define (in XQUF 1.0 it meant "a non-updating expression where an updating one
+is required").
+
+XQUF 3.0 §2.5: "If the outermost expression in a query returns a non-empty pending update list,
+upd:applyUpdates is implicitly invoked." So the update must be applied. Proposed (for Lucas): one
+place applies the list for every entry point; `XdmDocumentStore` (constructed nodes, parsed input,
+`doc()`) becomes updatable by replacing changed node objects; only a store that cannot be updated
+raises an implementation-defined error, proposed `phx:XUDY9001` in
+`https://schemas.phoenixml.dev/2026/functions`. That is a new error for queries that run today.
+
+### 128. Copy/modify and conflicting updates raised no error — recorded, waiting for a ruling (2026-11-20)
+
+Engine: **XQuery**. All silent on main (8a04748):
+
+| code | query shape | main |
+|---|---|---|
+| XUDY0014 | `copy $c := $o modify delete node $o/a return ...` (a node the copy did not create) | ignored |
+| XUDY0015 | two `rename node` of one node | last wins |
+| XUDY0016 | two `replace node` of one node | first wins |
+| XUDY0017 | two `replace value of node` of one node | last wins |
+
+XUDY0024 (conflicting namespace bindings) could not be tested before #126 (attribute insert) and
+#129 (namespaced rename) are fixed. These are new errors for queries that run today.
+
+### 129. Renaming a node into a namespace lost the namespace — recorded (2026-11-20)
+
+Engine: **XQuery** (`RenameOperator` / the overlay's namespace ids).
+
+`copy $c := <e><k>v</k></e> modify rename node $c/k as QName("urn:a","p:k") return $c`:
+`namespace-uri($c/k)` is "" and `serialize()` fails: "Cannot serialize 'k': namespace id 44938203
+is not registered with the node store. The node was built with an id from another store". The
+same for an element root and for an attribute. Renaming to a name in no namespace is correct.
+The namespace id is not one the store interned: the defect class of #124.
