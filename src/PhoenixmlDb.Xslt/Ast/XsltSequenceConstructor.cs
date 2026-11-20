@@ -27,9 +27,12 @@ public sealed class XsltSequenceConstructor : XsltInstruction
 
         if (!hasOnEmpty && !hasOnNonEmpty)
         {
-            // Fast path: no conditional instructions
-            foreach (var instruction in Instructions)
+            // Fast path: no conditional instructions. An index loop: foreach over the
+            // IReadOnlyList boxed an enumerator at every execution.
+            var instructions = Instructions;
+            for (var n = 0; n < instructions.Count; n++)
             {
+                var instruction = instructions[n];
                 if (instruction.Location != null) context.PushInstructionLocation(instruction.Location);
                 if (instruction.Version != null) context.PushVersion(instruction.Version);
                 if (instruction.DefaultCollation != null) context.PushCollation(instruction.DefaultCollation);

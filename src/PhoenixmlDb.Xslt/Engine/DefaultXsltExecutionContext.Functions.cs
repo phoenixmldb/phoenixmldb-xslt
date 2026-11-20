@@ -423,7 +423,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         // Document node with no live reader: recurse into children non-streaming, preserving
         // structure (the built-in document rule's structure-preserving behaviour, not text-only).
-        return ApplyTemplatesAsync(null, mode, [], withParams);
+        return ApplyTemplatesAsync(null, mode, NoSorts, withParams);
     }
 
 

@@ -192,9 +192,10 @@ internal sealed partial class DefaultXsltExecutionContext
             // `*|comment()|processing-instruction()`: the context node's children of those kinds,
             // read directly. Evaluating it as XPath built an execution context and a union for each
             // of ~400,000 evaluations per EMS payload.
-            var children = new List<object>();
-            foreach (var child in _nodeStore.GetChildren(selectFrom))
-                if (childKinds.Admits(child.NodeKind))
+            var childIds = XdmInMemoryStore.ChildIds(selectFrom);
+            var children = new List<object>(childIds.Count);
+            for (var ci = 0; ci < childIds.Count; ci++)
+                if (_nodeStore.ChildNode(childIds[ci]) is { } child && childKinds.Admits(child.NodeKind))
                     children.Add(child);
             nodes = children;
         }
@@ -225,11 +226,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 && !ReferenceEquals(ci, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
                 throw Error("XTTE0510: Context item for xsl:apply-templates must be a node");
             // Read straight into a list: the built-in rule recurses through here at every node.
-            var kids = new List<object>();
-            if (ci is XdmNode parentNode && _nodeStore != null)
-                foreach (var child in _nodeStore.GetChildren(parentNode))
-                    kids.Add(child);
-            nodes = kids;
+            nodes = ci is XdmNode parentNode && _nodeStore != null ? _nodeStore.ChildList(parentNode) : new List<object>(0);
         }
 
         // Apply sorts if specified
@@ -702,7 +699,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Exception: document nodes still recurse into children (otherwise nothing would ever match).
                 // In streaming mode, child recursion is handled by the streaming loop.
                 if (node is XdmDocument && !_isStreamingExecution)
-                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                    await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                 break;
             case OnNoMatchBehavior.ShallowSkip:
                 // Skip the node but apply templates to @* | node() (per XSLT spec)
@@ -730,7 +727,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // children, and no rule below it ran. The built-in shallow-copy makes the same
                     // test.
                     if (!_isStreamingExecution || _streamingDispatchElementMaterialized)
-                        await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                        await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                 }
                 else if (node is List<object?> array)
                 {
@@ -780,6 +777,11 @@ internal sealed partial class DefaultXsltExecutionContext
         && !IsTypedMode(mode)
         && GetOnNoMatchBehavior(mode) == OnNoMatchBehavior.TextOnlyCopy;
 
+    // Shared empty lists for the built-in rule, which applies templates at every node it visits:
+    // `[]` made a new list each time. Sort and with-param lists are only written by the parser.
+    private static readonly List<XsltSort> NoSorts = [];
+    private static readonly List<XsltWithParam> NoWithParams = [];
+
     /// <summary>
     /// The text-only-copy built-in rule applied to <paramref name="parent"/>'s children, as
     /// <c>apply-templates</c> with no select would, with the per-node work done only for
@@ -804,9 +806,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         try
         {
-            var children = new List<object>();
-            foreach (var child in _nodeStore!.GetChildren(parent))
-                children.Add(child);
+            var children = _nodeStore!.ChildList(parent);
             var last = children.Count;
             var lastTemplateResultWasAtomic = false;
             for (var i = 0; i < last; i++)
@@ -831,7 +831,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     // A matched child, or a kind this route doesn't handle: the general per-node path.
                     lastTemplateResultWasAtomic = await ApplyTemplatesToNodeAsync(
-                        node, i + 1, last, mode, [], null, lastTemplateResultWasAtomic, template)
+                        node, i + 1, last, mode, NoWithParams, null, lastTemplateResultWasAtomic, template)
                         .ConfigureAwait(false);
                     continue;
                 }
@@ -930,7 +930,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // unmatched child came out as <b>2</b> instead of "2").
                 if (_streamingDispatchElementMaterialized && node is XdmElement)
                 {
-                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                    await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                     break;
                 }
                 if (!_builtInFromStreamingLoop && OwningConstructIsGuaranteedStreamable())
@@ -954,7 +954,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     if (CanApplyBuiltInChildrenDirectly(mode, withParams))
                         await ApplyBuiltInChildrenAsync((XdmNode)node, mode, pushBarrier: true).ConfigureAwait(false);
                     else
-                        await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                        await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                 }
                 break;
             case XdmText text:
@@ -1009,7 +1009,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (!_isStreamingExecution && (InTypedAsBodyAccumulator || InFunctionBodyProper) && _nodeStore != null)
                     await BuildBuiltInCopyDocNodeAsync(builtinShallowDoc, mode, withParams).ConfigureAwait(false);
                 else if (!_isStreamingExecution)
-                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                    await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                 break;
             case XdmElement elem:
             {
@@ -1188,7 +1188,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     _serializingElementDepth++;
                     try
                     {
-                        await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                        await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                     }
                     finally
                     {
@@ -1291,7 +1291,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (!_isStreamingExecution && (InTypedAsBodyAccumulator || InFunctionBodyProper) && _nodeStore != null)
                     await BuildBuiltInCopyDocNodeAsync(builtinDeepDoc, mode, withParams).ConfigureAwait(false);
                 else if (!_isStreamingExecution)
-                    await ApplyTemplatesAsync(null, mode, [], withParams).ConfigureAwait(false);
+                    await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                 break;
             case XdmElement elem:
                 // Built-in deep-copy of an element is `<xsl:copy-of select="."/>`. When
