@@ -180,14 +180,11 @@ internal sealed partial class DefaultXsltExecutionContext
         public QName[] VariableNames { get; } = variableNames;
     }
 
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<XsltStylesheet,
-        System.Collections.Concurrent.ConcurrentDictionary<XQueryExpression, SharedXPathPlan>> s_sharedPlans = new();
-
-    private System.Collections.Concurrent.ConcurrentDictionary<XQueryExpression, SharedXPathPlan>? _sharedPlans;
-
-    private System.Collections.Concurrent.ConcurrentDictionary<XQueryExpression, SharedXPathPlan> SharedPlans
-        => _sharedPlans ??= s_sharedPlans.GetValue(_stylesheet,
-            static _ => new System.Collections.Concurrent.ConcurrentDictionary<XQueryExpression, SharedXPathPlan>(ReferenceEqualityComparer.Instance));
+    // Keyed weakly by the expression itself: an expression object belongs to one compiled stylesheet,
+    // and its plan lives as long as it does. Expressions made while a transform runs (xsl:evaluate's
+    // target, the streaming rewrites) are new objects in each transform, so a strong map kept every one
+    // of them for the life of the stylesheet; here their plans go with them.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<XQueryExpression, SharedXPathPlan> s_sharedPlans = new();
 
     /// <summary>
     /// Collects the distinct names of every variable reference in an expression, inline function bodies
