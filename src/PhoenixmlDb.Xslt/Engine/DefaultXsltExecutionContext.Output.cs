@@ -2459,7 +2459,8 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         }
 
-        var aName = attrPrefix != null ? $"{attrPrefix}:{attrLocalName}" : attrLocalName;
+        // An unprefixed attribute can carry Prefix "" (the streamed paths build it so) as well as null.
+        var aName = !string.IsNullOrEmpty(attrPrefix) ? $"{attrPrefix}:{attrLocalName}" : attrLocalName;
         if (target == _output)
         {
             _sink.Attribute(aName, attr.Value);
