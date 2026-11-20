@@ -2007,8 +2007,16 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         if (value is object?[] arr)
         {
+            // A sequence with no temporary tree in it is bound as it is. It was copied on every
+            // evaluation that read the variable, so a rule reading a global //@id variable for each
+            // node was quadratic in the document. The binding is read-only (QueryExecutionContext
+            // stores it), so the array can be shared.
+            var first = Array.FindIndex(arr, static item => item is ResultTreeFragment or object?[]);
+            if (first < 0)
+                return arr;
             var converted = new object?[arr.Length];
-            for (int i = 0; i < arr.Length; i++)
+            Array.Copy(arr, converted, first);
+            for (int i = first; i < arr.Length; i++)
             {
                 converted[i] = ConvertRtfForXQuery(arr[i]);
             }
