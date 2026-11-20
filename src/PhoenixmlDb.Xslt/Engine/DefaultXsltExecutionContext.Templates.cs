@@ -192,6 +192,11 @@ internal sealed partial class DefaultXsltExecutionContext
             // `*|comment()|processing-instruction()`: the context node's children of those kinds,
             // read directly. Evaluating it as XPath built an execution context and a union for each
             // of ~400,000 evaluations per EMS payload.
+            if (sorts.Count == 0)
+            {
+                await ApplyTemplatesToChildrenAsync(selectFrom, childKinds, mode, withParams).ConfigureAwait(false);
+                return;
+            }
             var childIds = XdmInMemoryStore.ChildIds(selectFrom);
             var children = new List<object>(childIds.Count);
             for (var ci = 0; ci < childIds.Count; ci++)
@@ -225,8 +230,14 @@ internal sealed partial class DefaultXsltExecutionContext
             if (ci != null && ci is not XdmNode && ci is not ResultTreeFragment
                 && !ReferenceEquals(ci, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
                 throw Error("XTTE0510: Context item for xsl:apply-templates must be a node");
-            // Read straight into a list: the built-in rule recurses through here at every node.
-            nodes = ci is XdmNode parentNode && _nodeStore != null ? _nodeStore.ChildList(parentNode) : new List<object>(0);
+            // The built-in rule recurses through here at every node: without xsl:sort, the children
+            // are dispatched as they are read, with no list.
+            if (ci is XdmNode parentNode && _nodeStore != null && sorts.Count == 0)
+            {
+                await ApplyTemplatesToChildrenAsync(parentNode, null, mode, withParams).ConfigureAwait(false);
+                return;
+            }
+            nodes = ci is XdmNode sortedParent && _nodeStore != null ? _nodeStore.ChildList(sortedParent) : new List<object>(0);
         }
 
         // Apply sorts if specified
@@ -301,6 +312,43 @@ internal sealed partial class DefaultXsltExecutionContext
             position++;
             lastTemplateResultWasAtomic = await ApplyTemplatesToNodeAsync(
                 node, position, expandedNodes.Count, mode, withParams, preEvaluatedParams,
+                lastTemplateResultWasAtomic).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// xsl:apply-templates over <paramref name="parent"/>'s children (all of them, or those of the
+    /// kinds <paramref name="kinds"/> admits) in document order, with no sort. The children are read
+    /// by index from the parent's child ids and dispatched as they are reached: no list is made.
+    /// last() is the number of children selected, counted in a first pass over the ids that
+    /// allocates nothing. As before, the with-params are evaluated after the selection and before
+    /// the first child, and also when no child is selected.
+    /// </summary>
+    private async ValueTask ApplyTemplatesToChildrenAsync(
+        XdmNode parent, ChildKindSelect? kinds, QName? mode, List<XsltWithParam> withParams)
+    {
+        var store = _nodeStore!;
+        var childIds = XdmInMemoryStore.ChildIds(parent);
+        var count = childIds.Count;
+        var last = 0;
+        for (var i = 0; i < count; i++)
+            if (store.ChildNode(childIds[i]) is { } c && (kinds is null || kinds.Admits(c.NodeKind)))
+                last++;
+
+        // Pre-evaluate with-param values in the CALLING context (before the per-node loop changes context).
+        var preEvaluatedParams = withParams.Count > 0 ? new Dictionary<QName, object?>() : null;
+        foreach (var param in withParams)
+            preEvaluatedParams![param.Name] = await EvaluateWithParamAsync(param).ConfigureAwait(false);
+
+        var position = 0;
+        var lastTemplateResultWasAtomic = false;
+        for (var i = 0; i < count && position < last; i++)
+        {
+            if (store.ChildNode(childIds[i]) is not { } node || (kinds is not null && !kinds.Admits(node.NodeKind)))
+                continue;
+            position++;
+            lastTemplateResultWasAtomic = await ApplyTemplatesToNodeAsync(
+                node, position, last, mode, withParams, preEvaluatedParams,
                 lastTemplateResultWasAtomic).ConfigureAwait(false);
         }
     }
@@ -817,12 +865,22 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         try
         {
-            var children = _nodeStore!.ChildList(parent);
-            var last = children.Count;
+            // The children are read by index from the parent's child ids, with no list: this runs at
+            // every node the built-in rule visits. last() is counted first, without allocating.
+            var store = _nodeStore!;
+            var childIds = XdmInMemoryStore.ChildIds(parent);
+            var count = childIds.Count;
+            var last = 0;
+            for (var ci = 0; ci < count; ci++)
+                if (store.ChildNode(childIds[ci]) is not null)
+                    last++;
             var lastTemplateResultWasAtomic = false;
-            for (var i = 0; i < last; i++)
+            var i = -1;
+            for (var ci = 0; ci < count && i + 1 < last; ci++)
             {
-                var node = children[i];
+                if (store.ChildNode(childIds[ci]) is not { } node)
+                    continue;
+                i++;
                 CheckResourceLimits();
                 XsltTemplate? template;
                 PushContextItem(node, i + 1, last);
