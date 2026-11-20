@@ -1524,6 +1524,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     value = coerced.Length == 1 ? coerced[0] : coerced;
                 }
             }
+            CheckDerivedBuiltInType(value, instruction.As, "XTTE0570", $"Variable ${instruction.Name.LocalName}");
         }
 
     doneValidation:
