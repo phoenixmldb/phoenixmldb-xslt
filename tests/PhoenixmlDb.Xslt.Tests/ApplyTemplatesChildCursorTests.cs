@@ -63,6 +63,24 @@ public class ApplyTemplatesChildCursorTests
     }
 
     [Fact]
+    public async Task StreamedPass_BuiltInRuleAndApplyTemplates_KeepTheirPositions()
+    {
+        // In a streamed pass the children are taken as a list first (nodes can be released while
+        // templates run); the result must be the same as in a pass that is not streamed. No text
+        // children here: a streamed pass numbers position() without them, which is a separate defect.
+        var stylesheet = """
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="text"/>
+              <xsl:mode streamable="yes"/>
+              <xsl:template match="i"><xsl:value-of select="position()"/>;</xsl:template>
+              <xsl:template match="text()"/>
+            </xsl:stylesheet>
+            """;
+
+        (await TransformAsync(stylesheet, "<r><w><i/><i/></w><w><i/></w></r>")).Should().Be("1;2;1;");
+    }
+
+    [Fact]
     public async Task WithParam_IsEvaluatedEvenWhenNoChildIsSelected()
     {
         var stylesheet = """

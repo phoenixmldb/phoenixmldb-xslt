@@ -192,7 +192,7 @@ internal sealed partial class DefaultXsltExecutionContext
             // `*|comment()|processing-instruction()`: the context node's children of those kinds,
             // read directly. Evaluating it as XPath built an execution context and a union for each
             // of ~400,000 evaluations per EMS payload.
-            if (sorts.Count == 0)
+            if (sorts.Count == 0 && !InStreamedPass)
             {
                 await ApplyTemplatesToChildrenAsync(selectFrom, childKinds, mode, withParams).ConfigureAwait(false);
                 return;
@@ -232,7 +232,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 throw Error("XTTE0510: Context item for xsl:apply-templates must be a node");
             // The built-in rule recurses through here at every node: without xsl:sort, the children
             // are dispatched as they are read, with no list.
-            if (ci is XdmNode parentNode && _nodeStore != null && sorts.Count == 0)
+            if (ci is XdmNode parentNode && _nodeStore != null && sorts.Count == 0 && !InStreamedPass)
             {
                 await ApplyTemplatesToChildrenAsync(parentNode, null, mode, withParams).ConfigureAwait(false);
                 return;
@@ -315,6 +315,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 lastTemplateResultWasAtomic).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// A streamed pass is active: nodes can be released from the store while templates run, so
+    /// child lists are taken as a list first instead of read by index as the templates run.
+    /// </summary>
+    private bool InStreamedPass => _isStreamingExecution || _activeStreamingProcessor != null;
 
     /// <summary>
     /// xsl:apply-templates over <paramref name="parent"/>'s children (all of them, or those of the
@@ -867,18 +873,29 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             // The children are read by index from the parent's child ids, with no list: this runs at
             // every node the built-in rule visits. last() is counted first, without allocating.
+            // In a streamed pass, nodes can be released from the store while templates run, so the
+            // children are taken as a list first, as before (a released child is still dispatched).
             var store = _nodeStore!;
             var childIds = XdmInMemoryStore.ChildIds(parent);
-            var count = childIds.Count;
+            var snapshot = InStreamedPass ? store.ChildList(parent) : null;
+            var count = snapshot?.Count ?? childIds.Count;
             var last = 0;
-            for (var ci = 0; ci < count; ci++)
-                if (store.ChildNode(childIds[ci]) is not null)
-                    last++;
+            if (snapshot is not null)
+                last = snapshot.Count;
+            else
+                for (var ci = 0; ci < count; ci++)
+                    if (store.ChildNode(childIds[ci]) is not null)
+                        last++;
             var lastTemplateResultWasAtomic = false;
             var i = -1;
             for (var ci = 0; ci < count && i + 1 < last; ci++)
             {
-                if (store.ChildNode(childIds[ci]) is not { } node)
+                XdmNode node;
+                if (snapshot is not null)
+                    node = (XdmNode)snapshot[ci];
+                else if (store.ChildNode(childIds[ci]) is { } resolved)
+                    node = resolved;
+                else
                     continue;
                 i++;
                 CheckResourceLimits();
