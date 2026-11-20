@@ -1294,23 +1294,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 break;
             case XdmAttribute attr2:
             {
-                // Shallow-copy of attribute: write as attribute (into collected attrs if inside element)
-                var attrTarget = _attributeCollecting ? _collectedAttributes! : _output;
-                var attrName = !string.IsNullOrEmpty(attr2.Prefix)
-                    ? $"{attr2.Prefix}:{attr2.LocalName}"
-                    : attr2.LocalName;
-                if (attrTarget == _output)
-                {
-                    _sink.Attribute(attrName, attr2.Value);
-                }
-                else
-                {
-                    attrTarget.Append(' ');
-                    attrTarget.Append(attrName);
-                    attrTarget.Append("=\"");
-                    attrTarget.Append(EscapeAttributeValue(attr2.Value));
-                    attrTarget.Append('"');
-                }
+                // Shallow-copy of attribute: write as attribute (into collected attrs if inside element),
+                // with the same namespace fixup as copy-of.
+                WriteCopiedAttribute(attr2);
                 break;
             }
             case XdmComment comment:
@@ -1426,23 +1412,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 break;
             case XdmAttribute attr:
             {
-                // Deep-copy of attribute: write as attribute (into collected attrs if inside element)
-                var attrTarget = _attributeCollecting ? _collectedAttributes! : _output;
-                var attrName = !string.IsNullOrEmpty(attr.Prefix)
-                    ? $"{attr.Prefix}:{attr.LocalName}"
-                    : attr.LocalName;
-                if (attrTarget == _output)
-                {
-                    _sink.Attribute(attrName, attr.Value);
-                }
-                else
-                {
-                    attrTarget.Append(' ');
-                    attrTarget.Append(attrName);
-                    attrTarget.Append("=\"");
-                    attrTarget.Append(EscapeAttributeValue(attr.Value));
-                    attrTarget.Append('"');
-                }
+                // Deep-copy of attribute: write as attribute (into collected attrs if inside element),
+                // with the same namespace fixup as copy-of.
+                WriteCopiedAttribute(attr);
                 break;
             }
             case XdmComment comment:

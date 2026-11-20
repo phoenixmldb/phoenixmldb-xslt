@@ -514,6 +514,16 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (_sequenceAccumulator == null)
                 {
                     var attrPrefix = name[..name.IndexOf(':', StringComparison.Ordinal)];
+                    // The prefix may already be bound to another namespace on THIS element, by an
+                    // earlier attribute or namespace node: one element cannot bind a prefix twice, so
+                    // namespace fixup gives this attribute another prefix (XSLT 3.0 §5.7.3). The check
+                    // above only compared the stylesheet's namespaces, so the second binding
+                    // overwrote the first, and the earlier attribute was lost.
+                    if (PrefixBoundToOtherUriOnCurrentElement(attrPrefix, explicitNsUri))
+                    {
+                        attrPrefix = GenerateUniquePrefix(attrPrefix);
+                        name = $"{attrPrefix}:{name[(name.IndexOf(':', StringComparison.Ordinal) + 1)..]}";
+                    }
                     if (!IsNamespaceInScope(attrPrefix, explicitNsUri))
                     {
                         var target2 = _attributeCollecting ? _collectedAttributes! : _output;
@@ -726,6 +736,30 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+
+    /// <summary>
+    /// Whether <paramref name="prefix"/> is already bound to a namespace other than
+    /// <paramref name="uri"/> on the element being constructed: by its own name or namespace
+    /// declarations, or by an earlier attribute or namespace node. An element constructor (LRE,
+    /// xsl:element, xsl:copy) pushes two output scopes: its own bindings, then one for the
+    /// declarations its attributes emit, so those two scopes are the element's; its namespace
+    /// nodes are in the top of _xslNamespaceBindings.
+    /// </summary>
+    private bool PrefixBoundToOtherUriOnCurrentElement(string prefix, string uri)
+    {
+        // A namespace node (xsl:namespace) is recorded per element in _xslNamespaceBindings.
+        if (_xslNamespaceBindings.Count > 0 && _xslNamespaceBindings.Peek().TryGetValue(prefix, out var fromNamespaceNode))
+            return fromNamespaceNode != uri;
+        var seen = 0;
+        foreach (var scope in _outputNsScopes)
+        {
+            if (scope.TryGetValue(prefix, out var bound))
+                return bound != uri;
+            if (++seen == 2)
+                break;
+        }
+        return false;
+    }
 
     public override async ValueTask CreateCommentAsync(XsltComment instruction)
     {
