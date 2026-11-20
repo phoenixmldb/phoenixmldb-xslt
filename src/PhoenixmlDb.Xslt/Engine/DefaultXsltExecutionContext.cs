@@ -4398,7 +4398,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             int i => i,
             double d => d,
             decimal m => (double)m,
+            float f => f,
+            Xdm.XsTypedInteger ti => ti.Value,
             System.Numerics.BigInteger bi => (double)bi,
+            Xdm.XsUntypedAtomic ua => ConvertToNumberDouble(ua.Value),
             string s when long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) => n,
             string s when double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) => d,
             string => double.NaN,
@@ -4423,6 +4426,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             int i => (double)i,
             double d => d,
             decimal m => (double)m,
+            float f => (double)f,
+            // A derived integer (xs:int, ...) and an untyped value (an atomized node: the value of
+            // xsl:number value="." is converted to xs:numeric, XSLT 3.0 §12.3) were NaN, so
+            // value="." over <num>100</num> was XTDE0980 (W3C avt-0801).
+            Xdm.XsTypedInteger ti => (double)ti.Value,
+            Xdm.XsUntypedAtomic ua => ConvertToNumberObject(ua.Value),
             string s when long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) => (double)n,
             string s when double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var d2) => d2,
             object[] arr when arr.Length > 0 => ConvertToNumberObject(arr[0]),
