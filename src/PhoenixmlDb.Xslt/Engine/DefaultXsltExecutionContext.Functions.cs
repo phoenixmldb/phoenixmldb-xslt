@@ -940,7 +940,7 @@ internal sealed partial class DefaultXsltExecutionContext
             // on the transform: the function library is used at plan time only for parameter names of
             // keyword arguments, calls resolve their function from the executing context, and name
             // tests are read from the expression at run time.
-            if (!SharedPlans.TryGetValue(expr, out shared))
+            if (!s_sharedPlans.TryGetValue(expr, out shared))
             {
                 var optimizer = new PhoenixmlDb.XQuery.Optimizer.QueryOptimizer();
                 var optContext = new PhoenixmlDb.XQuery.Optimizer.OptimizationContext { Container = default, BackwardsCompatible = IsBackwardsCompatible, FunctionLibrary = _functionLibrary };
@@ -949,7 +949,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 // tail position return a tail-call request to the function's loop (xquery#296).
                 if (tailCallKey is not null)
                     PhoenixmlDb.XQuery.Execution.TailCalls.Mark(built.Root, tailCallKey);
-                shared = SharedPlans.GetOrAdd(expr, new SharedXPathPlan(built, VariableReferenceCollector.Collect(expr)));
+                var candidate = new SharedXPathPlan(built, VariableReferenceCollector.Collect(expr));
+                // Another thread may have published a plan first; use that one (both are built whole).
+                shared = s_sharedPlans.GetValue(expr, _ => candidate);
             }
             cached.Shared = shared;
         }
