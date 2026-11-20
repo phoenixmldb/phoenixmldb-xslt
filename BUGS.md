@@ -7496,6 +7496,27 @@ Found while testing that the tree route's child cursor keeps streamed behaviour 
 Tests: `StreamedPositionTests` (streamed == unstreamed == Saxon, with text, comments, PIs and
 whitespace-only text).
 
+### 123. An attribute whose prefix the element already bound to another namespace was lost — fixed (2026-11-20)
+
+Repro: `<out><xsl:attribute name="p:att" namespace="urn:one">1</xsl:attribute><xsl:attribute name="p:att" namespace="urn:two">2</xsl:attribute></out>`.
+Expected (XSLT 3.0 §5.7.3, namespace fixup; Saxon-HE behaves so): both attributes, the second under another
+prefix (`p:att="1" p_N:att="2"`). Ours: `<out xmlns:p="urn:two" p:att="2"/>`, the first attribute silently gone.
+
+`xsl:attribute` with a `namespace` attribute renamed a prefix only when the STYLESHEET bound it to another
+URI, never when the element being constructed did. Then the second `xmlns:p` and the second `p:att` were
+written into the element's collected attribute text, and the text parser (`ParseAttributeString`, last
+name wins by qualified-name string) kept only the second of each. Three shapes:
+
+- an earlier attribute bound the prefix (the repro);
+- the element's own name bound it: `<xsl:element name="p:out" namespace="urn:e">` with `p:att` in
+  `urn:two` gave NON-WELL-FORMED output (two `xmlns:p` declarations);
+- a namespace node bound it: `<xsl:namespace name="p" select="'urn:one'"/>` then `p:att` in `urn:two` lost
+  the namespace node.
+
+The check now asks whether the prefix is bound to another URI on the element being constructed (its two
+output scopes and its namespace nodes) and, if so, generates a prefix. The underlying fragility, attributes
+and namespace declarations carried as text and re-parsed by qualified-name string, is the attribute pipeline
+redesign that waits for a decision. Tests: `AttributePrefixClashTests`.
 ### 124. A node from another node store is read in the transform's own store — silent wrong data (2026-11-20, open)
 
 Repro (`ForeignNodeParameterTests`, skipped until fixed): transformer A returns the document `<x><y n="1"/><z/><y n="2"/></x>`
