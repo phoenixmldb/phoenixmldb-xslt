@@ -138,4 +138,46 @@ public class CompiledNamespaceIdTests
         StylesheetParser.TryGetNamespaceId(uri, out _).Should().BeTrue("xsl:evaluate compiled a name test for it");
     }
 
+    /// <summary>
+    /// A node from another transformation, matched by the consumer's template patterns, a key and
+    /// xsl:number. On main after BUGS.md #124 (xslt#604) the node was read in its own store, but a
+    /// pattern's namespace id was resolved in the CONSUMER's store, so no pattern matched it and the
+    /// result was silently empty ("|0"), for any namespace. With a namespace new to the process
+    /// (<paramref name="fresh"/>) the producer's store gives it a local id before the table knows it
+    /// (condition 1's order); the patterns match through the node's URI.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_pattern_matches_a_node_from_another_transformation(bool fresh)
+    {
+        var uri = fresh ? FreshUri() : "urn:a";
+        StylesheetParser.ResolveNamespaceUri("urn:a"); // a namespace the table knows, for the other case
+        var producer = new XsltTransformer();
+        await producer.LoadStylesheetAsync("""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:param name="s"/>
+              <xsl:template name="xsl:initial-template"><xsl:copy-of select="parse-xml($s)/node()"/></xsl:template>
+            </xsl:stylesheet>
+            """);
+        producer.SetParameter("s", $"""<z:r xmlns:z="{uri}"><z:e k="1"/><z:e k="2"/><z:f/></z:r>""");
+        producer.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
+        var produced = await producer.TransformToSequenceAsync(null);
+        StylesheetParser.TryGetNamespaceId(uri, out _).Should().Be(!fresh, "only the producer's store has seen a fresh URI");
+
+        var consumer = new XsltTransformer();
+        await consumer.LoadStylesheetAsync($$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:z="{{uri}}">
+              <xsl:output method="text"/>
+              <xsl:key name="byk" match="z:e" use="@k"/>
+              <xsl:template match="/"><xsl:apply-templates select="z:r/*"/>|<xsl:value-of select="count(key('byk', '2'))"/></xsl:template>
+              <xsl:template match="z:e[@k]"><xsl:number count="z:e" level="any"/>;</xsl:template>
+              <xsl:template match="z:*">other;</xsl:template>
+            </xsl:stylesheet>
+            """);
+
+        var document = produced.Single(i => i is Xdm.Nodes.XdmDocument)!;
+        consumer.SetGlobalContextItem(document);
+        (await consumer.TransformAsync(produced)).Should().Be("1;2;other;|1");
+    }
 }
