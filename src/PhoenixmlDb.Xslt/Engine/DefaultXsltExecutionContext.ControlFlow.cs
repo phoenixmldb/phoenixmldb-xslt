@@ -253,8 +253,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // Only handle standard library functions (fn: or unqualified namespace).
         // User-defined XSLT functions (any other namespace) require the full XSLT execution
         // context and cannot be invoked with the minimal execContext here.
-        var ns = fcall.Name.Namespace;
-        if (ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn && ns != NamespaceId.None)
+        if (!FunctionNames.IsFn(fcall.Name))
             return (false, null);
 
         // Look up the function in the function library and invoke it
@@ -2193,10 +2192,10 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         IntegerLiteral il when il.Value is long lv => lv,
         FunctionCallExpression { Arguments.Count: 0 } fce
-            when fce.Name.LocalName == "position" && (fce.Name.Namespace == NamespaceId.None || fce.Name.Namespace == NamespaceId.Fn)
+            when fce.Name.LocalName == "position" && FunctionNames.IsFn(fce.Name)
             => Position,
         FunctionCallExpression { Arguments.Count: 0 } fce2
-            when fce2.Name.LocalName == "last" && (fce2.Name.Namespace == NamespaceId.None || fce2.Name.Namespace == NamespaceId.Fn)
+            when fce2.Name.LocalName == "last" && FunctionNames.IsFn(fce2.Name)
             => Last,
         _ => null
     };

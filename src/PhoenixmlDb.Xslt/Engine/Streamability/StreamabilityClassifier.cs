@@ -481,8 +481,7 @@ public static partial class StreamabilityClassifier
         // end (xslt#461). The rule of §19.8.9.1, as the classification by the specification has it.
         if (ctx.FoldsComputedAggregates && !ctx.BySpec && ctx.InStreamedScope && ctx.AfterConsumingSibling
             && fc.Arguments.Count == 1
-            && (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Fn || fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.None)
-            && fc.Name.LocalName == "accumulator-after"
+            && FunctionNames.IsFn(fc.Name, "accumulator-after")
             && Classify(fc.Arguments[0], ctx).Sweep == Sweep.Motionless)
             return Grounded(Sweep.Motionless);
 
@@ -492,8 +491,7 @@ public static partial class StreamabilityClassifier
         // SAME logic so it is not left Unknown → NotStreamable. (Most xs:* casts parse to a
         // CastExpression already handled in Classify; the residual constructor-CALL form — e.g.
         // list types, or an explicit function call — lands here.)
-        if ((fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Xsd
-                || (ctx.BySpec && fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs))
+        if ((ctx.BySpec ? FunctionNames.IsXs(fc.Name) : fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Xsd)
             && fc.Arguments.Count == 1)
             return Grounded(AtomizeSweep(fc.Arguments[0], ctx));
 
@@ -538,8 +536,7 @@ public static partial class StreamabilityClassifier
         // argument can navigate/consume the streamed input — are DELIBERATELY excluded and fall
         // through to the conservative default. Grounding them blanket would over-accept (the shadow
         // over-accept pin guards this). See IsHigherOrderMapArrayFunction.
-        if ((fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Map
-                || fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Array)
+        if ((FunctionNames.IsMap(fc.Name) || FunctionNames.IsArray(fc.Name))
             && !IsHigherOrderMapArrayFunction(fc.Name.LocalName))
         {
             // A map/array is a GROUNDED item — it CANNOT capture live streamed nodes. Any argument
@@ -563,7 +560,7 @@ public static partial class StreamabilityClassifier
         // All math: functions are pure numeric computations over grounded atomics — grounded
         // result, sweep = combine of the (atomizing) argument sweeps. math: has no higher-order
         // members.
-        if (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Math)
+        if (FunctionNames.IsMath(fc.Name))
         {
             if (!AllOperandsStreamable(fc.Arguments, ctx))
                 return NotStreamable();
@@ -576,9 +573,7 @@ public static partial class StreamabilityClassifier
         // higher-order function: the returned map's ?permute/?next members are function items, but
         // the call itself is motionless. (fn: is NamespaceId.Fn; a no-prefix call also resolves to
         // Fn, and 'random-number-generator' is unambiguous.)
-        if (fc.Name.LocalName == "random-number-generator"
-            && (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Fn
-                || fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.None))
+        if (FunctionNames.IsFn(fc.Name, "random-number-generator"))
         {
             if (!AllOperandsStreamable(fc.Arguments, ctx))
                 return NotStreamable();
@@ -831,7 +826,7 @@ public static partial class StreamabilityClassifier
 
     /// <summary>A reference to a function that reads the context item, position or size when it is called with this arity.</summary>
     private static bool IsFocusDependent(NamedFunctionRef reference)
-        => (reference.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Fn || reference.Name.Namespace == PhoenixmlDb.Core.NamespaceId.None)
+        => FunctionNames.IsFn(reference.Name)
            && (reference.Name.LocalName is "position" or "last" or "current" or "current-group" or "current-grouping-key"
                || BuiltInFunctionUsages.ByNameAndArity.GetValueOrDefault(
                    "fn:" + reference.Name.LocalName + "#" + reference.Arity.ToString(System.Globalization.CultureInfo.InvariantCulture)) == "."
@@ -1337,10 +1332,10 @@ public static partial class StreamabilityClassifier
 
     private static PostureSweep? BuiltInCall(FunctionCallExpression fc, StreamingContext ctx)
     {
-        var prefix = fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Fn || fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.None ? "fn:"
-            : fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Map ? "map:"
-            : fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Array ? "array:"
-            : fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.Math ? "math:"
+        var prefix = FunctionNames.IsFn(fc.Name) ? "fn:"
+            : FunctionNames.IsMap(fc.Name) ? "map:"
+            : FunctionNames.IsArray(fc.Name) ? "array:"
+            : FunctionNames.IsMath(fc.Name) ? "math:"
             : null;
         if (prefix is null)
             return null;

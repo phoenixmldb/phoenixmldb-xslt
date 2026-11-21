@@ -7694,6 +7694,43 @@ function-lookup(QName("urn:u", "g"), 1)(4)
   code that resolves a function name's id through a node store, or a node's id through the
   function table, reads the wrong URI. No failing query found yet.
 
+### 132. A function call written as an EQName was taken for an fn: call; XTSE3430 named no rule — fixed (2026-11-20)
+
+xslt#582. Repro: `<xsl:mode streamable="yes"/>`, a rule for `book` with
+`<x n="{Q{http://www.w3.org/2005/xpath-functions/map}get(map{1:2}, 1)}"/>`, run with `--strict-streaming`.
+Expected `<x n="2"/>` for each book; the prefixed `m:get(…)` gave it. Ours: XTSE3430, "it needs parts of the
+streamed input that have passed", with no template and no line in the message.
+
+The XPath parser builds `Q{uri}local` as `QName(NamespaceId.None, local)` with the URI in `ExpandedNamespace`;
+the stylesheet's resolver binds a prefixed function name to its namespace id but leaves an EQName so. Code
+that asked "is this a built-in?" by `Name.Namespace` alone read `None` as the default function namespace, fn:
+- `Q{…/map}get` was looked up as fn:get#2, not found, and refused (the classifier's table of §19.8.9, the
+  map/array grounding rule and the math: rule all missed it);
+- the reverse, a stylesheet function `Q{urn:other}sum` (or `count`, `position`, `last`, …) was taken for the
+  built-in: in a streamed `xsl:source-document`, `Q{urn:other}sum(//book/@price)` was folded by the streaming
+  pass as fn:sum and gave the sum of the prices; the fast path for `position()`/`last()` answered
+  `Q{urn:other}position()` with the context position; a use-when expression evaluated `Q{urn:other}true()`
+  as fn:true().
+- the self-call check of an absorbing function did not recognise a self-call written as an EQName.
+
+`FunctionNames` now reads the namespace of a function name in each form (prefixed id, unprefixed = fn,
+EQName/run-time URI), and every site that identified a built-in or compared two function names by
+`Name.Namespace` uses it: the classifier (accumulator-after, xs constructors by the specification, map/array
+grounding, math:, random-number-generator, focus-dependent named references, the §19.8.9 table), the
+streaming plan and scanner (folded aggregates, snapshot/copy-of, head/filter/subsequence peeling, the atomizing
+and numeric tails), the subtree-buffer detector, the streamability checker (at-most-one select, the self-call
+checks), the copy-of distributor, the static-expression guard, use-when evaluation, and the runtime fast paths
+(position/last, cheap numeric functions, the watcher evaluator).
+
+Not changed: the classifier's role table (`FunctionRole`) and many checks in `StreamabilityChecker` identify a
+function by its LOCAL NAME alone, with no namespace test, so `o:count(*)` (prefixed or EQName) is classified as
+fn:count there. That is a separate class; it is not EQName-specific and was left for a decision.
+
+The XTSE3430 message now names the rule as written and its line, `the template match="book" mode="g" (line 22)`,
+and the error carries the template's location (the template body had none).
+
+Tests: `EqNameFunctionCallTests`.
+
 ### 133. current-output-uri(): no base output URI from the CLI without -o; a global variable and a pattern saw it — fixed (2026-11-20)
 
 xslt#561. Repro: `xslt -it xsl:initial-template s.xsl` with `<xsl:result-document href="result-1.xml">` writing

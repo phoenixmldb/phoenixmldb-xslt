@@ -38,9 +38,7 @@ internal sealed class CopyOfSequenceDistributor : XQueryExpressionRewriter
         return new SequenceExpression { Items = items, Location = call.Location };
     }
 
-    // Before names are bound, an fn function is written with no prefix or with "fn".
-    private static bool IsFnName(QName name)
-        => name.Namespace == NamespaceId.None
-            || name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
-            || name.Prefix is "fn";
+    // Before names are bound, an fn function is written with no prefix or with "fn" (both
+    // NamespaceId.None), or as an EQName, whose namespace is read from its URI.
+    private static bool IsFnName(QName name) => FunctionNames.IsFn(name);
 }

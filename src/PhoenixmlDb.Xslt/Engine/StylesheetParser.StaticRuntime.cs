@@ -155,7 +155,7 @@ public sealed partial class StylesheetParser
         internal string? Forbidden { get; private set; }
 
         private static bool IsRuntimeOnly(QName name)
-            => (name.Namespace == NamespaceId.None || name.Namespace == NamespaceId.Fn)
+            => FunctionNames.IsFn(name)
                && name.LocalName is "current" or "current-group" or "current-grouping-key"
                    or "current-merge-group" or "current-merge-key" or "current-output-uri"
                    or "regex-group" or "unparsed-entity-uri" or "unparsed-entity-public-id"

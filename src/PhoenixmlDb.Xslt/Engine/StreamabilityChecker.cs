@@ -138,7 +138,8 @@ internal static class StreamabilityChecker
         XsltSequenceConstructor? body,
         SourceLocation? location,
         Dictionary<QName, XsltAttributeSet>? attributeSets = null,
-        Dictionary<(QName Name, int Arity), XsltFunction>? functions = null)
+        Dictionary<(QName Name, int Arity), XsltFunction>? functions = null,
+        string template = "this template")
     {
         if (body == null) return;
 
@@ -148,7 +149,7 @@ internal static class StreamabilityChecker
         if (walker.NonStreamableReason != null)
         {
             throw new XsltException(
-                $"XTSE3430: The body of this template in a streamable mode is not guaranteed streamable: {walker.NonStreamableReason}",
+                $"XTSE3430: The body of {template} in a streamable mode is not guaranteed streamable: {walker.NonStreamableReason}",
                 location);
         }
 
@@ -158,7 +159,7 @@ internal static class StreamabilityChecker
         if (ContainsCurrentGroupCallOutsideGroup(body))
         {
             throw new XsltException(
-                "XTSE3430: The body of this template in a streamable mode uses current-group() or current-grouping-key(), which is not available in applied templates during streaming",
+                $"XTSE3430: The body of {template} in a streamable mode uses current-group() or current-grouping-key(), which is not available in applied templates during streaming",
                 location);
         }
 
@@ -169,7 +170,7 @@ internal static class StreamabilityChecker
         if (ContainsAccumulatorAfterOnForeignNode(body))
         {
             throw new XsltException(
-                "XTSE3430: The body of this template in a streamable mode reads accumulator-after() of a node other than the one being processed, whose post-descent value is not yet known",
+                $"XTSE3430: The body of {template} in a streamable mode reads accumulator-after() of a node other than the one being processed, whose post-descent value is not yet known",
                 location);
         }
 
@@ -184,7 +185,7 @@ internal static class StreamabilityChecker
         if (phase.Reason != null)
         {
             throw new XsltException(
-                $"XTSE3430: The body of this template in a streamable mode is not guaranteed streamable: {phase.Reason}",
+                $"XTSE3430: The body of {template} in a streamable mode is not guaranteed streamable: {phase.Reason}",
                 location);
         }
 
@@ -830,7 +831,7 @@ internal static class StreamabilityChecker
     /// </summary>
     private static bool SelectsAtMostOneItem(XQueryExpression select)
         => select is FunctionCallExpression { Name.LocalName: "head" or "exactly-one" or "zero-or-one" } call
-           && (call.Name.Namespace == NamespaceId.Fn || call.Name.Namespace == NamespaceId.None)
+           && FunctionNames.IsFn(call.Name)
            && call.Arguments.Count == 1;
 
     private static bool ContainsDescendantAxis(XQueryExpression expr)
@@ -2283,8 +2284,7 @@ internal static class StreamabilityChecker
         private static bool ExpressionContainsSelfCall(XQueryExpression expr, QName functionName)
         {
             if (expr is FunctionCallExpression fce
-                && fce.Name.LocalName == functionName.LocalName
-                && fce.Name.Namespace == functionName.Namespace)
+                && FunctionNames.SameName(fce.Name, functionName))
                 return true;
 
             if (expr is IfExpression ifExpr)
@@ -3209,8 +3209,7 @@ internal static class StreamabilityChecker
             // spec's xml-to-json package has j:xml-to-json#1 call #2 with the same input, a
             // single absorption (W3C use-package-150..152 were rejected).
             if (_functionName != null && _streamability == "absorbing"
-                && expr.Name.LocalName == _functionName.Value.LocalName
-                && expr.Name.Namespace == _functionName.Value.Namespace
+                && FunctionNames.SameName(expr.Name, _functionName.Value)
                 && expr.Arguments.Count == _arity)
             {
                 // Check if any argument derives from the first parameter
