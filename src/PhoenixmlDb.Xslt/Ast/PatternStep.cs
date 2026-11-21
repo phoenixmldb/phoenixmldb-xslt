@@ -11,7 +11,21 @@ public sealed class PatternStep
 {
     public required Axis Axis { get; init; }
     public required NodeTest NodeTest { get; init; }
-    public List<XQueryExpression> Predicates { get; init; } = new();
+    public List<XQueryExpression> Predicates
+    {
+        get => _predicates;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _predicates = value;
+            // Decided here, when the step is built (at compile time): a compiled stylesheet is
+            // read-only while it runs, so this is not computed lazily on first use. No code adds to
+            // a step's predicates after it is built (a changed pattern gets a new PatternStep).
+            _needsPositionContext = PredicatePositionAnalysis.NeedsPositionContext(value);
+        }
+    }
+
+    private readonly List<XQueryExpression> _predicates = new();
 
     /// <summary>
     /// When true, this step was preceded by '//' in the pattern,
@@ -51,8 +65,7 @@ public sealed class PatternStep
     /// what made a predicated match pattern O(n²) (#95). The answer is static, so it is computed
     /// once on first use and cached here rather than per candidate node.
     /// </remarks>
-    internal bool NeedsPositionContext =>
-        _needsPositionContext ??= PredicatePositionAnalysis.NeedsPositionContext(Predicates);
+    internal bool NeedsPositionContext => _needsPositionContext;
 
-    private bool? _needsPositionContext;
+    private readonly bool _needsPositionContext;
 }
