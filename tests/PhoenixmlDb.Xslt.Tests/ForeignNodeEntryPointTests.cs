@@ -106,6 +106,8 @@ public class ForeignNodeEntryPointTests
     public async Task Source_sequence()
     {
         // The producer's result sequence, which carries its store, is the source of this one.
+        // A guard: this path already adopted the sequence's store before 3.3.0 (an XdmSequence
+        // without its store is refused), so it passed on 3.2.0 too.
         var produced = await ProduceSequenceAsync();
         var t = new XsltTransformer();
         await t.LoadStylesheetAsync(Stylesheet($"""
