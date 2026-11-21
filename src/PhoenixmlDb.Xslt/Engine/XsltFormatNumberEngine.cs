@@ -593,12 +593,15 @@ internal static class XsltFormatNumberEngine
             return s;
         var zdRune = GetFirstRune(zeroDigit);
         var sb = new System.Text.StringBuilder();
+        // One digit's UTF-16 (at most two chars). StringBuilder.Append(Rune) exists only from
+        // .NET 11, and newRune.ToString() allocated a string per digit.
+        Span<char> utf16 = stackalloc char[2];
         foreach (var c in s)
         {
             if (c >= '0' && c <= '9')
             {
                 var newRune = new System.Text.Rune(zdRune.Value + (c - '0'));
-                sb.Append(newRune.ToString());
+                sb.Append(utf16[..newRune.EncodeToUtf16(utf16)]);
             }
             else
                 sb.Append(c);
