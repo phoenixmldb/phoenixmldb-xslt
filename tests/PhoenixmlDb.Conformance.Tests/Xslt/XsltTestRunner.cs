@@ -506,6 +506,14 @@ public sealed class XsltTestRunner
             // file="#absent" means there is no base output URI (current-output-uri-013, -015).
             if (testElem.Element(ns + "output")?.Attribute("file")?.Value is { } outputFile && outputFile != "#absent")
                 test.Environment.BaseOutputPath = Path.Combine(basePath, outputFile);
+            // A current-output-uri case that names no output still runs with a base output URI, where
+            // its siblings put theirs (results/<case>.xml), unless it asks for none (#absent). Without
+            // one, current-output-uri() is empty everywhere and a case that checks it is empty in a
+            // global variable (current-output-uri-001, -007) passes whatever the engine does: it did
+            // pass while a global variable saw the base output URI (xslt#561; BUGS.md #69 is the same
+            // shape). The specification leaves the base output URI to the processor.
+            else if (testSetName == "current-output-uri" && testElem.Element(ns + "output") is null)
+                test.Environment.BaseOutputPath = Path.Combine(basePath, "results", name + ".xml");
 
             // Parse parameters from <test> element (W3C format: <param name="x" select="val"/>)
             foreach (var param in testElem.Elements(ns + "param"))

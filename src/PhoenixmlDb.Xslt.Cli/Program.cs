@@ -146,11 +146,17 @@ try
             staticParams[name] = value;
     }
     // Tell the engine where the principal result is going, so fn:current-output-uri() has an
-    // answer and relative xsl:result-document/@href resolves against it (XSLT 3.0 §2.3). Without
-    // -o the result goes to stdout, which has no URI — current-output-uri() then correctly
-    // reports the empty sequence. Reported by Martin Honnen 2026-09-06.
+    // answer and relative xsl:result-document/@href resolves against it (XSLT 3.0 §2.3).
+    // Reported by Martin Honnen 2026-09-06. Without -o the principal result goes to stdout, but
+    // the secondary result documents are still written relative to --output-dir, or else the
+    // working directory, so that directory is the base output URI: a result document's
+    // current-output-uri() is then the file it is written to. It was absent, so inside
+    // xsl:result-document href="result-1.xml" current-output-uri() reported "result-1.xml",
+    // a relative URI (xslt#561).
     if (options.OutputFile != null)
         transformer.SetBaseOutputUri(new Uri(Path.GetFullPath(options.OutputFile)));
+    else
+        transformer.SetBaseOutputUri(DirectoryUri(options.OutputDir ?? Directory.GetCurrentDirectory()));
 
     await transformer.LoadStylesheetAsync(stylesheetXml, stylesheetUri, staticParams).ConfigureAwait(true);
     compileSw.Stop();
@@ -611,6 +617,15 @@ finally
 // "C:\dir\file:\C:\dir\out", which Windows rejects as a directory name. Reported by
 // Martin Honnen running the xdm-persistence example: the file was written and the run then
 // failed creating a directory that should never have been named.
+// A directory as a file: URI that ends in "/", so that a relative reference resolves inside it.
+static Uri DirectoryUri(string directory)
+{
+    var full = Path.GetFullPath(directory);
+    if (!Path.EndsInDirectorySeparator(full))
+        full += Path.DirectorySeparatorChar;
+    return new Uri(full);
+}
+
 static string ResolveResultDocumentPath(string baseDir, string href)
 {
     if (Uri.TryCreate(href, UriKind.Absolute, out var uri) && uri.IsFile)
