@@ -32,7 +32,7 @@ namespace PhoenixmlDb.Xslt;
 /// trees built externally see the same canonical mappings the engine uses.
 /// </para>
 /// </remarks>
-public sealed class XdmInMemoryStore : INodeBuilder
+public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
 {
     private readonly Dictionary<NodeId, XdmNode> _nodes = new();
     private ulong _nextId = 1;
@@ -50,7 +50,13 @@ public sealed class XdmInMemoryStore : INodeBuilder
     }
 
     public NodeId NextId() => new(_nextId++);
-    public void Register(XdmNode node) => _nodes[node.Id] = node;
+    public void Register(XdmNode node)
+    {
+        // The node's ids and namespace ids are this store's; Store says so to an engine that
+        // meets the node outside this store (BUGS.md #124).
+        node.AttachStore(this);
+        _nodes[node.Id] = node;
+    }
     public XdmNode? GetNode(NodeId id) => _nodes.GetValueOrDefault(id);
 
     /// <summary>
@@ -158,6 +164,18 @@ public sealed class XdmInMemoryStore : INodeBuilder
     {
         _idToNs.TryAdd(id, uri);
         _nsToId.TryAdd(uri, id);
+    }
+
+    /// <inheritdoc />
+    public bool TryGetNamespaceId(string uri, out NamespaceId id)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        if (uri.Length == 0)
+        {
+            id = NamespaceId.None;
+            return true;
+        }
+        return _nsToId.TryGetValue(uri, out id);
     }
 
     public string? GetNamespaceUri(NamespaceId id)
