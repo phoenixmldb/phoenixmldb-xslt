@@ -1410,10 +1410,18 @@ internal sealed partial class DefaultXsltExecutionContext
         var savedCurrentOutputUri = _currentOutputUri;
         if (!string.IsNullOrEmpty(effectiveHref))
         {
+            // The href is a URI reference in the lexical space of xs:anyURI, so it may hold
+            // characters a URI may not; it is resolved after escaping them (XSLT 3.0 §5.8), so
+            // href="result-[1].xml" is .../result-%5B1%5D.xml (xslt#562). The file written keeps
+            // the name as written. Resolved by RFC 3986 on the strings: Uri.TryCreate(Uri, string)
+            // escapes the "%" of an escape again in a file: URI (%5B became %255B).
+            var escapedHref = EscapeUriReference(effectiveHref);
             var resolveAgainst = _baseOutputUri ?? _options.BaseUri;
-            _currentOutputUri = resolveAgainst != null
-                && Uri.TryCreate(resolveAgainst, effectiveHref, out var abs) ? abs
-                : Uri.TryCreate(effectiveHref, UriKind.Absolute, out var direct) ? direct
+            var resolved = PhoenixmlDb.XQuery.Functions.Rfc3986.IsAbsolute(escapedHref) ? escapedHref
+                : resolveAgainst is { IsAbsoluteUri: true } ? PhoenixmlDb.XQuery.Functions.Rfc3986.Resolve(resolveAgainst.AbsoluteUri, escapedHref)
+                : null;
+            _currentOutputUri = resolved != null && Uri.TryCreate(resolved, UriKind.Absolute, out var abs) ? abs
+                : Uri.TryCreate(escapedHref, UriKind.Absolute, out var direct) ? direct
                 : _currentOutputUri;
         }
         // CDATA-section wrapping happens at text-emission time via IsInCdataSectionElement(), which
@@ -2475,4 +2483,75 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+    private static readonly System.Buffers.SearchValues<char> AuthorityEnd = System.Buffers.SearchValues.Create("/?#");
+    private static readonly System.Buffers.SearchValues<char> SchemeCharacters =
+        System.Buffers.SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-.");
+
+    /// <summary>
+    /// Escapes the characters of a URI reference that RFC 3986 does not allow in one, as XSLT 3.0
+    /// §5.8 requires before a relative reference is resolved: each is written as %HH of its UTF-8
+    /// bytes. A space, a non-ASCII character, <c>"</c> <c>&lt;</c> <c>&gt;</c> <c>^</c> <c>`</c>
+    /// <c>{</c> <c>|</c> <c>}</c> and a control character are escaped, and so are <c>[</c> and
+    /// <c>]</c> except in the host of an authority (<c>http://[::1]/</c>), the one place they are
+    /// allowed. A <c>%</c> that starts an escape (<c>%5B</c>) is kept, so nothing is escaped twice;
+    /// any other <c>%</c> is <c>%25</c>. A backslash is kept as written, so that a Windows path given
+    /// as the href resolves as before.
+    /// </summary>
+    internal static string EscapeUriReference(string reference)
+    {
+        var (authorityStart, authorityEnd) = AuthorityRange(reference);
+        System.Text.StringBuilder? escaped = null;
+        Span<byte> utf8 = stackalloc byte[4];
+        for (var i = 0; i < reference.Length;)
+        {
+            var c = reference[i];
+            var keep = IsUriCharacter(c)
+                || c == '\\'
+                || (c is '[' or ']' && i >= authorityStart && i < authorityEnd)
+                || (c == '%' && i + 2 < reference.Length && Uri.IsHexDigit(reference[i + 1]) && Uri.IsHexDigit(reference[i + 2]));
+            if (keep)
+            {
+                escaped?.Append(c);
+                i++;
+                continue;
+            }
+            escaped ??= new System.Text.StringBuilder(reference.Length + 16).Append(reference, 0, i);
+            if (!System.Text.Rune.TryGetRuneAt(reference, i, out var rune))
+                rune = System.Text.Rune.ReplacementChar; // a lone surrogate
+            var length = rune.EncodeToUtf8(utf8);
+            for (var b = 0; b < length; b++)
+                escaped.Append('%').Append(utf8[b].ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
+            i += char.IsSurrogatePair(reference, i) ? 2 : 1;
+        }
+        return escaped?.ToString() ?? reference;
+
+        // Unreserved and reserved characters of RFC 3986 (§2.2, §2.3), without the brackets.
+        static bool IsUriCharacter(char c)
+            => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9')
+                or '-' or '.' or '_' or '~'
+                or ':' or '/' or '?' or '#' or '@'
+                or '!' or '$' or '&' or '\'' or '(' or ')' or '*' or '+' or ',' or ';' or '=';
+
+        // The authority of "scheme://authority/..." or "//authority/...": where brackets may stand.
+        static (int Start, int End) AuthorityRange(string reference)
+        {
+            var start = -1;
+            if (reference.StartsWith("//", StringComparison.Ordinal))
+                start = 2;
+            else
+            {
+                var colon = reference.IndexOf(':', StringComparison.Ordinal);
+                if (colon > 0 && reference.AsSpan(colon).StartsWith("://", StringComparison.Ordinal)
+                    && char.IsAsciiLetter(reference[0])
+                    && reference.AsSpan(0, colon).IndexOfAnyExcept(SchemeCharacters) < 0)
+                    start = colon + 3;
+            }
+            if (start < 0)
+                return (0, 0);
+            var end = reference.AsSpan(start).IndexOfAny(AuthorityEnd);
+            if (end >= 0)
+                end += start;
+            return (start, end < 0 ? reference.Length : end);
+        }
+    }
 }
