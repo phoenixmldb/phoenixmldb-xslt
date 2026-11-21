@@ -7855,7 +7855,8 @@ CompiledStylesheet branch moves store-local ids to a range from `0x8000_0000` al
 `xml` and `xmlns` checks are correct: those prefixes cannot be bound to another URI (Namespaces in XML
 §3). Not fixed, waiting for a ruling, because a fix makes queries and stylesheets that run today fail:
 
-- **xs bound to another URI is still taken as XML Schema.** XQuery `XQueryAstBuilder` (type names in
+- **xs bound to another URI is still taken as XML Schema.** Fixed for 3.3.0 (Lucas: "fix in 3.3"; xquery
+  fix/xs-prefix-rebound, xslt fix/xs-prefix-rebound). XQuery `XQueryAstBuilder` (type names in
   `instance of`, `cast as`, `element(*, T)`) and XSLT `StylesheetParser.Expressions` (`as="xs:…"`) test
   the prefix `xs` (and `xsd`) instead of the URI. With `declare namespace xs = "urn:x";` (only `xml` and
   `xmlns` may not be declared, XQST0070), `1 instance of xs:integer` is `true`,
