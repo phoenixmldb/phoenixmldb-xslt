@@ -435,7 +435,7 @@ internal static class StreamabilityChecker
 
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
-            if (expr.Name.LocalName == "accumulator-after")
+            if (FunctionNames.IsFn(expr.Name, "accumulator-after"))
                 Count++;
             return base.VisitFunctionCallExpression(expr);
         }
@@ -517,7 +517,7 @@ internal static class StreamabilityChecker
             public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
             {
                 if (Found) return null;
-                if (expr.Name.LocalName == "accumulator-after")
+                if (FunctionNames.IsFn(expr.Name, "accumulator-after"))
                 {
                     Found = true;
                     return null;
@@ -765,7 +765,7 @@ internal static class StreamabilityChecker
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
             if (Found) return null;
-            if (expr.Name.LocalName == "position" && expr.Arguments.Count == 0)
+            if (FunctionNames.IsFn(expr.Name, "position") && expr.Arguments.Count == 0)
             {
                 Found = true;
                 return null;
@@ -894,7 +894,7 @@ internal static class StreamabilityChecker
         {
             if (Found) return null;
             var headIsCurrent = expr.InitialExpression is FunctionCallExpression fc
-                && fc.Name.LocalName == "current" && fc.Arguments.Count == 0;
+                && FunctionNames.IsFn(fc.Name, "current") && fc.Arguments.Count == 0;
             if (expr.InitialExpression != null)
             {
                 var old = _motionlessUse;
@@ -933,7 +933,7 @@ internal static class StreamabilityChecker
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
             if (Found) return null;
-            if (expr.Name.LocalName == "last" && expr.Arguments.Count == 0)
+            if (FunctionNames.IsFn(expr.Name, "last") && expr.Arguments.Count == 0)
             {
                 Found = true;
                 return null;
@@ -1273,15 +1273,15 @@ internal static class StreamabilityChecker
 
             // Direct grounding function: copy-of(path), snapshot(path), data(path)
             if (expr is FunctionCallExpression fce
-                && fce.Name.LocalName is "copy-of" or "snapshot" or "data"
-                    or "current-group" or "current-grouping-key")
+                && FunctionNames.IsFn(fce.Name)
+                && fce.Name.LocalName is "copy-of" or "snapshot" or "data" or "current-group" or "current-grouping-key")
                 return true;
 
             // SimpleMapExpression: path ! copy-of(), path ! data()
             if (expr is SimpleMapExpression sme)
             {
                 if (sme.Right is FunctionCallExpression rightFce
-                    && rightFce.Name.LocalName is "copy-of" or "snapshot" or "data")
+                    && (FunctionNames.IsFn(rightFce.Name) && rightFce.Name.LocalName is "copy-of" or "snapshot" or "data"))
                     return true;
             }
 
@@ -1669,12 +1669,12 @@ internal static class StreamabilityChecker
             // path/functioncall() step: .//*/name(), descendant::x/string()
             if (select is SimpleMapExpression sme
                 && sme.Right is FunctionCallExpression rightFce
-                && PerItemGroundingFunctions.Contains(rightFce.Name.LocalName))
+                && (FunctionNames.IsFn(rightFce.Name) && PerItemGroundingFunctions.Contains(rightFce.Name.LocalName)))
                 return true;
 
             // Direct grounding call over a crawl: data(.//*), copy-of(.//*)
             if (select is FunctionCallExpression fce
-                && PerItemGroundingFunctions.Contains(fce.Name.LocalName))
+                && (FunctionNames.IsFn(fce.Name) && PerItemGroundingFunctions.Contains(fce.Name.LocalName)))
                 return true;
 
             return false;
@@ -2617,7 +2617,7 @@ internal static class StreamabilityChecker
             // If so, the entire path result is grounded — subsequent steps operate on
             // materialized nodes and don't need streaming checks.
             bool initialIsGrounding = expr.InitialExpression is FunctionCallExpression fce
-                && fce.Name.LocalName is "snapshot" or "copy-of";
+                && (FunctionNames.IsFn(fce.Name) && fce.Name.LocalName is "snapshot" or "copy-of");
 
             if (initialIsGrounding)
             {
@@ -2769,7 +2769,7 @@ internal static class StreamabilityChecker
 
             // If the primary is a grounding function, predicates operate on grounded results
             bool primaryIsGrounding = expr.Primary is FunctionCallExpression fce
-                && fce.Name.LocalName is "snapshot" or "copy-of";
+                && (FunctionNames.IsFn(fce.Name) && fce.Name.LocalName is "snapshot" or "copy-of");
 
             if (primaryIsGrounding)
             {
@@ -2880,7 +2880,7 @@ internal static class StreamabilityChecker
             // If the initial expression is a grounding function, all subsequent
             // steps operate on grounded results — no crawling concern
             bool initialIsGrounding = expr.InitialExpression is FunctionCallExpression fce
-                && fce.Name.LocalName is "outermost" or "innermost" or "snapshot" or "copy-of";
+                && (FunctionNames.IsFn(fce.Name) && fce.Name.LocalName is "outermost" or "innermost" or "snapshot" or "copy-of");
 
             if (initialIsGrounding)
             {
@@ -2909,7 +2909,7 @@ internal static class StreamabilityChecker
 
             // If the primary is a grounding function, predicates operate on grounded results
             bool primaryIsGrounding = expr.Primary is FunctionCallExpression fce
-                && fce.Name.LocalName is "outermost" or "innermost" or "snapshot" or "copy-of";
+                && (FunctionNames.IsFn(fce.Name) && fce.Name.LocalName is "outermost" or "innermost" or "snapshot" or "copy-of");
 
             if (primaryIsGrounding)
             {
@@ -2936,7 +2936,7 @@ internal static class StreamabilityChecker
             // the entire expression produces grounded results regardless of crawling in the left.
             // e.g., .//school/copy-of(.) — descendant axis is OK because each result is grounded.
             bool rightIsGrounding = expr.Right is FunctionCallExpression fce
-                && fce.Name.LocalName is "snapshot" or "copy-of";
+                && (FunctionNames.IsFn(fce.Name) && fce.Name.LocalName is "snapshot" or "copy-of");
 
             if (rightIsGrounding)
             {
@@ -3013,7 +3013,7 @@ internal static class StreamabilityChecker
             if (Found || _inGrounding) return null;
 
             // Grounding functions: their arguments operate on grounded results
-            if (expr.Name.LocalName is "outermost" or "innermost" or "snapshot" or "copy-of")
+            if ((FunctionNames.IsFn(expr.Name) && expr.Name.LocalName is "outermost" or "innermost" or "snapshot" or "copy-of"))
             {
                 var old = _inGrounding;
                 _inGrounding = true;
@@ -3045,7 +3045,7 @@ internal static class StreamabilityChecker
             // Steps after a variable/grounding-function initial expression are grounded
             bool stepsGrounded = expr.InitialExpression is VariableReference
                 || (expr.InitialExpression is FunctionCallExpression fce
-                    && fce.Name.LocalName is "outermost" or "innermost" or "snapshot" or "copy-of");
+                    && (FunctionNames.IsFn(fce.Name) && fce.Name.LocalName is "outermost" or "innermost" or "snapshot" or "copy-of"));
 
             if (stepsGrounded)
             {
@@ -3751,7 +3751,7 @@ internal static class StreamabilityChecker
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
             if (Found) return null;
-            if (expr.Name.LocalName == "current" && expr.Arguments.Count == 0)
+            if (FunctionNames.IsFn(expr.Name, "current") && expr.Arguments.Count == 0)
             {
                 Found = true;
                 return null;
@@ -4087,7 +4087,7 @@ internal static class StreamabilityChecker
         public override object? VisitPathExpression(PathExpression expr)
         {
             if (expr.InitialExpression is FunctionCallExpression { Arguments.Count: 0 } call
-                && call.Name.LocalName == "current-group"
+                && FunctionNames.IsFn(call.Name, "current-group")
                 && expr.Steps.Count > 0
                 && expr.Steps.All(step => step.Axis == Axis.Attribute))
             {
@@ -4101,7 +4101,7 @@ internal static class StreamabilityChecker
 
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
-            if (expr.Name.LocalName == "current-group" && expr.Arguments.Count == 0)
+            if (FunctionNames.IsFn(expr.Name, "current-group") && expr.Arguments.Count == 0)
                 Count++;
             foreach (var arg in expr.Arguments)
                 Walk(arg);

@@ -580,7 +580,9 @@ public static partial class StreamabilityClassifier
             return Grounded(fc.Arguments.Count > 0 ? WorstSweep(fc.Arguments, ctx) : Sweep.Motionless);
         }
 
-        var role = FunctionRole(fc.Name.LocalName, fc.Arguments.Count);
+        // Only a function in the fn: namespace has a role here: a user function named
+        // Q{urn:other}count is not fn:count (xslt BUGS.md #132).
+        var role = FunctionNames.IsFn(fc.Name) ? FunctionRole(fc.Name.LocalName, fc.Arguments.Count) : FnRole.Unknown;
 
         // §19.8.9: a built-in function that has no rule of its own above takes the general
         // streamability rules, with the operand usages the specification lists for it.
