@@ -1467,11 +1467,17 @@ public sealed partial class StylesheetParser
         // Apply xpath-default-namespace: when set to the XSD namespace, unprefixed atomic type
         // names (like "double") should be resolved as "xs:double". Per XSLT 3.0 spec section 5.2,
         // xpath-default-namespace applies to type names in SequenceType syntax.
+        // Set where the steps below rewrite a type to the "xs:" spelling of a type they know to be
+        // in the XSD namespace; the stylesheet's own binding of xs, if any, then plays no part.
+        var spelledAsSchemaType = false;
         if (context != null && !type.Contains(':', StringComparison.Ordinal) && !type.Contains('(', StringComparison.Ordinal))
         {
             var xdn = GetXpathDefaultNamespace(context);
             if (xdn == "http://www.w3.org/2001/XMLSchema")
+            {
                 type = "xs:" + type;
+                spelledAsSchemaType = true;
+            }
         }
 
         // Normalize any namespace prefix bound to the XSD namespace to the canonical "xs:"
@@ -1488,14 +1494,18 @@ public sealed partial class StylesheetParser
                     && context.GetNamespaceOfPrefix(prefix)?.NamespaceName == "http://www.w3.org/2001/XMLSchema")
                 {
                     type = "xs:" + type[(colon + 1)..];
+                    spelledAsSchemaType = true;
                 }
             }
         }
 
         // A type that a schema defines (as="my:partNumber"): an atomic type the schema provider
         // knows, as XQuery's sequence types hold it. It was taken for item(), so the value kept
-        // the nodes it was selected as, and `$v instance of my:partNumber` was false.
-        if (context != null && !type.Contains('(', StringComparison.Ordinal) && !type.StartsWith("xs:", StringComparison.Ordinal)
+        // the nodes it was selected as, and `$v instance of my:partNumber` was false. The prefix
+        // xs is no exception: with xmlns:xs="urn:x", as="xs:integer" names Q{urn:x}integer, which
+        // an imported schema may declare (else XPST0051); it was read as the built-in type by its
+        // spelling (BUGS.md #135).
+        if (context != null && !spelledAsSchemaType && !type.Contains('(', StringComparison.Ordinal)
             && type.IndexOf(':', StringComparison.Ordinal) is > 0 and var typeColon
             && context.GetNamespaceOfPrefix(type[..typeColon]) is { } typeNamespace
             && typeNamespace.NamespaceName.Length > 0
