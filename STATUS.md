@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-21 14:44 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-21 23:24 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-11-21 14:44 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 1 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 7 | 0 |
+| phoenixmldb-xslt | 6 | 0 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
@@ -26,7 +26,6 @@ Generated 2026-11-21 14:44 UTC by `scripts/status.sh`. Do not edit by hand.
 **phoenixmldb-xslt**
 
 - [575] Streamed grouping with xsl:output indent="yes" doesn't indent output but creates one long line
-- [562] square brackets in result URI should not be allowed
 - [542] Evaluate global variables lazily (order between trees: sx-union-012/017/022/035, square-array-201)
 - [516] Temporary trees stay in the node store until the transform ends
 - [499] Serializer: extension parameters for indent characters, attribute wrapping and namespace order (#400 part 2)
