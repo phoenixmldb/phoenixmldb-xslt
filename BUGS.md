@@ -7822,3 +7822,51 @@ STYLESHEET's base URI, not the base output URI; reads and writes are compared in
 both, so escaping one side only would break the comparison. Recorded, not fixed.
 
 Tests: `ResultDocumentHrefEscapingTests` (engine and CLI).
+
+### 135. xsi:nil was recognised by its prefix; prefix audit — fixing (2026-11-21)
+
+Engine: **XQuery** (shared with XSLT). xquery#413. The schema provider's nilled set and
+`TypeCastHelper.IsNilled` took an attribute for xsi:nil if it was in the XSI namespace **or** had the
+prefix `xsi`. Repro, validated strict against a nillable `xs:integer` element with a lax `anyAttribute`:
+
+```xml
+<e xmlns:xsi="urn:fake" xsi:nil="true">5</e>                                    <!-- A -->
+<e xmlns:i="http://www.w3.org/2001/XMLSchema-instance" i:nil="true"/>          <!-- B -->
+```
+
+On 3.2.0 and main: A gives `nilled() = true` and `data()` empty (silent data loss; it is `5`), and B gives
+`nilled() = false`. In B the attribute IS xsi:nil, but the store does not give the XSI URI
+`NamespaceId.Xsi`, so only the prefix fallback had ever matched. Fixed by comparing the namespace (the
+builder's id for the XSI URI; the attribute's URI through `XdmNode.Store`). No new error.
+Tests: `XsiNilByNamespaceTests` (xquery).
+
+**The xslt store's namespace counter started at 3: no effect found.** `XdmInMemoryStore` gave the first
+new URI of a transformation id 3, the next id 4, …, the ids Core reserves for `Xsd` (3) and `Xsi` (4).
+An input whose first new URIs are `urn:a` and `urn:b` gets those ids:
+`<e xmlns:a="urn:a" xmlns:b="urn:b" a:x="1" b:nil="true">5</e>`, validated as above, gives `nilled() = false`
+and `data() = 5` on 3.2.0 and main, which is correct. Reasons: type names never take a store id
+(`StylesheetParser` uses `NamespaceId.Xsd` or `XsdSchemaProvider.TypeNamespaceId`), validation runs on
+serialized text in .NET, and the only compare of a node's namespace id with a Core constant was the xsi:nil
+check above. The numeric uses of a `NamespaceId` value in Core, xquery and xslt are equality, string keys
+and Core's `NodeSerializer` var-int; none is an index, size, bit position or packed key. The
+CompiledStylesheet branch moves store-local ids to a range from `0x8000_0000` all the same.
+
+**Prefix audit.** Every compare on a prefix string in Core, xquery and xslt (66 sites) was read. The
+`xml` and `xmlns` checks are correct: those prefixes cannot be bound to another URI (Namespaces in XML
+§3). Not fixed, waiting for a ruling, because a fix makes queries and stylesheets that run today fail:
+
+- **xs bound to another URI is still taken as XML Schema.** XQuery `XQueryAstBuilder` (type names in
+  `instance of`, `cast as`, `element(*, T)`) and XSLT `StylesheetParser.Expressions` (`as="xs:…"`) test
+  the prefix `xs` (and `xsd`) instead of the URI. With `declare namespace xs = "urn:x";` (only `xml` and
+  `xmlns` may not be declared, XQST0070), `1 instance of xs:integer` is `true`,
+  `<a/> instance of element(*, xs:untyped)` is `true` and `"1" cast as xs:integer` is `1`. Correct is
+  XPST0051 (no type `Q{urn:x}integer`). In XSLT with `xmlns:xs="urn:x"`, `as="xs:integer"` is accepted
+  and `as="xs:int"` raises XTTE0570, not XPST0051. `xs:integer("1")` is already right (XPST0017: function
+  lookup reads the URI).
+- **xsl:catch ignores the namespace of a standard error's name.** `DefaultXsltExecutionContext.ControlFlow`
+  matches a standard error if the catch name has the prefix `err` or has any namespace at all:
+  `errors="q:FORG0001"` with `xmlns:q="urn:other"` catches `err:FORG0001`, and so does `errors="err:FORG0001"`
+  with `err` bound to `urn:other`. Correct: only a name in `http://www.w3.org/2005/xqt-errors` catches it.
+- **fn bound to another URI.** `NamedFunctionRefOperator` classifies a function by the prefix `fn` (resource
+  and context-capturing functions, `function-lookup`). With `declare namespace fn = "urn:x"`, user functions
+  `fn:doc`, `fn:name#1` and `fn:function-lookup` are still called correctly; no wrong result found.
