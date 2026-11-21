@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Reflection;
+using PhoenixmlDb.Core;
 using PhoenixmlDb.XQuery.Ast;
 using PhoenixmlDb.Xslt.Ast;
 
@@ -38,22 +39,39 @@ internal static class CompiledNameResolution
     }
 
     /// <summary>
-    /// The namespace of a name test in an XPath step: a prefix the parser left unresolved takes
-    /// the stylesheet's binding, an unprefixed element test takes xpath-default-namespace, then
-    /// the URI's process-wide id. Shared with the run-time walk, which then changes nothing.
+    /// The namespaces of the names in an XPath step: its name test, and the element or attribute
+    /// name of a kind test (<c>self::element(a:x)</c>, <c>document-node(element(a:x))</c>). A prefix
+    /// the parser left unresolved takes the stylesheet's binding, an unprefixed element name takes
+    /// xpath-default-namespace, then the URI's process-wide id. Shared with the run-time walk, which
+    /// then changes nothing for a compiled stylesheet's own expressions; for an expression compiled
+    /// at run time (xsl:evaluate) it is the only resolution, and it skipped kind tests, so
+    /// <c>self::element(a:x)</c> in an evaluated path matched nothing.
     /// </summary>
     internal static void ResolveStep(StepExpression se, XsltStylesheet stylesheet)
     {
-        if (se.NodeTest is not NameTest nt)
-            return;
+        switch (se.NodeTest)
+        {
+            case NameTest nt:
+                ResolveName(nt, stylesheet, isElementName: se.Axis != Axis.Attribute && se.Axis != Axis.Namespace);
+                break;
+            case KindTest kt:
+                if (kt.Name is { } kindName)
+                    ResolveName(kindName, stylesheet, isElementName: kt.Kind == XdmNodeKind.Element);
+                if (kt.DocumentElementTest is { } documentElement)
+                    ResolveName(documentElement, stylesheet, isElementName: true);
+                break;
+        }
+    }
+
+    private static void ResolveName(NameTest nt, XsltStylesheet stylesheet, bool isElementName)
+    {
         if (nt.Prefix != null && string.IsNullOrEmpty(nt.NamespaceUri) && nt.NamespaceUri != "*")
         {
             if (stylesheet.Namespaces.TryGetValue(nt.Prefix, out var uri))
                 nt.NamespaceUri = uri;
         }
         else if (nt.Prefix == null && string.IsNullOrEmpty(nt.NamespaceUri) && !nt.IsLocalNameWildcard
-                 && se.Axis != Axis.Attribute && se.Axis != Axis.Namespace
-                 && stylesheet.XpathDefaultNamespace != null && !nt.ResolvedNamespace.HasValue)
+                 && isElementName && stylesheet.XpathDefaultNamespace != null && !nt.ResolvedNamespace.HasValue)
         {
             nt.NamespaceUri = stylesheet.XpathDefaultNamespace;
         }

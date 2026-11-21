@@ -31,32 +31,78 @@ public class CompiledStylesheetFreezeTests
         </xsl:stylesheet>
         """;
 
+    /// <summary>
+    /// Run-time compilation and type names: xsl:evaluate (compiled per evaluation, with a context
+    /// item and a parameter), kind tests and sequence types that name elements, and fn:transform
+    /// with an inner stylesheet compiled during the transformation.
+    /// </summary>
+    private const string Dynamic = """
+        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                        xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                        xmlns:a="urn:a" xmlns:b="urn:b" xmlns:f="urn:f" exclude-result-prefixes="#all">
+          <xsl:variable name="inner" as="xs:string">&lt;xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:b="urn:b"&gt;&lt;xsl:template match="/"&gt;&lt;n&gt;&lt;xsl:value-of select="count(//b:y)"/&gt;&lt;/n&gt;&lt;/xsl:template&gt;&lt;/xsl:stylesheet&gt;</xsl:variable>
+          <xsl:function name="f:ys" as="element(b:y)*"><xsl:param name="e" as="element(a:x)"/><xsl:sequence select="$e/b:y"/></xsl:function>
+          <xsl:template match="/">
+            <out>
+              <xsl:for-each select="//a:x">
+                <e><xsl:evaluate xpath="'count(b:y[@n = $n]) + count(self::element(a:x))'" context-item="." with-params="map { QName('', 'n'): '2' }"/></e>
+              </xsl:for-each>
+              <k><xsl:value-of select="count(//element(b:y)), count(//a:x ! f:ys(.)), //b:y[1] instance of element(b:y), count(//attribute(n))"/></k>
+              <t><xsl:sequence select="transform(map { 'stylesheet-text': $inner, 'source-node': /, 'delivery-format': 'raw' })?output"/></t>
+            </out>
+          </xsl:template>
+        </xsl:stylesheet>
+        """;
+
     private static readonly string[] Inputs =
     [
         """<r xmlns:a="urn:a" xmlns:b="urn:b"><a:x><b:y n="1"/><b:y n="2"/></a:x></r>""",
         """<r xmlns:b="urn:b" xmlns:a="urn:a"><b:q/><a:x> <b:y n="2"/> </a:x></r>""",
+        """<r xmlns:z="urn:z" xmlns:b="urn:b" xmlns:a="urn:a"><z:q/><a:x><b:y n="3"/></a:x><a:x><b:y n="2"/><b:y n="2"/></a:x></r>""",
     ];
 
-    [Fact]
-    public async Task TransformsDoNotChangeTheCompiledStylesheet()
+    public static TheoryData<string, string> Stylesheets => new()
     {
+        { "patterns", Stylesheet },
+        { "dynamic", Dynamic },
+    };
+
+    [Theory]
+    [MemberData(nameof(Stylesheets))]
+    public async Task TransformsDoNotChangeTheCompiledStylesheet(string label, string stylesheet)
+    {
+        _ = label;
+        PhoenixmlDb.XQuery.Functions.TransformFunction.Provider ??= new XsltTransformProvider();
         var first = new XsltTransformer();
-        await first.LoadStylesheetAsync(Stylesheet);
+        await first.LoadStylesheetAsync(stylesheet);
         var compiled = StylesheetOf(first);
         var before = Dump(compiled);
 
-        // Transforms on the compiled stylesheet: sequentially, then on several threads.
+        // The outputs of one transformer, one input after another, are the reference.
+        var expected = new List<string>();
         foreach (var input in Inputs)
-            await first.TransformAsync(input);
-        await Task.WhenAll(Enumerable.Range(0, 4).Select(n => Task.Run(async () =>
+            expected.Add(await first.TransformAsync(input));
+
+        // Then the same compiled stylesheet on several threads at once, each input many times;
+        // every output must be the sequential one.
+        const int Threads = 8;
+        const int Rounds = 6;
+        var outputs = await Task.WhenAll(Enumerable.Range(0, Threads).Select(n => Task.Run(async () =>
         {
             var t = new XsltTransformer();
-            await t.LoadStylesheetAsync(Stylesheet);
+            await t.LoadStylesheetAsync(stylesheet);
             SetStylesheet(t, compiled);
-            for (var i = 0; i < 3; i++)
-                await t.TransformAsync(Inputs[(i + n) % Inputs.Length]);
+            var got = new List<(int Input, string Output)>();
+            for (var i = 0; i < Rounds; i++)
+            {
+                var k = (i + n) % Inputs.Length;
+                got.Add((k, await t.TransformAsync(Inputs[k])));
+            }
+            return got;
         })));
 
+        foreach (var (k, output) in outputs.SelectMany(o => o))
+            output.Should().Be(expected[k], "a transformation on another thread gave another result for input {0}", k);
         var after = Dump(compiled);
         FirstDifference(before, after).Should().BeNull();
     }
