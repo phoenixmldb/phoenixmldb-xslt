@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-21 00:00 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-21 14:44 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,18 +17,16 @@ Generated 2026-11-21 00:00 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 0 | 1 |
-| phoenixmldb-xquery | 0 | 1 |
-| phoenixmldb-xslt | 9 | 1 |
+| phoenixmldb-xquery | 0 | 0 |
+| phoenixmldb-xslt | 7 | 0 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
-- [582] Schxslt2 transpiled XSLT 3.0 with streaming passing (after an edit) strict streamability analyis of Saxon EE and of go-xml doesn't stream with PhoenixmlDb.Xslt
 - [575] Streamed grouping with xsl:output indent="yes" doesn't indent output but creates one long line
 - [562] square brackets in result URI should not be allowed
-- [561] current-output-uri() doesn't return anything
 - [542] Evaluate global variables lazily (order between trees: sx-union-012/017/022/035, square-array-201)
 - [516] Temporary trees stay in the node store until the transform ends
 - [499] Serializer: extension parameters for indent characters, attribute wrapping and namespace order (#400 part 2)
@@ -41,17 +39,9 @@ Generated 2026-11-21 00:00 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [54] build: SDK 11, and ship net11.0 next to net8.0 and net10.0
 
-**phoenixmldb-xquery**
-
-- [404] build: SDK 11, and ship net11.0 next to net8.0 and net10.0
-
-**phoenixmldb-xslt**
-
-- [590] build: SDK 11, and ship net11.0 next to net8.0 and net10.0
-
 ## Defect register
 
-`BUGS.md`: **130** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **136** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
