@@ -2654,7 +2654,7 @@ public sealed partial class StylesheetParser
 
         // XTSE0080: Function name must not be in a reserved namespace
         if (name.Namespace == NamespaceId.Xslt
-            || name.Namespace == new NamespaceId(2) // xs (XMLSchema)
+            || name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs // xs (XMLSchema)
             || name.Namespace == NamespaceId.Fn
             || name.Namespace == NamespaceId.Map
             || name.Namespace == NamespaceId.Array

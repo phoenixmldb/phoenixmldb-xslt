@@ -202,7 +202,7 @@ public sealed partial class StylesheetParser
     private static readonly Dictionary<string, NamespaceId> _wellKnownNamespaces = new()
     {
         ["http://www.w3.org/XML/1998/namespace"] = NamespaceId.Xml,                  // 1
-        ["http://www.w3.org/2001/XMLSchema"] = new NamespaceId(2),                   // FunctionNamespaces.Xs
+        ["http://www.w3.org/2001/XMLSchema"] = PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs,
         ["http://www.w3.org/2005/xpath-functions"] = NamespaceId.Fn,                 // 5
         ["http://www.w3.org/2005/xpath-functions/map"] = NamespaceId.Map,            // 6
         ["http://www.w3.org/2005/xpath-functions/array"] = NamespaceId.Array,        // 7
