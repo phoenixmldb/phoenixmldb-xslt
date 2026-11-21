@@ -1982,7 +1982,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 using var xmlReader = new PeekableXmlReader(rawReader, BuildStreamingWhitespaceStripper());
 
                 var streamNodeStore = _nodeStore ?? new XdmInMemoryStore();
-                _templateIndex.ResolvePatternNamespaces(streamNodeStore.InternNamespace);
+                _templateIndex.ResolvePatternNamespaces(StylesheetParser.ResolveNamespaceUri);
 
                 // Resolve accumulators for streaming. With #all the pass ran none: a streamed node
                 // has no subtree to compute a value from afterwards, so the values it reported were
@@ -2185,9 +2185,9 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             // Ensure namespace resolution for strip-space/preserve-space NameTests
             foreach (var decl in _stylesheet.StripSpace)
-                decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+                decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
             foreach (var decl in _stylesheet.PreserveSpace)
-                decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+                decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
 
             XsltTransformEngine.StripWhitespaceNodes(xdmDoc, _stylesheet.StripSpace, _stylesheet.PreserveSpace, nodeStore);
         }

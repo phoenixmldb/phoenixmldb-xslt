@@ -12,6 +12,20 @@ public sealed partial class StylesheetParser
 {
 
     /// <summary>
+    /// The process-wide id of a namespace URI, if one was given; never creates one. Node stores
+    /// read it so that every store in the process uses the same id for a URI the stylesheets know.
+    /// </summary>
+    internal static bool TryGetNamespaceId(string namespaceUri, out NamespaceId id)
+    {
+        if (string.IsNullOrEmpty(namespaceUri))
+        {
+            id = NamespaceId.None;
+            return true;
+        }
+        return _wellKnownNamespaces.TryGetValue(namespaceUri, out id) || _dynamicNamespaces.TryGetValue(namespaceUri, out id);
+    }
+
+    /// <summary>
     /// Resolves a namespace URI to its interned NamespaceId, creating one if needed.
     /// Used by the public API to match template/mode names against compiled stylesheet names.
     /// </summary>

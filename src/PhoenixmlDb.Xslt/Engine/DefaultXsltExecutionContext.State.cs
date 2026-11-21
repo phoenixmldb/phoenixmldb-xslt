@@ -503,8 +503,8 @@ internal sealed partial class DefaultXsltExecutionContext
         if (_stylesheet.StripSpace.Count == 0 || _nodeStore is null)
             return null;
         var store = _nodeStore;
-        foreach (var decl in _stylesheet.StripSpace) decl.Test.ResolveNamespace(store.InternNamespace);
-        foreach (var decl in _stylesheet.PreserveSpace) decl.Test.ResolveNamespace(store.InternNamespace);
+        foreach (var decl in _stylesheet.StripSpace) decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
+        foreach (var decl in _stylesheet.PreserveSpace) decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
         var cache = new Dictionary<(string, string), bool>();
         var strip = _stylesheet.StripSpace;
         var preserve = _stylesheet.PreserveSpace;
@@ -512,7 +512,9 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             if (cache.TryGetValue((localName, namespaceUri), out var known))
                 return known;
-            var ns = string.IsNullOrEmpty(namespaceUri) ? NamespaceId.None : store.InternNamespace(namespaceUri);
+            // The table's id when the stylesheet's tests know the URI (they carry table ids).
+            var ns = string.IsNullOrEmpty(namespaceUri) ? NamespaceId.None
+                : StylesheetParser.TryGetNamespaceId(namespaceUri, out var tableId) ? tableId : store.InternNamespace(namespaceUri);
             var result = XsltTransformEngine.ShouldStripWhitespaceIn(ns, localName, strip, preserve);
             cache[(localName, namespaceUri)] = result;
             return result;

@@ -507,6 +507,9 @@ public sealed class XsltTransformer
             var parsed = parser.Parse(stylesheetXml, baseUri, staticParams);
             ResolveSchemaImports(parsed, baseUri);
             RequireKnownSchemaTypes(parsed);
+            // Every name test gets its process-wide namespace id now, so no transformation
+            // writes one into the compiled stylesheet later.
+            CompiledNameResolution.Resolve(parsed);
             return Task.FromResult(parsed);
         }).ConfigureAwait(false);
         // Cross-feed static-param values to the runtime parameter map. A `static="yes"`

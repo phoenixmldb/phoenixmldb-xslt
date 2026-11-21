@@ -1270,7 +1270,7 @@ internal sealed partial class DefaultXsltExecutionContext
         var nsUri = _nodeStore?.GetNamespaceUri(elem.Namespace);
         var nameTest = new NameTest { LocalName = elem.LocalName, NamespaceUri = nsUri };
         if (!string.IsNullOrEmpty(nsUri) && _nodeStore != null)
-            nameTest.ResolveNamespace(_nodeStore.InternNamespace);
+            nameTest.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
         return new PathPattern
         {
             Steps = [new PatternStep { Axis = Axis.Child, NodeTest = nameTest }]

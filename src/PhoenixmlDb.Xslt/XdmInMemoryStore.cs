@@ -38,7 +38,31 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
     private ulong _nextId = 1;
     private readonly Dictionary<string, NamespaceId> _nsToId = new(StringComparer.Ordinal);
     private readonly Dictionary<NamespaceId, string> _idToNs = new();
-    private uint _nextNsId = 3; // Start after well-known IDs (Xml=1, Xmlns=2)
+    /// <summary>
+    /// The first id this store gives a namespace the process-wide table does not know. Such ids
+    /// come from a range the table never uses (it counts up from 100), so a store-local id is never
+    /// the table's id for another URI. A compiled stylesheet's name tests carry table ids and so
+    /// match by id in every store; a node whose namespace has a store-local id is matched by URI.
+    /// </summary>
+    internal const uint FirstLocalNamespaceId = 0x8000_0000;
+
+    private uint _nextNsId = FirstLocalNamespaceId;
+
+    /// <summary>
+    /// The process-wide id of <paramref name="node"/>'s namespace <paramref name="id"/> when that id
+    /// is store-local but the table now knows its URI (the store interned the URI before a
+    /// stylesheet did); otherwise <paramref name="id"/>. Compiled name tests carry table ids, so a
+    /// matcher compares this value with them.
+    /// </summary>
+    internal static NamespaceId CanonicalNamespaceId(XdmNode node, NamespaceId id)
+    {
+        if (!IsLocalNamespaceId(id) || node.Store?.GetNamespaceUri(id) is not { } uri)
+            return id;
+        return Engine.StylesheetParser.TryGetNamespaceId(uri, out var tableId) ? tableId : id;
+    }
+
+    /// <summary>Whether <paramref name="id"/> is a store-local namespace id (see <see cref="FirstLocalNamespaceId"/>).</summary>
+    internal static bool IsLocalNamespaceId(NamespaceId id) => id.Value >= FirstLocalNamespaceId;
 
     public XdmInMemoryStore()
     {
@@ -134,26 +158,31 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
     {
         if (string.IsNullOrEmpty(uri))
             return NamespaceId.None;
+        // This store's own id first: one URI has one id in a store, even if the process-wide
+        // table gave the URI an id after this store did.
         if (_nsToId.TryGetValue(uri, out var id))
             return id;
-        id = new NamespaceId(_nextNsId++);
+        if (Engine.StylesheetParser.TryGetNamespaceId(uri, out id) && !_idToNs.ContainsKey(id))
+        {
+            _nsToId[uri] = id;
+            _idToNs[id] = uri;
+            return id;
+        }
+        do { id = new NamespaceId(_nextNsId++); } while (_idToNs.ContainsKey(id));
         _nsToId[uri] = id;
         _idToNs[id] = uri;
         return id;
     }
 
+    /// <summary>
+    /// Interns <paramref name="uri"/>; <paramref name="preferredId"/> is not used. A URI's id is the
+    /// process-wide table's (one source of truth with the stylesheet parser) or a store-local one,
+    /// so a preferred id from elsewhere can never be given to one URI here and to another in the
+    /// table.
+    /// </summary>
     public NamespaceId InternNamespace(string uri, NamespaceId preferredId)
     {
-        if (string.IsNullOrEmpty(uri))
-            return NamespaceId.None;
-        if (_nsToId.TryGetValue(uri, out var existing))
-            return existing;
-        if (preferredId != NamespaceId.None && !_idToNs.ContainsKey(preferredId))
-        {
-            _nsToId[uri] = preferredId;
-            _idToNs[preferredId] = uri;
-            return preferredId;
-        }
+        _ = preferredId;
         return InternNamespace(uri);
     }
 

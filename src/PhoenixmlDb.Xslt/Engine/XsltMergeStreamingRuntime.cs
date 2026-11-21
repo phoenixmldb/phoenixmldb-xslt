@@ -223,12 +223,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (test is NameTest nt && nt.ResolvedNamespace == null
                     && !string.IsNullOrEmpty(nt.NamespaceUri) && nt.NamespaceUri != "*")
                 {
-                    nt.ResolveNamespace(_ctx._nodeStore!.InternNamespace);
+                    nt.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
                 }
                 else if (test is KindTest { Name: { } kn } && kn.ResolvedNamespace == null
                     && !string.IsNullOrEmpty(kn.NamespaceUri) && kn.NamespaceUri != "*")
                 {
-                    kn.ResolveNamespace(_ctx._nodeStore!.InternNamespace);
+                    kn.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
                 }
             }
         }

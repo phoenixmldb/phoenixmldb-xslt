@@ -393,7 +393,7 @@ public sealed class PathPattern : XsltPattern
             // Child axis: match elements, text, etc.
             // Per XPath spec, NameTest wildcards (*) on the child axis only match elements.
             // PIs and comments are only matched by their specific KindTests or node().
-            (Axis.Child, XdmElement elem) => MatchNodeTest(step.NodeTest, XdmNodeKind.Element, elem.Namespace, elem.LocalName),
+            (Axis.Child, XdmElement elem) => MatchNodeTest(step.NodeTest, XdmNodeKind.Element, XdmInMemoryStore.CanonicalNamespaceId(elem, elem.Namespace), elem.LocalName),
             (Axis.Child, XdmText) => step.NodeTest is KindTest { Kind: XdmNodeKind.Text or XdmNodeKind.None },
             (Axis.Child, XdmComment) => step.NodeTest is KindTest { Kind: XdmNodeKind.Comment or XdmNodeKind.None },
             (Axis.Child, XdmProcessingInstruction pi) => step.NodeTest is KindTest
@@ -401,13 +401,13 @@ public sealed class PathPattern : XsltPattern
                 : false, // NameTest (*) does not match PIs on child axis
 
             // Descendant / descendant-or-self axis: same node test matching as child
-            (Axis.Descendant, XdmElement elem) => MatchNodeTest(step.NodeTest, XdmNodeKind.Element, elem.Namespace, elem.LocalName),
+            (Axis.Descendant, XdmElement elem) => MatchNodeTest(step.NodeTest, XdmNodeKind.Element, XdmInMemoryStore.CanonicalNamespaceId(elem, elem.Namespace), elem.LocalName),
             (Axis.Descendant, XdmText) => step.NodeTest is KindTest { Kind: XdmNodeKind.Text or XdmNodeKind.None },
             (Axis.Descendant, XdmComment) => step.NodeTest is KindTest { Kind: XdmNodeKind.Comment or XdmNodeKind.None },
             (Axis.Descendant, XdmProcessingInstruction pi) => step.NodeTest is KindTest
                 ? MatchNodeTest(step.NodeTest, XdmNodeKind.ProcessingInstruction, NamespaceId.None, pi.Target)
                 : false,
-            (Axis.DescendantOrSelf, XdmElement elem) => MatchNodeTest(step.NodeTest, XdmNodeKind.Element, elem.Namespace, elem.LocalName),
+            (Axis.DescendantOrSelf, XdmElement elem) => MatchNodeTest(step.NodeTest, XdmNodeKind.Element, XdmInMemoryStore.CanonicalNamespaceId(elem, elem.Namespace), elem.LocalName),
             (Axis.DescendantOrSelf, XdmText) => step.NodeTest is KindTest { Kind: XdmNodeKind.Text or XdmNodeKind.None },
             (Axis.DescendantOrSelf, XdmComment) => step.NodeTest is KindTest { Kind: XdmNodeKind.Comment or XdmNodeKind.None },
             (Axis.DescendantOrSelf, XdmProcessingInstruction pi) => step.NodeTest is KindTest
@@ -415,7 +415,7 @@ public sealed class PathPattern : XsltPattern
                 : false,
 
             // Attribute axis
-            (Axis.Attribute, XdmAttribute attr) => MatchNodeTest(step.NodeTest, XdmNodeKind.Attribute, attr.Namespace, attr.LocalName),
+            (Axis.Attribute, XdmAttribute attr) => MatchNodeTest(step.NodeTest, XdmNodeKind.Attribute, XdmInMemoryStore.CanonicalNamespaceId(attr, attr.Namespace), attr.LocalName),
 
             // Namespace axis
             (Axis.Namespace, XdmNamespace ns) => step.NodeTest is KindTest { Kind: XdmNodeKind.Namespace or XdmNodeKind.None }
@@ -425,14 +425,14 @@ public sealed class PathPattern : XsltPattern
             // Self axis - matches the node itself (for count="." in xsl:number, or "." pattern)
             (Axis.Self, XdmDocument doc) => step.NodeTest is KindTest { Kind: XdmNodeKind.Document or XdmNodeKind.None } kt
                 && (kt.DocumentElementTest == null || MatchesDocumentElementTest(doc, kt.DocumentElementTest)),
-            (Axis.Self, XdmElement elem) => MatchNodeTest(step.NodeTest, XdmNodeKind.Element, elem.Namespace, elem.LocalName),
+            (Axis.Self, XdmElement elem) => MatchNodeTest(step.NodeTest, XdmNodeKind.Element, XdmInMemoryStore.CanonicalNamespaceId(elem, elem.Namespace), elem.LocalName),
             (Axis.Self, XdmText) => step.NodeTest is KindTest { Kind: XdmNodeKind.Text or XdmNodeKind.None }
                 || step.NodeTest is NameTest { LocalName: "*" },
             (Axis.Self, XdmComment) => step.NodeTest is KindTest { Kind: XdmNodeKind.Comment or XdmNodeKind.None }
                 || step.NodeTest is NameTest { LocalName: "*" },
             (Axis.Self, XdmProcessingInstruction pi) => step.NodeTest is NameTest { LocalName: "*" }
                 || MatchNodeTest(step.NodeTest, XdmNodeKind.ProcessingInstruction, NamespaceId.None, pi.Target),
-            (Axis.Self, XdmAttribute attr) => MatchNodeTest(step.NodeTest, XdmNodeKind.Attribute, attr.Namespace, attr.LocalName),
+            (Axis.Self, XdmAttribute attr) => MatchNodeTest(step.NodeTest, XdmNodeKind.Attribute, XdmInMemoryStore.CanonicalNamespaceId(attr, attr.Namespace), attr.LocalName),
             (Axis.Self, XdmNamespace ns) => step.NodeTest is KindTest { Kind: XdmNodeKind.Namespace or XdmNodeKind.None }
                 || step.NodeTest is NameTest { LocalName: "*" }
                 || (step.NodeTest is NameTest snt && snt.LocalName == ns.Prefix),
@@ -473,7 +473,7 @@ public sealed class PathPattern : XsltPattern
         {
             var docElem = context.NodeResolver(doc.DocumentElement.Value);
             if (docElem is XdmElement elem)
-                return elemTest.Matches(XdmNodeKind.Element, elem.Namespace, elem.LocalName);
+                return elemTest.Matches(XdmNodeKind.Element, XdmInMemoryStore.CanonicalNamespaceId(elem, elem.Namespace), elem.LocalName);
         }
         // Without a node resolver, match optimistically (kind already matched)
         return true;
