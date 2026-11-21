@@ -7876,3 +7876,43 @@ CompiledStylesheet branch moves store-local ids to a range from `0x8000_0000` al
 - **fn bound to another URI.** `NamedFunctionRefOperator` classifies a function by the prefix `fn` (resource
   and context-capturing functions, `function-lookup`). With `declare namespace fn = "urn:x"`, user functions
   `fn:doc`, `fn:name#1` and `fn:function-lookup` are still called correctly; no wrong result found.
+
+### 136. A node from another transformation matched no template pattern, key or xsl:number — fixing with CompiledStylesheet (2026-11-21)
+
+Engine: **XSLT**. A defect of main after #124 (xslt#604), in no release: open until the CompiledStylesheet
+branch merges (3.3.0 does not ship without it; parsers, 2026-11-21). #124 made a node from another
+transformation read in its own store, and XPath over it is right, but a template pattern, `xsl:key match`
+and `xsl:number count` resolved their namespace ids at run time against the CONSUMER's store, whose ids
+are not the producer's. Repro: the producer's result document `<z:r><z:e k="1"/><z:e k="2"/><z:f/></z:r>`
+as the source of a consumer with `match="z:e[@k]"` (xsl:number), `match="z:*"` and a key on `z:e`.
+Expected `1;2;other;|1`; main gives `|0`, silently, for a namespace the stylesheet names in any case.
+
+The CompiledStylesheet branch fixes it: every xslt store uses the process-wide table's id for each URI the
+table knows, so a pattern's id is the node's id whatever store holds it; a URI a store met before any
+stylesheet named it gets a store-local id (from `0x8000_0000`), which the match sites map to the table's
+id through the node's URI (`XdmInMemoryStore.CanonicalNamespaceId`). Tests: `CompiledNamespaceIdTests`
+(a namespace the table knows and a fresh one).
+
+### 137. A kind test's name in a path compiled by xsl:evaluate matched nothing — fixed (2026-11-21)
+
+Engine: **XSLT**. In 3.2.0 and main. In an `xsl:evaluate` path, `self::element(a:x)`,
+`b:y/self::element(b:y)` and `attribute(b:n)` counted 0, while `self::a:x` in the same path was right.
+An expression compiled at run time has its namespace ids resolved by a walk over its steps, which handled
+a step's name test only, not the element or attribute name of a kind test. The run-time step rule now
+resolves all three: the name test, a kind test's name, and its `document-node(element(…))` test.
+Found by the CompiledStylesheet freeze test. Tests: `EvaluateKindTestNameTests`.
+
+### The process-wide namespace table grows with names built from strings — known limit, recorded (2026-11-21)
+
+`StylesheetParser`'s namespace table (ids from 100, one per URI, process-wide, never shrinks) is the
+source of the namespace ids of compiled name tests, and with the CompiledStylesheet branch every xslt
+store takes its ids for the URIs it knows. A store gives the namespaces only its INPUT names ids of its
+own, so input documents do not grow the table (`CompiledNamespaceIdTests`: 300 fresh input namespaces,
+through the tree, `node-name()`, `namespace-uri()`, copies, computed attributes, serialization). But some
+run-time sites intern a URI built from a string, so input can grow it: a computed `xsl:element
+namespace="{…}"` (the output element stack, for `cdata-section-elements`), an EQName string
+(`Q{uri}local`) for an accumulator, a function or a QName, an error code in another namespace, and
+`suppress-indentation` over serialized output. A long-running process that transforms untrusted input
+through such a stylesheet keeps every such URI for its lifetime (a few hundred bytes each). Not changed:
+a fix interns these lookups read-only (`StylesheetParser.TryGetNamespaceId`), which none of them needs
+an id for when the table does not know the URI.
