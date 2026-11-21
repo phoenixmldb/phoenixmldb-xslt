@@ -7730,3 +7730,18 @@ The XTSE3430 message now names the rule as written and its line, `the template m
 and the error carries the template's location (the template body had none).
 
 Tests: `EqNameFunctionCallTests`.
+
+
+**use-when (ruled 2026-11-20):** XSLT 3.0 §9.7 gives a static expression these functions: "The
+functions defined in [Functions and Operators 3.0] in the fn and math namespaces, together with:
+the functions element-available, function-available, type-available, available-system-properties,
+and system-property defined in this specification; ... constructor functions for built-in types;
+the set of extension functions that are present in the static context of every XPath expression
+(other than a static expression) within the content of the element that contains the static
+expression." A function in another namespace is not among them, so a call to it is XPST0017.
+
+- Breaking change: 3.2.0 evaluated `use-when="o:true()"` (`o` bound to any namespace) as `true()`;
+  now XPST0017. `function-available('o:true')` is false, not an error.
+- Gap, not fixed here (also on main and in 3.2.0): the use-when evaluator rejects calls that §9.7
+  allows: constructor functions (`xs:integer('2')`), `math:` functions (`math:pi()`), and the map/array
+  functions; each gives XPST0017. Removing it is not breaking; it is a separate fix.
