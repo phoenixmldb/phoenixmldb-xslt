@@ -7867,6 +7867,11 @@ CompiledStylesheet branch moves store-local ids to a range from `0x8000_0000` al
   matches a standard error if the catch name has the prefix `err` or has any namespace at all:
   `errors="q:FORG0001"` with `xmlns:q="urn:other"` catches `err:FORG0001`, and so does `errors="err:FORG0001"`
   with `err` bound to `urn:other`. Correct: only a name in `http://www.w3.org/2005/xqt-errors` catches it.
+  Fixed for 3.3.0 (Lucas: "fix in 3.3"; xslt fix/catch-error-namespace): a catch name matches by local
+  name and namespace URI. Found with it: `err:*` caught nothing; an error fn:error raised in a namespace was
+  caught only by a name in NO namespace (`errors="e"` caught `Q{urn:u}e`, `errors="u:e"` did not); and an
+  xsl:message error-code in another namespace (reported as `Q{uri}local`) could not be caught by name.
+  `$err:code` now carries the error's own namespace. Tests: `CatchErrorNamespaceTests`.
 - **fn bound to another URI.** `NamedFunctionRefOperator` classifies a function by the prefix `fn` (resource
   and context-capturing functions, `function-lookup`). With `declare namespace fn = "urn:x"`, user functions
   `fn:doc`, `fn:name#1` and `fn:function-lookup` are still called correctly; no wrong result found.
