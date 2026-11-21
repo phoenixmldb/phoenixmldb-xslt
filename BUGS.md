@@ -7642,3 +7642,54 @@ Engine: **XQuery** (`RenameOperator` / the overlay's namespace ids).
 is not registered with the node store. The node was built with an id from another store". The
 same for an element root and for an attribute. Renaming to a name in no namespace is correct.
 The namespace id is not one the store interned: the defect class of #124.
+
+### 130. A constructor inside copy/modify/return lost its namespace — fixing (2026-11-20)
+
+Engine: **XQuery** (`XQueryExpressionRewriter`). Present in 3.2.0.
+
+```xquery
+copy $c := <e xmlns:q="urn:q"><q:m/></e> modify () return $c
+```
+
+`namespace-uri($c/q:m)` was "" and `serialize()` failed ("The prefix 'q' cannot be redefined from
+'urn:unresolved:q' to 'urn:q'") or wrote `xmlns:q="urn:unresolved:q"`. The same for a constructor
+in the modify clause (`insert node <q:m xmlns:q="urn:q"/> into $c`), in the return clause, and for
+a default namespace. A node built outside the transform and then copied was correct.
+
+Cause (instrumented): inside a transform the constructed `q:m` had namespace id 0 with prefix `q`.
+`XQueryExpressionRewriter`, the base of `NamespaceResolver`, `ConstantFolder` and
+`PredicateSimplifier`, had no visit for `TransformExpression`; its default returns an expression
+unchanged, so no rewrite pass entered the three clauses. An audit by reflection found three more
+expression types with children and no rewriter visit: `ElementConstructor`, `AttributeConstructor`,
+`StepExpression`. `NamespaceResolver` overrides those itself, but constant folding and predicate
+simplification never entered step predicates, constructor content or attribute values.
+
+Fix: the four visits, and `RewriterCoverageTests`, which fails for any expression type with child
+expressions and no rewriter visit. Tests: `TransformClauseNamespaceTests` (5, all fail on main).
+QT3 and W3C pass/fail sets are identical to main's.
+
+### 131. function-lookup did not find a user function in a user namespace — recorded (2026-11-20)
+
+Engine: **XQuery**. On main (03dd820):
+
+```xquery
+declare namespace u = "urn:u";
+declare function u:g($x) { $x * 2 };
+function-lookup(QName("urn:u", "g"), 1)(4)
+```
+
+`function-lookup` returns the empty sequence, so the call fails with XPTY0004. Built-in functions
+(fn:, xs:, math:) and `local:` functions are found.
+
+### Found with #129, recorded, waiting for a ruling (2026-11-20)
+
+- `TypeCastHelper.ParseQName`, reached by coercion of a string or untypedAtomic to `xs:QName` (an
+  external variable declared `as xs:QName`, a typed for binding, an inline function argument),
+  has no static context: it makes the namespace id from the PREFIX's hash and keeps no URI, so the
+  QName loses its namespace. The function conversion rules make this coercion XPTY0117: a new
+  error, for Lucas.
+- Two id spaces overlap: function names use `FunctionNamespaces.Xs = 2` and `Local = 4` (xquery,
+  and xslt `StylesheetParser.State.cs` maps XMLSchema to 2), while Core's node namespace ids are
+  `Xmlns = 2`, `Xsd = 3`, `Xsi = 4`. Function lookup by QName works (it reads the URI), but any
+  code that resolves a function name's id through a node store, or a node's id through the
+  function table, reads the wrong URI. No failing query found yet.
