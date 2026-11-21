@@ -557,7 +557,18 @@ public sealed partial class StylesheetParser
                             }
                             else
                             {
-                                errors.Add(ParseQName(trimmed, child));
+                                // The name's namespace URI, kept for matching: a prefix is
+                                // bound by the xsl:catch element, and an unprefixed name is in
+                                // no namespace (the default namespace is not used).
+                                var name = ParseQName(trimmed, child);
+                                if (name.ExpandedNamespace is null)
+                                    name = name with
+                                    {
+                                        ExpandedNamespace = string.IsNullOrEmpty(name.Prefix)
+                                            ? ""
+                                            : child.GetNamespaceOfPrefix(name.Prefix)?.NamespaceName ?? "",
+                                    };
+                                errors.Add(name);
                             }
                         }
                     }

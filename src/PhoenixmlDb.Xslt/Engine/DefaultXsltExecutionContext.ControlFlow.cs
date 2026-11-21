@@ -19,6 +19,24 @@ namespace PhoenixmlDb.Xslt.Engine;
 internal sealed partial class DefaultXsltExecutionContext
 {
 
+    /// <summary>
+    /// The namespace fn:error gave the error <paramref name="code"/>, or null. The exception an
+    /// xsl:try sees may wrap the one fn:error raised (diagnostics add the source location), so
+    /// the chain is walked; only an exception with the same code counts, so the namespace of
+    /// another error in the chain is never taken for this one's.
+    /// </summary>
+    private static string? RaisedErrorNamespace(Exception ex, string code)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is XQuery.Execution.XQueryRuntimeException { ErrorNamespaceUri: { } runtimeNs } rt && rt.ErrorCode == code)
+                return runtimeNs;
+            if (e is XQuery.Functions.XQueryException { ErrorNamespaceUri: { } fnNs } fx && fx.ErrorCode == code)
+                return fnNs;
+        }
+        return null;
+    }
+
     private static (bool Resolved, object? Value) TryResolveFromWatchers(
         PhoenixmlDb.XQuery.Ast.XQueryExpression expr,
         IReadOnlyList<StreamWatcher> watchers)
@@ -2019,29 +2037,37 @@ internal sealed partial class DefaultXsltExecutionContext
                 && char.IsLetterOrDigit(errorCode[2]) && char.IsLetterOrDigit(errorCode[3])
                 && errorCode[4..].All(char.IsDigit);
 
+            // The error's expanded name. A standard error is in the xqt-errors namespace; one that
+            // fn:error raised carries its namespace; xsl:message/@error-code reports a code in
+            // another namespace as Q{uri}local. A catch name matches by local name AND namespace
+            // URI (XSLT 3.0 §8.3): errors="q:FORG0001" with q bound to another URI, or an err
+            // prefix bound to one, does not catch err:FORG0001. The prefix used to decide
+            // (err, or any namespace at all, caught a standard error) (BUGS.md #135).
+            const string StandardErrorNamespace = "http://www.w3.org/2005/xqt-errors";
+            var errorLocal = errorCode;
+            string errorNamespace;
+            if (errorCode.StartsWith("Q{", StringComparison.Ordinal) && errorCode.IndexOf('}', StringComparison.Ordinal) is var close and > 1)
+            {
+                errorNamespace = errorCode[2..close];
+                errorLocal = errorCode[(close + 1)..];
+            }
+            else
+            {
+                errorNamespace = RaisedErrorNamespace(ex, errorCode)
+                    ?? (isStandardError ? StandardErrorNamespace : "");
+            }
+
             // Find matching catch
             foreach (var @catch in instruction.Catches)
             {
-                // Check if error matches — per XSLT spec, namespace must match
                 var matches = @catch.Errors.Count == 0; // Empty = catch all
                 if (!matches && @catch.Errors.Any(e =>
                 {
-                    if (e.LocalName == "*" && (e.Namespace == NamespaceId.None || e.Prefix == null))
-                        return true; // * or Q{ns}* wildcard
-                    if (e.LocalName != errorCode)
-                        return false;
-                    // Wildcard prefix *:code matches any namespace
                     if (e.Prefix == "*")
-                        return true;
-                    // Namespace check: standard errors are in the error namespace;
-                    // user-defined errors (from fn:error with custom QName) are in no namespace
-                    if (isStandardError)
-                    {
-                        // Standard error — catch must have err: prefix or be in the error namespace
-                        return e.Prefix == "err" || e.Namespace != NamespaceId.None;
-                    }
-                    // User-defined error — catch must also have no namespace (no prefix)
-                    return e.Namespace == NamespaceId.None && e.Prefix == null;
+                        return e.LocalName == errorLocal; // *:local, any namespace
+                    if (e.LocalName == "*")
+                        return e.ExpandedNamespace is null || e.ExpandedNamespace == errorNamespace; // * or p:* / Q{uri}*
+                    return e.LocalName == errorLocal && (e.ExpandedNamespace ?? "") == errorNamespace;
                 }))
                 {
                     matches = true;
@@ -2078,9 +2104,14 @@ internal sealed partial class DefaultXsltExecutionContext
                     // PhoenixmlDb.XQuery (fn:string on an xs:QName now yields the lexical form per
                     // XPath 3.1 §19.2), so both properties hold at once. Requires the companion
                     // XQuery release; with an older pin the rendering regresses.
-                    var errCodeValue = isStandardError
-                        ? (object)new QName(errNs, errorCode, "err") { ExpandedNamespace = errUri }
-                        : (object)new QName(NamespaceId.None, errorCode);
+                    // The code's own namespace, as the catch matched it: a code fn:error raised in
+                    // another namespace is not an err: code, whatever its shape.
+                    var errCodeValue = errorNamespace == StandardErrorNamespace
+                        ? (object)new QName(errNs, errorLocal, "err") { ExpandedNamespace = errUri }
+                        : errorNamespace.Length == 0
+                            ? (object)new QName(NamespaceId.None, errorLocal)
+                            : (object)new QName(StylesheetParser.ResolveNamespaceUri(errorNamespace), errorLocal,
+                                (ex as XQuery.Functions.XQueryException)?.ErrorPrefix) { ExpandedNamespace = errorNamespace };
                     SetVariable(new QName(errNs, "code", "err"), errCodeValue);
                     SetVariable(new QName(NamespaceId.None, "code", "") { ExpandedNamespace = errUri }, errCodeValue);
                     // $err:value is fn:error()'s third argument (the error object). It rides on

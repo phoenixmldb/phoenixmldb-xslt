@@ -2100,6 +2100,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     private static string? ExtractErrorCode(string message)
     {
+        // A code in another namespace, as xsl:message/@error-code reports it: Q{uri}local.
+        if (message.StartsWith("Q{", StringComparison.Ordinal)
+            && message.IndexOf('}', StringComparison.Ordinal) is var close and > 1
+            && message.IndexOf(':', close) is var end and > 0
+            && end > close + 1)
+        {
+            return message[..end];
+        }
         if (message.Length >= 8
             && char.IsUpper(message[0]) && char.IsUpper(message[1])
             && char.IsLetterOrDigit(message[2]) && char.IsLetterOrDigit(message[3])
