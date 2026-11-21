@@ -7693,3 +7693,26 @@ function-lookup(QName("urn:u", "g"), 1)(4)
   `Xmlns = 2`, `Xsd = 3`, `Xsi = 4`. Function lookup by QName works (it reads the URI), but any
   code that resolves a function name's id through a node store, or a node's id through the
   function table, reads the wrong URI. No failing query found yet.
+
+### 134. current-output-uri() reported a result-document href unescaped, or escaped twice — fixed (2026-11-20)
+
+xslt#562. Repro: `<xsl:result-document href="result-[1].xml">{current-output-uri()}</xsl:result-document>`
+with a base output URI (the CLI with `-o`). The file `result-[1].xml` is written, which is right: the href is
+a URI reference in the lexical space of xs:anyURI (XSLT 3.0 §5.8), so it is accepted and no error is due.
+But the URI reported was `…/result-[1].xml`, not a URI; §5.8 resolves a relative reference "after first
+escaping all characters that need to be escaped to make it a valid RFC3986 URI reference", so it is
+`…/result-%5B1%5D.xml`. And an href already escaped was escaped again: `result-%5B1%5D.xml` and `100%25.xml`
+reported `%255B1%255D` and `100%2525` — `Uri.TryCreate(Uri, string)` escapes the `%` of an escape in a
+`file:` URI. A query and a fragment in the href were taken into the path (`q%3Fa=[1]%23f[2]`).
+
+The href is now escaped first (`EscapeUriReference`: space, non-ASCII as UTF-8, `"<>^\`{|}`, controls, `[` `]`
+outside the host of an authority, a `%` that starts no escape; an escape is kept; a backslash is left as
+written so a Windows path resolves as before) and resolved by RFC 3986 on the strings (XQuery's `Rfc3986`,
+the resolver of fn:resolve-uri). The result document is still kept under the href as written, which names
+the file. A space, a non-ASCII character and a lone `%` were already escaped by `System.Uri`.
+
+Not changed: the XTDE1500 check (write to a URI that was read) resolves the href, unescaped, against the
+STYLESHEET's base URI, not the base output URI; reads and writes are compared in the form `System.Uri` gives
+both, so escaping one side only would break the comparison. Recorded, not fixed.
+
+Tests: `ResultDocumentHrefEscapingTests` (engine and CLI).
