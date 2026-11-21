@@ -7521,7 +7521,7 @@ The check now asks whether the prefix is bound to another URI on the element bei
 output scopes and its namespace nodes) and, if so, generates a prefix. The underlying fragility, attributes
 and namespace declarations carried as text and re-parsed by qualified-name string, is the attribute pipeline
 redesign that waits for a decision. Tests: `AttributePrefixClashTests`.
-### 124. A node from another node store is read in the transform's own store — silent wrong data (2026-11-20, open)
+### 124. A node from another node store is read in the transform's own store — silent wrong data (2026-11-20, fixed in 3.3.0)
 
 Repro (`ForeignNodeParameterTests`, skipped until fixed): transformer A returns the document `<x><y n="1"/><z/><y n="2"/></x>`
 (`TransformToSequenceAsync`); transformer B gets it with `SetParameter("p", doc)` and transforms its own input
@@ -7540,6 +7540,36 @@ Options compared: copying foreign trees at bind time (what `CrossStoreNodeRef` d
 and costs a full copy per transform; nodes that know their store (Core change) keep identity and are the base for fixed
 namespace ids in the compile-once API. Until fixed, a foreign node should be an error, never a silent wrong result.
 
+
+**Fixed (3.3.0, Core 2.8.0):** a node names the store that holds it (`XdmNode.Store`, set once by
+`AttachStore`; `IXdmNodeStore`). Every store attaches its nodes (xquery `XdmDocumentStore`, xslt
+`XdmInMemoryStore`); the copy/modify overlay attaches none. Navigation, `root()`, the namespace
+axis and in-scope namespaces, name tests, `namespace-uri()`/`node-name()` and the serializer read a
+node in its own store; a constructor imports a foreign tree into its store with namespace ids mapped
+by URI; a store-less node from outside that an `IXdmNodeStore` provider does not hold (by object
+identity) is `phx:XPDY9002`. Checked: "one tree never mixes stores" held in 390,663,215 node loads
+across all suites (0 violations). Tests: xquery `CrossStoreNodeTests`, xslt
+`ForeignNodeParameterTests` (un-skipped) and `ForeignNodeEntryPointTests`.
+
+### Function-name and node namespace ids are two id spaces — recorded, kept until 4.0 (2026-11-20)
+
+`FunctionNamespaces.Xs` is 2 and `Local` is 4, but Core's node namespace ids are `Xmlns` = 2,
+`Xsd` = 3, `Xsi` = 4. Moving the function ids to Core's (3 and `XQueryLocal` = 14, reserved in
+Core 2.8.0) broke the published Xslt 3.2.0 against a newer XQuery: Xslt 3.2.0 assigns the literal
+2 and compares with the field in seven places, so xs: functions were not found and streaming type
+checks took the wrong branch (W3C sx-gc-*-021/121). Ruled: keep 2/4 until 4.0, when both engines
+move together. Rule until then: never resolve a function-name NamespaceId through a node store, or
+a node's id through the function table. Grep check (xquery, fix-B branch): no `FunctionNamespaces.*`
+id passed to `GetNamespaceUri`/`NamespaceResolver`; a pattern check, so it finds only direct uses.
+
+### CrossStoreNodeRef copies nodes into fn:transform — follow-up for 3.4 (2026-11-20)
+
+`fn:transform` parameters and results, and `SetGlobalContextItem(string)`, pass nodes as
+`CrossStoreNodeRef` (serialize, then re-parse in the receiving store). The results are correct but
+are copies: node identity is not kept. With store-aware nodes the nodes could be passed directly.
+Open question before changing it: what XSLT 3.0 and F&O 3.1 (fn:transform) say about the identity
+of nodes passed to and returned from fn:transform, and what Saxon does. Needs its own gates and an
+A/B.
 ### 125. XQuery Update placed the source nodes themselves, not copies, and changed the input document — fixing (2026-11-20)
 
 Engine: **XQuery** (`InsertOperator`, `ReplaceNodeOperator`, `PendingUpdateApplicator`). Recorded
