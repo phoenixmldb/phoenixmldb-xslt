@@ -81,6 +81,12 @@ public sealed class XsltTemplate
     public string? DefaultCollation { get; init; }
 
     /// <summary>
+    /// How a diagnostic names this template: its name, match and mode attributes as written
+    /// (<c>match="book" mode="g"</c>), or null for a template the parser made itself.
+    /// </summary>
+    internal string? Label { get; init; }
+
+    /// <summary>
     /// Context item use constraint from xsl:context-item.
     /// Optional = no constraint (default), Required = context item must exist,
     /// Absent = context item must not be used.

@@ -72,7 +72,7 @@ internal static class StrictStreamability
     {
         foreach (var template in StreamedScopeEscapeDetector.StreamableModeRules(stylesheet))
         {
-            const string Subject = "XTSE3430: The body of this template in a streamable mode is not guaranteed streamable: ";
+            var subject = "XTSE3430: The body of " + Describe(template) + " in a streamable mode is not guaranteed streamable: ";
             var reason = Reason(template.Body, stylesheet, certainOnly, ContextChildType(template.Match), MatchesNoDocument(template.Match));
             // The opt-in check also reports what its two detectors find; the default check
             // reports only what the classifier is certain of, and uses them for the message.
@@ -81,16 +81,29 @@ internal static class StrictStreamability
             // The two commonest causes have a message of their own.
             if (StreamabilityChecker.HasSeveralConsumingOperands(template.Body))
                 return new XsltException(
-                    Subject + "more than one instruction reads the children of the matched node, and the streamed input passes once." + Remedy,
+                    subject + "more than one instruction reads the children of the matched node, and the streamed input passes once." + Remedy,
                     template.Body.Location);
             if (RoamingAxisDetector.First(template.Body) is { } roaming)
                 return new XsltException(
-                    Subject + $"the {AxisName(roaming.Axis)} axis from the matched node reads what the streamed input has passed or not yet reached." + Remedy,
+                    subject + $"the {AxisName(roaming.Axis)} axis from the matched node reads what the streamed input has passed or not yet reached." + Remedy,
                     roaming.Location ?? template.Body.Location);
             if (reason is not null)
-                return new XsltException(Subject + reason + "." + Remedy, template.Body.Location);
+                return new XsltException(subject + reason + "." + Remedy, template.Body.Location);
         }
         return null;
+    }
+
+    /// <summary>
+    /// How a message names a template rule: its attributes as written and its line, as in
+    /// <c>the template match="book" mode="g" (line 22)</c>, so that the rule can be found in a
+    /// stylesheet of many rules (xslt#582).
+    /// </summary>
+    internal static string Describe(XsltTemplate template)
+    {
+        var description = template.Label is { Length: > 0 } label ? "the template " + label : "this template";
+        return template.Body.Location is { Line: > 0 } location
+            ? description + $" (line {location.Line})"
+            : description;
     }
 
     /// <summary>

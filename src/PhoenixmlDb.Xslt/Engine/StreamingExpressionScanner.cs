@@ -810,8 +810,7 @@ internal sealed class StreamingExpressionScanner
     /// </summary>
     internal static FoldedAggregate? TryRecognizeFoldedAggregate(FunctionCallExpression fc)
     {
-        if (fc.Name.Namespace != NamespaceId.None
-            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+        if (!FunctionNames.IsFn(fc.Name))
             return null;
         WatcherAggregation aggregation;
         switch (fc.Name.LocalName)
@@ -853,8 +852,7 @@ internal sealed class StreamingExpressionScanner
         }
         else if (argument is FunctionCallExpression { Arguments.Count: 1 } data
             && data.Name.LocalName == "data"
-            && (data.Name.Namespace == NamespaceId.None
-                || data.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+            && FunctionNames.IsFn(data.Name))
         {
             source = data.Arguments[0];
         }
@@ -902,10 +900,9 @@ internal sealed class StreamingExpressionScanner
                 return IsAtomizingTail(bin.Left) && IsAtomizingTail(bin.Right);
             case FunctionCallExpression fc:
             {
-                var ns = fc.Name.Namespace;
-                if (ns == NamespaceId.Xsd || ns == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+                if (FunctionNames.IsXs(fc.Name))
                     return fc.Arguments.Count == 1 && IsAtomizingTail(fc.Arguments[0]);
-                if (ns != NamespaceId.None && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+                if (!FunctionNames.IsFn(fc.Name))
                     return false;
                 // The functions here atomize their argument, or with none take the string or
                 // typed value of the context item; each gives the same for an element as for
@@ -930,7 +927,7 @@ internal sealed class StreamingExpressionScanner
     {
         if (fc.Arguments.Count == 0) return false;
         return fc.Name.LocalName is "count" or "sum" or "max" or "min" or "avg" or "string-join"
-            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
+            && FunctionNames.IsFn(fc.Name);
     }
 
     private static WatcherAggregation GetAggregationType(FunctionCallExpression fc)
@@ -989,7 +986,7 @@ internal sealed class StreamingExpressionScanner
     {
         return expr is FunctionCallExpression fc
             && fc.Arguments.Count == 0
-            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            && FunctionNames.IsFn(fc.Name)
             && fc.Name.LocalName is "snapshot" or "copy-of";
     }
 
@@ -997,7 +994,7 @@ internal sealed class StreamingExpressionScanner
     {
         return fc.Name.LocalName == "head"
             && fc.Arguments.Count == 1
-            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
+            && FunctionNames.IsFn(fc.Name);
     }
 
     /// <summary>
@@ -1009,7 +1006,7 @@ internal sealed class StreamingExpressionScanner
     private static bool IsFilterFunction(FunctionCallExpression fc)
     {
         return fc.Arguments.Count == 1
-            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            && FunctionNames.IsFn(fc.Name)
             && fc.Name.LocalName is "outermost" or "innermost";
     }
 
@@ -1034,8 +1031,7 @@ internal sealed class StreamingExpressionScanner
     private static WrappedAggregation? TryExtractWrappedAggregation(XQueryExpression inner)
     {
         if (inner is not FunctionCallExpression fc) return null;
-        if (fc.Name.Namespace != NamespaceId.None
-            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+        if (!FunctionNames.IsFn(fc.Name))
             return null;
 
         switch (fc.Name.LocalName)
@@ -1180,10 +1176,7 @@ internal sealed class StreamingExpressionScanner
 
     private static bool IsNumericTailFunction(FunctionCallExpression fc)
     {
-        var ns = fc.Name.Namespace;
-        if (ns != NamespaceId.None
-            && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
-            && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+        if (!FunctionNames.IsFnOrXs(fc.Name))
             return false;
         return fc.Name.LocalName is "abs" or "ceiling" or "floor" or "round" or "number"
             or "decimal" or "double" or "integer" or "float";
@@ -1215,10 +1208,7 @@ internal sealed class StreamingExpressionScanner
                 // Allow fn:/xs: constructor and library function calls whose
                 // arguments are themselves per-item atomic. xs:NMTOKENS(.),
                 // xs:decimal(.), fn:upper-case(.), etc.
-                var ns = fc.Name.Namespace;
-                if (ns != NamespaceId.None
-                    && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
-                    && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+                if (!FunctionNames.IsFnOrXs(fc.Name))
                     return false;
                 foreach (var arg in fc.Arguments)
                 {
@@ -1851,10 +1841,7 @@ internal sealed class StreamingExpressionScanner
             // Reject positional/context-dependent functions explicitly.
             case FunctionCallExpression fc:
                 if (fc.Name.LocalName is "position" or "last") return false;
-                var ns = fc.Name.Namespace;
-                if (ns != NamespaceId.None
-                    && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
-                    && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+                if (!FunctionNames.IsFnOrXs(fc.Name))
                     return false;
                 foreach (var arg in fc.Arguments)
                     if (!IsMotionlessAncestorExpression(arg)) return false;
@@ -1994,8 +1981,7 @@ internal sealed class StreamingExpressionScanner
             if (select is FunctionCallExpression snapFc
                 && snapFc.Name.LocalName == "snapshot"
                 && snapFc.Arguments.Count == 1
-                && (snapFc.Name.Namespace == NamespaceId.None
-                    || snapFc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+                && FunctionNames.IsFn(snapFc.Name))
             {
                 select = snapFc.Arguments[0];
                 continue;
@@ -2014,8 +2000,7 @@ internal sealed class StreamingExpressionScanner
             if (select is FunctionCallExpression cardFc
                 && (cardFc.Name.LocalName == "one-or-more" || cardFc.Name.LocalName == "exactly-one")
                 && cardFc.Arguments.Count == 1
-                && (cardFc.Name.Namespace == NamespaceId.None
-                    || cardFc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+                && FunctionNames.IsFn(cardFc.Name))
             {
                 select = cardFc.Arguments[0];
                 continue;
@@ -2034,8 +2019,7 @@ internal sealed class StreamingExpressionScanner
             if (select is FunctionCallExpression passFc
                 && ((passFc.Name.LocalName == "unordered" && passFc.Arguments.Count == 1)
                     || (passFc.Name.LocalName == "trace" && passFc.Arguments.Count is 1 or 2))
-                && (passFc.Name.Namespace == NamespaceId.None
-                    || passFc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+                && FunctionNames.IsFn(passFc.Name))
             {
                 select = passFc.Arguments[0];
                 continue;
@@ -2275,8 +2259,7 @@ internal sealed class StreamingExpressionScanner
             if (left is FunctionCallExpression dataWrap
                 && dataWrap.Name.LocalName == "data"
                 && dataWrap.Arguments.Count == 1
-                && (dataWrap.Name.Namespace == NamespaceId.None
-                    || dataWrap.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+                && FunctionNames.IsFn(dataWrap.Name))
                 return false;
         }
 
@@ -2392,7 +2375,7 @@ internal sealed class StreamingExpressionScanner
     {
         return expr is FunctionCallExpression fc
             && fc.Arguments.Count == 0
-            && (fc.Name.Namespace == NamespaceId.None || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            && FunctionNames.IsFn(fc.Name)
             && fc.Name.LocalName is "string" or "data" or "copy-of" or "snapshot";
     }
 
@@ -2418,8 +2401,7 @@ internal sealed class StreamingExpressionScanner
         length = null;
         removeIndex = null;
         if (expr is not FunctionCallExpression fc) return false;
-        if (fc.Name.Namespace != NamespaceId.None
-            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+        if (!FunctionNames.IsFn(fc.Name))
             return false;
 
         switch (fc.Name.LocalName)
@@ -2490,8 +2472,7 @@ internal sealed class StreamingExpressionScanner
         lengthExpr = null;
         removeIndexExpr = null;
         if (expr is not FunctionCallExpression fc) return false;
-        if (fc.Name.Namespace != NamespaceId.None
-            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+        if (!FunctionNames.IsFn(fc.Name))
             return false;
 
         static bool GroundedBound(XQueryExpression e)
@@ -2677,7 +2658,7 @@ internal sealed class StreamingExpressionScanner
         if (select is FunctionCallExpression dataCall
             && dataCall.Name.LocalName == "data"
             && dataCall.Arguments.Count == 1
-            && (dataCall.Name.Namespace == NamespaceId.None || dataCall.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn))
+            && FunctionNames.IsFn(dataCall.Name))
         {
             select = dataCall.Arguments[0];
             atomize = true;
@@ -2692,7 +2673,7 @@ internal sealed class StreamingExpressionScanner
         // (si-copy-025/026).
         if (select is FunctionCallExpression copyOfCall
             && copyOfCall.Arguments.Count == 1
-            && (copyOfCall.Name.Namespace == NamespaceId.None || copyOfCall.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+            && FunctionNames.IsFn(copyOfCall.Name)
             && copyOfCall.Name.LocalName is "copy-of" or "snapshot")
         {
             select = copyOfCall.Arguments[0];

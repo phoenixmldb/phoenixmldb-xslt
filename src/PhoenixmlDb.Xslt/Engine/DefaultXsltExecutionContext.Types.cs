@@ -103,10 +103,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
     private static bool IsCheapNumericFunction(FunctionCallExpression fc)
     {
-        var ns = fc.Name.Namespace;
-        if (ns != NamespaceId.None
-            && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn
-            && ns != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Xs)
+        if (!FunctionNames.IsFnOrXs(fc.Name))
             return false;
         return fc.Name.LocalName is "abs" or "ceiling" or "floor" or "round" or "number"
             or "decimal" or "double" or "integer" or "float";

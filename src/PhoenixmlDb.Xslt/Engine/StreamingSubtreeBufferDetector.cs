@@ -847,8 +847,7 @@ internal static class StreamingSubtreeBufferDetector
             case FunctionCallExpression fc:
                 // Unprefixed system functions resolve to either the fn namespace or
                 // NamespaceId.None depending on the parse path (mirrors ClassifyAbsorbing).
-                if ((fc.Name.Namespace == NamespaceId.None
-                        || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+                if (FunctionNames.IsFn(fc.Name)
                     && (fc.Name.LocalName == "accumulator-before"
                         || (!beforeOnly && fc.Name.LocalName == "accumulator-after")))
                     return true;
@@ -953,8 +952,7 @@ internal static class StreamingSubtreeBufferDetector
     /// </summary>
     private static bool CollationArgNavigatesInput(FunctionCallExpression fc)
     {
-        if (fc.Name.Namespace != NamespaceId.None
-            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+        if (!FunctionNames.IsFn(fc.Name))
             return false;
 
         int collationArgIndex = fc.Name.LocalName switch
@@ -977,8 +975,7 @@ internal static class StreamingSubtreeBufferDetector
     /// </summary>
     private static AbsorbingKind ClassifyAbsorbing(FunctionCallExpression fc)
     {
-        if (fc.Name.Namespace != NamespaceId.None
-            && fc.Name.Namespace != PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn)
+        if (!FunctionNames.IsFn(fc.Name))
             return AbsorbingKind.None;
 
         return fc.Name.LocalName switch
@@ -1517,8 +1514,7 @@ internal static class StreamingSubtreeBufferDetector
     private static bool IsSnapshotOrCopyOf(FunctionCallExpression fc)
     {
         return fc.Name.LocalName is "snapshot" or "copy-of"
-            && (fc.Name.Namespace == NamespaceId.None
-                || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
+            && FunctionNames.IsFn(fc.Name);
     }
 
     /// <summary>

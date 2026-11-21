@@ -891,7 +891,9 @@ public sealed partial class StylesheetParser
 
         _nsContext = prevContext;
         _currentDefaultMode = prevDefaultMode;
-        var templateBody = new XsltSequenceConstructor { Instructions = bodyInstructions };
+        // The body has the template element's location, so that an error about the body as a
+        // whole (XTSE3430 from the streamability check) can say where it is (xslt#582).
+        var templateBody = new XsltSequenceConstructor { Instructions = bodyInstructions, Location = GetSourceLocation(element) };
         // A template whose result is not type-checked (no `as`) can run a call-template in tail position as
         // a tail call. With `as`, the call's output is captured and validated after it returns.
         if (asAttr == null)
@@ -911,8 +913,19 @@ public sealed partial class StylesheetParser
             ContextItemUse = contextItemUse,
             ContextItemAs = contextItemAs,
             Visibility = ParseVisibility(element.Attribute("visibility")?.Value),
-            VisibilityAttr = element.Attribute("visibility")?.Value.Trim()
+            VisibilityAttr = element.Attribute("visibility")?.Value.Trim(),
+            Label = TemplateLabel(nameAttr, matchAttr, modeAttr)
         };
+    }
+
+    /// <summary>The name, match and mode attributes of an xsl:template as written, for diagnostics.</summary>
+    private static string TemplateLabel(XAttribute? name, XAttribute? match, XAttribute? mode)
+    {
+        var parts = new List<string>(3);
+        foreach (var attribute in (ReadOnlySpan<XAttribute?>)[name, match, mode])
+            if (attribute != null)
+                parts.Add($"{attribute.Name.LocalName}=\"{attribute.Value.Trim()}\"");
+        return string.Join(' ', parts);
     }
 
     /// <summary>

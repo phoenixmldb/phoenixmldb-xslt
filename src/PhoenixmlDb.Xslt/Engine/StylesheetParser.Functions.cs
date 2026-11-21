@@ -621,7 +621,9 @@ public sealed partial class StylesheetParser
 
     private object? EvaluateStaticFunction(FunctionCallExpression fc, XElement context)
     {
-        var localName = fc.Name.LocalName;
+        // Only a function in fn: (or an xs: constructor, as before) is evaluated here:
+        // Q{urn:other}count(…) is not fn:count (xslt#582).
+        var localName = FunctionNames.IsFnOrXs(fc.Name) ? fc.Name.LocalName : "";
 
         switch (localName)
         {
@@ -798,8 +800,8 @@ public sealed partial class StylesheetParser
             EvaluateStaticExpression(arg, context);
 
         // Functions with a non-standard namespace (user-defined functions) are not available in use-when
-        if (fc.Name.Namespace != NamespaceId.None)
-            throw new XsltException($"XPST0017: Function {fc.Name.Prefix}:{localName} is not available in the static use-when context");
+        if (fc.Name.Namespace != NamespaceId.None || !FunctionNames.IsFn(fc.Name))
+            throw new XsltException($"XPST0017: Function {fc.Name} is not available in the static use-when context");
         // Known XPath functions not available in use-when: doc, doc-available, collection, etc.
         if (localName is "doc" or "doc-available" or "collection" or "uri-collection" or "unparsed-text"
             or "unparsed-text-lines" or "unparsed-text-available")

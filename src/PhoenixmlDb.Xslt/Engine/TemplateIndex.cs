@@ -175,7 +175,8 @@ internal sealed class TemplateIndex
                 Body = template.Body,
                 Visibility = template.Visibility,
                 UnionGroupId = groupId,
-                ImportPrecedence = template.ImportPrecedence
+                ImportPrecedence = template.ImportPrecedence,
+                Label = template.Label
             });
         }
         return result;
