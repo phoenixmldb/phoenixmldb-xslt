@@ -299,8 +299,7 @@ public static class StreamingPlanner
 
     private static bool IsSnapshotOrCopyOf(FunctionCallExpression fc)
         => fc.Name.LocalName is "snapshot" or "copy-of"
-            && (fc.Name.Namespace == PhoenixmlDb.Core.NamespaceId.None
-                || fc.Name.Namespace == PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn);
+            && FunctionNames.IsFn(fc.Name);
 
     /// <summary>
     /// True when an AVT (on an <c>xsl:result-document</c> attribute) has an embedded

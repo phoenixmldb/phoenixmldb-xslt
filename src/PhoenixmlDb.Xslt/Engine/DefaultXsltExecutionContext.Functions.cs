@@ -807,12 +807,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 return ci;
             // Fast path: position() and last() — avoid full XQuery pipeline in loops
             case FunctionCallExpression { Arguments.Count: 0 } fce
-                when fce.Name.LocalName == "position" && (fce.Name.Namespace == NamespaceId.None || fce.Name.Namespace == NamespaceId.Fn):
+                when fce.Name.LocalName == "position" && FunctionNames.IsFn(fce.Name):
                 if (ReferenceEquals(ContextItem, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
                     throw Error("XPDY0002: Context position is absent");
                 return (long)Position;
             case FunctionCallExpression { Arguments.Count: 0 } fce2
-                when fce2.Name.LocalName == "last" && (fce2.Name.Namespace == NamespaceId.None || fce2.Name.Namespace == NamespaceId.Fn):
+                when fce2.Name.LocalName == "last" && FunctionNames.IsFn(fce2.Name):
                 if (ReferenceEquals(ContextItem, PhoenixmlDb.XQuery.Execution.QueryExecutionContext.AbsentFocus))
                     throw Error("XPDY0002: Context size is absent");
                 return (long)Last;

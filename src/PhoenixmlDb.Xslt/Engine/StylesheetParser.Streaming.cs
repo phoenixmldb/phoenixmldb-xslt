@@ -59,7 +59,8 @@ public sealed partial class StylesheetParser
             if (inStreamableMode)
             {
                 StreamabilityChecker.CheckStreamablePattern(template.Match, null);
-                StreamabilityChecker.CheckStreamableTemplateBody(template.Body, null, stylesheet.AttributeSets, stylesheet.Functions);
+                StreamabilityChecker.CheckStreamableTemplateBody(template.Body, template.Body.Location, stylesheet.AttributeSets, stylesheet.Functions,
+                    StrictStreamability.Describe(template));
             }
         }
     }

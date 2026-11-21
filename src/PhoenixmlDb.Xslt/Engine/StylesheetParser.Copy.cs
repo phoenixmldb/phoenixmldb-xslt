@@ -19,7 +19,8 @@ public sealed partial class StylesheetParser
         VisibilityAttr = VisibilityToAttr(v),
         UnionGroupId = t.UnionGroupId, Version = t.Version, BaseUri = t.BaseUri,
         DefaultCollation = t.DefaultCollation, ContextItemUse = t.ContextItemUse,
-        ContextItemAs = t.ContextItemAs, OriginalTemplate = t.OriginalTemplate
+        ContextItemAs = t.ContextItemAs, OriginalTemplate = t.OriginalTemplate,
+        Label = t.Label
     };
 
 
