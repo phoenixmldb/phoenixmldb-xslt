@@ -7693,3 +7693,28 @@ function-lookup(QName("urn:u", "g"), 1)(4)
   `Xmlns = 2`, `Xsd = 3`, `Xsi = 4`. Function lookup by QName works (it reads the URI), but any
   code that resolves a function name's id through a node store, or a node's id through the
   function table, reads the wrong URI. No failing query found yet.
+
+### 133. current-output-uri(): no base output URI from the CLI without -o; a global variable and a pattern saw it — fixed (2026-11-20)
+
+xslt#561. Repro: `xslt -it xsl:initial-template s.xsl` with `<xsl:result-document href="result-1.xml">` writing
+`{current-output-uri()}`. The file is written to the working directory, and the function gave `result-1.xml`,
+a relative URI; in the principal result it gave the empty sequence. Expected the absolute URI of the file
+written. The CLI set the base output URI only with `-o`, and otherwise wrote result documents relative to
+`--output-dir` or the working directory; without `-o` that directory (a `file:` URI ending in `/`) is now
+the base output URI. With `-o` nothing changes.
+
+Second defect, same function: XSLT 3.0 §25.3 clears the current output URI while global variables,
+stylesheet parameters and patterns are evaluated. With a base output URI set, a global variable or the
+default of a stylesheet parameter got it, and so did a predicate of a template rule's match pattern or of
+`group-starting-with` (W3C current-output-uri-008, which failed). The eager and on-demand initialisation
+of globals, the package-local shadow globals, and the pattern evaluators (predicates, key() and id()
+arguments) now clear it and give it back when they end; a local variable keeps it, as the note in §25.3
+says.
+
+Hollow pass, the #69 shape: current-output-uri-001 (a global variable must see no current output URI)
+and -007 passed only because the W3C runner gave them no base output URI, so the function was empty
+everywhere. The runner now gives a current-output-uri case that names no `<output>` the base output URI
+`results/<case>.xml` beside the test set, as its siblings have; `#absent` still means none. With the
+runner change and the engine of main, 001 fails (`<wrong result="file:…/results/current-output-uri-001.xml"/>`).
+
+Tests: `CurrentOutputUriGlobalTests`, `CurrentOutputUriOptionTests` (CLI); W3C current-output-uri 17/17.

@@ -1669,6 +1669,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // For multi-step patterns, this is the original node being matched (not the ancestor being checked).
         // If matchedNode is null (shouldn't happen), fall back to stepNode.
         PushCurrentItem(matchedNode ?? stepNode);
+        // The current output URI is absent while a pattern is evaluated (XSLT 3.0 §25.3).
+        var savedOutputUri = ClearCurrentOutputUri();
         try
         {
             var result = RunSync(() => EvaluateAsync(predicate));
@@ -1705,8 +1707,26 @@ internal sealed partial class DefaultXsltExecutionContext
 #pragma warning restore CA1031
         finally
         {
+            RestoreCurrentOutputUri(savedOutputUri);
             PopCurrentItem();
             PopContextItem();
+        }
+    }
+
+    /// <summary>
+    /// Evaluates the argument of a key() or id() pattern, with the current output URI absent as
+    /// in any pattern (XSLT 3.0 §25.3).
+    /// </summary>
+    private object? EvaluatePatternArgument(PhoenixmlDb.XQuery.Ast.XQueryExpression valueExpr)
+    {
+        var savedOutputUri = ClearCurrentOutputUri();
+        try
+        {
+            return RunSync(() => EvaluateAsync(valueExpr));
+        }
+        finally
+        {
+            RestoreCurrentOutputUri(savedOutputUri);
         }
     }
 
@@ -1720,7 +1740,7 @@ internal sealed partial class DefaultXsltExecutionContext
         try
         {
             // Evaluate the value expression
-            var value = RunSync(() => EvaluateAsync(valueExpr));
+            var value = EvaluatePatternArgument(valueExpr);
 
             // Get the key function and invoke it
             var keyFunc = new XsltKeyFunction(this);
@@ -1768,7 +1788,7 @@ internal sealed partial class DefaultXsltExecutionContext
         try
         {
             // Evaluate the value expression
-            var value = RunSync(() => EvaluateAsync(valueExpr));
+            var value = EvaluatePatternArgument(valueExpr);
 
             // Find the document for the node being matched — id() searches within that document
             XdmDocument? doc = null;
@@ -1806,7 +1826,7 @@ internal sealed partial class DefaultXsltExecutionContext
         PushContextItem(node, 1, 1);
         try
         {
-            var result = RunSync(() => EvaluateAsync(call));
+            var result = EvaluatePatternArgument(call);
             foreach (var item in result as IEnumerable<object?> ?? [result])
             {
                 if (item is XdmNode found && found.Id == target.Id)

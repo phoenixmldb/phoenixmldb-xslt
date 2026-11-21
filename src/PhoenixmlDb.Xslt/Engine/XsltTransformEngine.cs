@@ -3989,9 +3989,21 @@ public sealed partial class XsltTransformEngine
             var savedGlobalPkg = context._currentGlobalPackage;
             context._currentGlobalPackage = global.PackageStylesheet;
             var absentFocus = PushLibraryGlobalFocus(context, global);
+            // The current output URI is absent while a global variable or parameter is evaluated
+            // (XSLT 3.0 §25.3); it was the base output URI (xslt#561).
+            var savedOutputUri = context.ClearCurrentOutputUri();
             // If this global is an overriding xsl:variable that references $xsl:original,
             // evaluate the overridden variable and bind $xsl:original for its select/content.
-            var xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
+            bool xslOrigScopePushed;
+            try
+            {
+                xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
+            }
+            catch
+            {
+                context.RestoreCurrentOutputUri(savedOutputUri);
+                throw;
+            }
             try
             {
             // If this is a param with an externally-supplied value, use that instead of the default
@@ -4362,6 +4374,7 @@ public sealed partial class XsltTransformEngine
             finally
             {
                 context._currentGlobalPackage = savedGlobalPkg;
+                context.RestoreCurrentOutputUri(savedOutputUri);
                 if (absentFocus)
                     context.PopContextItem();
                 if (xslOrigScopePushed)
@@ -4408,6 +4421,7 @@ public sealed partial class XsltTransformEngine
             // resolution (this variable's select/content, decimal formats, etc.) sees it.
             var savedGlobalPackage = context._currentGlobalPackage;
             context._currentGlobalPackage = pkg;
+            var savedOutputUri = context.ClearCurrentOutputUri();
             try
             {
                 object? value;
@@ -4426,6 +4440,7 @@ public sealed partial class XsltTransformEngine
             finally
             {
                 context._currentGlobalPackage = savedGlobalPackage;
+                context.RestoreCurrentOutputUri(savedOutputUri);
             }
         }
     }
@@ -4473,8 +4488,20 @@ public sealed partial class XsltTransformEngine
         var savedGlobalPkg = context._currentGlobalPackage;
         context._currentGlobalPackage = global.PackageStylesheet;
         var absentFocus = PushLibraryGlobalFocus(context, global);
+        // Absent while a global is evaluated, also on demand from inside a template (XSLT 3.0
+        // §25.3, xslt#561); the template's own current output URI comes back when it ends.
+        var savedOutputUri = context.ClearCurrentOutputUri();
         // Bind $xsl:original if this is an overriding xsl:variable referencing it.
-        var xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
+        bool xslOrigScopePushed;
+        try
+        {
+            xslOrigScopePushed = await context.TryPushXslOriginalVariableBindingAsync(global, outputBuilder).ConfigureAwait(false);
+        }
+        catch
+        {
+            context.RestoreCurrentOutputUri(savedOutputUri);
+            throw;
+        }
         try
         {
             var externalParams = context._options.InitialParameters;
@@ -4537,6 +4564,7 @@ public sealed partial class XsltTransformEngine
         finally
         {
             context._currentGlobalPackage = savedGlobalPkg;
+            context.RestoreCurrentOutputUri(savedOutputUri);
             if (absentFocus)
                 context.PopContextItem();
             if (xslOrigScopePushed)

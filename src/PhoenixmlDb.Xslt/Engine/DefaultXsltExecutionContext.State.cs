@@ -1093,6 +1093,21 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>The destination URI fn:current-output-uri() should report, or null if absent.</summary>
     internal Uri? CurrentOutputUri => _currentOutputUri;
 
+    /// <summary>
+    /// Clears the current output URI for the evaluation of a global variable or stylesheet
+    /// parameter, which XSLT 3.0 §25.3 makes absent there (a local variable keeps it), and
+    /// returns the value to give back to <see cref="RestoreCurrentOutputUri"/> when it ends.
+    /// </summary>
+    internal Uri? ClearCurrentOutputUri()
+    {
+        var saved = _currentOutputUri;
+        _currentOutputUri = null;
+        return saved;
+    }
+
+    /// <summary>Restores the current output URI that <see cref="ClearCurrentOutputUri"/> cleared.</summary>
+    internal void RestoreCurrentOutputUri(Uri? saved) => _currentOutputUri = saved;
+
     /// <summary>True while evaluating in temporary output state, where the current output URI is absent.</summary>
     internal bool InTemporaryOutputState => _temporaryOutputDepth > 0;
 
