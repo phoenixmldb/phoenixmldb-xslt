@@ -34,7 +34,7 @@ public class ForeignNodeParameterTests
         </xsl:stylesheet>
         """;
 
-    [Fact(Skip = "BUGS.md #124: a node from another node store is navigated in the transform's own store")]
+    [Fact]
     public async Task NodeFromAnotherTransformer_IsMatchedByItsNamespaces()
     {
         var producer = new XsltTransformer();
@@ -52,7 +52,7 @@ public class ForeignNodeParameterTests
         result.Should().Be("1|2|1|y,z,y|2|1|1");
     }
 
-    [Fact(Skip = "BUGS.md #124: a node from another node store is navigated in the transform's own store")]
+    [Fact]
     public async Task NodeFromAnotherTransformer_NoNamespaces_IsNavigable()
     {
         var producer = new XsltTransformer();
