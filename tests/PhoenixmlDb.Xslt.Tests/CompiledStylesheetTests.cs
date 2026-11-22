@@ -125,6 +125,55 @@ public class CompiledStylesheetTests
         one.CreateTransformer().SchemaProvider.Should().NotBeSameAs(two.CreateTransformer().SchemaProvider);
     }
 
+    private const string JsonToXml = """
+        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                        xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xsl:output method="text"/>
+          <xsl:template match="/">
+            <xsl:variable name="j" select="json-to-xml(string(.), map { 'validate': true() })"/>
+            <xsl:value-of select="data(($j//*:number)[1]) instance of xs:double, count($j//*:number)"/>
+          </xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    private const string FnNamespace = "http://www.w3.org/2005/xpath-functions";
+
+    [Fact]
+    public async Task ACompiledStylesheetsSchemaProviderHasTheFnSchemasBeforeAnyTransformation()
+    {
+        // fn:json-to-xml with validate types its result with the fn namespace's schema, which the
+        // provider adds on first use: during a transformation, while the stylesheet's other
+        // transformations read the provider. A shared stylesheet's provider gets it when it is compiled.
+        var compiled = await CompiledStylesheet.CompileAsync(JsonToXml);
+        var loaded = new XsltTransformer();
+        await loaded.LoadStylesheetAsync(JsonToXml);
+
+        compiled.CreateTransformer().SchemaProvider!.HasSchemaType(FnNamespace, "match-type").Should().BeTrue();
+        loaded.SchemaProvider!.HasSchemaType(FnNamespace, "match-type").Should().BeFalse("LoadStylesheetAsync is unchanged: one transformer, one transformation at a time");
+        (await loaded.TransformAsync("<r>[1, 2]</r>")).Should().Be("true 2");
+        loaded.SchemaProvider!.HasSchemaType(FnNamespace, "match-type").Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ValidatedJsonToXmlOnManyThreadsAtOnceGivesTypedResults()
+    {
+        for (var round = 0; round < 4; round++)
+        {
+            var compiled = await CompiledStylesheet.CompileAsync(JsonToXml);
+            using var start = new ManualResetEventSlim();
+            var tasks = Enumerable.Range(0, 16).Select(n => Task.Run(async () =>
+            {
+                var t = compiled.CreateTransformer();
+                start.Wait();
+                return await t.TransformAsync("<r>[" + string.Join(", ", Enumerable.Range(0, n + 1)) + "]</r>");
+            })).ToList();
+            start.Set();
+            var outputs = await Task.WhenAll(tasks);
+            for (var n = 0; n < outputs.Length; n++)
+                outputs[n].Should().Be($"true {n + 1}");
+        }
+    }
+
     [Fact]
     public void CompileReturnsOnTheCallingThread()
     {

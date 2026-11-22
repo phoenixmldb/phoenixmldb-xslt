@@ -90,6 +90,15 @@ public sealed class XsltCompileOptions
 /// Use one transformer per thread (or per transformation); creating one is cheap, because the
 /// stylesheet is not compiled again.
 /// </para>
+/// <para>
+/// The schema provider is shared too. Two things change it during a transformation, and so are
+/// not safe while other transformations of the stylesheet run: a transformer whose
+/// <see cref="XsltTransformer.RegexMatchTimeout"/> is lower than the compile option's (the
+/// provider's pattern limit is lowered for all its users; set the lower limit in the compile
+/// options instead), and <c>fn:load-xquery-module</c> of a module that has an
+/// <c>import schema</c>. A provider of your own in <see cref="XsltCompileOptions.SchemaProvider"/>
+/// must allow reads from several threads at once.
+/// </para>
 /// <code>
 /// var compiled = await CompiledStylesheet.CompileAsync(xslt, new Uri("file:///app/style.xsl"));
 /// // On each thread, or for each request:
@@ -149,7 +158,7 @@ public sealed class CompiledStylesheet
             options.SchemaProvider ?? XsltTransformer.CreateDefaultSchemaProvider(),
             options.StaticParameters is null ? null : new Dictionary<string, string>(options.StaticParameters, StringComparer.Ordinal),
             options.PackageCatalog?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal),
-            cancellationToken);
+            sharedByTransformers: true, cancellationToken);
     }
 
     /// <summary>
@@ -175,13 +184,16 @@ public sealed class CompiledStylesheet
     /// <summary>
     /// Compiles with an explicit schema provider (which may be <c>null</c>: no schema features)
     /// and the parser's own dictionary types; <see cref="XsltTransformer.LoadStylesheetAsync"/>
-    /// passes its own provider and the caller's dictionaries unchanged.
+    /// passes its own provider and the caller's dictionaries unchanged. With
+    /// <c>sharedByTransformers</c>, transformers on several threads will use the result (and so
+    /// its schema provider) at the same time: the provider then gets now what a transformation
+    /// would otherwise add to it while others read it.
     /// </summary>
     internal static async Task<CompiledStylesheet> CompileCoreAsync(string stylesheetXml, Uri? baseUri,
         XsltCompileOptions options, PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider,
         Dictionary<string, string>? staticParams,
         Dictionary<string, List<(string? Version, string FilePath)>>? packageCatalog,
-        CancellationToken cancellationToken)
+        bool sharedByTransformers, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -220,6 +232,12 @@ public sealed class CompiledStylesheet
             // Every name test gets its process-wide namespace id now, so no transformation
             // writes one into the compiled stylesheet later.
             CompiledNameResolution.Resolve(parsed);
+            // fn:json-to-xml with validate (and XQuery's fn:analyze-string) types its result with
+            // the built-in schemas of the fn namespace, which the provider adds on first use. Added
+            // during a transformation, they change the schema set while the other transformations
+            // of this stylesheet read it; so a shared stylesheet's provider has them from the start.
+            if (sharedByTransformers && schemaProvider is PhoenixmlDb.XQuery.XsdSchemaProvider xsd)
+                xsd.TryAddBuiltInFnSchemas();
             return Task.FromResult(parsed);
         }).ConfigureAwait(false);
         return new CompiledStylesheet(stylesheet, baseUri, options, schemaProvider);

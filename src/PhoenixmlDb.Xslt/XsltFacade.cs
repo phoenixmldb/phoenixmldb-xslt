@@ -519,7 +519,7 @@ public sealed class XsltTransformer
         // This transformer's own provider, which may be null (no schema features), and the
         // caller's dictionaries as they are.
         _compiled = await CompiledStylesheet.CompileCoreAsync(stylesheetXml, baseUri, options, SchemaProvider,
-            staticParams, packageCatalog, CancellationToken.None).ConfigureAwait(false);
+            staticParams, packageCatalog, sharedByTransformers: false, CancellationToken.None).ConfigureAwait(false);
         ApplyStaticParameters(staticParams);
     }
 
