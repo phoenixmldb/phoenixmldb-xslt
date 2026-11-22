@@ -30,7 +30,20 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </remarks>
 internal static class CompiledNameResolution
 {
-    private static readonly ConcurrentDictionary<Type, FieldInfo[]> s_fields = new();
+    /// <summary>
+    /// Per type: whether it is a syntax-tree type, and the fields the walk reads. A field is left
+    /// out when no value of its declared type can lead to a name: a value type, a string or Uri
+    /// (the walk stops at those, and reading one through <see cref="FieldInfo.GetValue"/> boxed it),
+    /// or a sealed type that holds none (<see cref="SourceLocation"/>, on every node, was most of
+    /// the objects the walk visited).
+    /// </summary>
+    private sealed record TypeWalk(bool IsTree, FieldInfo[] Fields);
+
+    private static readonly ConcurrentDictionary<Type, TypeWalk> s_types = new();
+    private static readonly ConcurrentDictionary<Type, bool> s_canReachName = new();
+
+    [ThreadStatic]
+    private static HashSet<Type>? t_computing;
 
     internal static void Resolve(XsltStylesheet stylesheet)
     {
@@ -84,10 +97,10 @@ internal static class CompiledNameResolution
 
     private static void Walk(object? o, XsltStylesheet stylesheet, HashSet<object> seen, int depth)
     {
-        if (o is null || o is string || o is Uri || o.GetType().IsValueType)
+        if (o is null || o is string || o is Uri)
             return;
         var t = o.GetType();
-        if (depth > 2000 || !seen.Add(o))
+        if (t.IsValueType || depth > 2000 || !seen.Add(o))
             return;
         switch (o)
         {
@@ -104,23 +117,77 @@ internal static class CompiledNameResolution
                 Walk(e.Value, stylesheet, seen, depth + 1);
             return;
         }
-        if (o is IEnumerable seq && !IsTreeType(t))
+        var info = s_types.GetOrAdd(t, Describe);
+        if (o is IEnumerable seq && !info.IsTree)
         {
             foreach (var item in seq)
                 Walk(item, stylesheet, seen, depth + 1);
             return;
         }
-        if (!IsTreeType(t))
+        if (!info.IsTree)
             return;
-        foreach (var f in s_fields.GetOrAdd(t, AllFields))
+        foreach (var f in info.Fields)
             Walk(f.GetValue(o), stylesheet, seen, depth + 1);
     }
 
-    private static FieldInfo[] AllFields(Type t)
+    private static TypeWalk Describe(Type t)
     {
-        var fields = new List<FieldInfo>();
+        if (!IsTreeType(t))
+            return new TypeWalk(false, []);
+        return new TypeWalk(true, ReferenceFields(t).Where(f => CanReachName(f.FieldType)).ToArray());
+    }
+
+    private static IEnumerable<FieldInfo> ReferenceFields(Type t)
+    {
         for (var type = t; type is not null && type != typeof(object); type = type.BaseType)
-            fields.AddRange(type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly));
-        return fields.ToArray();
+        {
+            foreach (var f in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+            {
+                if (!f.FieldType.IsValueType && f.FieldType != typeof(string) && f.FieldType != typeof(Uri))
+                    yield return f;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a value of a field declared as <paramref name="declared"/> can lead the walk to a
+    /// name test or a step. True for any type that is not sealed (a subclass may be the value), so
+    /// a false is exact: a sealed type that is neither a collection nor a tree type stops the walk,
+    /// and a sealed tree type or collection reaches only what its fields or items can.
+    /// </summary>
+    private static bool CanReachName(Type declared)
+    {
+        if (s_canReachName.TryGetValue(declared, out var known))
+            return known;
+        t_computing ??= new HashSet<Type>();
+        if (!t_computing.Add(declared))
+            return true; // a cycle through this type: assume it can, which only keeps a field in
+        try
+        {
+            var result = ComputeCanReachName(declared);
+            s_canReachName.TryAdd(declared, result);
+            return result;
+        }
+        finally
+        {
+            t_computing.Remove(declared);
+        }
+    }
+
+    private static bool ComputeCanReachName(Type t)
+    {
+        if (t.IsValueType || t == typeof(string) || t == typeof(Uri))
+            return false;
+        if (t.IsArray)
+            return CanReachName(t.GetElementType()!);
+        if (!t.IsSealed)
+            return true;
+        if (typeof(NameTest).IsAssignableFrom(t) || typeof(StepExpression).IsAssignableFrom(t))
+            return true;
+        if (IsTreeType(t))
+            return ReferenceFields(t).Any(f => CanReachName(f.FieldType));
+        if (typeof(IEnumerable).IsAssignableFrom(t))
+            return !t.IsGenericType || t.GetGenericArguments().Any(CanReachName);
+        return false;
     }
 }
