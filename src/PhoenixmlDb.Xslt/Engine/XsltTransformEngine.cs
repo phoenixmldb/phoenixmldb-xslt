@@ -2545,7 +2545,7 @@ public sealed partial class XsltTransformEngine
     /// serialization parameter is present and parses to a decimal &gt;= 5.0 (leading/trailing
     /// whitespace tolerated per attribute-value normalization).
     /// </summary>
-    private static bool Html5DoctypeApplies(XsltOutput outputDecl)
+    internal static bool Html5DoctypeApplies(XsltOutput outputDecl)
     {
         var hv = outputDecl.HtmlVersion?.Trim();
         if (string.IsNullOrEmpty(hv))
@@ -2605,7 +2605,7 @@ public sealed partial class XsltTransformEngine
     /// leading processing instructions and comments, starting the scan at <paramref name="from"/>.
     /// Returns -1 if no element start tag is found.
     /// </summary>
-    private static int FindDocumentElementStart(string output, int from)
+    internal static int FindDocumentElementStart(string output, int from)
     {
         var elemStart = output.IndexOf('<', from);
         while (elemStart >= 0 && elemStart < output.Length - 1)
@@ -5580,25 +5580,17 @@ public sealed partial class XsltTransformEngine
         // and bounds peak buffered output.
         context._streamingOutputSink = outputSink;
 
-        // For sink-driven streaming, post-processing (indentation, XML declaration, doctype,
-        // BOM, escape-uri-attributes) cannot be applied because it requires the full buffer.
-        // We emit an XML declaration up-front (when the output declaration requires one) so
-        // callers consuming the writer get a well-formed prologue.
-        if (outputSink != null)
+        // A result written to the caller's writer goes through the serialization steps a piece at
+        // a time (indentation, doctype, character maps, ...), as a whole result does at its end:
+        // they were all skipped (xslt#575). JSON, adaptive and CSV results are collected and
+        // serialized whole at the end (FinalizeJsonOutputAsync), so they keep the writer itself.
+        StreamedResultFinalizer? finalizer = null;
+        var sinkDecl = _stylesheet.PrincipalOutput;
+        if (outputSink != null && sinkDecl?.EffectiveMethod is not (OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv))
         {
-            var prologDecl = _stylesheet.PrincipalOutput;
-            if (prologDecl != null &&
-                (prologDecl.EffectiveMethod == OutputMethod.Xml || prologDecl.EffectiveMethod == OutputMethod.Xhtml) &&
-                prologDecl.OmitXmlDeclaration != true)
-            {
-                var encoding = prologDecl.Encoding ?? "UTF-8";
-                var version = prologDecl.Version ?? "1.0";
-                var decl = $"<?xml version=\"{version}\" encoding=\"{encoding}\"";
-                if (prologDecl.Standalone.HasValue)
-                    decl += prologDecl.Standalone.Value ? " standalone=\"yes\"" : " standalone=\"no\"";
-                decl += "?>";
-                await outputSink.WriteAsync(decl).ConfigureAwait(false);
-            }
+            finalizer = new StreamedResultFinalizer(this, sinkDecl, context.PrincipalOutputCharacterMaps, context.AllowedOutputMethods,
+                StreamedResultFinalizer.KeepsWhole(sinkDecl, _stylesheet), outputSink, options.CancellationToken);
+            context._streamingOutputSink = finalizer;
         }
 
         // In streaming mode the streamed source is not the global context item (XSLT 3.0
@@ -5789,7 +5781,11 @@ public sealed partial class XsltTransformEngine
             SecondaryResultDocuments = context.SecondaryResults;
 
             if (outputSink != null)
+            {
+                if (finalizer != null)
+                    await finalizer.CompleteAsync(options.CancellationToken).ConfigureAwait(false);
                 return;
+            }
 
             var docOutput = outputBuilder.ToString();
             var docOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
@@ -5814,14 +5810,15 @@ public sealed partial class XsltTransformEngine
         // Surface secondary results to the engine regardless of sink mode.
         SecondaryResultDocuments = context.SecondaryResults;
 
-        // Sink path (FinalizeKind.StreamingSink): the unified FinalizeOutput post-processing
-        // (indentation / decl / doctype / BOM / escape-uri / character maps / normalization)
-        // operates on a fully-buffered string and so cannot apply to output that was already
-        // delivered incrementally to the TextWriter sink. This is the one delivery path that
-        // intentionally does NOT route through FinalizeOutput; secondary results were already
-        // surfaced above, so we leave the builder empty and return.
+        // Sink path (FinalizeKind.StreamingSink): the result was written to the sink as it was
+        // produced, through the finalizer's serialization steps; what they still hold is written
+        // now. Secondary results were surfaced above, so the builder stays empty.
         if (outputSink != null)
+        {
+            if (finalizer != null)
+                await finalizer.CompleteAsync(options.CancellationToken).ConfigureAwait(false);
             return;
+        }
 
         var output = outputBuilder.ToString();
 
