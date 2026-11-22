@@ -261,6 +261,8 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         xmlDoc.LoadXml(xmlContent);
 
         var nodeStore = _nodeStore ?? new XdmInMemoryStore();
+        // A document read by fn:doc() or document(): a parsed document (xslt#542).
+        using var parsed = nodeStore.ParsedDocument();
         var xdmDoc = (Validation is var (strict, schemas) && xmlDoc.DocumentElement is not null
                 ? XsltTransformEngine.ValidateDocument(xmlDoc, nodeStore, schemas, _stylesheet, strict, documentUri.AbsoluteUri)
                 : null)

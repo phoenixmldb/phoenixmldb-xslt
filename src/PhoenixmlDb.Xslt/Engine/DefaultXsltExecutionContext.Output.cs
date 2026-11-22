@@ -2176,9 +2176,13 @@ internal sealed partial class DefaultXsltExecutionContext
         xmlDoc.LoadXml(xmlContent);
 
         var nodeStore = _nodeStore ?? new XdmInMemoryStore();
-        var xdmDoc = ValidatesSourceDocument(instruction)
-            ? ValidatedSourceDocument(xmlDoc, nodeStore, instruction, resolvedUri)
-            : XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
+        XdmDocument xdmDoc;
+        using (nodeStore.ParsedDocument()) // xsl:source-document: a parsed document (xslt#542)
+        {
+            xdmDoc = ValidatesSourceDocument(instruction)
+                ? ValidatedSourceDocument(xmlDoc, nodeStore, instruction, resolvedUri)
+                : XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
+        }
 
         // Apply xsl:strip-space declarations
         if (_stylesheet.StripSpace.Count > 0)

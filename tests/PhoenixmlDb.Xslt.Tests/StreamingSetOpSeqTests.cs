@@ -59,13 +59,13 @@ public class StreamingSetOpSeqTests
     public async Task PerItemUnion_StreamsGroundedAndChildren()
     {
         var result = await TransformWithFile(Sheet("* union $insertion"), ItemXml, "b.xml");
-        // union of ITEM[1]'s element children with the two grounded elements.
-        // The result is sorted by node identity (XdmNode.Id). Across the
-        // grounded/streamed boundary the grounded $insertion nodes were allocated
-        // before the per-item materialized children, so they sort first. The W3C
-        // catalog (sx-union-014/016/114/116) accepts either ordering via <any-of>;
-        // this is the grounded-first variant the streaming pass produces.
-        result.Trim().Should().Be("<out><x/><y/><TITLE>T1</TITLE><AUTHOR>A1</AUTHOR></out>");
+        // union of ITEM[1]'s element children with the two grounded elements, in
+        // document order. The order between the two trees: a parsed (here streamed)
+        // document precedes every constructed tree, such as the global's, whenever
+        // either was built (xslt#542). It was creation order, which put the global
+        // first. The W3C catalog (sx-union-014/016/114/116) accepts either ordering
+        // via <any-of>; sx-union-012/017/022/035 require this one.
+        result.Trim().Should().Be("<out><TITLE>T1</TITLE><AUTHOR>A1</AUTHOR><x/><y/></out>");
     }
 
     [Fact]
