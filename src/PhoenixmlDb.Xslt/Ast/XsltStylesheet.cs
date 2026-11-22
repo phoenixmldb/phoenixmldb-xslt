@@ -187,6 +187,15 @@ public sealed class XsltStylesheet
     internal XsltOutput? PrincipalOutput => Outputs.Find(static o => o.Name is null);
 
     /// <summary>
+    /// Whether any module of the stylesheet (imported, included or a used package) writes text with
+    /// <c>disable-output-escaping="yes"</c>, so that its result may not be well-formed markup. Set
+    /// on the stylesheet <c>StylesheetParser.Parse</c> returns. A result written while the
+    /// transformation streams is then indented from the whole text, as the other results are,
+    /// because what is not well-formed is left unindented (xslt#575).
+    /// </summary>
+    internal bool UsesDisableOutputEscaping { get; set; }
+
+    /// <summary>
     /// Imported stylesheets (lower precedence).
     /// </summary>
     public List<XsltStylesheet> Imports { get; init; } = new();

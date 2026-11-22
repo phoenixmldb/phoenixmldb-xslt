@@ -1351,6 +1351,9 @@ public sealed partial class StylesheetParser
     // stylesheet when the parse ends.
     private readonly List<(string NamespaceUri, string LocalName, SourceLocation? Location)> _schemaTypeReferences = [];
 
+    // Whether a module this parser read (or a package it used) has disable-output-escaping="yes".
+    private bool _usesDisableOutputEscaping;
+
     // Atomic or union type names an `as` type names that are not built in (as="my:t", as="t"),
     // of every module: each must be a simple type of the schemas in scope, which are known only
     // once the imports are loaded (XPST0051, XPath 3.1 §2.5.4).
