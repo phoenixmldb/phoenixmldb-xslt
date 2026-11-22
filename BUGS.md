@@ -7916,3 +7916,30 @@ namespace="{…}"` (the output element stack, for `cdata-section-elements`), an 
 through such a stylesheet keeps every such URI for its lifetime (a few hundred bytes each). Not changed:
 a fix interns these lookups read-only (`StylesheetParser.TryGetNamespaceId`), which none of them needs
 an id for when the table does not know the URI.
+
+### 138. The schema provider changes its schema set in place during a run — fixed in part, recorded (2026-11-22)
+
+Engines: **XQuery** (`XsdSchemaProvider`), reached from **XSLT**. One provider serves every transformation
+of a `CompiledStylesheet` (and every query that shares one), on any thread, and readers do not lock. An
+audit of its writes found four that a query or transformation makes while others may read:
+1. A type annotation records its namespace in the id-to-URI map, a `Dictionary`: two threads that add at
+   once can break it. Fixed: a `ConcurrentDictionary`.
+2. The fn namespace's schemas (json-to-xml with `validate`, XQuery's `fn:analyze-string`) were added on
+   first use, with no lock, into the set others read; two first uses at once each added them. Fixed: added
+   under the lock, once; and a stylesheet compiled with `CompiledStylesheet.CompileAsync` has them from the
+   start, so no transformation of it adds them (`CompiledStylesheetTests`).
+3. A transformer or query with a LOWER `RegexMatchTimeout` than the provider's re-bounds the shared set's
+   patterns; with a cache-shared set it replaces the set with an empty one and reloads into it. Open,
+   documented on `CompiledStylesheet`: set the lower limit in the compile options.
+4. `fn:load-xquery-module` compiles the module with the run's provider, so an `import schema` in the module
+   loads into the shared set mid-run. Open, documented.
+A complete fix builds each change of the set as a new set and publishes it (copy on write), so a reader
+never sees a set that is changing.
+
+### 139. XSLT's fn:analyze-string gives an untyped result — open (2026-11-22)
+
+Engine: **XSLT**. In 3.2.0 and main. A schema-aware processor gives the result of `fn:analyze-string` the
+types of its schema (F&O 3.1 §5.6.5): `@nr` is `xs:positiveInteger`. XQuery's function does
+(QT3 analyzeString-020); XSLT's own `XsltAnalyzeStringFunction` does not:
+`(analyze-string('a1', '(\d)')//@nr)[1] instance of xs:positiveInteger` is `false` in a stylesheet.
+Found while testing the CompiledStylesheet schema provider.
