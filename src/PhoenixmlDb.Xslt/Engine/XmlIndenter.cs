@@ -9,7 +9,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// the result is written again with the whitespace that goes before it. Nothing is indented in
 /// mixed content, in an element named by <c>suppress-indentation</c>, or after whitespace outside
 /// the document element. <see cref="XsltTransformEngine.ApplyXmlIndentation"/> drives it over a
-/// whole result; StreamedResultFinalizer over a result written while the
+/// whole result; <see cref="StreamedResultFinalizer"/> over a result written while the
 /// transformation streams (xslt#575), so both write the same text.
 /// </summary>
 internal sealed class XmlIndenter

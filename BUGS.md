@@ -7631,7 +7631,7 @@ an insertion sequence), XUTY0010 / XUTY0011 (attribute and non-attribute mixed i
 XUTY0022 (attribute inserted into a document node), XUDY0021 (duplicate attribute names after the
 update), XUDY0030 (attribute inserted before/after a node whose parent is not an element).
 
-### 127. A top-level updating query was dropped silently — recorded, waiting for a ruling (2026-11-20)
+### 127. A top-level updating query was dropped silently — ruled 2026-11-20, fixing in 3.3.0
 
 Engine: **XQuery** (`QueryEngine`, `ExecutionPlan`, `XdmDocumentStore`).
 
@@ -7648,6 +7648,13 @@ place applies the list for every entry point; `XdmDocumentStore` (constructed no
 `doc()`) becomes updatable by replacing changed node objects; only a store that cannot be updated
 raises an implementation-defined error, proposed `phx:XUDY9001` in
 `https://schemas.phoenixml.dev/2026/functions`. That is a new error for queries that run today.
+
+Ruled (Lucas, 2026-11-20, "yes to all 5"): updates apply to in-memory stores at every entry point;
+`phx:XUDY9001` only for a store that cannot be updated; a Breaking changes entry. Design (2026-11-22,
+with db-engine): opt-in — a store can be updated when it implements `IUpdatableNodeStore`; the store of
+EACH target node is checked, all before any change, and one that cannot be updated gives XUDY9001 with
+nothing changed. db-engine's `PersistentNodeProvider` does not implement it, so an update of a stored
+document gives XUDY9001; copy-modify of its nodes works on in-memory copies.
 
 ### 128. Copy/modify and conflicting updates raised no error — recorded, waiting for a ruling (2026-11-20)
 
@@ -7943,3 +7950,32 @@ types of its schema (F&O 3.1 §5.6.5): `@nr` is `xs:positiveInteger`. XQuery's f
 (QT3 analyzeString-020); XSLT's own `XsltAnalyzeStringFunction` does not:
 `(analyze-string('a1', '(\d)')//@nr)[1] instance of xs:positiveInteger` is `false` in a stylesheet.
 Found while testing the CompiledStylesheet schema provider.
+
+### 140. A streamed result reached the writer in one piece at the end — open, cause not traced (2026-11-22)
+
+Engine: **XSLT**. In 3.2.0 and main. Martin Honnen's streamed grouping (xslt#575: `xsl:copy` of `root`
+around `xsl:for-each-group select="item!copy-of()"`, `on-no-match="shallow-copy"`) streams its input, but
+its whole result is written to the caller's writer in ONE write when the transformation ends (measured:
+1 write of 15 055 593 characters for 300 000 items), so the memory it takes grows with the input, on
+main as on the #575 branch. The drain runs only where no element is being constructed; here the copied
+`root` is open while the group loop reads the whole input, which is the likely cause, not yet traced.
+The #575 serializer writes such a piece on in 16K slices, so it adds nothing to the memory.
+
+### 141. A result written while the transformation streams skipped the serialization steps — fixed (xslt#575, 2026-11-22)
+
+Engine: **XSLT**. In 3.2.0. `TransformAsync` with a stream or reader input and a writer, and the command
+line's file and standard output, wrote a streamed result as the engine produced it: `indent="yes"` gave
+one line (Martin Honnen's report), and a DOCTYPE, character maps, `normalization-form`, references for
+characters the encoding cannot represent (an `é` written raw into a US-ASCII file), the byte-order mark,
+`method="text"`, and the html and xhtml forms (void elements, Content-Type meta, URI attributes, raw-text
+elements, indentation) were all missing. `StreamedResultFinalizer` now applies the steps of
+`FinalizeOutput` a piece at a time, cutting the markup only where each step is as at the start of a
+result; it holds at most a tag, a head, the text between two tags and 8K characters for the writer.
+Checked: every result of the unit and W3C suites also run through it in pieces of 1, 7, 64 and 1000
+characters gave the same text (70 000 comparisons); `StreamedSerializationTests`.
+Where it differs from a whole result (recorded on the class): several top-level elements are indented;
+with `disable-output-escaping` and indentation the result is kept whole; SEPM0004 and SERE0015 come where
+the rule is broken, after the text before it.
+W3C si-value-of-102 (`method="text"`, assertions on the result tree) passed only because the streamed
+result was not serialized as text; the harness asserts on the serialized text, so it now fails. A harness
+fix that asserts on the result tree is approved, as its own PR.
