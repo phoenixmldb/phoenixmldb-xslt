@@ -25,7 +25,8 @@ internal sealed class StreamingXmlProcessor
 
     // The tree ordinal of the streamed document's nodes: a parse ordinal, so the document
     // precedes every constructed tree, such as a global variable's, built before it (xslt#542).
-    private readonly ulong _treeOrdinal = XdmInMemoryStore.NextParseOrdinal();
+    // The reader's (ProcessAsync), which the other paths that build its nodes use too.
+    private ulong _treeOrdinal = XdmInMemoryStore.NextParseOrdinal();
 
     private void RegisterStreamed(XdmNode node)
     {
@@ -228,6 +229,7 @@ internal sealed class StreamingXmlProcessor
         // execution. Cleared on exit so non-streaming runs don't see a stale handle.
         var previousStreamingReader = _context._activeStreamingReader;
         _context._activeStreamingReader = reader;
+        _treeOrdinal = XdmInMemoryStore.ParseOrdinalOf(reader);
         var previousStreamingCt = _context._activeStreamingCancellationToken;
         _context._activeStreamingCancellationToken = ct;
         var previousAccumulatorOwner = _context._accumulatorStreamOwner;

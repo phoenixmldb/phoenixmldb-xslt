@@ -410,8 +410,13 @@ internal sealed partial class DefaultXsltExecutionContext
 
             if (matches && isFinal)
             {
-                var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
-                LinkStridingAncestors(elem, openAncestors);
+                Xdm.Nodes.XdmElement elem;
+                // Nodes of the streamed document (xslt#542); the scope ends before any body runs.
+                using (_nodeStore?.ParsedDocument(XdmInMemoryStore.ParseOrdinalOf(reader)))
+                {
+                    elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                    LinkStridingAncestors(elem, openAncestors);
+                }
                 finalPosition[0]++;
                 // The element arrives FULLY MATERIALISED — the helper read its whole subtree and
                 // left the reader on its EndElement. Everything that would otherwise wait for the
@@ -498,8 +503,13 @@ internal sealed partial class DefaultXsltExecutionContext
             var matches = StridingNameTestMatchesReader(steps[level], reader);
             if (matches && level == steps.Count - 1)
             {
-                var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
-                LinkStridingAncestors(elem, openAncestors);
+                Xdm.Nodes.XdmElement elem;
+                // Nodes of the streamed document (xslt#542); the scope ends before any body runs.
+                using (_nodeStore?.ParsedDocument(XdmInMemoryStore.ParseOrdinalOf(reader)))
+                {
+                    elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                    LinkStridingAncestors(elem, openAncestors);
+                }
                 yield return elem;
             }
             else if (matches && !reader.IsEmptyElement)

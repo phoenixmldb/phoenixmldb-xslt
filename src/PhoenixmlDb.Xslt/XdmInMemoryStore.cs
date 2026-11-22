@@ -107,6 +107,18 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
     /// </summary>
     internal ParsedDocumentScope ParsedDocument() => new(this, NextParseOrdinal());
 
+    /// <summary>The same, for the nodes of a document that already has a parse ordinal.</summary>
+    internal ParsedDocumentScope ParsedDocument(ulong ordinal) => new(this, ordinal);
+
+    // The parse ordinal of the document a streaming reader reads: one per reader, so every path
+    // that builds nodes of a streamed document (the streaming processor, the striding drivers,
+    // the document node of xsl:source-document) gives them the same one.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<System.Xml.XmlReader, object> s_streamOrdinals = new();
+
+    /// <summary>The parse ordinal of the streamed document <paramref name="reader"/> reads.</summary>
+    internal static ulong ParseOrdinalOf(System.Xml.XmlReader reader)
+        => (ulong)s_streamOrdinals.GetValue(reader, static _ => NextParseOrdinal());
+
     internal readonly struct ParsedDocumentScope : IDisposable
     {
         private readonly XdmInMemoryStore _store;

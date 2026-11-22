@@ -2023,6 +2023,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 var syntheticDoc = new XdmDocument
                 {
                     StringValueResolver = streamNodeStore.StringValueResolver,
+                    // The streamed document's tree, so it precedes the document's nodes (xslt#542).
+                    TreeOrdinal = XdmInMemoryStore.ParseOrdinalOf(xmlReader),
                     Id = syntheticDocId,
                     Document = new DocumentId(0),
                     Children = [],
