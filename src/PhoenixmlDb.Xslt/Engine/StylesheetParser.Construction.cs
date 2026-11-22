@@ -335,6 +335,8 @@ public sealed partial class StylesheetParser
         var doeTextAttr = element.Attribute("disable-output-escaping");
         ValidateDoeAttribute(doeTextAttr, location);
         var doe = doeTextAttr?.Value.Trim() is "yes" or "true" or "1";
+        if (doe)
+            _usesDisableOutputEscaping = true;
         var expandText = IsExpandTextActive(element);
         var value = element.Value;
 

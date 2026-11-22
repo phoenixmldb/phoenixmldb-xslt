@@ -1547,6 +1547,9 @@ public sealed partial class StylesheetParser
 
         var hasContent = selectAttr == null && element.Nodes().Any();
 
+        var valueOfDoe = doeAttr?.Value.Trim() is "yes" or "true" or "1";
+        if (valueOfDoe)
+            _usesDisableOutputEscaping = true;
         return new XsltValueOf
         {
             Location = location,
@@ -1555,7 +1558,7 @@ public sealed partial class StylesheetParser
             // null means "use default" — in ValueOfAsync, default is " " for select, "" for content,
             // and in 1.0 backwards-compatible mode, first-value semantics are used instead.
             Separator = separatorAttr != null ? ParseAvt(separatorAttr.Value, element, separatorAttr) : null,
-            DisableOutputEscaping = doeAttr?.Value.Trim() is "yes" or "true" or "1"
+            DisableOutputEscaping = valueOfDoe
         };
     }
 

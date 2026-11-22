@@ -617,19 +617,13 @@ public sealed partial class XsltTransformEngine
     internal enum FinalizeKind { Primary, ResultDocument, StreamingSink, StreamingBuffered }
 
     /// <summary>
-    /// Applies the shared serialization post-processing pipeline (text/html post-process,
-    /// content-type meta, indentation, character maps, Unicode normalization, XML declaration,
-    /// doctype, BOM, escape-uri-attributes, sentinel restore) to <paramref name="output"/>.
-    /// </summary>
-    /// <summary>
     /// Validates the serialization parameters of an <see cref="XsltOutput"/> declaration
     /// against the W3C XSLT/XQuery Serialization 4.0 constraints, raising the relevant
     /// serialization error before any output is delivered. Mirrors the checks performed by
     /// <c>PhoenixmlDb.XQuery.XQueryResultSerializer</c> so both engines behave identically.
+    /// The checks that depend on the result itself are <see cref="ValidateResultShape"/>.
     /// </summary>
-    /// <param name="output">The serialized result tree (pre-declaration/doctype).</param>
-    /// <param name="outputDecl">The effective output declaration.</param>
-    private static void ValidateSerializationParameters(string output, XsltOutput outputDecl)
+    private static void ValidateSerializationDeclaration(XsltOutput outputDecl)
     {
         var method = outputDecl.EffectiveMethod;
 
@@ -697,6 +691,16 @@ public sealed partial class XsltTransformEngine
                 "SEPM0010: undeclare-prefixes=\"yes\" cannot be combined with output version 1.0");
         }
 
+    }
+
+    /// <summary>
+    /// The checks that depend on the result: SEPM0004 (one document element) and SERE0015 (a '>'
+    /// in a processing instruction of the html method). A streamed result is checked as it is
+    /// written (StreamedResultFinalizer).
+    /// </summary>
+    internal static void ValidateResultShape(string output, XsltOutput outputDecl)
+    {
+        var method = outputDecl.EffectiveMethod;
         // SEPM0004: standalone (yes/no) or doctype-system requires the result to be a single
         // well-formed document element. A result with zero, or more than one, top-level
         // element (or top-level non-whitespace text) cannot be serialized this way.
@@ -873,6 +877,31 @@ public sealed partial class XsltTransformEngine
     internal string FinalizeOutput(string output, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind,
         IReadOnlySet<OutputMethod>? allowedMethods = null, bool explicitResultDocument = false)
     {
+        // The steps are split so that a result written while the transformation streams goes
+        // through the same ones, a piece at a time (StreamedResultFinalizer, xslt#575).
+        var plan = PlanFinalize(output, outputDecl, resultDocCharacterMaps, kind, allowedMethods, explicitResultDocument);
+        if (plan.Decl != null)
+            ValidateResultShape(output, plan.Decl);
+        output = ApplyMarkupSteps(output, plan);
+        output = ApplyContentSteps(output, plan);
+        output = ApplyProlog(output, plan);
+        return ApplyFinalSteps(output, plan);
+    }
+
+    /// <summary>
+    /// What <see cref="FinalizeOutput"/> does to a result: the output declaration it is serialized
+    /// with (after the default method is chosen), and whether its document element is foreign to
+    /// the xhtml method.
+    /// </summary>
+    internal sealed record FinalizePlan(XsltOutput? Decl, FinalizeKind Kind, bool ForeignXhtmlRoot, IReadOnlyList<QName>? ResultDocCharacterMaps);
+
+    /// <summary>
+    /// Decides the plan and checks the output declaration. <paramref name="head"/> is the result,
+    /// or as much of it as holds the document element's start tag: nothing after it is read.
+    /// </summary>
+    internal FinalizePlan PlanFinalize(string head, XsltOutput? outputDecl, IReadOnlyList<QName>? resultDocCharacterMaps, FinalizeKind kind,
+        IReadOnlySet<OutputMethod>? allowedMethods, bool explicitResultDocument)
+    {
         RequireSupportedHtmlVersion(outputDecl);
         // Default output method (Serialization 4.0 §Default Output Method): when no method was
         // specified on xsl:output, a serialized result whose document element is `html` resolves to
@@ -889,7 +918,7 @@ public sealed partial class XsltTransformEngine
         // results therefore keep their existing (xml-default) serialization byte-for-byte.
         if (kind == FinalizeKind.Primary
             && (outputDecl == null || outputDecl.Method == null)
-            && ResolveDefaultOutputMethod(output) is OutputMethod defaultedMethod
+            && ResolveDefaultOutputMethod(head) is OutputMethod defaultedMethod
             && !(defaultedMethod == OutputMethod.Xhtml && !explicitResultDocument && IsVersion10(_stylesheet.Version)))
         {
             outputDecl = outputDecl?.CloneWithMethod(defaultedMethod)
@@ -918,53 +947,97 @@ public sealed partial class XsltTransformEngine
             // W3C Serialization 4.0 parameter validation. These serialization errors are
             // raised before any output is produced, matching PhoenixmlDb.XQuery's serializer
             // (SEPM0004 / SESU0007 / SESU0011 / SEPM0009 / SEPM0010).
-            ValidateSerializationParameters(output, outputDecl);
+            ValidateSerializationDeclaration(outputDecl);
 
             if (outputDecl.EffectiveMethod == OutputMethod.Xhtml)
             {
-                var rootNs = GetRootElementNamespace(output);
+                var rootNs = GetRootElementNamespace(head);
                 foreignXhtmlRoot = rootNs.Length > 0 && rootNs != "http://www.w3.org/1999/xhtml";
             }
-
-            if (outputDecl.EffectiveMethod == OutputMethod.Text)
-            {
-                // Text output: strip all markup, return only text content.
-                // The secondary xsl:result-document path (FinalizeKind.ResultDocument) has already
-                // stripped its text content WITHOUT sentinel protection, so re-stripping here would
-                // re-process decoded markup characters and corrupt the output. Skip the strip for
-                // that path; the primary result-document path uses FinalizeKind.Primary (and sentinel
-                // escaping), so it still strips correctly here.
-                if (kind != FinalizeKind.ResultDocument)
-                    output = DefaultXsltExecutionContext.StripXmlMarkup(output);
-            }
-            else
-            {
-                // HTML/XHTML methods: elements in the HTML5 content namespaces (XHTML, SVG, MathML)
-                // that are bound via a prefix in the result tree are serialized in the conventional
-                // default-namespace form — local element name + default xmlns declaration — and the
-                // namespace declarations for those three namespaces are prefix-normalized away
-                // (Serialization 3.0 XHTML output method; output-0211/0221/0225/0226, output-0602a/
-                // 0602b/0603a). The HTML method performs the same prefix normalization as XHTML (W3C
-                // decl/output MHK ruling 2019-04-11: the spec is inadequate for HTML here and the
-                // XHTML rules are treated as definitive). It comes before the void-element forms and
-                // the DOCTYPE, so they see the local names. Foreign-namespace elements keep their
-                // prefixes (XML rules). The Content-Type meta goes in <head> when include-content-type
-                // is yes (the default). Indentation: per XSLT 3.0 §20 the default is yes for
-                // html/xhtml, no for xml. The result writer does all of these in one pass.
-                var html = outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml && !foreignXhtmlRoot;
-                var effectiveIndent = outputDecl.Indent
-                    ?? (outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
-                var steps = new ResultWriter.Steps(
-                    outputDecl.EffectiveMethod,
-                    RedefaultNamespaces: html,
-                    HtmlForms: html,
-                    ContentTypeMeta: html && outputDecl.IncludeContentType != false ? outputDecl : null,
-                    Indent: effectiveIndent && outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html,
-                    outputDecl.SuppressIndentation);
-                output = ResultWriter.Write(output, steps);
-            }
         }
+        return new FinalizePlan(outputDecl, kind, foreignXhtmlRoot, resultDocCharacterMaps);
+    }
 
+    /// <summary>The steps on the markup: the text method's strip, or the result writer (html forms, Content-Type meta, indentation).</summary>
+    internal static string ApplyMarkupSteps(string output, FinalizePlan plan)
+    {
+        var outputDecl = plan.Decl;
+        if (outputDecl == null)
+            return output;
+        if (outputDecl.EffectiveMethod == OutputMethod.Text)
+        {
+            // Text output: strip all markup, return only text content.
+            // The secondary xsl:result-document path (FinalizeKind.ResultDocument) has already
+            // stripped its text content WITHOUT sentinel protection, so re-stripping here would
+            // re-process decoded markup characters and corrupt the output. Skip the strip for
+            // that path; the primary result-document path uses FinalizeKind.Primary (and sentinel
+            // escaping), so it still strips correctly here.
+            return plan.Kind != FinalizeKind.ResultDocument ? DefaultXsltExecutionContext.StripXmlMarkup(output) : output;
+        }
+        return ResultWriter.Write(output, MarkupSteps(plan));
+    }
+
+    /// <summary>The result writer's steps for a plan whose method is not text.</summary>
+    internal static ResultWriter.Steps MarkupSteps(FinalizePlan plan)
+    {
+        var outputDecl = plan.Decl!;
+        var foreignXhtmlRoot = plan.ForeignXhtmlRoot;
+        // HTML/XHTML methods: elements in the HTML5 content namespaces (XHTML, SVG, MathML)
+        // that are bound via a prefix in the result tree are serialized in the conventional
+        // default-namespace form — local element name + default xmlns declaration — and the
+        // namespace declarations for those three namespaces are prefix-normalized away
+        // (Serialization 3.0 XHTML output method; output-0211/0221/0225/0226, output-0602a/
+        // 0602b/0603a). The HTML method performs the same prefix normalization as XHTML (W3C
+        // decl/output MHK ruling 2019-04-11: the spec is inadequate for HTML here and the
+        // XHTML rules are treated as definitive). It comes before the void-element forms and
+        // the DOCTYPE, so they see the local names. Foreign-namespace elements keep their
+        // prefixes (XML rules). The Content-Type meta goes in <head> when include-content-type
+        // is yes (the default). Indentation: per XSLT 3.0 §20 the default is yes for
+        // html/xhtml, no for xml. The result writer does all of these in one pass.
+        var html = outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml && !foreignXhtmlRoot;
+        var effectiveIndent = outputDecl.Indent
+            ?? (outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
+        var steps = new ResultWriter.Steps(
+            outputDecl.EffectiveMethod,
+            RedefaultNamespaces: html,
+            HtmlForms: html,
+            ContentTypeMeta: html && outputDecl.IncludeContentType != false ? outputDecl : null,
+            Indent: effectiveIndent && outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html,
+            outputDecl.SuppressIndentation);
+        return steps;
+    }
+
+    /// <summary>
+    /// Whether <see cref="ApplyContentSteps"/> returns every text unchanged for this plan: no
+    /// character map, no normalization form, no encoding named for a markup method.
+    /// </summary>
+    internal static bool ContentStepsChangeNothing(FinalizePlan plan)
+        => plan.Decl?.UseCharacterMaps is not { Count: > 0 }
+           && plan.ResultDocCharacterMaps is not { Count: > 0 }
+           && (plan.Decl?.NormalizationForm is null
+               || plan.Decl.NormalizationForm.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
+           && (string.IsNullOrEmpty(plan.Decl?.Encoding)
+               || plan.Decl.EffectiveMethod is not (OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
+               || RepresentsAllOfUnicode(plan.Decl.Encoding));
+
+    // The UTF encodings, for which EscapeUnrepresentableCharacters returns its text as it is.
+    private static bool RepresentsAllOfUnicode(string encodingName)
+    {
+        try
+        {
+            return System.Text.Encoding.GetEncoding(encodingName).CodePage is 65001 or 1200 or 1201 or 12000 or 12001;
+        }
+        catch (ArgumentException)
+        {
+            return true; // EscapeUnrepresentableCharacters returns the text unchanged for an unknown name too
+        }
+    }
+
+    /// <summary>The steps on the characters of the result: character maps, Unicode normalization, and references for what the encoding cannot represent.</summary>
+    internal string ApplyContentSteps(string output, FinalizePlan plan)
+    {
+        var outputDecl = plan.Decl;
+        var resultDocCharacterMaps = plan.ResultDocCharacterMaps;
         // Apply character maps: merge xsl:output maps with xsl:result-document maps.
         // Per XSLT 3.0 §20: result-document maps supplement and take precedence.
         // Character maps are LOCAL to the package that declared the xsl:output referencing
@@ -1028,6 +1101,14 @@ public sealed partial class XsltTransformEngine
             output = EscapeUnrepresentableCharacters(output, outputDecl.Encoding);
         }
 
+        return output;
+    }
+
+    /// <summary>What goes before the result: the XML declaration, the DOCTYPE, the byte-order mark.</summary>
+    internal static string ApplyProlog(string output, FinalizePlan plan)
+    {
+        var outputDecl = plan.Decl;
+        var foreignXhtmlRoot = plan.ForeignXhtmlRoot;
         // Emit XML declaration if requested
         if (outputDecl != null &&
             (outputDecl.EffectiveMethod == OutputMethod.Xml || outputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
@@ -1075,6 +1156,13 @@ public sealed partial class XsltTransformEngine
             output = "\uFEFF" + output;
         }
 
+        return output;
+    }
+
+    /// <summary>The last steps: URI attributes of html and xhtml, the text sentinels, and the html method's raw-text elements.</summary>
+    internal static string ApplyFinalSteps(string output, FinalizePlan plan)
+    {
+        var outputDecl = plan.Decl;
         // escape-uri-attributes: in HTML/XHTML output, percent-encode non-ASCII characters
         // in URI-valued attributes (href, src, action, cite, data, formaction, poster, srcset, usemap)
         // when "yes" (the default). Even when "no", a URI-valued attribute still requires a literal
@@ -1116,7 +1204,6 @@ public sealed partial class XsltTransformEngine
 
         return output;
     }
-
     /// <summary>
     /// Transforms with "raw" delivery: returns the raw XDM result value(s) instead of
     /// serialized output. Used by fn:transform with delivery-format='raw'.
@@ -2484,7 +2571,7 @@ public sealed partial class XsltTransformEngine
     /// serialization parameter is present and parses to a decimal &gt;= 5.0 (leading/trailing
     /// whitespace tolerated per attribute-value normalization).
     /// </summary>
-    private static bool Html5DoctypeApplies(XsltOutput outputDecl)
+    internal static bool Html5DoctypeApplies(XsltOutput outputDecl)
     {
         var hv = outputDecl.HtmlVersion?.Trim();
         if (string.IsNullOrEmpty(hv))
@@ -2544,7 +2631,7 @@ public sealed partial class XsltTransformEngine
     /// leading processing instructions and comments, starting the scan at <paramref name="from"/>.
     /// Returns -1 if no element start tag is found.
     /// </summary>
-    private static int FindDocumentElementStart(string output, int from)
+    internal static int FindDocumentElementStart(string output, int from)
     {
         var elemStart = output.IndexOf('<', from);
         while (elemStart >= 0 && elemStart < output.Length - 1)
@@ -3003,25 +3090,6 @@ public sealed partial class XsltTransformEngine
             }
         }
 
-        HashSet<(NamespaceId, string)>? suppressed = null;
-        if (suppressIndentation is { Count: > 0 })
-        {
-            suppressed = [];
-            foreach (var name in suppressIndentation)
-                suppressed.Add((name.Namespace, name.LocalName));
-        }
-
-        // The settings XDocument.Parse reads with.
-        var readerSettings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, XmlResolver = null };
-        var writerSettings = new XmlWriterSettings
-        {
-            OmitXmlDeclaration = true, // We handle the declaration separately
-            NewLineHandling = NewLineHandling.Replace,
-            // NewLineChars defaults to Environment.NewLine, so indent="yes" wrote CRLF on
-            // Windows and LF elsewhere: the same transform gave different bytes per OS. The
-            // serializer's newline is LF everywhere, as the rest of the output already is.
-            NewLineChars = "\n",
-        };
         // Not sized up front: a StringBuilder grows by adding chunks of its own, each small, where
         // one buffer of the whole result is a single large-object-heap array, which only a full
         // collection frees. Sized for the result, it raised the committed heap of an indented
@@ -3035,114 +3103,11 @@ public sealed partial class XsltTransformEngine
             var input = new System.IO.StringReader(output);
             for (var skip = bodyStart; skip > 0; skip--)
                 input.Read();
-            using var reader = XmlReader.Create(input, readerSettings);
-            using var xw = XmlWriter.Create(sw, writerSettings);
-            var depth = 0;
-            var mixed = false;
-            // Whitespace outside the document element stops the indentation of what follows it
-            // there, but not inside the document element.
-            var topMixed = false;
-            var hasContent = false;
-            // Whether anything is written since the start or since the last text.
-            var afterMarkup = false;
-            var open = new Stack<(bool Mixed, bool HasContent)>();
-            // A newline and the indentation of each depth, made once.
-            var indents = new List<string> { "\n" };
-            // An end tag is indented by its own element's content; anything else by where it is.
-            void Indent(bool endTag = false)
-            {
-                if (!(depth == 0 && !endTag ? topMixed : mixed) && afterMarkup)
-                {
-                    while (indents.Count <= depth)
-                        indents.Add("\n" + new string(' ', indents.Count * 2));
-                    xw.WriteRaw(indents[depth]);
-                }
-            }
-            void Text()
-            {
-                mixed = true;
-                hasContent = true;
-                afterMarkup = false;
-            }
+            using var reader = XmlReader.Create(input, XmlIndenter.ReaderSettings(streamed: false));
+            using var xw = XmlWriter.Create(sw, XmlIndenter.WriterSettings(streamed: false));
+            var indenter = new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
             while (reader.Read())
-            {
-                switch (reader.NodeType)
-                {
-                    case XmlNodeType.Element:
-                        Indent();
-                        hasContent = true;
-                        var empty = reader.IsEmptyElement;
-                        var isSuppressed = suppressed is not null
-                            && suppressed.Contains((StylesheetParser.ResolveNamespaceUri(reader.NamespaceURI), reader.LocalName));
-                        xw.WriteStartElement(reader.Prefix, reader.LocalName, reader.NamespaceURI);
-                        xw.WriteAttributes(reader, defattr: true);
-                        reader.MoveToElement();
-                        afterMarkup = true;
-                        if (empty)
-                        {
-                            xw.WriteEndElement();
-                            // XmlWriter always writes "<e />". The XML method writes "<e/>", as the
-                            // unindented output does: indent="yes" changed the empty tags too.
-                            if (!xhtml)
-                            {
-                                xw.Flush();
-                                var n = buffer.Length;
-                                if (n >= 3 && buffer[n - 3] == ' ' && buffer[n - 2] == '/' && buffer[n - 1] == '>')
-                                    buffer.Remove(n - 3, 1);
-                            }
-                            break;
-                        }
-                        open.Push((mixed, hasContent));
-                        depth++;
-                        hasContent = false;
-                        if (isSuppressed)
-                            mixed = true;
-                        break;
-                    case XmlNodeType.EndElement:
-                        depth--;
-                        if (hasContent)
-                            Indent(endTag: true);
-                        xw.WriteFullEndElement();
-                        (mixed, hasContent) = open.Pop();
-                        afterMarkup = true;
-                        break;
-                    case XmlNodeType.Text:
-                        xw.WriteString(reader.Value);
-                        Text();
-                        break;
-                    case XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace:
-                        xw.WriteWhitespace(reader.Value);
-                        if (depth == 0)
-                        {
-                            topMixed = true;
-                            afterMarkup = false;
-                        }
-                        else
-                            Text();
-                        break;
-                    case XmlNodeType.CDATA:
-                        xw.WriteCData(reader.Value);
-                        Text();
-                        break;
-                    case XmlNodeType.Comment:
-                        Indent();
-                        xw.WriteComment(reader.Value);
-                        hasContent = true;
-                        afterMarkup = true;
-                        break;
-                    case XmlNodeType.ProcessingInstruction:
-                        Indent();
-                        xw.WriteProcessingInstruction(reader.Name, reader.Value);
-                        hasContent = true;
-                        afterMarkup = true;
-                        break;
-                    case XmlNodeType.DocumentType:
-                        Indent();
-                        xw.WriteDocType(reader.Name, reader.GetAttribute("PUBLIC"), reader.GetAttribute("SYSTEM"), reader.Value);
-                        afterMarkup = true;
-                        break;
-                }
-            }
+                indenter.Node(reader, XmlIndenter.HasValue(reader.NodeType) ? reader.Value : null);
         }
         catch (XmlException)
         {
@@ -5641,25 +5606,17 @@ public sealed partial class XsltTransformEngine
         // and bounds peak buffered output.
         context._streamingOutputSink = outputSink;
 
-        // For sink-driven streaming, post-processing (indentation, XML declaration, doctype,
-        // BOM, escape-uri-attributes) cannot be applied because it requires the full buffer.
-        // We emit an XML declaration up-front (when the output declaration requires one) so
-        // callers consuming the writer get a well-formed prologue.
-        if (outputSink != null)
+        // A result written to the caller's writer goes through the serialization steps a piece at
+        // a time (indentation, doctype, character maps, ...), as a whole result does at its end:
+        // they were all skipped (xslt#575). JSON, adaptive and CSV results are collected and
+        // serialized whole at the end (FinalizeJsonOutputAsync), so they keep the writer itself.
+        StreamedResultFinalizer? finalizer = null;
+        var sinkDecl = _stylesheet.PrincipalOutput;
+        if (outputSink != null && sinkDecl?.EffectiveMethod is not (OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv))
         {
-            var prologDecl = _stylesheet.PrincipalOutput;
-            if (prologDecl != null &&
-                (prologDecl.EffectiveMethod == OutputMethod.Xml || prologDecl.EffectiveMethod == OutputMethod.Xhtml) &&
-                prologDecl.OmitXmlDeclaration != true)
-            {
-                var encoding = prologDecl.Encoding ?? "UTF-8";
-                var version = prologDecl.Version ?? "1.0";
-                var decl = $"<?xml version=\"{version}\" encoding=\"{encoding}\"";
-                if (prologDecl.Standalone.HasValue)
-                    decl += prologDecl.Standalone.Value ? " standalone=\"yes\"" : " standalone=\"no\"";
-                decl += "?>";
-                await outputSink.WriteAsync(decl).ConfigureAwait(false);
-            }
+            finalizer = new StreamedResultFinalizer(this, sinkDecl, context.PrincipalOutputCharacterMaps, context.AllowedOutputMethods,
+                StreamedResultFinalizer.KeepsWhole(sinkDecl, _stylesheet), outputSink, options.CancellationToken);
+            context._streamingOutputSink = finalizer;
         }
 
         // In streaming mode the streamed source is not the global context item (XSLT 3.0
@@ -5850,7 +5807,11 @@ public sealed partial class XsltTransformEngine
             SecondaryResultDocuments = context.SecondaryResults;
 
             if (outputSink != null)
+            {
+                if (finalizer != null)
+                    await finalizer.CompleteAsync(options.CancellationToken).ConfigureAwait(false);
                 return;
+            }
 
             var docOutput = outputBuilder.ToString();
             var docOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
@@ -5875,14 +5836,15 @@ public sealed partial class XsltTransformEngine
         // Surface secondary results to the engine regardless of sink mode.
         SecondaryResultDocuments = context.SecondaryResults;
 
-        // Sink path (FinalizeKind.StreamingSink): the unified FinalizeOutput post-processing
-        // (indentation / decl / doctype / BOM / escape-uri / character maps / normalization)
-        // operates on a fully-buffered string and so cannot apply to output that was already
-        // delivered incrementally to the TextWriter sink. This is the one delivery path that
-        // intentionally does NOT route through FinalizeOutput; secondary results were already
-        // surfaced above, so we leave the builder empty and return.
+        // Sink path (FinalizeKind.StreamingSink): the result was written to the sink as it was
+        // produced, through the finalizer's serialization steps; what they still hold is written
+        // now. Secondary results were surfaced above, so the builder stays empty.
         if (outputSink != null)
+        {
+            if (finalizer != null)
+                await finalizer.CompleteAsync(options.CancellationToken).ConfigureAwait(false);
             return;
+        }
 
         var output = outputBuilder.ToString();
 

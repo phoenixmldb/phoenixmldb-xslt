@@ -74,6 +74,7 @@ public sealed partial class StylesheetParser
         ValidatePatternFunctionReferences(stylesheet);
         ValidateCallsToInaccessibleFunctions(stylesheet);
         ValidateStreamableTemplates(stylesheet);
+        stylesheet.UsesDisableOutputEscaping = _usesDisableOutputEscaping;
         return stylesheet;
     }
 
@@ -100,6 +101,7 @@ public sealed partial class StylesheetParser
         ValidatePatternFunctionReferences(stylesheet);
         ValidateCallsToInaccessibleFunctions(stylesheet);
         ValidateStreamableTemplates(stylesheet);
+        stylesheet.UsesDisableOutputEscaping = _usesDisableOutputEscaping;
         return stylesheet;
     }
 

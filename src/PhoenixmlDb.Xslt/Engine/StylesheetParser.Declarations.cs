@@ -1093,6 +1093,7 @@ public sealed partial class StylesheetParser
         var packageXml = System.IO.File.ReadAllText(packageFile);
         var packageBaseUri = new Uri(Path.GetFullPath(packageFile));
         var packageStylesheet = packageParser.Parse(packageXml, packageBaseUri, isLibraryPackage: true);
+        _usesDisableOutputEscaping |= packageParser._usesDisableOutputEscaping;
 
         // Template rules brought in via xsl:use-package have LOWER import precedence than
         // the using package's own declarations, including rules supplied inside xsl:override

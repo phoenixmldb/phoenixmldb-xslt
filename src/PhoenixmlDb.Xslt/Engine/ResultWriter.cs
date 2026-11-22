@@ -44,7 +44,27 @@ internal static class ResultWriter
 
         var sink = new Sink();
         Stage C(Stage stage) => chunk > 0 ? new Chunker(stage, chunk) : stage;
-        Stage next = sink;
+        var next = C(BuildStages(steps, sink, redefault, chunk));
+        next.Write(markup);
+        next.Finish();
+
+        var text = sink.ToString();
+        // XmlWriter's indentation reads the text the other steps wrote: an XmlReader needs it
+        // whole, and when it is not well-formed the result is that text, unindented.
+        return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(text, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml) : text;
+    }
+
+    /// <summary>
+    /// The stages of <paramref name="steps"/> other than the xml and xhtml indentation, in front of
+    /// <paramref name="sink"/>: the first one to write the markup to. With <paramref name="redefault"/>
+    /// the XHTML, SVG and MathML prefixes are taken off first. A result written while the
+    /// transformation streams goes through the same stages (StreamedResultFinalizer).
+    /// </summary>
+    internal static Stage BuildStages(in Steps steps, Stage sink, bool redefault, int chunk = 0)
+    {
+        var htmlIndent = steps.Indent && steps.Method == OutputMethod.Html;
+        Stage C(Stage stage) => chunk > 0 ? new Chunker(stage, chunk) : stage;
+        var next = sink;
         if (htmlIndent)
         {
             if (steps.SuppressIndentation is { Count: > 0 })
@@ -57,18 +77,9 @@ internal static class ResultWriter
             next = C(new BooleanAttributeStage(next));
         if (steps.HtmlForms)
             next = C(new HtmlFormsStage(next, steps.Method == OutputMethod.Xhtml));
-        next = C(next);
-
         if (redefault)
-            RedefaultNamespaces(markup, next);
-        else
-            next.Write(markup);
-        next.Finish();
-
-        var text = sink.ToString();
-        // XmlWriter's indentation reads the text the other steps wrote: an XmlReader needs it
-        // whole, and when it is not well-formed the result is that text, unindented.
-        return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(text, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml) : text;
+            next = C(new RedefaultNamespacesStage(next));
+        return next;
     }
 
     // ── stages ──
@@ -104,7 +115,7 @@ internal static class ResultWriter
     /// from the text it has, and keeps the rest (an unfinished tag, a head up to its end tag)
     /// for the next piece, or for the end, where it does what the whole-text pass did there.
     /// </summary>
-    private abstract class BufferedStage(Stage next) : Stage
+    internal abstract class BufferedStage(Stage next) : Stage
     {
         protected readonly Stage Next = next;
         private char[] _buf = new char[256];
@@ -130,8 +141,10 @@ internal static class ResultWriter
             if (used <= 0) return;
             _buf.AsSpan(used, _len - used).CopyTo(_buf);
             _len -= used;
-            // A head held for its end tag can be large; do not keep its buffer after it.
-            if (_buf.Length > 4096 && _len < 1024)
+            // A head held for its end tag can be large; do not keep its buffer after it. A buffer
+            // of up to 64K is kept: a streamed result comes in pieces of a few kilobytes, and its
+            // buffer was made again, larger and then smaller, for every one of them (xslt#575).
+            if (_buf.Length > 1 << 16 && _len < 1024)
                 Array.Resize(ref _buf, Math.Max(256, _len));
         }
 
@@ -145,282 +158,306 @@ internal static class ResultWriter
     /// An element bound to the XHTML, SVG or MathML namespace by a prefix is written with its
     /// local name and, where needed, a default namespace declaration; declarations of those three
     /// namespaces are dropped, and one is declared again for a prefixed attribute that needs it
-    /// (Serialization 3.0, XHTML output method; W3C output-0211/0221/0225/0226). It is the first
-    /// step, so it reads the whole markup, which is already in memory.
+    /// (Serialization 3.0, XHTML output method; W3C output-0211/0221/0225/0226). It reads the
+    /// markup a token at a time, keeping an unfinished one for the next piece, so it also serves a
+    /// result that is written while the transformation streams (xslt#575).
     /// </summary>
-    private static void RedefaultNamespaces(string output, Stage sb)
+    private sealed class RedefaultNamespacesStage(Stage next) : BufferedStage(next)
     {
-        static bool IsWs(char c) => c == ' ' || c == '\t' || c == '\n' || c == '\r';
+        private readonly List<Dictionary<string, string>> _inputScopes = new();
+        private readonly List<string> _outDefaults = new();
+        private readonly List<Dictionary<string, string>> _outPrefixDecls = new();
+        private readonly List<string> _openNames = new();
 
-        var inputScopes = new List<Dictionary<string, string>>();
-        var outDefaults = new List<string>();
-        var outPrefixDecls = new List<Dictionary<string, string>>();
-        var openNames = new List<string>();
+        private static bool IsWs(char c) => c == ' ' || c == '\t' || c == '\n' || c == '\r';
 
-        int i = 0, n = output.Length;
-        while (i < n)
+        // Whether the rest could still become this token with more text.
+        private static bool MayBecome(ReadOnlySpan<char> rest, string token)
+            => rest.Length < token.Length && token.AsSpan().StartsWith(rest, StringComparison.Ordinal);
+
+        protected override int Process(ReadOnlySpan<char> s, bool final)
         {
-            char c = output[i];
-            if (c != '<')
+            int i = 0, n = s.Length;
+            while (i < n)
             {
-                var lt = output.IndexOf('<', i);
-                var end = lt < 0 ? n : lt;
-                sb.Write(output.AsSpan(i, end - i));
-                i = end;
-                continue;
-            }
+                char c = s[i];
+                if (c != '<')
+                {
+                    var lt = s[i..].IndexOf('<');
+                    var end = lt < 0 ? n : i + lt;
+                    Next.Write(s[i..end]);
+                    i = end;
+                    continue;
+                }
 
-            char c1 = i + 1 < n ? output[i + 1] : '\0';
-            if (c1 == '!')
-            {
-                if (output.AsSpan(i).StartsWith("<!--"))
+                if (!final && (i + 1 >= n || MayBecome(s[i..], "<!--") || MayBecome(s[i..], "<![CDATA[")))
+                    return i;
+                char c1 = i + 1 < n ? s[i + 1] : '\0';
+                if (c1 == '!')
                 {
-                    int end = output.IndexOf("-->", i + 4, StringComparison.Ordinal);
-                    end = end < 0 ? n : end + 3;
-                    sb.Write(output.AsSpan(i, end - i));
+                    if (s[i..].StartsWith("<!--", StringComparison.Ordinal))
+                    {
+                        int close = i + 4 <= n ? s[(i + 4)..].IndexOf("-->", StringComparison.Ordinal) : -1;
+                        if (close < 0 && !final)
+                            return i;
+                        int end = close < 0 ? n : i + 4 + close + 3;
+                        Next.Write(s[i..end]);
+                        i = end;
+                        continue;
+                    }
+                    if (s[i..].StartsWith("<![CDATA[", StringComparison.Ordinal))
+                    {
+                        int close = i + 9 <= n ? s[(i + 9)..].IndexOf("]]>", StringComparison.Ordinal) : -1;
+                        if (close < 0 && !final)
+                            return i;
+                        int end = close < 0 ? n : i + 9 + close + 3;
+                        Next.Write(s[i..end]);
+                        i = end;
+                        continue;
+                    }
+                    int gt0 = s[i..].IndexOf('>');
+                    if (gt0 < 0 && !final)
+                        return i;
+                    gt0 = gt0 < 0 ? n : i + gt0 + 1;
+                    Next.Write(s[i..gt0]);
+                    i = gt0;
+                    continue;
+                }
+                if (c1 == '?')
+                {
+                    int close = i + 2 <= n ? s[(i + 2)..].IndexOf("?>", StringComparison.Ordinal) : -1;
+                    if (close < 0 && !final)
+                        return i;
+                    int end = close < 0 ? n : i + 2 + close + 2;
+                    Next.Write(s[i..end]);
                     i = end;
                     continue;
                 }
-                if (output.AsSpan(i).StartsWith("<![CDATA["))
+                if (c1 == '/')
                 {
-                    int end = output.IndexOf("]]>", i + 9, StringComparison.Ordinal);
-                    end = end < 0 ? n : end + 3;
-                    sb.Write(output.AsSpan(i, end - i));
-                    i = end;
+                    int gtAt = s[i..].IndexOf('>');
+                    if (gtAt < 0)
+                    {
+                        if (!final)
+                            return i;
+                        Next.Write(s[i..n]);
+                        i = n;
+                        continue;
+                    }
+                    int gt = i + gtAt;
+                    string emit;
+                    if (_openNames.Count > 0)
+                    {
+                        emit = _openNames[^1];
+                        _openNames.RemoveAt(_openNames.Count - 1);
+                    }
+                    else
+                    {
+                        emit = s.Slice(i + 2, gt - (i + 2)).ToString();
+                    }
+                    if (_inputScopes.Count > 0)
+                        _inputScopes.RemoveAt(_inputScopes.Count - 1);
+                    if (_outDefaults.Count > 0)
+                        _outDefaults.RemoveAt(_outDefaults.Count - 1);
+                    if (_outPrefixDecls.Count > 0)
+                        _outPrefixDecls.RemoveAt(_outPrefixDecls.Count - 1);
+                    Next.Write("</");
+                    Next.Write(emit);
+                    Next.Write('>');
+                    i = gt + 1;
                     continue;
                 }
-                int gt0 = output.IndexOf('>', i);
-                gt0 = gt0 < 0 ? n : gt0 + 1;
-                sb.Write(output.AsSpan(i, gt0 - i));
-                i = gt0;
-                continue;
-            }
-            if (c1 == '?')
-            {
-                int end = output.IndexOf("?>", i + 2, StringComparison.Ordinal);
-                end = end < 0 ? n : end + 2;
-                sb.Write(output.AsSpan(i, end - i));
-                i = end;
-                continue;
-            }
-            if (c1 == '/')
-            {
-                int gt = output.IndexOf('>', i);
-                if (gt < 0)
+
+                int p = i + 1;
+                while (p < n && s[p] != '>')
                 {
-                    sb.Write(output.AsSpan(i, n - i));
+                    if (s[p] == '"' || s[p] == '\'')
+                    {
+                        char q = s[p];
+                        p++;
+                        while (p < n && s[p] != q)
+                            p++;
+                    }
+                    p++;
+                }
+                if (p >= n)
+                {
+                    if (!final)
+                        return i;
+                    Next.Write(s[i..n]);
                     i = n;
                     continue;
                 }
-                string emit;
-                if (openNames.Count > 0)
-                {
-                    emit = openNames[^1];
-                    openNames.RemoveAt(openNames.Count - 1);
-                }
-                else
-                {
-                    emit = output.Substring(i + 2, gt - (i + 2));
-                }
-                if (inputScopes.Count > 0)
-                    inputScopes.RemoveAt(inputScopes.Count - 1);
-                if (outDefaults.Count > 0)
-                    outDefaults.RemoveAt(outDefaults.Count - 1);
-                if (outPrefixDecls.Count > 0)
-                    outPrefixDecls.RemoveAt(outPrefixDecls.Count - 1);
-                sb.Write("</");
-                sb.Write(emit);
-                sb.Write('>');
-                i = gt + 1;
-                continue;
-            }
+                bool selfClose = s[p - 1] == '/';
+                int innerEnd = selfClose ? p - 1 : p;
+                string inner = s.Slice(i + 1, innerEnd - (i + 1)).ToString();
 
-            int p = i + 1;
-            while (p < n && output[p] != '>')
-            {
-                if (output[p] == '"' || output[p] == '\'')
-                {
-                    char q = output[p];
-                    p++;
-                    while (p < n && output[p] != q)
-                        p++;
-                }
-                p++;
-            }
-            if (p >= n)
-            {
-                sb.Write(output.AsSpan(i, n - i));
-                i = n;
-                continue;
-            }
-            bool selfClose = output[p - 1] == '/';
-            int innerEnd = selfClose ? p - 1 : p;
-            string inner = output.Substring(i + 1, innerEnd - (i + 1));
+                int k = 0;
+                while (k < inner.Length && !IsWs(inner[k]))
+                    k++;
+                string qname = inner[..k];
+                string attrsPart = inner[k..];
 
-            int k = 0;
-            while (k < inner.Length && !IsWs(inner[k]))
-                k++;
-            string qname = inner[..k];
-            string attrsPart = inner[k..];
-
-            var attrs = new List<(string ws, string name, string eqValue)>();
-            string trailing = "";
-            int a = 0;
-            while (a < attrsPart.Length)
-            {
-                int wsStart = a;
-                while (a < attrsPart.Length && IsWs(attrsPart[a]))
-                    a++;
-                string ws = attrsPart[wsStart..a];
-                if (a >= attrsPart.Length)
+                var attrs = new List<(string ws, string name, string eqValue)>();
+                string trailing = "";
+                int a = 0;
+                while (a < attrsPart.Length)
                 {
-                    trailing = ws;
-                    break;
-                }
-                int nameStart = a;
-                while (a < attrsPart.Length && attrsPart[a] != '=' && !IsWs(attrsPart[a]))
-                    a++;
-                string name = attrsPart[nameStart..a];
-                while (a < attrsPart.Length && IsWs(attrsPart[a]))
-                    a++;
-                string eqValue = "";
-                if (a < attrsPart.Length && attrsPart[a] == '=')
-                {
-                    int evStart = a;
-                    a++;
+                    int wsStart = a;
                     while (a < attrsPart.Length && IsWs(attrsPart[a]))
                         a++;
-                    if (a < attrsPart.Length && (attrsPart[a] == '"' || attrsPart[a] == '\''))
+                    string ws = attrsPart[wsStart..a];
+                    if (a >= attrsPart.Length)
                     {
-                        char q = attrsPart[a];
-                        a++;
-                        while (a < attrsPart.Length && attrsPart[a] != q)
-                            a++;
-                        if (a < attrsPart.Length)
-                            a++;
+                        trailing = ws;
+                        break;
                     }
-                    eqValue = attrsPart[evStart..a];
+                    int nameStart = a;
+                    while (a < attrsPart.Length && attrsPart[a] != '=' && !IsWs(attrsPart[a]))
+                        a++;
+                    string name = attrsPart[nameStart..a];
+                    while (a < attrsPart.Length && IsWs(attrsPart[a]))
+                        a++;
+                    string eqValue = "";
+                    if (a < attrsPart.Length && attrsPart[a] == '=')
+                    {
+                        int evStart = a;
+                        a++;
+                        while (a < attrsPart.Length && IsWs(attrsPart[a]))
+                            a++;
+                        if (a < attrsPart.Length && (attrsPart[a] == '"' || attrsPart[a] == '\''))
+                        {
+                            char q = attrsPart[a];
+                            a++;
+                            while (a < attrsPart.Length && attrsPart[a] != q)
+                                a++;
+                            if (a < attrsPart.Length)
+                                a++;
+                        }
+                        eqValue = attrsPart[evStart..a];
+                    }
+                    attrs.Add((ws, name, eqValue));
                 }
-                attrs.Add((ws, name, eqValue));
-            }
 
-            var localDecls = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var (_, name, eqValue) in attrs)
-            {
-                if (name == "xmlns")
-                    localDecls[""] = DefaultXsltExecutionContext.ExtractQuotedValue(eqValue);
-                else if (name.StartsWith("xmlns:", StringComparison.Ordinal))
-                    localDecls[name[6..]] = DefaultXsltExecutionContext.ExtractQuotedValue(eqValue);
-            }
-
-            string prefix = "";
-            string local = qname;
-            int colon = qname.IndexOf(':', StringComparison.Ordinal);
-            if (colon >= 0)
-            {
-                prefix = qname[..colon];
-                local = qname[(colon + 1)..];
-            }
-
-            string InputLookup(string pfx)
-            {
-                if (localDecls.TryGetValue(pfx, out var lv))
-                    return lv;
-                for (int s = inputScopes.Count - 1; s >= 0; s--)
-                    if (inputScopes[s].TryGetValue(pfx, out var v))
-                        return v;
-                return "";
-            }
-            string OutLookupPrefix(string pfx)
-            {
-                for (int s = outPrefixDecls.Count - 1; s >= 0; s--)
-                    if (outPrefixDecls[s].TryGetValue(pfx, out var v))
-                        return v;
-                return "";
-            }
-            string OutDefault() => outDefaults.Count > 0 ? outDefaults[^1] : "";
-
-            string elemUri = InputLookup(prefix);
-            bool strip = prefix.Length > 0 && DefaultXsltExecutionContext.Html5ContentNamespaces.Contains(elemUri);
-            bool unprefixedOut = strip || prefix.Length == 0;
-            string outName = strip ? local : qname;
-
-            bool hasOwnDefaultDecl = localDecls.ContainsKey("");
-            string curDefault = OutDefault();
-            string newDefault = curDefault;
-            string? addDefaultDecl = null;
-            if (unprefixedOut)
-            {
-                string wantUri = elemUri;
-                if (hasOwnDefaultDecl)
-                    newDefault = localDecls[""];
-                else if (wantUri != curDefault)
+                var localDecls = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var (_, name, eqValue) in attrs)
                 {
-                    addDefaultDecl = wantUri;
-                    newDefault = wantUri;
+                    if (name == "xmlns")
+                        localDecls[""] = DefaultXsltExecutionContext.ExtractQuotedValue(eqValue);
+                    else if (name.StartsWith("xmlns:", StringComparison.Ordinal))
+                        localDecls[name[6..]] = DefaultXsltExecutionContext.ExtractQuotedValue(eqValue);
                 }
-            }
 
-            var emittedPrefixDecls = new Dictionary<string, string>(StringComparer.Ordinal);
-            var neededAttrDecls = new List<(string prefix, string uri)>();
-            var attrsBuilder = new StringBuilder();
-            foreach (var (ws, name, eqValue) in attrs)
-            {
-                if (name == "xmlns")
+                string prefix = "";
+                string local = qname;
+                int colon = qname.IndexOf(':', StringComparison.Ordinal);
+                if (colon >= 0)
                 {
-                    attrsBuilder.Append(ws).Append(name).Append(eqValue);
-                    continue;
+                    prefix = qname[..colon];
+                    local = qname[(colon + 1)..];
                 }
-                if (name.StartsWith("xmlns:", StringComparison.Ordinal))
+
+                string InputLookup(string pfx)
                 {
-                    string dpfx = name[6..];
-                    string duri = DefaultXsltExecutionContext.ExtractQuotedValue(eqValue);
-                    if (DefaultXsltExecutionContext.Html5ContentNamespaces.Contains(duri))
+                    if (localDecls.TryGetValue(pfx, out var lv))
+                        return lv;
+                    for (int s = _inputScopes.Count - 1; s >= 0; s--)
+                        if (_inputScopes[s].TryGetValue(pfx, out var v))
+                            return v;
+                    return "";
+                }
+                string OutLookupPrefix(string pfx)
+                {
+                    for (int s = _outPrefixDecls.Count - 1; s >= 0; s--)
+                        if (_outPrefixDecls[s].TryGetValue(pfx, out var v))
+                            return v;
+                    return "";
+                }
+                string OutDefault() => _outDefaults.Count > 0 ? _outDefaults[^1] : "";
+
+                string elemUri = InputLookup(prefix);
+                bool strip = prefix.Length > 0 && DefaultXsltExecutionContext.Html5ContentNamespaces.Contains(elemUri);
+                bool unprefixedOut = strip || prefix.Length == 0;
+                string outName = strip ? local : qname;
+
+                bool hasOwnDefaultDecl = localDecls.ContainsKey("");
+                string curDefault = OutDefault();
+                string newDefault = curDefault;
+                string? addDefaultDecl = null;
+                if (unprefixedOut)
+                {
+                    string wantUri = elemUri;
+                    if (hasOwnDefaultDecl)
+                        newDefault = localDecls[""];
+                    else if (wantUri != curDefault)
+                    {
+                        addDefaultDecl = wantUri;
+                        newDefault = wantUri;
+                    }
+                }
+
+                var emittedPrefixDecls = new Dictionary<string, string>(StringComparer.Ordinal);
+                var neededAttrDecls = new List<(string prefix, string uri)>();
+                var attrsBuilder = new StringBuilder();
+                foreach (var (ws, name, eqValue) in attrs)
+                {
+                    if (name == "xmlns")
+                    {
+                        attrsBuilder.Append(ws).Append(name).Append(eqValue);
                         continue;
+                    }
+                    if (name.StartsWith("xmlns:", StringComparison.Ordinal))
+                    {
+                        string dpfx = name[6..];
+                        string duri = DefaultXsltExecutionContext.ExtractQuotedValue(eqValue);
+                        if (DefaultXsltExecutionContext.Html5ContentNamespaces.Contains(duri))
+                            continue;
+                        attrsBuilder.Append(ws).Append(name).Append(eqValue);
+                        emittedPrefixDecls[dpfx] = duri;
+                        continue;
+                    }
                     attrsBuilder.Append(ws).Append(name).Append(eqValue);
-                    emittedPrefixDecls[dpfx] = duri;
-                    continue;
+                    int ac = name.IndexOf(':', StringComparison.Ordinal);
+                    if (ac > 0)
+                    {
+                        string apfx = name[..ac];
+                        string auri = InputLookup(apfx);
+                        if (DefaultXsltExecutionContext.Html5ContentNamespaces.Contains(auri))
+                            neededAttrDecls.Add((apfx, auri));
+                    }
                 }
-                attrsBuilder.Append(ws).Append(name).Append(eqValue);
-                int ac = name.IndexOf(':', StringComparison.Ordinal);
-                if (ac > 0)
+
+                var tag = new StringBuilder();
+                tag.Append('<').Append(outName);
+                if (addDefaultDecl != null)
+                    tag.Append(" xmlns=\"").Append(addDefaultDecl).Append('"');
+                tag.Append(attrsBuilder);
+                foreach (var (apfx, auri) in neededAttrDecls)
                 {
-                    string apfx = name[..ac];
-                    string auri = InputLookup(apfx);
-                    if (DefaultXsltExecutionContext.Html5ContentNamespaces.Contains(auri))
-                        neededAttrDecls.Add((apfx, auri));
+                    if (emittedPrefixDecls.TryGetValue(apfx, out var already) && already == auri)
+                        continue;
+                    if (OutLookupPrefix(apfx) == auri)
+                        continue;
+                    tag.Append(" xmlns:").Append(apfx).Append("=\"").Append(auri).Append('"');
+                    emittedPrefixDecls[apfx] = auri;
                 }
-            }
+                tag.Append(trailing);
+                if (selfClose)
+                    tag.Append('/');
+                tag.Append('>');
+                foreach (var chunk in tag.GetChunks())
+                    Next.Write(chunk.Span);
 
-            var tag = new StringBuilder();
-            tag.Append('<').Append(outName);
-            if (addDefaultDecl != null)
-                tag.Append(" xmlns=\"").Append(addDefaultDecl).Append('"');
-            tag.Append(attrsBuilder);
-            foreach (var (apfx, auri) in neededAttrDecls)
-            {
-                if (emittedPrefixDecls.TryGetValue(apfx, out var already) && already == auri)
-                    continue;
-                if (OutLookupPrefix(apfx) == auri)
-                    continue;
-                tag.Append(" xmlns:").Append(apfx).Append("=\"").Append(auri).Append('"');
-                emittedPrefixDecls[apfx] = auri;
+                if (!selfClose)
+                {
+                    _inputScopes.Add(new Dictionary<string, string>(localDecls, StringComparer.Ordinal));
+                    _outDefaults.Add(newDefault);
+                    _outPrefixDecls.Add(emittedPrefixDecls);
+                    _openNames.Add(outName);
+                }
+                i = p + 1;
             }
-            tag.Append(trailing);
-            if (selfClose)
-                tag.Append('/');
-            tag.Append('>');
-            foreach (var chunk in tag.GetChunks())
-                sb.Write(chunk.Span);
-
-            if (!selfClose)
-            {
-                inputScopes.Add(new Dictionary<string, string>(localDecls, StringComparer.Ordinal));
-                outDefaults.Add(newDefault);
-                outPrefixDecls.Add(emittedPrefixDecls);
-                openNames.Add(outName);
-            }
-            i = p + 1;
+            return n;
         }
     }
 
