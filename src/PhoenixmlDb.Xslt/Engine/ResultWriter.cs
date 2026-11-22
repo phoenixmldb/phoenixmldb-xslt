@@ -141,8 +141,10 @@ internal static class ResultWriter
             if (used <= 0) return;
             _buf.AsSpan(used, _len - used).CopyTo(_buf);
             _len -= used;
-            // A head held for its end tag can be large; do not keep its buffer after it.
-            if (_buf.Length > 4096 && _len < 1024)
+            // A head held for its end tag can be large; do not keep its buffer after it. A buffer
+            // of up to 64K is kept: a streamed result comes in pieces of a few kilobytes, and its
+            // buffer was made again, larger and then smaller, for every one of them (xslt#575).
+            if (_buf.Length > 1 << 16 && _len < 1024)
                 Array.Resize(ref _buf, Math.Max(256, _len));
         }
 

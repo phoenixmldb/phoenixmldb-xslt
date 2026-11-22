@@ -52,13 +52,18 @@ internal sealed class StreamedResultFinalizer : TextWriter
 
     private ResultWriter.Stage? _head;
     private ResultShapeTracker? _shape;
-    private readonly StringBuilder _pending = new();
+    private readonly PendingBuffer _pending = new();
 
     // The xml and xhtml indentation reads the markup with an XmlReader, which pulls; it runs as
     // its own task over a bounded channel, and writes everything after it.
     private Channel<string>? _toIndent;
     private StringBuilder? _indentInput;
     private Task? _pump;
+
+    // What the steps write goes to the caller's writer (or to the indentation) in pieces of at
+    // least this many characters: a write per event cost three asynchronous calls and their state
+    // each time the writer did not finish at once (a file), more than the steps themselves.
+    private const int WriteThreshold = 8192;
 
     /// <summary>The most characters any step held at once (tests: memory is bounded).</summary>
     internal int MaxHeld { get; private set; }
@@ -101,14 +106,14 @@ internal sealed class StreamedResultFinalizer : TextWriter
     public override Task WriteAsync(char[] buffer, int index, int count)
         => WriteAsync(buffer.AsMemory(index, count), _cancellation);
 
-    public override async Task WriteAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default)
+    public override Task WriteAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default)
     {
         if (buffer.IsEmpty)
-            return;
+            return Task.CompletedTask;
         if (_whole is not null)
         {
             _whole.Append(buffer.Span);
-            return;
+            return Task.CompletedTask;
         }
         if (_gate is not null)
         {
@@ -117,7 +122,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
             var held = _gate.ToString();
             var root = XsltTransformEngine.FindDocumentElementStart(held, 0);
             if (root < 0 || held.IndexOf('>', root) < 0)
-                return;
+                return Task.CompletedTask;
             _gate = null;
             Open(held);
         }
@@ -126,7 +131,9 @@ internal sealed class StreamedResultFinalizer : TextWriter
             _shape?.Write(buffer.Span);
             _head!.Write(buffer.Span);
         }
-        await AfterWriteAsync(cancellationToken).ConfigureAwait(false);
+        if (_toIndent is not null)
+            return _indentInput!.Length >= WriteThreshold ? SendToIndentAsync(cancellationToken) : Task.CompletedTask;
+        return _pending.Length >= WriteThreshold ? FlushPendingAsync(cancellationToken) : Task.CompletedTask;
     }
 
     /// <summary>Writes the rest of the result: what the steps still hold, and anything held for the end.</summary>
@@ -172,8 +179,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
             _allowedMethods, explicitResultDocument: false);
         _shape = ResultShapeTracker.For(plan.Decl, this);
 
-        ResultWriter.Stage sink = new PendingStage(_pending);
-        var final = new FinalStage(plan, sink);
+        var final = new FinalStage(plan, _pending);
         var prolog = new PrologStage(plan, final, this);
         var content = new ContentStage(_owner, plan, prolog);
         var method = plan.Decl?.EffectiveMethod;
@@ -205,14 +211,6 @@ internal sealed class StreamedResultFinalizer : TextWriter
         }
     }
 
-    private async Task AfterWriteAsync(CancellationToken cancellationToken)
-    {
-        if (_toIndent is not null)
-            await SendToIndentAsync(cancellationToken).ConfigureAwait(false);
-        else
-            await FlushPendingAsync(cancellationToken).ConfigureAwait(false);
-    }
-
     private async Task SendToIndentAsync(CancellationToken cancellationToken)
     {
         if (_indentInput!.Length == 0)
@@ -236,8 +234,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
         if (_pending.Length == 0)
             return;
         Held(_pending.Length);
-        foreach (var chunk in _pending.GetChunks())
-            await _sink.WriteAsync(chunk, cancellationToken).ConfigureAwait(false);
+        await _sink.WriteAsync(_pending.Memory, cancellationToken).ConfigureAwait(false);
         _pending.Clear();
     }
 
@@ -284,18 +281,47 @@ internal sealed class StreamedResultFinalizer : TextWriter
         }
     }
 
-    private async Task PassOnAsync(StringBuilder buffer, ResultWriter.Stage next)
+    private Task PassOnAsync(StringBuilder buffer, ResultWriter.Stage next)
     {
-        if (buffer.Length == 0)
-            return;
-        Held(buffer.Length);
-        foreach (var chunk in buffer.GetChunks())
-            next.Write(chunk.Span);
-        buffer.Clear();
-        await FlushPendingAsync(_cancellation).ConfigureAwait(false);
+        if (buffer.Length > 0)
+        {
+            Held(buffer.Length);
+            foreach (var chunk in buffer.GetChunks())
+                next.Write(chunk.Span);
+            buffer.Clear();
+        }
+        return _pending.Length >= WriteThreshold ? FlushPendingAsync(_cancellation) : Task.CompletedTask;
     }
 
     // ── stages after the markup steps ──
+
+    /// <summary>What the steps wrote, for the caller's writer: one buffer, used again for each write.</summary>
+    private sealed class PendingBuffer : ResultWriter.Stage
+    {
+        private char[] _buf = new char[4096];
+
+        public int Length { get; private set; }
+
+        public ReadOnlyMemory<char> Memory => _buf.AsMemory(0, Length);
+
+        public override void Write(ReadOnlySpan<char> text)
+        {
+            if (Length + text.Length > _buf.Length)
+                Array.Resize(ref _buf, Math.Max(_buf.Length * 2, Length + text.Length));
+            text.CopyTo(_buf.AsSpan(Length));
+            Length += text.Length;
+        }
+
+        public override void Finish() { }
+
+        public void Clear()
+        {
+            Length = 0;
+            // One very large write (a long text) does not keep its buffer.
+            if (_buf.Length > 1 << 20)
+                _buf = new char[4096];
+        }
+    }
 
     private sealed class PendingStage(StringBuilder pending) : ResultWriter.Stage
     {

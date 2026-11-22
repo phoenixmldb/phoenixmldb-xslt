@@ -149,9 +149,10 @@ public class StreamedSerializationTests
     [InlineData(4096)]
     public async Task ALargeStreamedResultIsSerializedWithBoundedMemory(int chunk)
     {
-        // The finalizer holds a tag, a head, the text between two tags: never the result. Fed the
+        // The finalizer holds a tag, a head, the text between two tags, and what it writes on to
+        // the caller's writer in pieces of at least 8K characters: never the result. Fed the
         // result of 20 000 items a piece at a time, it writes what FinalizeOutput writes for the
-        // whole, and never holds more than a few hundred characters.
+        // whole, and never holds more than 16K characters.
         var stylesheet = new StylesheetParser(new XQueryExpressionParser()).Parse(Stylesheet(
             """method="html" version="5.0" use-character-maps="m" """, "",
             """<xsl:character-map name="m"><xsl:output-character character="~" string="&amp;tilde;"/></xsl:character-map>"""));
@@ -170,7 +171,7 @@ public class StreamedSerializationTests
         await finalizer.CompleteAsync(default);
 
         sink.ToString().Should().Be(engine.FinalizeOutput(whole, decl, null, XsltTransformEngine.FinalizeKind.StreamingBuffered));
-        finalizer.MaxHeld.Should().BeLessThan(Math.Max(1024, chunk * 4), "the finalizer must not keep the result");
+        finalizer.MaxHeld.Should().BeLessThan(Math.Max(16_384, chunk * 4), "the finalizer must not keep the result");
     }
 
     [Fact]
@@ -192,7 +193,7 @@ public class StreamedSerializationTests
         await finalizer.CompleteAsync(default);
 
         sink.ToString().Should().Be(engine.FinalizeOutput(whole, decl, null, XsltTransformEngine.FinalizeKind.StreamingBuffered));
-        finalizer.MaxHeld.Should().BeLessThan(8192, "the finalizer must not keep the result");
+        finalizer.MaxHeld.Should().BeLessThan(16_384, "the finalizer must not keep the result");
     }
 
     private static async Task<(string Streamed, string Tree)> BothAsync(string xslt, string input)
