@@ -57,6 +57,12 @@ public sealed partial class XsltTransformEngine
     public IReadOnlyDictionary<string, string> SecondaryResultDocuments { get; private set; }
         = new Dictionary<string, string>();
 
+    /// <summary>
+    /// The principal result of the last transformation as the markup of its tree, before it was
+    /// serialized, when <see cref="XsltTransformOptions.KeepResultMarkup"/> asked for it.
+    /// </summary>
+    internal string? ResultMarkup { get; private set; }
+
     /// <summary>The principal result as a typed tree; see <see cref="XsltTransformer.PrincipalResultTree"/>.</summary>
     internal XsltResultTree? PrincipalResultTree { get; private set; }
 
@@ -606,6 +612,8 @@ public sealed partial class XsltTransformEngine
         // Apply output method post-processing
         // When result-document claimed primary output with a named format, use that declaration
         var outputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
+        if (options.KeepResultMarkup)
+            ResultMarkup = output;
         return FinalizeOutput(output, outputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.Primary, context.AllowedOutputMethods,
             explicitResultDocument: context.PrimaryOutputClaimedByResultDocument);
     }
@@ -5615,7 +5623,10 @@ public sealed partial class XsltTransformEngine
         if (outputSink != null && sinkDecl?.EffectiveMethod is not (OutputMethod.Json or OutputMethod.Adaptive or OutputMethod.Csv))
         {
             finalizer = new StreamedResultFinalizer(this, sinkDecl, context.PrincipalOutputCharacterMaps, context.AllowedOutputMethods,
-                StreamedResultFinalizer.KeepsWhole(sinkDecl, _stylesheet), outputSink, options.CancellationToken);
+                StreamedResultFinalizer.KeepsWhole(sinkDecl, _stylesheet), outputSink, options.CancellationToken)
+            {
+                Markup = options.KeepResultMarkup ? new StringBuilder() : null,
+            };
             context._streamingOutputSink = finalizer;
         }
 
@@ -5809,12 +5820,17 @@ public sealed partial class XsltTransformEngine
             if (outputSink != null)
             {
                 if (finalizer != null)
+                {
                     await finalizer.CompleteAsync(options.CancellationToken).ConfigureAwait(false);
+                    ResultMarkup = finalizer.Markup?.ToString();
+                }
                 return;
             }
 
             var docOutput = outputBuilder.ToString();
             var docOutDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
+            if (options.KeepResultMarkup)
+                ResultMarkup = docOutput;
             docOutput = FinalizeOutput(docOutput, docOutDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered, context.AllowedOutputMethods);
             outputBuilder.Clear();
             outputBuilder.Append(docOutput);
@@ -5842,7 +5858,10 @@ public sealed partial class XsltTransformEngine
         if (outputSink != null)
         {
             if (finalizer != null)
+            {
                 await finalizer.CompleteAsync(options.CancellationToken).ConfigureAwait(false);
+                ResultMarkup = finalizer.Markup?.ToString();
+            }
             return;
         }
 
@@ -5856,6 +5875,8 @@ public sealed partial class XsltTransformEngine
         // step for XML/HTML/XHTML methods, so JSON already serialized via FinalizeJsonOutput above
         // is not re-indented or corrupted.
         var streamOutputDecl = context.PrimaryOutputMatchedDeclaration ?? _stylesheet.PrincipalOutput;
+        if (options.KeepResultMarkup)
+            ResultMarkup = output;
         output = FinalizeOutput(output, streamOutputDecl, context.PrincipalOutputCharacterMaps, FinalizeKind.StreamingBuffered, context.AllowedOutputMethods);
 
         // Replace the builder's contents with the post-processed output so the calling

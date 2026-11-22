@@ -1135,7 +1135,9 @@ public sealed class XsltTestRunner
                 // DOCTYPE (entity definitions, DocBook's common.xsl). The engine prohibits
                 // DTDs unless asked — the right default for arbitrary input, wrong for a
                 // conformance run, which must parse what the suite actually ships.
-                var transformer = new XsltTransformer { AllowDtdProcessing = true };
+                // KeepResultMarkup: the principal result is also kept as the markup of its tree, for
+                // the assertions that address the tree when the stylesheet serializes it as text.
+                var transformer = new XsltTransformer { AllowDtdProcessing = true, KeepResultMarkup = true };
                 // The streaming sets are run as a streaming processor is required to run them
                 // (XSLT 3.0 §19.10): a construct that is not guaranteed-streamable is XTSE3430,
                 // not a silent fall back to a buffered copy. That is StrictStreamability, which
@@ -1306,16 +1308,21 @@ public sealed class XsltTestRunner
                 // element(*, xs:untyped))`); the text read again is untyped.
                 if (transformer.PrincipalResultTree is { } resultTree)
                     TypedResults.AddOrUpdate(primaryOutput, new TypedResult(resultTree, transformer.SchemaProvider));
-                return (primaryOutput, transformer.SecondaryResultDocuments);
+                // The result tree of a result the text method serialized: <assert> and <assert-xml>
+                // address the tree, which the serialized text no longer is (W3C si-value-of-102:
+                // method="text", /out/row[1] = "a1,b1,default").
+                var principalMethod = transformer.OutputDeclarations.FirstOrDefault(d => d.Name is null)?.EffectiveMethod;
+                var tree = principalMethod == PhoenixmlDb.Xslt.Ast.OutputMethod.Text ? transformer.LastResultMarkup : null;
+                return (primaryOutput, transformer.SecondaryResultDocuments, tree);
             }, cts.Token);
 
-            var (output, secondaryResults) = await transformTask.WaitAsync(cts.Token);
+            var (output, secondaryResults, treeResult) = await transformTask.WaitAsync(cts.Token);
             result.ActualResult = output;
 
             // Verify assertions (pass secondary results for assert-result-document, and the
             // warnings the transform reported for assert-warning)
             result.Passed = await VerifyAssertionsAsync(testCase.Assertions, output, cts.Token, secondaryResults, warnings,
-                _config.WhitespaceSensitiveTestSets.Contains(testCase.TestSet), messages);
+                _config.WhitespaceSensitiveTestSets.Contains(testCase.TestSet), messages, treeResult);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -1341,12 +1348,13 @@ public sealed class XsltTestRunner
         IReadOnlyDictionary<string, string>? secondaryResults = null,
         IReadOnlyList<string>? warnings = null,
         bool whitespaceSensitive = false,
-        IReadOnlyList<string>? messages = null)
+        IReadOnlyList<string>? messages = null,
+        string? treeResult = null)
     {
         foreach (var assertion in assertions)
         {
             if (!await VerifyAssertionAsync(assertion, actualResult, ct, secondaryResults, warnings, whitespaceSensitive,
-                    messages))
+                    messages, treeResult))
             {
                 return false;
             }
@@ -1361,11 +1369,13 @@ public sealed class XsltTestRunner
         IReadOnlyDictionary<string, string>? secondaryResults = null,
         IReadOnlyList<string>? warnings = null,
         bool whitespaceSensitive = false,
-        IReadOnlyList<string>? messages = null)
+        IReadOnlyList<string>? messages = null,
+        string? treeResult = null)
     {
+        // treeResult: the result tree's markup when the serialized result is text (else null).
         return assertion.Type switch
         {
-            "assert-xml" => await VerifyXmlAsync(assertion, actualResult, ct, whitespaceSensitive),
+            "assert-xml" => await VerifyXmlAsync(assertion, treeResult ?? actualResult, ct, whitespaceSensitive),
             "assert-string-value" => VerifyStringValue(assertion, actualResult),
             "assert-serialization" => await VerifySerializationAsync(assertion, actualResult, ct),
             "assert-result-document" => await VerifyResultDocumentAsync(assertion, actualResult, ct, secondaryResults),
@@ -1375,18 +1385,18 @@ public sealed class XsltTestRunner
             "assert-deep-eq" => VerifyDeepEq(assertion, actualResult),
             "assert-message" => await VerifyMessageAsync(assertion, secondaryResults, warnings, messages, ct),
             "error" => false, // Expected error, but we got a result
-            "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive, messages),
-            "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive, messages),
+            "all-of" => await AllOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive, messages, treeResult),
+            "any-of" => await AnyOfAsync(assertion.Children, actualResult, ct, secondaryResults, warnings, whitespaceSensitive, messages, treeResult),
 
             // <assert> is an XPath predicate over the result tree, and the single most common
             // assertion in the whole corpus — 11024 occurrences. It was unimplemented, so the
             // catch-all below returned TRUE for every one of them.
-            "assert" => await VerifyXPathAssertAsync(assertion, actualResult, ct),
+            "assert" => await VerifyXPathAssertAsync(assertion, treeResult ?? actualResult, ct),
 
             // <not> negates its single child.
             "not" => assertion.Children.Count == 1
                 && !await VerifyAssertionAsync(assertion.Children[0], actualResult, ct, secondaryResults, warnings,
-                    whitespaceSensitive, messages),
+                    whitespaceSensitive, messages, treeResult),
 
             "assert-empty" => string.IsNullOrWhiteSpace(actualResult),
 
@@ -1579,11 +1589,11 @@ public sealed class XsltTestRunner
 
     private async Task<bool> AllOfAsync(List<XsltAssertion> assertions, string? result, CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null,
-        bool whitespaceSensitive = false, IReadOnlyList<string>? messages = null)
+        bool whitespaceSensitive = false, IReadOnlyList<string>? messages = null, string? treeResult = null)
     {
         foreach (var a in assertions)
         {
-            if (!await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive, messages))
+            if (!await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive, messages, treeResult))
                 return false;
         }
         return true;
@@ -1591,11 +1601,11 @@ public sealed class XsltTestRunner
 
     private async Task<bool> AnyOfAsync(List<XsltAssertion> assertions, string? result, CancellationToken ct,
         IReadOnlyDictionary<string, string>? secondaryResults = null, IReadOnlyList<string>? warnings = null,
-        bool whitespaceSensitive = false, IReadOnlyList<string>? messages = null)
+        bool whitespaceSensitive = false, IReadOnlyList<string>? messages = null, string? treeResult = null)
     {
         foreach (var a in assertions)
         {
-            if (await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive, messages))
+            if (await VerifyAssertionAsync(a, result, ct, secondaryResults, warnings, whitespaceSensitive, messages, treeResult))
                 return true;
         }
         return false;

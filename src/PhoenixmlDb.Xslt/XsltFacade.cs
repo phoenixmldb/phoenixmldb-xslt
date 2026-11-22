@@ -307,6 +307,16 @@ public sealed class XsltTransformer
     public bool LastTransformStreamed { get; private set; }
 
     /// <summary>
+    /// Keep the principal result of each transformation as the markup of its tree, before it is
+    /// serialized, in <see cref="LastResultMarkup"/>. For the W3C harness, which asserts on the
+    /// result tree where a case asks for it, also when the stylesheet serializes it as text.
+    /// </summary>
+    internal bool KeepResultMarkup { get; set; }
+
+    /// <summary>The principal result of the last transformation as the markup of its tree, when <see cref="KeepResultMarkup"/> is set.</summary>
+    internal string? LastResultMarkup { get; private set; }
+
+    /// <summary>
     /// True when the loaded stylesheet declares at least one streamable mode (either an
     /// explicit <c>&lt;xsl:mode streamable="yes"/&gt;</c> declaration or a streamable
     /// default mode). The CLI uses this signal to auto-select the streaming
@@ -1213,6 +1223,7 @@ public sealed class XsltTransformer
         finally
         {
             LastTransformStreamed = engine.StreamedPrincipalInput;
+            LastResultMarkup = engine.ResultMarkup;
         }
 
         // If a handler is set, write secondary results to the provided writers
@@ -1607,6 +1618,7 @@ public sealed class XsltTransformer
             AllowedOutputMethods = AllowedOutputMethods,
             RegexMatchTimeout = RegexMatchTimeout,
             MaxStringLength = MaxStringLength,
+            KeepResultMarkup = KeepResultMarkup,
             PreloadedResources = PreloadedResources,
             XQueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal),
             ReturnRawXdm = rawBox != null,
@@ -1815,6 +1827,7 @@ public sealed class XsltTransformer
         finally
         {
             LastTransformStreamed = engine.StreamedPrincipalInput;
+            LastResultMarkup = engine.ResultMarkup;
         }
         await PublishSecondaryResultsAsync(engine, ct).ConfigureAwait(false);
     }
