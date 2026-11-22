@@ -270,9 +270,9 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         if (_stylesheet.StripSpace.Count > 0)
         {
             foreach (var decl in _stylesheet.StripSpace)
-                decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+                decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
             foreach (var decl in _stylesheet.PreserveSpace)
-                decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+                decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
 
             XsltTransformEngine.StripWhitespaceNodes(xdmDoc, _stylesheet.StripSpace, _stylesheet.PreserveSpace, nodeStore);
         }

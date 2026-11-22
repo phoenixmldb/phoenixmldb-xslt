@@ -50,23 +50,9 @@ internal sealed partial class DefaultXsltExecutionContext
 
         public override object? VisitStepExpression(StepExpression se)
         {
-            if (se.NodeTest is NameTest nt)
-            {
-                // If prefix is set but URI wasn't resolved at parse time, resolve from stylesheet namespaces
-                if (nt.Prefix != null && string.IsNullOrEmpty(nt.NamespaceUri) && nt.NamespaceUri != "*")
-                {
-                    if (ctx._stylesheet.Namespaces.TryGetValue(nt.Prefix, out var uri))
-                        nt.NamespaceUri = uri;
-                }
-                // Apply stylesheet-level xpath-default-namespace for unprefixed element name tests
-                else if (nt.Prefix == null && string.IsNullOrEmpty(nt.NamespaceUri) && !nt.IsLocalNameWildcard
-                         && se.Axis != Axis.Attribute && se.Axis != Axis.Namespace
-                         && ctx._stylesheet.XpathDefaultNamespace != null && !nt.ResolvedNamespace.HasValue)
-                {
-                    nt.NamespaceUri = ctx._stylesheet.XpathDefaultNamespace;
-                }
-                nt.ResolveNamespace(ctx._nodeStore!.InternNamespace);
-            }
+            // The same rule as at compile (CompiledNameResolution), so for a compiled
+            // stylesheet's expressions it finds every value already in place and writes nothing.
+            CompiledNameResolution.ResolveStep(se, ctx._stylesheet);
             return base.VisitStepExpression(se);
         }
     }
@@ -85,7 +71,7 @@ internal sealed partial class DefaultXsltExecutionContext
             case PathPattern pp:
                 foreach (var step in pp.Steps)
                     if (step.NodeTest is NameTest nt && !nt.ResolvedNamespace.HasValue)
-                        nt.ResolveNamespace(_nodeStore.InternNamespace);
+                        nt.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
                 break;
             case UnionPattern up:
                 foreach (var p in up.Patterns)

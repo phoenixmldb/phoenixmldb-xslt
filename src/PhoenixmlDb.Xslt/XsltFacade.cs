@@ -85,7 +85,10 @@ public enum PackageVersionResolution
 /// <seealso cref="XsltException"/>
 public sealed class XsltTransformer
 {
-    private XsltStylesheet? _stylesheet;
+    // The loaded stylesheet: from LoadStylesheetAsync, or the CompiledStylesheet this transformer
+    // was created from. Shared, read only, with every other transformer of that stylesheet.
+    private CompiledStylesheet? _compiled;
+    private XsltStylesheet? Stylesheet => _compiled?.Stylesheet;
     private readonly Dictionary<string, object?> _typedParameters = new();
     /// <summary>
     /// Global parameters supplied by QNAME rather than by local name. Separate from
@@ -108,6 +111,34 @@ public sealed class XsltTransformer
     private Uri? _baseOutputUri;
     private bool _expandXInclude;
     private object? _globalContextItem;
+
+    /// <summary>
+    /// A transformer with no stylesheet loaded. Call <see cref="LoadStylesheetAsync"/>, or use
+    /// <see cref="CompiledStylesheet.CreateTransformer"/> to get a transformer for a stylesheet
+    /// that is compiled once.
+    /// </summary>
+    public XsltTransformer()
+    {
+        // Here, not as the property's initializer: a transformer from a compiled stylesheet takes
+        // the stylesheet's provider, and would make (and compile the XML namespace's schema for)
+        // a default one first.
+        SchemaProvider = CreateDefaultSchemaProvider();
+    }
+
+    /// <summary>A transformer for a compiled stylesheet, with the settings it was compiled with.</summary>
+    internal XsltTransformer(CompiledStylesheet compiled)
+    {
+        _compiled = compiled;
+        var options = compiled.Options;
+        AllowDtdProcessing = options.AllowDtdProcessing;
+        SchemaAware = options.SchemaAware;
+        ResourcePolicy = options.ResourcePolicy;
+        PreloadedResources = options.PreloadedResources;
+        XQueryModules = options.XQueryModules;
+        RegexMatchTimeout = options.RegexMatchTimeout;
+        SchemaProvider = compiled.SchemaProvider;
+        ApplyStaticParameters(options.StaticParameters);
+    }
 
     /// <summary>
     /// When <c>true</c>, the string and node transform overloads evaluate against an in-memory tree
@@ -286,8 +317,8 @@ public sealed class XsltTransformer
     {
         get
         {
-            if (_stylesheet == null) return false;
-            foreach (var mode in _stylesheet.Modes.Values)
+            if (_compiled == null) return false;
+            foreach (var mode in _compiled.Stylesheet.Modes.Values)
                 if (mode.Streamable) return true;
             return false;
         }
@@ -317,9 +348,9 @@ public sealed class XsltTransformer
     /// <see cref="AllowedOutputMethods"/> still governs them.
     /// </summary>
     public IReadOnlyList<XsltOutputDeclaration> OutputDeclarations =>
-        _stylesheet is null
+        Stylesheet is null
             ? []
-            : _stylesheet.Outputs.Select(o => new XsltOutputDeclaration(o.Name, o.Method, o.EffectiveMethod)).ToList();
+            : Stylesheet.Outputs.Select(o => new XsltOutputDeclaration(o.Name, o.Method, o.EffectiveMethod)).ToList();
 
     /// <summary>
     /// Longest a single regular-expression operation may run before it is abandoned; see
@@ -367,7 +398,6 @@ public sealed class XsltTransformer
     /// XPST0008 and every <c>validation="strict"</c> raises a runtime error).
     /// </remarks>
     public PhoenixmlDb.XQuery.ISchemaProvider? SchemaProvider { get; set; }
-        = CreateDefaultSchemaProvider();
 
     // XSD 1.0 §4.2.6.2: a schema may import the XML namespace with no schemaLocation, because
     // every processor is expected to already know it. System.Xml knows only part of it (not
@@ -379,7 +409,7 @@ public sealed class XsltTransformer
     // more schema in its set: with anything in its set it took nothing from the cache of
     // compiled schemas, so every XsltTransformer compiled each imported schema again
     // (xslt#355).
-    private static PhoenixmlDb.XQuery.XsdSchemaProvider CreateDefaultSchemaProvider()
+    internal static PhoenixmlDb.XQuery.XsdSchemaProvider CreateDefaultSchemaProvider()
         => new() { KnowsXmlNamespace = true };
 
     /// <summary>For a test: whether the schemas in use are a compiled set from the cache, which other transformers share.</summary>
@@ -399,7 +429,7 @@ public sealed class XsltTransformer
     // stylesheet nested past MaxParseNestingDepth with a catchable error, before any recursive pass
     // touches it. Uses the same DTD/entity posture as the real parse so it never rejects otherwise-
     // valid input; a malformed stylesheet surfaces its normal error from the real parser below.
-    private static void GuardStylesheetNestingDepth(string stylesheetXml)
+    internal static void GuardStylesheetNestingDepth(string stylesheetXml)
     {
         var settings = new XmlReaderSettings
         {
@@ -477,53 +507,41 @@ public sealed class XsltTransformer
         PackageVersionResolution packageVersionResolution = PackageVersionResolution.Highest)
     {
         ArgumentNullException.ThrowIfNull(stylesheetXml);
-
-        // Reject a pathologically deep stylesheet up front, before ANY pass touches it: the HTTP
-        // import walk, XDocument parse, instruction-tree build, streamability classification and the
-        // executor all recurse per element-nesting level and would StackOverflow the host (an
-        // uncatchable crash) on untrusted deep input. One iterative pre-scan here bounds them all.
-        GuardStylesheetNestingDepth(stylesheetXml);
-
-        // Pre-fetch HTTP-resolved xsl:import / xsl:include hrefs into the preload cache
-        // BEFORE invoking the synchronous parser. The parser's import resolver consults
-        // the cache first; with everything pre-fetched, it never hits the sync HTTP
-        // fallback that throws "Cannot wait on monitors" on Blazor WebAssembly.
-        // Skip when the host hasn't asked for HTTP imports (no http(s) refs present →
-        // walker is cheap; trivially-malformed XML is swallowed and surfaces via the parser).
-        var effectivePreload = PreloadedResources ?? new PreloadedResources();
-        await HttpImportPreloader.PreloadHttpImportsAsync(stylesheetXml, baseUri, effectivePreload, ResourcePolicy).ConfigureAwait(false);
-
-        var xqueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal);
-        var exprParser = new XQueryExpressionParser();
-        var parser = packageCatalog != null
-            ? new StylesheetParser(exprParser, packageCatalog) { AllowDtdProcessing = AllowDtdProcessing, SchemaAware = SchemaAware, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules, RegexMatchTimeout = RegexMatchTimeout }
-            : new StylesheetParser(exprParser) { AllowDtdProcessing = AllowDtdProcessing, SchemaAware = SchemaAware, ResourcePolicy = ResourcePolicy, PreloadedResources = effectivePreload, VersionResolution = packageVersionResolution, XQueryModules = xqueryModules, RegexMatchTimeout = RegexMatchTimeout };
-        // The parse, including static expressions (use-when, static variables) that may be slow,
-        // runs on the large-stack thread and does NOT hold the calling thread. After the HTTP
-        // import fetch above, the calling thread is whichever pool thread completed it, and parsing
-        // there held a pool thread for the whole parse whatever the host did.
-        _stylesheet = await LargeStack.Run(() =>
+        var options = new XsltCompileOptions
         {
-            var parsed = parser.Parse(stylesheetXml, baseUri, staticParams);
-            ResolveSchemaImports(parsed, baseUri);
-            RequireKnownSchemaTypes(parsed);
-            return Task.FromResult(parsed);
-        }).ConfigureAwait(false);
-        // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
-        // parameter is resolved at compile time for use-when / shadow attributes, but the
-        // same `$debug` variable is also visible at runtime — and consumers expect both
-        // sides to see the same overridden value. Without this, `LoadStylesheetAsync(staticParams: { debug: "true" })`
-        // would still evaluate `<xsl:param select="false()"/>` at runtime and surface false
-        // for `<xsl:if test="$debug">`. Skip names that the caller has already explicitly set
-        // via SetParameter, so user-provided typed values take precedence over the string
-        // form supplied here.
-        if (staticParams is not null)
+            AllowDtdProcessing = AllowDtdProcessing,
+            SchemaAware = SchemaAware,
+            ResourcePolicy = ResourcePolicy,
+            PreloadedResources = PreloadedResources,
+            XQueryModules = XQueryModules,
+            RegexMatchTimeout = RegexMatchTimeout,
+            StaticParameters = staticParams,
+            PackageVersionResolution = packageVersionResolution,
+            SchemaProvider = SchemaProvider,
+        };
+        // This transformer's own provider, which may be null (no schema features), and the
+        // caller's dictionaries as they are.
+        _compiled = await CompiledStylesheet.CompileCoreAsync(stylesheetXml, baseUri, options, SchemaProvider,
+            staticParams, packageCatalog, sharedByTransformers: false, CancellationToken.None).ConfigureAwait(false);
+        ApplyStaticParameters(staticParams);
+    }
+
+    // Cross-feed static-param values to the runtime parameter map. A `static="yes"`
+    // parameter is resolved at compile time for use-when / shadow attributes, but the
+    // same `$debug` variable is also visible at runtime — and consumers expect both
+    // sides to see the same overridden value. Without this, `LoadStylesheetAsync(staticParams: { debug: "true" })`
+    // would still evaluate `<xsl:param select="false()"/>` at runtime and surface false
+    // for `<xsl:if test="$debug">`. Skip names that the caller has already explicitly set
+    // via SetParameter, so user-provided typed values take precedence over the string
+    // form supplied here.
+    private void ApplyStaticParameters(IReadOnlyDictionary<string, string>? staticParams)
+    {
+        if (staticParams is null)
+            return;
+        foreach (var (name, value) in staticParams)
         {
-            foreach (var (name, value) in staticParams)
-            {
-                if (!_typedParameters.ContainsKey(name))
-                    _typedParameters[name] = ParseExternalParamValue(value);
-            }
+            if (!_typedParameters.ContainsKey(name))
+                _typedParameters[name] = ParseExternalParamValue(value);
         }
     }
 
@@ -554,13 +572,15 @@ public sealed class XsltTransformer
     /// <see cref="SchemaProvider"/>. Schema-location URIs are resolved against the
     /// stylesheet base URI before being handed to the provider so relative hints work.
     /// </summary>
-    private void ResolveSchemaImports(XsltStylesheet stylesheet, Uri? baseUri)
+    internal static void ResolveSchemaImports(XsltStylesheet stylesheet, Uri? baseUri,
+        PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider, TimeSpan? regexMatchTimeout,
+        PhoenixmlDb.XQuery.Security.ResourcePolicy? resourcePolicy)
     {
-        if (SchemaProvider is null) return;
+        if (schemaProvider is null) return;
         // Compiling a schema already matches its own values against its pattern facets, so the
         // provider has to hold the limit before the first import.
-        if (RegexMatchTimeout is { } regexLimit)
-            SchemaProvider.LimitPatternMatchTime(regexLimit);
+        if (regexMatchTimeout is { } regexLimit)
+            schemaProvider.LimitPatternMatchTime(regexLimit);
         // Walk imported and included stylesheets too — import-schema can appear in any module.
         foreach (var import in EnumerateAllSchemaImports(stylesheet))
         {
@@ -580,8 +600,8 @@ public sealed class XsltTransformer
                 // location is relative to the stylesheet, and goes through the policy.
                 try
                 {
-                    SchemaProvider.AddSchemaText(import.TargetNamespace, inlineSchema,
-                        baseUri is { IsAbsoluteUri: true } ? baseUri : null, ResourcePolicy, import.ModuleUri);
+                    schemaProvider.AddSchemaText(import.TargetNamespace, inlineSchema,
+                        baseUri is { IsAbsoluteUri: true } ? baseUri : null, resourcePolicy, import.ModuleUri);
                 }
                 catch (NotSupportedException)
                 {
@@ -607,10 +627,10 @@ public sealed class XsltTransformer
             // engine may fetch from, do not apply. With no rule at all the import failed here
             // before the resolver was ever asked, while xsl:import, doc() and fn:transform under
             // the same policy were served by it.
-            if (ResourcePolicy is { ResourceResolver.SuppliesAllContent: true })
+            if (resourcePolicy is { ResourceResolver.SuppliesAllContent: true })
             {
             }
-            else if (ResourcePolicy is { } policy && resolved is { Count: > 0 })
+            else if (resourcePolicy is { } policy && resolved is { Count: > 0 })
             {
                 // Each location must be one the policy allows importing from; the provider then
                 // checks every document the schema itself includes or imports.
@@ -628,7 +648,7 @@ public sealed class XsltTransformer
             }
             try
             {
-                SchemaProvider.ImportSchema(import.TargetNamespace, resolved, ResourcePolicy, import.ModuleUri);
+                schemaProvider.ImportSchema(import.TargetNamespace, resolved, resourcePolicy, import.ModuleUri);
             }
             catch (PhoenixmlDb.XQuery.SchemaException ex)
             {
@@ -645,11 +665,11 @@ public sealed class XsltTransformer
     /// none is in scope. It went unchecked, and the template failed when called, with XTTE0590
     /// for a context item that could never match.
     /// </summary>
-    private void RequireKnownSchemaTypes(XsltStylesheet stylesheet)
+    internal static void RequireKnownSchemaTypes(XsltStylesheet stylesheet, PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider)
     {
         foreach (var (ns, local, location) in stylesheet.SchemaTypeReferences)
         {
-            if (SchemaProvider is { } provider && provider.HasSchemaType(ns, local))
+            if (schemaProvider is { } provider && provider.HasSchemaType(ns, local))
                 continue;
             throw new XsltException(
                 $"XPST0008: The type Q{{{ns}}}{local} is not a type of the schemas in scope", location);
@@ -659,7 +679,7 @@ public sealed class XsltTransformer
         // the value was kept as it was (xslt#550).
         foreach (var (ns, local, location) in stylesheet.AtomicTypeReferences)
         {
-            if (SchemaProvider is { } provider
+            if (schemaProvider is { } provider
                 && (provider.GetSchemaSimpleType(ns, local) is not null || provider.HasSchemaType(ns, local)))
                 continue;
             throw new XsltException(
@@ -1178,12 +1198,12 @@ public sealed class XsltTransformer
     /// </remarks>
     public async Task<string> TransformAsync(string? inputXml, CancellationToken ct = default)
     {
-        if (_stylesheet == null)
+        if (_compiled == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
         var options = BuildTransformOptions(hasSource: inputXml != null, rawBox: null, ct: ct);
 
-        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        var engine = new XsltTransformEngine(_compiled.Stylesheet, _compiled.TemplateIndex, SchemaProvider);
         // No input — use empty document
         string result;
         try
@@ -1241,13 +1261,13 @@ public sealed class XsltTransformer
     /// </summary>
     internal async Task<object?> TransformToValueOrMarkupAsync(string? inputXml, CancellationToken ct = default)
     {
-        if (_stylesheet == null)
+        if (_compiled == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
         var rawBox = new RawResultBox();
         var options = BuildTransformOptions(hasSource: inputXml != null, rawBox: rawBox, ct: ct);
 
-        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        var engine = new XsltTransformEngine(_compiled.Stylesheet, _compiled.TemplateIndex, SchemaProvider);
         string serialized;
         try
         {
@@ -1300,7 +1320,7 @@ public sealed class XsltTransformer
     /// </remarks>
     public async Task<string> TransformAsync(Xdm.XdmSequence? source, CancellationToken ct = default)
     {
-        if (_stylesheet == null)
+        if (_compiled == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
         var (sourceNode, sourceStore) = ExtractSourceFromSequence(source);
@@ -1320,7 +1340,7 @@ public sealed class XsltTransformer
             hasSource: sourceNode != null || nonNodeHead != null,
             rawBox: null, ct: ct);
 
-        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        var engine = new XsltTransformEngine(_compiled.Stylesheet, _compiled.TemplateIndex, SchemaProvider);
         string result;
         if (sourceNode != null)
         {
@@ -1362,7 +1382,7 @@ public sealed class XsltTransformer
     /// </summary>
     public async Task<Xdm.XdmSequence> TransformToSequenceAsync(Xdm.XdmSequence? source, CancellationToken ct = default)
     {
-        if (_stylesheet == null)
+        if (_compiled == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
         var (sourceNode, sourceStore) = ExtractSourceFromSequence(source);
@@ -1389,7 +1409,7 @@ public sealed class XsltTransformer
             hasSource: sourceNode != null || nonNodeHead != null,
             rawBox: rawBox, ct: ct);
 
-        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        var engine = new XsltTransformEngine(_compiled.Stylesheet, _compiled.TemplateIndex, SchemaProvider);
         // Use TransformRawAsync, which sets up sequence collection across ALL invocation
         // paths (initial-function, initial-template, initial-mode, default apply-templates)
         // and returns the typed result. The plain TransformAsync path only captures
@@ -1548,7 +1568,7 @@ public sealed class XsltTransformer
                     // initial mode — and it is eligible precisely because it is the default
                     // mode (XSLT 3.0 §5.7.1, W3C package-001p/q/r, package-012). Falls back to
                     // the unnamed mode (empty QName) when no @default-mode is declared.
-                    ? (_stylesheet?.DefaultMode ?? new QName(NamespaceId.None, ""))
+                    ? (Stylesheet?.DefaultMode ?? new QName(NamespaceId.None, ""))
                     : _initialMode is "#unnamed"
                         // "#unnamed" always selects the unnamed mode (empty QName), never a
                         // mode literally named "#unnamed" and never the named default mode.
@@ -1601,7 +1621,7 @@ public sealed class XsltTransformer
     // threads — calls these instead. The work still runs on the engine's large-stack thread, for
     // recursion depth; the calling thread waits for it and gets the result back itself.
 
-    private static T OnCallersThread<T>(Func<Task<T>> work)
+    internal static T OnCallersThread<T>(Func<Task<T>> work)
     {
         // Blocking is how these keep the caller on its thread, and the browser cannot block.
         if (OperatingSystem.IsBrowser())
@@ -1753,7 +1773,7 @@ public sealed class XsltTransformer
     {
         ArgumentNullException.ThrowIfNull(inputXml);
         ArgumentNullException.ThrowIfNull(output);
-        if (_stylesheet == null)
+        if (_compiled == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
         using var xmlReader = XmlReader.Create(inputXml, StreamedSourceReaderSettings(),
@@ -1783,11 +1803,11 @@ public sealed class XsltTransformer
 
     private async Task StreamTransformAsync(XmlReader xmlReader, TextWriter output, CancellationToken ct)
     {
-        if (_stylesheet == null)
+        if (_compiled == null)
             throw new InvalidOperationException("No stylesheet loaded. Call LoadStylesheetAsync first.");
 
         var options = BuildTransformOptions(hasSource: true, rawBox: null, ct: ct);
-        var engine = new XsltTransformEngine(_stylesheet, SchemaProvider);
+        var engine = new XsltTransformEngine(_compiled.Stylesheet, _compiled.TemplateIndex, SchemaProvider);
         try
         {
             await engine.TransformAsync(xmlReader, output, options).ConfigureAwait(false);
@@ -1834,7 +1854,7 @@ public sealed class XsltTransformer
         ArgumentNullException.ThrowIfNull(inputXml);
         ArgumentNullException.ThrowIfNull(output);
 
-        if (_stylesheet != null && IsInitialModeStreamable())
+        if (_compiled != null && IsInitialModeStreamable())
         {
             var streamingWriter = new StreamWriter(output, leaveOpen: true);
             await using (streamingWriter.ConfigureAwait(false))
@@ -1857,14 +1877,14 @@ public sealed class XsltTransformer
 
     private bool IsInitialModeStreamable()
     {
-        if (_stylesheet == null) return false;
+        if (_compiled == null) return false;
         var key = _initialMode != null
             ? ResolveQName(_initialMode, _initialModeNamespace)
             : new QName(NamespaceId.None, "");
-        return _stylesheet.Modes.TryGetValue(key, out var mode) && mode.Streamable
+        return _compiled.Stylesheet.Modes.TryGetValue(key, out var mode) && mode.Streamable
             // Same fallback as the engine's string overload (xslt#298): a rule that reads outside
             // its matched element is evaluated against a tree, not streamed.
-            && !StreamedScopeEscapeDetector.AnyStreamableRuleEscapesItsMatch(_stylesheet);
+            && !StreamedScopeEscapeDetector.AnyStreamableRuleEscapesItsMatch(_compiled.Stylesheet);
     }
 
     /// <summary>

@@ -62,10 +62,20 @@ public sealed partial class XsltTransformEngine
 
     public XsltTransformEngine(XsltStylesheet stylesheet,
         PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider = null)
+        : this(stylesheet, templateIndex: null, schemaProvider)
+    {
+    }
+
+    /// <summary>
+    /// An engine for one transformation that uses the template index of a compiled stylesheet,
+    /// which is built once and shared (read only) by every transformation of that stylesheet.
+    /// </summary>
+    internal XsltTransformEngine(XsltStylesheet stylesheet, TemplateIndex? templateIndex,
+        PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider)
     {
         ArgumentNullException.ThrowIfNull(stylesheet);
         _stylesheet = stylesheet;
-        _templateIndex = new TemplateIndex(stylesheet);
+        _templateIndex = templateIndex ?? new TemplateIndex(stylesheet);
         _schemaProvider = schemaProvider;
     }
 
@@ -1678,21 +1688,21 @@ public sealed partial class XsltTransformEngine
         var nodeStore = new XdmInMemoryStore();
         var xdmDoc = ValidatedSource(doc, nodeStore, options) ?? ConvertToXdm(doc, nodeStore);
 
-        _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
+        _templateIndex.ResolvePatternNamespaces(StylesheetParser.ResolveNamespaceUri);
         foreach (var keyDef in _stylesheet.Keys.Values)
         {
-            TemplateIndex.ResolveNamespacesInPattern(keyDef.Match, nodeStore.InternNamespace);
+            TemplateIndex.ResolveNamespacesInPattern(keyDef.Match, StylesheetParser.ResolveNamespaceUri);
             if (keyDef.OtherDefinitions != null)
                 foreach (var other in keyDef.OtherDefinitions)
-                    TemplateIndex.ResolveNamespacesInPattern(other.Match, nodeStore.InternNamespace);
+                    TemplateIndex.ResolveNamespacesInPattern(other.Match, StylesheetParser.ResolveNamespaceUri);
         }
         foreach (var acc in _stylesheet.Accumulators.Values)
             foreach (var rule in acc.Rules)
-                TemplateIndex.ResolveNamespacesInPattern(rule.Match, nodeStore.InternNamespace);
+                TemplateIndex.ResolveNamespacesInPattern(rule.Match, StylesheetParser.ResolveNamespaceUri);
         foreach (var decl in _stylesheet.StripSpace)
-            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+            decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
         foreach (var decl in _stylesheet.PreserveSpace)
-            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+            decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
         if (_stylesheet.StripSpace.Count > 0)
             StripWhitespaceNodes(xdmDoc, _stylesheet.StripSpace, _stylesheet.PreserveSpace, nodeStore);
 
@@ -5294,16 +5304,16 @@ public sealed partial class XsltTransformEngine
         var xdmDoc = ValidatedSource(doc, nodeStore, options) ?? ConvertToXdm(doc, nodeStore, options?.SourceDocumentUri?.ToString());
 
         // Resolve namespace URIs in patterns to NamespaceIds
-        _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
+        _templateIndex.ResolvePatternNamespaces(StylesheetParser.ResolveNamespaceUri);
 
         // Resolve namespaces in xsl:key match patterns
         foreach (var keyDef in _stylesheet.Keys.Values)
         {
-            TemplateIndex.ResolveNamespacesInPattern(keyDef.Match, nodeStore.InternNamespace);
+            TemplateIndex.ResolveNamespacesInPattern(keyDef.Match, StylesheetParser.ResolveNamespaceUri);
             if (keyDef.OtherDefinitions != null)
             {
                 foreach (var other in keyDef.OtherDefinitions)
-                    TemplateIndex.ResolveNamespacesInPattern(other.Match, nodeStore.InternNamespace);
+                    TemplateIndex.ResolveNamespacesInPattern(other.Match, StylesheetParser.ResolveNamespaceUri);
             }
         }
 
@@ -5311,14 +5321,14 @@ public sealed partial class XsltTransformEngine
         foreach (var acc in _stylesheet.Accumulators.Values)
         {
             foreach (var rule in acc.Rules)
-                TemplateIndex.ResolveNamespacesInPattern(rule.Match, nodeStore.InternNamespace);
+                TemplateIndex.ResolveNamespacesInPattern(rule.Match, StylesheetParser.ResolveNamespaceUri);
         }
 
         // Resolve namespaces in strip-space/preserve-space NameTests
         foreach (var decl in _stylesheet.StripSpace)
-            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+            decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
         foreach (var decl in _stylesheet.PreserveSpace)
-            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+            decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
 
         // Apply xsl:strip-space declarations
         if (_stylesheet.StripSpace.Count > 0)
@@ -5558,16 +5568,16 @@ public sealed partial class XsltTransformEngine
         options.HasSourceDocument = true;
 
         var nodeStore = new XdmInMemoryStore();
-        _templateIndex.ResolvePatternNamespaces(nodeStore.InternNamespace);
+        _templateIndex.ResolvePatternNamespaces(StylesheetParser.ResolveNamespaceUri);
 
         // Resolve namespaces in key match patterns
         foreach (var keyDef in _stylesheet.Keys.Values)
         {
-            TemplateIndex.ResolveNamespacesInPattern(keyDef.Match, nodeStore.InternNamespace);
+            TemplateIndex.ResolveNamespacesInPattern(keyDef.Match, StylesheetParser.ResolveNamespaceUri);
             if (keyDef.OtherDefinitions != null)
             {
                 foreach (var other in keyDef.OtherDefinitions)
-                    TemplateIndex.ResolveNamespacesInPattern(other.Match, nodeStore.InternNamespace);
+                    TemplateIndex.ResolveNamespacesInPattern(other.Match, StylesheetParser.ResolveNamespaceUri);
             }
         }
 
@@ -5575,14 +5585,14 @@ public sealed partial class XsltTransformEngine
         foreach (var acc in _stylesheet.Accumulators.Values)
         {
             foreach (var rule in acc.Rules)
-                TemplateIndex.ResolveNamespacesInPattern(rule.Match, nodeStore.InternNamespace);
+                TemplateIndex.ResolveNamespacesInPattern(rule.Match, StylesheetParser.ResolveNamespaceUri);
         }
 
         // Resolve namespaces in strip-space/preserve-space NameTests
         foreach (var decl in _stylesheet.StripSpace)
-            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+            decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
         foreach (var decl in _stylesheet.PreserveSpace)
-            decl.Test.ResolveNamespace(nodeStore.InternNamespace);
+            decl.Test.ResolveNamespace(StylesheetParser.ResolveNamespaceUri);
 
         // Create a synthetic document node for the context
         var syntheticDocId = nodeStore.NextId();
@@ -6565,7 +6575,7 @@ public sealed partial class XsltTransformEngine
     /// </summary>
     internal static bool ShouldStripWhitespaceIn(
         XdmElement elem, List<WhitespaceDeclaration> stripSpace, List<WhitespaceDeclaration> preserveSpace)
-        => ShouldStripWhitespaceIn(elem.Namespace, elem.LocalName, stripSpace, preserveSpace);
+        => ShouldStripWhitespaceIn(XdmInMemoryStore.CanonicalNamespaceId(elem, elem.Namespace), elem.LocalName, stripSpace, preserveSpace);
 
     /// <summary>Name-keyed form, for the streaming reader, which has a name but no element node.</summary>
     internal static bool ShouldStripWhitespaceIn(

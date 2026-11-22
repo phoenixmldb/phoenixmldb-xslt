@@ -1644,8 +1644,8 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         return (nodeTest, node) switch
         {
-            (NameTest nt, XdmElement elem) => nt.Matches(XdmNodeKind.Element, elem.Namespace, elem.LocalName),
-            (NameTest nt, XdmAttribute attr) => nt.Matches(XdmNodeKind.Attribute, attr.Namespace, attr.LocalName),
+            (NameTest nt, XdmElement elem) => nt.Matches(XdmNodeKind.Element, XdmInMemoryStore.CanonicalNamespaceId(elem, elem.Namespace), elem.LocalName),
+            (NameTest nt, XdmAttribute attr) => nt.Matches(XdmNodeKind.Attribute, XdmInMemoryStore.CanonicalNamespaceId(attr, attr.Namespace), attr.LocalName),
             (KindTest { Kind: XdmNodeKind.Element }, XdmElement) => true,
             (KindTest { Kind: XdmNodeKind.Text }, XdmText) => true,
             (KindTest { Kind: XdmNodeKind.Comment }, XdmComment) => true,

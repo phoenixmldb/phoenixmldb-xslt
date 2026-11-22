@@ -1076,7 +1076,14 @@ public sealed partial class StylesheetParser
             // Every expression of a stylesheet is parsed here, so every one carries it, and a
             // load it makes is that module's wherever the expression comes to be evaluated: a
             // global variable, a key, a pattern, an accumulator rule, a parameter default.
-            parsed.EmbeddedInModule = origin?.BaseUri ?? "";
+            // Not on the parser's shared instances (`()`, `.`, `?`): one object stands for every
+            // such expression in the process, so a stamp was a write to it from every module of
+            // every stylesheet, at compile and at run time (a compiled stylesheet changed under
+            // its transformations). Those expressions load nothing, so they need no module.
+            if (!ReferenceEquals(parsed, PhoenixmlDb.XQuery.Ast.EmptySequence.Instance)
+                && !ReferenceEquals(parsed, PhoenixmlDb.XQuery.Ast.ContextItemExpression.Instance)
+                && !ReferenceEquals(parsed, PhoenixmlDb.XQuery.Ast.ArgumentPlaceholder.Instance))
+                parsed.EmbeddedInModule = origin?.BaseUri ?? "";
             return parsed;
         }
         catch (PhoenixmlDb.XQuery.Parser.XQueryParseException ex)

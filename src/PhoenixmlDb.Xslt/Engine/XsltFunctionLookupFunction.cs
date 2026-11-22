@@ -45,12 +45,25 @@ internal sealed class XsltFunctionLookupFunction : XQueryFunction
             && (arguments[0] is object?[] { Length: 1 } one ? one[0] : arguments[0]) is QName name
             && XsltEvaluateUnavailable.IsXsltOnlyFunction(name))
             throw new XsltException($"XTDE3160: The function {name.LocalName}() is not available within xsl:evaluate");
+        // xsl:original is named only by a static call or a function reference in an overriding
+        // function; a dynamic lookup does not find it (W3C function-lookup-006). It was "not
+        // found" only by accident: a QName made at run time had a namespace id of its own, which
+        // was not the stylesheet's. With the ids fixed at compile, the lookup found it.
+        if (arguments.Count > 0 && (arguments[0] is object?[] { Length: 1 } first ? first[0] : arguments[0]) is QName looked
+            && IsXslOriginal(looked))
+            return ValueTask.FromResult<object?>(null);
         if (StylesheetFunctionAsSeenByCaller(arguments, context) is { } seen)
             return ValueTask.FromResult(seen.Function is { } function
                 ? (object?)new XsltUserFunctionAdapter(function, _transform!).BindCreationContext(context)
                 : null);
         return _inner.InvokeAsync(arguments, context);
     }
+
+    private static bool IsXslOriginal(QName name)
+        => name.LocalName == "original"
+           && ((name.RuntimeNamespace ?? name.ExpandedNamespace) is { } uri
+               ? uri == "http://www.w3.org/1999/XSL/Transform"
+               : name.Namespace == NamespaceId.Xslt);
 
     /// <summary>
     /// For a stylesheet function, the declaration the package that calls function-lookup sees
