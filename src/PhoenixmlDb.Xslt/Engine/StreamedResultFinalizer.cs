@@ -313,14 +313,34 @@ internal sealed class StreamedResultFinalizer : TextWriter
     /// <summary>Character maps, normalization and unrepresentable characters, a segment at a time.</summary>
     private sealed class ContentStage(XsltTransformEngine owner, XsltTransformEngine.FinalizePlan plan, ResultWriter.Stage next) : ResultWriter.Stage
     {
-        public override void Write(ReadOnlySpan<char> text) => next.Write(owner.ApplyContentSteps(text.ToString(), plan));
+        // Most results have none of them: the text goes on as it is, not copied into a string.
+        private readonly bool _changesNothing = XsltTransformEngine.ContentStepsChangeNothing(plan);
+
+        public override void Write(ReadOnlySpan<char> text)
+        {
+            if (_changesNothing)
+                next.Write(text);
+            else
+                next.Write(owner.ApplyContentSteps(text.ToString(), plan));
+        }
+
         public override void Finish() => next.Finish();
     }
 
     /// <summary>URI attributes, sentinels and raw-text elements, a segment at a time.</summary>
     private sealed class FinalStage(XsltTransformEngine.FinalizePlan plan, ResultWriter.Stage next) : ResultWriter.Stage
     {
-        public override void Write(ReadOnlySpan<char> text) => next.Write(XsltTransformEngine.ApplyFinalSteps(text.ToString(), plan));
+        // URI attributes and raw-text elements are the html and xhtml methods'; a sentinel is in the text or not.
+        private readonly bool _htmlLike = plan.Decl?.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml;
+
+        public override void Write(ReadOnlySpan<char> text)
+        {
+            if (!_htmlLike && text.IndexOf('\uFDD0') < 0)
+                next.Write(text);
+            else
+                next.Write(XsltTransformEngine.ApplyFinalSteps(text.ToString(), plan));
+        }
+
         public override void Finish() => next.Finish();
     }
 

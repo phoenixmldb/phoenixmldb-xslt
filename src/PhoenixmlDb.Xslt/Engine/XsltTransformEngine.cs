@@ -1007,6 +1007,17 @@ public sealed partial class XsltTransformEngine
         return steps;
     }
 
+    /// <summary>
+    /// Whether <see cref="ApplyContentSteps"/> returns every text unchanged for this plan: no
+    /// character map, no normalization form, no encoding named for a markup method.
+    /// </summary>
+    internal static bool ContentStepsChangeNothing(FinalizePlan plan)
+        => plan.Decl?.UseCharacterMaps is not { Count: > 0 }
+           && plan.ResultDocCharacterMaps is not { Count: > 0 }
+           && plan.Decl?.NormalizationForm is null
+           && (string.IsNullOrEmpty(plan.Decl?.Encoding)
+               || plan.Decl.EffectiveMethod is not (OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html));
+
     /// <summary>The steps on the characters of the result: character maps, Unicode normalization, and references for what the encoding cannot represent.</summary>
     internal string ApplyContentSteps(string output, FinalizePlan plan)
     {
