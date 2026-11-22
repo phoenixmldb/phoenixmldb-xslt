@@ -1014,9 +1014,24 @@ public sealed partial class XsltTransformEngine
     internal static bool ContentStepsChangeNothing(FinalizePlan plan)
         => plan.Decl?.UseCharacterMaps is not { Count: > 0 }
            && plan.ResultDocCharacterMaps is not { Count: > 0 }
-           && plan.Decl?.NormalizationForm is null
+           && (plan.Decl?.NormalizationForm is null
+               || plan.Decl.NormalizationForm.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
            && (string.IsNullOrEmpty(plan.Decl?.Encoding)
-               || plan.Decl.EffectiveMethod is not (OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html));
+               || plan.Decl.EffectiveMethod is not (OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html)
+               || RepresentsAllOfUnicode(plan.Decl.Encoding));
+
+    // The UTF encodings, for which EscapeUnrepresentableCharacters returns its text as it is.
+    private static bool RepresentsAllOfUnicode(string encodingName)
+    {
+        try
+        {
+            return System.Text.Encoding.GetEncoding(encodingName).CodePage is 65001 or 1200 or 1201 or 12000 or 12001;
+        }
+        catch (ArgumentException)
+        {
+            return true; // EscapeUnrepresentableCharacters returns the text unchanged for an unknown name too
+        }
+    }
 
     /// <summary>The steps on the characters of the result: character maps, Unicode normalization, and references for what the encoding cannot represent.</summary>
     internal string ApplyContentSteps(string output, FinalizePlan plan)

@@ -64,6 +64,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
     // least this many characters: a write per event cost three asynchronous calls and their state
     // each time the writer did not finish at once (a file), more than the steps themselves.
     private const int WriteThreshold = 8192;
+    private const int SliceSize = 16384;
 
     /// <summary>The most characters any step held at once (tests: memory is bounded).</summary>
     internal int MaxHeld { get; private set; }
@@ -115,22 +116,45 @@ internal sealed class StreamedResultFinalizer : TextWriter
             _whole.Append(buffer.Span);
             return Task.CompletedTask;
         }
+        if (buffer.Length > SliceSize)
+            return WriteSlicesAsync(buffer, cancellationToken);
+        return WriteSlice(buffer.Span) ? AfterWriteAsync(cancellationToken) : Task.CompletedTask;
+    }
+
+    // What the engine writes at once can be the whole result (it holds back what is written in
+    // an element still open: xslt BUGS #140). It goes through the steps a slice at a time, and is
+    // written on between slices, so that no step copies it whole.
+    private async Task WriteSlicesAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken)
+    {
+        for (var at = 0; at < buffer.Length; at += SliceSize)
+        {
+            if (WriteSlice(buffer.Span.Slice(at, Math.Min(SliceSize, buffer.Length - at))))
+                await AfterWriteAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // Gives text to the steps; false while the xhtml method still holds the start of the result.
+    private bool WriteSlice(ReadOnlySpan<char> text)
+    {
         if (_gate is not null)
         {
-            _gate.Append(buffer.Span);
+            _gate.Append(text);
             Held(_gate.Length);
             var held = _gate.ToString();
             var root = XsltTransformEngine.FindDocumentElementStart(held, 0);
             if (root < 0 || held.IndexOf('>', root) < 0)
-                return Task.CompletedTask;
+                return false;
             _gate = null;
             Open(held);
+            return true;
         }
-        else
-        {
-            _shape?.Write(buffer.Span);
-            _head!.Write(buffer.Span);
-        }
+        _shape?.Write(text);
+        _head!.Write(text);
+        return true;
+    }
+
+    private Task AfterWriteAsync(CancellationToken cancellationToken)
+    {
         if (_toIndent is not null)
             return _indentInput!.Length >= WriteThreshold ? SendToIndentAsync(cancellationToken) : Task.CompletedTask;
         return _pending.Length >= WriteThreshold ? FlushPendingAsync(cancellationToken) : Task.CompletedTask;

@@ -147,12 +147,13 @@ public class StreamedSerializationTests
     [InlineData(3)]
     [InlineData(17)]
     [InlineData(4096)]
+    [InlineData(int.MaxValue)] // the whole result in one write, as the engine gives it from inside an open element (BUGS #140)
     public async Task ALargeStreamedResultIsSerializedWithBoundedMemory(int chunk)
     {
         // The finalizer holds a tag, a head, the text between two tags, and what it writes on to
         // the caller's writer in pieces of at least 8K characters: never the result. Fed the
         // result of 20 000 items a piece at a time, it writes what FinalizeOutput writes for the
-        // whole, and never holds more than 16K characters.
+        // whole, and never holds more than 32K characters, also when the result comes in one piece.
         var stylesheet = new StylesheetParser(new XQueryExpressionParser()).Parse(Stylesheet(
             """method="html" version="5.0" use-character-maps="m" """, "",
             """<xsl:character-map name="m"><xsl:output-character character="~" string="&amp;tilde;"/></xsl:character-map>"""));
@@ -171,7 +172,7 @@ public class StreamedSerializationTests
         await finalizer.CompleteAsync(default);
 
         sink.ToString().Should().Be(engine.FinalizeOutput(whole, decl, null, XsltTransformEngine.FinalizeKind.StreamingBuffered));
-        finalizer.MaxHeld.Should().BeLessThan(Math.Max(16_384, chunk * 4), "the finalizer must not keep the result");
+        finalizer.MaxHeld.Should().BeLessThan(32_768, "the finalizer must not keep the result");
     }
 
     [Fact]
