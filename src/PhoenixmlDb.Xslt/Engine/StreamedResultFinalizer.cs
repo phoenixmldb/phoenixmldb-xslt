@@ -66,6 +66,9 @@ internal sealed class StreamedResultFinalizer : TextWriter
     private const int WriteThreshold = 8192;
     private const int SliceSize = 16384;
 
+    /// <summary>When set, the markup as the engine wrote it, before the steps (the W3C harness's assertions on the result tree).</summary>
+    internal StringBuilder? Markup { get; init; }
+
     /// <summary>The most characters any step held at once (tests: memory is bounded).</summary>
     internal int MaxHeld { get; private set; }
 
@@ -111,6 +114,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
     {
         if (buffer.IsEmpty)
             return Task.CompletedTask;
+        Markup?.Append(buffer.Span);
         if (_whole is not null)
         {
             _whole.Append(buffer.Span);

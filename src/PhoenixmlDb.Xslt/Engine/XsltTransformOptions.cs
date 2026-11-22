@@ -245,6 +245,13 @@ public sealed class XsltTransformOptions
     internal bool SourceIsStreamed { get; set; }
 
     /// <summary>
+    /// Keep the principal result as the markup of its tree, before it is serialized
+    /// (<see cref="XsltTransformEngine.ResultMarkup"/>). The W3C harness asserts on the result tree
+    /// where a case asks for it, also when the result is serialized by the text method.
+    /// </summary>
+    internal bool KeepResultMarkup { get; set; }
+
+    /// <summary>
     /// Cancellation token for cooperative cancellation of transformation.
     /// When cancelled, the transformation throws OperationCanceledException.
     /// </summary>
