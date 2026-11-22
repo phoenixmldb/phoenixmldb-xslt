@@ -10,8 +10,8 @@ namespace PhoenixmlDb.Xslt.Tests;
 /// <summary>
 /// A compiled stylesheet is read-only once it is compiled: transforms, in parallel and over inputs that
 /// declare their namespaces in different orders, must not change it. The test dumps the whole compiled
-/// object graph (the xslt and XQuery syntax trees, by reflection) after compiling and again after the
-/// transforms, and compares the two.
+/// object graph (the xslt and XQuery syntax trees and the template index, by reflection) after
+/// compiling and again after the transforms, and compares the two.
 /// </summary>
 public class CompiledStylesheetFreezeTests
 {
@@ -54,6 +54,20 @@ public class CompiledStylesheetFreezeTests
         </xsl:stylesheet>
         """;
 
+    /// <summary>
+    /// A named mode that also has mode="#all" rules: the template index merges the two lists for
+    /// the mode, which it did on first use, during a transformation.
+    /// </summary>
+    private const string Modes = """
+        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                        xmlns:a="urn:a" xmlns:b="urn:b" exclude-result-prefixes="#all">
+          <xsl:template match="/"><out><xsl:apply-templates select="//a:x" mode="m"/></out></xsl:template>
+          <xsl:template match="a:x" mode="m"><x><xsl:apply-templates select="b:y" mode="m"/></x></xsl:template>
+          <xsl:template match="b:y" mode="#all"><y n="{@n}"/></xsl:template>
+          <xsl:template match="b:y[@n = '2']" mode="m" priority="1">two</xsl:template>
+        </xsl:stylesheet>
+        """;
+
     private static readonly string[] Inputs =
     [
         """<r xmlns:a="urn:a" xmlns:b="urn:b"><a:x><b:y n="1"/><b:y n="2"/></a:x></r>""",
@@ -65,6 +79,7 @@ public class CompiledStylesheetFreezeTests
     {
         { "patterns", Stylesheet },
         { "dynamic", Dynamic },
+        { "modes", Modes },
     };
 
     [Theory]
@@ -73,10 +88,10 @@ public class CompiledStylesheetFreezeTests
     {
         _ = label;
         PhoenixmlDb.XQuery.Functions.TransformFunction.Provider ??= new XsltTransformProvider();
-        var first = new XsltTransformer();
-        await first.LoadStylesheetAsync(stylesheet);
-        var compiled = StylesheetOf(first);
+        var compiled = await CompiledStylesheet.CompileAsync(stylesheet);
         var before = Dump(compiled);
+        before.Should().Contain(l => l.Contains("/TemplateIndex.", StringComparison.Ordinal), "the dump must reach the template index");
+        var first = compiled.CreateTransformer();
 
         // The outputs of one transformer, one input after another, are the reference.
         var expected = new List<string>();
@@ -89,9 +104,7 @@ public class CompiledStylesheetFreezeTests
         const int Rounds = 6;
         var outputs = await Task.WhenAll(Enumerable.Range(0, Threads).Select(n => Task.Run(async () =>
         {
-            var t = new XsltTransformer();
-            await t.LoadStylesheetAsync(stylesheet);
-            SetStylesheet(t, compiled);
+            var t = compiled.CreateTransformer();
             var got = new List<(int Input, string Output)>();
             for (var i = 0; i < Rounds; i++)
             {
@@ -106,13 +119,6 @@ public class CompiledStylesheetFreezeTests
         var after = Dump(compiled);
         FirstDifference(before, after).Should().BeNull();
     }
-
-    private static FieldInfo StylesheetField =>
-        typeof(XsltTransformer).GetField("_stylesheet", BindingFlags.Instance | BindingFlags.NonPublic)!;
-
-    private static object StylesheetOf(XsltTransformer t) => StylesheetField.GetValue(t)!;
-
-    private static void SetStylesheet(XsltTransformer t, object compiled) => StylesheetField.SetValue(t, compiled);
 
     private static string? FirstDifference(List<string> a, List<string> b)
     {
@@ -137,8 +143,9 @@ public class CompiledStylesheetFreezeTests
     }
 
     private static bool IsTreeType(Type t) =>
-        t.Namespace is { } ns && (ns.StartsWith("PhoenixmlDb.Xslt.Ast", StringComparison.Ordinal)
-            || ns.StartsWith("PhoenixmlDb.XQuery.Ast", StringComparison.Ordinal));
+        t == typeof(CompiledStylesheet) || t == typeof(PhoenixmlDb.Xslt.Engine.TemplateIndex)
+        || (t.Namespace is { } ns && (ns.StartsWith("PhoenixmlDb.Xslt.Ast", StringComparison.Ordinal)
+            || ns.StartsWith("PhoenixmlDb.XQuery.Ast", StringComparison.Ordinal)));
 
     private static string Scalar(object? o) => o switch
     {

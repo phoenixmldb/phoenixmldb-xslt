@@ -30,8 +30,11 @@ internal sealed class TemplateIndex
     private readonly List<XsltTemplate> _defaultModeTemplates = new();
     private readonly List<XsltTemplate> _allModeTemplates = new();
     private readonly List<TemplateIndex> _importedIndexes = new();
-    // Cache for merged+sorted mode template lists to avoid re-allocating and re-sorting per call
-    private readonly Dictionary<QName, List<XsltTemplate>> _mergedModeCache = new();
+    // Each named mode's rules merged with the mode="#all" rules and sorted, built once in the
+    // constructor. An index is shared by every transformation of a compiled stylesheet, on any
+    // thread, so nothing in it is written after construction: this was a cache filled on first
+    // use, and two transformations could fill it at once.
+    private readonly Dictionary<QName, List<XsltTemplate>> _mergedModeTemplates = new();
 
     /// <summary>Maps templates to their owning TemplateIndex for apply-imports module scoping.</summary>
     private readonly Dictionary<XsltTemplate, TemplateIndex> _templateOwners = new();
@@ -132,6 +135,18 @@ internal sealed class TemplateIndex
         foreach (var list in _templatesByMode.Values)
         {
             StableSortByPriority(list);
+        }
+
+        if (_allModeTemplates.Count > 0)
+        {
+            foreach (var (mode, modeTemplates) in _templatesByMode)
+            {
+                var merged = new List<XsltTemplate>(modeTemplates.Count + _allModeTemplates.Count);
+                merged.AddRange(modeTemplates);
+                merged.AddRange(_allModeTemplates);
+                merged.Sort(CompareForConflict);
+                _mergedModeTemplates[mode] = merged;
+            }
         }
     }
 
@@ -366,23 +381,8 @@ internal sealed class TemplateIndex
         List<XsltTemplate> templates;
         if (!isDefaultMode && _templatesByMode.TryGetValue(mode!.Value, out var modeTemplates))
         {
-            // Merge mode-specific templates with #all templates, sorted by priority
-            if (_allModeTemplates.Count > 0)
-            {
-                // Use cached merged list to avoid re-allocating and re-sorting per call
-                if (!_mergedModeCache.TryGetValue(mode.Value, out templates!))
-                {
-                    templates = new List<XsltTemplate>(modeTemplates.Count + _allModeTemplates.Count);
-                    templates.AddRange(modeTemplates);
-                    templates.AddRange(_allModeTemplates);
-                    templates.Sort(CompareForConflict);
-                    _mergedModeCache[mode.Value] = templates;
-                }
-            }
-            else
-            {
-                templates = modeTemplates;
-            }
+            // The mode's rules merged with the #all rules, sorted by priority (built in the constructor)
+            templates = _allModeTemplates.Count > 0 ? _mergedModeTemplates[mode.Value] : modeTemplates;
         }
         else if (!isDefaultMode && _allModeTemplates.Count > 0)
         {

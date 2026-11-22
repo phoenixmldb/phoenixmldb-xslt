@@ -62,10 +62,20 @@ public sealed partial class XsltTransformEngine
 
     public XsltTransformEngine(XsltStylesheet stylesheet,
         PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider = null)
+        : this(stylesheet, templateIndex: null, schemaProvider)
+    {
+    }
+
+    /// <summary>
+    /// An engine for one transformation that uses the template index of a compiled stylesheet,
+    /// which is built once and shared (read only) by every transformation of that stylesheet.
+    /// </summary>
+    internal XsltTransformEngine(XsltStylesheet stylesheet, TemplateIndex? templateIndex,
+        PhoenixmlDb.XQuery.ISchemaProvider? schemaProvider)
     {
         ArgumentNullException.ThrowIfNull(stylesheet);
         _stylesheet = stylesheet;
-        _templateIndex = new TemplateIndex(stylesheet);
+        _templateIndex = templateIndex ?? new TemplateIndex(stylesheet);
         _schemaProvider = schemaProvider;
     }
 
