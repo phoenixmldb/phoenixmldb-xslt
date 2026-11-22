@@ -119,6 +119,10 @@ public sealed class XsltTransformer
     /// </summary>
     public XsltTransformer()
     {
+        // Here, not as the property's initializer: a transformer from a compiled stylesheet takes
+        // the stylesheet's provider, and would make (and compile the XML namespace's schema for)
+        // a default one first.
+        SchemaProvider = CreateDefaultSchemaProvider();
     }
 
     /// <summary>A transformer for a compiled stylesheet, with the settings it was compiled with.</summary>
@@ -394,7 +398,6 @@ public sealed class XsltTransformer
     /// XPST0008 and every <c>validation="strict"</c> raises a runtime error).
     /// </remarks>
     public PhoenixmlDb.XQuery.ISchemaProvider? SchemaProvider { get; set; }
-        = CreateDefaultSchemaProvider();
 
     // XSD 1.0 §4.2.6.2: a schema may import the XML namespace with no schemaLocation, because
     // every processor is expected to already know it. System.Xml knows only part of it (not
