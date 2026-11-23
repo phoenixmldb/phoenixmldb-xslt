@@ -330,6 +330,10 @@ internal sealed partial class DefaultXsltExecutionContext
         if (rtf.CachedDocumentNode is XdmDocument cached)
             return cached;
 
+        // The tree is a temporary tree with a store of its own: freed when nothing refers to it,
+        // not kept until the transform ends (xslt#516).
+        using var temporaryTree = _nodeStore.TemporaryTree();
+
         // A temporary tree of text only — a variable or parameter body like <xsl:param>5</…> —
         // is a document node with one text node (none when empty). It is built directly: as XML
         // it is not well-formed, so the parse below threw, caught, and parsed it again wrapped,

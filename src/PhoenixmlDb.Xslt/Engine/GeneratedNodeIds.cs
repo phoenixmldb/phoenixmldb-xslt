@@ -26,7 +26,7 @@ internal static class GeneratedNodeIds
             // In the engine's own store a node id alone is unique, and the tree ordinal is a
             // process-wide count (xslt#542): it would make the id depend on how many trees the
             // process built before. Its nodes keep the id they had, with 0 for the tree.
-            var tree = xdm.Store is XdmInMemoryStore ? 0UL : xdm.TreeOrdinal;
+            var tree = xdm.Store is XdmInMemoryStore or TemporaryTreeStore ? 0UL : xdm.TreeOrdinal;
             return $"d{tree:x}n{xdm.Id.Value:x}";
         }
         return s_unkeyed.GetValue(xdm, static _ => $"u{Interlocked.Increment(ref s_nextUnkeyed):x}");
