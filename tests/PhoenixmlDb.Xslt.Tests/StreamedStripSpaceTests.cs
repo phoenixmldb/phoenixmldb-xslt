@@ -59,7 +59,7 @@ public sealed class StreamedStripSpaceTests : IDisposable
     [Fact]
     public async Task Strip_space_star_removes_whitespace_when_streamed()
         => (await AssertParityAsync(Indented, """<xsl:strip-space elements="*"/>"""))
-            .Should().Contain("<r><a>x</a><a></a><b><c></c></b></r>");
+            .Should().Contain("<r><a>x</a><a/><b><c/></b></r>");
 
     /// <summary>Only the named element strips; whitespace elsewhere stays.</summary>
     [Fact]
@@ -78,13 +78,13 @@ public sealed class StreamedStripSpaceTests : IDisposable
     [Fact]
     public async Task Xml_space_preserve_is_respected_both_ways()
         => (await AssertParityAsync("""<r>  <p xml:space="preserve">  <i/>  </p>  </r>""", """<xsl:strip-space elements="*"/>"""))
-            .Should().Contain("""<r><p xml:space="preserve">  <i></i>  </p></r>""");
+            .Should().Contain("""<r><p xml:space="preserve">  <i/>  </p></r>""");
 
     /// <summary>xml:space="default" below a preserve switches stripping back on.</summary>
     [Fact]
     public async Task Xml_space_default_below_preserve_strips_again()
         => (await AssertParityAsync("""<r><p xml:space="preserve"> <q xml:space="default"> <i/> </q> </p></r>""", """<xsl:strip-space elements="*"/>"""))
-            .Should().Contain("""<q xml:space="default"><i></i></q>""");
+            .Should().Contain("""<q xml:space="default"><i/></q>""");
 
     /// <summary>
     /// A template that needs its element's whole subtree runs on a copy materialised from the

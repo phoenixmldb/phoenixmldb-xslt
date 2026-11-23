@@ -942,8 +942,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     {
         if (_streamingOutputSink == null || _streamingOutputHeld > 0) return;
         if (_output.Length == 0) return;
-        var chunk = _output.ToString();
-        _output.Clear();
+        // The '>' of a start tag nothing has followed yet stays: if the element gets no content,
+        // its end makes the tag <e/> (CloseStreamingOpenElement, xslt#624).
+        var keep = _streamingOpenStartTagEnds.Count > 0
+            && _streamingSentChars + _output.Length == _streamingOpenStartTagEnds.Peek()
+            && _output[^1] == '>' ? 1 : 0;
+        if (_output.Length == keep) return;
+        var chunk = _output.ToString(0, _output.Length - keep);
+        _output.Remove(0, chunk.Length);
+        _streamingSentChars += chunk.Length;
         _outputLogicalStart = 0;
         await _streamingOutputSink.WriteAsync(chunk.AsMemory(), ct).ConfigureAwait(false);
     }

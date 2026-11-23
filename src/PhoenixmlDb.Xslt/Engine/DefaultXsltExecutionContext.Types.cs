@@ -153,6 +153,31 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     /// <summary>
+    /// A namespace declaration a copied element need not write (xslt#624): the result already binds
+    /// the prefix to the same namespace here, or it undeclares the default namespace where none is
+    /// in force.
+    /// </summary>
+    private bool IsRedundantDeclaration(string prefix, string uri)
+        => IsNamespaceInScope(prefix, uri)
+            || (prefix.Length == 0 && uri.Length == 0 && GetInScopeDefaultNamespace() == null);
+
+    /// <summary>
+    /// After a start tag ended at <paramref name="startTagEnd"/> in <paramref name="buffer"/>, when
+    /// nothing was written since: the start tag becomes an empty element tag (<c>&lt;e/&gt;</c>), and
+    /// true. When anything was written, or the output was cut back or sent on since, false: the
+    /// caller writes the end tag (xslt#624).
+    /// </summary>
+    private bool CloseEmptyStartTag(System.Text.StringBuilder buffer, int startTagEnd)
+    {
+        if (!ReferenceEquals(buffer, _output) || _output.Length != startTagEnd || startTagEnd == 0
+            || _output[startTagEnd - 1] != '>')
+            return false;
+        _output.Length = startTagEnd - 1;
+        _sink.StartElementClose(true);
+        return true;
+    }
+
+    /// <summary>
     /// Checks if a prefix is already bound in any output namespace scope.
     /// </summary>
     private bool IsPrefixInUse(string prefix)
@@ -573,17 +598,32 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <see cref="IsInCdataSectionElement"/> reads, so that the streamed text in it is tracked too.
     /// The two stacks move together: <see cref="CloseStreamingOpenElement"/> pops both.
     /// </summary>
-    private void OpenStreamingElement(string lexicalName, QName cdataName)
+    /// <param name="startTagLast">Whether the start tag is the last thing written: no content of
+    /// the element precedes this call. Only then can the element still be written <c>&lt;e/&gt;</c>.</param>
+    private void OpenStreamingElement(string lexicalName, QName cdataName, bool startTagLast)
     {
         _streamingOpenElements.Push(lexicalName);
         _outputElementStack.Push(cdataName);
+        _streamingOpenStartTagEnds.Push(startTagLast ? _streamingSentChars + _output.Length : -1);
     }
 
-    /// <summary>Writes the end tag of the innermost element <see cref="OpenStreamingElement"/> left open.</summary>
+    /// <summary>
+    /// Writes the end tag of the innermost element <see cref="OpenStreamingElement"/> left open; or,
+    /// when nothing was written after its start tag, makes that an empty element tag, <c>&lt;e/&gt;</c>,
+    /// as the element is written when the transformation does not stream (xslt#624).
+    /// </summary>
     internal void CloseStreamingOpenElement()
     {
         _outputElementStack.Pop();
-        WriteStreamingEndTag(_streamingOpenElements.Pop());
+        var startTagEnd = _streamingOpenStartTagEnds.Pop();
+        var lexicalName = _streamingOpenElements.Pop();
+        if (_streamingSentChars + _output.Length == startTagEnd && _output.Length > 0 && _output[^1] == '>')
+        {
+            _output.Length--;
+            _sink.StartElementClose(true);
+            return;
+        }
+        WriteStreamingEndTag(lexicalName);
     }
 
     private bool IsInCdataSectionElement()

@@ -47,15 +47,15 @@ public sealed class StreamedOutputNestingTests : IDisposable
 
     [Theory]
     // An empty element written with start and end tag, template building a complete result.
-    [InlineData("<r><a></a><c/></r>", "<A/>", "<r><A/><c></c></r>")]
+    [InlineData("<r><a></a><c/></r>", "<A/>", "<r><A/><c/></r>")]
     // The same, one level down — the parent that got closed is not the root.
-    [InlineData("<r><x><a></a></x><c/></r>", "<a><xsl:apply-templates/></a>", "<r><x><a/></x><c></c></r>")]
+    [InlineData("<r><x><a></a></x><c/></r>", "<a><xsl:apply-templates/></a>", "<r><x><a/></x><c/></r>")]
     // With apply-templates in the body and siblings after it.
-    [InlineData("<r><a></a><a><b/></a></r>", "<a><xsl:apply-templates/></a>", "<r><a/><a><b></b></a></r>")]
+    [InlineData("<r><a></a><a><b/></a></r>", "<a><xsl:apply-templates/></a>", "<r><a/><a><b/></a></r>")]
     // Self-closing element, complete result: the self-closing branch had the same flaw.
-    [InlineData("<r><a/><c/></r>", "<A/>", "<r><A/><c></c></r>")]
+    [InlineData("<r><a/><c/></r>", "<A/>", "<r><A/><c/></r>")]
     // Self-closing element with apply-templates: read on past <a/> into its siblings.
-    [InlineData("<r><a/><a><b/></a></r>", "<a><xsl:apply-templates/></a>", "<r><a/><a><b></b></a></r>")]
+    [InlineData("<r><a/><a><b/></a></r>", "<a><xsl:apply-templates/></a>", "<r><a/><a><b/></a></r>")]
     public async Task Streamed_output_nests_like_unstreamed(string source, string templateForA, string expected)
     {
         var unstreamed = await RunAsync(false, source, templateForA);

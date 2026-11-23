@@ -8112,3 +8112,27 @@ forms). It is not a serialization difference, so
 `phx:indent-style="saxon-he-10"` does not change it: a result that writes the URI (for example a Schematron
 report that records the document it validated) differs from Saxon's in this string only. Lucas (2026-11-23): do
 not change it; record it here.
+
+### 147. The built-in copy rules repeated inherited namespace declarations, and wrote `<b></b>` for an empty element — fixed (xslt#624, 2026-11-23)
+
+Engine: **XSLT**. In 3.2.0. Found while testing `cdata-section-elements` with copies (#144). Without streaming,
+`on-no-match="shallow-copy"` and `"deep-copy"` over `<doc xmlns:x="urn:p"><a>t</a><d><b/></d></doc>` gave
+`<doc xmlns:x="urn:p"><a xmlns:x="urn:p">t</a><d xmlns:x="urn:p"><b xmlns:x="urn:p"></b></d></doc>`; xsl:copy, and
+Saxon-HE 10.9, give `<doc xmlns:x="urn:p"><a>t</a><d><b/></d></doc>`. Equivalent XML, other bytes. The built-in
+shallow copy (`ApplyBuiltInShallowCopyAsync`) and deep copy (`SerializeElement`) wrote every namespace declaration of
+a copied element, which in the source store holds the ones it inherits, without the check xsl:copy makes, and opened
+no output scope for its children; and they wrote the start tag before they knew whether the element gets content.
+When the transformation streams, an element the streaming loop closes was written `<b></b>` too.
+
+Now a declaration the result already has in force is not written again (`IsRedundantDeclaration`: the same
+binding in scope, or `xmlns=""` where no default namespace is in force), and each copied element's declarations
+are a scope for its children. An element that gets no content is `<b/>`: the deep copy knows it from the children;
+the shallow copy, whose children's templates may write nothing, makes its start tag an empty element tag when
+nothing was written after it (`CloseEmptyStartTag`); the streaming loop does the same at the element's end
+(`CloseStreamingOpenElement`), and the drain holds back the `>` of a start tag nothing has followed yet, so a tag
+already sent on cannot stop it. The default output changes for stylesheets that use these rules. Not changed: the
+order of an element's namespace declarations. Saxon-HE 10.9 writes them first, sorted by prefix (ordinal, the
+default namespace first), for every element; here a copy follows the source store's order (the reverse of the
+source's), and xsl:copy and xsl:copy-of the same. A separate decision. `BuiltInCopyRuleTests`; tests
+that held `<b></b>` as expected (streamed nesting, strip-space, duplicate attributes, streamed attribute
+patterns) now hold `<b/>`.

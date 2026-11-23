@@ -34,14 +34,14 @@ public sealed class DuplicateAttributeTests
         => (await RunAsync($"""
                 <xsl:mode on-no-match="shallow-copy" streamable="{(streamable ? "yes" : "no")}"/>
                 <xsl:template match="@*"><xsl:attribute name="Z" select="name()"/></xsl:template>
-                """)).Should().Be("""<r><m Z="b"></m></r>""");
+                """)).Should().Be("""<r><m Z="b"/></r>""");
 
     [Fact]
     public async Task The_built_in_shallow_copy_replaces_a_copied_attribute()
         => (await RunAsync("""
                 <xsl:mode on-no-match="shallow-copy"/>
                 <xsl:template match="@b"><xsl:attribute name="a" select="'from-b'"/></xsl:template>
-                """)).Should().Be("""<r><m a="from-b"></m></r>""");
+                """)).Should().Be("""<r><m a="from-b"/></r>""");
 
     [Fact]
     public async Task Two_prefixes_for_one_namespace_are_one_attribute()
