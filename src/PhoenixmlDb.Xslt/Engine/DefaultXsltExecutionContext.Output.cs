@@ -139,8 +139,55 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         if (_attributeContentDepth > 0)
             _sink.RawText(value);
+        else if (IsInCdataSectionElement())
+            EmitCdata(value);
         else
             _sink.Text(value);
+    }
+
+    // The CDATA section written last: its text and the markup written for it, so that text written
+    // right after it in the same element joins it.
+    private readonly StringBuilder _cdataRunText = new();
+    private string? _cdataRunMarkup;
+
+    /// <summary>
+    /// Text of an element named by <c>cdata-section-elements</c>: a CDATA section. Each text
+    /// write is not a text node of its own: text written right after a CDATA section of the same
+    /// element is the same text node, so it joins that section (<c>&lt;a&gt;lit&lt;xsl:text&gt;t&lt;/xsl:text&gt;&lt;/a&gt;</c>
+    /// is <c>&lt;a&gt;&lt;![CDATA[litt]]&gt;&lt;/a&gt;</c>). A <c>]]&gt;</c> in the text, also one
+    /// that only the joined text has, ends one section and starts the next (Serialization 3.1 §5.1.4).
+    /// </summary>
+    private void EmitCdata(string value)
+    {
+        // A zero-length text node is no node at all: nothing is written.
+        if (value.Length == 0)
+            return;
+        // Joined only when the output still ends with the section written last: nothing (a tag,
+        // other text) came between, and the output was not cut back or sent on since.
+        if (_cdataRunMarkup is { } last && _output.Length >= last.Length
+            && EndsWithOrdinal(_output, last))
+        {
+            _output.Length -= last.Length;
+            _cdataRunText.Append(value);
+        }
+        else
+        {
+            _cdataRunText.Clear().Append(value);
+        }
+        var markup = "<![CDATA[" + _cdataRunText.ToString().Replace("]]>", "]]]]><![CDATA[>", StringComparison.Ordinal) + "]]>";
+        _sink.RawText(markup);
+        _cdataRunMarkup = markup;
+    }
+
+    private static bool EndsWithOrdinal(StringBuilder sb, string suffix)
+    {
+        var offset = sb.Length - suffix.Length;
+        for (var i = 0; i < suffix.Length; i++)
+        {
+            if (sb[offset + i] != suffix[i])
+                return false;
+        }
+        return true;
     }
 
 
@@ -187,13 +234,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 _simpleContentLastWasNode = false;
             _sink.RawText(value);
         }
-        else if (IsInCdataSectionElement())
-        {
-            // Wrap in CDATA section — escape any embedded "]]>" sequences
-            _sink.RawText("<![CDATA[" + value.Replace("]]>", "]]]]><![CDATA[>", StringComparison.Ordinal) + "]]>");
-        }
         else
         {
+            // A CDATA section in an element named by cdata-section-elements (EmitCdata).
             EmitText(value);
         }
 
