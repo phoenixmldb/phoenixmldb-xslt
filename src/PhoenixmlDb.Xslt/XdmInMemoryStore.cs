@@ -83,11 +83,165 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
         // and between constructed trees, the order is the node ids' (creation) order, as before.
         if (node.TreeOrdinal == 0)
             node.TreeOrdinal = _parseOrdinal != 0 ? _parseOrdinal : ConstructionOrdinal;
+        // A node constructed while a temporary tree is being built, with an id this store gave
+        // since, is a node of that tree. Two kinds of node registered meanwhile are not: a node of
+        // a parsed document (a parse ordinal), such as one doc() loads in a variable body; and a
+        // node of the streamed input, which the transform gives ids from a counter of its own
+        // (from 5 000 000). The tree finds its nodes by the ids this store gave it, so a streamed
+        // element taken into it was found, and its attributes and children were not.
+        if (_openTree is { } tree && node.Id.Value >= _openTreeStart && node.Id.Value < _nextId
+            && (node.TreeOrdinal & TreeOrdinalAllocator.ConstructedFlag) != 0)
+        {
+            tree.Add(node);
+            return;
+        }
         // The node's ids and namespace ids are this store's; Store says so to an engine that
         // meets the node outside this store (BUGS.md #124).
         node.AttachStore(this);
         _nodes[node.Id] = node;
+        if (_treeRanges.Count > 0)
+            PinLinkedTrees(node);
     }
+
+    // A node of this store that names a node of a temporary tree (its parent, a child or an
+    // attribute) keeps that tree for as long as this store lives: this store holds its own nodes
+    // strongly, and a tree it only named by id would otherwise be freed under it.
+    private HashSet<TemporaryTreeStore>? _pinnedTrees;
+
+    private void PinLinkedTrees(XdmNode node)
+    {
+        foreach (var id in LinkedIds(node))
+        {
+            if (!_nodes.ContainsKey(id) && TreeOf(id) is { } tree)
+                (_pinnedTrees ??= []).Add(tree);
+        }
+    }
+
+    /// <summary>The ids <paramref name="node"/> names: its parent, children and attributes.</summary>
+    internal static IEnumerable<NodeId> LinkedIds(XdmNode node)
+    {
+        if (node.Parent is { } parent && parent != NodeId.None)
+            yield return parent;
+        var (children, attributes) = node switch
+        {
+            XdmElement e => (e.Children, e.Attributes),
+            XdmDocument d => (d.Children, (IReadOnlyList<NodeId>)[]),
+            _ => ((IReadOnlyList<NodeId>)[], (IReadOnlyList<NodeId>)[]),
+        };
+        foreach (var id in children)
+            yield return id;
+        foreach (var id in attributes)
+            yield return id;
+    }
+
+    // ---- Temporary trees (xslt#516) ------------------------------------------------------------
+    //
+    // A temporary tree is held by its own TemporaryTreeStore, which its nodes name as their Store:
+    // a node that is still referred to keeps its tree, and a tree nothing refers to is freed. This
+    // store keeps, for each run of ids a tree was given, a weak handle, so that it can still find
+    // a node of a live tree from its id (the engine resolves children, attributes and parents by
+    // id here). Ids are given in increasing order, so the runs are in order of their start.
+
+    private readonly record struct TreeRange(ulong Start, ulong End, WeakReference<TemporaryTreeStore> Tree);
+
+    private readonly List<TreeRange> _treeRanges = [];
+    private int _pruneTreeRangesAt = 1024;
+    private TemporaryTreeStore? _openTree;
+    private ulong _openTreeStart;
+
+    /// <summary>
+    /// Until the scope is disposed, the nodes given ids and registered are those of one new
+    /// temporary tree, held by a store of its own. Scopes nest: a tree built while another is
+    /// being built is a tree of its own.
+    /// </summary>
+    internal TemporaryTreeScope TemporaryTree()
+    {
+        var previous = _openTree;
+        if (previous is not null)
+            CloseTreeRun(previous);
+        _openTree = new TemporaryTreeStore(this);
+        _openTreeStart = _nextId;
+        return new TemporaryTreeScope(this, previous);
+    }
+
+    internal readonly struct TemporaryTreeScope : IDisposable
+    {
+        private readonly XdmInMemoryStore _store;
+        private readonly TemporaryTreeStore? _previous;
+
+        internal TemporaryTreeScope(XdmInMemoryStore store, TemporaryTreeStore? previous)
+        {
+            _store = store;
+            _previous = previous;
+        }
+
+        public void Dispose()
+        {
+            if (_store is null || _store._openTree is not { } tree)
+                return;
+            _store.CloseTreeRun(tree);
+            _store._openTree = _previous;
+            _store._openTreeStart = _store._nextId;
+            _store.LinkTree(tree);
+        }
+    }
+
+    // A tree whose nodes name nodes of another tree (an id of a parent, child or attribute it does
+    // not hold) keeps that tree: the ids are all it has of them.
+    private void LinkTree(TemporaryTreeStore tree)
+    {
+        foreach (var node in tree.Nodes)
+        {
+            foreach (var id in LinkedIds(node))
+            {
+                if (tree.Own(id) is null && TreeOf(id) is { } other && !ReferenceEquals(other, tree))
+                    tree.KeepAlive(other);
+            }
+        }
+    }
+
+    // Records the run of ids the open tree was given since its scope (re)opened.
+    private void CloseTreeRun(TemporaryTreeStore tree)
+    {
+        if (_nextId <= _openTreeStart)
+            return;
+        if (_treeRanges.Count >= _pruneTreeRangesAt)
+        {
+            _treeRanges.RemoveAll(static r => !r.Tree.TryGetTarget(out _));
+            _pruneTreeRangesAt = Math.Max(1024, _treeRanges.Count * 2);
+        }
+        _treeRanges.Add(new TreeRange(_openTreeStart, _nextId, tree.Handle));
+    }
+
+    // The temporary tree whose ids include id: the open tree, or one with a recorded run. A run
+    // whose tree was freed is an error, not "no such node": an id of a freed tree was kept where
+    // its node was not, and reading it as absent would give wrong results silently.
+    private TemporaryTreeStore? TreeOf(NodeId id)
+    {
+        var value = id.Value;
+        if (_openTree is { } open && value >= _openTreeStart && value < _nextId)
+            return open;
+        int lo = 0, hi = _treeRanges.Count - 1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) >>> 1;
+            var range = _treeRanges[mid];
+            if (value < range.Start)
+                hi = mid - 1;
+            else if (value >= range.End)
+                lo = mid + 1;
+            else if (range.Tree.TryGetTarget(out var tree))
+                return tree;
+            else
+                throw new InvalidOperationException(
+                    $"Node {value} belongs to a temporary tree that was freed: an id of it was kept without the node (xslt#516).");
+        }
+        return null;
+    }
+
+    // A node of this store or of a live temporary tree.
+    private XdmNode? Lookup(NodeId id)
+        => _nodes.TryGetValue(id, out var node) ? node : TreeOf(id)?.Own(id);
 
     // The parse ordinal of the document being parsed (ParsedDocument), or 0.
     private ulong _parseOrdinal;
@@ -137,14 +291,14 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
                 _store._parseOrdinal = _previous;
         }
     }
-    public XdmNode? GetNode(NodeId id) => _nodes.GetValueOrDefault(id);
+    public XdmNode? GetNode(NodeId id) => Lookup(id);
 
     /// <summary>
     /// Removes a node the engine built for a moment only, such as the context of a streamed
     /// predicate, so that streaming memory does not grow with the input (xslt#520). Its
     /// attributes and children are separate entries: remove them too.
     /// </summary>
-    internal void Unregister(NodeId id) => _nodes.Remove(id);
+    internal void Unregister(NodeId id) => Remove(id);
 
     /// <summary>
     /// Computes an element's or document node's string value from its children in this store,
@@ -193,7 +347,11 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
     /// Removes a node from the store. Used by streaming execution to free
     /// temporary nodes after they have been processed.
     /// </summary>
-    internal void Remove(NodeId id) => _nodes.Remove(id);
+    internal void Remove(NodeId id)
+    {
+        if (!_nodes.Remove(id))
+            TreeOf(id)?.Remove(id);
+    }
 
     /// <summary>
     /// Returns the next NodeId that would be allocated, without consuming it.
@@ -270,6 +428,7 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
         return _idToNs.GetValueOrDefault(id);
     }
 
+    /// <summary>The nodes of this store; not those of temporary trees, which have stores of their own.</summary>
     public IEnumerable<XdmNode> GetAllNodes() => _nodes.Values;
 
     public IEnumerable<XdmNode> GetChildren(XdmNode node)
@@ -283,7 +442,7 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
 
         foreach (var childId in childIds)
         {
-            if (_nodes.TryGetValue(childId, out var child))
+            if (Lookup(childId) is { } child)
                 yield return child;
         }
     }
@@ -297,7 +456,7 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
     };
 
     /// <summary>The child with this id, or null, as <see cref="GetChildren"/> resolves it.</summary>
-    internal XdmNode? ChildNode(NodeId id) => _nodes.TryGetValue(id, out var child) ? child : null;
+    internal XdmNode? ChildNode(NodeId id) => Lookup(id);
 
     /// <summary>
     /// The children of <paramref name="node"/> as a new list, sized once: what
@@ -310,7 +469,7 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
         var list = new List<object>(childIds.Count);
         for (var i = 0; i < childIds.Count; i++)
         {
-            if (_nodes.TryGetValue(childIds[i], out var child))
+            if (Lookup(childIds[i]) is { } child)
                 list.Add(child);
         }
         return list;
@@ -320,7 +479,7 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
     {
         foreach (var attrId in elem.Attributes)
         {
-            if (_nodes.TryGetValue(attrId, out var attr) && attr is XdmAttribute a)
+            if (Lookup(attrId) is XdmAttribute a)
                 yield return a;
         }
     }
@@ -356,7 +515,7 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
         {
             while (++_index < _attrIds.Count)
             {
-                if (_store._nodes.TryGetValue(_attrIds[_index], out var n) && n is XdmAttribute a)
+                if (_store.Lookup(_attrIds[_index]) is XdmAttribute a)
                 {
                     _current = a;
                     return true;

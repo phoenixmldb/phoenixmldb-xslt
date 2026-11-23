@@ -402,6 +402,10 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         else if (instruction.Content != null)
         {
+            // What the body builds is a temporary tree, with a store of its own: freed when
+            // nothing refers to it, not kept until the transform ends (xslt#516).
+            using var temporaryTree = _nodeStore?.TemporaryTree();
+
             // Push effective base URI if the instruction has xml:base
             if (instruction.BaseUri != null)
                 _baseUriStack.Push(XsltTransformEngine.UriString(instruction.BaseUri)!);
