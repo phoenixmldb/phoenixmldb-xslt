@@ -7638,7 +7638,7 @@ an insertion sequence), XUTY0010 / XUTY0011 (attribute and non-attribute mixed i
 XUTY0022 (attribute inserted into a document node), XUDY0021 (duplicate attribute names after the
 update), XUDY0030 (attribute inserted before/after a node whose parent is not an element).
 
-### 127. A top-level updating query was dropped silently — ruled 2026-11-20, fixing in 3.3.0
+### 127. A top-level updating query was dropped silently — fixed (xquery#416, 2026-11-23)
 
 Engine: **XQuery** (`QueryEngine`, `ExecutionPlan`, `XdmDocumentStore`).
 
@@ -7663,7 +7663,14 @@ EACH target node is checked, all before any change, and one that cannot be updat
 nothing changed. db-engine's `PersistentNodeProvider` does not implement it, so an update of a stored
 document gives XUDY9001; copy-modify of its nodes works on in-memory copies.
 
-### 128. Copy/modify and conflicting updates raised no error — recorded, waiting for a ruling (2026-11-20)
+Fixed in xquery#416 (2f990be, 2026-11-23). One place applies the list, at the end of
+`ExecutionPlan.ExecuteAsync`, so every entry point applies it once. `XdmDocumentStore` implements
+`IUpdatableNodeStore` (explicitly): the public interface is the opt-in, ruled by Lucas 2026-11-23, and
+its documentation says so. Inserted and replacing nodes are copies, and string values are computed
+again once per list. XQUTS 1.0.1: 116 → 337 of 815 (221 cases that failed with the XUST0002 refusal;
+0 lost). QT3: the same 31 failing cases by name. Breaking changes entries are in the PR body.
+
+### 128. Copy/modify and conflicting updates raised no error — ruled 2026-11-23, fixing in 3.3.0 (xquery#417)
 
 Engine: **XQuery**. All silent on main (8a04748):
 
@@ -7676,6 +7683,12 @@ Engine: **XQuery**. All silent on main (8a04748):
 
 XUDY0024 (conflicting namespace bindings) could not be tested before #126 (attribute insert) and
 #129 (namespaced rename) are fixed. These are new errors for queries that run today.
+
+Ruled (Lucas, 2026-11-23): covered by "raise every error XQUF 3.0 requires"; merge after #127, with
+Breaking changes entries. xquery#417 raises XUDY0015/0016/0017 for a list with two renames, two
+replacements or two value replacements of one node (before any change), and XUDY0014 for a modify
+clause that changes a node its copy clause did not create. XQUTS 337 → 375 (38 cases that expect these
+errors; 0 lost); QT3 unchanged. XUDY0024 is not in it.
 
 ### 129. Renaming a node into a namespace lost the namespace — recorded (2026-11-20)
 
@@ -7958,7 +7971,7 @@ types of its schema (F&O 3.1 §5.6.5): `@nr` is `xs:positiveInteger`. XQuery's f
 `(analyze-string('a1', '(\d)')//@nr)[1] instance of xs:positiveInteger` is `false` in a stylesheet.
 Found while testing the CompiledStylesheet schema provider.
 
-### 140. A streamed result reached the writer in one piece at the end — open, cause not traced (2026-11-22)
+### 140. A streamed grouping read its whole input into memory, and its result reached the writer in one piece — ruled 2026-11-23: fix in 3.3.0
 
 Engine: **XSLT**. In 3.2.0 and main. Martin Honnen's streamed grouping (xslt#575: `xsl:copy` of `root`
 around `xsl:for-each-group select="item!copy-of()"`, `on-no-match="shallow-copy"`) streams its input, but
@@ -7967,6 +7980,19 @@ its whole result is written to the caller's writer in ONE write when the transfo
 main as on the #575 branch. The drain runs only where no element is being constructed; here the copied
 `root` is open while the group loop reads the whole input, which is the likely cause, not yet traced.
 The #575 serializer writes such a piece on in 16K slices, so it adds nothing to the memory.
+
+Ruled (Lucas, 2026-11-23): fix in 3.3.0.
+
+Correction (measured 2026-11-23, main b395e78): the input is NOT streamed. Peak RSS of the CLI on
+Martin's stylesheet: 189 MiB for 30 000 items, 1439 MiB for 300 000; the same input with only
+`on-no-match="shallow-copy"`: 97 and 101 MiB. The rule for `root` runs in
+`ExecuteWithBufferedSubtreeAsync`, so the whole input is read into a tree, and the for-each-group
+takes its buffered path. The plan for the body is `BufferWholeInput`: the classifier
+(`ClassifyForEachGroup`, not the by-spec rules) reports the key `category`, a step down from a
+grounded member (`item!copy-of()`), as consuming, and refuses a key that is not motionless. Found
+with temporary tracing in a scratch build. Reproduce: the stylesheet of xslt#575 over `<root>` with
+300 000 `<item><name/><category/></item>`, `xslt g.xsl -o out.xml items.xml`, and read the peak RSS.
+Two parts to fix: the key rule for a grounded population, then a drain while the copied `root` is open.
 
 ### 141. A result written while the transformation streams skipped the serialization steps — fixed (xslt#575, 2026-11-22)
 
