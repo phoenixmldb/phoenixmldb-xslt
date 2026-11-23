@@ -123,7 +123,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             SerializingElementDepth = _serializingElementDepth,
             CollectTextAsSequenceItems = _collectTextAsSequenceItems,
             LastResultWasAtomic = _lastResultWasAtomic,
-            CollectedAttributes = new List<StringBuilder>(_collectedAttributesStack),
+            CollectedAttributes = new List<AttrBuffer>(_collectedAttributesStack),
             ActiveTreeConstructor = _activeTreeConstructor,
             TcFragmentIncomplete = _tcFragmentIncomplete,
             SuppressTcIncomplete = _suppressTcIncomplete,
@@ -546,7 +546,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>Who asks, for a load the running code makes.</summary>
     internal PhoenixmlDb.XQuery.Security.ResourceCaller Caller => PhoenixmlDb.XQuery.Security.ResourceGate.Caller(StaticBaseUri, ModuleLocation);
 
-    private StringBuilder? _collectedAttributes => _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek() : null;
+    private StringBuilder? _collectedAttributes => _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek().Text : null;
+
+    /// <summary>The attributes and namespace declarations of the element under construction, as text and as items (S1).</summary>
+    private AttrBuffer? _collectedAttrBuffer => _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek() : null;
 
     private bool _attributeCollecting => _collectedAttributesStack.Count > 0;
 
@@ -621,11 +624,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                     continue;
                 if (prefix.Length > 0)
                 {
-                    sb.Append(" xmlns:");
-                    sb.Append(prefix);
-                    sb.Append("=\"");
-                    sb.Append(EscapeAttributeValue(uri));
-                    sb.Append('"');
+                    AppendNamespaceDeclarationTo(sb, prefix, uri);
                 }
                 else
                 {
@@ -656,11 +655,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(prefix) || !seen.Add(prefix))
                 continue;
-            sb.Append(" xmlns:");
-            sb.Append(prefix);
-            sb.Append("=\"");
-            sb.Append(EscapeAttributeValue(uri));
-            sb.Append('"');
+            AppendNamespaceDeclarationTo(sb, prefix, uri);
         }
 
         return sb.ToString();
@@ -1887,7 +1882,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _sequenceAccumulator = null;
         var savedTextContentDepth = _textContentDepth;
         var savedCollectText = _collectTextAsSequenceItems;
-        var savedAttrStack = new List<StringBuilder>(_collectedAttributesStack);
+        var savedAttrStack = new List<AttrBuffer>(_collectedAttributesStack);
         _collectedAttributesStack.Clear();
         // Force a clean node-serialization context: the enclosing item()* body sets
         // _collectTextAsSequenceItems, which would fragment the copied child markup.
@@ -5517,9 +5512,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Save collected attributes so where-populated content captures attributes separately.
         // This allows filtering zero-length "insignificant" attributes per XSLT 3.0 §11.4.
-        var savedAttrs = _attributeCollecting ? _collectedAttributes!.ToString() : null;
-        if (_attributeCollecting)
-            _collectedAttributes!.Clear();
+        // As text and as items (S1).
+        var savedAttrs = _collectedAttrBuffer?.Snapshot();
+        _collectedAttrBuffer?.Clear();
 
         // When the surrounding scope is an `as=` template/function body, xsl:attribute goes
         // to `_sequenceAccumulator` rather than `_collectedAttributes`. Snapshot its length
@@ -5570,14 +5565,22 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Collect and filter attributes produced inside where-populated
         string? wpAttrs = null;
-        if (_attributeCollecting)
+        object[]? wpItems = null;
+        if (_collectedAttrBuffer is { } attrBuffer && savedAttrs is { } saved)
         {
-            var rawAttrs = _collectedAttributes!.ToString();
-            _collectedAttributes!.Clear();
-            _collectedAttributes.Append(savedAttrs);
+            var rawAttrs = attrBuffer.Text.ToString();
+            var rawItems = attrBuffer.Items.ToArray();
+            attrBuffer.Restore(saved);
 
-            // Filter out zero-length attribute values (insignificant per spec)
+            // Filter out zero-length attribute values (insignificant per spec); the items as the
+            // text (the last value of a name is applied where the element ends).
             wpAttrs = FilterInsignificantAttributes(rawAttrs);
+            wpItems = rawItems.Where(item => item switch
+            {
+                AttrItem a => a.Value.Length > 0,
+                NsItem n => n.Uri.Length > 0,
+                _ => true,
+            }).ToArray();
         }
 
         if (result.Length == 0 && string.IsNullOrEmpty(wpAttrs))
@@ -5592,6 +5595,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (!string.IsNullOrEmpty(wpAttrs))
         {
             _collectedAttributes!.Append(wpAttrs);
+            _collectedAttrBuffer!.Items.AddRange(wpItems ?? []);
             MarkContentProduced();
         }
         if (filtered.Length > 0)

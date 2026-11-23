@@ -211,7 +211,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         // Use attribute-collection mode flag (push new buffer for nesting support)
-        _collectedAttributesStack.Push(new StringBuilder());
+        _collectedAttributesStack.Push(new AttrBuffer());
 
         var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
         var savedLogicalStart = _outputLogicalStart;
@@ -361,6 +361,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // Deduplicate attributes (last-wins)
         var attrs = new Dictionary<string, string>();
         ParseAttributeString(attrParts.ToString(), attrs);
+        CheckAttrGuard(collectedAttrs, "xsl:element");
         ParseAttributeString(collectedAttrs.ToString(), attrs);
         DeduplicateByExpandedName(attrs, name);
         foreach (var (attrName, attrValue) in attrs)
@@ -463,11 +464,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (_sequenceAccumulator == null && prefix != "xml" && prefixNsUri != null && !IsNamespaceInScope(prefix, prefixNsUri))
                 {
                     var target2 = _attributeCollecting ? _collectedAttributes! : _output;
-                    target2.Append(" xmlns:");
-                    target2.Append(prefix);
-                    target2.Append("=\"");
-                    target2.Append(EscapeAttributeValue(prefixNsUri));
-                    target2.Append('"');
+                    AppendNamespaceDeclarationTo(target2, prefix, prefixNsUri);
                     if (_outputNsScopes.Count > 0)
                         _outputNsScopes.Peek()[prefix] = prefixNsUri;
                 }
@@ -527,11 +524,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     if (!IsNamespaceInScope(attrPrefix, explicitNsUri))
                     {
                         var target2 = _attributeCollecting ? _collectedAttributes! : _output;
-                        target2.Append(" xmlns:");
-                        target2.Append(attrPrefix);
-                        target2.Append("=\"");
-                        target2.Append(EscapeAttributeValue(explicitNsUri));
-                        target2.Append('"');
+                        AppendNamespaceDeclarationTo(target2, attrPrefix, explicitNsUri);
                         // Register in the current scope so child elements won't re-emit it
                         if (_outputNsScopes.Count > 0)
                             _outputNsScopes.Peek()[attrPrefix] = explicitNsUri;
@@ -728,11 +721,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         else
         {
-            target.Append(' ');
-            target.Append(name);
-            target.Append("=\"");
-            target.Append(EscapeAttributeValue(value));
-            target.Append('"');
+            AppendAttributeTo(target, name, value);
         }
     }
 
@@ -992,15 +981,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 return;
         }
 
-        target.Append(" xmlns");
-        if (!string.IsNullOrEmpty(prefix))
-        {
-            target.Append(':');
-            target.Append(prefix);
-        }
-        target.Append("=\"");
-        target.Append(EscapeAttributeValue(uri));
-        target.Append('"');
+        AppendNamespaceDeclarationTo(target, prefix, uri);
     }
 
 
@@ -1546,7 +1527,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // 3. xsl:attribute instructions in body (highest priority)
         // Push namespace scope before processing body so children can see our ns bindings
-        _collectedAttributesStack.Push(new StringBuilder());
+        _collectedAttributesStack.Push(new AttrBuffer());
 
         var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
         var savedLogicalStart = _outputLogicalStart;
@@ -1643,6 +1624,7 @@ internal sealed partial class DefaultXsltExecutionContext
         _lastResultWasAtomic = false;
 
         // Parse collected attributes and add to dictionary (overriding earlier values)
+        CheckAttrGuard(collectedAttrs, "literal result element");
         ParseAttributeString(collectedAttrs.ToString(), attributes);
         DeduplicateByExpandedName(attributes, elemName, prefixToUri);
 

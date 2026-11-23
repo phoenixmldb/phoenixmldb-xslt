@@ -592,15 +592,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     break;
 
                 var target = _attributeCollecting ? _collectedAttributes! : _output;
-                target.Append(" xmlns");
-                if (!string.IsNullOrEmpty(prefix))
-                {
-                    target.Append(':');
-                    target.Append(prefix);
-                }
-                target.Append("=\"");
-                target.Append(EscapeAttributeValue(uri));
-                target.Append('"');
+                AppendNamespaceDeclarationTo(target, prefix, uri);
                 if (_outputNsScopes.Count > 0)
                     _outputNsScopes.Peek()[prefix] = uri;
                 break;
@@ -2465,11 +2457,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     {
                         attrPrefix = GenerateUniquePrefix(attrPrefix);
                     }
-                    target.Append(" xmlns:");
-                    target.Append(attrPrefix);
-                    target.Append("=\"");
-                    target.Append(EscapeAttributeValue(attrNsUri));
-                    target.Append('"');
+                    AppendNamespaceDeclarationTo(target, attrPrefix, attrNsUri);
                     if (_outputNsScopes.Count > 0)
                         _outputNsScopes.Peek()[attrPrefix] = attrNsUri;
                 }
@@ -2484,11 +2472,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         else
         {
-            target.Append(' ');
-            target.Append(aName);
-            target.Append("=\"");
-            target.Append(EscapeAttributeValue(attr.Value));
-            target.Append('"');
+            AppendAttributeTo(target, aName, attr.Value);
         }
     }
 

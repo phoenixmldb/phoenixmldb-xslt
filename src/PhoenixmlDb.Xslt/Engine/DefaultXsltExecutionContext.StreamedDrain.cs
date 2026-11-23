@@ -151,6 +151,7 @@ internal sealed partial class DefaultXsltExecutionContext
             _sink.Namespace(prefix, uri);
         }
         var attrs = new Dictionary<string, string>();
+        CheckAttrGuard(_collectedAttributesStack.Peek(), "streamed xsl:copy, committed");
         ParseAttributeString(_collectedAttributesStack.Peek().ToString(), attrs);
         DeduplicateByExpandedName(attrs, frame.ElemName);
         foreach (var (attrName, attrValue) in attrs)
