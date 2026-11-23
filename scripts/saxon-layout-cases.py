@@ -7,6 +7,11 @@ suppress-indentation, a DOCTYPE) and writes it with indent="yes" and phx:indent-
 The expected result of each case is the output of Saxon-HE 10.9 for the same stylesheet: run this
 script with the Saxon-HE 10.9 jar to write it. The cases are fixed by the seed.
 
+Cases 0-119 use generic element names and mostly the xml method. Cases 120 and up use the xhtml method
+and HTML element names (inline, block, formatted, void, also in upper case and in other namespaces),
+whose layout depends on the name. They come after the first 120 in the same random stream, so adding
+them does not change the first 120.
+
     python3 -I scripts/saxon-layout-cases.py <java> <Saxon-HE-10.9.jar> <out-dir> [count]
 """
 import random
@@ -17,6 +22,12 @@ from pathlib import Path
 PHX = "https://schemas.phoenixml.dev/2026/functions"
 NAMESPACES = [("p", "urn:p"), ("q", "urn:example:q"), ("long-prefix", "urn:example:a-much-longer-namespace-uri")]
 NAMES = ["a", "b", "item", "section", "x", "data-element", "e"]
+# The xhtml profile: inline (span, b, a, em, script, textarea), block (div, p, section, td, li, item),
+# formatted (pre, script, style, textarea, title), void (br, img).
+XHTML_NAMES = ["div", "p", "span", "b", "a", "em", "pre", "section", "td", "li", "script", "textarea", "title",
+               "style", "br", "img", "item"]
+XHTML_NS = "http://www.w3.org/1999/xhtml"
+FIRST_XHTML_CASE = 120
 TEXT_CHARS = "abc xyz<>&\"'\t\n" + "é"
 
 
@@ -33,6 +44,8 @@ class Case:
     def __init__(self, rng, index):
         self.rng = rng
         self.index = index
+        self.xhtml = index >= FIRST_XHTML_CASE
+        self.names = XHTML_NAMES if self.xhtml else NAMES
         self.cdata = set()
         self.suppress = set()
 
@@ -53,7 +66,12 @@ class Case:
             decls.append(' xmlns="urn:default"' if rng.random() < 0.7 else ' xmlns=""')
         if in_scope and rng.random() < 0.3:
             prefix = rng.choice(sorted(in_scope))
-        local = rng.choice(NAMES)
+        local = rng.choice(self.names)
+        if self.xhtml:
+            if rng.random() < 0.1:
+                local = local.upper()
+            if depth == 0 and rng.random() < 0.5 and not any(d.startswith(' xmlns=') for d in decls):
+                decls.append(f' xmlns="{XHTML_NS}"')
         name = f"{prefix}:{local}" if prefix else local
         attrs = []
         used = set()
@@ -92,6 +110,8 @@ class Case:
         rng = self.rng
         body = self.element(0, frozenset())
         method = "xhtml" if rng.random() < 0.15 else "xml"
+        if self.xhtml:
+            method = "xhtml"
         opts = [f'method="{method}"', 'indent="yes"', 'phx:indent-style="saxon-he-10"']
         if rng.random() < 0.2:
             opts.append('omit-xml-declaration="yes"')
@@ -113,7 +133,7 @@ class Case:
 
 def main():
     java, jar, out = sys.argv[1], sys.argv[2], Path(sys.argv[3])
-    count = int(sys.argv[4]) if len(sys.argv) > 4 else 120
+    count = int(sys.argv[4]) if len(sys.argv) > 4 else 180
     out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(499)
     for i in range(count):
