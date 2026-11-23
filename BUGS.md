@@ -8062,3 +8062,34 @@ nodes the query constructs and the copies of a `copy` clause can still be update
 Not yet tested: an updating function used only inside copy-modify on a marked document, because no query
 can declare an updating function yet (`declare updating function` is XPST0003, `declare %updating
 function` XQST0045); that waits for the rest of XQUF in 3.3.0 (ruled 2026-11-20).
+
+### 144. The text of a cdata-section-elements element was a CDATA section only when xsl:value-of or literal text wrote it — fixed (2026-11-23)
+
+Engine: **XSLT**. In 3.2.0. Found while building the Saxon-HE 10 layout cases (xslt#499). The text of an
+element named by `cdata-section-elements` is written as CDATA sections (Serialization 3.1 §5.1.4), whatever
+writes it. The check was made only by `WriteText` (literal text, xsl:value-of), and only for elements that a
+literal result element or xsl:element constructed. With `cdata-section-elements="a"`:
+
+| Stylesheet | Before | Now (and Saxon-HE 10.9) |
+|---|---|---|
+| `<a><xsl:text>t</xsl:text></a>` | `<a>t</a>` | `<a><![CDATA[t]]></a>` |
+| `<a>lit<xsl:text>t</xsl:text></a>` | `<a><![CDATA[lit]]>t</a>` | `<a><![CDATA[litt]]></a>` |
+| `<a><xsl:value-of select="'v'"/><xsl:number value="3"/></a>` | `<a><![CDATA[v]]>3</a>` | `<a><![CDATA[v3]]></a>` |
+| `<xsl:copy-of select="doc/a"/>` (source `<a>s</a>`) | `<a>s</a>` | `<a><![CDATA[s]]></a>` |
+| xsl:copy of that `a`, then its text | `<a>s</a>` | `<a><![CDATA[s]]></a>` |
+| `<a><xsl:text>p]]</xsl:text><xsl:text>&gt;q</xsl:text></a>` | `<a>p]]&gt;q</a>` | `<a><![CDATA[p]]]]><![CDATA[>q]]></a>` |
+| `<a><xsl:value-of select="''"/></a>` | `<a><![CDATA[]]></a>` | `<a/>` |
+
+Now the check is where all text is written (`EmitText`: also xsl:text, xsl:number, a function's text), and
+xsl:copy and xsl:copy-of (`SerializeNode`) track the copied element's name, matched by namespace URI (the node
+store's namespace ids are not the stylesheet's). Each text write was a section of its own; text written right
+after a CDATA section of the same element is the same text node, so it now joins that section. A `]]>` in the
+text, also one that only the joined text has, ends one section and starts the next; a zero-length text node
+writes nothing. Not covered: an element copied by the streamed copy paths. `CdataSectionTextTests`; the
+expected results are Saxon-HE 10.9's.
+
+### 145. xsl:number wrote its format token unescaped: the output was not well-formed — fixed (2026-11-23)
+
+Engine: **XSLT**. In 3.2.0. Found with #144. `<r><xsl:number value="3" format="&lt;1&amp;"/></r>` gave
+`<r><3&</r>`: xsl:number wrote its result as markup (`RawText`). It is a text node: `<r>&lt;3&amp;</r>`.
+Now it is written as all text is (`EmitText`, #144). `CdataSectionTextTests`.
