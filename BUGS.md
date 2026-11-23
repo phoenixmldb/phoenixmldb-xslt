@@ -7971,7 +7971,7 @@ types of its schema (F&O 3.1 §5.6.5): `@nr` is `xs:positiveInteger`. XQuery's f
 `(analyze-string('a1', '(\d)')//@nr)[1] instance of xs:positiveInteger` is `false` in a stylesheet.
 Found while testing the CompiledStylesheet schema provider.
 
-### 140. A streamed grouping read its whole input into memory, and its result reached the writer in one piece — ruled 2026-11-23: fix in 3.3.0
+### 140. A streamed grouping read its whole input into memory, and its result reached the writer in one piece — fixed (xslt#615, xslt#620, 2026-11-23)
 
 Engine: **XSLT**. In 3.2.0 and main. Martin Honnen's streamed grouping (xslt#575: `xsl:copy` of `root`
 around `xsl:for-each-group select="item!copy-of()"`, `on-no-match="shallow-copy"`) streams its input, but
@@ -7993,6 +7993,17 @@ grounded member (`item!copy-of()`), as consuming, and refuses a key that is not 
 with temporary tracing in a scratch build. Reproduce: the stylesheet of xslt#575 over `<root>` with
 300 000 `<item><name/><category/></item>`, `xslt g.xsl -o out.xml items.xml`, and read the peak RSS.
 Two parts to fix: the key rule for a grounded population, then a drain while the copied `root` is open.
+
+Fixed in two parts. xslt#615: a grouping key over a grounded population (`item!copy-of()`) may step down
+from the member (§19.8.8.9), so the rule's body streams. xslt#620: each member is a temporary tree of its
+own (#516), freed when its group is done; and between two groups the copy of `root` sends its start tag
+and the content so far to the writer, once the content has a child (no attribute can follow then:
+XTDE0410, which a later attribute still raises). That drain is made only in the one shape whose output
+buffers are known: a rule the streaming processor dispatched, an `xsl:copy` among its body's
+instructions, the grouping among the copy's, all at their own scope depth, writing text with nothing
+else open. Not changed: a literal result element in place of `xsl:copy` (`<root><xsl:for-each-group …/></root>`)
+still holds its result to the end. While fixing it, three fixed id bases of streamed nodes were found to
+collide with the store's ids past about a million (fixed in xslt#619).
 
 ### 141. A result written while the transformation streams skipped the serialization steps — fixed (xslt#575, 2026-11-22)
 
