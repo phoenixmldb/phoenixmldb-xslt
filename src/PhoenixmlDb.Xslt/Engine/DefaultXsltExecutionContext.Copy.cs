@@ -317,6 +317,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Track whether the copied element has a namespace (for XTDE0440)
                 _outputElementHasNsStack.Push(!string.IsNullOrEmpty(elem.Prefix) || elem.Namespace != NamespaceId.None);
                 _outputElementIsLreStack.Push(false); // xsl:copy — not an LRE
+                _outputElementStack.Push(CdataTrackingName(elem)); // its text: cdata-section-elements
                 _xslNamespaceBindings.Push(new Dictionary<string, string>());
 
                 var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
@@ -432,6 +433,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     PopOutputNsScope(); // element ns scope
                     _outputElementHasNsStack.Pop();
                     _outputElementIsLreStack.Pop();
+                    _outputElementStack.Pop();
                     _xslNamespaceBindings.Pop();
                 }
 
