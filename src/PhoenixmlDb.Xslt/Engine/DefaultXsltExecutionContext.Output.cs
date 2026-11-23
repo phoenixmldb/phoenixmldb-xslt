@@ -571,6 +571,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         // yielded <ir:base/> where <ir:base>4</ir:base> was required.
                         _serializingElementDepth++;
                         _serializeCopyDepth++;
+                        // Its text: a CDATA section when the element is in cdata-section-elements.
+                        _outputElementStack.Push(CdataTrackingName(elem));
                         try
                         {
                             foreach (var child in children)
@@ -578,6 +580,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         }
                         finally
                         {
+                            _outputElementStack.Pop();
                             _serializingElementDepth--;
                             _serializeCopyDepth--;
                         }

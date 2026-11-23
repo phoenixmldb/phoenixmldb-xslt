@@ -552,6 +552,21 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
+    /// <summary>
+    /// The name a copied element (xsl:copy, xsl:copy-of) is tracked by for
+    /// <c>cdata-section-elements</c>, as <see cref="IsInCdataSectionElement"/> compares it: by
+    /// namespace URI, since the node store's namespace ids are not the stylesheet's. When the
+    /// output names no CDATA-section element, no name is looked up.
+    /// </summary>
+    private QName CdataTrackingName(XdmElement elem)
+    {
+        var outputDecl = _activeResultDocumentOutput ?? _stylesheet.PrincipalOutput;
+        if (outputDecl?.CdataSectionElements is not { Count: > 0 })
+            return default;
+        var uri = elem.Namespace == NamespaceId.None ? null : _nodeStore?.GetNamespaceUri(elem.Namespace);
+        return new QName(string.IsNullOrEmpty(uri) ? NamespaceId.None : StylesheetParser.ResolveNamespaceUri(uri), elem.LocalName);
+    }
+
     private bool IsInCdataSectionElement()
     {
         if (_outputElementStack.Count == 0)

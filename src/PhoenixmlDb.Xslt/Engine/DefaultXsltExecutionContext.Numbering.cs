@@ -156,7 +156,9 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Format the numbers
         var formatted = FormatNumbers(numbers, format, groupSep, groupSize, ordinal, lang);
-        _sink.RawText(formatted);
+        // A text node like any other: escaped (the format token may hold '<' or '&'), and a CDATA
+        // section in a cdata-section-elements element.
+        EmitText(formatted);
     }
 
 
