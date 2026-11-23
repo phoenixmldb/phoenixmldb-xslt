@@ -1262,7 +1262,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // never be popped (the tag stays open) — close it inline instead.
                 if (_isStreamingExecution && !_streamingDispatchElementMaterialized)
                 {
-                    _streamingOpenElements.Push(qname);
+                    OpenStreamingElement(qname, CdataTrackingName(elem));
                     // Descendants in the streaming loop inherit this subtree's base context;
                     // restore happens on the matching EndElement is out of scope here, so
                     // restore now — sentinel already emitted on the open tag above.
@@ -1273,12 +1273,15 @@ internal sealed partial class DefaultXsltExecutionContext
                     var savedSeqAccumSC = _sequenceAccumulator;
                     _sequenceAccumulator = null;
                     _serializingElementDepth++;
+                    // Its text: a CDATA section when the element is in cdata-section-elements.
+                    _outputElementStack.Push(CdataTrackingName(elem));
                     try
                     {
                         await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                     }
                     finally
                     {
+                        _outputElementStack.Pop();
                         _serializingElementDepth--;
                         _sequenceAccumulator = savedSeqAccumSC;
                         // Restore base context so following siblings re-evaluate whether their
@@ -2295,10 +2298,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // Only if THIS dispatch opened it: a child whose template built a complete
                     // result opened nothing, and popping closed the enclosing element (#181).
                     if (_streamingOpenElements.Count > openBeforeDispatch)
-                    {
-                        var qn = _streamingOpenElements.Pop();
-                        WriteStreamingEndTag(qn);
-                    }
+                        CloseStreamingOpenElement();
                     accumulatorOwner?.ForgetAccumulatorValues(elem);
                     // The child was read whole for its template alone, which is done: nothing
                     // refers to it now. Each one stayed in the node store to the end of the

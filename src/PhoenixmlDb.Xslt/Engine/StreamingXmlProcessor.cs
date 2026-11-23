@@ -820,8 +820,7 @@ internal sealed class StreamingXmlProcessor
                             // (si-copy-200 mis-nesting). A shallow-copy/xsl:copy body pushed one.
                             if (_context._streamingOpenElements.Count > openElementsBeforeMatch)
                             {
-                                var qname = _context._streamingOpenElements.Pop();
-                                _context.WriteStreamingEndTag(qname);
+                                _context.CloseStreamingOpenElement();
                             }
                             CleanupStreamingNode(current);
                             break;
@@ -861,8 +860,7 @@ internal sealed class StreamingXmlProcessor
 
                             if (current.LeftTagOpen && _context._streamingOpenElements.Count > 0)
                             {
-                                var qname = _context._streamingOpenElements.Pop();
-                                _context.WriteStreamingEndTag(qname);
+                                _context.CloseStreamingOpenElement();
                             }
                             CleanupStreamingNode(current);
                         }
@@ -950,8 +948,7 @@ internal sealed class StreamingXmlProcessor
                             if (!insideSuppressed && closingContext.LeftTagOpen
                                 && _context._streamingOpenElements.Count > 0)
                             {
-                                var qname = _context._streamingOpenElements.Pop();
-                                _context.WriteStreamingEndTag(qname);
+                                _context.CloseStreamingOpenElement();
                             }
 
                             // Clean up temporary XDM nodes to free memory

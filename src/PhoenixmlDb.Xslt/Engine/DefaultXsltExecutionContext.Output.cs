@@ -84,26 +84,35 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
             }
             _sink.StartElementClose(false);
-            foreach (var child in childElements)
+            // Its text: a CDATA section when the element is in cdata-section-elements.
+            _outputElementStack.Push(CdataTrackingName(elem));
+            try
             {
-                switch (child)
+                foreach (var child in childElements)
                 {
-                    case XdmElement childElem:
-                        SerializeElement(childElem);
-                        break;
-                    case XdmText text:
-                        WriteText(text.Value, false);
-                        break;
-                    case XdmComment comment:
-                        _sink.Comment(comment.Value);
-                        break;
-                    case XdmProcessingInstruction pi:
-                        // Note: deep-copy path intentionally does not apply EscapePIValue
-                        // (matches pre-existing behavior at this call site) — use RawText,
-                        // not _sink.ProcessingInstruction, to keep byte-identical output.
-                        _sink.RawText("<?" + pi.Target + (string.IsNullOrEmpty(pi.Value) ? "" : " " + pi.Value) + "?>");
-                        break;
+                    switch (child)
+                    {
+                        case XdmElement childElem:
+                            SerializeElement(childElem);
+                            break;
+                        case XdmText text:
+                            WriteText(text.Value, false);
+                            break;
+                        case XdmComment comment:
+                            _sink.Comment(comment.Value);
+                            break;
+                        case XdmProcessingInstruction pi:
+                            // Note: deep-copy path intentionally does not apply EscapePIValue
+                            // (matches pre-existing behavior at this call site) — use RawText,
+                            // not _sink.ProcessingInstruction, to keep byte-identical output.
+                            _sink.RawText("<?" + pi.Target + (string.IsNullOrEmpty(pi.Value) ? "" : " " + pi.Value) + "?>");
+                            break;
+                    }
                 }
+            }
+            finally
+            {
+                _outputElementStack.Pop();
             }
         }
         else

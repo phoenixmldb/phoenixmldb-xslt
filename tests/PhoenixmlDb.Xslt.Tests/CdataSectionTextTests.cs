@@ -69,4 +69,73 @@ public class CdataSectionTextTests
             """);
         (await transformer.TransformAsync(Source)).Should().Be($"<r>{expected}</r>");
     }
+
+    private const string StreamedSource = """<doc><a>src-a</a><t>src-t</t><x:a xmlns:x="urn:p">ns-a</x:a><d><a>deep</a></d><b>x</b></doc>""";
+
+    private const string WholeDoc = """<doc><a><![CDATA[src-a]]></a><t>src-t</t><x:a xmlns:x="urn:p"><![CDATA[ns-a]]></x:a><d><a><![CDATA[deep]]></a></d><b>x</b></doc>""";
+
+    /// <summary>Mode attributes, templates, and the expected result (Saxon-HE 10.9, which runs them without streaming).
+    /// The namespace is declared where it is used: a copy that repeats an inherited declaration is another matter.</summary>
+    public static TheoryData<string, string, string, string> StreamedCases => new()
+    {
+        { "copy-of a streamed element", "", """<xsl:template match="doc"><r><xsl:copy-of select="a"/></r></xsl:template>""",
+          """<r><a><![CDATA[src-a]]></a></r>""" },
+        { "copy-of a streamed subtree", "", """<xsl:template match="doc"><r><xsl:copy-of select="d"/></r></xsl:template>""",
+          """<r><d><a><![CDATA[deep]]></a></d></r>""" },
+        { "copy-of a namespaced element", "", """<xsl:template match="doc"><r><xsl:copy-of select="p:a"/></r></xsl:template>""",
+          """<r><x:a xmlns:x="urn:p"><![CDATA[ns-a]]></x:a></r>""" },
+        { "shallow-copy (on-no-match)", """on-no-match="shallow-copy" """, "", WholeDoc },
+        { "deep-copy (on-no-match)", """on-no-match="deep-copy" """, "", WholeDoc },
+        { "xsl:copy, then the built-in text rule", """on-no-match="shallow-copy" """,
+          """<xsl:template match="a"><xsl:copy><xsl:apply-templates/></xsl:copy></xsl:template>""", WholeDoc },
+        { "xsl:copy in for-each, value-of", "",
+          """<xsl:template match="doc"><r><xsl:for-each select="a"><xsl:copy><xsl:value-of select="."/></xsl:copy></xsl:for-each></r></xsl:template>""",
+          """<r><a><![CDATA[src-a]]></a></r>""" },
+        { "xsl:sequence of a streamed element", "", """<xsl:template match="doc"><r><xsl:sequence select="a"/></r></xsl:template>""",
+          """<r><a><![CDATA[src-a]]></a></r>""" },
+        { "the built-in text rule in a literal element", "",
+          """<xsl:template match="doc"><r><a><xsl:apply-templates select="t/text()"/></a></r></xsl:template>""",
+          """<r><a><![CDATA[src-t]]></a></r>""" },
+        { "value-of a streamed element", "", """<xsl:template match="doc"><r><a><xsl:value-of select="t"/></a></r></xsl:template>""",
+          """<r><a><![CDATA[src-t]]></a></r>""" },
+        { "copy-of() then copy-of", "",
+          """<xsl:template match="doc"><r><xsl:for-each select="a!copy-of()"><xsl:copy-of select="."/></xsl:for-each></r></xsl:template>""",
+          """<r><a><![CDATA[src-a]]></a></r>""" },
+    };
+
+    /// <summary>
+    /// The same when the transformation streams: the result as a string, and the result written to
+    /// the caller's writer as it is produced. With streaming off, the same stylesheet is the control.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(StreamedCases))]
+    public async Task The_text_of_a_CDATA_section_element_is_a_CDATA_section_when_the_transformation_streams(
+        string label, string mode, string templates, string expected)
+    {
+        _ = label;
+        var xslt = $"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:p="urn:p" exclude-result-prefixes="#all">
+              <xsl:output method="xml" omit-xml-declaration="yes" cdata-section-elements="a p:a"/>
+              <xsl:mode streamable="yes" {mode}/>
+              {templates}
+            </xsl:stylesheet>
+            """;
+
+        var toString = new XsltTransformer();
+        await toString.LoadStylesheetAsync(xslt);
+        var asString = await toString.TransformAsync(StreamedSource);
+        toString.LastTransformStreamed.Should().BeTrue("the case must stream");
+
+        var toWriter = new XsltTransformer();
+        await toWriter.LoadStylesheetAsync(xslt);
+        using var writer = new StringWriter();
+        await toWriter.TransformAsync(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(StreamedSource)), writer);
+        toWriter.LastTransformStreamed.Should().BeTrue("the case must stream");
+
+        var tree = new XsltTransformer { DisableStreaming = true };
+        await tree.LoadStylesheetAsync(xslt);
+        var asTree = await tree.TransformAsync(StreamedSource);
+
+        (asString, writer.ToString(), asTree).Should().Be((expected, expected, expected));
+    }
 }

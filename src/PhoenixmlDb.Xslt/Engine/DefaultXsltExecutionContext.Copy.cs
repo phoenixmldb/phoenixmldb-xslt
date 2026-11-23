@@ -445,7 +445,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // processor to close at the source element's end, as below. Everything before
                     // the element was sent on too.
                     _outputLogicalStart = 0;
-                    _streamingOpenElements.Push(committable.ElemName);
+                    OpenStreamingElement(committable.ElemName, CdataTrackingName(elem));
                     break;
                 }
                 var content = savedScope.GetWritten();
@@ -571,7 +571,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // (group-starting-with / group-adjacent in streamable mode).
                     _sink.StartElementClose(false);
                     _sink.RawText(content);
-                    _streamingOpenElements.Push(elemName);
+                    OpenStreamingElement(elemName, CdataTrackingName(elem));
                 }
                 else if (content.Length > 0)
                 {
