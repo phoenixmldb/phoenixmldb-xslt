@@ -16,27 +16,17 @@ internal interface IXmlIndenter
 
 /// <summary>
 /// <c>phx:indent-style="saxon-he-10"</c> (xslt#499): the xml and xhtml indentation laid out as
-/// Saxon-HE 10.9 lays it out, to the byte, observed from its output (the cases of SaxonLayoutTests):
+/// Saxon-HE 10.9 lays it out, to the byte, as observed from its output.
 /// </summary>
 /// <remarks>
-/// <list type="number">
-/// <item>Three spaces per level.</item>
-/// <item>The namespace declarations of an element come first, sorted by prefix, then its
-/// attributes in their order.</item>
-/// <item>When an element has two or more of them and their cost is more than 80, the first stays
-/// on the line of the start tag and each other goes on a line of its own, under the first. The
-/// cost of a namespace declaration is the length of its text (` xmlns:p="uri"`); of an attribute,
-/// the length of its name and of its value (not escaped), plus 8. The element's name and the
-/// indentation do not count.</item>
-/// <item>A comment or processing instruction just after a start tag stays on that line, also
-/// several in a row; elsewhere it goes on a line of its own.</item>
-/// <item>In mixed content nothing is indented, but an end tag after the end of an element child
-/// goes on a line of its own.</item>
-/// <item>A double quote in an attribute value is <c>&amp;#34;</c>.</item>
-/// <item>A newline at the end of the result.</item>
-/// </list>
-/// Start and end tags are written by this class; text, comments, processing instructions, CDATA
-/// sections and the document type declaration by the XmlWriter, as the default layout writes them.
+/// The rules, each with the generated cases that change when it alone is switched off, are in the
+/// text of xslt#499; <c>SaxonLayoutTests</c> runs those cases (<c>scripts/saxon-layout-cases.py</c>).
+/// In short: three spaces per level; namespace declarations first, sorted by prefix; <c>&amp;#34;</c>
+/// for a double quote in an attribute; with the xml method, attributes wrapped by a cost rule and
+/// newlines decided by what was written last (a start tag, an end tag or text), whitespace-only
+/// text held; with the xhtml method, the layout of an element taken from its local name (inline,
+/// formatted, void, block). This class writes every node itself: tags, text, comments, processing
+/// instructions, CDATA sections and the document type declaration.
 /// </remarks>
 internal sealed class SaxonXmlIndenter : IXmlIndenter
 {
