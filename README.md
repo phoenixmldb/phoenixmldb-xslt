@@ -11,7 +11,7 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 - **xsl:record** — record construction
 - **method="csv"** — CSV serialization output
 
-### XSLT 3.0 (98.6% W3C conformance — 10,684/10,839 cases, measured 2026-10-03)
+### XSLT 3.0 (99.7% W3C conformance — 11,484/11,522 cases, measured 2026-11-23)
 - Full template matching with priorities and modes
 - xsl:iterate, xsl:try/catch, xsl:evaluate
 - xsl:use-package with override, xsl:original, visibility
@@ -24,15 +24,19 @@ A modern XSLT 4.0 transformation engine for .NET with streaming and package supp
 
 Every figure below is measured, dated, and reproducible. Nothing here is an estimate.
 
-### W3C XSLT 3.0 — 10,684/10,839 cases (98.57%), 155 failing
+### W3C XSLT 3.0 — 11,484/11,522 cases (99.67%), 38 failing
 
-Measured 2026-10-03 against `w3c/xslt30-test` @ `fddf1cf` and `phoenixmldb-xquery` main (source
-mode), as the **measured pass count from a confirming full run**: the per-set passes in
-`conformance-results/summary.txt` (#274). Two full runs agreed on every set before the baseline was
-raised; the confirming run is the one committed. Eleven chunks, **zero timeouts**.
+Measured 2026-11-23 against `w3c/xslt30-test` @ `fddf1cf`, `phoenixmldb-xslt` @ `398fd3a`,
+`phoenixmldb-xquery` @ `16e3956` and `phoenixmldb-core` @ `547f9fe` (all source mode), Release
+build. The figure is the **measured pass count from a confirming full run**: the per-set passes in
+`conformance-results/summary.txt` (#617). Eleven chunks, **zero timeouts**.
 
-**Since 2026-09-17: 492 failing → 155**, on the same 10,839-case denominator, so the two figures are
-directly comparable. The rest of this section is the history behind that denominator.
+**Since 2026-10-03: 155 failing → 38.** The denominator also changed (10,839 → 11,522), so compare
+failing counts, not percentages, across that change.
+
+One case is counted as failed although the engine is correct: `accumulator-073`, whose expected
+result contradicts the spec (qt4cg/xslt40-test#13, w3c/xslt30-test#50). One case is not run,
+because it names a corpus file that does not exist (`system-property-999gen`).
 
 QT3 (XQuery) is not measured in this repo. Its figure comes from the XQuery repo's runner:
 see [phoenixmldb-xquery](https://github.com/phoenixmldb/phoenixmldb-xquery).
@@ -48,8 +52,8 @@ see [phoenixmldb-xquery](https://github.com/phoenixmldb/phoenixmldb-xquery).
 
 > **Not the sum of `scripts/conformance-baseline.tsv`.** That file is a **regression gate, not a
 > pass count**, and is deliberately allowed to sit *below* the measurement wherever a set is
-> pinned to a floor. Today it sums to 10,326: `insn/call-template` measures 39 and is recorded at
-> its standing floor of 37. A gate below the truth costs at most a missed alarm on one set; a gate
+> pinned to a floor. Today it sums to 11,483: `insn/call-template` measures 41 and is recorded at
+> its standing floor of 40. A gate below the truth costs at most a missed alarm on one set; a gate
 > above it turns `main` red whenever that set drifts. The two figures agree only when nothing is
 > pinned.
 
@@ -63,27 +67,24 @@ worse than a smaller number that counts it, so the smaller honest one is publish
 **Which XQuery this is measured against, because it changes the number.** The conformance
 project reaches XQuery through the `src/PhoenixmlDb.XQuery` symlink, so a local run measures
 whatever that working tree is checked out at. The figure above is against `phoenixmldb-xquery`
-**main** at 1.8.0, which is the intended basis.
+**main** at `16e3956`, which is the intended basis.
 
 The baseline records the **minimum across full runs, not the best one seen**. Repeated sweeps
-agree on every set but one: `insn/call-template` alternates between 38 and 37, and the baseline
-holds 37. A baseline set to the maximum observed enshrines a lucky run and then reports a
-regression every time the suite behaves normally.
+agree on every set but one: `insn/call-template` can measure one case lower, so the baseline
+holds 40 where the confirming run measured 41. A baseline set to the maximum observed enshrines a
+lucky run and then reports a regression every time the suite behaves normally.
 
 | Group | Passing | | Failing |
 |---|---|---|---|
-| `attr` — attributes | 1084/1117 | 97.0% | 33 |
-| `decl` — declarations | 1017/1122 | 90.6% | 105 |
-| `type` — types | 753/766 | 98.3% | 13 |
-| `fn` — functions | 1082/1131 | 95.7% | 49 |
-| `strm` — streaming | 2309/2373 | 97.3% | 64 |
-| `expr` — expressions | 637/648 | 98.3% | 11 |
-| `misc` | 1884/1921 | 98.1% | 37 |
-| `insn` — instructions | 1544/1594 | 96.9% | 50 |
-| **Total** | **10,310/10,672** | **96.6%** | **362** |
-
-`decl` is the only group whose denominator changed: 1080 to 1122, the 42 newly-opened
-`decl/expose` cases.
+| `attr` — attributes | 1450/1458 | 99.5% | 8 |
+| `decl` — declarations | 1122/1129 | 99.4% | 7 |
+| `type` — types | 804/806 | 99.8% | 2 |
+| `fn` — functions | 1300/1306 | 99.5% | 6 |
+| `strm` — streaming | 2531/2534 | 99.9% | 3 |
+| `expr` — expressions | 701/704 | 99.6% | 3 |
+| `misc` | 1939/1944 | 99.7% | 5 |
+| `insn` — instructions | 1637/1641 | 99.8% | 4 |
+| **Total** | **11,484/11,522** | **99.7%** | **38** |
 
 The `sandp` group runs but reports no per-case counts, so it is excluded from the total rather
 than counted as passing.
