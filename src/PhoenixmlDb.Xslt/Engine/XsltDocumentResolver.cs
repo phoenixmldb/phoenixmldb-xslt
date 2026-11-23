@@ -125,6 +125,19 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
         }
     }
 
+    /// <summary>
+    /// <see cref="ResolveCollection"/>, and whether the collection exists: one the host declared
+    /// exists even when it has no documents, and is the empty sequence, not FODC0002
+    /// (xquery#418). Any other collection exists when it has documents, as before.
+    /// </summary>
+    public bool TryResolveCollection(string? uri, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IEnumerable<XdmNode>? documents)
+    {
+        var all = ResolveCollection(uri);
+        var resolved = all as IReadOnlyCollection<XdmNode> ?? all.ToArray();
+        documents = resolved.Count > 0 || HasCollection(uri ?? "") ? resolved : null;
+        return documents != null;
+    }
+
     public IEnumerable<XdmNode> ResolveCollection(string? uri)
     {
         if (_collections == null || !_collections.TryGetValue(uri ?? "", out var paths))
