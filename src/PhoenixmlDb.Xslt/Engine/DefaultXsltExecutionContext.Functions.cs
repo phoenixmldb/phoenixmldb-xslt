@@ -436,6 +436,9 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     internal async ValueTask<bool> MatchAndExecuteStreamingNodeAsync(XdmNode node, QName? mode, int position)
     {
+        // Only the processor's own dispatch, not one made from inside a body (BUGS #140).
+        var fromProcessor = _processorDispatch;
+        _processorDispatch = false;
         // Record the start tag being dispatched, so fn:has-children() in the match pattern or the
         // body can look ahead for this element — and only this one (BUGS #92).
         _lastDispatchRanTemplateBodyLive = false;
@@ -448,7 +451,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 : null;
         try
         {
-            return await MatchAndExecuteStreamingNodeCoreAsync(node, mode, position).ConfigureAwait(false);
+            return await MatchAndExecuteStreamingNodeCoreAsync(node, mode, position, fromProcessor).ConfigureAwait(false);
         }
         finally
         {
@@ -456,7 +459,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
-    private async ValueTask<bool> MatchAndExecuteStreamingNodeCoreAsync(XdmNode node, QName? mode, int position)
+    private async ValueTask<bool> MatchAndExecuteStreamingNodeCoreAsync(XdmNode node, QName? mode, int position, bool fromProcessor = false)
     {
         // last=0 signals "unknown in streaming mode". The StreamabilityChecker rejects
         // last() in streamable templates, so this value should never be accessed.
@@ -632,12 +635,29 @@ internal sealed partial class DefaultXsltExecutionContext
                     _defaultCollationStack.Push(template.DefaultCollation);
                 if (template.BaseUri != null)
                     _staticBaseUriStack.Push(XsltTransformEngine.UriString(template.BaseUri)!);
+                // The body of a rule the processor dispatched, writing text with nothing open around
+                // it: an xsl:copy among its instructions may be committed between the groups of a
+                // streamed grouping in it (BUGS #140, StreamedDrain.cs). Any other body is not.
+                var savedDrainableBody = _drainableBody;
+                var savedDrainableScopeDepth = _drainableScopeDepth;
+                if (fromProcessor && _streamingOutputSink != null && _streamingOutputHeld == 0
+                    && _activeTreeConstructor == null && _sequenceAccumulator == null && _temporaryOutputDepth == 0)
+                {
+                    _drainableBody = template.Body;
+                    _drainableScopeDepth = _scopes.Count;
+                }
+                else
+                {
+                    _drainableBody = null;
+                }
                 try
                 {
                     await template.Body.ExecuteAsync(this).ConfigureAwait(false);
                 }
                 finally
                 {
+                    _drainableBody = savedDrainableBody;
+                    _drainableScopeDepth = savedDrainableScopeDepth;
                     if (template.BaseUri != null)
                         _staticBaseUriStack.Pop();
                     if (template.DefaultCollation != null)

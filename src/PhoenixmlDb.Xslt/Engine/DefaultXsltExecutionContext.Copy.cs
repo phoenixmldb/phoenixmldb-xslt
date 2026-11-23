@@ -373,6 +373,12 @@ internal sealed partial class DefaultXsltExecutionContext
                     copyNsBindings[""] = "";
                 }
 
+                // BUGS #140: in one known shape a streamed grouping in the content may send this
+                // element's start tag and content on between groups (StreamedDrain.cs).
+                var committable = OpenCommittableFrame(instruction,
+                    !string.IsNullOrEmpty(elem.Prefix) ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName,
+                    copyNsBindings, savedScope);
+
                 // Process content with ns scope so children can deduplicate
                 PushOutputNsScope(copyNsBindings);
                 PushOutputNsScope(new Dictionary<string, string>()); // Separate scope for attribute-emitted ns decls
@@ -400,6 +406,11 @@ internal sealed partial class DefaultXsltExecutionContext
                 var tcForThisElement = _activeTreeConstructor;
                 if (tcForThisElement != null)
                     TcOpenElement(tcForThisElement, copyElemName, copyElemNsUri);
+                // Nothing in the content is an instruction of the rule's body.
+                var savedDrainableBody = _drainableBody;
+                var savedCommittableFrame = _committableFrame;
+                _drainableBody = null;
+                _committableFrame = committable;
                 try
                 {
                     if (instruction.Content != null)
@@ -409,6 +420,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 finally
                 {
+                    _drainableBody = savedDrainableBody;
+                    _committableFrame = savedCommittableFrame;
                     _forceDefaultNsUndeclaration = savedForceNsUndecl2;
                     _inheritNamespacesNo = savedInheritNsNo2;
                     _lastResultWasAtomic = savedLastResultWasAtomic2;
@@ -423,6 +436,16 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
 
                 var collectedAttrs = _collectedAttributesStack.Pop();
+                if (committable is { Committed: true })
+                {
+                    // The start tag and the content before the last group were sent on; the rest
+                    // of the content is what the buffer holds. The element stays open for the
+                    // processor to close at the source element's end, as below. Everything before
+                    // the element was sent on too.
+                    _outputLogicalStart = 0;
+                    _streamingOpenElements.Push(committable.ElemName);
+                    break;
+                }
                 var content = savedScope.GetWritten();
                 savedScope.Dispose();
                 _outputLogicalStart = savedLogicalStart;

@@ -769,8 +769,18 @@ internal sealed class StreamingXmlProcessor
                         else
                         {
                             var positionBeforeDispatch = reader is PeekableXmlReader beforeReader ? beforeReader.Position : -1;
-                            wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, templatePosition)
-                                .ConfigureAwait(false);
+                            // This loop's own dispatch, between events: a rule's body run from here
+                            // has nothing open around it (BUGS #140, StreamedDrain.cs).
+                            _context._processorDispatch = true;
+                            try
+                            {
+                                wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, templatePosition)
+                                    .ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                _context._processorDispatch = false;
+                            }
 
                             // A matched template that never read into this element's children did
                             // not ask for them, so the loop must not process them (#180). Only an

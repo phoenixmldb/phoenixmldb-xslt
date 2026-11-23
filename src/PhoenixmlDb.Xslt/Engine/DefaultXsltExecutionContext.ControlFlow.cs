@@ -1510,6 +1510,10 @@ internal sealed partial class DefaultXsltExecutionContext
         Xdm.Nodes.XdmElement ReadElementSubtree()
         {
             ct.ThrowIfCancellationRequested();
+            // Each member is a tree of its own, freed when its group is done and nothing else
+            // refers to it; in the transform's store every member stayed until the end, so the
+            // memory grew with the input (BUGS #140).
+            using var memberTree = _nodeStore!.TemporaryTree();
             var elem = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore!, DocumentId.None)!;
             // Detach the materialized root: as a selected group member it stands on
             // its own, and later snapshot(current-group())/.. synthesizes the parent.
@@ -1623,6 +1627,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 PopContextItem();
                 _isStreamingExecution = savedStreaming;
             }
+            // The group's result may go to the writer now, with the open element around it
+            // (BUGS #140): otherwise the whole result waited for the end of the input.
+            await DrainBetweenGroupsAsync(instruction).ConfigureAwait(false);
         }
 
         await foreach (var child in population.ConfigureAwait(false))

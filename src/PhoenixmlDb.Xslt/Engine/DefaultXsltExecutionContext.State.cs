@@ -425,6 +425,13 @@ internal sealed partial class DefaultXsltExecutionContext
     // but whose end tags must be deferred until the StreamingXmlProcessor sees EndElement.
     internal readonly Stack<string> _streamingOpenElements = new();
 
+    // Draining a streamed grouping's result while the element around it is open (BUGS #140).
+    // See DefaultXsltExecutionContext.StreamedDrain.cs.
+    internal bool _processorDispatch;
+    private XsltSequenceConstructor? _drainableBody;
+    private int _drainableScopeDepth;
+    private CommittableElementFrame? _committableFrame;
+
     /// <summary>
     /// True while executing a template for an element whose subtree was already READ from the
     /// stream (ReadStreamingElementForDispatchAsync materialises the whole element and leaves the
