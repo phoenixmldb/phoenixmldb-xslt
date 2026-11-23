@@ -1,0 +1,4 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xml" indent="yes" phx:indent-style="saxon-he-10" omit-xml-declaration="yes"/>
+  <xsl:template name="xsl:initial-template"><data-element xmlns:q="urn:example:q" v2="&amp;zx&#10;c&quot;&quot;&lt;" q:n0="ax&#10;&lt;&#9;&gt;y'&#10;'&gt; " n0="yyé &#9;&lt;y&quot;&lt;é&lt; &#10;&#9;"><section xmlns:p="urn:p" p:id3="&gt;'é&quot;&#10;yc&gt;x&amp;z'z&quot;z&quot;ac&quot;" type2="ba&amp;&quot;z&lt;&lt;&amp;&lt;bx"><xsl:comment>baa </xsl:comment><xsl:text>yx'</xsl:text><data-element a-long-attribute-name0="&quot; &lt;a&#10;&gt;"><x a-long-attribute-name2=""><xsl:text>a	x&amp;c&lt;c</xsl:text></x></data-element></section></data-element></xsl:template>
+</xsl:stylesheet>

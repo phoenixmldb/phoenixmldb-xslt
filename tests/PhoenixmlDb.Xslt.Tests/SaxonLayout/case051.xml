@@ -1,0 +1,34 @@
+<data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+              xmlns:p="urn:p"
+              xmlns:q="urn:example:q"
+              a-long-attribute-name3="'&amp;&lt;&gt;"
+              a-long-attribute-name1="&#34;&#34;&gt;é bz&#xA;&#x9;&amp;a"
+              n2="b &amp;'éxzc"
+              long-prefix:id3="'&amp;'"><?pi1?>
+   <a long-prefix:id3="xy&#34;&amp;c&#34;&amp;&lt;&#34;zb c&#x9;éb&gt;y'y&lt;a&#xA;b"
+      id2="é z"
+      v1=" cxyééz&#x9;&#34;xz&lt;y&gt;éé&#34;&amp;"
+      long-prefix:n0="c&#xA;a"
+      a-long-attribute-name3="&#34;ybaaa &amp; &#34;x">
+      <section long-prefix:a-long-attribute-name0="&#x9;xy &amp;x xcy "
+               a-long-attribute-name1="az&lt;b&amp;x&lt;b&lt;&lt;&#xA;b&gt;  ' &#34;'yxéb' 'ab"
+               long-prefix:id3=" y'aazé&gt;'&lt;&gt;&lt;&gt;b&#34;'z"
+               a-long-attribute-name2="&lt;&gt;bz&gt;&#xA;zéc&gt;'&#xA;éc">
+         <item v2="a &amp;&gt;éyb&#34;y&gt;&#xA;&#xA;&lt;&#x9;c&#34;z&#xA;  &lt;c&#xA;'"
+               type1="&#xA;&lt;&#34;&#xA;éxz&amp;xé&amp;x&lt;&#34;'"
+               id3="bxy&#34;&lt;'c&#xA;caxzb &#xA;é"
+               n3="'&#34;éx&#xA;z&lt;&amp;a&#34;"
+               long-prefix:n1="'éb&lt;axyb y zéb&#34; &lt;"
+               a-long-attribute-name3="&#34;">
+            <b q:id2="&amp;&lt;zy&#x9;z&lt; é&#xA;y&#x9;&#34;&lt;ax&amp;&#xA;&lt;yz"
+               v0="a 'xazxy&gt;&#34;bé&amp;zaaz&#34;&amp;x&amp;y &#xA;é"
+               type3="'zé é&lt;'ééxc"
+               type1="c&#xA;czy&#x9;x&gt;z &lt;&#34;yy"/>z"<b/>
+            <?pi2 &zc'?>
+         </item>
+         <long-prefix:e n3="&gt;yéxy'&#xA;'&#34;cb&#x9;''b&#x9;&gt;zbb&#xA;éx &#34;x a"
+                        a-long-attribute-name2="z"
+                        v2=" b&lt;a'é&#34;&lt;b&#xA; &amp;&#xA;c&amp;y&#34;&amp;&#x9;&lt;&#xA;é">c"ab z ay<long-prefix:b/>
+         </long-prefix:e>&lt;"x&gt;&lt;'"</section>
+   </a>
+</data-element>

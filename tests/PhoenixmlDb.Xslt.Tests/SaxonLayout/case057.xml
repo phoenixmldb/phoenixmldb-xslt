@@ -1,0 +1,6 @@
+
+<!DOCTYPE data-element
+  PUBLIC "-//PHX//CASE//EN" "case.dtd">
+<data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+              xmlns:p="urn:p"
+              xmlns:q="urn:example:q"/>

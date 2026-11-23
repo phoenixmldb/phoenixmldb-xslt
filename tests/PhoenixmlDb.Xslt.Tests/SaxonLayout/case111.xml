@@ -1,0 +1,7 @@
+
+<!DOCTYPE e
+  PUBLIC "-//PHX//CASE//EN" "case.dtd">
+<e xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   a-long-attribute-name0="&amp;'é&gt;&#xA;x'é'&#34;&#xA;&#xA;&lt;y&#34;z&#xA;&gt; &#x9;' éba&lt;y&#xA;"/>

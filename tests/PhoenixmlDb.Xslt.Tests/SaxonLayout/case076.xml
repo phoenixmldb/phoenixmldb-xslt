@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE section
+  SYSTEM "case.dtd">
+<section xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+         xmlns:p="urn:p"
+         xmlns:q="urn:example:q"
+         n2="&#xA;&lt;'&lt;é'a&gt; &gt;aa&lt;cz&gt;'z&amp;&#xA;z&lt;c&lt;az&#34;"
+         id1="x'"
+         type1="a&gt;y&#x9;é'yé&#34;&lt;z&#34;az&#xA;&gt;'&#x9;az&#xA;&#x9;bczy"
+         a-long-attribute-name3="'éy&amp;b&#34;z'&gt;zy'&amp;xyabc&#x9;ya&#x9;z&lt;c&#34;">
+   <data-element/>
+   <!--x-->
+</section>

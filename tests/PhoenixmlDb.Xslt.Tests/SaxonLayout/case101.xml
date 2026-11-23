@@ -1,0 +1,13 @@
+<e xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   id1="'z&#xA;&#xA;'&amp;y&gt;&#34;ézy&gt;"
+   n0="bzc&#x9;&gt;&#x9;&#34; xb&amp;&#34;y &#34;zyz"
+   type1=" &#x9;&#xA;éé"
+   id0="&#x9;cb&#x9;byé">
+   <section>ayc<x type2="b&lt;&#x9;&amp;&#xA; &#34; '&gt;&amp;&gt;é&#x9;yxc&lt;x"/>
+      <?pi0 céy<'?>
+   </section>
+   <!---->
+   <?pi0 bx''?>
+</e>

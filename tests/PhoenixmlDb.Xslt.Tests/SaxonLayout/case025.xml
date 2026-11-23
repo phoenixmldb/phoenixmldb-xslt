@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q"
+      id2="'y&#34;ababy' &amp;b&gt;a&lt;&lt;ya&#x9;x&gt;xz&#xA;">
+   <section><!--	b--></section>
+   <x p:id2="&lt;'z&amp;&#34;xbé&gt; éy&#x9;&amp;b'&#xA;xxaax" type1="x&gt;&lt;&gt;yxx&#x9;zbyx'  &#xA;'é'z&#xA;y&amp;&#x9;zc&#xA;é"/>
+   <x type2=" &gt;&amp;&#x9;é''&#34;&lt;c&#x9;a&lt;&amp;é'&amp;&amp;&#x9;xé" id0="z&lt;&lt;y&amp; b&gt;&amp;&amp;y" id3="&#34;éz&gt;&#x9; &amp;y&lt;y&#xA;y"><!--
+&x
+		<">-->
+      <a type3="yéa&gt;&lt;xyba" type0="&amp;c&lt;&gt;by&lt;xé&#34;bc&amp;ax&lt;">a
+&gt;cya &lt;&amp;&amp;<data-element>
+            <a id0="&gt;éé&lt;&#xA;&amp;z'&#xA; x&#x9;'bc&#x9;zxbbx&gt;xcca&#34;" long-prefix:id0=""/>
+         </data-element>
+      </a>
+      <q:section q:a-long-attribute-name0="&gt;&gt;&gt;" n0="">
+         <data-element xmlns="urn:default" type2="&lt;&#x9;'">
+            <q:a/>
+         </data-element>   b</q:section>
+      <?pi1 "a&x
+"x?>
+   </x>
+   <!--
+cbx-->
+</item>

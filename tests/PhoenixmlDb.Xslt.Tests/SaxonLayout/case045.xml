@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<b xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   n0="zé &#xA;bxac&amp;&lt;&#x9;b&#34;&#x9;&#xA;">
+   <data-element xmlns="urn:default" n0="&#34;c'&gt;&gt;&#34;x&gt;é&#x9;&#xA;x&gt;&gt;azc'a" type1=" c &#xA;&gt;&#xA;z &#xA;' y&#x9;">
+      <item>
+         <section v3="&#xA;xyxc&#34;b&#34;a "
+                  n3="é&amp;ba&#34;' &#xA;yéy zc&#x9;&#x9; zac&#xA;&#xA;x"
+                  long-prefix:v3="z&#xA;éaxaé&#34;yb&gt;&#x9;bcb yéac&lt;&#xA;x&gt;"><!--x	-->
+            <long-prefix:item type2="  é&#xA;&lt;ab z&lt;"
+                              id1="'ax  &amp;'"
+                              long-prefix:id0="&gt;&gt;"
+                              n3="cxa&lt;ybz&#x9;ya&lt;'&#34;&amp;&#x9;&amp;byx&#34; &gt;a''&lt;"
+                              v2="é&gt;&gt;'&#34;b&#xA;c&#34;&amp;é&amp;&gt;cb&gt;ya&#xA;&#x9;&#x9;&lt;c&amp;&gt;é"
+                              v3="&#xA;&#xA;by&#xA;&#x9;&amp;&#34;é"/>
+            <!--	b 
+c""-->
+         </section>
+         <long-prefix:item/>
+         <a/>
+      </item>
+   </data-element><![CDATA[cz>ca&'c "']]><item><!---->
+      <data-element id3="zcy" a-long-attribute-name1="zé&#x9;xxé&#x9;x&#xA;&lt;b" long-prefix:a-long-attribute-name1="&gt;éa&gt;&gt; b&amp;z&lt;c y&#x9;&#34;" n3="c&#xA;&#x9;xzé&#xA;&#34;" xml:space="preserve">   </data-element>
+      <a long-prefix:a-long-attribute-name3="'az"><?pi2 'zc?>&gt;'&lt;z&lt;zz&amp;"<a long-prefix:v1="éééa&#xA;&#xA;&gt;&#x9;ab&#xA;&amp;yx&#34;é'&#x9;azb&#xA;c"
+            n0="'yz &#x9; &#34;&#34;b y&#xA;&amp;"
+            type3="&#x9;&amp;xxy é&gt;&#34;'&amp;"
+            long-prefix:n2="c&#x9;c&#x9;&#xA;'xbb ay&lt;bzac&#xA;"
+            id1="&#xA;&#xA;a&lt;&#x9;céazyyay&#x9;azyxa&gt;b'&#xA;ccb">
+            <e id1="x&gt;'&#34;éé'y&#xA;&gt;&#x9;&#x9;'x&#34;&#34;zx&#x9;&lt;z"
+               v3="b&#xA;xy'&#xA;&gt;zyb"
+               a-long-attribute-name0="&#x9;&#x9;'c&#x9;c&amp;&lt;&gt;éc"
+               n2="éa&#x9;y&gt;x&#34;&#34;c&lt;z&#xA;"/>a
+&amp;
+x	ayy&amp;ya<long-prefix:b type0="xb  c'za&#x9;&#x9; z&lt;yé&amp;axzyz&#34;&#x9;" type3="yé&#xA;x&#x9;éza&#x9;&amp;&#xA;&lt;abx'&#xA;y&#34;a" v2=""/>
+            <q:section v3="&#x9;x"
+                       n0="yc b&#xA;&#x9;zc é&lt;&#x9;&lt;"
+                       a-long-attribute-name0="y&#34;&amp;&#34;az&gt;&lt;b&lt;&#xA; &#x9;&lt;&#34;x&lt;&gt; '&gt;a'a"/>
+         </a>
+      </a>
+   </item>
+   <long-prefix:data-element a-long-attribute-name3="ca&lt;&#34;&#x9;z&#xA;&gt;&#x9;&amp;&#xA;az&#x9;'"
+                             type3="yccézé'&#xA;'&#34;é&lt;&amp;'yz&#xA;&#34;c&gt;y&#x9;&lt;xx&#xA;éé"/>
+</b>

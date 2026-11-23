@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<b xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q">
+   <item v2="yx&lt;&lt;&#34; c&amp;&amp;y&#xA;b&#x9;&lt;&lt;c">
+      <e id3=" '&lt;&#34;é&gt;'zé&#x9;a&#xA;&#xA;ay&#34;&#x9;by&#xA;&amp;&gt;"
+         a-long-attribute-name1=" &#34;c&gt;&#x9;ybc&#34;&#x9;b&#x9;&#x9;bcxéz">   </e>
+      <section q:id2="xcb&#xA;y''&#xA;&#xA;&#x9;a'&#xA;a &#x9;&#x9;c &amp;xé&amp;b"
+               v1="&#34;&lt;"
+               q:id3=" "
+               type1="' 'y&gt;yy&lt;&gt;ba&gt;&amp;"
+               n1="é&#34;"
+               type0="z cé&#xA;'&lt;zx&#x9;&amp;cb&gt;x"><?pi0 < ?>cb<?pi2 > <<
+'?><!--	'&ayx&--></section>
+   </item>
+   <section type3="'c' x&amp;x&#x9;y&#34;&amp;&#34;éz" a-long-attribute-name3="  &#x9;&#34;&amp;z " v3="ya&#xA;b"/>
+   <b/>
+</b>

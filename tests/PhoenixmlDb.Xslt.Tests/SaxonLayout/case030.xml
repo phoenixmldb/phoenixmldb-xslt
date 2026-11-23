@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<x xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   type2="yab z&amp;b&gt; xy&#34;&lt; &lt;&gt;aé&#34;xz&gt;z"
+   type3="&lt;yéc&#34;z&#xA;&#x9;c&lt;&#xA;zc&#34;&#34;b&amp;&#x9;"
+   id1="cbbcb &#xA;&gt;y&amp;xy'zc&#x9;xéxab &#xA;a&lt;"
+   n3="&amp;'z&#x9;y c&lt;a 'é'&#xA;&#xA;"
+   v3="&#34;&#xA;&amp;&#34;"
+   v1="&amp;"><!--é
+cyz
+x&--><![CDATA[<'y'&xy"<z   ]]></x>

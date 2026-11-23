@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+              xmlns:p="urn:p"
+              xmlns:q="urn:example:q"
+              n3="x&lt;c&#xA; c&gt;&gt;&gt; c"
+              v1="&#xA;c&gt;"/>

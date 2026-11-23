@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<x xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   id0="x'z&#x9;z&gt;&#34;&lt;z&lt;c'bzcéb&lt;b&#34;"><?pi2?></x>

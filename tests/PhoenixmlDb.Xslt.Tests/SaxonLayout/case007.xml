@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q"
+      type0="&#x9;'&#34;&amp;c&lt;&gt;zz  &#34;"
+      type2="' ax&#xA;' é"
+      a-long-attribute-name3="cczz&#34;zbb&gt;cé&#34;"
+      v2="c&lt;&lt;">é	c   </item>

@@ -1,0 +1,7 @@
+<section xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+         xmlns:p="urn:p"
+         xmlns:q="urn:example:q"
+         type2="zébb&#xA;&#x9;&#x9;zc&amp;"
+         id3="&amp;yax  &#xA;ca"
+         a-long-attribute-name2="&#x9;'&#x9;&lt;'x&#x9;&#x9;ééc"
+         n1="yczxcx'yé &lt;'a&#xA;zy&#xA;x&#x9; zz&#xA;xca&amp;' "/>

@@ -1,0 +1,13 @@
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q">&amp;' "b<a>
+      <data-element xmlns="urn:default"
+                    p:v1="a b&#xA;&lt;&#xA;&#xA;&#xA;yab&lt;"
+                    a-long-attribute-name3=" a&amp;z&#x9;''bzz&#xA;'&amp;aécyz&#xA;&amp;cy&gt;a&#34;"
+                    p:type0="b">"x"x&gt;a&amp;'&amp;zy<p:b id0="&#xA;&#xA;zca&lt;éy&#34;czz&#xA;" a-long-attribute-name3=" a&#x9;&#xA;é'y'x&#xA;a">zxx&lt;
+éz   <x n0="&#x9;" n1="&#34;&amp;&gt;x&#34;&#x9;bxz&#xA;&lt;" v0="&#x9;yc&gt;&#34;é&#x9;céab&lt;"/>
+            <!--&x
+-->
+         </p:b>&amp;c</data-element>
+      <?pi0 yc	x&cyx?>b&gt;bzé &gt;é	b"&lt;</a>
+</item>

@@ -1,0 +1,5 @@
+<section xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+         xmlns:p="urn:p"
+         xmlns:q="urn:example:q"
+         type0="xa&#x9;by&lt;za&gt;"
+         a-long-attribute-name0="&gt;&gt;&#xA;'y&#xA;'bx"/>

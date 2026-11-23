@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q"
+      type1="&#34;ycxy &#x9;yzé&amp;&gt;&lt;&#34; cy&#34;&#34;&lt;a&gt;&#34;&gt;'&gt;a&#xA;&#34;"
+      type3="&amp;&#xA;&#xA;a&amp;&#34;ab  bz&amp;&lt;&#x9;&#xA;&lt;&#34;&#34;&lt;éyz"
+      a-long-attribute-name2="&#x9;b&lt;xbyy &amp;&#34; c&#xA;z&gt; &#34;xbacy&#34;&#x9;&lt;&#x9;"
+      a-long-attribute-name1="cx&amp;é&#34;&#xA;axé&#x9;cxx&#xA;aab&#x9;bxb&#xA;&#x9;"
+      id0="&#x9;b&#34;zé&lt;&amp;&#34;&gt;&#x9;&amp;&gt;ac&#34; &amp;azb&#x9;cc"
+      v2=" b&lt;ccac&#xA;z b&gt;&#34;&#34;'&#34;zyzzy&lt;z&#xA; &#xA;zéa&#x9;">
+   <e>
+      <data-element>
+         <x n1="&#x9;éx&#xA;'&gt;&#x9;xy&#x9;&#x9; &#xA;" long-prefix:v1="&#34;zy&gt;éyx&#xA;é&#xA;&gt;&#x9;y&#34;cy&#xA;bé&lt;">
+            <data-element/>
+            <section xml:space="preserve"/>
+            <!--<
+ybyybz'-->
+         </x>
+         <?pi1 é<"<>"éy?>
+         <long-prefix:section type1="&#34;&gt;&#xA; x&lt;&gt;&#x9;b&lt;y&#xA;b&lt;aé&#xA;&#xA;a&amp;y"><?pi0 >caz?>
+            <b n1="x&amp;&#xA;&#34;"
+               n3="z&#x9;aaazy'&#x9;a c&gt;&#34;&#x9;&#xA; "
+               type3=" &amp;&#xA;"
+               id3="béxybx&lt; xy&#34;&lt;&lt; é&#34;xx'yc"
+               long-prefix:a-long-attribute-name0="z&amp;xé'c&lt;&#x9;&#34;y&gt; éc&amp;&#xA;&#34; b&lt;'c''c"
+               type1="zax&amp;&amp;&lt;&#x9;&lt;'ca&#34;aé&#34;&#xA;a c"/>
+            <!-->
+"za-->
+         </long-prefix:section>
+      </data-element>
+      <x a-long-attribute-name1="yéz" p:n3="xé &#34;&#34;a&#x9;&#34;&gt;c&gt;éc&lt;a&gt;axx"/>
+      <long-prefix:a a-long-attribute-name2="&lt;&#xA;&lt;&#34;&amp;'&lt;&#xA;a&amp;x&lt;&gt;xcbc caa &#34;">
+         <long-prefix:e n2="xzbézc&amp;x&#34;acy" type0=""/>
+         <e xmlns="urn:default"/>
+      </long-prefix:a>
+   </e>
+   <?pi1 <<' axx>?>
+   <item id2="&#x9;x&#34;&gt;x&lt;&#x9;ba&#xA;zc&lt;zb&gt;&lt;&gt;" a-long-attribute-name3="c&#xA;x&#xA;&amp;x"/>
+   <!-- éb	" "&-->
+</item>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+         xmlns:p="urn:p"
+         xmlns:q="urn:example:q">
+   <item n3="byz a" type3="'" id3="b"/>
+   <item n1="&#xA;z&lt;xé&#x9;&gt;xx&lt;&lt;'&lt;&amp;" id1="&amp;c'a&#34;b&#34;c&#xA; a" id3="ax&#xA;&#xA;&#34;&gt;x&#34;&#34; &#34;&#xA;'&#x9;&#34;ééy ">
+      <item>
+         <e long-prefix:n3="&lt;&lt;&#xA;&amp;&#34;yb&#x9;&gt;b&gt;z&#xA;&gt;&gt;&#xA;by"
+            type3="''é&gt; &lt;x&amp;&gt;c'&amp;&lt;&#x9;&amp;&#x9;c  &lt;&gt;'a"
+            type1="cbé&amp;é&amp;y'éé 'b&#34;&#xA;&#xA;b&#34;&amp;y&#xA;é&amp;&lt;&#34;&#x9;c&#xA;">
+            <item long-prefix:v3="&#x9;bc&#x9;yb&gt;'&#x9;z&gt;" type2="&#x9;aba &gt;&amp;x&gt;&#34;bb &#34; &#xA;yy z&#x9;xb"/><![CDATA[   ]]><!--&--></e>
+         <x type3="abx&#34;&gt;&gt;&#34;&#34;&#x9;é&lt;y"><![CDATA["	<"cyb>>]]><q:section type0=" x&#x9;&lt;é&#x9;&gt;a'&gt;&#xA;cca &#34;éa&#34;'"/>
+            <!--
+bz
+é&yé
+-->
+            <?pi2 "?>
+         </x>
+      </item>
+      <b a-long-attribute-name1="&#xA;&#xA;&gt;a&#34;&#xA;&#x9;&gt;'cy&lt;a&#x9;&#xA;é &#34;'y&#34;yz">
+         <b/>
+      </b>
+   </item>
+   <x type3="zxc&lt;&#34;c'&lt;&#x9;&lt;x&#xA;&#xA;" id0="&lt;  b&amp;&lt; &#x9;''''c" xml:space="preserve"><data-element a-long-attribute-name2="&lt;y&lt;ay&gt;&lt;&#x9;éy&#xA;&lt;yz&gt;c by&#34;x &#xA;" id2="a'a&amp;&lt;&amp;&lt;c&gt;'xca&#x9;zz  zay&amp;éc"><e/><!--cc"
+bxba-->   </data-element></x>
+</section>

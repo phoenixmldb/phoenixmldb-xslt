@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<p:section xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+           xmlns:p="urn:p"
+           xmlns:q="urn:example:q"
+           v3="b ''&lt;&#34;&#34;cybb&#x9;&lt; abc&#x9;bé a"
+           type0="'&lt;x'zéxc'">
+   <data-element a-long-attribute-name2="&#x9;y &#xA; &gt;é&lt;">
+      <section p:v0="&#xA;&#x9;ac &#xA;écbaz&#x9;&amp;&lt;bby&lt; a y&gt;z&#x9;&gt;é" v2="a&gt; x&#xA;&#34;&amp;&gt;c" a-long-attribute-name2="&gt;'&amp;&#34; y" id0="&gt;&amp;' "><item p:id1="&amp;yza&lt;&#xA;x'é zyy &#x9;é&#x9;&#34;é&#34;a&gt;&#x9;zcyz&#xA;" type3="za&gt;" type2="&#x9;" v2="&amp;&lt;&#x9;zbb&#xA;bzy"><long-prefix:a v2="ya&#x9;aay&amp; zx&#34;xx&amp;cb&lt;&#x9;zx&#34;&gt;&lt;ab" id2="&lt;bz&#x9;acéb&lt;"/></item><x a-long-attribute-name1="c&#xA;" v3="&#34;&#34;c'y&#xA;é'x&amp;&#x9;c&#xA;ya''x'&#x9;&#xA;&#xA;&lt;'yc&gt;y" n3="&#xA;&amp;" n1="ab'z&amp;é&#x9;b'bzy&#x9;&#34;xb&lt;cé&lt;x&#34;&amp;" long-prefix:a-long-attribute-name2="&lt;"><!--y> -->""	&lt;'&amp;
+'y'	<a p:n3="xz&gt;&#xA;é&#xA;y&amp; &#34;&gt;&amp;b&gt;y&#34;&#x9;z''&#34;a&amp;y&amp;&#34;zy&gt;"/><!--z	xy--></x></section>
+      <data-element n1="z&lt;xc'c&gt;yc'&amp;zcx&#34;&#34;z&amp;' " type0="&#xA;cx &#xA;x'&lt;"/>
+      <!--&é'é-->
+      <a v1="z&#34;écb" v2="x&lt;" v0=" x&amp;&#x9;yy'b&#x9; ab&#xA;&lt; c&gt;&#x9;&gt;'c&gt;'&#34;'x"/>
+   </data-element><![CDATA[   ]]></p:section>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE data-element
+  SYSTEM "case.dtd">
+<data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+              xmlns:p="urn:p"
+              xmlns:q="urn:example:q"
+              a-long-attribute-name2="&#34;&#x9;y&#xA;&#xA;a&#x9;xyz&lt;&#xA;&#xA;y&#xA;y"
+              a-long-attribute-name1="'&gt;c&#x9;yéyxc &#xA;éc béz éabz"
+              id3="ayé&#x9;&gt;"/>

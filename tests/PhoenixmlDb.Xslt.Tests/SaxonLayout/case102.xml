@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q"
+      id1="''ca'&#34;x&#xA;&#34;&#x9;">
+   <section/>
+   <section n1="c&#34;zz&lt;xé&lt;&amp; zzzzazyyaz&gt;y&gt;a"
+            long-prefix:v3="a&#34;&#x9;ccxyza&amp;&lt;z"
+            id0="&gt;yz&lt;z&#x9;axx x&#34;z&lt;&gt;&amp;céaxy'c&amp;a&#xA;"
+            type1="yy&#xA;&#x9;éyc">
+      <section a-long-attribute-name3=" '&gt;&#xA;&gt;é"
+               type1="x&lt;&#x9;&#x9;'&#xA;a&amp;xz&#xA;y &#x9;azéy"
+               n0="&amp;' bé&#34;&#xA;c&#34; x&lt;&#xA;céxz&#xA;"
+               type3="yc'c&#34;&#34;&amp;a&lt;&#x9; c&lt;x 'b&#34;c&#xA;b&#xA; é y&#34;&#34;y"
+               type2="éx'&lt;bzb&lt;bcb&gt;é&gt;axz'x"
+               a-long-attribute-name1="&lt;&lt;y'&lt;a&#34;&gt;z&#x9;bbé&#34; 'z&gt;zy'z&gt;zbx&#34; ' "/>
+      <item v3=" &gt;éé bz&amp;zéa&#xA;"
+            v2="b &#xA; aaza&#34;b'&lt;y&amp;&lt;x&#34;a&#34;xa&#34;' é&#x9;"
+            type2=" &amp;&gt;&#34;&lt;&amp;&lt;x"
+            id0="a&#34;aécé&#x9;ycé"/>
+   </section>
+   <!-- x'-->
+   <?pi0 'é'ac&?>
+</item>

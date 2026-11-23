@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q"
+      id3="&amp;x&amp;&#x9;xx&lt;é&lt;c&lt; zx&amp;a&#xA;xbyb&#34;bxé&gt; "
+      v3="&amp; é'b'&lt;zb&#xA;é&#x9;yéy&#xA;&#34;x'"/>

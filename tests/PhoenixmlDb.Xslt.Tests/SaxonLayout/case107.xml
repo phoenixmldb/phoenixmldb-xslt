@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<a xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   v0="c&amp;yz&amp;&#x9;é&amp;y'z&#x9;é'"
+   type1="&lt;a &amp;c&amp;a''x&gt;x&gt;&gt; c '&#xA;y&#x9; xyz">&amp;&amp;<e id1="y xy&lt; z'&gt;&lt;&#xA;&#34;xza&gt;&gt; b&#34;ba"/>
+   <section v2="" type1="y é&#34;&#34;&#x9;&lt;'é&#x9;y&gt;é&amp;&#x9;&lt;&lt;b&amp;&gt; "> c <section id0="yé&lt;&amp;&#xA;y&gt;x' &amp;"
+               n3=" bxyé&#xA;cyc&#xA;a&#34; b&#xA;x&#34;&#xA;zé&gt;xy&#34;&amp;a"
+               type0="é z&lt;az &#x9;x&#x9;'z"
+               type1="x&lt;xéc&gt;&lt;ayby&#34;azb y byc&lt;&#xA;yéé&#x9;"><!--	abzé>--></section>
+   </section>
+   <section><?pi0?>
+      <a a-long-attribute-name2="abé"
+         v3=" '&lt;&gt;&#xA;x'za&gt;b&#34;&#x9;&#34;&gt;"
+         id1="yc&lt;a byaxzy&gt;xx&lt;a&amp;'">éc&gt;b&amp; y	xcé" </a>
+   </section>
+</a>

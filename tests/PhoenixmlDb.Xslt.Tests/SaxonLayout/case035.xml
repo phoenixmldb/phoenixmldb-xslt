@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?><item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" n1="c'z'&#34;y&#xA;'&gt;cz&#34;&#34;y &#x9;a za'" type3="'&gt;czéazb&gt;&lt;&#xA;yx&gt;zc&#xA;x&#34;b ">
+   <data-element n0="y&#xA;&#x9;&gt;éy" a-long-attribute-name0="ébc" type0="'&#34;a'éxb&#x9;&amp;&#xA;z&#x9;&lt;ax&#34;yc&lt;&amp;&#xA;byx" n1="c&#34;x a&#x9; z&lt;&#34;&#34;&#34; éé&#xA;yaxx" v2="' éaz&lt;béyz&gt;cc"></data-element>
+   <x type0="&lt; &amp;&#xA; éé yz&gt;ac&lt;&#34; &#xA; " n0="yz&gt;zx&gt;zé&lt;b&#xA; &#x9;&#34;&gt;&amp;&gt;zy&#34;&gt;y " type2="&#xA;yz y&amp;'''&lt;&#x9;&#xA;zx&#34;é"><!--  z	ayéc--></x>
+</item>

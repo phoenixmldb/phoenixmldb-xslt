@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<e xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   a-long-attribute-name2="éb&#x9;&amp;&#x9;&gt;&lt;a&#xA;z b">
+   <a v0="&#xA;xyxaéxzx'&amp;&#34;y&amp;' a"
+      n2="z&lt;&#xA;&#xA;yz&lt;&#34;&gt;ab &#x9;"
+      a-long-attribute-name1="'&#x9; bé&#xA;a&amp;cb &lt;x&#x9;xé"
+      v2=" '&lt;&#xA;a&amp;&gt;y&lt;&amp;'&lt;é&lt;&#xA;&#x9;&#x9;z"
+      type0="x&amp;x&amp; é&amp;&lt;&amp;xa "
+      p:n2="&gt;cabccyab&#34;y bc'a y&gt;&#xA; &#x9;&lt;z">
+      <p:item id3="&gt;&#xA;y'&gt;&lt;ab&amp;c&#xA;&lt; c&amp;&amp;&#xA;&#x9;&amp;&#34;x a" v3="&lt;&#34;&#34;&#34;&#34;&amp;z&lt;&gt;"/>
+   </a>bzb &lt;zz&gt;<b/>
+   <x>
+      <p:item v2="zac&#34;' 'é" type2="&#34;" a-long-attribute-name0="&#x9;&gt;z&lt;"><!--&<<	z&xx-->
+         <x a-long-attribute-name3="&#xA;&gt;''&#x9; abz&#34;xz&#x9;&#x9;yx&#xA;&#xA;ézb'" p:n1="z&gt;&#34;éé'&#34;&#34;z&#xA;y '">&lt;&lt;y&lt;y
+</x>
+      </p:item>
+      <?pi2 x>?>
+      <!--
+" z
+c&-->ya'a&gt;y az</x>
+</e>

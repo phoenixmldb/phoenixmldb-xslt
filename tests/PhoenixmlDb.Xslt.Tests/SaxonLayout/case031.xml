@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<x xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   type2="&#x9;&gt;&#x9;&#x9;'ay'éazéza&#34;' &gt;bx&lt;ccébaé"
+   type0="bc'by'&#xA;&#x9; c&#x9;z&amp;x&#xA;&lt;z é&lt;xb&#34;&#xA;&#34;"
+   n0="&gt;&#34;&#34;&#34;&lt;&#x9; xaébc&#xA;&#34;é&#x9;''&gt;x &amp;&amp;&#x9;&lt;a'cz&lt;"
+   n3="&#xA;&#x9;c'z&amp;&#34;&lt;cz&#x9;'é &#34;&#x9;&#x9;'&#x9;&#x9;zc"
+   id0="&#34; é&lt;&lt;&lt;'éacx&#x9;a&amp;'azy&#x9;éa"
+   v2="bb&#34;&gt;&#34;&#x9;é&amp;&#x9;bzc&amp;'b'&amp;b">
+   <section n1="&amp;z"
+            id0="z&gt; &#34;éb&#34;&#34;z&#xA;&gt;b"
+            v0="éz'&#xA;&#x9;&gt;c&#xA;&#xA;&amp;&#x9;ax"
+            a-long-attribute-name0="zzay&amp;éy"><!--x
+x'é-->
+      <item xmlns="urn:default"
+            type0="b'&#x9;&#x9;&amp;'&amp;&gt;'&amp;&#x9;y"
+            n0="&#xA;&#34;"
+            q:v1="&#x9;y&gt;'&gt;&#xA;b&gt;ac&#34;&amp;&amp; &gt;ay"
+            v0="&#34;&amp;&gt;&#xA;b&#34;éxczy  x&amp;x&gt;&gt;"/>
+      <q:e q:n1="x&lt;&#34;z">
+         <item q:id3="&gt;" v0="&amp;x&#xA;b&amp;&#xA;&amp;xé&amp;'&gt;&gt;&#xA;" id3="yézz"> éaxc<x xmlns="urn:default" a-long-attribute-name2="" type0=""/>
+         </item>
+         <!--azab-->
+      </q:e>
+      <x type0="&amp;éyééb&#xA;&#x9;cé'b&#x9;&amp;&gt;c' bé&#x9;'z&#x9;&#xA;"
+         id2="&#xA;z'c&#xA;c&#34;&gt;&#x9;c'&amp;&#34;&gt;&#xA;&#34;axxéayé&lt;z'x'é&gt;"
+         type2="zxy&#x9;yc&gt;&#34;c&lt;z&#34;b a&amp;é&#xA;">
+         <q:data-element q:type1="&#xA;y'y&gt; &#x9;bz&#xA;&#x9;&lt;&#x9;&#34;">
+            <item n1="&#xA;'a&#x9;&#34;&#xA;&#34;&lt;'&#34;&#xA;&#34;&#xA; &amp;zyxyz"
+                  n0="&#xA;&gt; &#x9;céaé&#xA;yaa&#34;z&#xA;y&#x9;&amp;'"
+                  type0="zé'&#xA;&gt;&#xA;x&gt;'&#xA;c"/>
+            <!--a-->
+         </q:data-element>
+         <!-- <é'<&
+-->
+      </x>
+   </section>z y&amp;a&gt;y
+ </x>
