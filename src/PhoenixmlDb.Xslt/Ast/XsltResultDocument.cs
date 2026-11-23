@@ -58,6 +58,10 @@ public sealed class XsltResultDocument : XsltInstruction
     /// against <see cref="NamespaceBindings"/>; the effective set is the union with the matched
     /// xsl:output declaration's cdata-section-elements (result-document-0240).</summary>
     public XsltAttributeValueTemplate? CdataSectionElements { get; init; }
+    /// <summary><c>phx:indent-style</c> (xslt#499), an attribute value template as the other
+    /// serialization attributes are: a literal value is checked when the stylesheet is compiled
+    /// (XTSE0020), a computed one when the instruction runs (XTDE0030).</summary>
+    public XsltAttributeValueTemplate? PhxIndentStyle { get; init; }
     public bool? BuildTree { get; init; }
     public XsltAttributeValueTemplate? ItemSeparator { get; init; }
     public XsltAttributeValueTemplate? AllowDuplicateNames { get; init; }

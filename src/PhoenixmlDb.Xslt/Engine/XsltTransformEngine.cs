@@ -1012,8 +1012,7 @@ public sealed partial class XsltTransformEngine
             ContentTypeMeta: html && outputDecl.IncludeContentType != false ? outputDecl : null,
             Indent: effectiveIndent && outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html,
             outputDecl.SuppressIndentation,
-            outputDecl.IndentStyle,
-            outputDecl.CdataSectionElements);
+            outputDecl.IndentStyle);
         return steps;
     }
 
@@ -3164,9 +3163,8 @@ public sealed partial class XsltTransformEngine
     /// it does unindented and as Saxon does.
     /// </param>
     /// <param name="indentStyle">The layout: <c>phx:indent-style</c> (xslt#499).</param>
-    /// <param name="cdataSectionElements">The CDATA-section elements, which the Saxon-HE 10 layout does not wrap.</param>
     internal static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null, bool xhtml = false,
-        IndentStyle indentStyle = IndentStyle.Default, HashSet<QName>? cdataSectionElements = null)
+        IndentStyle indentStyle = IndentStyle.Default)
     {
         // The XML declaration is written as it is, then a newline, and the rest is read from
         // after it and the line ends that follow it. The text is not copied to do so: the
@@ -3206,7 +3204,7 @@ public sealed partial class XsltTransformEngine
             using var reader = XmlReader.Create(input, XmlIndenter.ReaderSettings(streamed: false));
             using var xw = XmlWriter.Create(sw, XmlIndenter.WriterSettings(streamed: false));
             IXmlIndenter indenter = indentStyle == IndentStyle.SaxonHe10
-                ? new SaxonXmlIndenter(xw, buffer, suppressIndentation, xhtml, cdataSectionElements)
+                ? new SaxonXmlIndenter(xw, buffer, suppressIndentation, xhtml)
                 : new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
             while (reader.Read())
                 indenter.Node(reader, XmlIndenter.HasValue(reader.NodeType) ? reader.Value : null);

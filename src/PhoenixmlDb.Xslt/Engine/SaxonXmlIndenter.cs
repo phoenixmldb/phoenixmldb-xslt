@@ -68,7 +68,6 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
     private readonly XmlWriter _xw;
     private readonly StringBuilder _buffer;
     private readonly HashSet<(NamespaceId, string)>? _suppressed;
-    private readonly HashSet<(NamespaceId, string)>? _cdataSection;
     private readonly bool _xhtml;
     private int _depth;
     private Last _last = Last.Nothing;
@@ -86,14 +85,12 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
     private readonly StringBuilder _pendingSpace = new();
     private readonly List<string> _indents = ["\n"];
 
-    public SaxonXmlIndenter(XmlWriter xw, StringBuilder buffer, HashSet<QName>? suppressIndentation, bool xhtml,
-        HashSet<QName>? cdataSectionElements)
+    public SaxonXmlIndenter(XmlWriter xw, StringBuilder buffer, HashSet<QName>? suppressIndentation, bool xhtml)
     {
         _xw = xw;
         _buffer = buffer;
         _xhtml = xhtml;
         _suppressed = Names(suppressIndentation);
-        _cdataSection = Names(cdataSectionElements);
     }
 
     private static HashSet<(NamespaceId, string)>? Names(HashSet<QName>? names)

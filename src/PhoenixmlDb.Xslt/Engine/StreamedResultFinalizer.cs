@@ -227,7 +227,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
                 _indentInput = new StringBuilder();
                 _toIndent = Channel.CreateBounded<string>(new BoundedChannelOptions(16) { SingleReader = true, SingleWriter = true });
                 _head = ResultWriter.BuildStages(steps, new PendingStage(_indentInput), steps.RedefaultNamespaces);
-                _pump = IndentAsync(steps.SuppressIndentation, method == OutputMethod.Xhtml, segmenter);
+                _pump = IndentAsync(steps.SuppressIndentation, method == OutputMethod.Xhtml, steps.IndentStyle, segmenter);
             }
             else
                 _head = ResultWriter.BuildStages(steps, segmenter, steps.RedefaultNamespaces);
@@ -274,7 +274,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
     /// the steps), and a stylesheet cannot write one but with disable-output-escaping, which keeps
     /// the result whole.
     /// </summary>
-    private async Task IndentAsync(HashSet<QName>? suppressIndentation, bool xhtml, ResultWriter.Stage next)
+    private async Task IndentAsync(HashSet<QName>? suppressIndentation, bool xhtml, IndentStyle indentStyle, ResultWriter.Stage next)
     {
         await Task.Yield();
         try
@@ -285,7 +285,9 @@ internal sealed class StreamedResultFinalizer : TextWriter
             using var sw = new StringWriter(buffer, CultureInfo.InvariantCulture);
             using (var xw = XmlWriter.Create(sw, XmlIndenter.WriterSettings(streamed: true)))
             {
-                var indenter = new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
+                IXmlIndenter indenter = indentStyle == IndentStyle.SaxonHe10
+                    ? new SaxonXmlIndenter(xw, buffer, suppressIndentation, xhtml)
+                    : new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
                 while (await reader.ReadAsync().ConfigureAwait(false))
                 {
                     var value = XmlIndenter.HasValue(reader.NodeType) ? await reader.GetValueAsync().ConfigureAwait(false) : null;
@@ -295,6 +297,10 @@ internal sealed class StreamedResultFinalizer : TextWriter
 #pragma warning restore CA1849
                     await PassOnAsync(buffer, next).ConfigureAwait(false);
                 }
+                indenter.End();
+#pragma warning disable CA1849 // The XmlWriter writes to a StringBuilder in memory: nothing blocks.
+                xw.Flush();
+#pragma warning restore CA1849
             }
             await PassOnAsync(buffer, next).ConfigureAwait(false);
             next.Finish();

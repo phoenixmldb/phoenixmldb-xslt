@@ -29,8 +29,7 @@ internal static class ResultWriter
         XsltOutput? ContentTypeMeta,
         bool Indent,
         HashSet<QName>? SuppressIndentation,
-        IndentStyle IndentStyle = IndentStyle.Default,
-        HashSet<QName>? CdataSectionElements = null);
+        IndentStyle IndentStyle = IndentStyle.Default);
 
     internal static string Write(string markup, in Steps steps) => Write(markup, steps, chunk: 0);
 
@@ -42,7 +41,7 @@ internal static class ResultWriter
         var redefault = steps.RedefaultNamespaces && markup.Contains("xmlns:", StringComparison.Ordinal);
 
         if (!redefault && !steps.HtmlForms && steps.ContentTypeMeta is null && !htmlIndent)
-            return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(markup, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml, steps.IndentStyle, steps.CdataSectionElements) : markup;
+            return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(markup, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml, steps.IndentStyle) : markup;
 
         var sink = new Sink();
         Stage C(Stage stage) => chunk > 0 ? new Chunker(stage, chunk) : stage;
@@ -53,7 +52,7 @@ internal static class ResultWriter
         var text = sink.ToString();
         // XmlWriter's indentation reads the text the other steps wrote: an XmlReader needs it
         // whole, and when it is not well-formed the result is that text, unindented.
-        return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(text, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml, steps.IndentStyle, steps.CdataSectionElements) : text;
+        return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(text, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml, steps.IndentStyle) : text;
     }
 
     /// <summary>
