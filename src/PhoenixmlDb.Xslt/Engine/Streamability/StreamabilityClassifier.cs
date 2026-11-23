@@ -2181,11 +2181,23 @@ public static partial class StreamabilityClassifier
         if (keyExpr is not null)
         {
             var k = Classify(keyExpr, ctx with { ContextPosture = s.Posture, CurrentGroup = null, ContextHasNoChildren = false, ContextMayHaveChildren = false, AfterConsumingSibling = false });
+            if (s.Posture == Posture.Grounded)
+            {
+                // Over a grounded population (item!copy-of(), snapshot(.)) the key reads the
+                // member in hand, a tree in memory: a step down from it reads nothing of the
+                // stream (§19.8.8.9), though this classifier reports any downward step as
+                // consuming. Only a key that reaches the stream itself (an absolute path) stops
+                // the grouping from streaming. group-adjacent="category" over item!copy-of() was
+                // called not streamable, and the whole input was read into memory (BUGS.md #140).
+                if (k.Posture != Posture.Grounded || k.Sweep == Sweep.FreeRanging)
+                    return NotStreamable();
+            }
             // A consuming (let alone free-ranging) grouping key breaks streamable grouping: the
             // key is evaluated per member and must not itself advance the stream.
-            if (k.Sweep != Sweep.Motionless)
+            else if (k.Sweep != Sweep.Motionless)
                 return NotStreamable();
-            keySweep = k.Sweep;
+            else
+                keySweep = k.Sweep;
         }
         // group-starting-with / group-ending-with use patterns (not expressions); a pattern
         // match against the current item is motionless — nothing extra to fold here.
