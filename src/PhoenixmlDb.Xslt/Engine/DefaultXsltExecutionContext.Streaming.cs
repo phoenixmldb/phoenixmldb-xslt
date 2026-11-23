@@ -439,10 +439,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Close only a tag THIS dispatch left open. A body that closed inline (the
                 // materialised path) pushes nothing, and popping then would close an ancestor.
                 if (_streamingOpenElements.Count > openBeforeDispatch)
-                {
-                    var qn = _streamingOpenElements.Pop();
-                    WriteStreamingEndTag(qn);
-                }
+                    CloseStreamingOpenElement();
             }
             else if (matches && !reader.IsEmptyElement)
             {

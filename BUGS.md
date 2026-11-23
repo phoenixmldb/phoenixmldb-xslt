@@ -8085,8 +8085,17 @@ xsl:copy and xsl:copy-of (`SerializeNode`) track the copied element's name, matc
 store's namespace ids are not the stylesheet's). Each text write was a section of its own; text written right
 after a CDATA section of the same element is the same text node, so it now joins that section. A `]]>` in the
 text, also one that only the joined text has, ends one section and starts the next; a zero-length text node
-writes nothing. Not covered: an element copied by the streamed copy paths. `CdataSectionTextTests`; the
-expected results are Saxon-HE 10.9's.
+writes nothing. `CdataSectionTextTests`; the expected results are Saxon-HE 10.9's.
+
+Then (Lucas, 2026-11-23: in 3.3.0, in its own PR): the same test, with eleven ways of copying when the
+transformation streams (to a string, to the caller's writer, and with streaming off as the control), found
+three more: the built-in rules `on-no-match="shallow-copy"` and `"deep-copy"` (`ApplyBuiltInShallowCopyAsync`,
+`SerializeElement`), with and without streaming, and an element whose end tag the streaming loop writes
+(`_streamingOpenElements`: the built-in shallow copy and xsl:copy when the transformation streams). Its text
+comes from the stream when the method that opened it has returned, and its name was not on the stack then (the
+built-in rule never put it there; xsl:copy took it off on return). Now the built-in rules track the name
+too, and every element the streaming loop closes is opened and closed through `OpenStreamingElement` and
+`CloseStreamingOpenElement`, which move its name on the stack with it.
 
 ### 145. xsl:number wrote its format token unescaped: the output was not well-formed — fixed (2026-11-23)
 

@@ -567,6 +567,25 @@ internal sealed partial class DefaultXsltExecutionContext
         return new QName(string.IsNullOrEmpty(uri) ? NamespaceId.None : StylesheetParser.ResolveNamespaceUri(uri), elem.LocalName);
     }
 
+    /// <summary>
+    /// An element whose end tag the streaming loop writes (its children come from the stream): its
+    /// lexical name for that end tag, and its <c>cdata-section-elements</c> name on the stack
+    /// <see cref="IsInCdataSectionElement"/> reads, so that the streamed text in it is tracked too.
+    /// The two stacks move together: <see cref="CloseStreamingOpenElement"/> pops both.
+    /// </summary>
+    private void OpenStreamingElement(string lexicalName, QName cdataName)
+    {
+        _streamingOpenElements.Push(lexicalName);
+        _outputElementStack.Push(cdataName);
+    }
+
+    /// <summary>Writes the end tag of the innermost element <see cref="OpenStreamingElement"/> left open.</summary>
+    internal void CloseStreamingOpenElement()
+    {
+        _outputElementStack.Pop();
+        WriteStreamingEndTag(_streamingOpenElements.Pop());
+    }
+
     private bool IsInCdataSectionElement()
     {
         if (_outputElementStack.Count == 0)
