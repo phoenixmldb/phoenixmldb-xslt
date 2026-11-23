@@ -2837,6 +2837,8 @@ XSLT-first order. Recorded so they are not rediscovered.
 
 #### `fn:collection()` conflates "declared but empty" with "not found"
 
+Fixed 2026-11-23: see #142.
+
 A collection that is declared and contains nothing raises `FODC0002` — the not-found error —
 where the empty sequence is due (`fn/collection-001`, `-003`). Same for `uri-collection()`.
 
@@ -8023,3 +8025,40 @@ the rule is broken, after the text before it.
 W3C si-value-of-102 (`method="text"`, assertions on the result tree) passed only because the streamed
 result was not serialized as text; the harness asserts on the serialized text, so it now fails. A harness
 fix that asserts on the result tree is approved, as its own PR.
+
+### 142. An empty collection gave FODC0002, and behind a policy a registered collection was not found — fixed (xquery#418, xquery#420 and its xslt companion, 2026-11-23)
+
+Engine: **XQuery** and **XSLT**. In 3.2.0. Recorded first as #65 (2026-09-11); found again by the
+database engine, whose own resolver serves collections. `fn:collection()`, `fn:collection($uri)` and the
+`fn:uri-collection` pair raised FODC0002 whenever the resolver gave no documents:
+`IDocumentResolver.ResolveCollection` returns an empty sequence for an empty collection and for one that
+does not exist, so the functions could not tell them apart. XSLT worked around it for a declared default
+collection only (`XsltCollection0Function`).
+
+Fixed with a default member, `IDocumentResolver.TryResolveCollection` (design approved by Lucas
+2026-11-23): true with the documents, which may be none, for a collection that exists; false for none
+(FODC0002). The default answers as before; `XdmDocumentStore`, `PolicyEnforcingResolver` and XSLT's
+resolver override it, and the XSLT workaround is removed. Probed on main first: behind a
+`ResourcePolicy` the functions did not find what the host registered on the store at all (FODC0002 for
+an empty collection and for one of atomic values), because they looked for the store itself and found
+the policy's wrapper; `TryResolveCollection` alone would have made a collection of atomic values the
+empty sequence, silently. An internal `PolicyEnforcingResolver.TryResolveCollectionItems` authorizes the
+URI as before and asks the inner store. QT3 `fn-collection` (19/21) and `fn-uri-collection` (7/7), and the
+W3C collection cases, are as on main.
+
+### 143. A document a database loaded into an `XdmDocumentStore` was updated in memory, and the query reported success — fixed (xquery#419, 2026-11-23)
+
+Engine: **XQuery**. In main after #127 (xquery#416), not in 3.2.0. Found by the database engine: on its
+per-document path it loads each stored document into a new `XdmDocumentStore`. Since #416 that store
+can be updated (`IUpdatableNodeStore`), so `PendingUpdateApplicator.ApplyAtEnd` accepted the target and
+changed the copy in memory; the query reported success and the database did not change (on 3.2.0 the
+same path gave XUST0002). The host cannot check afterwards: the updates are applied in the query's last
+`MoveNextAsync`.
+
+Fixed with `XdmDocumentStore.MarkReadOnly(XdmDocument)` (approved by Lucas 2026-11-23): an update whose
+target is a node of a marked document is `phx:XUDY9001` before anything is changed, in any store. The
+check is per target, by the target's root (a copy can keep its source's `DocumentId` or tree ordinal), so
+nodes the query constructs and the copies of a `copy` clause can still be updated, also in the same store.
+Not yet tested: an updating function used only inside copy-modify on a marked document, because no query
+can declare an updating function yet (`declare updating function` is XPST0003, `declare %updating
+function` XQST0045); that waits for the rest of XQUF in 3.3.0 (ruled 2026-11-20).
