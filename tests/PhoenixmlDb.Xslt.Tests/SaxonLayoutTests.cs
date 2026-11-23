@@ -23,7 +23,7 @@ public class SaxonLayoutTests
 
     [Fact]
     public void There_are_cases()
-        => Cases().Count.Should().BeGreaterThanOrEqualTo(100);
+        => Cases().Count.Should().Be(180);
 
     [Theory]
     [MemberData(nameof(Cases))]

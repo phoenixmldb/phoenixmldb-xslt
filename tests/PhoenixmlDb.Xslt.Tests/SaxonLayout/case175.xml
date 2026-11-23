@@ -1,0 +1,3 @@
+<!DOCTYPE script
+  SYSTEM "case.dtd">
+<script xmlns="http://www.w3.org/1999/xhtml" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" a-long-attribute-name1="y'éaca y&lt;z&lt;y&amp;&lt;&gt;&lt;'&#34;ca &amp;x&#34;&gt;x" type3="a&amp;&gt;&#34;'&gt;&lt;éb&#x9;x&#x9;&#x9;&lt;'yaz''&amp;"></script>

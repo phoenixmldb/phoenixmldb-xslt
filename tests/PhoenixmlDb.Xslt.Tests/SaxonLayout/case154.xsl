@@ -1,0 +1,5 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xhtml" indent="yes" phx:indent-style="saxon-he-10"/>
+  <xsl:template name="xsl:initial-template"><td type3="cb&amp;&quot;'c&quot;y&quot;a&#10;z&amp;c&#9;az&#9;cya" n1="é&#9;" xml:space="preserve"><long-prefix:span xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" v3="&quot;bcxéxa'&quot;&#9;'&gt;xé&quot;y" a-long-attribute-name3="a&quot;c&#9;cyzz&quot;&lt;a'axcy&gt;aéx' éx&amp;'a" long-prefix:v3="" a-long-attribute-name2="az&#9;&gt; "></long-prefix:span><xsl:processing-instruction name="pi0">b&gt;y
+é"</xsl:processing-instruction><style v1="x&#10;&quot;&gt;c&#9;"><xsl:comment>x' </xsl:comment><xsl:comment>az&amp;cy</xsl:comment><xsl:text>xz&amp;</xsl:text><xsl:processing-instruction name="pi1">&amp;&amp;</xsl:processing-instruction></style><xsl:processing-instruction name="pi0">x&lt;z''é</xsl:processing-instruction></td></xsl:template>
+</xsl:stylesheet>

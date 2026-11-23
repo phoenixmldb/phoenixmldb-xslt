@@ -1,0 +1,3 @@
+<b xmlns="http://www.w3.org/1999/xhtml" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q">   
+   
+   <p id0="&lt;&gt;" q:id2="'cybb &#34;&#34; &gt; a&#x9;z&#xA;xé&amp;&#xA;&lt; xz&#xA;éa&#34; x&lt;"></p><!--a--></b>

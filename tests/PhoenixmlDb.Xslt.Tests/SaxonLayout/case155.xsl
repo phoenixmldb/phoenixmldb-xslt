@@ -1,0 +1,5 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xhtml" indent="yes" phx:indent-style="saxon-he-10"/>
+  <xsl:template name="xsl:initial-template"><span n3="c&lt;&amp;yxé&quot;y&lt;&#9;&#10;'bbbbc&quot;  &amp;&gt;'z &amp;&lt;zz"><td id3="&#9;'xéza'&amp;&gt;c&gt;&#10;b&lt;&#9;aézb" a-long-attribute-name3="zx&lt;" n1="&lt;y&lt;&#9;ba&amp;x&#9;&#10;xy&quot;é&quot; '" type3="" v0="é&quot;xa'&amp;&lt;&lt;z&gt;" v3="&lt;by&lt;y&quot; zxz'&lt;&quot;a&quot;"></td><p><xsl:comment>"x	c&lt;y</xsl:comment><xsl:text>   </xsl:text><xsl:comment>yxé'y&amp;xy
+</xsl:comment><item id2="" a-long-attribute-name1="b "><xsl:text>&lt;</xsl:text></item></p><xsl:processing-instruction name="pi2">bz&lt;z"z&lt;&lt;</xsl:processing-instruction></span></xsl:template>
+</xsl:stylesheet>

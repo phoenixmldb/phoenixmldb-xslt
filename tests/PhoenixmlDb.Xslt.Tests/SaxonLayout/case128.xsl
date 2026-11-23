@@ -1,0 +1,7 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xhtml" indent="yes" phx:indent-style="saxon-he-10" omit-xml-declaration="yes" cdata-section-elements="em"/>
+  <xsl:template name="xsl:initial-template"><textarea n1="x&gt;&lt;bé&#9; c&#9;ayyé&#9;&quot;" id2="&#10;'&lt;&amp;caz&#9;yé&amp;é&#9;&#9;&#9;&#10;&lt;a&amp;z&#10;&lt;é" xml:space="preserve"><em a-long-attribute-name1="&lt;a&gt;&gt;c&#9;&amp;xz&gt;&#9;&lt;y'x'&lt;" n2="&quot;&amp;&quot; &gt;&quot;&#9;c&#9;&#10;bb&amp;céaz&#10;" type3="&#9;by&lt;z&lt;&#10;&quot;z'&lt;'z'y&lt;&#10;&lt;bc&gt;&amp;a&amp; " id1="z''&lt;zbx  &quot;ax y&#9;yx &quot;" v0=""></em><span xmlns:q="urn:example:q" n1="" q:n0="b&gt;&amp;&quot;zc&#10;''é &gt;éy&#9;azyb z bzé" a-long-attribute-name2="&quot;&lt;&quot;&#9;bybc&#9;&gt;&#9;b&amp; &gt;" n2="&lt;" q:n1="éxy"><xsl:comment>yaz
+&lt;
+'é</xsl:comment><q:section xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"><xsl:text>   </xsl:text><xsl:processing-instruction name="pi2">
+b&lt;acc</xsl:processing-instruction><xsl:text>   </xsl:text></q:section></span><SECTION a-long-attribute-name0="x&amp;&lt;&amp;&#10;&quot;baé &amp;'&lt;&lt;c&#10;cyé&quot; é&amp;&quot;&amp;cxé&lt;"><xsl:comment> xy'xz</xsl:comment></SECTION></textarea></xsl:template>
+</xsl:stylesheet>
