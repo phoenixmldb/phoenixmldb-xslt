@@ -7392,9 +7392,16 @@ Of `system-property-gen`'s 166 cases, #203 and #204 fixed 143. The 22 `system-pr
 +22, no losses. It lands at the release train. system-property-021 (the hand-written set) is
 fixed by #212. That leaves this one.
 
-### 118. Five cases expect one implementation-dependent order of distinct trees — recorded, not fixed (2026-10-01)
+### 118. Five cases expect one implementation-dependent order of distinct trees — fixed by a rule (xslt#542, 2026-11-22)
 
-**Status: not a processor defect. Recorded for #13's "fixed or recorded with a reason".**
+**Status: fixed for 3.3.0 (xslt#542, Lucas ruled for the tree-order rule).** The order between
+trees is now "parsed before constructed", the rule XQuery's store has: a parsed document (the
+principal source, `fn:doc()`/`document()`, `fn:parse-xml()`, `xsl:source-document`, and a streamed
+document, with one ordinal per streaming reader) precedes every constructed tree, whenever either
+was built. Constructed trees keep creation order among themselves. sx-union-012/017/022/035 run
+again (they were skipped as not applicable) and pass, with si-fork-118 and square-array-201; W3C
+failures 40 → 38, none lost. `generate-id()` of the engine's own nodes does not include the tree
+ordinal (a process-wide count), so its values do not change. The record below is kept as it was.
 
 XDM 3.1 §2.4 (document order): the relative order of nodes in *distinct trees* is stable but
 implementation-dependent. Five streaming cases bake in one particular choice, that nodes of the
