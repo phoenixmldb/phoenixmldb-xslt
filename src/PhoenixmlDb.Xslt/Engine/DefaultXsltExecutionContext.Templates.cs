@@ -1107,14 +1107,19 @@ internal sealed partial class DefaultXsltExecutionContext
 
                 _sink.StartElementOpen(qname);
 
-                // Copy namespace declarations
+                // Copy namespace declarations, not again what the result already declares here
+                // (xslt#624), as xsl:copy does
                 var wroteDefaultNsDecl = false;
+                var shallowCopyNsBindings = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var nsDecl in elem.NamespaceDeclarations)
                 {
                     var nsDeclUri = _nodeStore?.GetNamespaceUri(nsDecl.Namespace) ?? "";
                     var nsDeclPrefix = nsDecl.Prefix ?? "";
                     if (string.IsNullOrEmpty(nsDeclPrefix))
                         wroteDefaultNsDecl = true;
+                    shallowCopyNsBindings[nsDeclPrefix] = nsDeclUri;
+                    if (IsRedundantDeclaration(nsDeclPrefix, nsDeclUri))
+                        continue;
                     _sink.Namespace(nsDeclPrefix, nsDeclUri);
                 }
 
@@ -1246,6 +1251,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
 
                 _sink.StartElementClose(false);
+                // Where the start tag ends: an element that gets no content is written <e/> (xslt#624).
+                var shallowCopyBuffer = _output;
+                var shallowCopyStartTagEnd = _output.Length;
 
                 // Insert any non-attribute content from matched attribute templates as children
                 if (templateChildContent.Length > 0)
@@ -1262,7 +1270,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // never be popped (the tag stays open) — close it inline instead.
                 if (_isStreamingExecution && !_streamingDispatchElementMaterialized)
                 {
-                    OpenStreamingElement(qname, CdataTrackingName(elem));
+                    OpenStreamingElement(qname, CdataTrackingName(elem), startTagLast: templateChildContent.Length == 0);
                     // Descendants in the streaming loop inherit this subtree's base context;
                     // restore happens on the matching EndElement is out of scope here, so
                     // restore now — sentinel already emitted on the open tag above.
@@ -1275,12 +1283,15 @@ internal sealed partial class DefaultXsltExecutionContext
                     _serializingElementDepth++;
                     // Its text: a CDATA section when the element is in cdata-section-elements.
                     _outputElementStack.Push(CdataTrackingName(elem));
+                    // Its namespaces are in scope for what its children write (xslt#624).
+                    PushOutputNsScope(shallowCopyNsBindings);
                     try
                     {
                         await ApplyTemplatesAsync(null, mode, NoSorts, withParams).ConfigureAwait(false);
                     }
                     finally
                     {
+                        PopOutputNsScope();
                         _outputElementStack.Pop();
                         _serializingElementDepth--;
                         _sequenceAccumulator = savedSeqAccumSC;
@@ -1289,7 +1300,8 @@ internal sealed partial class DefaultXsltExecutionContext
                         _serializeBaseContext = savedShallowCopyBaseContext;
                     }
 
-                    _sink.EndElement(qname);
+                    if (!CloseEmptyStartTag(shallowCopyBuffer, shallowCopyStartTagEnd))
+                        _sink.EndElement(qname);
                 }
                 break;
             }

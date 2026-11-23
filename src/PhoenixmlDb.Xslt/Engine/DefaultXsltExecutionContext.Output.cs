@@ -43,11 +43,15 @@ internal sealed partial class DefaultXsltExecutionContext
 
         _sink.StartElementOpen(qname);
 
-        // Namespace declarations
+        // Namespace declarations, not again what the result already declares here (xslt#624)
+        var nsBindings = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var nsDecl in elem.NamespaceDeclarations)
         {
             var nsDeclUri = _nodeStore?.GetNamespaceUri(nsDecl.Namespace) ?? "";
             var nsDeclPrefix = nsDecl.Prefix ?? "";
+            nsBindings[nsDeclPrefix] = nsDeclUri;
+            if (IsRedundantDeclaration(nsDeclPrefix, nsDeclUri))
+                continue;
             _sink.Namespace(nsDeclPrefix, nsDeclUri);
         }
 
@@ -83,9 +87,17 @@ internal sealed partial class DefaultXsltExecutionContext
                     childElements.Add(child);
                 }
             }
+            // An element with no content is written <e/> (xslt#624).
+            if (childElements.Count == 0)
+            {
+                _sink.StartElementClose(true);
+                return;
+            }
             _sink.StartElementClose(false);
-            // Its text: a CDATA section when the element is in cdata-section-elements.
+            // Its text: a CDATA section when the element is in cdata-section-elements; its
+            // namespaces are in scope for its children.
             _outputElementStack.Push(CdataTrackingName(elem));
+            PushOutputNsScope(nsBindings);
             try
             {
                 foreach (var child in childElements)
@@ -112,6 +124,7 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             finally
             {
+                PopOutputNsScope();
                 _outputElementStack.Pop();
             }
         }

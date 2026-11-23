@@ -65,7 +65,7 @@ public sealed class StreamingD1FixTests : IDisposable
                 <xsl:template match="{{pattern}}"><xsl:attribute name="{substring(local-name(), 2)}" select="'X'"/></xsl:template>
                 </xsl:stylesheet>
                 """, """<r><m _a="1"/></r>""", tree: true))
-            .Should().Be("""<r><m a="X"></m></r>""");
+            .Should().Be("""<r><m a="X"/></r>""");
 
     /// <summary>
     /// A streamed element's attributes had no parent, so ".." from an attribute was empty and a
@@ -81,8 +81,8 @@ public sealed class StreamingD1FixTests : IDisposable
             </xsl:stylesheet>
             """;
         const string Input = """<r><x/><y/><m _a="1"/></r>""";
-        (await RunAsync(stylesheet, Input)).Should().Be("""<r><x></x><y></y><m a="m 2"></m></r>""");
-        (await RunAsync(stylesheet, Input, tree: true)).Should().Be("""<r><x></x><y></y><m a="m 2"></m></r>""");
+        (await RunAsync(stylesheet, Input)).Should().Be("""<r><x/><y/><m a="m 2"/></r>""");
+        (await RunAsync(stylesheet, Input, tree: true)).Should().Be("""<r><x/><y/><m a="m 2"/></r>""");
     }
 
     /// <summary>

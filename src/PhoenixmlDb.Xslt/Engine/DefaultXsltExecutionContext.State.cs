@@ -424,6 +424,12 @@ internal sealed partial class DefaultXsltExecutionContext
     // Stack of element qualified names whose start tags have been written during streaming
     // but whose end tags must be deferred until the StreamingXmlProcessor sees EndElement.
     internal readonly Stack<string> _streamingOpenElements = new();
+    // Where the start tag of each element in _streamingOpenElements ended, counted from the start of
+    // the result (characters already sent on plus the buffer), so that one that gets no content is
+    // written <e/> (xslt#624).
+    private readonly Stack<long> _streamingOpenStartTagEnds = new();
+    // The characters DrainStreamingOutputAsync has sent on.
+    private long _streamingSentChars;
 
     // Draining a streamed grouping's result while the element around it is open (BUGS #140).
     // See DefaultXsltExecutionContext.StreamedDrain.cs.
