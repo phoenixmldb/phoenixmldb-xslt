@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<e xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"><!--&<bx"x-->
+   <b id1="é&#xA;&#34;xéxbcz'b " a-long-attribute-name1="'&amp;&#x9;a" type3="x">
+      <q:section v2="c&#xA;&#x9;'&amp;cb&#34;zé&gt;" type1=" cxc&lt;b&#x9;&#xA;ézz &#x9;&#x9;&lt;x&#xA;é &amp;c&gt;abccx"/>
+      <!--b>xéc	"-->
+   </b>
+   <x>
+      <q:b type1="&#34;&#x9;c&#34;"
+           type2="y&lt;'c&amp;&#34;&#xA;"
+           v3="&#xA;aa &#x9;&lt;&lt;&lt;b&amp;&#34;&#34;é"
+           v0="&#xA;&amp;&lt;&gt;'a xxa&gt;z&#34;&lt;&#x9;x&#34;z&lt;cc&lt;ba">
+         <e q:v3="&gt;&amp;'&amp; xbyyy&lt;xcx'"
+            n1="c&#x9;éyby&lt;é&#34;x&#xA;bé&gt;yaz&lt;&lt;cb&#x9;x&#x9;b"
+            type1="bxz&#x9;c&lt;c"
+            n0="éébyy&gt; &gt;&#34;x'bb&gt;&#xA;"
+            a-long-attribute-name3="x&#x9;"
+            a-long-attribute-name0="y&gt;'&#34;&#x9;"/>
+         <section n2=" '&#x9;ac&gt;ba&amp;&lt;é&gt;bc&amp;ac''&gt;&amp;cyé&gt;a" id2="c&#x9;&gt;y&amp;éaa&lt;&#34;éaz&#34;éxa"><!-- x<éyy>x>--><!--<&	>--></section>''&amp;y"
+'xz
+<item id2="&gt; c"
+               v1="&gt;x&gt;y&#x9;c&#34;zz&gt;&gt;béé zéxc ax'&lt;b"
+               a-long-attribute-name2="&lt;y&lt;zéc&#x9;b'&#x9;é&#xA;&#xA;c c'&gt;&#xA;b&#xA;&amp;ba&#34;a"
+               a-long-attribute-name0=" cz&#xA;&#xA;&lt;é&#34;&lt;y&lt;&#34;"
+               id1="é&amp;&#34; ''&#34;&gt; 'a&#34;&gt;&amp;&#x9;z&amp;éxé&#34;z&#xA;y&gt;&amp;"
+               a-long-attribute-name1="&lt;x&amp;&lt;z&#x9;a&#xA; &lt;&gt;b&amp;&amp;&gt;&#34;cxybééa "/>
+      </q:b>
+      <e a-long-attribute-name1="ca z&#34;&lt;&amp;&lt;&gt;&amp;&#x9;xac&lt;'"
+         v3="'yxx&gt;xx&gt;cy'y &gt;'xc' a&#xA;&#x9;ybzz&gt;&#x9;"/>
+      <!--aa&a&'c"b
+-->
+      <q:b a-long-attribute-name0="é&amp;&#xA;&#x9;é&#x9;a&#34;&#x9;">
+         <item v2="''é&#34;&#x9;" n1="a&gt;&gt;by&#xA; é&#x9;&#34;yca'  x&amp; ">
+            <e v0="&#x9;&gt;ccyx&#34;&gt;&gt;" id0="&#xA;&gt;yaz&gt;c&amp;'&gt;y &gt;cb&gt;c&gt;&lt;zb&#xA; a&lt;&lt;"/>
+            <!-- &> " b&-->
+            <x xmlns="urn:default"
+               id0="&lt;&gt;z"
+               n2="&lt;é z&#34;&amp;' é&lt;axc&#34;aéx&#xA;&#x9;c"
+               a-long-attribute-name0="'c&amp;&gt;"
+               a-long-attribute-name1="a&gt;&#x9;&lt;aé&lt;aébxaaé b&#34;&#34;&amp;bc'&#xA;&lt; &amp;é"/>'  cx</item>
+      </q:b>
+   </x>
+   <?pi2 z"z"bc?>
+</e>

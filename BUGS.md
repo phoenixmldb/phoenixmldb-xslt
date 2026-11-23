@@ -8102,3 +8102,13 @@ too, and every element the streaming loop closes is opened and closed through `O
 Engine: **XSLT**. In 3.2.0. Found with #144. `<r><xsl:number value="3" format="&lt;1&amp;"/></r>` gave
 `<r><3&</r>`: xsl:number wrote its result as markup (`RawText`). It is a text node: `<r>&lt;3&amp;</r>`.
 Now it is written as all text is (`EmitText`, #144). `CdataSectionTextTests`.
+
+### 146. The URI of a file is `file:///path` here and `file:/path` in Saxon — a difference, not changed (2026-11-23)
+
+Engine: **XSLT**. Found while comparing output with Saxon-HE 10.9 for xslt#499.
+For a source document read from a file, `document-uri(/)`, `base-uri(/)` and `document-uri(doc('in.xml'))` give
+`file:///tmp/x/in.xml` here and `file:/tmp/x/in.xml` in Saxon. Both name the same file (RFC 8089 allows both
+forms). It is not a serialization difference, so
+`phx:indent-style="saxon-he-10"` does not change it: a result that writes the URI (for example a Schematron
+report that records the document it validated) differs from Saxon's in this string only. Lucas (2026-11-23): do
+not change it; record it here.

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<x xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q">
+   <e n2="x'zééé&#34;&amp;&#xA;cbc&#x9;&gt;czz&#34;&amp;  cé&lt;y"
+      n3="éac&#34;a&gt;xxc c"
+      q:n2="é&#x9;&amp;'&lt;a&#x9;c&amp;&amp;yzéa "><!--zc--></e>
+</x>

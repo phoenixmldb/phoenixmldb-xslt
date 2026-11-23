@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q">
+   <x id2=" '&gt;ba"
+      n2="b&#xA;xycxb&gt;&#34;&#x9;&gt;&amp;a&gt; &#x9;&lt;'a z&#xA;zy&gt;ba&#x9;&amp;&#xA;"
+      type3="z&#34;é&lt;&#34;&gt;&#x9;&#34;&#x9;a&#34;"
+      a-long-attribute-name2="&#34; &lt;az&gt;&#x9;&#x9;z&lt;&#34;yxac&#xA;c"/>
+</item>

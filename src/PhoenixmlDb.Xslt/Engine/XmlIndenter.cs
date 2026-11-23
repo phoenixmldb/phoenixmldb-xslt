@@ -12,7 +12,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// whole result; <see cref="StreamedResultFinalizer"/> over a result written while the
 /// transformation streams (xslt#575), so both write the same text.
 /// </summary>
-internal sealed class XmlIndenter
+internal sealed class XmlIndenter : IXmlIndenter
 {
     private readonly XmlWriter _xw;
     // What _xw writes to: the empty-element form is corrected in it.
@@ -97,6 +97,11 @@ internal sealed class XmlIndenter
         _mixed = true;
         _hasContent = true;
         _afterMarkup = false;
+    }
+
+    /// <summary>The default layout writes nothing after the last node.</summary>
+    public void End()
+    {
     }
 
     /// <summary>Writes the node <paramref name="reader"/> is on; <paramref name="value"/> is its value when <see cref="HasValue"/>.</summary>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<b xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   id0="&#x9;bbc&lt;é''c"
+   type1=" &lt;é&#xA;&#x9;zy&#34;yé'&amp;zazc'&#34;bb"><?pi0 za y?>
+   <e><!---->
+      <e>   <!--'
+">a
+&c--></e>
+      <!--xéxb
+x-->
+      <?pi1 x?>
+   </e>
+   <e>
+      <section xml:space="preserve"/>
+   </e>
+   <!--xa<z-->
+</b>

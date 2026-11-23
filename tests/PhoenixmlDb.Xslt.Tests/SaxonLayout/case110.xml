@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<b xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q">
+   <section n3="yzx&#x9;c&#xA;éy &amp;" a-long-attribute-name2="" id1="" xml:space="preserve"><x long-prefix:n3="&#xA;b&#xA;z&gt;&gt;y&#34; &amp;a'&#34;b&gt;c&#xA;x&amp;b&gt;'y&gt; é&lt;xy" long-prefix:v0="y&#x9;&#34;'&lt;&#x9;'zécyb"/></section>
+   <?pi2 &?><![CDATA[b<céa"]]><!-->c>by&xzxx--></b>

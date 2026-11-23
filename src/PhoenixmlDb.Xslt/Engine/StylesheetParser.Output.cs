@@ -51,6 +51,9 @@ public sealed partial class StylesheetParser
             if (a != null && !a.Value.Contains('{', StringComparison.Ordinal) && ParseYesNo(a) == null)
                 throw new XsltException($"XTSE0020: Invalid value '{a.Value}' for xsl:result-document {yn} attribute (must be yes, no, true, false, 1, or 0)", location);
         }
+        var rdIndentStyle = element.Attribute(IndentStyleAttribute);
+        if (rdIndentStyle != null && !rdIndentStyle.Value.Contains('{', StringComparison.Ordinal))
+            ParseIndentStyle(rdIndentStyle.Value, element);
         var rdStandalone = element.Attribute("standalone");
         if (rdStandalone != null && !rdStandalone.Value.Contains('{', StringComparison.Ordinal))
         {
@@ -150,6 +153,7 @@ public sealed partial class StylesheetParser
             ByteOrderMark = byteOrderMarkAttr != null ? ParseAvt(byteOrderMarkAttr.Value, element, byteOrderMarkAttr) : null,
             EscapeUriAttributes = escapeUriAttributesAttr != null ? ParseAvt(escapeUriAttributesAttr.Value, element, escapeUriAttributesAttr) : null,
             CdataSectionElements = cdataSectionElementsAvt,
+            PhxIndentStyle = rdIndentStyle != null ? ParseAvt(rdIndentStyle.Value, element, rdIndentStyle) : null,
             BuildTree = ParseYesNo(buildTreeAttr),
             ItemSeparator = itemSeparatorAttr != null ? ParseAvt(itemSeparatorAttr.Value, element, itemSeparatorAttr) : null,
             AllowDuplicateNames = allowDupNamesAttr != null ? ParseAvt(allowDupNamesAttr.Value, element, allowDupNamesAttr) : null,

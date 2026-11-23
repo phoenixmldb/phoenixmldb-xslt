@@ -51,6 +51,11 @@ public sealed class XsltOutput
     public HashSet<QName>? SuppressIndentation { get; set; }
 #pragma warning restore CA2227
     /// <summary>
+    /// The layout of an indented xml or xhtml result: <c>phx:indent-style</c>
+    /// (https://schemas.phoenixml.dev/2026/functions), xslt#499.
+    /// </summary>
+    public IndentStyle IndentStyle { get; set; }
+    /// <summary>
     /// When true, a UTF-8 BOM (U+FEFF) is prepended to the serialized output.
     /// </summary>
     public bool? ByteOrderMark { get; init; }
@@ -101,6 +106,7 @@ public sealed class XsltOutput
         clone.CdataSectionElements = CdataSectionElements;
         clone.PackageStylesheet = PackageStylesheet;
         clone.SuppressIndentation = SuppressIndentation;
+        clone.IndentStyle = IndentStyle;
         foreach (var m in UseCharacterMaps)
             clone.UseCharacterMaps.Add(m);
         return clone;
@@ -152,6 +158,7 @@ public sealed class XsltOutput
         clone.CdataSectionElements = CdataSectionElements;
         clone.PackageStylesheet = PackageStylesheet;
         clone.SuppressIndentation = SuppressIndentation;
+        clone.IndentStyle = IndentStyle;
         foreach (var m in UseCharacterMaps)
             clone.UseCharacterMaps.Add(m);
         return clone;
@@ -186,8 +193,25 @@ public sealed class XsltOutput
         clone.CdataSectionElements = cdataSectionElements;
         clone.PackageStylesheet = PackageStylesheet;
         clone.SuppressIndentation = SuppressIndentation;
+        clone.IndentStyle = IndentStyle;
         foreach (var m in UseCharacterMaps)
             clone.UseCharacterMaps.Add(m);
         return clone;
     }
 }
+
+/// <summary>The layout of an indented xml or xhtml result (<c>phx:indent-style</c>, xslt#499).</summary>
+public enum IndentStyle
+{
+    /// <summary>The engine's own layout: two spaces per level.</summary>
+    Default,
+
+    /// <summary>
+    /// <c>saxon-he-10</c>: the layout Saxon-HE 10.9 writes, to the byte: three spaces per level;
+    /// the namespace declarations of an element sorted by prefix; attributes and namespace
+    /// declarations on lines of their own when the start tag is long; a comment or processing
+    /// instruction just after a start tag on its line; a newline at the end.
+    /// </summary>
+    SaxonHe10,
+}
+

@@ -1241,6 +1241,15 @@ internal sealed partial class DefaultXsltExecutionContext
             resultOmitXmlDecl = omitStr.Trim() is "yes" or "true" or "1";
         }
 
+        // phx:indent-style (xslt#499, AVT). A literal value was checked at compile time (XTSE0020).
+        Ast.IndentStyle? resultIndentStyle = null;
+        if (instruction.PhxIndentStyle != null)
+        {
+            var indentStyleStr = await EvaluateAvtAsync(instruction.PhxIndentStyle).ConfigureAwait(false);
+            resultIndentStyle = StylesheetParser.TryParseIndentStyle(indentStyleStr)
+                ?? throw Error($"XTDE0030: phx:indent-style must be \"saxon-he-10\", not \"{indentStyleStr.Trim()}\"");
+        }
+
         // Evaluate indent from xsl:result-document (AVT)
         bool? resultIndent = null;
         if (instruction.Indent != null)
@@ -1653,6 +1662,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // in FinalizeOutput; carry the effective union here for declaration consistency.
                     CdataSectionElements = effectiveCdata ?? matchedOutput?.CdataSectionElements,
                     SuppressIndentation = matchedOutput?.SuppressIndentation ?? _stylesheet.PrincipalOutput?.SuppressIndentation,
+                    IndentStyle = resultIndentStyle ?? rdBaseOutput?.IndentStyle ?? Ast.IndentStyle.Default,
                 };
                 secondaryContent = Owner!.FinalizeOutput(
                     secondaryContent, rdOutputDecl, effectiveCharMaps, XsltTransformEngine.FinalizeKind.ResultDocument,
@@ -1674,26 +1684,26 @@ internal sealed partial class DefaultXsltExecutionContext
                 // synthetic output declaration so serialization honours its method/standalone/
                 // output-version/omit-xml-declaration (not the xsl:output default). A null method
                 // still defaults to xml, so the XML declaration is emitted even with no attributes.
-                _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
+                _primaryOutputMatchedDeclaration = WithIndentStyle(ApplyResultDocumentDoctype(
                     CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
                         resultStandalone, resultStandaloneSpecified, resultVersion,
                         resultMediaType, resultIncludeContentType,
                         resultByteOrderMark, resultEscapeUriAttributes, resultHtmlVersion, resultNormalizationForm,
                         resultEncoding, matchedOutput),
-                    resultDoctypePublic, resultDoctypeSystem);
+                    resultDoctypePublic, resultDoctypeSystem), resultIndentStyle);
             }
             else
             {
                 // XTDE1490: Mark that the primary output has been claimed by an explicit
                 // result-document href="", preventing further implicit writes
                 _primaryOutputClaimedByResultDocument = true;
-                _primaryOutputMatchedDeclaration = ApplyResultDocumentDoctype(
+                _primaryOutputMatchedDeclaration = WithIndentStyle(ApplyResultDocumentDoctype(
                     CreateSyntheticOutput(resultMethod, resultOmitXmlDecl, resultIndent,
                         resultStandalone, resultStandaloneSpecified, resultVersion,
                         resultMediaType, resultIncludeContentType,
                         resultByteOrderMark, resultEscapeUriAttributes, resultHtmlVersion, resultNormalizationForm,
                         resultEncoding, matchedOutput),
-                    resultDoctypePublic, resultDoctypeSystem);
+                    resultDoctypePublic, resultDoctypeSystem), resultIndentStyle);
             }
         }
         finally

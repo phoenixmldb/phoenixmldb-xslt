@@ -1,0 +1,6 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xml" indent="yes" phx:indent-style="saxon-he-10"/>
+  <xsl:template name="xsl:initial-template"><b><item v2="yx&lt;&lt;&quot; c&amp;&amp;y&#10;b&#9;&lt;&lt;c"><e id3=" '&lt;&quot;é&gt;'zé&#9;a&#10;&#10;ay&quot;&#9;by&#10;&amp;&gt;" a-long-attribute-name1=" &quot;c&gt;&#9;ybc&quot;&#9;b&#9;&#9;bcxéz"><xsl:text>   </xsl:text></e><section xmlns:q="urn:example:q" q:id2="xcb&#10;y''&#10;&#10;&#9;a'&#10;a &#9;&#9;c &amp;xé&amp;b" v1="&quot;&lt;" q:id3=" " type1="' 'y&gt;yy&lt;&gt;ba&gt;&amp;" n1="é&quot;" type0="z cé&#10;'&lt;zx&#9;&amp;cb&gt;x"><xsl:processing-instruction name="pi0">&lt; </xsl:processing-instruction><xsl:text>cb</xsl:text><xsl:processing-instruction name="pi2">&gt; &lt;&lt;
+'</xsl:processing-instruction><xsl:comment>	'&amp;ayx&amp;</xsl:comment></section></item><section type3="'c' x&amp;x&#9;y&quot;&amp;&quot;éz" a-long-attribute-name3="  &#9;&quot;&amp;z " v3="ya&#10;b"></section><b xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"></b><xsl:text>
+</xsl:text></b></xsl:template>
+</xsl:stylesheet>

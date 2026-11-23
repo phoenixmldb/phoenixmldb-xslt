@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+              xmlns:p="urn:p"
+              xmlns:q="urn:example:q">
+   <long-prefix:section id0="z&lt;b&#xA;&amp; &#xA;ac&#x9;cy&lt;" type1="c x"/>
+   <b long-prefix:n1="&lt;a&gt;éé&lt;"/>
+   <long-prefix:b long-prefix:v0="a &amp;c&gt;b&lt;&#34;bé&#xA;&#34;ay"
+                  v2="ybzbx&#xA;éy c&#xA;b'&#34;&#34;&#34;b&lt;"
+                  id2="&amp;ba&#xA;&#x9;&#xA;a&#x9;'b&#x9;&gt;&gt;&#x9;&#xA;'zxz'x&#xA;&#34;">
+      <long-prefix:e>
+         <e type0="" v2="aéyébczc&#xA;&#xA;czx&lt;éyb&#x9;'"/>
+      </long-prefix:e>
+      <!--	&
+éa-->
+      <long-prefix:data-element v3=" &#xA;">
+         <a type0="&lt;y&#xA;x&#34;y&amp;yycxcy&amp; xacc'&#x9;zzyc"
+            a-long-attribute-name3="a&#34;céz&#x9;yéy&gt;&gt;é&#x9;axzzxya&#x9;z&#xA;&#x9;">
+            <long-prefix:data-element n0="&#x9;ébz'&amp;x&lt;&gt;yx&#34;c"
+                                      long-prefix:type1="&#xA; y&#34;'a&#34;y&#x9;c&#x9; z&gt;&amp;'&#xA;&lt;'&#xA; '&lt;x"
+                                      a-long-attribute-name2="&#xA;&gt;yé&#x9;yxzbé&amp;&amp;z&gt;"/>   yé<!--<>z>--></a>
+      </long-prefix:data-element>
+   </long-prefix:b>
+</data-element>

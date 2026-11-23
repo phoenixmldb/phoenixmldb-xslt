@@ -1,0 +1,11 @@
+<data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+              xmlns:p="urn:p"
+              xmlns:q="urn:example:q"
+              v2="&amp;zx&#xA;c&#34;&#34;&lt;"
+              q:n0="ax&#xA;&lt;&#x9;&gt;y'&#xA;'&gt; "
+              n0="yyé &#x9;&lt;y&#34;&lt;é&lt; &#xA;&#x9;">
+   <section p:id3="&gt;'é&#34;&#xA;yc&gt;x&amp;z'z&#34;z&#34;ac&#34;" type2="ba&amp;&#34;z&lt;&lt;&amp;&lt;bx"><!--baa -->yx'<data-element a-long-attribute-name0="&#34; &lt;a&#xA;&gt;">
+         <x a-long-attribute-name2="">a	x&amp;c&lt;c</x>
+      </data-element>
+   </section>
+</data-element>

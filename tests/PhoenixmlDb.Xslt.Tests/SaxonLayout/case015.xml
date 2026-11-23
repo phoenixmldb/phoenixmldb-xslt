@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<b xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   id3="&lt;yb&amp;x &#34;b ézazaz'&lt;z&#xA;&#xA;'c&amp;&lt;acy&gt;&#34;"
+   id0="zéyaaz"
+   n3="'&amp; &#34;z'&#xA;xyzé&lt;&#34;"/>

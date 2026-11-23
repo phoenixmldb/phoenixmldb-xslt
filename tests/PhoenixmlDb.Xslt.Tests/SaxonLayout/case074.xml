@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE data-element
+  PUBLIC "-//PHX//CASE//EN" "case.dtd">
+<data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+              xmlns:p="urn:p"
+              xmlns:q="urn:example:q"
+              type0="&#xA;cc &#34;aécaax&#x9;"
+              v0="&lt;c 'c&amp;'c&amp;cbb "
+              type3="a&lt;&lt;&lt;c cx&#34;a&#x9;y&lt;&lt;xcaczx"
+              n3="x&#34;xaz&amp;">éxc za
+&lt;'yy<section>
+      <e type2="&#34;x&gt;&#34;&#xA;xz'xb&lt; &amp;&#xA;&#34;éx&gt;&lt;zx&lt;&#34;&lt;&#x9;"
+         id1="zéby&gt;&#xA;cxé&#x9;é&#xA;&gt;"
+         a-long-attribute-name0="'&gt;'zb&#x9;'cy&#xA;&amp;&lt;&#x9;x&amp;b&#34;zéz&amp;"
+         a-long-attribute-name3="cbx&#xA;yé&gt;&amp; &#xA;ca&gt;&#xA;aab"
+         v0="&#xA;&#x9;xé'cz"
+         n2="béxzxx"/>
+      <?pi2?>b	a
+zébé
+éb </section>
+   <x type3="&amp;&#x9;&#xA;&#34;&#xA;" id1="yé&#xA;&amp;'by&#xA;&lt;&#x9;"/>
+</data-element>

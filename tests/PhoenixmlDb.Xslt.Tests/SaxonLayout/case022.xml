@@ -1,0 +1,24 @@
+
+<!DOCTYPE b
+  SYSTEM "case.dtd">
+<b xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   a-long-attribute-name2="&#x9;ab&lt;&amp;x&#x9;é&#xA; bc&lt;ba&#x9;">	&lt;"é
+&lt;'é&amp;
+<x>
+      <p:x p:a-long-attribute-name0="ax&#34;z&#xA;&lt;&amp;&amp;&lt;&gt;&#34; "
+           n1="&lt;&#x9;&#34; &#xA; &#x9;&lt;&#xA;y&#34;'a&#x9;&#34;b&#34;'b&#xA;&lt;ay&#34;b"
+           type2="éaa&lt;é&gt;'b&amp;a&#x9;&#34;'&amp;&lt;&#34;c&gt;yay&amp;c&#34;&gt;&lt;yb"
+           id3="&#xA;zay&#x9;&amp;y'b&lt; c&gt;cé&#x9;&#xA; &lt;b"/>
+   </x>
+   <data-element type0="" id3="&amp;&#xA;&#x9;x&#x9;x&#34;c"><?pi1 b' 	<&&?>
+      <x>
+         <x id3="&gt;&#xA;y' z&#xA;"
+            n2="&#xA;c&lt;&#xA;b&#x9;éa&lt;x&#x9;b&#34;'c x&gt;"
+            v0="xx&#xA;&#34;by&amp;&#x9;b&#x9;yxa&amp;b&#xA;éz&#xA;éé&amp;é&#xA;é&amp;&#34;"
+            v2="axb&#x9;yz'&#xA;z"
+            a-long-attribute-name1="x&#x9;ba&#xA; &#34;ééy'b&amp;az&amp;&#34;'&#xA;xa "
+            n0="&#xA;y&#x9;&#x9;xxza b'yyyxx&lt;&lt;xé&#xA;&#x9;"/>x'</x>
+   </data-element>
+</b>

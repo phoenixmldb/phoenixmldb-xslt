@@ -1011,7 +1011,8 @@ public sealed partial class XsltTransformEngine
             HtmlForms: html,
             ContentTypeMeta: html && outputDecl.IncludeContentType != false ? outputDecl : null,
             Indent: effectiveIndent && outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html,
-            outputDecl.SuppressIndentation);
+            outputDecl.SuppressIndentation,
+            outputDecl.IndentStyle);
         return steps;
     }
 
@@ -1117,8 +1118,15 @@ public sealed partial class XsltTransformEngine
     {
         var outputDecl = plan.Decl;
         var foreignXhtmlRoot = plan.ForeignXhtmlRoot;
+        // phx:indent-style="saxon-he-10" (xslt#499): the declaration and the DOCTYPE as Saxon-HE 10.9 lays them out.
+        if (outputDecl is { IndentStyle: IndentStyle.SaxonHe10, EffectiveMethod: OutputMethod.Xml or OutputMethod.Xhtml }
+            && (outputDecl.Indent ?? outputDecl.EffectiveMethod == OutputMethod.Xhtml)
+            && !output.StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            output = SaxonHe10Prolog(output, outputDecl);
+        }
         // Emit XML declaration if requested
-        if (outputDecl != null &&
+        else if (outputDecl != null &&
             (outputDecl.EffectiveMethod == OutputMethod.Xml || outputDecl.EffectiveMethod == OutputMethod.Xhtml) &&
             outputDecl.OmitXmlDeclaration != true &&
             !output.StartsWith("<?xml", StringComparison.Ordinal))
@@ -1145,7 +1153,9 @@ public sealed partial class XsltTransformEngine
         // doctype-system to override an imported/named non-empty value back to "none").
         if (outputDecl != null && !string.IsNullOrEmpty(outputDecl.DoctypeSystem))
         {
-            output = InsertDoctype(output, outputDecl.DoctypePublic, outputDecl.DoctypeSystem);
+            if (outputDecl.IndentStyle != IndentStyle.SaxonHe10 || !(outputDecl.Indent ?? outputDecl.EffectiveMethod == OutputMethod.Xhtml)
+                || outputDecl.EffectiveMethod is not (OutputMethod.Xml or OutputMethod.Xhtml))
+                output = InsertDoctype(output, outputDecl.DoctypePublic, outputDecl.DoctypeSystem);
         }
         // HTML5 DOCTYPE: html/xhtml output with html-version >= 5 emits "<!DOCTYPE name>" using the
         // document element's serialized (case-preserving) name (Serialization 3.0 HTML/XHTML output
@@ -2509,6 +2519,77 @@ public sealed partial class XsltTransformEngine
     ///   - If both public and system: &lt;!DOCTYPE root PUBLIC "public" "system"&gt;
     ///   - If only system: &lt;!DOCTYPE root SYSTEM "system"&gt;
     /// </summary>
+    /// <summary>
+    /// The XML declaration and the DOCTYPE in front of an indented result, laid out as Saxon-HE 10.9
+    /// writes them (<c>phx:indent-style="saxon-he-10"</c>, xslt#499). The DOCTYPE's identifiers go on
+    /// a line of their own, indented by two spaces. With the xml method a newline goes before the
+    /// DOCTYPE (also when there is no declaration) and before the document; with the xhtml method
+    /// the DOCTYPE follows the declaration on its line, and the document follows the declaration.
+    /// </summary>
+    internal static string SaxonHe10Prolog(string output, XsltOutput decl)
+    {
+        var xhtml = decl.EffectiveMethod == OutputMethod.Xhtml;
+        var sb = new StringBuilder();
+        var hasDeclaration = decl.OmitXmlDeclaration != true;
+        if (hasDeclaration)
+        {
+            sb.Append("<?xml version=\"").Append(decl.Version ?? "1.0").Append("\" encoding=\"").Append(decl.Encoding ?? "UTF-8").Append('"');
+            if (decl.Standalone.HasValue)
+                sb.Append(decl.Standalone.Value ? " standalone=\"yes\"" : " standalone=\"no\"");
+            sb.Append("?>");
+        }
+        string? doctype = null;
+        if (!string.IsNullOrEmpty(decl.DoctypeSystem) && RootElementName(output) is { } root)
+        {
+            doctype = decl.DoctypePublic != null
+                ? $"<!DOCTYPE {root}\n  PUBLIC \"{decl.DoctypePublic}\" \"{decl.DoctypeSystem}\">"
+                : $"<!DOCTYPE {root}\n  SYSTEM \"{decl.DoctypeSystem}\">";
+        }
+        if (xhtml)
+        {
+            if (doctype != null)
+                sb.Append(doctype).Append('\n');
+        }
+        else
+        {
+            if (doctype != null)
+                sb.Append('\n').Append(doctype);
+            if ((hasDeclaration || doctype != null) && output.Length > 0 && output[0] == '<')
+                sb.Append('\n');
+        }
+        return sb.Append(output).ToString();
+    }
+
+    /// <summary>The name of the first element of a result, or null.</summary>
+    private static string? RootElementName(string output)
+    {
+        var i = 0;
+        while (i < output.Length)
+        {
+            i = output.IndexOf('<', i);
+            if (i < 0 || i + 1 >= output.Length)
+                return null;
+            var next = output[i + 1];
+            if (next == '?')
+            {
+                i = output.IndexOf("?>", i, StringComparison.Ordinal);
+                if (i < 0) return null;
+                continue;
+            }
+            if (next == '!')
+            {
+                i = output.IndexOf('>', i);
+                if (i < 0) return null;
+                continue;
+            }
+            var end = i + 1;
+            while (end < output.Length && !char.IsWhiteSpace(output[end]) && output[end] != '/' && output[end] != '>')
+                end++;
+            return output[(i + 1)..end];
+        }
+        return null;
+    }
+
     internal static string InsertDoctype(string output, string? doctypePublic, string doctypeSystem)
     {
         // Find the root element name
@@ -3081,7 +3162,9 @@ public sealed partial class XsltTransformEngine
     /// (<c>&lt;br /&gt;</c>, for HTML user agents); the XML method writes <c>&lt;e/&gt;</c>, as
     /// it does unindented and as Saxon does.
     /// </param>
-    internal static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null, bool xhtml = false)
+    /// <param name="indentStyle">The layout: <c>phx:indent-style</c> (xslt#499).</param>
+    internal static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null, bool xhtml = false,
+        IndentStyle indentStyle = IndentStyle.Default)
     {
         // The XML declaration is written as it is, then a newline, and the rest is read from
         // after it and the line ends that follow it. The text is not copied to do so: the
@@ -3106,7 +3189,12 @@ public sealed partial class XsltTransformEngine
         // 1.4 MB result by 12 MB (#401, the GA.EMS Schematron compile).
         var buffer = new StringBuilder();
         if (declLength > 0)
-            buffer.Append(output, 0, declLength).Append('\n');
+        {
+            buffer.Append(output, 0, declLength);
+            // Saxon-HE 10 writes the xhtml method's root element on the line of the declaration (xslt#499).
+            if (!(indentStyle == IndentStyle.SaxonHe10 && xhtml))
+                buffer.Append('\n');
+        }
         var sw = new System.IO.StringWriter(buffer, CultureInfo.InvariantCulture);
         try
         {
@@ -3115,9 +3203,12 @@ public sealed partial class XsltTransformEngine
                 input.Read();
             using var reader = XmlReader.Create(input, XmlIndenter.ReaderSettings(streamed: false));
             using var xw = XmlWriter.Create(sw, XmlIndenter.WriterSettings(streamed: false));
-            var indenter = new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
+            IXmlIndenter indenter = indentStyle == IndentStyle.SaxonHe10
+                ? new SaxonXmlIndenter(xw, buffer, suppressIndentation, xhtml)
+                : new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
             while (reader.Read())
                 indenter.Node(reader, XmlIndenter.HasValue(reader.NodeType) ? reader.Value : null);
+            indenter.End();
         }
         catch (XmlException)
         {

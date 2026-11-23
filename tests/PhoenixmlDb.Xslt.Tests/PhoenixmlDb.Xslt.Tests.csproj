@@ -21,6 +21,7 @@
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="TestData\schematron\*.*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="SaxonLayout\*.*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE data-element
+  SYSTEM "case.dtd">
+<data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+              xmlns:p="urn:p"
+              xmlns:q="urn:example:q">
+   <data-element/>
+</data-element>

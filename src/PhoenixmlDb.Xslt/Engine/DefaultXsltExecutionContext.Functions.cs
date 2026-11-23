@@ -1455,7 +1455,16 @@ internal sealed partial class DefaultXsltExecutionContext
             SuppressIndentation = baseDecl.SuppressIndentation,
             ByteOrderMark = baseDecl.ByteOrderMark,
             JsonNodeOutputMethod = baseDecl.JsonNodeOutputMethod,
+            IndentStyle = baseDecl.IndentStyle,
         };
+    }
+
+    /// <summary>The result-document's own <c>phx:indent-style</c> over <paramref name="decl"/>'s (xslt#499).</summary>
+    private static Ast.XsltOutput? WithIndentStyle(Ast.XsltOutput? decl, Ast.IndentStyle? indentStyle)
+    {
+        if (decl is not null && indentStyle is { } style)
+            decl.IndentStyle = style;
+        return decl;
     }
 
 

@@ -1,0 +1,9 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xhtml" indent="yes" phx:indent-style="saxon-he-10"/>
+  <xsl:template name="xsl:initial-template"><b xmlns="http://www.w3.org/1999/xhtml" type3="&amp;&#9;xxbx zz&gt;zxz&lt;&amp;" id0="&gt;c&amp;&quot;&amp; yza" v1=" éy &#9;'xb&gt;by&gt;" type0="&#9;bxb&lt;' x&#9;b bc&#9;&#10;xz ' &gt;&#9;zczy" n0="'a&#10;z&amp;&gt;&#10;y&#9;z&amp;'yz&lt;" id3="&quot;"><xsl:comment>x'é&amp;x	&lt;cb</xsl:comment><p:a xmlns:p="urn:p" v2="&lt;c'&#10;&gt;&amp;&#9;b&#10;&gt;é&#9;z" p:id1="&lt;&gt;&quot;b&#10;&gt; &amp;é&#10;by&gt;&amp;&amp;b" id1="c&#10;bz&#10;'&lt;'&gt;xbb&#9;&gt;ycy&lt;zb&lt;b " n1="&#9;&quot;&#10;éay'éz'&gt;&amp;'ba&#10;&quot;y"><xsl:comment>"'	&lt;xx </xsl:comment><xsl:text>   </xsl:text><long-prefix:title xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" id3="&lt;c'b&#10;x&#10; c&gt;&quot;&#10;c y" id1="&quot;yb&#10;z&#9;za&lt;&gt;zx&#9;y&lt;&lt;b&#10;'z&amp;éy &lt;zya" id2="&#10;é&#9;&#10;z&#9;" a-long-attribute-name2="" a-long-attribute-name0="&#10;&#10;cz'é" a-long-attribute-name1="a&quot;y&#9;z' bc&amp;z&amp;&gt;a'y" xml:space="preserve"><xsl:text>   </xsl:text><xsl:text>b&amp;
+y&amp;
+&amp;yay"</xsl:text><xsl:comment>&gt;	"x</xsl:comment></long-prefix:title><td xmlns="urn:default" xml:space="preserve"><p:TITLE id2="&lt;&amp;&#10;&gt;x &quot;b&gt;" id3="&#10;c&quot;y"><xsl:comment>&gt;céb'
+ybc&amp;</xsl:comment><xsl:comment></xsl:comment></p:TITLE></td></p:a><title type3="&amp;&lt;" v2=" y&lt;&quot;&#9;b'yzccac&#10;&#9;&amp;&#10;&#10;&quot; "><xsl:comment>z
+	</xsl:comment><xsl:text>	
+ &gt; </xsl:text></title></b></xsl:template>
+</xsl:stylesheet>

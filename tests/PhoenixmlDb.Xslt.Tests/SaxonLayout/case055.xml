@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section xmlns="urn:default"
+         xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+         xmlns:p="urn:p"
+         xmlns:q="urn:example:q"
+         n1="&#34;b'yé&amp;é'&gt;&gt;xyxa&#34;&lt;&amp;x&amp;"><?pi0?></section>

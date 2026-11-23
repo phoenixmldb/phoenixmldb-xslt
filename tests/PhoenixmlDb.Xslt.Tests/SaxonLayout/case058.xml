@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<a xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   v2="éx&#x9;">
+   <x type0="y&gt;aba&#34;y'ybé&#x9;" long-prefix:a-long-attribute-name3="&gt; &#34;x&#xA;z&#x9;bé" id2=" " long-prefix:id0="&gt;c&#34;&#34;éyazx&amp;é'&#xA; cy&#x9;&#x9;&#x9;bz&lt;&#xA;c&#34;&#34;a'" xml:space="preserve"><e a-long-attribute-name0="az&gt;x&amp;yc&gt;cy x''bc&lt; yaéca&#34;&#xA;c&amp;az&#xA;" id0="" v2="ba&amp;&lt;&#x9;&amp;xb&#xA;xx&#34;&#x9;&amp;z ayzéa " long-prefix:type1="&lt;z &gt;b&#x9;y'&amp;&#xA;yy"><!--< x-->   <data-element n0="b&amp; bxé" long-prefix:type3="é&lt;éya&#x9;'éb&gt;&#34;&#xA;&#34;bé&#34;&gt; &#34;&lt; &amp;"/></e></x>
+</a>

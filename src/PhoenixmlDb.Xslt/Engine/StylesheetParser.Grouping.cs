@@ -766,6 +766,8 @@ public sealed partial class StylesheetParser
                 }
             }
             merged.SuppressIndentation = suppressElements;
+            // phx:indent-style (xslt#499): the highest-precedence declaration that sets it.
+            merged.IndentStyle = sorted.Select(o => o.IndentStyle).FirstOrDefault(s => s != IndentStyle.Default);
 
             stylesheet.Outputs.Add(merged);
         }

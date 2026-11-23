@@ -55,6 +55,11 @@ public class StreamedSerializationTests
         { "text, character map", """method="text" use-character-maps="m" """, """<xsl:for-each select="item!copy-of()"><xsl:value-of select="."/>;</xsl:for-each>""",
           """<xsl:character-map name="m"><xsl:output-character character=";" string="|"/></xsl:character-map>""" },
         { "cdata-section-elements", """method="xml" indent="yes" cdata-section-elements="i" """, $"<out>{Items}</out>", "" },
+        { "saxon-he-10 layout", $"""method="xml" indent="yes" {SaxonLayout} """, $"<out><!-- c --><?p x?>{Items}</out>", "" },
+        { "saxon-he-10 layout, doctype", $"""method="xml" indent="yes" doctype-public="-//X//EN" doctype-system="out.dtd" {SaxonLayout} """, $"<out>{Items}</out>", "" },
+        { "saxon-he-10 layout, suppress-indentation", $"""method="xml" indent="yes" suppress-indentation="i" {SaxonLayout} """, $"<out><g>{Items}</g></out>", "" },
+        { "saxon-he-10 layout, xhtml", $"""method="xhtml" indent="yes" html-version="5" {SaxonLayout} """,
+          """<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body><xsl:for-each select="item!copy-of()"><p><b><xsl:value-of select="."/></b></p><br/></xsl:for-each></body></html>""", "" },
     };
 
     [Theory]
@@ -65,6 +70,37 @@ public class StreamedSerializationTests
         var (streamed, tree) = await BothAsync(Stylesheet(output, body, declarations), Input);
 
         streamed.Should().Be(tree);
+    }
+
+    private const string SaxonLayout = """xmlns:phx="https://schemas.phoenixml.dev/2026/functions" phx:indent-style="saxon-he-10" """;
+
+    [Fact]
+    public async Task AStreamedResultHasTheSaxonLayout()
+    {
+        // xslt#499: the streamed result goes through the same layout. Expected: Saxon-HE 10.9's output
+        // for the same stylesheet (which it runs without streaming).
+        var xslt = $$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" exclude-result-prefixes="#all">
+              <xsl:output method="xml" indent="yes" doctype-system="out.dtd" {{SaxonLayout}}/>
+              <xsl:mode streamable="yes"/>
+              <xsl:template match="root"><out a-long-attribute-name1="value one" a-long-attribute-name2="value two" a-long-attribute-name3="value three"><xsl:comment>c</xsl:comment><xsl:for-each select="item!copy-of()"><i n="{@n}"><xsl:value-of select="."/></i><e/></xsl:for-each></out></xsl:template>
+            </xsl:stylesheet>
+            """;
+
+        var (streamed, tree) = await BothAsync(xslt, """<root><item n="1">a</item><item n="2">c</item></root>""");
+
+        streamed.Should().Be(tree);
+        streamed.Should().Be(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+            "<!DOCTYPE out\n  SYSTEM \"out.dtd\">\n" +
+            "<out a-long-attribute-name1=\"value one\"\n" +
+            "     a-long-attribute-name2=\"value two\"\n" +
+            "     a-long-attribute-name3=\"value three\"><!--c-->\n" +
+            "   <i n=\"1\">a</i>\n" +
+            "   <e/>\n" +
+            "   <i n=\"2\">c</i>\n" +
+            "   <e/>\n" +
+            "</out>\n");
     }
 
     [Fact]

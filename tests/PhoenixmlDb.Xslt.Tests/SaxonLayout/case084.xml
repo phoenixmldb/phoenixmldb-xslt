@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<b xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   v1="cé&#xA;x&lt;xzacax"
+   q:type0="zc&amp;x&#x9;z&amp;&amp;yzb&#34;c">
+   <q:e/>
+   <!--'	
+	'"&
+z-->
+   <a a-long-attribute-name1="&gt;&lt; &lt;z z&gt; &#x9;bab&amp;cé&#xA;&#34; xx&lt;c'azb"
+      a-long-attribute-name2="bb&amp;yéyé '"/>
+</b>

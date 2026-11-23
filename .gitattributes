@@ -1,0 +1,3 @@
+# The Saxon layout cases are compared with the output byte for byte (xslt#499): no line-ending
+# conversion on checkout.
+tests/PhoenixmlDb.Xslt.Tests/SaxonLayout/** -text

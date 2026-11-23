@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<long-prefix:data-element xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+                          xmlns:p="urn:p"
+                          xmlns:q="urn:example:q">	&amp;
+b'xy  xb <?pi2 b&x<"&>é?><?pi1 y	xz>c>?>b</long-prefix:data-element>

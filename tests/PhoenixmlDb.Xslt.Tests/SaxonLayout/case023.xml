@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE item
+  PUBLIC "-//PHX//CASE//EN" "case.dtd">
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q"
+      id0="y&amp;&#x9;&lt;&amp;c'a&#xA;xééc&#34;c'&#x9;'é&#x9;&gt;&lt;"
+      a-long-attribute-name2="é czxya&#x9;' b&#34;c&#xA;y&#34;z&#xA;"><!--y&b'-->
+   <a n0="éb&lt;&#34;y&#34;" type3="&#x9;&amp;a&#34;x &#x9;a&#34;'z'&lt;yczb&#xA;éa&gt; "/>
+</item>

@@ -1,0 +1,3 @@
+<p:li xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" v3="b'c&#xA;&gt;c'&amp;&#xA;&lt;bb&gt;ya&#x9;yc&#x9;b&amp;" p:id3="&lt;czb" n2="ba&#34;'y éyy&#xA;&lt;xbxxécbba&amp; x&lt;x" p:a-long-attribute-name3="&#x9;&#xA;&#xA;azb&#x9;&#xA;&#34;c&lt;&#xA;&amp;&#34;z&gt; bc">
+   <!--
+<zy'"--></p:li>

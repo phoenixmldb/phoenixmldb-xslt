@@ -3079,6 +3079,9 @@ public sealed partial class StylesheetParser
                 .ToHashSet();
         }
 
+        if (element.Attribute(IndentStyleAttribute) is { } indentStyleAttr)
+            output.IndentStyle = ParseIndentStyle(indentStyleAttr.Value, element);
+
         // Register the parameter document's inline character maps as an anonymous map and
         // reference it FIRST, so any use-character-maps written directly on xsl:output (which
         // ParseOutput already appended above) take precedence per §26.1.

@@ -1,0 +1,9 @@
+
+<!DOCTYPE x
+  SYSTEM "case.dtd">
+<x xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+   xmlns:p="urn:p"
+   xmlns:q="urn:example:q"
+   n0="é&#x9;"
+   p:v0="zb' z&lt;&#34;&#34; c&#34;&lt; c'&#xA;zéx&#x9; xz&gt;y"
+   type1="x&#xA;&gt;&#x9;&lt;yz'&amp;c'xy&#34;&#xA;&#34;z&lt;cxéb&amp;"/>

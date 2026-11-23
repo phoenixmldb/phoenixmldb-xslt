@@ -1,0 +1,6 @@
+<item xmlns:long-prefix="urn:example:a-much-longer-namespace-uri"
+      xmlns:p="urn:p"
+      xmlns:q="urn:example:q"
+      id2="&gt;&#34;&#34;&#34;&amp;x&amp;c&#xA;&gt;aé&#34;x&#34;&#xA;&amp;&lt;&amp;x&#xA; a&gt;&#xA;"
+      id1="c&amp;'é"
+      a-long-attribute-name1="y&amp;a&#xA;xb&amp;z  z"/>

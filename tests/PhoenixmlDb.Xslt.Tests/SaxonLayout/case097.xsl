@@ -1,0 +1,4 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xml" indent="yes" phx:indent-style="saxon-he-10" doctype-system="case.dtd" doctype-public="-//PHX//CASE//EN"/>
+  <xsl:template name="xsl:initial-template"><a id1="&quot;c&lt;y&lt;&amp;c zzy c&#10;ébc&#10;"><xsl:processing-instruction name="pi1"></xsl:processing-instruction><q:x xmlns:q="urn:example:q" a-long-attribute-name0="'&#10;y&quot;éx&#10;&quot;&quot; yxxy&#10;&lt;&#9;cxc&#10; " a-long-attribute-name2="&amp;"><xsl:text>&amp;b"		cb</xsl:text><xsl:comment>yz&gt;	x&lt;</xsl:comment><xsl:text>&gt;y</xsl:text></q:x><xsl:comment></xsl:comment></a></xsl:template>
+</xsl:stylesheet>

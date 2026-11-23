@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE TEXTAREA
+  PUBLIC "-//PHX//CASE//EN" "case.dtd">
+<TEXTAREA xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" n2="&amp;&#34;&amp;c&gt; &amp;b&#x9;&#xA;&#x9;&lt; 'a&#x9; x&#xA;" id1="&lt;&gt;&gt;b&#x9;é&lt;&#xA;&amp;yzy&amp;"></TEXTAREA>
