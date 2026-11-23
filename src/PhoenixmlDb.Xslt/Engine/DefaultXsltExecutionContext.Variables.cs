@@ -185,23 +185,21 @@ internal sealed partial class DefaultXsltExecutionContext
     public override object SaveOutput()
     {
         var outputStr = _output.ToString();
-        var attrsStr = _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek().ToString() : null;
-        return (outputStr, attrsStr, _lastResultWasAtomic);
+        // The attributes as text and as items (S1), so that both are taken back together.
+        (string, object[])? attrs = _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek().Snapshot() : null;
+        return (outputStr, attrs, _lastResultWasAtomic);
     }
 
 
     /// <summary>Restore output to a previously saved state.</summary>
     public override void RestoreOutput(object savedState)
     {
-        var (outputStr, attrsStr, lastAtomic) = ((string, string?, bool))savedState;
+        var (outputStr, attrs, lastAtomic) = ((string, (string, object[])?, bool))savedState;
         _output.Clear();
         _output.Append(outputStr);
         _lastResultWasAtomic = lastAtomic;
-        if (attrsStr != null && _collectedAttributesStack.Count > 0)
-        {
-            _collectedAttributesStack.Peek().Clear();
-            _collectedAttributesStack.Peek().Append(attrsStr);
-        }
+        if (attrs is { } snapshot && _collectedAttributesStack.Count > 0)
+            _collectedAttributesStack.Peek().Restore(snapshot);
     }
 
 
@@ -971,7 +969,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 _lastResultWasAtomic = false;
                 // Variable content creates a document fragment — isolate attribute collection
                 // from parent elements so attributes don't leak (XTDE0420)
-                var savedAttrStack = new List<StringBuilder>(_collectedAttributesStack);
+                var savedAttrStack = new List<AttrBuffer>(_collectedAttributesStack);
                 _collectedAttributesStack.Clear();
                 // Save and clear namespace scopes so RTF content has all needed declarations
                 var savedNsScopes2 = new List<Dictionary<string, string>>(_outputNsScopes);

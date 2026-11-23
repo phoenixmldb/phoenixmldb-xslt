@@ -218,7 +218,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
     // Attribute collection mode for xsl:element
     // Use a stack to support nested element construction
-    private readonly Stack<StringBuilder> _collectedAttributesStack = new();
+    private readonly Stack<AttrBuffer> _collectedAttributesStack = new();
 
     private int _textContentDepth; // >0 when collecting simple text content (attribute/comment/PI body)
 
@@ -275,7 +275,7 @@ internal sealed partial class DefaultXsltExecutionContext
         public int SerializingElementDepth { get; init; }
         public bool CollectTextAsSequenceItems { get; init; }
         public bool LastResultWasAtomic { get; init; }
-        public List<StringBuilder> CollectedAttributes { get; init; }
+        public List<AttrBuffer> CollectedAttributes { get; init; }
         public TreeConstructor? ActiveTreeConstructor { get; init; }
         public bool TcFragmentIncomplete { get; init; }
         public bool SuppressTcIncomplete { get; init; }

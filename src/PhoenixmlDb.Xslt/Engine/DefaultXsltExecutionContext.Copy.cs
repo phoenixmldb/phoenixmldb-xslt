@@ -117,7 +117,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     var savedAccum = _sequenceAccumulator;
                     _sequenceAccumulator = null;
 
-                    var savedAttrStack2 = new List<StringBuilder>(_collectedAttributesStack);
+                    var savedAttrStack2 = new List<AttrBuffer>(_collectedAttributesStack);
                     _collectedAttributesStack.Clear();
                     _documentNodeDepth++;
                     try
@@ -213,7 +213,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 else if (instruction.Content != null)
                 {
                     // Fallback: just process content inline
-                    var savedAttrStack = new List<StringBuilder>(_collectedAttributesStack);
+                    var savedAttrStack = new List<AttrBuffer>(_collectedAttributesStack);
                     _collectedAttributesStack.Clear();
                     _documentNodeDepth++;
                     try
@@ -313,7 +313,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
 
                 // Use attribute collection mode like CreateElementAsync (push for nesting)
-                _collectedAttributesStack.Push(new StringBuilder());
+                _collectedAttributesStack.Push(new AttrBuffer());
                 // Track whether the copied element has a namespace (for XTDE0440)
                 _outputElementHasNsStack.Push(!string.IsNullOrEmpty(elem.Prefix) || elem.Namespace != NamespaceId.None);
                 _outputElementIsLreStack.Push(false); // xsl:copy — not an LRE
@@ -326,7 +326,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Process use-attribute-sets first (they create attributes)
                 var attrSetParts = new StringBuilder();
                 await ApplyAttributeSetsAsync(instruction.UseAttributeSets, attrSetParts).ConfigureAwait(false);
-                _collectedAttributes!.Append(attrSetParts);
+                _collectedAttrBuffer!.AppendText(attrSetParts.ToString());
 
                 // SP-C copy-0612 family: a COPIED element under an inherit-namespaces="no" ancestor
                 // (xsl:copy identity chain: match="*" → <xsl:copy inherit-namespaces="no">) carries
@@ -541,6 +541,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
                 // Deduplicate attributes (last-wins) like CreateElementCoreAsync
                 var attrs = new Dictionary<string, string>();
+                CheckAttrGuard(collectedAttrs, "xsl:copy");
                 ParseAttributeString(collectedAttrs.ToString(), attrs);
                 DeduplicateByExpandedName(attrs, elemName);
                 foreach (var (attrName, attrValue) in attrs)
@@ -713,11 +714,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         {
                             if (IsPrefixInUse(copyPrefix))
                                 copyPrefix = GenerateUniquePrefix(copyPrefix);
-                            target.Append(" xmlns:");
-                            target.Append(copyPrefix);
-                            target.Append("=\"");
-                            target.Append(EscapeAttributeValue(copyNsUri));
-                            target.Append('"');
+                            AppendNamespaceDeclarationTo(target, copyPrefix, copyNsUri);
                             if (_outputNsScopes.Count > 0)
                                 _outputNsScopes.Peek()[copyPrefix] = copyNsUri;
                         }
@@ -731,11 +728,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 else
                 {
-                    target.Append(' ');
-                    target.Append(attrName);
-                    target.Append("=\"");
-                    target.Append(EscapeAttributeValue(attr.Value));
-                    target.Append('"');
+                    AppendAttributeTo(target, attrName, attr.Value);
                 }
                 break;
             }

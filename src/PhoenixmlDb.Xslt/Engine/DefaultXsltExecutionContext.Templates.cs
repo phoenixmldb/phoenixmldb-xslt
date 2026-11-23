@@ -1192,7 +1192,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 var templateChildContent = string.Empty;
                 if (templateMatches is { Count: > 0 })
                 {
-                    _collectedAttributesStack.Push(new StringBuilder());
+                    _collectedAttributesStack.Push(new AttrBuffer());
                     var scope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                     // Reset _outputLogicalStart to the scope's start so the XTDE0410 check
                     // ("attribute after children") uses the correct baseline. Without this, the
@@ -1238,6 +1238,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         foreach (var (copiedName, copiedValue) in copiedAttributes)
                             attributes[copiedName] = EscapeAttributeValue(copiedValue);
                     }
+                    CheckAttrGuard(collectedAttrs, "built-in shallow copy");
                     ParseAttributeString(collectedAttrs.ToString(), attributes);
                     DeduplicateByExpandedName(attributes, qname);
                     foreach (var (attributeName, attributeValue) in attributes)
@@ -1312,15 +1313,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 // Shallow/deep copy: emit namespace declaration
                 var nsTarget = _attributeCollecting ? _collectedAttributes! : _output;
-                nsTarget.Append(" xmlns");
-                if (!string.IsNullOrEmpty(ns2.Prefix))
-                {
-                    nsTarget.Append(':');
-                    nsTarget.Append(ns2.Prefix);
-                }
-                nsTarget.Append("=\"");
-                nsTarget.Append(EscapeAttributeValue(ns2.Uri));
-                nsTarget.Append('"');
+                AppendNamespaceDeclarationTo(nsTarget, ns2.Prefix, ns2.Uri);
                 break;
             }
             default:
@@ -1430,15 +1423,7 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 // Deep copy: emit namespace declaration
                 var nsTarget3 = _attributeCollecting ? _collectedAttributes! : _output;
-                nsTarget3.Append(" xmlns");
-                if (!string.IsNullOrEmpty(ns3.Prefix))
-                {
-                    nsTarget3.Append(':');
-                    nsTarget3.Append(ns3.Prefix);
-                }
-                nsTarget3.Append("=\"");
-                nsTarget3.Append(EscapeAttributeValue(ns3.Uri));
-                nsTarget3.Append('"');
+                AppendNamespaceDeclarationTo(nsTarget3, ns3.Prefix, ns3.Uri);
                 break;
             }
             default:
