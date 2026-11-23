@@ -43,10 +43,16 @@ internal sealed partial class DefaultXsltExecutionContext
     /// node) kept its prefix, and so moved into that namespace: <c>&lt;r&gt;&lt;xsl:attribute
     /// name="p:a" namespace="u1"/&gt;&lt;xsl:namespace name="p"&gt;u2&lt;/xsl:namespace&gt;&lt;/r&gt;</c>
     /// gave <c>&lt;r xmlns:p="u2" p:a="1"/&gt;</c>. Its item knows its namespace: it keeps it under a
-    /// new prefix, as namespace fixup does (XSLT 3.0 §5.7.3), declared before it (BUGS.md #147).
+    /// new prefix, as namespace fixup does (XSLT 3.0 §5.7.3), declared before it (BUGS.md #148).
+    /// The element's name is the one it is written with, after its own fixup: an attribute in the
+    /// element's namespace takes the element's prefix, and a new prefix is never the element's
+    /// (it would be declared twice, or bound to two namespaces).
     /// </remarks>
-    private void ReadCollectedAttributes(AttrBuffer buffer, Dictionary<string, string> target)
+    private void ReadCollectedAttributes(AttrBuffer buffer, Dictionary<string, string> target,
+        string elementName, string? elementNamespace)
     {
+        var elementColon = elementName.IndexOf(':', StringComparison.Ordinal);
+        var elementPrefix = elementColon > 0 ? elementName[..elementColon] : "";
         Dictionary<string, string>? lastBinding = null;
         foreach (var item in buffer.Items)
         {
@@ -75,13 +81,17 @@ internal sealed partial class DefaultXsltExecutionContext
             var prefix = a.Name[..colon];
             if (!lastBinding.TryGetValue(prefix, out var bound) || bound == uri)
                 return a.Name;
+            if (elementPrefix.Length > 0 && uri == elementNamespace
+                && (!lastBinding.TryGetValue(elementPrefix, out var elementBound) || elementBound == uri))
+                return elementPrefix + a.Name[colon..];
             newPrefixes ??= [];
             if (!newPrefixes.TryGetValue((prefix, uri), out var newPrefix))
             {
                 for (var counter = 0; ; counter++)
                 {
                     newPrefix = $"{prefix}_{counter}";
-                    if (!lastBinding.ContainsKey(newPrefix) && !target.ContainsKey("xmlns:" + newPrefix) && !IsPrefixInUse(newPrefix))
+                    if (newPrefix != elementPrefix && !lastBinding.ContainsKey(newPrefix)
+                        && !target.ContainsKey("xmlns:" + newPrefix) && !IsPrefixInUse(newPrefix))
                         break;
                 }
                 newPrefixes[(prefix, uri)] = newPrefix;
