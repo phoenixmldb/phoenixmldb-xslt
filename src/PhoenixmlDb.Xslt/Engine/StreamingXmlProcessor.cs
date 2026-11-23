@@ -50,7 +50,12 @@ internal sealed class StreamingXmlProcessor
         get => _mode;
         set => _mode = value;
     }
-    private ulong _nextNodeId = 1_000_000; // High start to avoid collision with tree nodes
+    // Ids of the streamed nodes this processor makes. They are in the id space of the transform's
+    // store, whose own ids start at 1, so they start where the store's never reach: from 1 000 000
+    // they collided with the store's once it had given out a million ids, and a node of either was
+    // found for the other (StreamedNodeIdRangeTests).
+    internal const ulong NodeIdBase = 1UL << 40;
+    private ulong _nextNodeId = NodeIdBase;
 
     // Accumulator state for streaming computation
     private readonly IReadOnlyList<XsltAccumulator> _accumulators;

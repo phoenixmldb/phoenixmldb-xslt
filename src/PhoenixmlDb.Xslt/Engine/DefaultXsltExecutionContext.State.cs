@@ -1301,13 +1301,13 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     /// <summary>
-    /// Streaming-group node-id allocator. Sits above the principal source's id range
-    /// and below <see cref="StreamingXmlProcessor"/>'s allocator (1_000_000) by enough
-    /// margin that practical streams don't collide. Reset on each group flush would be
-    /// nice but the buffered nodes outlive the loop iteration, so we just monotonically
-    /// increment.
+    /// Ids of the elements of a streamed input read whole for a dispatch, and of their nodes.
+    /// Above the ids of <see cref="StreamingXmlProcessor"/> (<see cref="StreamingXmlProcessor.NodeIdBase"/>),
+    /// as before, and far above any id the transform's store gives: from 5 000 000 they collided
+    /// with the store's once it had given out that many (StreamedNodeIdRangeTests). Not reset on a
+    /// group flush: the nodes outlive the loop iteration.
     /// </summary>
-    private ulong _nextStreamGroupNodeId = 5_000_000;
+    private ulong _nextStreamGroupNodeId = 1UL << 41;
 
 
     /// <summary>

@@ -2018,8 +2018,11 @@ internal sealed partial class DefaultXsltExecutionContext
                     subscriptions.Count > 0 ? subscriptions : null,
                     subscriptionOnly);
 
-                // Push a synthetic document node as context so the content body can execute
-                var syntheticDocId = new NodeId(999_999);
+                // Push a synthetic document node as context so the content body can execute. Its
+                // id is the store's: the fixed id 999 999 was given by the store too, once it had
+                // given out that many, and the two nodes were found for each other
+                // (StreamedNodeIdRangeTests).
+                var syntheticDocId = streamNodeStore.NextId();
                 var syntheticDoc = new XdmDocument
                 {
                     StringValueResolver = streamNodeStore.StringValueResolver,
