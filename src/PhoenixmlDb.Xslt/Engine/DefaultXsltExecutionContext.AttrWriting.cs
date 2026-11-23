@@ -33,6 +33,27 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
     /// <summary>
+    /// The attributes and namespace declarations collected for an element, read from its items (the
+    /// typed attribute pipeline, S2) into <paramref name="target"/>: lexical name to escaped value, in
+    /// write order, the last value of each name, as <see cref="ParseAttributeString"/> reads the text.
+    /// </summary>
+    private static void ReadCollectedAttributes(AttrBuffer buffer, Dictionary<string, string> target)
+    {
+        foreach (var item in buffer.Items)
+        {
+            switch (item)
+            {
+                case AttrItem a:
+                    target[a.Name] = EscapeAttributeValue(a.Value);
+                    break;
+                case NsItem n:
+                    target[n.Prefix.Length == 0 ? "xmlns" : "xmlns:" + n.Prefix] = EscapeAttributeValue(n.Uri);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
     /// At an element's end, with <c>PXDB_ATTR_GUARD=1</c>: the attributes and namespace declarations
     /// read from the text, as the element's end reads them (the last value of each name), must be
     /// those the items give (S1). A difference throws: an item the text has no counterpart for, or

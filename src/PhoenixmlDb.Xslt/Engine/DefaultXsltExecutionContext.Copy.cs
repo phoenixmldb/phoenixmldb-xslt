@@ -544,7 +544,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Deduplicate attributes (last-wins) like CreateElementCoreAsync
                 var attrs = new Dictionary<string, string>();
                 CheckAttrGuard(collectedAttrs, "xsl:copy");
-                ParseAttributeString(collectedAttrs.ToString(), attrs);
+                ReadCollectedAttributes(collectedAttrs, attrs);
                 DeduplicateByExpandedName(attrs, elemName);
                 foreach (var (attrName, attrValue) in attrs)
                 {

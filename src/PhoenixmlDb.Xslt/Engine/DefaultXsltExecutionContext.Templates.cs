@@ -1244,7 +1244,7 @@ internal sealed partial class DefaultXsltExecutionContext
                             attributes[copiedName] = EscapeAttributeValue(copiedValue);
                     }
                     CheckAttrGuard(collectedAttrs, "built-in shallow copy");
-                    ParseAttributeString(collectedAttrs.ToString(), attributes);
+                    ReadCollectedAttributes(collectedAttrs, attributes);
                     DeduplicateByExpandedName(attributes, qname);
                     foreach (var (attributeName, attributeValue) in attributes)
                         _sink.RawText($" {attributeName}=\"{attributeValue}\"");

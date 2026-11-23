@@ -362,7 +362,7 @@ internal sealed partial class DefaultXsltExecutionContext
         var attrs = new Dictionary<string, string>();
         ParseAttributeString(attrParts.ToString(), attrs);
         CheckAttrGuard(collectedAttrs, "xsl:element");
-        ParseAttributeString(collectedAttrs.ToString(), attrs);
+        ReadCollectedAttributes(collectedAttrs, attrs);
         DeduplicateByExpandedName(attrs, name);
         foreach (var (attrName, attrValue) in attrs)
         {
@@ -1625,7 +1625,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Parse collected attributes and add to dictionary (overriding earlier values)
         CheckAttrGuard(collectedAttrs, "literal result element");
-        ParseAttributeString(collectedAttrs.ToString(), attributes);
+        ReadCollectedAttributes(collectedAttrs, attributes);
         DeduplicateByExpandedName(attributes, elemName, prefixToUri);
 
         // Namespace fixup: if xsl:namespace redefined the element's prefix to a different URI,
