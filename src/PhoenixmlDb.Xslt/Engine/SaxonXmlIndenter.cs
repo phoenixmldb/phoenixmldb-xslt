@@ -44,8 +44,26 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
     private const int IndentWidth = 3;
 
     // What was written last, of a start tag, an end tag and text: a comment or processing
-    // instruction does not change it.
-    private enum Last { Nothing, StartTag, EndTag, Text }
+    // instruction does not change it. InlineEnd: the end of an inline element (xhtml method only).
+    private enum Last { Nothing, StartTag, EndTag, InlineEnd, Text }
+
+    // The xhtml method lays out an element by its local name, in any namespace and in any case.
+    // Inline elements are never put on a new line, nor is what follows their end tag (a block
+    // start tag); inside formatted elements only comments and processing instructions are.
+    private static readonly HashSet<string> InlineElements = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "a", "abbr", "acronym", "applet", "area", "audio", "b", "basefont", "bdi", "bdo", "big", "br",
+        "button", "canvas", "cite", "code", "data", "datalist", "del", "dfn", "em", "embed", "font", "i",
+        "iframe", "img", "input", "ins", "kbd", "label", "map", "mark", "math", "meter", "noscript",
+        "object", "output", "picture", "progress", "q", "ruby", "s", "samp", "script", "select", "small",
+        "span", "strike", "strong", "sub", "sup", "svg", "template", "textarea", "time", "tt", "u", "var",
+        "video", "wbr",
+    };
+
+    private static readonly HashSet<string> FormattedElements = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "pre", "script", "style", "textarea", "title", "xmp",
+    };
 
     private readonly XmlWriter _xw;
     private readonly StringBuilder _buffer;
@@ -60,7 +78,10 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
     private bool _noIndent;
     // Inside xml:space="preserve": nothing is indented, comments and processing instructions too.
     private bool _preserve;
-    private readonly Stack<(string Name, bool NoIndent, bool Preserve)> _open = new();
+    private readonly Stack<(string Name, bool NoIndent, bool Preserve, bool Inline)> _open = new();
+    // xhtml method: a comment or processing instruction came last. The next one, and an end tag,
+    // stay on its line.
+    private bool _afterComment;
     // Whitespace-only text not yet written: it is dropped when what follows goes on a new line.
     private readonly StringBuilder _pendingSpace = new();
     private readonly List<string> _indents = ["\n"];
@@ -116,36 +137,30 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
                 EndTag();
                 break;
             case XmlNodeType.Text:
-                Before(newLine: false);
-                _xw.WriteRaw(EscapeText(value ?? ""));
-                _last = Last.Text;
+                WriteText(IndentText(EscapeText(value ?? "")));
                 break;
             case XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace:
-                // In xml:space="preserve" it is text; elsewhere it waits for what follows, and does
-                // not change what came last.
-                if (_preserve)
-                {
-                    Before(newLine: false);
-                    _xw.WriteRaw(EscapeText(value ?? ""));
-                    _last = Last.Text;
-                }
+                // With the xhtml method, and in xml:space="preserve", it is text; elsewhere it waits
+                // for what follows, and does not change what came last.
+                if (_xhtml || _preserve)
+                    WriteText(IndentText(EscapeText(value ?? "")));
                 else
                     _pendingSpace.Append(EscapeText(value ?? ""));
                 break;
             case XmlNodeType.CDATA:
-                Before(newLine: false);
-                _xw.WriteRaw("<![CDATA[" + (value ?? "").Replace("]]>", "]]]]><![CDATA[>", StringComparison.Ordinal) + "]]>");
-                _last = Last.Text;
+                WriteText("<![CDATA[" + (value ?? "").Replace("]]>", "]]]]><![CDATA[>", StringComparison.Ordinal) + "]]>");
                 break;
             case XmlNodeType.Comment:
                 Before(MarkupIndented());
                 _xw.WriteRaw("<!--" + value + "-->");
                 _topWritten |= _depth == 0;
+                _afterComment = true;
                 break;
             case XmlNodeType.ProcessingInstruction:
                 Before(MarkupIndented());
                 _xw.WriteRaw(string.IsNullOrEmpty(value) ? "<?" + reader.Name + "?>" : "<?" + reader.Name + " " + value + "?>");
                 _topWritten |= _depth == 0;
+                _afterComment = true;
                 break;
             case XmlNodeType.DocumentType:
                 Before(_topWritten);
@@ -163,6 +178,22 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
                 break;
         }
     }
+
+    private void WriteText(string markup)
+    {
+        Before(newLine: false);
+        _xw.WriteRaw(markup);
+        _last = Last.Text;
+        _afterComment = false;
+    }
+
+    // The xhtml method indents the line after each newline in text, except in formatted and
+    // suppress-indentation elements; comments, processing instructions and CDATA sections are
+    // written as they are.
+    private string IndentText(string text)
+        => _xhtml && !_noIndent && text.Contains('\n', StringComparison.Ordinal)
+            ? text.Replace("\n", IndentOf(_depth), StringComparison.Ordinal)
+            : text;
 
     private static string EscapeText(string value)
     {
@@ -192,16 +223,34 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
     }
 
     // A comment or processing instruction goes on a line of its own after an end tag, and at the
-    // top level after anything; just after a start tag or text it stays on that line.
-    // suppress-indentation leaves them as they are elsewhere; xml:space="preserve" does not.
+    // top level after anything; just after a start tag or text it stays on that line. The xml
+    // method: not in suppress-indentation or xml:space="preserve". The xhtml method: also there
+    // and in formatted elements, but not in an inline element, and not just after another one.
     private bool MarkupIndented()
-        => !_preserve && !(_noIndent && !_xhtml) && (_depth == 0 ? _topWritten : _last == Last.EndTag);
+    {
+        if (_depth == 0)
+            return _topWritten;
+        if (_xhtml)
+            return !_open.Peek().Inline && _last is (Last.EndTag or Last.InlineEnd) && !_afterComment;
+        return !_preserve && !_noIndent && _last == Last.EndTag;
+    }
 
     private void StartTag(XmlReader reader)
     {
         // A start tag goes on a line of its own after a start or end tag, and at the top level
-        // after anything; after text it stays on the line.
-        Before(!_noIndent && (_depth == 0 ? _topWritten : _last is Last.StartTag or Last.EndTag));
+        // after anything; after text it stays on the line. The xhtml method: an inline element's
+        // never; any other's also after text, and not after an inline element's end tag.
+        var inline = _xhtml && InlineElements.Contains(reader.LocalName);
+        bool newLine;
+        if (_noIndent)
+            newLine = false;
+        else if (_depth == 0)
+            newLine = _topWritten;
+        else if (_xhtml)
+            newLine = !inline && _last != Last.InlineEnd;
+        else
+            newLine = _last is Last.StartTag or Last.EndTag;
+        Before(newLine);
         var name = reader.Name;
         var empty = reader.IsEmptyElement;
         var namespaces = new List<(string Prefix, string Uri)>();
@@ -218,7 +267,8 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
                 else
                 {
                     attributes.Add((reader.Name, reader.Value));
-                    if (reader.Name == "xml:space" && reader.Value == "preserve")
+                    // The xhtml method indents in xml:space="preserve" too.
+                    if (!_xhtml && reader.Name == "xml:space" && reader.Value == "preserve")
                         preserve = true;
                 }
             }
@@ -233,7 +283,8 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
         foreach (var (attrName, attrValue) in attributes)
             cost += attrName.Length + attrValue.Length + 8;
         var expanded = (StylesheetParser.ResolveNamespaceUri(reader.NamespaceURI), reader.LocalName);
-        var isSuppressed = _suppressed is not null && _suppressed.Contains(expanded);
+        var isSuppressed = (_suppressed is not null && _suppressed.Contains(expanded))
+            || (_xhtml && FormattedElements.Contains(reader.LocalName));
         var count = namespaces.Count + attributes.Count;
         // Not in or on an element that is not indented (suppress-indentation, xml:space="preserve"),
         // and never with the xhtml method.
@@ -260,16 +311,17 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
         }
 
         _topWritten |= _depth == 0;
+        _afterComment = false;
         if (empty)
         {
             tag.Append(_xhtml ? " />" : "/>");
             _xw.WriteRaw(tag.ToString());
-            _last = Last.EndTag;
+            _last = inline ? Last.InlineEnd : Last.EndTag;
             return;
         }
         tag.Append('>');
         _xw.WriteRaw(tag.ToString());
-        _open.Push((name, _noIndent, _preserve));
+        _open.Push((name, _noIndent, _preserve, inline));
         _depth++;
         _noIndent |= isSuppressed || preserve;
         _preserve |= preserve;
@@ -288,13 +340,15 @@ internal sealed class SaxonXmlIndenter : IXmlIndenter
     private void EndTag()
     {
         _depth--;
-        // An end tag goes on a line of its own after an end tag.
-        Before(!_noIndent && _last == Last.EndTag);
-        var (name, noIndent, preserve) = _open.Pop();
+        var (name, noIndent, preserve, inline) = _open.Pop();
+        // An end tag goes on a line of its own after an end tag. The xhtml method: an inline
+        // element's never, and not just after a comment or processing instruction.
+        Before(!_noIndent && !inline && _last == Last.EndTag && !(_xhtml && _afterComment));
         _xw.WriteRaw("</" + name + ">");
         _noIndent = noIndent;
         _preserve = preserve;
-        _last = Last.EndTag;
+        _last = inline ? Last.InlineEnd : Last.EndTag;
+        _afterComment = false;
     }
 
     private static void AppendEscaped(StringBuilder sb, string value)
