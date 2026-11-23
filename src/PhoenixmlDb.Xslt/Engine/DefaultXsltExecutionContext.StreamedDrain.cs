@@ -30,7 +30,16 @@ internal sealed class CommittableElementFrame
     /// <summary>The attribute-collection depth inside the content; the top one is the element's.</summary>
     public required int AttributeDepth { get; init; }
 
-    public required string ElemName { get; init; }
+    public required string ElemName { get; set; }
+
+    /// <summary>The namespace URI of the element's name.</summary>
+    public required string ElemNamespace { get; init; }
+
+    /// <summary>The prefixes the copy has from the source element (copy-namespaces="yes"), else null.</summary>
+    public required IReadOnlySet<string>? CopiedPrefixes { get; init; }
+
+    /// <summary>The namespace nodes in the content (xslt#628).</summary>
+    public required Dictionary<string, string> NamespaceNodes { get; init; }
 
     /// <summary>The element's namespace bindings, as the start tag at its end would read them.</summary>
     public required Dictionary<string, string> NsBindings { get; init; }
@@ -52,8 +61,9 @@ internal sealed partial class DefaultXsltExecutionContext
     /// validation, no sequence being collected), and the element is open for the processor to
     /// close at the source element's end. Called before the element's namespace scopes are pushed.
     /// </summary>
-    private CommittableElementFrame? OpenCommittableFrame(XsltCopy instruction, string elemName,
-        Dictionary<string, string> nsBindings, XsltTransformEngine.ScopedOutputBuffer scope)
+    private CommittableElementFrame? OpenCommittableFrame(XsltCopy instruction, string elemName, string elemNamespace,
+        Dictionary<string, string> nsBindings, IReadOnlySet<string>? copiedPrefixes,
+        Dictionary<string, string> namespaceNodes, XsltTransformEngine.ScopedOutputBuffer scope)
     {
         if (_drainableBody is not { } body || _scopes.Count != _drainableScopeDepth
             || instruction.Content is not { } content
@@ -75,7 +85,10 @@ internal sealed partial class DefaultXsltExecutionContext
             NsScopeDepth = _outputNsScopes.Count + 2,
             AttributeDepth = _collectedAttributesStack.Count,
             ElemName = elemName,
+            ElemNamespace = elemNamespace,
             NsBindings = nsBindings,
+            CopiedPrefixes = copiedPrefixes,
+            NamespaceNodes = namespaceNodes,
             Scope = scope,
         };
     }
@@ -143,6 +156,9 @@ internal sealed partial class DefaultXsltExecutionContext
     // namespace scopes outside the element: its own two are the top of the stack.
     private void WriteCommittedStartTag(CommittableElementFrame frame)
     {
+        // The namespace nodes come before any child, so all of them are here (xslt#628).
+        frame.ElemName = ApplyContentNamespaceNodesToCopy(frame.ElemName, frame.ElemNamespace, frame.NsBindings,
+            frame.CopiedPrefixes, frame.NamespaceNodes, _collectedAttributesStack.Peek());
         _sink.StartElementOpen(frame.ElemName);
         foreach (var (prefix, uri) in frame.NsBindings)
         {
@@ -152,7 +168,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         var attrs = new Dictionary<string, string>();
         CheckAttrGuard(_collectedAttributesStack.Peek(), "streamed xsl:copy, committed");
-        ReadCollectedAttributes(_collectedAttributesStack.Peek(), attrs, frame.ElemName, elementNamespace: null);
+        ReadCollectedAttributes(_collectedAttributesStack.Peek(), attrs, frame.ElemName, frame.ElemNamespace);
         DeduplicateByExpandedName(attrs, frame.ElemName);
         foreach (var (attrName, attrValue) in attrs)
         {

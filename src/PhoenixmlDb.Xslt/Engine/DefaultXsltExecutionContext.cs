@@ -862,8 +862,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>
     /// Generates a unique namespace prefix by appending _0, _1, etc. to the base prefix.
     /// Used during namespace fixup when xsl:namespace conflicts with an element's own prefix.
+    /// <paramref name="taken"/>: the prefixes the element itself declares or uses (xslt#628).
     /// </summary>
-    private string GenerateUniquePrefix(string basePrefix)
+    private string GenerateUniquePrefix(string basePrefix, HashSet<string>? taken = null)
     {
         var counter = 0;
         string candidate;
@@ -871,7 +872,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             candidate = $"{basePrefix}_{counter}";
             counter++;
-        } while (IsPrefixInUse(candidate));
+        } while (IsPrefixInUse(candidate) || (taken?.Contains(candidate) ?? false));
         return candidate;
     }
 

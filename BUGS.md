@@ -8158,4 +8158,43 @@ Not in this fix (xslt#628): the element side. A namespace node that rebinds the 
 is handled for xsl:namespace on xsl:element and on a literal result element whose prefix is excluded, but not for
 a copied namespace node, the default namespace or xsl:copy; and the new prefix of the element is not checked
 against the declarations the element already has (`<xsl:element name="p:v" namespace="u1">` with an attribute
-`p:a` in `u3` and `<xsl:namespace name="p">u2</xsl:namespace>` declares `p_0` twice).
+`p:a` in `u3` and `<xsl:namespace name="p">u2</xsl:namespace>` declares `p_0` twice). See #149.
+
+### 149. A namespace node that rebound a prefix of the element under construction wrote two declarations of the prefix — fixed (xslt#628, 2026-11-23)
+
+Engine: **XSLT**. On main (2982c90) and before. Found while checking the XSpec suites that xslt#624 lets compile:
+`<xsl:element name="p:v" namespace="u1"><xsl:copy-of select="$e/namespace::p"/></xsl:element>`, with `p` = `u2`
+in `$e`, gave `<p:v xmlns:p="u1" xmlns:p="u2"/>`, which is not well-formed (in a temporary tree: XPTY0019, the
+tree was not built). xsl:namespace (an element's own namespace nodes are recorded per element) and copied
+namespace nodes (not recorded) took two paths, and only xsl:namespace on xsl:element and on a literal result
+element was checked against the element.
+
+Now both kinds of namespace node are one record per element (XSLT 3.0 §11.7: a copied namespace node and
+xsl:namespace constrain the prefixes alike), and the element's end checks them (Lucas, 2026-11-23):
+- Two namespace nodes in the content that bind one prefix to two namespaces: XTDE0430 (§5.7.1), for the copied
+  ones too. Main raised it for two xsl:namespace only, and kept the last one otherwise.
+- A namespace node that binds a prefix of a namespace node the element copied (a literal result element's, from
+  the stylesheet; xsl:copy's with copy-namespaces="yes", from the source element) to another namespace:
+  XTDE0430, as W3C namespace-2618 has it for xsl:namespace and the literal result element's name. Main raised it
+  only for xsl:namespace and the name's prefix of a literal result element. Saxon-HE 10.9 differs for a copied
+  namespace node: it gives the name another prefix, or drops the element's namespace node.
+- A namespace node that binds the prefix of the element's name, where the element's binding is one namespace
+  fixup made (xsl:element; an excluded prefix of a literal result element; xsl:copy with copy-namespaces="no"):
+  the name gets another prefix, the default namespace too (`<_0:v xmlns:_0="u1" xmlns="u2"/>`). The new prefix is
+  none the element declares or uses otherwise (it declared `p_0` twice when an attribute had taken it, and a
+  namespace node `p_0` was lost). Saxon-HE 10.9 raises XTDE0430 for xsl:namespace in xsl:copy
+  copy-namespaces="no".
+- A namespace node is in force for the element's content, which is written before the element's start tag: a
+  child in the namespace the prefix had declares the prefix again. `<p:w/>` was written without it and moved into
+  the namespace node's namespace.
+- xsl:copy of a namespace node adds a namespace node, as xsl:copy-of does; it wrote the namespace URI as text.
+- The built-in shallow copy keeps its own record, for the namespace nodes its attribute templates make; they
+  were recorded on an enclosing element.
+- A copied namespace node for the default namespace, on an element in no namespace: XTDE0440 (§5.7.1), as for
+  xsl:namespace (Lucas, 2026-11-23). It moved the element into that namespace (`<v xmlns="u2"/>`). Saxon-HE 10.9
+  raises XTDE0440 too.
+`NamespaceNodeConflictTests`. Breaking: a stylesheet that works on main can now stop with XTDE0430 where a
+namespace node in the content binds a prefix of the literal result element (other than its name's) to another
+namespace, or where two namespace nodes in the content bind one prefix to two namespaces and at least one is
+copied (two copied ones: Saxon-HE 10.9 keeps the last one and raises no error); and with XTDE0440 where a copied
+namespace node for the default namespace is added to an element in no namespace.
