@@ -2023,6 +2023,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 var syntheticDoc = new XdmDocument
                 {
                     StringValueResolver = streamNodeStore.StringValueResolver,
+                    // The streamed document's tree, so it precedes the document's nodes (xslt#542).
+                    TreeOrdinal = XdmInMemoryStore.ParseOrdinalOf(xmlReader),
                     Id = syntheticDocId,
                     Document = new DocumentId(0),
                     Children = [],
@@ -2176,9 +2178,13 @@ internal sealed partial class DefaultXsltExecutionContext
         xmlDoc.LoadXml(xmlContent);
 
         var nodeStore = _nodeStore ?? new XdmInMemoryStore();
-        var xdmDoc = ValidatesSourceDocument(instruction)
-            ? ValidatedSourceDocument(xmlDoc, nodeStore, instruction, resolvedUri)
-            : XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
+        XdmDocument xdmDoc;
+        using (nodeStore.ParsedDocument()) // xsl:source-document: a parsed document (xslt#542)
+        {
+            xdmDoc = ValidatesSourceDocument(instruction)
+                ? ValidatedSourceDocument(xmlDoc, nodeStore, instruction, resolvedUri)
+                : XsltTransformEngine.ConvertToXdm(xmlDoc, nodeStore, resolvedUri.AbsoluteUri);
+        }
 
         // Apply xsl:strip-space declarations
         if (_stylesheet.StripSpace.Count > 0)

@@ -1781,7 +1781,9 @@ public sealed partial class XsltTransformEngine
         doc.LoadXml(xmlSource);
 
         var nodeStore = new XdmInMemoryStore();
-        var xdmDoc = ValidatedSource(doc, nodeStore, options) ?? ConvertToXdm(doc, nodeStore);
+        XdmDocument xdmDoc;
+        using (nodeStore.ParsedDocument()) // the principal source: a parsed document (xslt#542)
+            xdmDoc = ValidatedSource(doc, nodeStore, options) ?? ConvertToXdm(doc, nodeStore);
 
         _templateIndex.ResolvePatternNamespaces(StylesheetParser.ResolveNamespaceUri);
         foreach (var keyDef in _stylesheet.Keys.Values)
@@ -5274,7 +5276,9 @@ public sealed partial class XsltTransformEngine
         }
 
         var nodeStore = new XdmInMemoryStore();
-        var xdmDoc = ValidatedSource(doc, nodeStore, options) ?? ConvertToXdm(doc, nodeStore, options?.SourceDocumentUri?.ToString());
+        XdmDocument xdmDoc;
+        using (nodeStore.ParsedDocument()) // the principal source: a parsed document (xslt#542)
+            xdmDoc = ValidatedSource(doc, nodeStore, options) ?? ConvertToXdm(doc, nodeStore, options?.SourceDocumentUri?.ToString());
 
         // Resolve namespace URIs in patterns to NamespaceIds
         _templateIndex.ResolvePatternNamespaces(StylesheetParser.ResolveNamespaceUri);

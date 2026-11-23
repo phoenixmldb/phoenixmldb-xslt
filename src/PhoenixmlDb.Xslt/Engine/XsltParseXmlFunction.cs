@@ -46,7 +46,9 @@ internal sealed class XsltParseXmlFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
                 var xmlDoc = new System.Xml.XmlDocument();
                 xmlDoc.PreserveWhitespace = true;
                 xmlDoc.LoadXml(xmlStr);
-                var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _context._nodeStore, documentUri: null);
+                XdmDocument xdmDoc;
+                using (_context._nodeStore.ParsedDocument()) // fn:parse-xml: a parsed document (xslt#542)
+                    xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _context._nodeStore, documentUri: null);
                 // Temporary trees have no document URI per XSLT 3.0 §11.9.1
                 xdmDoc.DocumentUri = null;
                 return ValueTask.FromResult<object?>(xdmDoc);

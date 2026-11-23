@@ -22,6 +22,18 @@ internal sealed class StreamingXmlProcessor
     private readonly TemplateIndex _templateIndex;
     private readonly DefaultXsltExecutionContext _context;
     private readonly XdmInMemoryStore _nodeStore;
+
+    // The tree ordinal of the streamed document's nodes: a parse ordinal, so the document
+    // precedes every constructed tree, such as a global variable's, built before it (xslt#542).
+    // The reader's (ProcessAsync), which the other paths that build its nodes use too.
+    private ulong _treeOrdinal = XdmInMemoryStore.NextParseOrdinal();
+
+    private void RegisterStreamed(XdmNode node)
+    {
+        if (node.TreeOrdinal == 0)
+            node.TreeOrdinal = _treeOrdinal;
+        _nodeStore.Register(node);
+    }
     private QName? _mode;
 
     /// <summary>
@@ -217,6 +229,7 @@ internal sealed class StreamingXmlProcessor
         // execution. Cleared on exit so non-streaming runs don't see a stale handle.
         var previousStreamingReader = _context._activeStreamingReader;
         _context._activeStreamingReader = reader;
+        _treeOrdinal = XdmInMemoryStore.ParseOrdinalOf(reader);
         var previousStreamingCt = _context._activeStreamingCancellationToken;
         _context._activeStreamingCancellationToken = ct;
         var previousAccumulatorOwner = _context._accumulatorStreamOwner;
@@ -971,7 +984,7 @@ internal sealed class StreamingXmlProcessor
                         textNode.Parent = ancestorStack.Count > 0
                             ? ancestorStack.Peek().NodeId
                             : EnsureStreamingRootDocId();
-                        _nodeStore.Register(textNode);
+                        RegisterStreamed(textNode);
 
                         // Fire stream watchers for text content (constructor-time +
                         // dynamic _activeStreamWatchers + accumulate into any pending
@@ -1015,7 +1028,7 @@ internal sealed class StreamingXmlProcessor
                             Document = new DocumentId(0),
                             Value = reader.Value
                         };
-                        _nodeStore.Register(comment);
+                        RegisterStreamed(comment);
 
                         await FireAccumulatorRulesAsync(comment, commentId, AccumulatorPhase.Start).ConfigureAwait(false);
                         if (suppressionDepth < 0)
@@ -1040,7 +1053,7 @@ internal sealed class StreamingXmlProcessor
                             Target = reader.LocalName,
                             Value = reader.Value
                         };
-                        _nodeStore.Register(pi);
+                        RegisterStreamed(pi);
 
                         await FireAccumulatorRulesAsync(pi, piId, AccumulatorPhase.Start).ConfigureAwait(false);
                         if (suppressionDepth < 0)
@@ -1628,7 +1641,7 @@ internal sealed class StreamingXmlProcessor
         // Registered first so it receives the lowest NodeId — preserving the
         // outermost-first document-order keying the set-ops rely on.
         var docNodeId = _nodeStore.NextId();
-        _nodeStore.Register(new XdmDocument
+        RegisterStreamed(new XdmDocument
         {
             StringValueResolver = _nodeStore.StringValueResolver,
             Id = docNodeId,
@@ -1649,7 +1662,7 @@ internal sealed class StreamingXmlProcessor
                 {
                     var attrId = _nodeStore.NextId();
                     var (attrNs, attrPrefix, attrLocal) = ParseAttributeKey(k);
-                    _nodeStore.Register(new XdmAttribute
+                    RegisterStreamed(new XdmAttribute
                     {
                         Id = attrId,
                         Document = documentId,
@@ -1674,7 +1687,7 @@ internal sealed class StreamingXmlProcessor
                 NamespaceDeclarations = XdmElement.EmptyNamespaceDeclarations,
                 Parent = parentId
             };
-            _nodeStore.Register(ancestor);
+            RegisterStreamed(ancestor);
             parentId = ancestorId;
         }
         return parentId;
@@ -2093,7 +2106,7 @@ internal sealed class StreamingXmlProcessor
             {
                 var attrId = _nodeStore.NextId();
                 var (attrNs, attrPrefix, attrLocal) = ParseAttributeKey(k);
-                _nodeStore.Register(new XdmAttribute
+                RegisterStreamed(new XdmAttribute
                 {
                     Id = attrId,
                     Document = documentId,
@@ -2119,7 +2132,7 @@ internal sealed class StreamingXmlProcessor
             NamespaceDeclarations = XdmElement.EmptyNamespaceDeclarations,
             Parent = null
         };
-        _nodeStore.Register(elem);
+        RegisterStreamed(elem);
         return elem;
     }
 
@@ -2700,7 +2713,7 @@ internal sealed class StreamingXmlProcessor
                     Value = v,
                     Parent = elemId
                 };
-                _nodeStore.Register(attr);
+                RegisterStreamed(attr);
                 attrIds.Add(attrId);
             }
         }
@@ -2716,7 +2729,7 @@ internal sealed class StreamingXmlProcessor
                 Value = textContent,
                 Parent = elemId
             };
-            _nodeStore.Register(text);
+            RegisterStreamed(text);
             childIds.Add(textId);
         }
 
@@ -2733,7 +2746,7 @@ internal sealed class StreamingXmlProcessor
             NamespaceDeclarations = BuildNamespaceDeclarations(inScopeNamespaces)
         };
         elem._stringValue = textContent ?? string.Empty;
-        _nodeStore.Register(elem);
+        RegisterStreamed(elem);
         return elem;
     }
 
@@ -2826,7 +2839,7 @@ internal sealed class StreamingXmlProcessor
             Prefix = null,
             Value = value,
         };
-        _nodeStore.Register(attr);
+        RegisterStreamed(attr);
         return attr;
     }
 
@@ -2839,7 +2852,7 @@ internal sealed class StreamingXmlProcessor
             Document = new DocumentId(0),
             Value = value
         };
-        _nodeStore.Register(t);
+        RegisterStreamed(t);
         return t;
     }
 
@@ -2872,7 +2885,7 @@ internal sealed class StreamingXmlProcessor
                     Value = v,
                     Parent = elemId
                 };
-                _nodeStore.Register(attr);
+                RegisterStreamed(attr);
                 attrIds.Add(attrId);
             }
         }
@@ -2909,7 +2922,7 @@ internal sealed class StreamingXmlProcessor
             NamespaceDeclarations = BuildNamespaceDeclarations(frame.InScopeNamespaces)
         };
         elem._stringValue = stringValue.ToString();
-        _nodeStore.Register(elem);
+        RegisterStreamed(elem);
         return elem;
     }
 
@@ -3183,7 +3196,7 @@ internal sealed class StreamingXmlProcessor
         if (_streamingRootDocId != NodeId.None)
             return _streamingRootDocId;
         var docId = _nodeStore.NextId();
-        _nodeStore.Register(new XdmDocument
+        RegisterStreamed(new XdmDocument
         {
             StringValueResolver = _nodeStore.StringValueResolver,
             Id = docId,
@@ -3218,7 +3231,7 @@ internal sealed class StreamingXmlProcessor
                 // from an attribute was empty: a template for @x that read
                 // ../accumulator-before() found no value (W3C evaluate-046).
                 xdmAttr.Parent = ctx.NodeId;
-                _nodeStore.Register(xdmAttr);
+                RegisterStreamed(xdmAttr);
                 (attrIds ??= AcquireNodeIdList()).Add(attr.NodeId);
                 (materializedAttrs ??= AcquireXdmAttrList()).Add(xdmAttr);
             }
@@ -3242,7 +3255,7 @@ internal sealed class StreamingXmlProcessor
             (IReadOnlyList<NodeId>?)attrIds ?? XdmElement.EmptyAttributes,
             (IReadOnlyList<NamespaceBinding>?)nsBindings ?? XdmElement.EmptyNamespaceDeclarations);
         ctx.MaterializedElement = elem;
-        _nodeStore.Register(elem);
+        RegisterStreamed(elem);
         return elem;
     }
 }

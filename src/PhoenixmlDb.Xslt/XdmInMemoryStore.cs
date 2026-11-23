@@ -76,10 +76,66 @@ public sealed class XdmInMemoryStore : INodeBuilder, IXdmNodeStore
     public NodeId NextId() => new(_nextId++);
     public void Register(XdmNode node)
     {
+        // The order between trees (xslt#542): a node of a parsed document carries its document's
+        // parse ordinal, any other node this store's construction ordinal. A construction ordinal
+        // has the high bit set, so a parsed document precedes every constructed tree, whenever
+        // either was built; the rule XQuery's store has (TreeOrdinalAllocator). Within a tree,
+        // and between constructed trees, the order is the node ids' (creation) order, as before.
+        if (node.TreeOrdinal == 0)
+            node.TreeOrdinal = _parseOrdinal != 0 ? _parseOrdinal : ConstructionOrdinal;
         // The node's ids and namespace ids are this store's; Store says so to an engine that
         // meets the node outside this store (BUGS.md #124).
         node.AttachStore(this);
         _nodes[node.Id] = node;
+    }
+
+    // The parse ordinal of the document being parsed (ParsedDocument), or 0.
+    private ulong _parseOrdinal;
+    private ulong _constructionOrdinal;
+
+    /// <summary>The tree ordinal of every node this store constructs (allocated on first use).</summary>
+    internal ulong ConstructionOrdinal
+        => _constructionOrdinal != 0 ? _constructionOrdinal : (_constructionOrdinal = TreeOrdinalAllocator.NextConstructionOrdinal());
+
+    /// <summary>A new parse ordinal: the tree ordinal of every node of one parsed document.</summary>
+    internal static ulong NextParseOrdinal() => TreeOrdinalAllocator.NextParseOrdinal();
+
+    /// <summary>
+    /// Until the scope is disposed, the nodes registered are those of one parsed document and
+    /// carry a new parse ordinal. For a document built in one call, such as from an
+    /// <see cref="System.Xml.XmlDocument"/>; a streamed document stamps its nodes itself.
+    /// </summary>
+    internal ParsedDocumentScope ParsedDocument() => new(this, NextParseOrdinal());
+
+    /// <summary>The same, for the nodes of a document that already has a parse ordinal.</summary>
+    internal ParsedDocumentScope ParsedDocument(ulong ordinal) => new(this, ordinal);
+
+    // The parse ordinal of the document a streaming reader reads: one per reader, so every path
+    // that builds nodes of a streamed document (the streaming processor, the striding drivers,
+    // the document node of xsl:source-document) gives them the same one.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<System.Xml.XmlReader, object> s_streamOrdinals = new();
+
+    /// <summary>The parse ordinal of the streamed document <paramref name="reader"/> reads.</summary>
+    internal static ulong ParseOrdinalOf(System.Xml.XmlReader reader)
+        => (ulong)s_streamOrdinals.GetValue(reader, static _ => NextParseOrdinal());
+
+    internal readonly struct ParsedDocumentScope : IDisposable
+    {
+        private readonly XdmInMemoryStore _store;
+        private readonly ulong _previous;
+
+        internal ParsedDocumentScope(XdmInMemoryStore store, ulong ordinal)
+        {
+            _store = store;
+            _previous = store._parseOrdinal;
+            store._parseOrdinal = ordinal;
+        }
+
+        public void Dispose()
+        {
+            if (_store is not null)
+                _store._parseOrdinal = _previous;
+        }
     }
     public XdmNode? GetNode(NodeId id) => _nodes.GetValueOrDefault(id);
 

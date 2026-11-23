@@ -503,15 +503,6 @@ public sealed class XsltTestFixture : IAsyncLifetime
         // schema validation is a storage concern, not an XSLT concern. This trade-off enables
         // 12+ tests whose stylesheets use import-schema without needing schema features.
         config.SkipTests.Add("error-1650a");
-        // Not applicable: each expects one order for nodes from different trees (a document
-        // and trees built by global variables). That order is implementation-dependent (XDM 3.1
-        // §2.4 Document Order: "the relative order of nodes in distinct trees is stable but
-        // implementation-dependent"). The expected results follow Saxon's lazy creation of the
-        // global variables; ours are evaluated eagerly, which is also conformant.
-        config.SkipTests.Add("sx-union-012");
-        config.SkipTests.Add("sx-union-017");
-        config.SkipTests.Add("sx-union-022");
-        config.SkipTests.Add("sx-union-035");
         // Not applicable: the expected results need a schema-validated source, but neither the
         // environment nor the stylesheet asks for validation. The <source> has no validation
         // attribute (the catalog default is "strip", i.e. no validation); <schema
