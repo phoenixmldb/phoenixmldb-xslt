@@ -12,7 +12,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// whole result; <see cref="StreamedResultFinalizer"/> over a result written while the
 /// transformation streams (xslt#575), so both write the same text.
 /// </summary>
-internal sealed class XmlIndenter : IXmlIndenter
+internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
 {
     private readonly XmlWriter _xw;
     // What _xw writes to: the empty-element form is corrected in it.
@@ -74,6 +74,25 @@ internal sealed class XmlIndenter : IXmlIndenter
         if (streamed)
             settings.ConformanceLevel = ConformanceLevel.Fragment;
         return settings;
+    }
+
+    /// <summary>
+    /// <c>phx:indent-style="saxon-he-10"</c> (xslt#499): the layout class of the XQuery library, which
+    /// fn:serialize uses too, given the suppress-indentation names as it takes them (namespace URI and
+    /// local name).
+    /// </summary>
+    internal static PhoenixmlDb.XQuery.SaxonXmlIndenter SaxonLayout(XmlWriter xw, StringBuilder buffer,
+        HashSet<QName>? suppressIndentation, bool xhtml)
+    {
+        Func<string, string, bool>? isSuppressed = null;
+        if (suppressIndentation is { Count: > 0 })
+        {
+            var names = new HashSet<(NamespaceId, string)>();
+            foreach (var name in suppressIndentation)
+                names.Add((name.Namespace, name.LocalName));
+            isSuppressed = (ns, local) => names.Contains((StylesheetParser.ResolveNamespaceUri(ns), local));
+        }
+        return new PhoenixmlDb.XQuery.SaxonXmlIndenter(xw, buffer, isSuppressed, xhtml);
     }
 
     /// <summary>Whether <see cref="Node"/> needs the node's value (read by the driver, which may read it asynchronously).</summary>
