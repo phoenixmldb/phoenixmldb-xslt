@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-22 23:38 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-23 18:20 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,16 +17,14 @@ Generated 2026-11-22 23:38 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 0 | 1 |
-| phoenixmldb-xquery | 0 | 1 |
-| phoenixmldb-xslt | 5 | 0 |
+| phoenixmldb-xquery | 0 | 0 |
+| phoenixmldb-xslt | 3 | 2 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
-- [542] Evaluate global variables lazily (order between trees: sx-union-012/017/022/035, square-array-201)
-- [516] Temporary trees stay in the node store until the transform ends
 - [499] Serializer: extension parameters for indent characters, attribute wrapping and namespace order (#400 part 2)
 - [445] Nightly regression report
 - [13] Backlog triage: 57 failing W3C XSLT cases (11,461/11,518 applicable pass)
@@ -37,13 +35,14 @@ Generated 2026-11-22 23:38 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [54] build: SDK 11, and ship net11.0 next to net8.0 and net10.0
 
-**phoenixmldb-xquery**
+**phoenixmldb-xslt**
 
-- [416] XQuery Update: pending updates are applied at every entry point; phx:XUDY9001 for a store that cannot be updated (BUGS #127)
+- [622] feat(S1): attributes of an element under construction are also items; a guard compares them with the text
+- [618] docs(README): W3C XSLT 3.0 figure from the #617 confirming run: 11,484/11,522, 38 failing
 
 ## Defect register
 
-`BUGS.md`: **142** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **144** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -74,10 +73,10 @@ the engines are split but the defects are not.
 
 Figures are only as good as their provenance, so each carries how and when it was measured.
 
-- **W3C XSLT 3.0 — 11397/11528 (98.86%)** across 225 test-sets,
+- **W3C XSLT 3.0 — 11483/11522 (99.66%)** across 225 test-sets,
   from the committed per-set baseline, Release build. A ratchet, not a live run: it
   records what each set reaches every time.
-- **The denominator moved since the previous baseline revision: XSLT 11529 -> 11528.** A percentage
+- **The denominator moved since the previous baseline revision: XSLT 11528 -> 11522.** A percentage
   change across this revision is partly or wholly cases entering or leaving the count,
   NOT necessarily the engine. Compare pass counts, not percentages, across this line.
 - **W3C QT3 / XQuery** — 99.90% — 31,294 / 31,325 across all 428 catalog test-sets, measured 2026-11-02, Release build.
