@@ -58,6 +58,18 @@ public class IndentStyleTests
         => (await PrimaryAsync("""<xsl:output method="xml" indent="yes" phx:indent-style="saxon-he-10"/>""", Tree))
             .Should().Be(Expected);
 
+    /// <summary>
+    /// The end of a formatted element (here an empty <c>textarea</c>) ends the formatted state: what
+    /// follows in the enclosing <c>pre</c> is indented again. The xhtml method writes an empty element
+    /// as a start and an end tag before the layout, so this holds on main too; the rule for an empty
+    /// element tag, which fn:serialize's layout reaches, is tested in the XQuery library.
+    /// </summary>
+    [Fact]
+    public async Task An_empty_formatted_element_ends_the_formatted_state()
+        => (await PrimaryAsync("""<xsl:output method="xhtml" indent="yes" omit-xml-declaration="yes" phx:indent-style="saxon-he-10"/>""",
+                "<root><pre><span>x</span><textarea/><div/><div><p/></div></pre></root>"))
+            .Should().Be("<root>\n   <pre><span>x</span><textarea></textarea><div></div>\n      <div>\n         <p></p>\n      </div>\n   </pre>\n</root>");
+
     [Fact]
     public async Task Without_it_the_layout_is_the_default_one()
         => (await PrimaryAsync("""<xsl:output method="xml" indent="yes"/>""", Tree))
