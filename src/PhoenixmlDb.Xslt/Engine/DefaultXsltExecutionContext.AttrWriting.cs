@@ -37,19 +37,57 @@ internal sealed partial class DefaultXsltExecutionContext
     /// typed attribute pipeline, S2) into <paramref name="target"/>: lexical name to escaped value, in
     /// write order, the last value of each name, as <see cref="ParseAttributeString"/> reads the text.
     /// </summary>
-    private static void ReadCollectedAttributes(AttrBuffer buffer, Dictionary<string, string> target)
+    /// <remarks>
+    /// The element gets the last declaration of each prefix. An attribute written before a
+    /// declaration that binds its prefix to another namespace (xsl:namespace, a copied namespace
+    /// node) kept its prefix, and so moved into that namespace: <c>&lt;r&gt;&lt;xsl:attribute
+    /// name="p:a" namespace="u1"/&gt;&lt;xsl:namespace name="p"&gt;u2&lt;/xsl:namespace&gt;&lt;/r&gt;</c>
+    /// gave <c>&lt;r xmlns:p="u2" p:a="1"/&gt;</c>. Its item knows its namespace: it keeps it under a
+    /// new prefix, as namespace fixup does (XSLT 3.0 §5.7.3), declared before it (BUGS.md #147).
+    /// </remarks>
+    private void ReadCollectedAttributes(AttrBuffer buffer, Dictionary<string, string> target)
     {
+        Dictionary<string, string>? lastBinding = null;
+        foreach (var item in buffer.Items)
+        {
+            if (item is NsItem { Prefix.Length: > 0 } ns)
+                (lastBinding ??= new(StringComparer.Ordinal))[ns.Prefix] = ns.Uri;
+        }
+        Dictionary<(string Prefix, string Uri), string>? newPrefixes = null;
         foreach (var item in buffer.Items)
         {
             switch (item)
             {
                 case AttrItem a:
-                    target[a.Name] = EscapeAttributeValue(a.Value);
+                    target[NameKeepingNamespace(a)] = EscapeAttributeValue(a.Value);
                     break;
                 case NsItem n:
                     target[n.Prefix.Length == 0 ? "xmlns" : "xmlns:" + n.Prefix] = EscapeAttributeValue(n.Uri);
                     break;
             }
+        }
+
+        string NameKeepingNamespace(AttrItem a)
+        {
+            var colon = a.Name.IndexOf(':', StringComparison.Ordinal);
+            if (lastBinding is null || colon <= 0 || a.Namespace is not { Length: > 0 } uri)
+                return a.Name;
+            var prefix = a.Name[..colon];
+            if (!lastBinding.TryGetValue(prefix, out var bound) || bound == uri)
+                return a.Name;
+            newPrefixes ??= [];
+            if (!newPrefixes.TryGetValue((prefix, uri), out var newPrefix))
+            {
+                for (var counter = 0; ; counter++)
+                {
+                    newPrefix = $"{prefix}_{counter}";
+                    if (!lastBinding.ContainsKey(newPrefix) && !target.ContainsKey("xmlns:" + newPrefix) && !IsPrefixInUse(newPrefix))
+                        break;
+                }
+                newPrefixes[(prefix, uri)] = newPrefix;
+                target["xmlns:" + newPrefix] = EscapeAttributeValue(uri);
+            }
+            return newPrefix + a.Name[colon..];
         }
     }
 

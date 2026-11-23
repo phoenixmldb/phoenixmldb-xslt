@@ -449,6 +449,8 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         // XTDE0860: Prefixed name with no namespace attribute — prefix must be declared
+        // The attribute's namespace URI, for its item in the attributes collected for the element (S2).
+        string? attributeNamespace = null;
         if (instruction.Namespace == null)
         {
             var colonIdx2 = name.IndexOf(':', StringComparison.Ordinal);
@@ -459,6 +461,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 string? prefixNsUri = null;
                 if (prefix != "xml" && !instruction.InScopeNamespaces.TryGetValue(prefix, out prefixNsUri))
                     throw Error($"XTDE0860: The prefix '{prefix}' in the attribute name '{name}' is not declared in any in-scope namespace declaration");
+                attributeNamespace = prefix == "xml" ? "http://www.w3.org/XML/1998/namespace" : prefixNsUri;
                 // Emit namespace declaration for the prefix if not already in scope
                 // Skip when accumulating XDM nodes — the attribute node stores namespace info natively
                 if (_sequenceAccumulator == null && prefix != "xml" && prefixNsUri != null && !IsNamespaceInScope(prefix, prefixNsUri))
@@ -488,6 +491,7 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             if (!string.IsNullOrEmpty(explicitNsUri))
             {
+                attributeNamespace = explicitNsUri;
                 var colonIdx2 = name.IndexOf(':', StringComparison.Ordinal);
                 if (colonIdx2 < 0)
                 {
@@ -721,7 +725,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         else
         {
-            AppendAttributeTo(target, name, value);
+            AppendAttributeTo(target, name, value, attributeNamespace);
         }
     }
 

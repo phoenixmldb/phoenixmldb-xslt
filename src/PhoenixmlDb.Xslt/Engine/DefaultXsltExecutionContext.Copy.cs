@@ -730,7 +730,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 else
                 {
-                    AppendAttributeTo(target, attrName, attr.Value);
+                    AppendAttributeTo(target, attrName, attr.Value,
+                        attr.Namespace == NamespaceId.None ? null : _nodeStore?.GetNamespaceUri(attr.Namespace));
                 }
                 break;
             }
