@@ -1240,7 +1240,14 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
-    private async ValueTask ApplyAttributeSetsAsync(List<QName> attrSetNames, StringBuilder target)
+    /// <summary>
+    /// Expands the attribute sets into <paramref name="target"/>: the attributes their
+    /// xsl:attribute instructions make, as text and as items, with their namespaces (the typed
+    /// attribute pipeline, S3). They were written as text to the output and read back without
+    /// their namespaces: an attribute whose prefix a later namespace node rebound moved into that
+    /// namespace (BUGS.md #151).
+    /// </summary>
+    private async ValueTask ApplyAttributeSetsAsync(List<QName> attrSetNames, AttrBuffer target)
     {
         foreach (var attrSetName in attrSetNames)
         {
@@ -1298,11 +1305,12 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     _currentAttributeSetStack.Push(attrSet);
                     pushedCurrentAttrSet = true;
-                    // Temporarily disable attribute collection mode so that the xsl:attribute
-                    // instructions write to _output (which we capture) instead of _collectedAttributes
-                    // Save and clear the stack, then restore after
+                    // The set's xsl:attribute instructions write to target, the only collection while
+                    // the set is expanded: the element's own collection is put aside and restored after.
                     var savedStack = _collectedAttributesStack.ToArray();
                     _collectedAttributesStack.Clear();
+                    _collectedAttributesStack.Push(target);
+                    var savedLogicalStartForSet = _outputLogicalStart;
 
                     // Attribute sets are always applied to elements, not document nodes.
                     // Save and reset _documentNodeDepth so XTDE0420 checks don't fire.
@@ -1317,6 +1325,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
                     var savedForAttr = _output.ToString();
                     _output.Clear();
+                    _outputLogicalStart = 0;
 
                     // The set's xsl:attribute instructions must write to _output, which is captured
                     // for the element. In a variable's body a sequence accumulator is active, and an
@@ -1340,9 +1349,6 @@ internal sealed partial class DefaultXsltExecutionContext
                         // then its local attributes, in document order (XSLT 3.0 §10.2.2)
                         foreach (var part in attrSet.Parts)
                         {
-                            // Flush any accumulated output before recursive call
-                            target.Append(_output);
-                            _output.Clear();
                             // Push xml:base onto static base URI stack for this part
                             if (part.BaseUri != null)
                                 _staticBaseUriStack.Push(XsltTransformEngine.UriString(part.BaseUri)!);
@@ -1379,13 +1385,13 @@ internal sealed partial class DefaultXsltExecutionContext
                         }
                     }
 
-                    target.Append(_output);
                     }
                     finally
                     {
                         _sequenceAccumulator = savedAccumulatorForAttr;
                         _output.Clear();
                         _output.Append(savedForAttr);
+                        _outputLogicalStart = savedLogicalStartForSet;
 
                         // Restore scope stack
                         _scopes.Clear();

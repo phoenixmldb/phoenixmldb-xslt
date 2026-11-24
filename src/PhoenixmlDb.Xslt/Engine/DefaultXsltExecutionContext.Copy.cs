@@ -327,9 +327,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 _outputLogicalStart = _output.Length;
 
                 // Process use-attribute-sets first (they create attributes)
-                var attrSetParts = new StringBuilder();
+                var attrSetParts = new AttrBuffer();
                 await ApplyAttributeSetsAsync(instruction.UseAttributeSets, attrSetParts).ConfigureAwait(false);
-                _collectedAttrBuffer!.AppendText(attrSetParts.ToString());
+                _collectedAttrBuffer!.AppendFrom(attrSetParts);
 
                 // SP-C copy-0612 family: a COPIED element under an inherit-namespaces="no" ancestor
                 // (xsl:copy identity chain: match="*" → <xsl:copy inherit-namespaces="no">) carries

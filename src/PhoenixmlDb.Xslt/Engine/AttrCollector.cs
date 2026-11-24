@@ -42,6 +42,13 @@ internal sealed class AttrBuffer
         Items.Clear();
     }
 
+    /// <summary>Appends what <paramref name="other"/> holds, as text and as items.</summary>
+    public void AppendFrom(AttrBuffer other)
+    {
+        Text.Append(other.Text);
+        Items.AddRange(other.Items);
+    }
+
     /// <summary>A copy of the content, for a construct that may take it back (xsl:where-populated, a typed body).</summary>
     public (string Text, object[] Items) Snapshot() => (Text.ToString(), Items.ToArray());
 

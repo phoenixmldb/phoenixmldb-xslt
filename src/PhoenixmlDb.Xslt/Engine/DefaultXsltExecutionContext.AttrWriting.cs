@@ -49,7 +49,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// (it would be declared twice, or bound to two namespaces).
     /// </remarks>
     private void ReadCollectedAttributes(AttrBuffer buffer, Dictionary<string, string> target,
-        string elementName, string? elementNamespace)
+        string elementName, string? elementNamespace, AttrBuffer? laterBindings = null)
     {
         var elementColon = elementName.IndexOf(':', StringComparison.Ordinal);
         var elementPrefix = elementColon > 0 ? elementName[..elementColon] : "";
@@ -58,6 +58,16 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             if (item is NsItem { Prefix.Length: > 0 } ns)
                 (lastBinding ??= new(StringComparer.Ordinal))[ns.Prefix] = ns.Uri;
+        }
+        // The namespace nodes written after these attributes (the content of a literal result
+        // element, after its attribute sets, S3): they rebind a prefix the same way.
+        if (laterBindings is not null)
+        {
+            foreach (var item in laterBindings.Items)
+            {
+                if (item is NsItem { Prefix.Length: > 0 } ns)
+                    (lastBinding ??= new(StringComparer.Ordinal))[ns.Prefix] = ns.Uri;
+            }
         }
         Dictionary<(string Prefix, string Uri), string>? newPrefixes = null;
         foreach (var item in buffer.Items)

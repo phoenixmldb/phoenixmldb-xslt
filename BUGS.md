@@ -8218,3 +8218,20 @@ it cannot read (FODC0002 fn:doc, FODC0005 document(), FODC0006 fn:parse-xml; the
 principal source, elsewhere). Markup this processor wrote itself and reads back (fn:transform's source-node, a
 temporary tree) is not changed: its newlines in attribute values are character references.
 `ExternalDocumentNormalizationTests` (expected results: Saxon-HE 10.9's), `ExternalDocumentEntityLimitTests`.
+
+### 151. An attribute from an attribute set moved into another namespace when a namespace node rebound its prefix — fixed (S3, 2026-11-24)
+
+Engine: **XSLT**. On main (2614c46) and before. The case of #148 for attributes from attribute sets, which #148's fix
+did not reach: `ApplyAttributeSetsAsync` wrote a set's attributes as text to the output, and the element ends read
+that text back without namespaces. With `<xsl:attribute-set name="s"><xsl:attribute name="p:a" namespace="u1">1
+</xsl:attribute></xsl:attribute-set>`, `<r xsl:use-attribute-sets="s"><xsl:namespace name="p">u2</xsl:namespace></r>`
+gave `<r xmlns:p="u2" p:a="1"/>`, the attribute in `u2`; the same with xsl:element and xsl:copy, and in a temporary
+tree. Saxon-HE 10.9: `<r xmlns:p="u2" xmlns:p_1="u1" p_1:a="1"/>`.
+
+Now a set's xsl:attribute instructions write into a collection of their own, as items with their namespaces (the
+typed attribute pipeline, S3), and the element ends read them as the other items: the attribute keeps its namespace
+under a new prefix. xsl:element and xsl:copy put them before the content's; a literal result element reads them
+after its content, below its literal attributes, with the content's namespace nodes. The priority of a set's
+attributes, the literal ones and the content's is unchanged. With this, no element end reads attributes from text;
+the text stays for the guard (`PXDB_ATTR_GUARD`) until S4. `AttributeSetNamespaceTests` (expected results: Saxon-HE
+10.9's).
