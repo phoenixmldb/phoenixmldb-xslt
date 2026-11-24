@@ -201,7 +201,7 @@ internal sealed partial class DefaultXsltExecutionContext
         _cdataRunMarkup = markup;
     }
 
-    private static bool EndsWithOrdinal(StringBuilder sb, string suffix)
+    private static bool EndsWithOrdinal(OutputBuffer sb, string suffix)
     {
         var offset = sb.Length - suffix.Length;
         for (var i = 0; i < suffix.Length; i++)

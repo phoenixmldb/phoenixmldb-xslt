@@ -64,33 +64,100 @@ public sealed class DeepRecursionGrowthTests(ITestOutputHelper output)
     {
         var transformer = new XsltTransformer { MaxRecursionDepth = 2 * Elements };
         await transformer.LoadStylesheetAsync(Stylesheet);
-        var (deep, wide) = (Deep(Elements), Wide(Elements));
         (await transformer.TransformAsync(Deep(500))).Trim().Should().Be("501"); // warm-up
 
+        await CompareAsync("elements nested", () => transformer.TransformAsync(Deep(Elements)),
+            "two levels deep", () => transformer.TransformAsync(Wide(Elements)), Elements + 1);
+    }
+
+    // An identity transform: in the deep input each level's copy holds all the levels below it in
+    // the result too. Each level's content was cut out of the output buffer and written back after
+    // its start tag, so it was copied once per level above it; and each element constructed looked
+    // up the default namespace through every element open in the result.
+    private const string Identity = """
+        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+          <xsl:output method="text"/>
+          <xsl:template match="/"><xsl:variable name="c"><xsl:apply-templates/></xsl:variable><xsl:value-of select="count($c//*)"/></xsl:template>
+          <xsl:template match="@*|node()"><xsl:copy><xsl:apply-templates select="@*|node()"/></xsl:copy></xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    [Fact]
+    public async Task An_identity_transform_of_ten_thousand_elements_nested_takes_about_as_long_as_of_ten_thousand_two_levels_deep()
+    {
+        var transformer = new XsltTransformer { MaxRecursionDepth = 2 * Elements };
+        await transformer.LoadStylesheetAsync(Identity);
+        (await transformer.TransformAsync(Deep(500))).Trim().Should().Be("500"); // warm-up
+
+        await CompareAsync("elements nested", () => transformer.TransformAsync(Deep(Elements)),
+            "two levels deep", () => transformer.TransformAsync(Wide(Elements)), Elements);
+    }
+
+    // A named template that makes one element per call: inside the element, the next call nests the
+    // result one level deeper; after it, the call is a tail call and the result is flat.
+    private static string NamedTemplate(bool nested) => $$"""
+        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xsl:output method="text"/>
+          <xsl:param name="n" as="xs:integer"/>
+          <xsl:template name="xsl:initial-template"><xsl:variable name="c"><xsl:call-template name="t"><xsl:with-param name="n" select="$n"/></xsl:call-template></xsl:variable><xsl:value-of select="count($c//*)"/></xsl:template>
+          <xsl:template name="t">
+            <xsl:param name="n"/>
+            <xsl:if test="$n gt 0">
+              {{(nested
+                ? """<x><xsl:call-template name="t"><xsl:with-param name="n" select="$n - 1"/></xsl:call-template></x>"""
+                : """<x/><xsl:call-template name="t"><xsl:with-param name="n" select="$n - 1"/></xsl:call-template>""")}}
+            </xsl:if>
+          </xsl:template>
+        </xsl:stylesheet>
+        """;
+
+    [Fact]
+    public async Task A_named_template_nesting_ten_thousand_elements_takes_about_as_long_as_one_making_them_side_by_side()
+    {
+        var nested = new XsltTransformer { MaxRecursionDepth = 2 * Elements };
+        await nested.LoadStylesheetAsync(NamedTemplate(nested: true));
+        var flat = new XsltTransformer { MaxRecursionDepth = 2 * Elements };
+        await flat.LoadStylesheetAsync(NamedTemplate(nested: false));
+        foreach (var t in new[] { nested, flat })
+        {
+            t.SetInitialTemplate("initial-template", "http://www.w3.org/1999/XSL/Transform");
+            t.SetParameter("n", 500L);
+            (await t.TransformAsync((string?)null)).Trim().Should().Be("500"); // warm-up
+            t.SetParameter("n", (long)Elements);
+        }
+
+        await CompareAsync("elements nested", () => nested.TransformAsync((string?)null),
+            "side by side", () => flat.TransformAsync((string?)null), Elements);
+    }
+
+    // Times the two transformations in turn, the best of five of each, without GC pauses, and
+    // requires the deep one to take less than five times as long as the other.
+    private async Task CompareAsync(string deepName, Func<Task<string>> deep, string wideName, Func<Task<string>> wide, int count)
+    {
         var bestDeep = double.MaxValue;
         var bestWide = double.MaxValue;
         for (var i = 0; i < 5; i++)
         {
-            bestDeep = Math.Min(bestDeep, await TimeWithoutPausesAsync(transformer, deep));
-            bestWide = Math.Min(bestWide, await TimeWithoutPausesAsync(transformer, wide));
+            bestDeep = Math.Min(bestDeep, await TimeWithoutPausesAsync(deep, count));
+            bestWide = Math.Min(bestWide, await TimeWithoutPausesAsync(wide, count));
         }
 
         var measured = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"{Elements:N0} elements nested took {bestDeep:F0} ms and two levels deep {bestWide:F0} ms (without GC pauses, best of 5): ratio {bestDeep / bestWide:F2}");
+            $"{Elements:N0} {deepName} took {bestDeep:F0} ms and {wideName} {bestWide:F0} ms (without GC pauses, best of 5): ratio {bestDeep / bestWide:F2}");
         output.WriteLine(measured);
         (bestDeep / bestWide).Should().BeLessThan(5.0, measured);
     }
 
-    private static async Task<double> TimeWithoutPausesAsync(XsltTransformer transformer, string source)
+    private static async Task<double> TimeWithoutPausesAsync(Func<Task<string>> transform, int count)
     {
         GC.Collect();
         GC.WaitForPendingFinalizers();
         var pausedBefore = GC.GetTotalPauseDuration();
         var watch = Stopwatch.StartNew();
-        var result = await transformer.TransformAsync(source);
+        var result = await transform();
         watch.Stop();
         var paused = GC.GetTotalPauseDuration() - pausedBefore;
-        result.Trim().Should().Be((Elements + 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        result.Trim().Should().Be(count.ToString(System.Globalization.CultureInfo.InvariantCulture));
         return (watch.Elapsed - paused).TotalMilliseconds;
     }
 }

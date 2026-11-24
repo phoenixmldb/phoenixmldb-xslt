@@ -27,7 +27,7 @@ public sealed class ScopedOutputBufferTests
     public void GetWritten_ReturnsSliceWrittenSinceScopeOpened()
     {
         var sb = new StringBuilder("PREFIX");
-        var scope = new XsltTransformEngine.ScopedOutputBuffer(sb);
+        var scope = new XsltTransformEngine.ScopedOutputBuffer(new OutputBuffer(sb));
         sb.Append("inner");
 
         scope.WrittenLength.Should().Be(5);
@@ -38,7 +38,7 @@ public sealed class ScopedOutputBufferTests
     public void Dispose_TruncatesBackToSavedLength()
     {
         var sb = new StringBuilder("PREFIX");
-        var scope = new XsltTransformEngine.ScopedOutputBuffer(sb);
+        var scope = new XsltTransformEngine.ScopedOutputBuffer(new OutputBuffer(sb));
         sb.Append("inner");
 
         scope.Dispose();
@@ -50,7 +50,7 @@ public sealed class ScopedOutputBufferTests
     public void GetWritten_BufferClearedUnderScope_ReturnsEmptyWithoutThrowing()
     {
         var sb = new StringBuilder("PREFIX");
-        var scope = new XsltTransformEngine.ScopedOutputBuffer(sb);
+        var scope = new XsltTransformEngine.ScopedOutputBuffer(new OutputBuffer(sb));
         sb.Append("inner");
 
         // An xsl:result-document / finalize-flush path clears _output underneath the open scope.
@@ -64,7 +64,7 @@ public sealed class ScopedOutputBufferTests
     public void Dispose_BufferClearedUnderScope_DoesNotPadGrow()
     {
         var sb = new StringBuilder("PREFIX");
-        var scope = new XsltTransformEngine.ScopedOutputBuffer(sb);
+        var scope = new XsltTransformEngine.ScopedOutputBuffer(new OutputBuffer(sb));
         sb.Append("inner");
         sb.Clear();
 

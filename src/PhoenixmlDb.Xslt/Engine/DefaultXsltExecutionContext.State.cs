@@ -52,7 +52,12 @@ internal sealed partial class DefaultXsltExecutionContext
     // attribute/namespace/text/comment/PI — goes through `_sink`. Do not add new structured
     // emission as a raw `_output.Append`; route it through `_sink` so the future
     // TreeConstructor-backed sink (SP-B) receives it as a node event.
-    private readonly StringBuilder _output;
+    private readonly OutputBuffer _output;
+
+    // Elements under construction whose content is in the output buffer (ContentInPlace): when the
+    // outermost one is complete, the buffer's held insertions are made (OutputBuffer.Flush), so the
+    // StringBuilder the engine reads after the transformation holds the result.
+    private int _contentInPlaceDepth;
 
     // Emission abstraction (SP-A). All structured emission routes through this sink;
     // `StringOutputSink` reproduces today's markup byte-for-byte (gated by SerializationMatrixTests).
@@ -1230,7 +1235,7 @@ internal sealed partial class DefaultXsltExecutionContext
     {
         _stylesheet = stylesheet;
         _templateIndex = templateIndex;
-        _output = output;
+        _output = new OutputBuffer(output);
         _sink = new StringOutputSink(_output);
         _options = options;
         // Base output URI (XSLT 3.0 §2.3). Absent unless the host says where the principal result
@@ -1657,6 +1662,76 @@ internal sealed partial class DefaultXsltExecutionContext
 
             public bool MoveNext() => --_index >= 0;
         }
+    }
+
+    /// <summary>
+    /// The content of an element being constructed, left in the output buffer where it was written
+    /// (#639). The start tag is known only after the content, which can add attributes and
+    /// namespace nodes to it, so the content was cut out as a string, the start tag written and
+    /// the string written back after it: each level of a deep recursion copied all the content
+    /// below it. Now the start tag is written after the content and moved before it
+    /// (<see cref="MoveStartTagBefore"/>). Every scope still open began before this content, so its
+    /// start position stays valid. The bytes are the old path's: when the buffer was cut below the
+    /// content's start under the scope, the length is 0 (as the cut-out string was empty) and the
+    /// start tag stays at the end, where the old path wrote it.
+    /// </summary>
+    private readonly record struct ContentInPlace(int Start, int Length, string? Text);
+
+    /// <summary>
+    /// Content shorter than this is cut out and written back after the start tag, as before #639:
+    /// for short content that costs less than moving the tag, and it adds no insertion to the
+    /// buffer, so a document of ordinary depth allocates and takes no more than before. In a
+    /// recursion only the levels whose content is still this short copy it, so the copying is
+    /// bounded; above them the content stays in place. Both ways give the same bytes; tests set 0
+    /// to put every element's content in place.
+    /// </summary>
+    internal static int ShortContentLimit { get; set; } = 4096;
+
+    /// <summary>
+    /// The content of an element whose start tag is now to be written: left in the buffer
+    /// (<see cref="ContentInPlace.Text"/> null), or, when it is shorter than <see cref="ShortContentLimit"/>,
+    /// cut out (<see cref="ContentInPlace.Text"/>), to be written back after the start tag.
+    /// </summary>
+    private static ContentInPlace TakeContent(XsltTransformEngine.ScopedOutputBuffer scope)
+    {
+        var length = scope.WrittenLength;
+        if (length >= ShortContentLimit)
+            return new ContentInPlace(scope.SavedLength, length, null);
+        var text = scope.GetWritten();
+        scope.Dispose();
+        return new ContentInPlace(scope.SavedLength, length, text);
+    }
+
+    /// <summary>
+    /// Moves the start tag written at the end of the output buffer, from <paramref name="tagStart"/>,
+    /// to just before the element's <paramref name="content"/>. The buffer holds the insertion
+    /// (<see cref="OutputBuffer"/>), so this costs the length of the tag, not of the content.
+    /// </summary>
+    private void MoveStartTagBefore(ContentInPlace content, int tagStart)
+    {
+        if (content.Text is { } text)
+        {
+            _output.Append(text);
+        }
+        else if (content.Length > 0)
+        {
+            var tag = _output.ToString(tagStart, _output.Length - tagStart);
+            _output.Length = tagStart;
+            _output.Insert(content.Start, tag);
+        }
+        if (_contentInPlaceDepth == 0)
+            _output.Flush();
+    }
+
+    // Around the content of an element whose content stays in the buffer: the depth, and the flush
+    // when the outermost one's content ends by an exception. After a normal end MoveStartTagBefore
+    // flushes, once, after the element's own start tag is in place.
+    private void EnterContentInPlace() => _contentInPlaceDepth++;
+
+    private void ExitContentInPlace(bool completed)
+    {
+        if (--_contentInPlaceDepth == 0 && !completed)
+            _output.Flush();
     }
 
     private sealed class Scope

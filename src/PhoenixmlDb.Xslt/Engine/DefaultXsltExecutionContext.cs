@@ -1343,7 +1343,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }
             if (pendingGlobal != null)
             {
-                RunSync(() => XsltTransformEngine.InitializePendingGlobalAsync(this, pendingGlobal, _output));
+                // The engine reads the StringBuilder itself (BindGlobalFromContentAsync).
+                using (_output.OpenRaw())
+                    RunSync(() => XsltTransformEngine.InitializePendingGlobalAsync(this, pendingGlobal, _output.Builder));
                 if (GlobalVariables.TryGetValue(pendingGlobal.Name, out var lazyInitValue))
                     return lazyInitValue;
             }

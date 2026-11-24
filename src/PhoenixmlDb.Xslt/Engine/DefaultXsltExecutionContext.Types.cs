@@ -167,7 +167,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// true. When anything was written, or the output was cut back or sent on since, false: the
     /// caller writes the end tag (xslt#624).
     /// </summary>
-    private bool CloseEmptyStartTag(System.Text.StringBuilder buffer, int startTagEnd)
+    private bool CloseEmptyStartTag(OutputBuffer buffer, int startTagEnd)
     {
         if (!ReferenceEquals(buffer, _output) || _output.Length != startTagEnd || startTagEnd == 0
             || _output[startTagEnd - 1] != '>')

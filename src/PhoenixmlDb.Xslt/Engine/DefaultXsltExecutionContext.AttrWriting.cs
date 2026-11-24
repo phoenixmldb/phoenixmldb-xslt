@@ -14,6 +14,14 @@ internal sealed partial class DefaultXsltExecutionContext
         target.Append("=\"").Append(EscapeAttributeValue(uri)).Append('"');
     }
 
+    private static void AppendNamespaceDeclarationTo(OutputBuffer target, string? prefix, string uri)
+    {
+        target.Append(" xmlns");
+        if (!string.IsNullOrEmpty(prefix))
+            target.Append(':').Append(prefix);
+        target.Append("=\"").Append(EscapeAttributeValue(uri)).Append('"');
+    }
+
     /// <summary>
     /// A namespace declaration of the element under construction: an item of its attributes (the
     /// typed attribute pipeline); with no element under construction, text in the output.

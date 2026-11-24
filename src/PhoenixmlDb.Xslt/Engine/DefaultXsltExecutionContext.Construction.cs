@@ -261,9 +261,12 @@ internal sealed partial class DefaultXsltExecutionContext
         var tcForThisElement = _activeTreeConstructor;
         if (tcForThisElement != null)
             TcOpenElement(tcForThisElement, name, nsUri);
+        EnterContentInPlace();
+        var contentCompleted = false;
         try
         {
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+            contentCompleted = true;
         }
         finally
         {
@@ -272,6 +275,7 @@ internal sealed partial class DefaultXsltExecutionContext
             _forceDefaultNsUndeclaration = savedForceNsUndecl;
             _inheritNamespacesNo = savedInheritNsNoLre;
             _serializingElementDepth--;
+            ExitContentInPlace(contentCompleted);
             _sequenceAccumulator = savedSeqAccum1;
             PopScope();
             PopOutputNsScope(); // attribute ns decls scope
@@ -286,8 +290,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         var collectedAttrs = _collectedAttributesStack.Pop();
-        var content = savedScope.GetWritten();
-        savedScope.Dispose();
+        var content = TakeContent(savedScope);
         _outputLogicalStart = savedLogicalStart;
         // After producing an element node, reset atomic state (nodes break atomic adjacency)
         _lastResultWasAtomic = false;
@@ -320,6 +323,7 @@ internal sealed partial class DefaultXsltExecutionContext
         List<(NamespaceId Ns, string Local, string? Prefix, string Value)>? tcAttrs = tcForThisElement != null ? new() : null;
         var tcAbort = false;
 
+        var tagStart = _output.Length; // the start tag is moved before the content below
         _sink.StartElementOpen(name);
 
         // Emit namespace declaration if not already in scope
@@ -379,7 +383,7 @@ internal sealed partial class DefaultXsltExecutionContext
         if (content.Length > 0)
         {
             _sink.StartElementClose(false);
-            _sink.RawText(content);
+            MoveStartTagBefore(content, tagStart);
             _sink.EndElement(name);
         }
         else
@@ -1723,9 +1727,12 @@ internal sealed partial class DefaultXsltExecutionContext
         var tcForThisElement = _activeTreeConstructor;
         if (tcForThisElement != null)
             TcOpenElement(tcForThisElement, elemName, cdataNsUri);
+        EnterContentInPlace();
+        var contentCompleted = false;
         try
         {
             await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+            contentCompleted = true;
         }
         finally
         {
@@ -1734,6 +1741,7 @@ internal sealed partial class DefaultXsltExecutionContext
             _forceDefaultNsUndeclaration = savedForceNsUndecl3;
             _inheritNamespacesNo = savedInheritNsNoElem;
             _serializingElementDepth--;
+            ExitContentInPlace(contentCompleted);
             _sequenceAccumulator = savedSeqAccum3;
             PopScope();
             PopOutputNsScope(); // attribute ns decls scope
@@ -1753,8 +1761,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         var collectedAttrs = _collectedAttributesStack.Pop();
-        var content = savedScope.GetWritten();
-        savedScope.Dispose();
+        var content = TakeContent(savedScope);
         _outputLogicalStart = savedLogicalStart;
         // After producing an element node, reset atomic state (nodes break atomic adjacency)
         _lastResultWasAtomic = false;
@@ -1819,7 +1826,8 @@ internal sealed partial class DefaultXsltExecutionContext
         List<(NamespaceId Ns, string Local, string? Prefix, string Value)>? tcAttrs = tcForThisElement != null ? new() : null;
         var tcAbort = false;
 
-        // Build element output
+        // Build element output: the start tag at the end of the buffer, moved before the content below.
+        var tagStart = _output.Length;
         _sink.StartElementOpen(elemName);
 
         // Namespace declarations — emit only those not already in scope from ancestor elements
@@ -1877,7 +1885,7 @@ internal sealed partial class DefaultXsltExecutionContext
         if (content.Length > 0)
         {
             _sink.StartElementClose(false);
-            _sink.RawText(content);
+            MoveStartTagBefore(content, tagStart);
             _sink.EndElement(elemName);
         }
         else
