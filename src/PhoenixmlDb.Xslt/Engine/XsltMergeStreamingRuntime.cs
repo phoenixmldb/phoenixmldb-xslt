@@ -428,7 +428,8 @@ internal sealed partial class DefaultXsltExecutionContext
 
         private XmlReader OpenReader(string uri)
         {
-            var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = false };
+            // As every document read from outside the transformation (xslt#627).
+            var settings = XsltTransformEngine.CreateSourceReaderSettings();
             if (_ctx.Policy is { } policy)
             {
                 // Under a resource policy: resolve, authorise, and read only what was authorised.

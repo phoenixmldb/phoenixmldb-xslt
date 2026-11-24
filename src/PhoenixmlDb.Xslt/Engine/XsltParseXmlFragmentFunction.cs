@@ -65,16 +65,15 @@ internal sealed class XsltParseXmlFragmentFunction : PhoenixmlDb.XQuery.Ast.XQue
             if (_context._nodeStore != null)
             {
                 // Wrap in a root element to handle fragments with multiple roots or text content
-                var xmlDoc = new System.Xml.XmlDocument();
-                xmlDoc.PreserveWhitespace = true;
+                System.Xml.XmlDocument xmlDoc;
                 var wasWrapped = false;
                 try
                 {
-                    xmlDoc.LoadXml(xmlStr);
+                    xmlDoc = XsltTransformEngine.LoadExternalXml(xmlStr);
                 }
                 catch (System.Xml.XmlException)
                 {
-                    xmlDoc.LoadXml($"<_rtf_root_>{xmlStr}</_rtf_root_>");
+                    xmlDoc = XsltTransformEngine.LoadExternalXml($"<_rtf_root_>{xmlStr}</_rtf_root_>");
                     wasWrapped = true;
                 }
                 var xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _context._nodeStore, documentUri: null);

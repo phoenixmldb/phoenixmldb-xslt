@@ -270,8 +270,7 @@ internal sealed class XsltDocumentResolver : PhoenixmlDb.XQuery.IDocumentResolve
 
     private XdmDocument BuildFromXml(string xmlContent, Uri documentUri)
     {
-        var xmlDoc = new XmlDocument { PreserveWhitespace = true };
-        xmlDoc.LoadXml(xmlContent);
+        var xmlDoc = XsltTransformEngine.LoadExternalXml(xmlContent);
 
         var nodeStore = _nodeStore ?? new XdmInMemoryStore();
         // A document read by fn:doc() or document(): a parsed document (xslt#542).
