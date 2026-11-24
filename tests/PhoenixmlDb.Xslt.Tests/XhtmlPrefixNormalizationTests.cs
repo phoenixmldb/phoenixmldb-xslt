@@ -35,8 +35,8 @@ public sealed class XhtmlPrefixNormalizationTests
     {
         var result = await RunAsync("5", ForeignInXhtml);
 
-        result.Should().Contain("""<p:x xmlns="" xmlns:p="urn:p"><img xmlns="http://www.w3.org/1999/xhtml" """)
-            .And.Contain("<b>t</b>", "b is in no namespace, which is the default in force: no xmlns=\"\" again");
+        // As Saxon-HE 10.9 writes it; b is in no namespace, the default in force: no xmlns="" again.
+        result.Should().Contain("""<p:x xmlns="" xmlns:p="urn:p"><img xmlns="http://www.w3.org/1999/xhtml"/><b>t</b></p:x>""");
     }
 
     [Fact]

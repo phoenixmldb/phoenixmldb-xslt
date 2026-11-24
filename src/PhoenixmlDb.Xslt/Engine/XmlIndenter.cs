@@ -19,6 +19,8 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
     private readonly StringBuilder _buffer;
     private readonly HashSet<(NamespaceId, string)>? _suppressed;
     private readonly bool _xhtml;
+    // The xhtml method with an html-version of 5.0 or more given: empty elements <br/>, as unindented.
+    private readonly bool _html5;
     private int _depth;
     private bool _mixed;
     // Whitespace outside the document element stops the indentation of what follows it
@@ -31,11 +33,12 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
     // A newline and the indentation of each depth, made once.
     private readonly List<string> _indents = ["\n"];
 
-    public XmlIndenter(XmlWriter xw, StringBuilder buffer, HashSet<QName>? suppressIndentation, bool xhtml)
+    public XmlIndenter(XmlWriter xw, StringBuilder buffer, HashSet<QName>? suppressIndentation, bool xhtml, bool html5 = false)
     {
         _xw = xw;
         _buffer = buffer;
         _xhtml = xhtml;
+        _html5 = xhtml && html5;
         if (suppressIndentation is { Count: > 0 })
         {
             _suppressed = [];
@@ -202,8 +205,9 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
                 {
                     _xw.WriteEndElement();
                     // XmlWriter always writes "<e />". The XML method writes "<e/>", as the
-                    // unindented output does: indent="yes" changed the empty tags too.
-                    if (!_xhtml)
+                    // unindented output does: indent="yes" changed the empty tags too. So does
+                    // the xhtml method with html-version 5.0.
+                    if (!_xhtml || _html5)
                     {
                         _xw.Flush();
                         var n = _buffer.Length;

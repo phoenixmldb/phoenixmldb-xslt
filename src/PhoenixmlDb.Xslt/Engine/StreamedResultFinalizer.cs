@@ -287,7 +287,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
             {
                 PhoenixmlDb.XQuery.IXmlIndenter indenter = indentStyle == IndentStyle.SaxonHe10
                     ? XmlIndenter.SaxonLayout(xw, buffer, suppressIndentation, xhtml, html5)
-                    : new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
+                    : new XmlIndenter(xw, buffer, suppressIndentation, xhtml, html5);
                 while (await reader.ReadAsync().ConfigureAwait(false))
                 {
                     var value = XmlIndenter.HasValue(reader.NodeType) ? await reader.GetValueAsync().ConfigureAwait(false) : null;

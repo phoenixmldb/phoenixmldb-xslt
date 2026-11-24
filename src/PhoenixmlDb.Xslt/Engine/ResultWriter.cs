@@ -78,7 +78,7 @@ internal static class ResultWriter
         if (steps.HtmlForms && steps.Method == OutputMethod.Html)
             next = C(new BooleanAttributeStage(next));
         if (steps.HtmlForms)
-            next = C(new HtmlFormsStage(next, steps.Method == OutputMethod.Xhtml));
+            next = C(new HtmlFormsStage(next, steps.Method == OutputMethod.Xhtml, steps.Html5));
         if (redefault)
             next = C(new RedefaultNamespacesStage(next, steps.Html5));
         return next;
@@ -489,9 +489,10 @@ internal static class ResultWriter
 
     /// <summary>
     /// &lt;br/&gt; becomes
-    /// &lt;br&gt; (html) or &lt;br /&gt; (xhtml), and &lt;div/&gt; becomes &lt;div&gt;&lt;/div&gt;.
+    /// &lt;br&gt; (html) or &lt;br /&gt; (xhtml; with an html-version of 5.0 or more given, &lt;br/&gt;, as
+    /// Saxon-HE writes it and as the XQuery serializer does), and &lt;div/&gt; becomes &lt;div&gt;&lt;/div&gt;.
     /// </summary>
-    private sealed class HtmlFormsStage(Stage next, bool xhtml) : BufferedStage(next)
+    private sealed class HtmlFormsStage(Stage next, bool xhtml, bool html5 = false) : BufferedStage(next)
     {
         protected override int Process(ReadOnlySpan<char> s, bool final)
         {
@@ -540,7 +541,7 @@ internal static class ResultWriter
                         if (xhtml)
                         {
                             Next.Write(upToSlash.TrimEnd());
-                            Next.Write(" />");
+                            Next.Write(html5 ? "/>" : " />");
                         }
                         else
                         {
@@ -799,7 +800,7 @@ internal static class ResultWriter
         {
             var content = $"{outputDecl.MediaType ?? "text/html"}; charset={outputDecl.Encoding ?? "UTF-8"}";
             return outputDecl.EffectiveMethod == OutputMethod.Xhtml
-                ? $"<meta http-equiv=\"Content-Type\" content=\"{content}\" />"
+                ? $"<meta http-equiv=\"Content-Type\" content=\"{content}\"{(XsltTransformEngine.Html5DoctypeApplies(outputDecl) ? "" : " ")}/>"
                 : $"<meta http-equiv=\"Content-Type\" content=\"{content}\">";
         }
 

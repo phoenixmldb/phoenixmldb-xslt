@@ -3223,7 +3223,7 @@ public sealed partial class XsltTransformEngine
             using var xw = XmlWriter.Create(sw, XmlIndenter.WriterSettings(streamed: false));
             PhoenixmlDb.XQuery.IXmlIndenter indenter = indentStyle == IndentStyle.SaxonHe10
                 ? XmlIndenter.SaxonLayout(xw, buffer, suppressIndentation, xhtml, html5)
-                : new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
+                : new XmlIndenter(xw, buffer, suppressIndentation, xhtml, html5);
             while (reader.Read())
                 indenter.Node(reader, XmlIndenter.HasValue(reader.NodeType) ? reader.Value : null);
             indenter.End();
