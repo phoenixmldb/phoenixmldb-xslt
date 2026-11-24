@@ -1249,7 +1249,6 @@ internal sealed partial class DefaultXsltExecutionContext
                         foreach (var (copiedName, copiedValue) in copiedAttributes)
                             attributes[copiedName] = EscapeAttributeValue(copiedValue);
                     }
-                    CheckAttrGuard(collectedAttrs, "built-in shallow copy");
                     ReadCollectedAttributes(collectedAttrs, attributes, qname, nsUri);
                     DeduplicateByExpandedName(attributes, qname);
                     foreach (var (attributeName, attributeValue) in attributes)
@@ -1333,10 +1332,9 @@ internal sealed partial class DefaultXsltExecutionContext
             case XdmNamespace ns2:
             {
                 // Shallow/deep copy: emit namespace declaration
-                var nsTarget = _attributeCollecting ? _collectedAttributes! : _output;
                 if (_attributeCollecting)
                     RecordContentNamespaceNode(ns2.Prefix ?? "", ns2.Uri);
-                AppendNamespaceDeclarationTo(nsTarget, ns2.Prefix, ns2.Uri);
+                WriteNamespaceDeclaration(ns2.Prefix, ns2.Uri);
                 break;
             }
             default:
@@ -1445,10 +1443,9 @@ internal sealed partial class DefaultXsltExecutionContext
             case XdmNamespace ns3:
             {
                 // Deep copy: emit namespace declaration
-                var nsTarget3 = _attributeCollecting ? _collectedAttributes! : _output;
                 if (_attributeCollecting)
                     RecordContentNamespaceNode(ns3.Prefix ?? "", ns3.Uri);
-                AppendNamespaceDeclarationTo(nsTarget3, ns3.Prefix, ns3.Uri);
+                WriteNamespaceDeclaration(ns3.Prefix, ns3.Uri);
                 break;
             }
             default:

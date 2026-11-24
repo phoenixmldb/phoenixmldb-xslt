@@ -185,8 +185,8 @@ internal sealed partial class DefaultXsltExecutionContext
     public override object SaveOutput()
     {
         var outputStr = _output.ToString();
-        // The attributes as text and as items (S1), so that both are taken back together.
-        (string, object[])? attrs = _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek().Snapshot() : null;
+        // The attributes of the element under construction, taken back with the output.
+        object[]? attrs = _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek().Snapshot() : null;
         return (outputStr, attrs, _lastResultWasAtomic);
     }
 
@@ -194,7 +194,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <summary>Restore output to a previously saved state.</summary>
     public override void RestoreOutput(object savedState)
     {
-        var (outputStr, attrs, lastAtomic) = ((string, (string, object[])?, bool))savedState;
+        var (outputStr, attrs, lastAtomic) = ((string, object[]?, bool))savedState;
         _output.Clear();
         _output.Append(outputStr);
         _lastResultWasAtomic = lastAtomic;
