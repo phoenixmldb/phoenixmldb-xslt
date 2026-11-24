@@ -1198,6 +1198,10 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (templateMatches is { Count: > 0 })
                 {
                     _collectedAttributesStack.Push(new AttrBuffer());
+                    // The namespace nodes these templates make are this element's, not an
+                    // enclosing element's (xslt#628).
+                    _xslNamespaceBindings.Push(new Dictionary<string, string>());
+                    _outputElementHasNsStack.Push(nsUri.Length > 0);
                     var scope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                     // Reset _outputLogicalStart to the scope's start so the XTDE0410 check
                     // ("attribute after children") uses the correct baseline. Without this, the
@@ -1232,6 +1236,8 @@ internal sealed partial class DefaultXsltExecutionContext
                     finally
                     {
                         _sequenceAccumulator = savedSeqAccumAttrs;
+                        _xslNamespaceBindings.Pop();
+                        _outputElementHasNsStack.Pop();
                     }
                     _outputLogicalStart = savedLogicalStartForAttrTemplate;
                     var collectedAttrs = _collectedAttributesStack.Pop();
@@ -1328,6 +1334,8 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 // Shallow/deep copy: emit namespace declaration
                 var nsTarget = _attributeCollecting ? _collectedAttributes! : _output;
+                if (_attributeCollecting)
+                    RecordContentNamespaceNode(ns2.Prefix ?? "", ns2.Uri);
                 AppendNamespaceDeclarationTo(nsTarget, ns2.Prefix, ns2.Uri);
                 break;
             }
@@ -1438,6 +1446,8 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 // Deep copy: emit namespace declaration
                 var nsTarget3 = _attributeCollecting ? _collectedAttributes! : _output;
+                if (_attributeCollecting)
+                    RecordContentNamespaceNode(ns3.Prefix ?? "", ns3.Uri);
                 AppendNamespaceDeclarationTo(nsTarget3, ns3.Prefix, ns3.Uri);
                 break;
             }

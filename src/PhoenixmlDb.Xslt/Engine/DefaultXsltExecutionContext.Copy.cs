@@ -318,7 +318,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 _outputElementHasNsStack.Push(!string.IsNullOrEmpty(elem.Prefix) || elem.Namespace != NamespaceId.None);
                 _outputElementIsLreStack.Push(false); // xsl:copy — not an LRE
                 _outputElementStack.Push(CdataTrackingName(elem)); // its text: cdata-section-elements
-                _xslNamespaceBindings.Push(new Dictionary<string, string>());
+                // The namespace nodes in the content, held for the start tag (xslt#628).
+                var copyNamespaceNodes = new Dictionary<string, string>();
+                _xslNamespaceBindings.Push(copyNamespaceNodes);
 
                 var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
                 var savedLogicalStart = _outputLogicalStart;
@@ -378,7 +380,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 // element's start tag and content on between groups (StreamedDrain.cs).
                 var committable = OpenCommittableFrame(instruction,
                     !string.IsNullOrEmpty(elem.Prefix) ? $"{elem.Prefix}:{elem.LocalName}" : elem.LocalName,
-                    copyNsBindings, savedScope);
+                    _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "",
+                    copyNsBindings, (instruction.CopyNamespaces ?? true) ? emittedPrefixes : null,
+                    copyNamespaceNodes, savedScope);
 
                 // Process content with ns scope so children can deduplicate
                 PushOutputNsScope(copyNsBindings);
@@ -461,6 +465,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 var elemName = !string.IsNullOrEmpty(elem.Prefix)
                     ? $"{elem.Prefix}:{elem.LocalName}"
                     : elem.LocalName;
+                elemName = ApplyContentNamespaceNodesToCopy(elemName, _nodeStore?.GetNamespaceUri(elem.Namespace) ?? "",
+                    copyNsBindings, (instruction.CopyNamespaces ?? true) ? emittedPrefixes : null,
+                    copyNamespaceNodes, collectedAttrs);
 
                 // SP-B: when a tree constructor is active (differential), mirror the exact
                 // namespace/attribute decisions the string path makes below into typed lists,
@@ -742,6 +749,19 @@ internal sealed partial class DefaultXsltExecutionContext
 
             case XdmProcessingInstruction pi:
                 _sink.ProcessingInstruction(pi.Target, pi.Value);
+                break;
+
+            case XdmNamespace ns:
+                // A copy of a namespace node is a namespace node, as xsl:copy-of makes one: in an
+                // element's content, the element's (XSLT 3.0 §11.9.1). It fell to the default
+                // below and wrote the namespace URI as text (xslt#628).
+                if (_sequenceAccumulator != null
+                    && (!_attributeCollecting || IsAttributeScopeOutsideAsBody()))
+                {
+                    AppendToSeqAccumulator(CopyNodeForAccumulator(ns));
+                    break;
+                }
+                SerializeNode(ns);
                 break;
 
             default:
@@ -1367,6 +1387,38 @@ internal sealed partial class DefaultXsltExecutionContext
             return DeepCopyDocument(doc);
         }
         return item;
+    }
+
+
+    /// <summary>
+    /// xsl:copy of an element: the namespace nodes in its content (xsl:namespace, copied ones)
+    /// against the element's own (XSLT 3.0 §11.7, §11.9.1; xslt#628). One that binds a prefix the
+    /// copy has from the source element (<paramref name="copiedPrefixes"/>, copy-namespaces="yes")
+    /// to another namespace is XTDE0430. One that binds the prefix of the element's name, where
+    /// only namespace fixup made that binding (copy-namespaces="no"), gives the name another
+    /// prefix: returned, with the element's binding moved in <paramref name="copyNsBindings"/>.
+    /// </summary>
+    private string ApplyContentNamespaceNodesToCopy(string elemName, string elemNsUri,
+        Dictionary<string, string> copyNsBindings, IReadOnlySet<string>? copiedPrefixes,
+        IReadOnlyDictionary<string, string> namespaceNodes, AttrBuffer collected)
+    {
+        if (namespaceNodes.Count == 0)
+            return elemName;
+        foreach (var (nodePrefix, nodeUri) in namespaceNodes)
+        {
+            if (copiedPrefixes != null && copiedPrefixes.Contains(nodePrefix)
+                && copyNsBindings.TryGetValue(nodePrefix, out var ownUri) && ownUri.Length > 0 && ownUri != nodeUri)
+                throw NamespaceNodeConflict(nodePrefix, nodeUri, ownUri, "copied from the source element");
+        }
+        var colon = elemName.IndexOf(':', StringComparison.Ordinal);
+        var namePrefix = colon > 0 ? elemName[..colon] : "";
+        if (elemNsUri.Length == 0 || !namespaceNodes.TryGetValue(namePrefix, out var boundUri) || boundUri == elemNsUri)
+            return elemName;
+        var newPrefix = GenerateUniquePrefix(namePrefix,
+            PrefixesTakenOnElement(collected, namespaceNodes.Keys.Concat(copyNsBindings.Keys)));
+        copyNsBindings.Remove(namePrefix);
+        copyNsBindings[newPrefix] = elemNsUri;
+        return $"{newPrefix}:{elemName[(colon + 1)..]}";
     }
 
 

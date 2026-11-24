@@ -292,18 +292,22 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Namespace fixup: if xsl:namespace redefined the element's prefix to a different URI,
         // rename the element's prefix to avoid the conflict (XSLT 3.0 §11.7)
+        // A namespace node (xsl:namespace, a copied one) can bind the default namespace too: an
+        // element without a prefix gets one (xslt#628). The new prefix is none the element
+        // declares or uses otherwise.
         string? fixupNewPrefix = null;
         if (xslNsBindingsForFixup != null && nsUri != null && nsUri.Length > 0)
         {
             var fixupColonIdx = name.IndexOf(':', StringComparison.Ordinal);
-            if (fixupColonIdx > 0)
+            var elemPfx = fixupColonIdx > 0 ? name[..fixupColonIdx] : "";
+            if (xslNsBindingsForFixup.TryGetValue(elemPfx, out var xslUri) && xslUri != nsUri)
             {
-                var elemPfx = name[..fixupColonIdx];
-                if (xslNsBindingsForFixup.TryGetValue(elemPfx, out var xslUri) && xslUri != nsUri)
-                {
-                    fixupNewPrefix = GenerateUniquePrefix(elemPfx);
-                    name = $"{fixupNewPrefix}:{name[(fixupColonIdx + 1)..]}";
-                }
+                var setAttributes = new AttrBuffer();
+                setAttributes.AppendText(attrParts.ToString());
+                var taken = PrefixesTakenOnElement(collectedAttrs, xslNsBindingsForFixup.Keys);
+                taken.UnionWith(PrefixesTakenOnElement(setAttributes, []));
+                fixupNewPrefix = GenerateUniquePrefix(elemPfx, taken);
+                name = $"{fixupNewPrefix}:{name[(fixupColonIdx + 1)..]}";
             }
         }
 
@@ -942,13 +946,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // XTDE0430: Duplicate namespace nodes with same prefix but different URIs
         var nsPrefix = prefix ?? "";
-        if (_xslNamespaceBindings.Count > 0)
-        {
-            var currentBindings = _xslNamespaceBindings.Peek();
-            if (currentBindings.TryGetValue(nsPrefix, out var existingUri) && existingUri != uri)
-                throw Error($"XTDE0430: Two namespace nodes with the same prefix '{nsPrefix}' have different namespace URIs ('{existingUri}' and '{uri}')");
-            currentBindings[nsPrefix] = uri;
-        }
+        RecordContentNamespaceNode(nsPrefix, uri);
 
         // Conflicts between xsl:namespace and the element's own namespace bindings
         // are detected at element construction time, where we can check whether
@@ -986,6 +984,77 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         AppendNamespaceDeclarationTo(target, prefix, uri);
+        // In force for the element's content, which is written before the element's start tag:
+        // a child in the namespace the prefix had before declares it again (xslt#628).
+        if (_attributeCollecting && _outputNsScopes.Count > 0)
+            _outputNsScopes.Peek()[nsPrefix] = uri;
+    }
+
+    /// <summary>
+    /// A namespace node in the content of the element under construction, from xsl:namespace or
+    /// copied (xsl:copy-of, xsl:copy, a built-in copy): the two behave the same (XSLT 3.0 §11.7).
+    /// The element's end checks it against the element's own namespace nodes and gives the
+    /// element's name another prefix where they differ only in a binding namespace fixup made
+    /// (xslt#628).
+    /// </summary>
+    /// <exception cref="XsltException">XTDE0430: another namespace node in the content binds the
+    /// prefix to another namespace (XSLT 3.0 §5.7.1). XTDE0440: a namespace node for the default
+    /// namespace, and the element is in no namespace; for a copied one too (it moved the element
+    /// into that namespace).</exception>
+    private void RecordContentNamespaceNode(string prefix, string uri)
+    {
+        if (prefix.Length == 0 && uri.Length > 0
+            && _outputElementHasNsStack.Count > 0 && !_outputElementHasNsStack.Peek())
+            throw Error($"XTDE0440: Cannot define a default namespace ('{uri}') when the element being constructed is in no namespace");
+        if (_xslNamespaceBindings.Count == 0)
+            return;
+        var bindings = _xslNamespaceBindings.Peek();
+        if (bindings.TryGetValue(prefix, out var existingUri) && existingUri != uri)
+            throw Error($"XTDE0430: Two namespace nodes in the content of an element bind {DescribePrefix(prefix)} to different namespaces: '{existingUri}' and '{uri}'");
+        bindings[prefix] = uri;
+    }
+
+    /// <summary>
+    /// XTDE0430 at an element's end: a namespace node in the content binds <paramref name="prefix"/>
+    /// to <paramref name="nodeUri"/>, and the element has a namespace node (<paramref name="owner"/>)
+    /// that binds it to <paramref name="ownUri"/>.
+    /// </summary>
+    private XsltException NamespaceNodeConflict(string prefix, string nodeUri, string ownUri, string owner)
+        => Error($"XTDE0430: A namespace node in the content of the element binds {DescribePrefix(prefix)} to '{nodeUri}', but the element has a namespace node {owner} that binds it to '{ownUri}'");
+
+    private static string DescribePrefix(string prefix)
+        => prefix.Length == 0 ? "the default namespace (no prefix)" : $"the prefix '{prefix}'";
+
+    /// <summary>
+    /// The prefixes an element's start tag declares or uses besides its name's: its namespace nodes
+    /// (<paramref name="declared"/>), and the declarations and attribute names collected for it.
+    /// A new prefix for the element's name must be none of them (xslt#628).
+    /// </summary>
+    private static HashSet<string> PrefixesTakenOnElement(AttrBuffer collected, IEnumerable<string> declared,
+        IEnumerable<string>? attributeNames = null)
+    {
+        var taken = new HashSet<string>(declared, StringComparer.Ordinal);
+        foreach (var item in collected.Items)
+        {
+            if (item is NsItem ns)
+                taken.Add(ns.Prefix);
+            else if (item is AttrItem a)
+                AddPrefixOf(a.Name);
+        }
+        if (attributeNames != null)
+        {
+            foreach (var name in attributeNames)
+                AddPrefixOf(name);
+        }
+        return taken;
+
+        void AddPrefixOf(string name)
+        {
+            if (name.StartsWith("xmlns:", StringComparison.Ordinal))
+                taken.Add(name[6..]);
+            else if (name.IndexOf(':', StringComparison.Ordinal) is var colon and > 0)
+                taken.Add(name[..colon]);
+        }
     }
 
 
@@ -1427,6 +1496,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // Pre-compute namespace bindings for this element (so children can see them in scope)
         // Apply namespace aliases: transform URIs and prefixes
         var nsBindings = new Dictionary<string, string>();
+        var lreCopiedPrefixes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (prefix, uri) in instruction.NamespaceDeclarations)
         {
             var effectiveUri = uri;
@@ -1461,7 +1531,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 && nsAliases.Values.Any(a => a.ResultUri == effectiveUri);
             // Check exclude-result-prefixes using the ORIGINAL prefix (from stylesheet)
             var isInUse = usedPrefixes.Contains(effectivePrefix) || isAliasResultNs;
-            if (!isInUse && (
+            var isExcluded =
                 // The LRE's set already carries the stylesheet module's exclude-result-prefixes,
                 // resolved to URIs where they were declared (StylesheetParser). Matching the
                 // module's raw prefix list here as well excluded a descendant's own binding of a
@@ -1474,10 +1544,16 @@ internal sealed partial class DefaultXsltExecutionContext
                 // URI. Matching the prefix against that set never succeeded, and the extension
                 // namespace was copied onto every literal result element (XSLT 3.0 §11.1.3).
                 (!string.IsNullOrEmpty(prefix) && (_stylesheet.ExtensionElementPrefixes.Contains(uri) || _stylesheet.ExtensionElementPrefixes.Contains(prefix))) ||
-                (string.IsNullOrEmpty(prefix) && _stylesheet.ExtensionElementPrefixes.Contains("#default"))))
+                (string.IsNullOrEmpty(prefix) && _stylesheet.ExtensionElementPrefixes.Contains("#default"));
+            if (!isInUse && isExcluded)
                 continue;
 
             nsBindings[effectivePrefix] = effectiveUri;
+            // A namespace node copied from the stylesheet (§11.1.3), not one that only the
+            // element's or an attribute's name needs (namespace fixup): a namespace node in the
+            // content that binds its prefix to another namespace is XTDE0430 (xslt#628).
+            if (!isExcluded || isAliasResultNs)
+                lreCopiedPrefixes.Add(effectivePrefix);
         }
 
         // Ensure the element's aliased namespace is declared if not already present
@@ -1627,41 +1703,33 @@ internal sealed partial class DefaultXsltExecutionContext
         // After producing an element node, reset atomic state (nodes break atomic adjacency)
         _lastResultWasAtomic = false;
 
+        // Namespace nodes in the content (xsl:namespace, copied ones) against the element's own
+        // (XSLT 3.0 §11.1.3, §11.7; W3C namespace-2618; xslt#628). One that binds a prefix of a
+        // namespace node copied from the stylesheet to another namespace is XTDE0430. One that
+        // binds the prefix of the element's name, where only namespace fixup made that binding
+        // (the prefix is excluded), gives the name another prefix.
         string? lreFixupPrefix = null;
-        // Namespace fixup: if xsl:namespace redefined the element's prefix to a different URI,
-        // either do namespace fixup (if prefix was excluded) or throw XTDE0430 (XSLT 3.0 §11.7)
-        if (xslNsBindingsForFixup != null && elemPrefix != null)
+        if (xslNsBindingsForFixup != null)
         {
-            if (xslNsBindingsForFixup.TryGetValue(elemPrefix, out var xslUri))
+            foreach (var (nodePrefix, nodeUri) in xslNsBindingsForFixup)
             {
-                // Get the element's original namespace URI
-                var elemNsUri = nsBindings.GetValueOrDefault(elemPrefix, "");
-                if (elemNsUri.Length == 0)
-                {
-                    // The prefix may have been excluded; look up the original declaration
-                    foreach (var (p, u) in instruction.NamespaceDeclarations)
-                    {
-                        if (p == elemPrefix) { elemNsUri = u; break; }
-                    }
-                    // Apply namespace alias if applicable
-                    if (nsAliases.TryGetValue(elemNsUri, out var alias2))
-                        elemNsUri = alias2.ResultUri;
-                }
-                if (xslUri != elemNsUri)
-                {
-                    // Check if the prefix was in exclude-result-prefixes
-                    var prefixWasExcluded = instruction.ExcludeResultPrefixes.Contains(elemPrefix)
-                        || instruction.ExcludeResultPrefixes.Contains("#all");
-                    if (!prefixWasExcluded)
-                        throw Error($"XTDE0430: Namespace node with prefix '{elemPrefix}' and URI '{xslUri}' conflicts with the element's own namespace binding '{elemPrefix}' → '{elemNsUri}'");
-
-                    var newPfx = GenerateUniquePrefix(elemPrefix);
-                    elemName = $"{newPfx}:{elemLocalName}";
-                    // Add new prefix → element namespace to nsBindings; remove old conflicting entry
-                    nsBindings.Remove(elemPrefix);
-                    nsBindings[newPfx] = elemNsUri;
-                    lreFixupPrefix = newPfx;
-                }
+                if (lreCopiedPrefixes.Contains(nodePrefix) && nsBindings.TryGetValue(nodePrefix, out var ownUri)
+                    && ownUri.Length > 0 && ownUri != nodeUri)
+                    throw NamespaceNodeConflict(nodePrefix, nodeUri, ownUri, "copied from the stylesheet");
+            }
+            var namePrefix = elemPrefix ?? "";
+            var elemNsUri = cdataNsUri ?? "";
+            if (elemNsUri.Length > 0 && xslNsBindingsForFixup.TryGetValue(namePrefix, out var xslUri) && xslUri != elemNsUri)
+            {
+                var newPfx = GenerateUniquePrefix(namePrefix,
+                    PrefixesTakenOnElement(collectedAttrs, xslNsBindingsForFixup.Keys.Concat(nsBindings.Keys), attributes.Keys));
+                elemName = $"{newPfx}:{elemLocalName}";
+                // The element's own binding moves to the new prefix; the namespace node's is among
+                // the collected declarations.
+                nsBindings.Remove(namePrefix);
+                nsBindings[newPfx] = elemNsUri;
+                elemPrefix = newPfx;
+                lreFixupPrefix = newPfx;
             }
         }
 

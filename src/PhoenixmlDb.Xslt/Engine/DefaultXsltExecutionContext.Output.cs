@@ -655,6 +655,9 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Skip the special "xml" prefix — it's always implicitly bound and must not be redeclared.
                 if (prefix == "xml")
                     break;
+                // A namespace node of the element under construction, as xsl:namespace makes one (xslt#628).
+                if (_attributeCollecting)
+                    RecordContentNamespaceNode(prefix, uri);
                 // Suppress redundant declarations already in the output namespace scope.
                 if (IsNamespaceInScope(prefix, uri))
                     break;
