@@ -381,6 +381,12 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Searches the scope stack for a tunnel parameter with the given name.
     /// Returns true and the value if found, false otherwise.
     /// </summary>
+    /// <remarks>
+    /// The search ends at the nearest scope that holds every tunnel parameter of its invocation
+    /// (<see cref="Scope.TunnelParametersInherited"/>): a name not there is not in force (#639). It went
+    /// on to the bottom of the stack or the nearest function, so a template that declares a tunnel
+    /// parameter no caller passes searched every level, for each invocation.
+    /// </remarks>
     private bool TryGetTunnelParam(QName name, out object? value) => TryGetTunnelParam(name, out value, out _);
 
     /// <summary>
@@ -402,7 +408,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 return true;
             }
             // Stop at function boundaries — tunnel params don't propagate through functions
-            if (scope.IsTunnelBarrier)
+            if (scope.IsTunnelBarrier || scope.TunnelParametersInherited)
                 break;
         }
         value = null;

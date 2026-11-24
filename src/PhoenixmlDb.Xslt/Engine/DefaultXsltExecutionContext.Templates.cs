@@ -1558,6 +1558,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     // use the set captured when the call was scheduled (see TryScheduleTailCallAsync).
                     foreach (var (tunnelName, tunnelValue) in tailTunnelParameters)
                         _scopes.Peek().TunnelParameters[tunnelName] = tunnelValue;
+                    _scopes.Peek().TunnelParametersInherited = true;
                 }
                 else
                 {

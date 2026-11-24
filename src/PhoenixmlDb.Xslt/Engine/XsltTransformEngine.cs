@@ -6366,8 +6366,49 @@ public sealed partial class XsltTransformEngine
         return docNode;
     }
 
-    private static XdmNode? ConvertXmlNode(XmlNode xmlNode, XdmInMemoryStore store, NodeId parentId, DocumentId docId, string? documentBaseUri = null)
+    /// <summary>
+    /// What an element of an <see cref="XmlDocument"/> gives its children in <see cref="ConvertXmlNode"/>:
+    /// its in-scope namespaces in the order of <c>GetNamespacesInScope(XmlNamespaceScope.All)</c>, less
+    /// <c>xml</c>, and its <see cref="XmlNode.BaseURI"/>. System.Xml computes both by walking the
+    /// ancestors, and the element's <see cref="XmlNode.InnerText"/> by walking its descendants, so a
+    /// tree of depth N took time about N squared to build (#639). A child's are computed from its
+    /// parent's: its own declarations (<c>GetNamespacesInScope(Local)</c>) first, then the parent's
+    /// bindings of the other prefixes; the parent's base URI (System.Xml returns it for an element or
+    /// a processing instruction whose parent is an element); and the string value from the children's.
+    /// </summary>
+    private sealed record ParentFacts(XmlElement Element, IReadOnlyList<KeyValuePair<string, string>> InScope, string BaseUri);
+
+    private static IReadOnlyList<KeyValuePair<string, string>> InScopeNamespaces(XmlElement element, ParentFacts? parent)
     {
+        if (parent is null)
+        {
+            var all = new List<KeyValuePair<string, string>>();
+            foreach (var kvp in element.CreateNavigator()!.GetNamespacesInScope(System.Xml.XmlNamespaceScope.All))
+                if (kvp.Key != "xml")
+                    all.Add(kvp);
+            return all;
+        }
+        if (!element.HasAttributes)
+            return parent.InScope;
+        var local = element.CreateNavigator()!.GetNamespacesInScope(System.Xml.XmlNamespaceScope.Local);
+        if (local.Count == 0)
+            return parent.InScope;
+        var result = new List<KeyValuePair<string, string>>(local.Count + parent.InScope.Count);
+        foreach (var kvp in local)
+            if (kvp.Key != "xml" && !(kvp.Key.Length == 0 && kvp.Value.Length == 0)) // xmlns="" is not a binding
+                result.Add(kvp);
+        foreach (var kvp in parent.InScope)
+            if (!local.ContainsKey(kvp.Key))
+                result.Add(kvp);
+        return result;
+    }
+
+    private static XdmNode? ConvertXmlNode(XmlNode xmlNode, XdmInMemoryStore store, NodeId parentId, DocumentId docId, string? documentBaseUri = null, ParentFacts? parent = null)
+    {
+        // The parent's facts hold only for a node whose parent is that element.
+        if (parent is not null && !ReferenceEquals(xmlNode.ParentNode, parent.Element))
+            parent = null;
+
         // One frame per element of the source, before any template runs: a stack overflow here
         // cannot be caught, and it takes the process with it.
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
@@ -6384,16 +6425,18 @@ public sealed partial class XsltTransformEngine
                 // namespace declaration + attribute, stamping CopySourceBaseUri below.
                 string? recoveredBaseUri = null;
 
+                var baseUri = parent?.BaseUri ?? xmlNode.BaseURI;
+                ParentFacts? facts = null;
+
                 // Collect all in-scope namespace declarations (including inherited ones)
                 var nsDecls = new List<NamespaceBinding>();
                 var seenPrefixes = new HashSet<string>();
                 if (xmlNode is XmlElement xmlElem)
                 {
-                    var nav = xmlElem.CreateNavigator()!;
-                    foreach (var kvp in nav.GetNamespacesInScope(System.Xml.XmlNamespaceScope.All))
+                    var inScope = InScopeNamespaces(xmlElem, parent);
+                    facts = new ParentFacts(xmlElem, inScope, baseUri);
+                    foreach (var kvp in inScope)
                     {
-                        if (kvp.Key == "xml")
-                            continue; // Skip xml namespace
                         if (string.Equals(kvp.Value, BaseSentinelNs, StringComparison.Ordinal))
                             continue; // drop the sentinel namespace declaration
                         nsDecls.Add(new NamespaceBinding(kvp.Key, store.InternNamespace(kvp.Value)));
@@ -6480,24 +6523,39 @@ public sealed partial class XsltTransformEngine
                     }
                 }
 
-                // Convert children
+                // Convert children, and compute the string value (the concatenation of all descendant
+                // text, as XmlNode.InnerText gives it) from theirs.
                 var childIds = new List<NodeId>();
+                var stringValue = "";
+                StringBuilder? stringValueBuilder = null;
                 foreach (XmlNode child in xmlNode.ChildNodes)
                 {
-                    var childNode = ConvertXmlNode(child, store, elemId, docId, documentBaseUri);
+                    var childNode = ConvertXmlNode(child, store, elemId, docId, documentBaseUri, facts);
                     if (childNode != null)
                         childIds.Add(childNode.Id);
+                    var part = child.FirstChild is null
+                        ? child.NodeType is XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace
+                            ? child.Value ?? ""
+                            : ""
+                        : child is XmlElement && childNode is XdmElement { _stringValue: { } known }
+                            ? known
+                            : child.InnerText;
+                    if (part.Length == 0)
+                        continue;
+                    if (stringValue.Length == 0 && stringValueBuilder is null)
+                        stringValue = part;
+                    else
+                        (stringValueBuilder ??= new StringBuilder(stringValue)).Append(part);
                 }
-
-                // Compute string value (concatenation of all descendant text)
-                var stringValue = xmlNode.InnerText;
+                if (stringValueBuilder is not null)
+                    stringValue = stringValueBuilder.ToString();
 
                 // Capture entity-derived base URI when it differs from the document's base URI
                 string? entityBaseUri = null;
-                if (!string.IsNullOrEmpty(xmlNode.BaseURI) && documentBaseUri != null
-                    && !string.Equals(xmlNode.BaseURI, documentBaseUri, StringComparison.Ordinal))
+                if (!string.IsNullOrEmpty(baseUri) && documentBaseUri != null
+                    && !string.Equals(baseUri, documentBaseUri, StringComparison.Ordinal))
                 {
-                    entityBaseUri = xmlNode.BaseURI;
+                    entityBaseUri = baseUri;
                 }
 
                 var elem = new XdmElement
@@ -6558,10 +6616,11 @@ public sealed partial class XsltTransformEngine
                 var piId = store.NextId();
                 // Capture entity-derived base URI for PIs
                 string? piBaseUri = null;
-                if (!string.IsNullOrEmpty(xmlNode.BaseURI) && documentBaseUri != null
-                    && !string.Equals(xmlNode.BaseURI, documentBaseUri, StringComparison.Ordinal))
+                var baseUri = parent?.BaseUri ?? xmlNode.BaseURI;
+                if (!string.IsNullOrEmpty(baseUri) && documentBaseUri != null
+                    && !string.Equals(baseUri, documentBaseUri, StringComparison.Ordinal))
                 {
-                    piBaseUri = xmlNode.BaseURI;
+                    piBaseUri = baseUri;
                 }
                 var pi = new XdmProcessingInstruction
                 {
