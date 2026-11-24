@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-23 18:20 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-24 03:59 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,14 +18,13 @@ Generated 2026-11-23 18:20 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 1 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 3 | 2 |
+| phoenixmldb-xslt | 2 | 1 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
-- [499] Serializer: extension parameters for indent characters, attribute wrapping and namespace order (#400 part 2)
 - [445] Nightly regression report
 - [13] Backlog triage: 57 failing W3C XSLT cases (11,461/11,518 applicable pass)
 
@@ -37,12 +36,11 @@ Generated 2026-11-23 18:20 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xslt**
 
-- [622] feat(S1): attributes of an element under construction are also items; a guard compares them with the text
-- [618] docs(README): W3C XSLT 3.0 figure from the #617 confirming run: 11,484/11,522, 38 failing
+- [635] S4: attributes under construction are items only; a literal result element's static plan
 
 ## Defect register
 
-`BUGS.md`: **144** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **152** entries, **23** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
