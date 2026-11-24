@@ -2041,12 +2041,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 using System.IO.Stream fileStream = hostSource != null
                     ? new System.IO.MemoryStream(hostSource, writable: false)
                     : OpenAuthorizedFile(resolvedUri, href, "FODC0002");
-                var readerSettings = new XmlReaderSettings
-                {
-                    DtdProcessing = DtdProcessing.Parse,
-                    Async = true,
-                    MaxCharactersFromEntities = 1_000_000
-                };
+                var readerSettings = XsltTransformEngine.CreateSourceReaderSettings();
+                readerSettings.Async = true;
                 ApplyEntityPolicy(readerSettings);
                 using var rawReader = XmlReader.Create(fileStream, readerSettings, resolvedUri.AbsoluteUri);
                 // Wrapped so fn:has-children() can look one event ahead invisibly (BUGS #92), and
@@ -2250,8 +2246,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         // Parse and convert to XDM
-        var xmlDoc = new XmlDocument { PreserveWhitespace = true };
-        xmlDoc.LoadXml(xmlContent);
+        var xmlDoc = XsltTransformEngine.LoadExternalXml(xmlContent);
 
         var nodeStore = _nodeStore ?? new XdmInMemoryStore();
         XdmDocument xdmDoc;

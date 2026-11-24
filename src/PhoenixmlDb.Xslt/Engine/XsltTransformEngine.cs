@@ -1396,7 +1396,8 @@ public sealed partial class XsltTransformEngine
     /// <see cref="ChildPath"/> is a chain of child indices, not an XPath: indices need no
     /// namespace context at the far end and cannot be ambiguous.
     /// </remarks>
-    internal sealed record CrossStoreNodeRef(string Xml, bool IsElement, int[]? ChildPath = null, string? DocumentUri = null);
+    internal sealed record CrossStoreNodeRef(string Xml, bool IsElement, int[]? ChildPath = null, string? DocumentUri = null,
+        bool External = false);
 
     /// <summary>
     /// Returns a copy of <paramref name="args"/> with any <see cref="CrossStoreNodeRef"/>
@@ -1595,19 +1596,27 @@ public sealed partial class XsltTransformEngine
     }
 
     private static object? ReparseCrossStoreNode(CrossStoreNodeRef wrapped, XdmInMemoryStore store)
-        => ReparseXml(wrapped.Xml, wrapped.IsElement, store, wrapped.DocumentUri);
+        => ReparseXml(wrapped.Xml, wrapped.IsElement, store, wrapped.DocumentUri, wrapped.External);
 
     /// <summary>
     /// Parses serialized node markup into <paramref name="store"/>: a document node, or its element when
     /// <paramref name="isElement"/> — the shape the caller supplied.
     /// </summary>
-    private static object? ReparseXml(string? xml, bool isElement, XdmInMemoryStore store, string? documentUri = null)
+    private static object? ReparseXml(string? xml, bool isElement, XdmInMemoryStore store, string? documentUri = null,
+        bool external = false)
     {
         if (string.IsNullOrEmpty(xml)) return null;
         try
         {
-            var doc = new XmlDocument { PreserveWhitespace = true };
-            doc.LoadXml(xml);
+            // A document from outside is read as the principal source is (xslt#627).
+            XmlDocument doc;
+            if (external)
+                doc = LoadExternalXml(xml);
+            else
+            {
+                doc = new XmlDocument { PreserveWhitespace = true };
+                doc.LoadXml(xml);
+            }
             var localDoc = ConvertToXdm(doc, store, documentUri);
             if (isElement && localDoc.DocumentElement.HasValue)
             {
@@ -1787,8 +1796,7 @@ public sealed partial class XsltTransformEngine
         if (xmlSource.Length > 0 && xmlSource[0] == '\uFEFF')
             xmlSource = xmlSource[1..];
 
-        var doc = new XmlDocument { PreserveWhitespace = true };
-        doc.LoadXml(xmlSource);
+        var doc = LoadExternalXml(xmlSource);
 
         var nodeStore = new XdmInMemoryStore();
         XdmDocument xdmDoc;
@@ -5238,27 +5246,50 @@ public sealed partial class XsltTransformEngine
     }
 
     /// <summary>
-    /// Reader settings for parsing a principal source document.
+    /// Reader settings for every XML document read from outside the transformation: the principal
+    /// source (as a tree and streamed), fn:doc and document(), fn:parse-xml and
+    /// fn:parse-xml-fragment, xsl:source-document (as a tree and streamed), the principal source
+    /// given as text to <c>TransformRawAsync</c>, and a global context document given as text. One
+    /// method, so that these paths cannot differ again (xslt#627). A caller may add what its reader
+    /// needs besides (<c>Async</c>, an entity policy).
     /// </summary>
     /// <remarks>
     /// XSLT needs the internal DTD subset: entity references, and the attribute declarations
-    /// that make <c>id()</c> and IDREF work. So DTDs are parsed rather than prohibited — but
-    /// on two leashes, because parsing a DTD is where XML's two classic attacks live:
+    /// that make <c>id()</c> and IDREF work. So DTDs are parsed rather than prohibited, with two
+    /// limits:
     /// <list type="bullet">
-    ///   <item><c>XmlResolver = null</c> — no external DTD or entity is ever fetched, which is
-    ///   what closes XXE. Only the internal subset is honoured.</item>
-    ///   <item><c>MaxCharactersFromEntities</c> — caps total entity expansion, which is what
-    ///   closes the billion-laughs / quadratic-blowup family.</item>
+    ///   <item><c>XmlResolver = null</c> — no external DTD or entity is ever fetched. Only the
+    ///   internal subset is honoured.</item>
+    ///   <item><c>MaxCharactersFromEntities</c> — at most 1,000,000 characters from entity
+    ///   expansion in one document.</item>
     /// </list>
-    /// Both were already applied on the with-URI path; this exists so the without-URI path
-    /// cannot drift from it again.
     /// </remarks>
-    private static XmlReaderSettings CreateSourceReaderSettings() => new()
+    internal static XmlReaderSettings CreateSourceReaderSettings() => new()
     {
         DtdProcessing = DtdProcessing.Parse,
         MaxCharactersFromEntities = 1_000_000,
         XmlResolver = null,
     };
+
+    /// <summary>
+    /// Reads an XML document from outside the transformation into a DOM, as the principal source
+    /// is read (<see cref="CreateSourceReaderSettings"/>): fn:doc and document(), fn:parse-xml and
+    /// fn:parse-xml-fragment, xsl:source-document, the principal source given as text to
+    /// <c>TransformRawAsync</c>, a global context document given as text. The reader applies XML 1.0
+    /// attribute-value normalization (§3.3.3: a newline or tab in an attribute value is a space)
+    /// and end-of-line handling (§2.11); <see cref="XmlDocument.LoadXml"/> reads with an
+    /// <see cref="XmlTextReader"/> that does neither, and with the .NET default entity limit, so
+    /// these documents kept them where the principal source did not (xslt#627). Not for markup this
+    /// processor wrote itself, which a re-parse reads back as written.
+    /// </summary>
+    internal static XmlDocument LoadExternalXml(string xml)
+    {
+        var doc = new XmlDocument { PreserveWhitespace = true };
+        using var sr = new System.IO.StringReader(xml);
+        using var reader = XmlReader.Create(sr, CreateSourceReaderSettings());
+        doc.Load(reader);
+        return doc;
+    }
 
     /// <summary>
     /// Transforms an XML string using the stylesheet.
@@ -5598,7 +5629,8 @@ public sealed partial class XsltTransformEngine
     {
         _runtimeCharacterMaps.Clear();
         using var stringReader = new System.IO.StringReader(xmlSource);
-        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, Async = true, MaxCharactersFromEntities = 1_000_000 };
+        var settings = CreateSourceReaderSettings();
+        settings.Async = true;
         using var xmlReader = XmlReader.Create(stringReader, settings,
             options?.SourceDocumentUri?.AbsoluteUri ?? "");
         var sb = new StringBuilder();

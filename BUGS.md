@@ -8198,3 +8198,23 @@ namespace node in the content binds a prefix of the literal result element (othe
 namespace, or where two namespace nodes in the content bind one prefix to two namespaces and at least one is
 copied (two copied ones: Saxon-HE 10.9 keeps the last one and raises no error); and with XTDE0440 where a copied
 namespace node for the default namespace is added to an element in no namespace.
+
+### 150. A document from outside, other than the principal source, kept newlines in attribute values and had another entity limit — fixed (xslt#627, 2026-11-24)
+
+Engine: **XSLT**. On main (b491b50) and before. Found while checking the XSpec suites that xslt#624 lets compile:
+an imported `.xspec` file's multi-line `test` attribute kept its newlines and tabs in the compiled stylesheet. fn:doc,
+document(), fn:parse-xml, fn:parse-xml-fragment, xsl:source-document (as a tree), fn:transform's source-location and
+a global context document given as text read the document with `XmlDocument.LoadXml`, whose reader applies neither
+XML 1.0 attribute-value normalization (§3.3.3) nor end-of-line handling (§2.11): `<other b="p&#xA;&#x9;q">` (a
+literal newline and tab) gave `@b` = `p`, newline, tab, `q`, and a CRLF in text kept its CR. The principal source,
+read with an `XmlReader`, gave `p  q` and a newline. These paths also had the .NET default limit on entity expansion,
+not the principal source's 1,000,000 characters (xsl:merge's streamed sources had it too).
+
+Now every document read from outside the transformation is read with one set of reader settings
+(`XsltTransformEngine.CreateSourceReaderSettings`): the principal source, as a tree and streamed, and all the paths
+above, xsl:source-document streamed and xsl:merge too. The same entity limit for all: a document with 1,000,000
+characters from entity expansion is read, one with 1,000,001 is not; each path raises what it raises for a document
+it cannot read (FODC0002 fn:doc, FODC0005 document(), FODC0006 fn:parse-xml; the reader's error, as for the
+principal source, elsewhere). Markup this processor wrote itself and reads back (fn:transform's source-node, a
+temporary tree) is not changed: its newlines in attribute values are character references.
+`ExternalDocumentNormalizationTests` (expected results: Saxon-HE 10.9's), `ExternalDocumentEntityLimitTests`.

@@ -790,9 +790,9 @@ public sealed class XsltTransformer
         }
         // Reject malformed XML here, where the caller can see it; the engine parses it again into
         // each transformation's own node store.
-        new XmlDocument { PreserveWhitespace = true }.LoadXml(documentXml);
+        Engine.XsltTransformEngine.LoadExternalXml(documentXml);
         _globalContextItem = new Engine.XsltTransformEngine.CrossStoreNodeRef(
-            documentXml, IsElement: false, DocumentUri: documentUri?.AbsoluteUri);
+            documentXml, IsElement: false, DocumentUri: documentUri?.AbsoluteUri, External: true);
     }
 
     /// <summary>

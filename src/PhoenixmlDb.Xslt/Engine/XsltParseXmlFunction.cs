@@ -43,9 +43,7 @@ internal sealed class XsltParseXmlFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             // Convert to XDM so XPath axis navigation works (e.g., $tree//e)
             if (_context._nodeStore != null)
             {
-                var xmlDoc = new System.Xml.XmlDocument();
-                xmlDoc.PreserveWhitespace = true;
-                xmlDoc.LoadXml(xmlStr);
+                var xmlDoc = XsltTransformEngine.LoadExternalXml(xmlStr);
                 XdmDocument xdmDoc;
                 using (_context._nodeStore.ParsedDocument()) // fn:parse-xml: a parsed document (xslt#542)
                     xdmDoc = XsltTransformEngine.ConvertToXdm(xmlDoc, _context._nodeStore, documentUri: null);
