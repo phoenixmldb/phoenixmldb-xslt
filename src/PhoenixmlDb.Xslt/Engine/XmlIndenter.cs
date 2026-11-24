@@ -100,6 +100,35 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
         or XmlNodeType.SignificantWhitespace or XmlNodeType.CDATA or XmlNodeType.Comment
         or XmlNodeType.ProcessingInstruction or XmlNodeType.DocumentType;
 
+    /// <summary>
+    /// Whether a character of a text or attribute node is written as a character reference:
+    /// CR, NEL, LINE SEPARATOR, DEL and the C1 controls (Serialization 3.1 §5). The writer wrote
+    /// NEL and LINE SEPARATOR as they were, and a CR in text as a newline.
+    /// </summary>
+    internal static bool MustBeReference(char c) => c is '\r' or '\u2028' || (c >= '\u007F' && c <= '\u009F');
+
+    /// <summary>
+    /// Writes the value of a text or attribute node, the characters of <see cref="MustBeReference"/>
+    /// as character references. A value without them is written as before, in one call.
+    /// </summary>
+    private void WriteEscaped(string value)
+    {
+        var start = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (!MustBeReference(value[i]))
+                continue;
+            if (i > start)
+                _xw.WriteString(value[start..i]);
+            _xw.WriteCharEntity(value[i]);
+            start = i + 1;
+        }
+        if (start == 0)
+            _xw.WriteString(value);
+        else if (start < value.Length)
+            _xw.WriteString(value[start..]);
+    }
+
     // An end tag is indented by its own element's content; anything else by where it is.
     private void Indent(bool endTag = false)
     {
@@ -135,7 +164,16 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
                 var isSuppressed = _suppressed is not null
                     && _suppressed.Contains((StylesheetParser.ResolveNamespaceUri(reader.NamespaceURI), reader.LocalName));
                 _xw.WriteStartElement(reader.Prefix, reader.LocalName, reader.NamespaceURI);
-                _xw.WriteAttributes(reader, defattr: true);
+                if (reader.MoveToFirstAttribute())
+                {
+                    do
+                    {
+                        _xw.WriteStartAttribute(reader.Prefix, reader.LocalName, reader.NamespaceURI);
+                        WriteEscaped(reader.Value);
+                        _xw.WriteEndAttribute();
+                    }
+                    while (reader.MoveToNextAttribute());
+                }
                 reader.MoveToElement();
                 _afterMarkup = true;
                 if (empty)
@@ -167,11 +205,16 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
                 _afterMarkup = true;
                 break;
             case XmlNodeType.Text:
-                _xw.WriteString(value);
+                WriteEscaped(value!);
                 Text();
                 break;
             case XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace:
-                _xw.WriteWhitespace(value);
+                // A CR here came from a character reference (a parse turns a literal one into a
+                // newline), inside an element.
+                if (value!.Contains('\r', StringComparison.Ordinal))
+                    WriteEscaped(value);
+                else
+                    _xw.WriteWhitespace(value);
                 if (_depth == 0)
                 {
                     _topMixed = true;

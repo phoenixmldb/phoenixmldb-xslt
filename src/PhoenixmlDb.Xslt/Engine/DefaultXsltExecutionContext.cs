@@ -6294,8 +6294,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     }
 
 
+    /// <summary>
+    /// Text as markup: CR, NEL, LINE SEPARATOR, DEL and the C1 controls as character references,
+    /// as Serialization 3.1 §5 requires for a text node; written as they were, a parse turned a CR
+    /// into a newline, and an XML 1.1 parser NEL and LINE SEPARATOR too.
+    /// </summary>
     internal static string EscapeText(string text)
-        => CharacterEscaper.EscapeXmlText(text);
+        => EscapeControlCharsAsNcr(CharacterEscaper.EscapeXmlText(text));
 
 
     internal static string EscapeAttributeValue(string value)
@@ -6303,13 +6308,13 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
 
     /// <summary>
-    /// Emits DEL, the C1 control characters (U+0080..U+009F) and the line separator
-    /// U+2028 as numeric character references. These characters cannot appear literally
-    /// in serialized XML/XHTML attribute values, so they are written as <c>&amp;#xNN;</c>,
-    /// matching the XQuery serializer's <c>WriteTextEscaped</c> attribute path
-    /// (W3C Serialization 4.0 §7.2). The shared <see cref="CharacterEscaper"/> only
-    /// introduces ASCII markup, so the sole remaining control characters in its output
-    /// are the original literals — no double-escaping occurs.
+    /// Emits CR, DEL, the C1 control characters (U+0080..U+009F, NEL among them) and the line
+    /// separator U+2028 as numeric character references (Serialization 3.1 §5: in text and
+    /// attribute nodes they MUST be). They are written as <c>&amp;#xNN;</c>, matching the XQuery
+    /// serializer's <c>WriteTextEscaped</c>. The shared <see cref="CharacterEscaper"/> only
+    /// introduces ASCII markup, so the sole remaining control characters in its output are the
+    /// original literals — no double-escaping occurs. (In an attribute value it has already
+    /// written CR as a reference.)
     /// </summary>
     private static string EscapeControlCharsAsNcr(string escaped)
     {
@@ -6317,7 +6322,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         for (var i = 0; i < escaped.Length; i++)
         {
             var c = escaped[i];
-            if (c == '\u2028' || (c >= '\u007F' && c <= '\u009F'))
+            if (c is '\r' or '\u2028' || (c >= '\u007F' && c <= '\u009F'))
             {
                 sb ??= new StringBuilder(escaped.Length + 8).Append(escaped, 0, i);
                 sb.Append("&#x").Append(((int)c).ToString("X", CultureInfo.InvariantCulture)).Append(';');
