@@ -796,6 +796,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             capture.Positions.Add(offset);
             capture.ConsumedTo.Add(offset);   // no output consumed unless the caller says so
         }
+        if (_functionBodyPositions is { } positions && ReferenceEquals(_sequenceAccumulator, _functionBodyAccumulator))
+            positions.Add(_output.Length - _functionBodyOutputBase);
         _sequenceAccumulator!.Add(item);
     }
 

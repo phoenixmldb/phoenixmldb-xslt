@@ -1144,6 +1144,12 @@ internal sealed partial class DefaultXsltExecutionContext
     // InFunctionBodyProper.
     private List<object?>? _functionBodyAccumulator;
 
+    // For each item added to _functionBodyAccumulator, the output offset (from
+    // _functionBodyOutputBase) where it was added: the function result keeps the items in order
+    // with the markup the body wrote between them (#645).
+    private List<int>? _functionBodyPositions;
+    private int _functionBodyOutputBase;
+
     /// <summary>
     /// True when the sequence being built is the executing function's own result — the only
     /// place text is written to BOTH the accumulator and <c>_output</c>, because only the

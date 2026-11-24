@@ -8254,3 +8254,29 @@ The tree is the same; only the serialized form differs, and Serialization 3.1 le
 The saxon-he-10 layout writes Saxon's form (it re-reads the result and writes the declaration, the DOCTYPE, the
 namespace declarations and the attributes itself). Ruled to stay as it is (2026-11-24): no fix. (A void element
 with html-version 5 was in this list too; it is written `<br/>` now, as Saxon and the XQuery serializer write it.)
+
+### 153. A stylesheet function returned a literal result element before the items that came before it — fixed (xslt#645, 2026-11-24)
+
+Engine: **XSLT**. Found while checking the readers of the output buffer for #639 (part 2): a case with a function
+result gave its items in another order than Saxon-HE 10.9. A wrong result, not only a different form.
+
+```xml
+<xsl:function name="f:s" as="item()*"><xsl:sequence select="1"/><w/></xsl:function>
+```
+
+`f:s()` returned `(<w/>, 1)`; the result of a sequence constructor is its items in order (XSLT 3.0 §5.7): `(1, <w/>)`.
+Any sequence constructor in a function body did it: the body itself, `xsl:iterate`, `xsl:for-each`, `xsl:fork`,
+`xsl:try`, `xsl:choose`, `xsl:if`, with or without `as`, also a function of a used package. A literal result element
+came before an atomic value or an `xsl:copy` result that preceded it; `xsl:copy-of` results kept their place. A
+variable or a named template with `as="item()*"` gave the items in order.
+
+The cause: a function body writes elements to the output buffer and collects the other items apart; the result was
+the nodes of the markup first, then the items (`MarkupAndItemsToValue`). A typed variable or template records where
+each item was added (`AsBodyCapture`) and weaves them back in order. A function body now records the output offset of
+each item added to its own sequence (`_functionBodyPositions`), and the result puts each item between the nodes of the
+markup before and after it. Text items stay in the markup, as before. A full `AsBodyCapture` was not used for
+functions: it also changes how attributes and typed builders are routed in the body.
+
+Tests: `FunctionResultOrderTests` — the seven constructors in a function, a typed variable and a typed named template
+(21 cases, Saxon-HE 10.9's output as the expected result); copies, atomic values and elements in a function (6); a
+function with no `as`; a function of a used package. The 12 cases with a function fail on the source before the fix.
