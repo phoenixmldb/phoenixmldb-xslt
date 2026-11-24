@@ -1,0 +1,3 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q">
+   <p:style a-long-attribute-name0="b&gt;&#34;é&lt;y&lt;z&lt;&lt;zé&#34;béy&#x9;&amp;&#xA;c&gt;zxabz"><br a-long-attribute-name3="&#x9;a&gt;xy&#34;&#xA;&amp;xa&#34;&gt;&lt;x&amp;yab&amp;&#34; " /> b&gt;xbcéy'"x"<p:em n3="c&#34;zyz&lt;&amp;z&lt;yc&lt;yx'zxb&#x9;&gt;&#34;&#34;&#x9;'&lt;y" p:v2="éé &#34;cba&#34;xy&lt;&#34;x&lt; " type0="&gt;&#34;bza&gt;ab&amp;ca'xx&#34; &#34;" a-long-attribute-name0="&gt;&lt;aa&#xA;x  &#xA;" xml:space="preserve"></p:em><em><?pi2 a'?><p:a p:type1="&#x9;'c&#x9;ybé zé z&#x9;ya&#xA;cxa"></p:a><span p:a-long-attribute-name3="x&#34;"><!--<xc'"cz--><?pi0 &é'"x?></span></em></p:style>
+</html>

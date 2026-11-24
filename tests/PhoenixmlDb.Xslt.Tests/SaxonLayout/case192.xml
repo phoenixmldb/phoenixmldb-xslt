@@ -1,0 +1,3 @@
+<!DOCTYPE td
+  PUBLIC "-//PHX//CASE//EN" "case.dtd">
+<td xmlns="urn:default" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" id2="b&lt;zb&gt;'&lt;&gt;&#x9;z&amp;&gt; c" v1="c&#xA;xzb'&lt;b z&lt;ccz&amp;&lt;&gt;&gt;&#xA;é&amp; a&lt;b&lt;&gt;">" '&lt;b&lt;ba"z</td>

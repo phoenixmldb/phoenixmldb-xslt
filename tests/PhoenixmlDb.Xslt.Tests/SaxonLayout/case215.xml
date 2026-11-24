@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q"><img a-long-attribute-name2="a&lt;&#xA;&#x9;c&gt;&#x9;x&gt;&#34;c&amp;&#34;x&lt;&lt;aaaé&gt;éx&lt;&#xA;&lt;&#x9;" type2="&#34; bzx&gt;&#x9;éac''&#xA;"><!--x<y	z"y<b"--></img></html>

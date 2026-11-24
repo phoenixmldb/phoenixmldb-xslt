@@ -1,0 +1,9 @@
+<!DOCTYPE li
+  SYSTEM "case.dtd">
+<li xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q"><p:a a-long-attribute-name0="&#x9;&gt;cb&gt;&#34;&gt;&#x9;&lt;" p:type2=" ">
+      <title a-long-attribute-name0="&lt;&gt;y&gt;&amp;&gt;xy">&gt;"
+&amp;zc&gt;bbb   <?pi1?><section>   <p:pre></p:pre>
+            <item n3="x&amp;b&#xA;bbbczz " p:a-long-attribute-name1="&#x9;bc&#34;y" xml:space="preserve"></item>
+            <!--a>aé'abcé--></section>
+      </title></p:a><span n0="&lt;&gt;&amp;&#34; x'ycy&#x9;ééyé&#xA;y'b&amp;xcé&lt;&#xA;c&amp;&#34;" n3="x&#34;ayx&amp;x&#34;' &gt;&#34;z'&#34;é&#xA;z&#x9;a'&#x9;z'&lt;  " type1="c"><!--c--></span>
+   <!--"&b	zax'éé--></li>

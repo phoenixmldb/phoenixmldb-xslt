@@ -1,0 +1,6 @@
+<!DOCTYPE title
+  SYSTEM "case.dtd">
+<title xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" v3="&lt;é'a éb&#34;cb&amp;&amp;" v1="y&gt;z&amp;b&gt;&#34;y&#x9;&#xA;ba&#x9;&#34;&#34;é&lt;cé&#x9;yay''y" type1="b&#xA;&#xA; &#x9; ya&amp;&#xA;&lt;&#34;c' &amp;cb'&gt;a&lt;" type0="é&#xA;   a&amp; azb" a-long-attribute-name1="'' &gt;xxa'z z' "><BR a-long-attribute-name3="&gt; &lt;xz " type0="&#34;xb&#xA;x bx&#xA;&lt;b&#x9;&amp;&#34;x&#x9;&amp;&amp;éc&#xA;c&lt;'&#xA;&lt;'&lt;"></BR><br><?pi0 c?><!-->-->y	
+ &lt; c 
+ba</br>
+'x<section xmlns="urn:default" n0="&amp;cé&amp;&#34;&#34;xzz&#xA;bxxé&#x9;'x&gt;" xml:space="preserve">y	y&amp;"	&gt;'x   </section></title>

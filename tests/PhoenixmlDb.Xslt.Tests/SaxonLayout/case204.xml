@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html
+  PUBLIC "-//PHX//CASE//EN" "case.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q">
+   <div long-prefix:type3="xx&amp; " long-prefix:a-long-attribute-name0="'" a-long-attribute-name3="x&lt;&lt;b'&lt;y&#xA;cx&lt;&#xA;&#xA;cxx&#34; &gt;">
+      <title v1="c'z é ac&amp;yéb&#xA;" id1=" zé&gt;&#xA;é&lt;b&#34;é" a-long-attribute-name0="aaba&gt;céay cé&#x9;&#x9; &#x9;&amp;&#34; caé'&#34;" long-prefix:id3="&amp;ccaybzxbz" type3="&#34;&#34;&#x9;b&#xA;&amp;xz&amp;cc&#x9;é&#xA;'yb&lt;b 'zbzyy &#x9;a" type2="&amp;&lt;yy'"><li n3="&gt;bz &#x9;zb'b&lt;&#x9;&#x9;ac'" id0="cé'&#xA;yé '&amp;ayé&#34;ybé&#34;" v1="b&#34;yc&#34;c a'by&lt;a&gt;y'é&#xA;é&lt;&#xA; &amp;c&#34;xb&#34;z&#34;" long-prefix:type1="&#34;&lt;&#x9;&#x9;&#xA;b'é&gt;&#xA;&lt;y&lt;&lt;'&#xA;x é&#xA;z">   </li>
+         <?pi0 z>&?></title>
+   </div>
+</html>

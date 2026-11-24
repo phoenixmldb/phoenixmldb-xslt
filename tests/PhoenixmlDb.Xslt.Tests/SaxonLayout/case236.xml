@@ -1,0 +1,12 @@
+<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q">
+   <p n0=" &#x9;&gt;&#x9;&#x9;b&#x9;x&#34;" type0="&#xA;&lt;é&#xA;x&#34;''&#34;y&amp;&#xA;&lt;&#xA;&lt; &lt;&gt;" v2="&#x9;cxbax'" type1="'éy'&#xA;aa" a-long-attribute-name2="b&#x9;&#xA;&#xA; 'x&#xA;a&#34;zxz &#x9;a&#xA;aab&#x9;&amp;&#x9;" v0="ybé&amp;xabbé&gt;&gt;yécb&#xA; &#xA;&lt;">&gt;c&amp;&lt;ycbéxc
+      <td id3="é&#34;&amp;x&#34;'&lt;&#x9;a bayéca&amp;&gt;c" a-long-attribute-name3="zb'" type0="&#xA;c céx&#xA;cc&#xA;é&lt; ">
+         <item v3="ac&#xA;éax&#34;aaéz&#x9;aé&lt;yycy&#x9;&lt;&amp;&#34;éa" type0="xxcyé'&#xA;&#34; &gt;b&gt;&#xA;xy" n3="éézb&#x9;y'&#xA;b x&#xA;&lt;ébcc " id0="&#x9;&#34;a&#x9;&lt;ax&gt;yyz&#x9;'" v2="ézéé" type2="&amp;xéz"><br id3="z'&gt;éb&gt;&#34;&gt;&lt;&#xA; y&lt;ac&amp;b&lt;cé" v2="yz&#x9;&gt;&#xA;x'&lt;y&#34;&#x9;éxéz&gt;z'&#34;&lt; &gt;y " n0="&#x9;&gt;&amp;&#x9;&#34;'cb' &amp;&lt;'">
+               <item v0="&gt;xyzzb&#x9;&amp;xy&lt;&gt;'y&gt;xé&#x9;xx&#34; é" v3="x&#34;y &amp;&lt;&lt;za&lt;'yyx'c" a-long-attribute-name2="yz &#x9;&gt;&#xA;&#34; &lt;'b&#x9;&#x9; &amp;cb&#x9;c&#xA;z&#34;xyy&#34;"></item><script type3="" a-long-attribute-name2="z&#x9;z&gt;by &#34;a&gt;'b&amp;xx&#xA;&lt; cb" id3="z&#x9;é"></script></br></item>
+      </td>
+      <li id3="z&#34; é"><!--y< 	b>c--><script type3="&amp;&lt;&#x9;&#34;&lt;éy y" v0="x&lt; &amp;zb&#xA;&gt;écézyaé&gt;&lt;'&#x9;&#x9;xéyéyc &#x9;a" q:a-long-attribute-name1="&lt;yb  ''cxby&#34;&#x9;xb b"><q:P xmlns="" q:v0="'x&#xA;é'&amp;&lt;ab&lt;" q:v2="" type3="&lt; &#xA; b" n2="xycx&gt;by&gt;c&lt;xxéyzy&#34;'x&#xA;&#x9;xy  ' " id3="zca&amp;cz&gt;é" v1="&#x9;&gt;&lt;xc" xml:space="preserve"></q:P>a'x&lt;&amp;éac&amp;	z c&lt;x		
+&gt;'&lt;&lt;</script><item type1="bax&lt;&#x9;'c'&lt;xa&amp; yb&#34;&lt;a&#x9;x&#x9;&#x9;b&#x9;&gt;bx bx" v3="bxy&#x9;xa">a'cyc&lt;c&amp;'é'
+            z&amp;x&gt;&gt; "<!--y--><!----></item>
+      </li>
+   </p>
+</html>

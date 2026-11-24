@@ -1,0 +1,6 @@
+<!DOCTYPE EM
+  SYSTEM "case.dtd">
+<EM xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q">'&gt;''<?pi2 "ayx?>
+   <div id2="&gt;&lt;&gt; &#34;&gt;cyéc'y'a&#34;&#x9; &#34;x&gt;">
+      <td><img></img>
+         <!--"--></td>   &amp;   </div></EM>

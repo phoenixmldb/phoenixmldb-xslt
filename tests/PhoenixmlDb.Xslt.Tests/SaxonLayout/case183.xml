@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?><DIV xmlns="urn:default" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" type2="&gt;&lt;&gt;&#x9; &lt;'&lt;c&gt;b&#xA;&#xA;é&#34; xx&#x9;zé'z&gt;ézz&#34;&gt;&#x9;" v0="z'&#x9; ">
+   <title type1="&lt; &gt;&amp; éz&#x9; éy&#34;&gt;&amp;y&lt;&#xA;z&lt;" n1="é&lt;'a&#x9;&amp;&#34;x&lt;&amp;ééyéé&#xA;&gt;éy" v0="&#x9;b'&lt;''" n2="y &gt;&#xA;&amp;c&gt;xé&#34;&#x9;cy&#xA;&gt;&#34;x&#34;za &#x9;z&#xA;ca'&lt;&#xA;" n0="&#34;é'ab&lt;abb&gt;z&amp;c" id2="&#x9;&#xA;&#xA;c &gt;zy&amp;&lt;&#x9;cb'é"><!--b bxa>c"'-->   "éé &amp;z&gt;b"yx</title>
+   <div a-long-attribute-name1="&lt;xz&amp;c&amp;&gt;é" n0="" id0="&amp;é&#xA;&gt;&#x9;'x&lt;éa&amp;c&#x9;y&#34;y'x&#34;&gt;&amp;&lt;b&#x9;&gt;xc"></div>
+</DIV>
