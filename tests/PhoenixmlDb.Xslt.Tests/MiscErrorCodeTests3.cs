@@ -79,5 +79,5 @@ public sealed class MiscErrorCodeTests3
     /// <summary>A string argument still resolves against the static base URI.</summary>
     [Fact]
     public Task Document_WithAStringUri_StillUsesTheStaticBase()
-        => AssertErrorAsync(Wrap("", """<xsl:copy-of select="document('abcd.xml')"/>"""), "FODC0005");
+        => AssertErrorAsync(Wrap("", """<xsl:copy-of select="document('abcd.xml')"/>"""), "FODC0002");
 }

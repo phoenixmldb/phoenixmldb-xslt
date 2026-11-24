@@ -118,6 +118,7 @@ internal sealed class XsltDocument2Function : PhoenixmlDb.XQuery.Ast.XQueryFunct
             uri = uri[..hashIdx];
             XsltDocumentFunction.RequireShorthandPointer(fragment);
         }
+        XsltDocumentFunction.RequireValidUriReference(uri);
 
         // Resolve against the base node's document URI
         if (uri.Length == 0)
@@ -141,6 +142,6 @@ internal sealed class XsltDocument2Function : PhoenixmlDb.XQuery.Ast.XQueryFunct
             }
             return ValueTask.FromResult<object?>(doc);
         }
-        throw new XsltException($"FODC0005: Cannot retrieve document at URI '{uri}'");
+        throw new XsltException($"FODC0002: Cannot retrieve document at URI '{uri}'");
     }
 }

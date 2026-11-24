@@ -78,6 +78,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
                 RequireShorthandPointer(fragment);
             }
 
+            RequireValidUriReference(uri);
             RequireBaseUriForNodeArgument(item, nodeBaseUri, uri);
             if (context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext qc &&
                 qc.DocumentResolver is not null)
@@ -102,19 +103,24 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
                     }
                 }
                 else
-                    throw new XsltException($"FODC0005: Cannot retrieve document at URI '{uri}'");
+                    throw new XsltException($"FODC0002: Cannot retrieve document at URI '{uri}'");
             }
             else
-                throw new XsltException($"FODC0005: Cannot retrieve document at URI '{uri}'");
+                throw new XsltException($"FODC0002: Cannot retrieve document at URI '{uri}'");
         }
         return ValueTask.FromResult<object?>(results.ToArray());
     }
 
     /// <summary>
     /// The document at <paramref name="uri"/>. A refusal of a relative URI, which reaches here
-    /// only when there is no base URI to resolve it against, is FODC0005 like any other
+    /// only when there is no base URI to resolve it against, is FODC0002 like any other
     /// document that cannot be retrieved; it reached the caller as ResourceAccessDeniedException.
     /// </summary>
+    /// <remarks>
+    /// document() raises the errors of fn:doc (XSLT 3.0 §20.1): FODC0002 for a resource that
+    /// cannot be retrieved or parsed, FODC0005 only for a URI that is not valid. It raised
+    /// FODC0005 for both.
+    /// </remarks>
     private static XdmDocument? ResolveDocument(PhoenixmlDb.XQuery.Execution.QueryExecutionContext context, string uri)
     {
         try
@@ -123,7 +129,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
         }
         catch (PhoenixmlDb.XQuery.Security.ResourceAccessDeniedException e) when (PhoenixmlDb.XQuery.Functions.LocationResolver.IsRelativeName(uri))
         {
-            throw new XsltException($"FODC0005: Cannot retrieve document at URI '{uri}': {e.Message}", e);
+            throw new XsltException($"FODC0002: Cannot retrieve document at URI '{uri}': {e.Message}", e);
         }
     }
 
@@ -147,6 +153,7 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             RequireShorthandPointer(fragment);
         }
 
+        RequireValidUriReference(uri);
         RequireBaseUriForNodeArgument(arg, nodeBaseUri, uri);
         if (context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext queryContext &&
             queryContext.DocumentResolver is not null)
@@ -171,8 +178,8 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             }
         }
 
-        // FODC0005: Cannot resolve document URI
-        throw new XsltException($"FODC0005: Cannot retrieve document at URI '{uri}'");
+        // FODC0002: the document cannot be retrieved (fn:doc's code, XSLT 3.0 §20.1)
+        throw new XsltException($"FODC0002: Cannot retrieve document at URI '{uri}'");
     }
 
     /// <summary>
@@ -242,6 +249,45 @@ internal sealed class XsltDocumentFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
             return baseUriStr;
         return PhoenixmlDb.XQuery.Functions.LocationResolver.Absolute(uri, baseUriStr)
             ?? throw new XsltException($"FODC0005: The URI '{uri}' cannot be resolved against the base URI");
+    }
+
+    /// <summary>
+    /// A reference that is not a valid URI reference is FODC0005, checked before it is resolved,
+    /// as fn:doc checks it (PhoenixmlDb.XQuery's DocFunction; document() raises fn:doc's errors,
+    /// XSLT 3.0 §20.1). Without the check, whether such a reference failed as invalid depended on
+    /// the base URI: with an empty one it was looked up as it was, and failed as not found.
+    /// </summary>
+    internal static void RequireValidUriReference(string uri)
+    {
+        if (uri.Length > 0 && (!Uri.TryCreate(uri, UriKind.RelativeOrAbsolute, out _) || IsColonInFirstRelativeSegment(uri)))
+            throw new XsltException($"FODC0005: The URI '{uri}' passed to document() is not a valid URI");
+    }
+
+    /// <summary>
+    /// A relative reference whose first path segment contains a colon is not a URI reference
+    /// (RFC 3986 §4.2: that segment would read as a scheme), though System.Uri accepts it as
+    /// relative. The same rule as fn:doc's.
+    /// </summary>
+    private static bool IsColonInFirstRelativeSegment(string uri)
+    {
+        var end = uri.IndexOfAny(['/', '?', '#']);
+        var first = end < 0 ? uri : uri[..end];
+        var colon = first.IndexOf(':', StringComparison.Ordinal);
+        // scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ): before such a colon the reference
+        // is absolute (file:/abs/path, urn:a:b).
+        return colon >= 0 && !IsScheme(first.AsSpan(0, colon));
+    }
+
+    private static bool IsScheme(ReadOnlySpan<char> s)
+    {
+        if (s.Length == 0 || !char.IsAsciiLetter(s[0]))
+            return false;
+        foreach (var c in s)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c is not ('+' or '-' or '.'))
+                return false;
+        }
+        return true;
     }
 
     /// <summary>
