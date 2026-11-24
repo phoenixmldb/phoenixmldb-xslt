@@ -899,7 +899,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
 
     // Namespace scope tracking for deduplication during serialization
-    private readonly Stack<Dictionary<string, string>> _outputNsScopes = new();
+    private readonly OutputNsScopeStack _outputNsScopes = new();
 
 
     // Sequence accumulator: when active, xsl:sequence items are collected into this list
@@ -1581,6 +1581,84 @@ internal sealed partial class DefaultXsltExecutionContext
     };
 
 
+    /// <summary>
+    /// The output's namespace scopes, innermost on top: the bindings each open element declared. Each
+    /// scope also records the default namespace in force below it when it is pushed, so the default
+    /// namespace in force is read from the top scope (#639); it was a walk of every open scope, for
+    /// each element constructed, which made deep recursion take time about the square of its depth.
+    /// Only the top scope changes after it is pushed (a namespace node or an attribute's prefix
+    /// written into it), and a scope pushed again, as the save-and-restore paths do, records it
+    /// again. The members are those of the <see cref="Stack{T}"/> it replaces, enumerating from the top.
+    /// </summary>
+    private sealed class OutputNsScopeStack : IEnumerable<Dictionary<string, string>>
+    {
+        private (Dictionary<string, string> Scope, string? DefaultBelow)[] _items = new (Dictionary<string, string>, string?)[16];
+        private int _count;
+
+        public int Count => _count;
+
+        public void Push(Dictionary<string, string> scope)
+        {
+            var below = DefaultInForce();
+            if (_count == _items.Length)
+                Array.Resize(ref _items, _count * 2);
+            _items[_count++] = (scope, below);
+        }
+
+        public Dictionary<string, string> Pop()
+        {
+            if (_count == 0)
+                throw new InvalidOperationException("Stack empty.");
+            var scope = _items[--_count].Scope;
+            _items[_count] = default;
+            return scope;
+        }
+
+        public Dictionary<string, string> Peek()
+            => _count > 0 ? _items[_count - 1].Scope : throw new InvalidOperationException("Stack empty.");
+
+        public void Clear()
+        {
+            Array.Clear(_items, 0, _count);
+            _count = 0;
+        }
+
+        /// <summary>
+        /// The default namespace in force: the nearest scope's <c>xmlns</c>, or <c>null</c> when none
+        /// is declared or the nearest is <c>xmlns=""</c>.
+        /// </summary>
+        public string? DefaultInForce()
+        {
+            if (_count == 0)
+                return null;
+            var (top, below) = _items[_count - 1];
+            if (top.TryGetValue("", out var uri))
+                return string.IsNullOrEmpty(uri) ? null : uri;
+            return below;
+        }
+
+        public Enumerator GetEnumerator() => new(this);
+
+        IEnumerator<Dictionary<string, string>> IEnumerable<Dictionary<string, string>>.GetEnumerator()
+        {
+            for (var i = _count - 1; i >= 0; i--)
+                yield return _items[i].Scope;
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+            => ((IEnumerable<Dictionary<string, string>>)this).GetEnumerator();
+
+        /// <summary>From the top scope down, without an allocation.</summary>
+        public struct Enumerator(OutputNsScopeStack stack)
+        {
+            private int _index = stack._count;
+
+            public readonly Dictionary<string, string> Current => stack._items[_index].Scope;
+
+            public bool MoveNext() => --_index >= 0;
+        }
+    }
+
     private sealed class Scope
     {
         // Lazy-init Variables / TunnelParameters dictionaries: most scopes (e.g. the
@@ -1607,6 +1685,15 @@ internal sealed partial class DefaultXsltExecutionContext
         public bool IsTunnelBarrier { get; set; }
 
         /// <summary>
+        /// True once the tunnel parameters in force at this scope's template invocation are in its
+        /// <see cref="TunnelParameters"/>: a deeper invocation inherits them from here, and a lookup
+        /// ends here, without looking further (#639). Both went through every scope down to a
+        /// function, for each template invocation, which made deep recursion take time about the
+        /// square of its depth.
+        /// </summary>
+        public bool TunnelParametersInherited { get; set; }
+
+        /// <summary>
         /// When true, variable lookup does not continue past this scope into the caller's scopes: it
         /// goes straight to the global variables. Set on the scope a template or stylesheet function
         /// invocation pushes, because XSLT variables are lexically scoped (XSLT 3.0 §9.9) — the body of
@@ -1629,6 +1716,7 @@ internal sealed partial class DefaultXsltExecutionContext
         {
             Parent = null;
             IsTunnelBarrier = false;
+            TunnelParametersInherited = false;
             IsVariableBarrier = false;
             _variables?.Clear();
             _tunnelParameters?.Clear();

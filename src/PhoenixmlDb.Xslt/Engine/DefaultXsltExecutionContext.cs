@@ -444,25 +444,100 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     private string? EffectiveBaseUri => _baseUriStack.Count > 0 ? _baseUriStack.Peek() : XsltTransformEngine.UriString(_stylesheet.BaseUri);
 
 
+    // #639: the base URI and the in-scope namespaces of a source element were computed by walking all
+    // its ancestors, for each element that xsl:copy copies, which made a deep copy take time about the
+    // square of its depth. They are kept per element and computed from the parent's: a walk in
+    // document order asks for an element after its parent. The key is the node's document-order key,
+    // (tree ordinal, node id), which no other node has; a node with tree ordinal 0 (built outside a
+    // store) is not kept. The tables hold no node: a temporary tree is freed when nothing else refers
+    // to it, also while the transformation runs. They belong to this transformation's context, and
+    // are cleared when they reach SourceCacheLimit entries, which bounds their memory.
+    private const int SourceCacheLimit = 4096;
+    private readonly Dictionary<(ulong Tree, NodeId Id), string?> _sourceBaseUris = new();
+    private readonly Dictionary<(ulong Tree, NodeId Id), Xdm.NamespaceBinding[]> _sourceBindings = new();
+
+    private static bool TryRecall<T>(Dictionary<(ulong Tree, NodeId Id), T> table, Xdm.Nodes.XdmElement elem, out T value)
+    {
+        if (elem.TreeOrdinal != 0 && table.TryGetValue((elem.TreeOrdinal, elem.Id), out value!))
+            return true;
+        value = default!;
+        return false;
+    }
+
+    private static void Remember<T>(Dictionary<(ulong Tree, NodeId Id), T> table, Xdm.Nodes.XdmElement elem, T value)
+    {
+        if (elem.TreeOrdinal == 0)
+            return;
+        if (table.Count >= SourceCacheLimit)
+            table.Clear();
+        table[(elem.TreeOrdinal, elem.Id)] = value;
+    }
+
     private string? ComputeSourceBaseUri(Xdm.Nodes.XdmElement elem)
     {
-        // Check for xml:base attribute on the element
-        string? xmlBase = null;
+        if (TryRecall(_sourceBaseUris, elem, out var known))
+            return known;
+        // The element and its ancestors up to one whose base URI is known or needs no parent, nearest
+        // first; then their base URIs from the top down. Without recursion: a deep document's first
+        // element asked for has its whole chain to compute.
+        var chain = new List<Xdm.Nodes.XdmElement>();
+        string? above = null;
+        var e = elem;
+        while (true)
+        {
+            chain.Add(e);
+            if (BaseUriNeedsNoParent(e))
+                break;
+            if (!e.Parent.HasValue || e.Parent.Value == NodeId.None || _nodeStore == null)
+                break;
+            var parent = _nodeStore.GetNode(e.Parent.Value);
+            if (parent is Xdm.Nodes.XdmElement parentElem)
+            {
+                if (TryRecall(_sourceBaseUris, parentElem, out var parentBase))
+                {
+                    above = parentBase;
+                    break;
+                }
+                e = parentElem;
+                continue;
+            }
+            above = parent is Xdm.Nodes.XdmDocument doc ? doc.BaseUri : parent?.BaseUri;
+            break;
+        }
+        var result = above;
+        for (var i = chain.Count - 1; i >= 0; i--)
+        {
+            result = BaseUriGivenParent(chain[i], result);
+            Remember(_sourceBaseUris, chain[i], result);
+        }
+        return result;
+    }
+
+    private string? XmlBaseOf(Xdm.Nodes.XdmElement elem)
+    {
         foreach (var attrId in elem.Attributes)
         {
             var attr = _nodeStore!.GetNode(attrId) as Xdm.Nodes.XdmAttribute;
             if (attr != null && attr.Namespace == NamespaceId.Xml && attr.LocalName == "base")
-            {
-                xmlBase = attr.Value;
-                break;
-            }
+                return attr.Value;
         }
+        return null;
+    }
+
+    // An absolute xml:base, or an entity-derived base URI and no xml:base.
+    private bool BaseUriNeedsNoParent(Xdm.Nodes.XdmElement elem)
+        => XmlBaseOf(elem) is { } xmlBase ? Uri.TryCreate(xmlBase, UriKind.Absolute, out _) : elem.BaseUri != null;
+
+    /// <summary>The base URI of <paramref name="elem"/> given its parent's, <paramref name="parentBase"/>.</summary>
+    private string? BaseUriGivenParent(Xdm.Nodes.XdmElement elem, string? parentBase)
+    {
+        // Check for xml:base attribute on the element
+        var xmlBase = XmlBaseOf(elem);
         if (xmlBase != null)
         {
             // Resolve against parent's base URI if relative
             if (Uri.TryCreate(xmlBase, UriKind.Absolute, out _))
                 return xmlBase;
-            var parentBase = GetAncestorBaseUri(elem);
             if (parentBase != null && Uri.TryCreate(parentBase, UriKind.Absolute, out var parentUri)
                 && Uri.TryCreate(parentUri, xmlBase, out var resolved))
                 return resolved.OriginalString;
@@ -472,21 +547,10 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         if (elem.BaseUri != null)
             return elem.BaseUri;
         // Inherit from parent
-        return GetAncestorBaseUri(elem);
+        return parentBase;
     }
 
 
-    private string? GetAncestorBaseUri(Xdm.Nodes.XdmNode node)
-    {
-        if (!node.Parent.HasValue || node.Parent.Value == NodeId.None || _nodeStore == null)
-            return null;
-        var parent = _nodeStore.GetNode(node.Parent.Value);
-        if (parent is Xdm.Nodes.XdmElement parentElem)
-            return ComputeSourceBaseUri(parentElem);
-        if (parent is Xdm.Nodes.XdmDocument doc)
-            return doc.BaseUri;
-        return parent?.BaseUri;
-    }
 
     internal string? StaticBaseUri => _call is { } call ? call.StaticBaseUri
         : _staticBaseUriStack.Count > 0 ? _staticBaseUriStack.Peek() : XsltTransformEngine.UriString(_stylesheet.BaseUri);
@@ -894,18 +958,8 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         return bound;
     }
 
-    private string? GetInScopeDefaultNamespace()
-    {
-        foreach (var scope in _outputNsScopes)
-        {
-            if (scope.TryGetValue("", out var uri))
-            {
-                // Empty string means xmlns="" (undeclaration) — return null to indicate no default ns
-                return string.IsNullOrEmpty(uri) ? null : uri;
-            }
-        }
-        return null;
-    }
+    // xmlns="" (an undeclaration) and no declaration are both null: no default namespace.
+    private string? GetInScopeDefaultNamespace() => _outputNsScopes.DefaultInForce();
 
 
     /// <summary>
@@ -1409,9 +1463,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
                 foreach (var (name, value) in inherited)
                     target.TryAdd(name, value);
             }
-            if (scope.IsTunnelBarrier)
+            // A scope that inherited already holds everything below it, up to the function barrier.
+            if (scope.IsTunnelBarrier || scope.TunnelParametersInherited)
                 break;
         }
+        _scopes.Peek().TunnelParametersInherited = true;
     }
 
 
@@ -3105,54 +3161,91 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// A constructed (DocumentId 0) source already holds its complete set, so no walk is done.
     /// </summary>
     private IEnumerable<Xdm.NamespaceBinding> GatherSourceInScopeBindings(XdmElement src)
-    {
-        // Constructed source (DocumentId 0): NamespaceDeclarations already hold the full in-scope
-        // set. Surface everything except an xmlns="" undeclaration (not a binding).
-        if (src.Document.Value == 0)
-        {
-            foreach (var nb in src.NamespaceDeclarations)
-            {
-                var prefix = nb.Prefix ?? "";
-                if (string.IsNullOrEmpty(prefix) && nb.Namespace == NamespaceId.None)
-                    continue;
-                yield return nb;
-            }
-            yield break;
-        }
+        => src.Document.Value == 0 ? ConstructedSourceBindings(src) : ParsedSourceBindings(src);
 
-        // Parsed source (non-zero DocumentId): the source records only the xmlns declarations
-        // physically present on each element, so inherited bindings are collected by walking
-        // ancestors (nearest wins).
-        var seen = new HashSet<string>();
-        var undeclared = new HashSet<string>();
+    // Constructed source (DocumentId 0): NamespaceDeclarations already hold the full in-scope set.
+    // Surface everything except an xmlns="" undeclaration (not a binding).
+    private static IEnumerable<Xdm.NamespaceBinding> ConstructedSourceBindings(XdmElement src)
+    {
+        foreach (var nb in src.NamespaceDeclarations)
+        {
+            var prefix = nb.Prefix ?? "";
+            if (string.IsNullOrEmpty(prefix) && nb.Namespace == NamespaceId.None)
+                continue;
+            yield return nb;
+        }
+    }
+
+    /// <summary>
+    /// A parsed source element's in-scope namespaces (non-zero DocumentId): the source records only
+    /// the xmlns declarations physically present on each element, so inherited bindings come from the
+    /// ancestors, nearest wins. Each element's set is its own declarations and name prefix, then its
+    /// parent's set less what it declared or undeclared, in that order (the order of a walk from the
+    /// element up); kept per element (#639) and computed without recursion.
+    /// </summary>
+    private Xdm.NamespaceBinding[] ParsedSourceBindings(XdmElement src)
+    {
+        if (TryRecall(_sourceBindings, src, out var known))
+            return known;
+        var chain = new List<XdmElement>();
+        Xdm.NamespaceBinding[] above = [];
         XdmNode? current = src;
         while (current is not null)
         {
             if (current is XdmElement ce)
             {
-                foreach (var nb in ce.NamespaceDeclarations)
+                if (!ReferenceEquals(ce, src) && TryRecall(_sourceBindings, ce, out var cached))
                 {
-                    var prefix = nb.Prefix ?? "";
-                    // xmlns="" undeclaration: the default namespace is out of scope from here up.
-                    if (string.IsNullOrEmpty(prefix) && nb.Namespace == NamespaceId.None)
-                    {
-                        undeclared.Add("");
-                        seen.Add("");
-                        continue;
-                    }
-                    if (undeclared.Contains(prefix) || !seen.Add(prefix))
-                        continue;
-                    yield return nb;
+                    above = cached;
+                    break;
                 }
-                // The element's own name prefix is in scope even if declared by an ancestor.
-                if (!string.IsNullOrEmpty(ce.Prefix) && ce.Namespace != NamespaceId.None
-                    && !undeclared.Contains(ce.Prefix) && seen.Add(ce.Prefix))
-                {
-                    yield return new Xdm.NamespaceBinding(ce.Prefix, ce.Namespace);
-                }
+                chain.Add(ce);
             }
             current = current.Parent is { } pid && pid != NodeId.None ? _nodeStore!.GetNode(pid) : null;
         }
+        var result = above;
+        for (var i = chain.Count - 1; i >= 0; i--)
+        {
+            result = BindingsGivenParent(chain[i], result);
+            Remember(_sourceBindings, chain[i], result);
+        }
+        return result;
+    }
+
+    private static Xdm.NamespaceBinding[] BindingsGivenParent(XdmElement ce, Xdm.NamespaceBinding[] parentBindings)
+    {
+        // No declaration of its own and no name prefix: the parent's set, as it is. (A name prefix
+        // comes first in the element's set, before the parent's bindings, so it changes the order.)
+        if (ce.NamespaceDeclarations.Count == 0 && (string.IsNullOrEmpty(ce.Prefix) || ce.Namespace == NamespaceId.None))
+            return parentBindings;
+        var result = new List<Xdm.NamespaceBinding>(ce.NamespaceDeclarations.Count + parentBindings.Length + 1);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var defaultUndeclared = false;
+        foreach (var nb in ce.NamespaceDeclarations)
+        {
+            var prefix = nb.Prefix ?? "";
+            // xmlns="" undeclaration: the default namespace is out of scope from here up.
+            if (prefix.Length == 0 && nb.Namespace == NamespaceId.None)
+            {
+                defaultUndeclared = true;
+                seen.Add("");
+                continue;
+            }
+            if ((prefix.Length == 0 && defaultUndeclared) || !seen.Add(prefix))
+                continue;
+            result.Add(nb);
+        }
+        // The element's own name prefix is in scope even if declared by an ancestor.
+        if (!string.IsNullOrEmpty(ce.Prefix) && ce.Namespace != NamespaceId.None && seen.Add(ce.Prefix))
+            result.Add(new Xdm.NamespaceBinding(ce.Prefix, ce.Namespace));
+        foreach (var nb in parentBindings)
+        {
+            var prefix = nb.Prefix ?? "";
+            if ((prefix.Length == 0 && defaultUndeclared) || !seen.Add(prefix))
+                continue;
+            result.Add(nb);
+        }
+        return [.. result];
     }
 
 
