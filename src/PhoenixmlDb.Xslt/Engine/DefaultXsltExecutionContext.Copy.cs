@@ -416,12 +416,15 @@ internal sealed partial class DefaultXsltExecutionContext
                 var savedCommittableFrame = _committableFrame;
                 _drainableBody = null;
                 _committableFrame = committable;
+                EnterContentInPlace();
+                var contentCompleted = false;
                 try
                 {
                     if (instruction.Content != null)
                     {
                         await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
                     }
+                    contentCompleted = true;
                 }
                 finally
                 {
@@ -431,6 +434,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     _inheritNamespacesNo = savedInheritNsNo2;
                     _lastResultWasAtomic = savedLastResultWasAtomic2;
                     _serializingElementDepth--;
+                    ExitContentInPlace(contentCompleted);
                     _sequenceAccumulator = savedSeqAccum2;
                     PopScope();
                     PopOutputNsScope(); // attribute ns decls scope
@@ -450,10 +454,13 @@ internal sealed partial class DefaultXsltExecutionContext
                     // the element was sent on too.
                     _outputLogicalStart = 0;
                     OpenStreamingElement(committable.ElemName, CdataTrackingName(elem), startTagLast: false);
+                    // No start tag to move: the held insertions of the content are made here, as
+                    // MoveStartTagBefore makes them, when this is the outermost element.
+                    if (_contentInPlaceDepth == 0)
+                        _output.Flush();
                     break;
                 }
-                var content = savedScope.GetWritten();
-                savedScope.Dispose();
+                var content = TakeContent(savedScope);
                 _outputLogicalStart = savedLogicalStart;
 
                 // Build output element name (with prefix if present).
@@ -576,19 +583,22 @@ internal sealed partial class DefaultXsltExecutionContext
                     // of body. Reported by Martin Honnen against 1.3.10
                     // (group-starting-with / group-adjacent in streamable mode).
                     _sink.StartElementClose(false);
-                    _sink.RawText(content);
+                    MoveStartTagBefore(content, elemStartPos);
                     OpenStreamingElement(elemName, CdataTrackingName(elem), startTagLast: content.Length == 0);
                 }
                 else if (content.Length > 0)
                 {
                     _sink.StartElementClose(false);
-                    _sink.RawText(content);
+                    MoveStartTagBefore(content, elemStartPos);
                     _sink.EndElement(elemName);
                 }
                 else
                 {
                     _sink.StartElementClose(true);
                 }
+                // The element begins where its content began, when the start tag was moved there.
+                if (content.Length > 0)
+                    elemStartPos = content.Start;
 
                 // SP-B slice 4: seal the copied element opened before content; children built
                 // natively in document order, and the source element's base URI carried onto

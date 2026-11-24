@@ -10,7 +10,7 @@ public class StringOutputSinkTests
     public void EmitsElementWithAttributeTextAndEnd()
     {
         var sb = new StringBuilder();
-        var sink = new StringOutputSink(sb);
+        var sink = new StringOutputSink(new OutputBuffer(sb));
         sink.StartElementOpen("a");
         sink.Attribute("x", "1&2");
         sink.StartElementClose(selfClose: false);
@@ -23,7 +23,7 @@ public class StringOutputSinkTests
     public void EmitsSelfClosingElementWithNamespace()
     {
         var sb = new StringBuilder();
-        var sink = new StringOutputSink(sb);
+        var sink = new StringOutputSink(new OutputBuffer(sb));
         sink.StartElementOpen("p:a");
         sink.Namespace("p", "urn:x");
         sink.StartElementClose(selfClose: true);
@@ -34,7 +34,7 @@ public class StringOutputSinkTests
     public void UndeclaresDefaultNamespaceWithEmptyUri()
     {
         var sb = new StringBuilder();
-        var sink = new StringOutputSink(sb);
+        var sink = new StringOutputSink(new OutputBuffer(sb));
         sink.StartElementOpen("a");
         sink.Namespace("", "");
         sink.StartElementClose(selfClose: true);
@@ -45,7 +45,7 @@ public class StringOutputSinkTests
     public void EmitsCommentAndProcessingInstruction()
     {
         var sb = new StringBuilder();
-        var sink = new StringOutputSink(sb);
+        var sink = new StringOutputSink(new OutputBuffer(sb));
         sink.Comment("hello");
         sink.ProcessingInstruction("target", "data");
         sink.ProcessingInstruction("target2", "");
@@ -56,7 +56,7 @@ public class StringOutputSinkTests
     public void EmitsRawTextVerbatim()
     {
         var sb = new StringBuilder();
-        var sink = new StringOutputSink(sb);
+        var sink = new StringOutputSink(new OutputBuffer(sb));
         sink.RawText("<raw>&unescaped</raw>");
         Assert.Equal("<raw>&unescaped</raw>", sb.ToString());
     }

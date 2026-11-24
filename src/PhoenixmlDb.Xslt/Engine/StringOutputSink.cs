@@ -11,9 +11,9 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// <see cref="DefaultXsltExecutionContext"/>'s existing static escapers to avoid any
 /// divergence between the direct-append path and the sink path.
 /// </summary>
-internal sealed class StringOutputSink(StringBuilder output) : IOutputSink
+internal sealed class StringOutputSink(OutputBuffer output) : IOutputSink
 {
-    private readonly StringBuilder _output = output;
+    private readonly OutputBuffer _output = output;
 
     public void StartElementOpen(string qName)
     {

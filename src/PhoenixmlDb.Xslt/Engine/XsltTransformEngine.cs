@@ -6916,10 +6916,10 @@ public sealed partial class XsltTransformEngine
     /// </remarks>
     internal struct ScopedOutputBuffer
     {
-        private readonly System.Text.StringBuilder _buffer;
+        private readonly OutputBuffer _buffer;
         private readonly int _savedLength;
 
-        public ScopedOutputBuffer(System.Text.StringBuilder buffer)
+        public ScopedOutputBuffer(OutputBuffer buffer)
         {
             _buffer = buffer;
             _savedLength = buffer.Length;
