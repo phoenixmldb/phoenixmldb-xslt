@@ -143,7 +143,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         // Process use-attribute-sets
-        var attrParts = new StringBuilder();
+        var attrParts = new AttrBuffer();
         await ApplyAttributeSetsAsync(instruction.UseAttributeSets, attrParts).ConfigureAwait(false);
 
         // Process content — attributes and non-attribute content are interleaved
@@ -210,8 +210,10 @@ internal sealed partial class DefaultXsltExecutionContext
             elemNsBindings[""] = "";
         }
 
-        // Use attribute-collection mode flag (push new buffer for nesting support)
+        // Use attribute-collection mode flag (push new buffer for nesting support). The attributes
+        // of the attribute sets come first, as items (S3).
         _collectedAttributesStack.Push(new AttrBuffer());
+        _collectedAttributesStack.Peek().AppendFrom(attrParts);
 
         var savedScope = new XsltTransformEngine.ScopedOutputBuffer(_output);
         var savedLogicalStart = _outputLogicalStart;
@@ -302,10 +304,7 @@ internal sealed partial class DefaultXsltExecutionContext
             var elemPfx = fixupColonIdx > 0 ? name[..fixupColonIdx] : "";
             if (xslNsBindingsForFixup.TryGetValue(elemPfx, out var xslUri) && xslUri != nsUri)
             {
-                var setAttributes = new AttrBuffer();
-                setAttributes.AppendText(attrParts.ToString());
                 var taken = PrefixesTakenOnElement(collectedAttrs, xslNsBindingsForFixup.Keys);
-                taken.UnionWith(PrefixesTakenOnElement(setAttributes, []));
                 fixupNewPrefix = GenerateUniquePrefix(elemPfx, taken);
                 name = $"{fixupNewPrefix}:{name[(fixupColonIdx + 1)..]}";
             }
@@ -364,7 +363,6 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Deduplicate attributes (last-wins)
         var attrs = new Dictionary<string, string>();
-        ParseAttributeString(attrParts.ToString(), attrs);
         CheckAttrGuard(collectedAttrs, "xsl:element");
         ReadCollectedAttributes(collectedAttrs, attrs, name, nsUri);
         DeduplicateByExpandedName(attrs, name);
@@ -1471,6 +1469,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Collect all attributes in a dictionary (last-wins deduplication)
         var attributes = new Dictionary<string, string>();
+        AttrBuffer? attrSetBuffer = null;
 
         // Build set of prefixes in use by the element and its attributes (using aliased prefixes)
         var usedPrefixes = new HashSet<string>();
@@ -1583,9 +1582,9 @@ internal sealed partial class DefaultXsltExecutionContext
         // 1. Apply use-attribute-sets FIRST (lowest priority - can be overridden)
         if (instruction.UseAttributeSets.Count > 0)
         {
-            var attrSetParts = new StringBuilder();
-            await ApplyAttributeSetsAsync(instruction.UseAttributeSets, attrSetParts).ConfigureAwait(false);
-            ParseAttributeString(attrSetParts.ToString(), attributes);
+            // Read after the content, below the literal attributes (S3).
+            attrSetBuffer = new AttrBuffer();
+            await ApplyAttributeSetsAsync(instruction.UseAttributeSets, attrSetBuffer).ConfigureAwait(false);
         }
 
         // 2. Inline attributes (override attribute-set values)
@@ -1721,8 +1720,10 @@ internal sealed partial class DefaultXsltExecutionContext
             var elemNsUri = cdataNsUri ?? "";
             if (elemNsUri.Length > 0 && xslNsBindingsForFixup.TryGetValue(namePrefix, out var xslUri) && xslUri != elemNsUri)
             {
-                var newPfx = GenerateUniquePrefix(namePrefix,
-                    PrefixesTakenOnElement(collectedAttrs, xslNsBindingsForFixup.Keys.Concat(nsBindings.Keys), attributes.Keys));
+                var takenByLre = PrefixesTakenOnElement(collectedAttrs, xslNsBindingsForFixup.Keys.Concat(nsBindings.Keys), attributes.Keys);
+                if (attrSetBuffer is not null)
+                    takenByLre.UnionWith(PrefixesTakenOnElement(attrSetBuffer, []));
+                var newPfx = GenerateUniquePrefix(namePrefix, takenByLre);
                 elemName = $"{newPfx}:{elemLocalName}";
                 // The element's own binding moves to the new prefix; the namespace node's is among
                 // the collected declarations.
@@ -1735,6 +1736,18 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Parse collected attributes and add to dictionary (overriding earlier values). After the
         // element's fixup: an attribute in the element's namespace takes the element's new prefix.
+        // The attributes of the attribute sets have the lowest priority: read from their items
+        // after the element's fixup, with the namespace nodes of the content, which come after them
+        // (S3); then the literal attributes over them.
+        if (attrSetBuffer is { Items.Count: > 0 })
+        {
+            CheckAttrGuard(attrSetBuffer, "literal result element, attribute sets");
+            var fromSets = new Dictionary<string, string>();
+            ReadCollectedAttributes(attrSetBuffer, fromSets, elemName, cdataNsUri, laterBindings: collectedAttrs);
+            foreach (var (literalName, literalValue) in attributes)
+                fromSets[literalName] = literalValue;
+            attributes = fromSets;
+        }
         CheckAttrGuard(collectedAttrs, "literal result element");
         ReadCollectedAttributes(collectedAttrs, attributes, elemName, cdataNsUri);
         // A declaration of the element's new prefix among the collected ones is dropped: the
