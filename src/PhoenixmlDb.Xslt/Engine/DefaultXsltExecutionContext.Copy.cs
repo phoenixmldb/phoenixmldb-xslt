@@ -544,7 +544,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Deduplicate attributes (last-wins) like CreateElementCoreAsync
                 var attrs = new Dictionary<string, string>();
                 CheckAttrGuard(collectedAttrs, "xsl:copy");
-                ParseAttributeString(collectedAttrs.ToString(), attrs);
+                ReadCollectedAttributes(collectedAttrs, attrs, elemName, _nodeStore?.GetNamespaceUri(elem.Namespace));
                 DeduplicateByExpandedName(attrs, elemName);
                 foreach (var (attrName, attrValue) in attrs)
                 {
@@ -730,7 +730,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
                 else
                 {
-                    AppendAttributeTo(target, attrName, attr.Value);
+                    AppendAttributeTo(target, attrName, attr.Value,
+                        attr.Namespace == NamespaceId.None ? null : _nodeStore?.GetNamespaceUri(attr.Namespace));
                 }
                 break;
             }

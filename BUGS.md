@@ -8136,3 +8136,26 @@ default namespace first), for every element; here a copy follows the source stor
 source's), and xsl:copy and xsl:copy-of the same. A separate decision. `BuiltInCopyRuleTests`; tests
 that held `<b></b>` as expected (streamed nesting, strip-space, duplicate attributes, streamed attribute
 patterns) now hold `<b/>`.
+
+### 148. An attribute moved into another namespace when a later namespace node rebound its prefix — fixed (S2, 2026-11-23)
+
+Engine: **XSLT**. On main (2982c90) and before. Found while moving the element ends to the typed attribute items (the typed attribute
+pipeline, step S2). An attribute written before a namespace node (xsl:namespace, a copied namespace node) that binds
+the attribute's prefix to another namespace kept its prefix, and so moved into that namespace:
+`<r><xsl:attribute name="p:a" namespace="u1">1</xsl:attribute><xsl:namespace name="p">u2</xsl:namespace></r>` gave
+`<r xmlns:p="u2" p:a="1"/>`, the attribute in `u2`. The same with xsl:element, xsl:copy and a copied attribute
+(`<xsl:copy-of select="@p:a"/>`), serialized and in a temporary tree. The element ends read the collected attributes
+as text, `p:a="1"`, which has no namespace; the last declaration of `p` decided it. A namespace node never changes
+the name of an attribute (XSLT 3.0 §11.7). Saxon-HE 10.9: `<r xmlns:p="u2" xmlns:p_1="u1" p_1:a="1"/>`.
+
+Now the element ends read the collected items, and an attribute item carries its namespace: an attribute whose
+prefix the element's last declaration binds to another namespace keeps its namespace under a new prefix, declared
+on the element (`<r xmlns:p="u2" xmlns:p_0="u1" p_0:a="1"/>`; the new prefix is the processor's choice). An
+attribute in the namespace of the element, when the element itself got a new prefix, takes the element's prefix.
+`AttributeNamespaceRebindingTests` (expected results: Saxon-HE 10.9's, compared as XML).
+
+Not in this fix (xslt#628): the element side. A namespace node that rebinds the prefix of the element's own name
+is handled for xsl:namespace on xsl:element and on a literal result element whose prefix is excluded, but not for
+a copied namespace node, the default namespace or xsl:copy; and the new prefix of the element is not checked
+against the declarations the element already has (`<xsl:element name="p:v" namespace="u1">` with an attribute
+`p:a` in `u3` and `<xsl:namespace name="p">u2</xsl:namespace>` declares `p_0` twice).

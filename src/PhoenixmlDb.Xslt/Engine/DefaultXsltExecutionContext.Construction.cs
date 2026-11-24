@@ -362,7 +362,7 @@ internal sealed partial class DefaultXsltExecutionContext
         var attrs = new Dictionary<string, string>();
         ParseAttributeString(attrParts.ToString(), attrs);
         CheckAttrGuard(collectedAttrs, "xsl:element");
-        ParseAttributeString(collectedAttrs.ToString(), attrs);
+        ReadCollectedAttributes(collectedAttrs, attrs, name, nsUri);
         DeduplicateByExpandedName(attrs, name);
         foreach (var (attrName, attrValue) in attrs)
         {
@@ -449,6 +449,8 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         // XTDE0860: Prefixed name with no namespace attribute — prefix must be declared
+        // The attribute's namespace URI, for its item in the attributes collected for the element (S2).
+        string? attributeNamespace = null;
         if (instruction.Namespace == null)
         {
             var colonIdx2 = name.IndexOf(':', StringComparison.Ordinal);
@@ -459,6 +461,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 string? prefixNsUri = null;
                 if (prefix != "xml" && !instruction.InScopeNamespaces.TryGetValue(prefix, out prefixNsUri))
                     throw Error($"XTDE0860: The prefix '{prefix}' in the attribute name '{name}' is not declared in any in-scope namespace declaration");
+                attributeNamespace = prefix == "xml" ? "http://www.w3.org/XML/1998/namespace" : prefixNsUri;
                 // Emit namespace declaration for the prefix if not already in scope
                 // Skip when accumulating XDM nodes — the attribute node stores namespace info natively
                 if (_sequenceAccumulator == null && prefix != "xml" && prefixNsUri != null && !IsNamespaceInScope(prefix, prefixNsUri))
@@ -488,6 +491,7 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             if (!string.IsNullOrEmpty(explicitNsUri))
             {
+                attributeNamespace = explicitNsUri;
                 var colonIdx2 = name.IndexOf(':', StringComparison.Ordinal);
                 if (colonIdx2 < 0)
                 {
@@ -721,7 +725,7 @@ internal sealed partial class DefaultXsltExecutionContext
         }
         else
         {
-            AppendAttributeTo(target, name, value);
+            AppendAttributeTo(target, name, value, attributeNamespace);
         }
     }
 
@@ -1623,11 +1627,7 @@ internal sealed partial class DefaultXsltExecutionContext
         // After producing an element node, reset atomic state (nodes break atomic adjacency)
         _lastResultWasAtomic = false;
 
-        // Parse collected attributes and add to dictionary (overriding earlier values)
-        CheckAttrGuard(collectedAttrs, "literal result element");
-        ParseAttributeString(collectedAttrs.ToString(), attributes);
-        DeduplicateByExpandedName(attributes, elemName, prefixToUri);
-
+        string? lreFixupPrefix = null;
         // Namespace fixup: if xsl:namespace redefined the element's prefix to a different URI,
         // either do namespace fixup (if prefix was excluded) or throw XTDE0430 (XSLT 3.0 §11.7)
         if (xslNsBindingsForFixup != null && elemPrefix != null)
@@ -1660,12 +1660,20 @@ internal sealed partial class DefaultXsltExecutionContext
                     // Add new prefix → element namespace to nsBindings; remove old conflicting entry
                     nsBindings.Remove(elemPrefix);
                     nsBindings[newPfx] = elemNsUri;
-                    // Remove the old xmlns:PREFIX from attributes dict — it will be emitted from nsBindings
-                    // The xsl:namespace's binding stays in attributes as xmlns:ORIGINAL_PREFIX
-                    attributes.Remove($"xmlns:{newPfx}"); // Ensure no conflict with new prefix
+                    lreFixupPrefix = newPfx;
                 }
             }
         }
+
+        // Parse collected attributes and add to dictionary (overriding earlier values). After the
+        // element's fixup: an attribute in the element's namespace takes the element's new prefix.
+        CheckAttrGuard(collectedAttrs, "literal result element");
+        ReadCollectedAttributes(collectedAttrs, attributes, elemName, cdataNsUri);
+        // A declaration of the element's new prefix among the collected ones is dropped: the
+        // element's own (nsBindings) is written.
+        if (lreFixupPrefix != null)
+            attributes.Remove($"xmlns:{lreFixupPrefix}");
+        DeduplicateByExpandedName(attributes, elemName, prefixToUri);
 
         // SP-B: when a tree constructor is active, mirror the exact namespace/attribute
         // decisions the string path makes below into typed lists, then build a byte-identical
