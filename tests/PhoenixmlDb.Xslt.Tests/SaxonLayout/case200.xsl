@@ -1,0 +1,5 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xhtml" indent="yes" phx:indent-style="saxon-he-10" cdata-section-elements="p:a" html-version="4.0"/>
+  <xsl:template name="xsl:initial-template"><html xmlns="http://www.w3.org/1999/xhtml"><div xmlns="http://www.w3.org/1999/xhtml" n0="ébx ay&#9;&quot;&#9;xxyzxcz&#9;c&quot; &gt;ac&gt;&#10;"><p:a xmlns:p="urn:p" type3="" v2="&amp;&#10; z&gt;&quot;&lt;&lt;ybxzcz   éé&quot;&#9;"><xsl:text>   </xsl:text><xsl:processing-instruction name="pi2">	 yzé</xsl:processing-instruction></p:a><ITEM xmlns="urn:default"><img id1="&quot;xé" v1="&#9;c&quot;a&gt;&gt;x'&#10;x&quot;y &quot;&gt;&quot;'a&#10;é"><xsl:text>b</xsl:text><xsl:comment></xsl:comment><td n0="&#10;&#9;bcbé "><xsl:comment>a&amp;</xsl:comment><xsl:text>a&gt;zyca</xsl:text></td><xsl:processing-instruction name="pi1">
+"é&gt;"</xsl:processing-instruction></img></ITEM></div></html></xsl:template>
+</xsl:stylesheet>

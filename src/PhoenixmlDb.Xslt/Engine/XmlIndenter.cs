@@ -19,6 +19,8 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
     private readonly StringBuilder _buffer;
     private readonly HashSet<(NamespaceId, string)>? _suppressed;
     private readonly bool _xhtml;
+    // The xhtml method with an html-version of 5.0 or more given: empty elements <br/>, as unindented.
+    private readonly bool _html5;
     private int _depth;
     private bool _mixed;
     // Whitespace outside the document element stops the indentation of what follows it
@@ -31,11 +33,12 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
     // A newline and the indentation of each depth, made once.
     private readonly List<string> _indents = ["\n"];
 
-    public XmlIndenter(XmlWriter xw, StringBuilder buffer, HashSet<QName>? suppressIndentation, bool xhtml)
+    public XmlIndenter(XmlWriter xw, StringBuilder buffer, HashSet<QName>? suppressIndentation, bool xhtml, bool html5 = false)
     {
         _xw = xw;
         _buffer = buffer;
         _xhtml = xhtml;
+        _html5 = xhtml && html5;
         if (suppressIndentation is { Count: > 0 })
         {
             _suppressed = [];
@@ -82,7 +85,7 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
     /// local name).
     /// </summary>
     internal static PhoenixmlDb.XQuery.SaxonXmlIndenter SaxonLayout(XmlWriter xw, StringBuilder buffer,
-        HashSet<QName>? suppressIndentation, bool xhtml)
+        HashSet<QName>? suppressIndentation, bool xhtml, bool html5 = false)
     {
         Func<string, string, bool>? isSuppressed = null;
         if (suppressIndentation is { Count: > 0 })
@@ -90,9 +93,20 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
             var names = new HashSet<(NamespaceId, string)>();
             foreach (var name in suppressIndentation)
                 names.Add((name.Namespace, name.LocalName));
-            isSuppressed = (ns, local) => names.Contains((StylesheetParser.ResolveNamespaceUri(ns), local));
+            if (xhtml)
+            {
+                // The xhtml method: Saxon-HE 10.9 matches a suppress-indentation name by its local
+                // name only, without regard to case or to either namespace (span names p:span and an
+                // XHTML span; q:span names a span in another namespace; SPAN names span).
+                var locals = new HashSet<string>(names.Select(n => n.Item2), StringComparer.OrdinalIgnoreCase);
+                isSuppressed = (_, local) => locals.Contains(local);
+            }
+            else
+                isSuppressed = (ns, local) => names.Contains((StylesheetParser.ResolveNamespaceUri(ns), local));
         }
-        return new PhoenixmlDb.XQuery.SaxonXmlIndenter(xw, buffer, isSuppressed, xhtml);
+        // html5: the xhtml method with an html-version of 5.0 or more given (Saxon-HE 10.9 lays out
+        // one without it as below 5.0): void elements are written <br/>.
+        return new PhoenixmlDb.XQuery.SaxonXmlIndenter(xw, buffer, isSuppressed, xhtml, html5: html5);
     }
 
     /// <summary>Whether <see cref="Node"/> needs the node's value (read by the driver, which may read it asynchronously).</summary>
@@ -191,8 +205,9 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
                 {
                     _xw.WriteEndElement();
                     // XmlWriter always writes "<e />". The XML method writes "<e/>", as the
-                    // unindented output does: indent="yes" changed the empty tags too.
-                    if (!_xhtml)
+                    // unindented output does: indent="yes" changed the empty tags too. So does
+                    // the xhtml method with html-version 5.0.
+                    if (!_xhtml || _html5)
                     {
                         _xw.Flush();
                         var n = _buffer.Length;

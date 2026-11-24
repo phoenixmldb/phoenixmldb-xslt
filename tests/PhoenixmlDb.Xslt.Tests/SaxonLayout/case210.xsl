@@ -1,0 +1,4 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xhtml" indent="yes" phx:indent-style="saxon-he-10" html-version="1.0"/>
+  <xsl:template name="xsl:initial-template"><div xmlns="urn:default" v3="yéé &gt;&gt;&gt;&lt;&#10;zé&amp;&gt;c&gt;'béc" id0="&amp;&lt;é x'cc&gt;&amp;ab bb c&amp; &quot;" v0="caé&amp;a&lt;&#10; &amp;'a"><TD v2="a&#9;b&#9;&amp;a&lt; &lt;&#10;c acy&amp;x&amp;xzyé&amp;xa&quot;c " n2="  x&#9;'xb&lt;cz&amp;&lt;&#10;x&#10;" a-long-attribute-name1="y  '&#10;c&#10;&quot;zbcbza&amp;zébzx&amp;" n1="&gt;&gt;&#9;&lt;&#9;''&quot;b&lt;&#10;&quot;&quot;&#9;'c&#9;&gt;" v3="z&lt;bxzéybax&#9;" id3="xb'&#9;&amp;zccz&#9;y b&#9;&gt;&amp;'b by&lt;byaa&#9;"></TD></div></xsl:template>
+</xsl:stylesheet>

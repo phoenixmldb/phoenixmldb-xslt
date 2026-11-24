@@ -227,7 +227,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
                 _indentInput = new StringBuilder();
                 _toIndent = Channel.CreateBounded<string>(new BoundedChannelOptions(16) { SingleReader = true, SingleWriter = true });
                 _head = ResultWriter.BuildStages(steps, new PendingStage(_indentInput), steps.RedefaultNamespaces);
-                _pump = IndentAsync(steps.SuppressIndentation, method == OutputMethod.Xhtml, steps.IndentStyle, segmenter);
+                _pump = IndentAsync(steps.SuppressIndentation, method == OutputMethod.Xhtml, steps.IndentStyle, steps.Html5, segmenter);
             }
             else
                 _head = ResultWriter.BuildStages(steps, segmenter, steps.RedefaultNamespaces);
@@ -274,7 +274,7 @@ internal sealed class StreamedResultFinalizer : TextWriter
     /// the steps), and a stylesheet cannot write one but with disable-output-escaping, which keeps
     /// the result whole.
     /// </summary>
-    private async Task IndentAsync(HashSet<QName>? suppressIndentation, bool xhtml, IndentStyle indentStyle, ResultWriter.Stage next)
+    private async Task IndentAsync(HashSet<QName>? suppressIndentation, bool xhtml, IndentStyle indentStyle, bool html5, ResultWriter.Stage next)
     {
         await Task.Yield();
         try
@@ -286,8 +286,8 @@ internal sealed class StreamedResultFinalizer : TextWriter
             using (var xw = XmlWriter.Create(sw, XmlIndenter.WriterSettings(streamed: true)))
             {
                 PhoenixmlDb.XQuery.IXmlIndenter indenter = indentStyle == IndentStyle.SaxonHe10
-                    ? XmlIndenter.SaxonLayout(xw, buffer, suppressIndentation, xhtml)
-                    : new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
+                    ? XmlIndenter.SaxonLayout(xw, buffer, suppressIndentation, xhtml, html5)
+                    : new XmlIndenter(xw, buffer, suppressIndentation, xhtml, html5);
                 while (await reader.ReadAsync().ConfigureAwait(false))
                 {
                     var value = XmlIndenter.HasValue(reader.NodeType) ? await reader.GetValueAsync().ConfigureAwait(false) : null;

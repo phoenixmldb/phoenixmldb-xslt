@@ -1,0 +1,1 @@
+<p:section xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" a-long-attribute-name2="&amp;z&gt;az&#xA;&amp;" p:v2="" id3="&#34;">   </p:section>

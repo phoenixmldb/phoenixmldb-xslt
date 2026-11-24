@@ -1,0 +1,7 @@
+<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:phx="https://schemas.phoenixml.dev/2026/functions" xmlns:p="urn:p" xmlns:q="urn:example:q" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" exclude-result-prefixes="phx">
+  <xsl:output method="xhtml" indent="yes" phx:indent-style="saxon-he-10" doctype-system="case.dtd" doctype-public="-//PHX//CASE//EN" suppress-indentation="p:p" html-version="5"/>
+  <xsl:template name="xsl:initial-template"><html xmlns="http://www.w3.org/1999/xhtml"><q:b xmlns:q="urn:example:q" a-long-attribute-name2="&#9;&lt;&lt;b&quot;&lt;"><q:em xmlns:p="urn:p" a-long-attribute-name1="&gt;'bb&amp;bac&#10;bz xécé&amp;" n1="&#9;é&quot;yz&gt;z"><xsl:processing-instruction name="pi0">bb   
+'</xsl:processing-instruction><xsl:comment>&lt;</xsl:comment><xsl:comment>y&amp;</xsl:comment><xsl:processing-instruction name="pi2">a
+"yx	a&gt;</xsl:processing-instruction></q:em><q:style v0="'b&#9;béa'y&gt;'xyc&quot;&quot;x&amp;'&quot; c" type2="a&quot;zx é&quot; &lt;&#10;c&#10;ax&lt;&lt;&#9;'accb&#10;&amp;"><p:p xmlns:p="urn:p" n1="x&#9;cax&amp;éz&quot;&#10;éa&#10;za'a'cééé" q:type0="&#10;&amp; a&gt;   b &quot; c'éaéc'&lt;y&amp;cb&gt;éc "><xsl:text>   </xsl:text><xsl:text>   </xsl:text><xsl:text>   </xsl:text><xsl:processing-instruction name="pi2"> yé&lt;	
+c</xsl:processing-instruction></p:p><xsl:text>   </xsl:text><xsl:text>&lt;&gt;'c&gt;&lt;cxa	a&amp;</xsl:text><xsl:text>   </xsl:text></q:style></q:b></html></xsl:template>
+</xsl:stylesheet>

@@ -1,0 +1,3 @@
+<!DOCTYPE p
+  SYSTEM "case.dtd">
+<p xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" id2="zéb&gt;'a&lt;&lt;y&#x9;y&#xA;&lt;&#x9;bz" type3="a  é&#34;zx&amp;z'&amp;&#x9;&gt;&amp;y&amp;&gt;&#x9;&#xA;x&#34;&amp;y&lt;&gt;" a-long-attribute-name0="&amp; ''&#x9;cab 'c'x a&amp;&lt;a &#xA;c &lt;acy" type1="&#x9;y x&amp;" v1="c&amp;&amp;é&lt; &#xA;b " n1="&lt;&gt;&gt;y&#34;zcc &#xA;&#x9;c&lt; &lt;&#34;"></p>

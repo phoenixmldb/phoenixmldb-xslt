@@ -10,7 +10,8 @@ script with the Saxon-HE 10.9 jar to write it. The cases are fixed by the seed.
 Cases 0-119 use generic element names and mostly the xml method. Cases 120 and up use the xhtml method
 and HTML element names (inline, block, formatted, void, also in upper case and in other namespaces),
 whose layout depends on the name. They come after the first 120 in the same random stream, so adding
-them does not change the first 120.
+them does not change the first 120. Cases 180 and up also set html-version (5, 5.0, 4.0 or 1.0) and
+sometimes put the tree in an html element in the XHTML namespace; the first 180 draw nothing more.
 
     python3 -I scripts/saxon-layout-cases.py <java> <Saxon-HE-10.9.jar> <out-dir> [count]
 """
@@ -28,6 +29,7 @@ XHTML_NAMES = ["div", "p", "span", "b", "a", "em", "pre", "section", "td", "li",
                "style", "br", "img", "item"]
 XHTML_NS = "http://www.w3.org/1999/xhtml"
 FIRST_XHTML_CASE = 120
+FIRST_HTML_VERSION_CASE = 180
 TEXT_CHARS = "abc xyz<>&\"'\t\n" + "é"
 
 
@@ -123,6 +125,10 @@ class Case:
             opts.append(f'cdata-section-elements="{" ".join(sorted(self.cdata))}"')
         if self.suppress:
             opts.append(f'suppress-indentation="{" ".join(sorted(self.suppress))}"')
+        if self.index >= FIRST_HTML_VERSION_CASE:
+            opts.append(f'html-version="{rng.choice(["5", "5", "5", "5.0", "4.0", "1.0"])}"')
+            if rng.random() < 0.5:
+                body = f'<html xmlns="{XHTML_NS}">{body}</html>'
         ns = "".join(f' xmlns:{p}="{uri}"' for p, uri in NAMESPACES)
         return (f'<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"'
                 f' xmlns:phx="{PHX}"{ns} exclude-result-prefixes="phx">\n'
@@ -133,7 +139,7 @@ class Case:
 
 def main():
     java, jar, out = sys.argv[1], sys.argv[2], Path(sys.argv[3])
-    count = int(sys.argv[4]) if len(sys.argv) > 4 else 180
+    count = int(sys.argv[4]) if len(sys.argv) > 4 else 240
     out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(499)
     for i in range(count):

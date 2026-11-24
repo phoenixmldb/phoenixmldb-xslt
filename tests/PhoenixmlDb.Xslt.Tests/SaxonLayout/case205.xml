@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html
+  PUBLIC "-//PHX//CASE//EN" "case.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q">
+   <pre><textarea n0="a&lt;&gt;z&lt;ax &amp; bazay&#x9;&amp; &#34;zaa&amp;" type1="" id1="a&amp;'ébc&#34;cybx'&#x9;&gt;&#xA;x&amp;cé&#34;&#xA;cc" type3="a&#34;b&#xA; &#34;'&#34;&#x9;&gt;a&lt;&amp;é&#34;b&#34;xcx y&amp;z'b&#x9;&lt;z" v3="'y&lt;&amp;ééé&#x9; &#x9;&amp;&#34;&#x9;caécc&gt;y&amp;cé'" id3="éb &#x9;zé">ac 
+&gt;a<p type1="&amp;x&gt;é&amp;y&#x9;&#x9;&#xA;é" a-long-attribute-name3="&#xA;&lt;c&gt;aé c&#x9;é'b&#34;&#xA;&#34;c&amp;'zx&amp;é'&#x9;&#xA;" type3="&lt;éxa" id3="&#x9;ééz"><a type2="z&amp;&lt;y''y&#x9;&gt;&#34;z &gt;é" a-long-attribute-name2="aaa&#34;bc&#x9;&lt;&lt;&#xA;&#34;b&amp;xcay&lt;&#x9;aca&amp;'&gt;&gt;&lt;&#x9;" v3="éx&gt;&lt;b&gt;c &amp;&#34;&#34;b &amp;éx&gt;c"><textarea p:a-long-attribute-name3="c&lt;é&#xA;ébé&amp;éx x&#34; z éyx" p:type1="xy&lt;yb &lt;éx&#34;'&lt;zz&#xA;acz&gt;bécé&#34;&lt;"></textarea></a>b&gt;&lt;&amp; c	<?pi2 b<	y?><?pi1 c"b "a?></p></textarea><p v1="&lt;&lt;c&amp;&#x9;&#xA;" v0="&#xA;&#x9;az&#34;&lt;&amp;y&#xA;&#34;xyé" id1="é bzé&gt;c&lt;b&#34;b'&#xA;&#34;&lt;&#34;&gt;" v3="z&lt;'x&lt;&#34;a&lt;&lt;c&#x9;ba&lt;béc" a-long-attribute-name2="&lt; x&#xA;cc &#xA;&#xA;&gt;'b &lt;aé&lt; é"></p>
+   </pre>
+</html>

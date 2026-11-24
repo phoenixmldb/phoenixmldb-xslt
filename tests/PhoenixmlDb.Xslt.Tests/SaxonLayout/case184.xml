@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q">
+   <li type3=" &#34;&lt;&amp;y&#xA;z a" long-prefix:type2="&#xA;" a-long-attribute-name1="&#34;b&#xA;&#xA;'zéaabb é x'a&#34;ac"><b a-long-attribute-name3="'&#xA;" v3="xy&#xA;&lt;&#x9;&#xA;''&amp;é&gt;'&lt;zcabé&#34;&amp;&#x9;&lt;&amp;xx&#x9;xé ">
+         bb&amp;<!--<a>c>	y	b--></b></li>
+</html>

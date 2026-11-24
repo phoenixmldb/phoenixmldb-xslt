@@ -1,0 +1,1 @@
+<span xmlns:long-prefix="urn:example:a-much-longer-namespace-uri" xmlns:p="urn:p" xmlns:q="urn:example:q" id2="bc&#xA;'" id1="&lt;&gt;&#x9; b&#34;z''" v0="&amp;b&lt;z&#34;&amp;y&#x9;&lt;&amp; b &#34;&lt;" p:a-long-attribute-name1="'&lt;z&amp;'" a-long-attribute-name1="&#x9;&amp;&lt;&#34;bab&#x9;&#xA;&#x9;&amp;&lt;c &#xA;&#x9;&amp;b&#34;zc&#xA;"></span>

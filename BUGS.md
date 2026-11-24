@@ -8235,3 +8235,22 @@ after its content, below its literal attributes, with the content's namespace no
 attributes, the literal ones and the content's is unchanged. With this, no element end reads attributes from text;
 the text stays for the guard (`PXDB_ATTR_GUARD`) until S4. `AttributeSetNamespaceTests` (expected results: Saxon-HE
 10.9's).
+
+### 152. Unindented xhtml output is not byte-identical to Saxon-HE 10.9 — recorded, no fix (2026-11-24)
+
+Engine: **XSLT**. Found while generating the `phx:indent-style="saxon-he-10"` layout cases with an html-version
+(cases 180-239). Without indentation (or without the saxon-he-10 layout) the xhtml method writes the same tree as
+Saxon-HE 10.9, but not the same bytes:
+
+| | Saxon-HE 10.9 | this processor |
+|---|---|---|
+| `doctype-system` | a line break before the DOCTYPE, its identifier on the next line: `\n<!DOCTYPE html\n  SYSTEM "case.dtd">` | `<!DOCTYPE html SYSTEM "case.dtd">` on one line, right after the declaration |
+| namespace declarations of an element | the default one first, then sorted by prefix | the default one first, then in the order of the data model |
+| `"` in an attribute value | `&#34;` | `&quot;` |
+| html-version 5: `<!DOCTYPE html>` | the document element right after it | a line break after it |
+| a document element outside the XHTML namespace: an empty XHTML element in it | `<div></div>` | `<div/>` (the xml rules, as for such a document element before) |
+
+The tree is the same; only the serialized form differs, and Serialization 3.1 leaves each choice to the processor.
+The saxon-he-10 layout writes Saxon's form (it re-reads the result and writes the declaration, the DOCTYPE, the
+namespace declarations and the attributes itself). Ruled to stay as it is (2026-11-24): no fix. (A void element
+with html-version 5 was in this list too; it is written `<br/>` now, as Saxon and the XQuery serializer write it.)
