@@ -6318,8 +6318,12 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// </summary>
     private static string EscapeControlCharsAsNcr(string escaped)
     {
+        // Most values have none: one vectorized search, and the value as it is.
+        var first = escaped.AsSpan().IndexOfAny(XmlIndenter.References);
+        if (first < 0)
+            return escaped;
         StringBuilder? sb = null;
-        for (var i = 0; i < escaped.Length; i++)
+        for (var i = first; i < escaped.Length; i++)
         {
             var c = escaped[i];
             if (c is '\r' or '\u2028' || (c >= '\u007F' && c <= '\u009F'))

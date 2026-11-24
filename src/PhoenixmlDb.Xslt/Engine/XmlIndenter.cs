@@ -107,14 +107,25 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
     /// </summary>
     internal static bool MustBeReference(char c) => c is '\r' or '\u2028' || (c >= '\u007F' && c <= '\u009F');
 
+    /// <summary>The characters of <see cref="MustBeReference"/>, for a vectorized search.</summary>
+    internal static readonly System.Buffers.SearchValues<char> References = System.Buffers.SearchValues.Create(
+        "\r\u2028\u007F\u0080\u0081\u0082\u0083\u0084\u0085\u0086\u0087\u0088\u0089\u008A\u008B\u008C\u008D\u008E\u008F"
+        + "\u0090\u0091\u0092\u0093\u0094\u0095\u0096\u0097\u0098\u0099\u009A\u009B\u009C\u009D\u009E\u009F");
+
     /// <summary>
     /// Writes the value of a text or attribute node, the characters of <see cref="MustBeReference"/>
     /// as character references. A value without them is written as before, in one call.
     /// </summary>
     private void WriteEscaped(string value)
     {
+        var first = value.AsSpan().IndexOfAny(References);
+        if (first < 0)
+        {
+            _xw.WriteString(value);
+            return;
+        }
         var start = 0;
-        for (var i = 0; i < value.Length; i++)
+        for (var i = first; i < value.Length; i++)
         {
             if (!MustBeReference(value[i]))
                 continue;
