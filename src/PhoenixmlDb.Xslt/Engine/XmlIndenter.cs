@@ -82,7 +82,7 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
     /// local name).
     /// </summary>
     internal static PhoenixmlDb.XQuery.SaxonXmlIndenter SaxonLayout(XmlWriter xw, StringBuilder buffer,
-        HashSet<QName>? suppressIndentation, bool xhtml)
+        HashSet<QName>? suppressIndentation, bool xhtml, bool html5 = false)
     {
         Func<string, string, bool>? isSuppressed = null;
         if (suppressIndentation is { Count: > 0 })
@@ -90,9 +90,20 @@ internal sealed class XmlIndenter : PhoenixmlDb.XQuery.IXmlIndenter
             var names = new HashSet<(NamespaceId, string)>();
             foreach (var name in suppressIndentation)
                 names.Add((name.Namespace, name.LocalName));
-            isSuppressed = (ns, local) => names.Contains((StylesheetParser.ResolveNamespaceUri(ns), local));
+            if (xhtml)
+            {
+                // The xhtml method: Saxon-HE 10.9 matches a suppress-indentation name by its local
+                // name only, without regard to case or to either namespace (span names p:span and an
+                // XHTML span; q:span names a span in another namespace; SPAN names span).
+                var locals = new HashSet<string>(names.Select(n => n.Item2), StringComparer.OrdinalIgnoreCase);
+                isSuppressed = (_, local) => locals.Contains(local);
+            }
+            else
+                isSuppressed = (ns, local) => names.Contains((StylesheetParser.ResolveNamespaceUri(ns), local));
         }
-        return new PhoenixmlDb.XQuery.SaxonXmlIndenter(xw, buffer, isSuppressed, xhtml);
+        // html5: the xhtml method with an html-version of 5.0 or more given (Saxon-HE 10.9 lays out
+        // one without it as below 5.0): void elements are written <br/>.
+        return new PhoenixmlDb.XQuery.SaxonXmlIndenter(xw, buffer, isSuppressed, xhtml, html5: html5);
     }
 
     /// <summary>Whether <see cref="Node"/> needs the node's value (read by the driver, which may read it asynchronously).</summary>

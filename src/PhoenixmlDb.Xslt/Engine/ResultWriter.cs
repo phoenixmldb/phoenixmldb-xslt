@@ -29,7 +29,8 @@ internal static class ResultWriter
         XsltOutput? ContentTypeMeta,
         bool Indent,
         HashSet<QName>? SuppressIndentation,
-        IndentStyle IndentStyle = IndentStyle.Default);
+        IndentStyle IndentStyle = IndentStyle.Default,
+        bool Html5 = false);
 
     internal static string Write(string markup, in Steps steps) => Write(markup, steps, chunk: 0);
 
@@ -41,7 +42,7 @@ internal static class ResultWriter
         var redefault = steps.RedefaultNamespaces && markup.Contains("xmlns:", StringComparison.Ordinal);
 
         if (!redefault && !steps.HtmlForms && steps.ContentTypeMeta is null && !htmlIndent)
-            return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(markup, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml, steps.IndentStyle) : markup;
+            return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(markup, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml, steps.IndentStyle, steps.Html5) : markup;
 
         var sink = new Sink();
         Stage C(Stage stage) => chunk > 0 ? new Chunker(stage, chunk) : stage;
@@ -52,7 +53,7 @@ internal static class ResultWriter
         var text = sink.ToString();
         // XmlWriter's indentation reads the text the other steps wrote: an XmlReader needs it
         // whole, and when it is not well-formed the result is that text, unindented.
-        return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(text, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml, steps.IndentStyle) : text;
+        return xmlIndent ? XsltTransformEngine.ApplyXmlIndentation(text, steps.SuppressIndentation, steps.Method == OutputMethod.Xhtml, steps.IndentStyle, steps.Html5) : text;
     }
 
     /// <summary>
@@ -79,7 +80,7 @@ internal static class ResultWriter
         if (steps.HtmlForms)
             next = C(new HtmlFormsStage(next, steps.Method == OutputMethod.Xhtml));
         if (redefault)
-            next = C(new RedefaultNamespacesStage(next));
+            next = C(new RedefaultNamespacesStage(next, steps.Html5));
         return next;
     }
 
@@ -161,9 +162,12 @@ internal static class ResultWriter
     /// namespaces are dropped, and one is declared again for a prefixed attribute that needs it
     /// (Serialization 3.0, XHTML output method; W3C output-0211/0221/0225/0226). It reads the
     /// markup a token at a time, keeping an unfinished one for the next piece, so it also serves a
-    /// result that is written while the transformation streams (xslt#575).
+    /// result that is written while the transformation streams (xslt#575). With an html-version of
+    /// 5.0 or more given (<paramref name="html5"/>), those namespaces are also dropped from an element
+    /// outside them, the default namespace too, as Saxon-HE 10.9 writes it: a prefixed element inside a
+    /// normalized XHTML element gets <c>xmlns=""</c>, and its XHTML children declare the namespace again.
     /// </summary>
-    private sealed class RedefaultNamespacesStage(Stage next) : BufferedStage(next)
+    private sealed class RedefaultNamespacesStage(Stage next, bool html5 = false) : BufferedStage(next)
     {
         private readonly List<Dictionary<string, string>> _inputScopes = new();
         private readonly List<string> _outDefaults = new();
@@ -396,6 +400,20 @@ internal static class ResultWriter
                         newDefault = wantUri;
                     }
                 }
+                else if (html5)
+                {
+                    // A prefixed element outside the XHTML, SVG and MathML namespaces: the default
+                    // namespace of its input scope, without those, is its default in the output. Its own
+                    // declaration of the default namespace is written here, not as it was.
+                    string own = InputLookup("");
+                    if (DefaultXsltExecutionContext.Html5ContentNamespaces.Contains(own))
+                        own = "";
+                    if (own != curDefault)
+                    {
+                        addDefaultDecl = own;
+                        newDefault = own;
+                    }
+                }
 
                 var emittedPrefixDecls = new Dictionary<string, string>(StringComparer.Ordinal);
                 var neededAttrDecls = new List<(string prefix, string uri)>();
@@ -404,6 +422,11 @@ internal static class ResultWriter
                 {
                     if (name == "xmlns")
                     {
+                        // html-version 5: a prefixed element's default namespace is written above;
+                        // an unprefixed element's declaration that repeats the default in force is
+                        // left out, as Saxon-HE 10.9 writes no redundant declaration.
+                        if (html5 && (!unprefixedOut || localDecls[""] == curDefault))
+                            continue;
                         attrsBuilder.Append(ws).Append(name).Append(eqValue);
                         continue;
                     }
