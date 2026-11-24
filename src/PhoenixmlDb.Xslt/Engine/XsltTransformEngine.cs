@@ -1005,14 +1005,19 @@ public sealed partial class XsltTransformEngine
         var html = outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml && !foreignXhtmlRoot;
         var effectiveIndent = outputDecl.Indent
             ?? (outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml);
+        // With an html-version of 5.0 or more given, prefix normalization also applies under a document
+        // element outside the XHTML namespace, as Saxon-HE 10.9 does it (the XHTML namespace dropped
+        // from that element, its XHTML descendants declaring it again).
+        var html5 = outputDecl.EffectiveMethod == OutputMethod.Xhtml && Html5DoctypeApplies(outputDecl);
         var steps = new ResultWriter.Steps(
             outputDecl.EffectiveMethod,
-            RedefaultNamespaces: html,
+            RedefaultNamespaces: html || html5,
             HtmlForms: html,
             ContentTypeMeta: html && outputDecl.IncludeContentType != false ? outputDecl : null,
             Indent: effectiveIndent && outputDecl.EffectiveMethod is OutputMethod.Xml or OutputMethod.Xhtml or OutputMethod.Html,
             outputDecl.SuppressIndentation,
-            outputDecl.IndentStyle);
+            outputDecl.IndentStyle,
+            Html5: html5);
         return steps;
     }
 
@@ -1165,7 +1170,11 @@ public sealed partial class XsltTransformEngine
                  outputDecl.EffectiveMethod is OutputMethod.Html or OutputMethod.Xhtml &&
                  Html5DoctypeApplies(outputDecl))
         {
-            output = InsertHtml5Doctype(output);
+            // The saxon-he-10 layout writes the document element right after it, as Saxon-HE 10.9
+            // does; otherwise it is on a line of its own.
+            var saxonLayout = outputDecl is { IndentStyle: IndentStyle.SaxonHe10, EffectiveMethod: OutputMethod.Xml or OutputMethod.Xhtml }
+                && (outputDecl.Indent ?? outputDecl.EffectiveMethod == OutputMethod.Xhtml);
+            output = InsertHtml5Doctype(output, newline: !saxonLayout);
         }
 
         // Prepend UTF-8 BOM when byte-order-mark="yes"
@@ -2684,7 +2693,7 @@ public sealed partial class XsltTransformEngine
     /// instructions. The doctype name is the serialized qualified name of the document element
     /// (case-preserving) so "&lt;HTML&gt;" yields "&lt;!DOCTYPE HTML&gt;" per the serialization spec.
     /// </summary>
-    private static string InsertHtml5Doctype(string output)
+    private static string InsertHtml5Doctype(string output, bool newline = true)
     {
         var searchStart = 0;
         if (output.StartsWith("<?xml", StringComparison.Ordinal))
@@ -2722,7 +2731,7 @@ public sealed partial class XsltTransformEngine
         if (!localName.Equals("html", StringComparison.OrdinalIgnoreCase))
             return output;
 
-        return output[..elemStart] + $"<!DOCTYPE {rootName}>\n" + output[elemStart..];
+        return output[..elemStart] + $"<!DOCTYPE {rootName}>" + (newline ? "\n" : "") + output[elemStart..];
     }
 
     /// <summary>
@@ -3171,8 +3180,9 @@ public sealed partial class XsltTransformEngine
     /// it does unindented and as Saxon does.
     /// </param>
     /// <param name="indentStyle">The layout: <c>phx:indent-style</c> (xslt#499).</param>
+    /// <param name="html5">The xhtml method with an html-version of 5.0 or more given: the saxon-he-10 layout writes void elements <c>&lt;br/&gt;</c>.</param>
     internal static string ApplyXmlIndentation(string output, HashSet<QName>? suppressIndentation = null, bool xhtml = false,
-        IndentStyle indentStyle = IndentStyle.Default)
+        IndentStyle indentStyle = IndentStyle.Default, bool html5 = false)
     {
         // The XML declaration is written as it is, then a newline, and the rest is read from
         // after it and the line ends that follow it. The text is not copied to do so: the
@@ -3212,7 +3222,7 @@ public sealed partial class XsltTransformEngine
             using var reader = XmlReader.Create(input, XmlIndenter.ReaderSettings(streamed: false));
             using var xw = XmlWriter.Create(sw, XmlIndenter.WriterSettings(streamed: false));
             PhoenixmlDb.XQuery.IXmlIndenter indenter = indentStyle == IndentStyle.SaxonHe10
-                ? XmlIndenter.SaxonLayout(xw, buffer, suppressIndentation, xhtml)
+                ? XmlIndenter.SaxonLayout(xw, buffer, suppressIndentation, xhtml, html5)
                 : new XmlIndenter(xw, buffer, suppressIndentation, xhtml);
             while (reader.Read())
                 indenter.Node(reader, XmlIndenter.HasValue(reader.NodeType) ? reader.Value : null);
