@@ -8247,6 +8247,8 @@ Saxon-HE 10.9, but not the same bytes:
 | `doctype-system` | a line break before the DOCTYPE, its identifier on the next line: `\n<!DOCTYPE html\n  SYSTEM "case.dtd">` | `<!DOCTYPE html SYSTEM "case.dtd">` on one line, right after the declaration |
 | namespace declarations of an element | the default one first, then sorted by prefix | the default one first, then in the order of the data model |
 | `"` in an attribute value | `&#34;` | `&quot;` |
+| html-version 5: `<!DOCTYPE html>` | the document element right after it | a line break after it |
+| html-version 5: a void element | `<br/>` | `<br />` (the `<br/>` ruling of 2026-11-24 was for the XQuery serializer) |
 
 The tree is the same; only the serialized form differs, and Serialization 3.1 leaves each choice to the processor.
 The saxon-he-10 layout writes Saxon's form (it re-reads the result and writes the declaration, the DOCTYPE, the
