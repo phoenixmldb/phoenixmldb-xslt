@@ -70,8 +70,8 @@ public sealed class ExternalDocumentEntityLimitTests : IDisposable
     {
         var run = () => Run(body.Replace("{0}", FileUri("over.xml"), StringComparison.Ordinal));
 
-        // What each path raises for a document it cannot read: FODC0002 (fn:doc), FODC0005
-        // (document()), FODC0006 (fn:parse-xml); the reader's own message, as for the principal
+        // What each path raises for a document it cannot read: FODC0002 (fn:doc and document()),
+        // FODC0006 (fn:parse-xml); the reader's own message, as for the principal
         // source (xsl:source-document, fn:transform's source-location).
         var error = (await run.Should().ThrowAsync<Exception>()).Which;
         var message = error switch
@@ -83,7 +83,7 @@ public sealed class ExternalDocumentEntityLimitTests : IDisposable
         var expected = path switch
         {
             "doc" => "FODC0002",
-            "document" => "FODC0005",
+            "document" => "FODC0002",
             "parse-xml" => "FODC0006",
             _ => "MaxCharactersFromEntities",
         };
