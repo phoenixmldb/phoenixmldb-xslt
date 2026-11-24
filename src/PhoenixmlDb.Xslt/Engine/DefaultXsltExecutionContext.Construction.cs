@@ -363,7 +363,6 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Deduplicate attributes (last-wins)
         var attrs = new Dictionary<string, string>();
-        CheckAttrGuard(collectedAttrs, "xsl:element");
         ReadCollectedAttributes(collectedAttrs, attrs, name, nsUri);
         DeduplicateByExpandedName(attrs, name);
         foreach (var (attrName, attrValue) in attrs)
@@ -468,8 +467,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Skip when accumulating XDM nodes — the attribute node stores namespace info natively
                 if (_sequenceAccumulator == null && prefix != "xml" && prefixNsUri != null && !IsNamespaceInScope(prefix, prefixNsUri))
                 {
-                    var target2 = _attributeCollecting ? _collectedAttributes! : _output;
-                    AppendNamespaceDeclarationTo(target2, prefix, prefixNsUri);
+                    WriteNamespaceDeclaration(prefix, prefixNsUri);
                     if (_outputNsScopes.Count > 0)
                         _outputNsScopes.Peek()[prefix] = prefixNsUri;
                 }
@@ -529,8 +527,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
                     if (!IsNamespaceInScope(attrPrefix, explicitNsUri))
                     {
-                        var target2 = _attributeCollecting ? _collectedAttributes! : _output;
-                        AppendNamespaceDeclarationTo(target2, attrPrefix, explicitNsUri);
+                        WriteNamespaceDeclaration(attrPrefix, explicitNsUri);
                         // Register in the current scope so child elements won't re-emit it
                         if (_outputNsScopes.Count > 0)
                             _outputNsScopes.Peek()[attrPrefix] = explicitNsUri;
@@ -720,15 +717,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 _tcAttributeAnnotations?.Remove(key);
         }
 
-        var target = _attributeCollecting ? _collectedAttributes! : _output;
-        if (target == _output)
-        {
-            _sink.Attribute(name, value);
-        }
-        else
-        {
-            AppendAttributeTo(target, name, value, attributeNamespace);
-        }
+        WriteAttribute(name, value, attributeNamespace);
     }
 
 
@@ -951,8 +940,6 @@ internal sealed partial class DefaultXsltExecutionContext
         // exclude-result-prefixes was set (→ namespace fixup) or not (→ XTDE0430).
 
         // Namespace declarations should appear in the element's start tag,
-        // so write to _collectedAttributes when in attribute collection mode
-        var target = _attributeCollecting ? _collectedAttributes! : _output;
 
         // Adding a namespace node for a (prefix, uri) the element under construction already
         // has is a no-op, not a duplicate declaration: XTDE0430 covers only the case where the
@@ -981,7 +968,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 return;
         }
 
-        AppendNamespaceDeclarationTo(target, prefix, uri);
+        WriteNamespaceDeclaration(prefix, uri);
         // In force for the element's content, which is written before the element's start tag:
         // a child in the namespace the prefix had before declares it again (xslt#628).
         if (_attributeCollecting && _outputNsScopes.Count > 0)
@@ -1390,62 +1377,47 @@ internal sealed partial class DefaultXsltExecutionContext
     }
 
 
-    private async ValueTask CreateLiteralElementCoreAsync(XsltLiteralResultElement instruction)
+    /// <summary>
+    /// What a literal result element gives regardless of the context it runs in (the typed
+    /// attribute pipeline, S4): its name after namespace aliasing, the namespace nodes it copies
+    /// from the stylesheet (after exclusion and aliasing), the names of its literal attributes, and
+    /// the namespace of its name for cdata-section-elements. Built once per instruction; it was
+    /// built on every evaluation.
+    /// </summary>
+    private sealed class LrePlan
     {
-        // Inside attribute/comment/PI content, suppress element tags and pass through
-        // only text content (atomization per XSLT spec 5.7.2)
-        if (_textContentDepth > 0)
-        {
-            // When collecting simple content items, atomized elements are separate items
-            if (_collectTextAsSequenceItems && _sequenceAccumulator != null && _serializingElementDepth == 0)
-            {
-                // Slice and truncate from the current scope's base, as xsl:element does: the
-                // whole buffer took the text written before the comment or PI (bug-0305).
-                var pendingBase = Math.Clamp(_outputLogicalStart, 0, _output.Length);
-                var pending = _output.ToString(pendingBase, _output.Length - pendingBase);
-                if (pending.Length > 0)
-                {
-                    AppendToSeqAccumulator(new Xdm.TextNodeItem(pending));
-                    _output.Length = pendingBase;
-                }
-                _collectTextAsSequenceItems = false;
-                try
-                {
-                    await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
-                }
-                finally
-                {
-                    _collectTextAsSequenceItems = true;
-                }
-                var elementBase = Math.Clamp(_outputLogicalStart, 0, _output.Length);
-                var elementText = _output.ToString(elementBase, _output.Length - elementBase);
-                _output.Length = elementBase;
-                if (elementText.Length > 0)
-                    AppendToSeqAccumulator(elementText);
-                return;
-            }
-            // Simple content construction: space between items from different nodes
-            // (only for comment/PI content; attribute content uses empty-string separator)
-            if (_attributeContentDepth == 0 && _output.Length > 0)
-                _sink.RawText(" ");
-            await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
-            if (_attributeContentDepth == 0)
-                _simpleContentLastWasNode = true;
-            return;
-        }
+        public required Dictionary<string, string> PrefixToUri { get; init; }
+        public required string? ElemPrefix { get; init; }
+        public required string ElemName { get; init; }
+        public required KeyValuePair<string, string>[] NsBindings { get; init; }
+        public required HashSet<string> CopiedPrefixes { get; init; }
+        public required string[] AttributeNames { get; init; }
+        public required string? CdataNsUri { get; init; }
+        public required NamespaceId CdataNsId { get; init; }
+    }
 
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<XsltLiteralResultElement, LrePlan> s_lrePlans = new();
+
+    private LrePlan GetLrePlan(XsltLiteralResultElement instruction,
+        Dictionary<string, (string ResultUri, string ResultPrefix)> nsAliases)
+        => s_lrePlans.TryGetValue(instruction, out var plan) ? plan : CreateLrePlan(instruction, nsAliases);
+
+    // Only a miss allocates (the closure over the new plan).
+    private LrePlan CreateLrePlan(XsltLiteralResultElement instruction,
+        Dictionary<string, (string ResultUri, string ResultPrefix)> nsAliases)
+    {
+        var plan = BuildLrePlan(instruction, nsAliases);
+        return s_lrePlans.GetValue(instruction, _ => plan);
+    }
+
+    private LrePlan BuildLrePlan(XsltLiteralResultElement instruction,
+        Dictionary<string, (string ResultUri, string ResultPrefix)> nsAliases)
+    {
         // Build a prefix→URI map from the instruction's namespace declarations for alias resolution
         var prefixToUri = new Dictionary<string, string>();
         foreach (var (p, u) in instruction.NamespaceDeclarations)
             prefixToUri[p] = u;
 
-        // xsl:namespace-alias is LOCAL to its declaring package (XSLT 3.0 §3.6.7 / §11.1.2):
-        // it rewrites only literal result elements produced by code in the SAME package.
-        // A literal element constructed while executing a used package's component must be
-        // aliased by THAT package's declarations, not the principal's (use-package-103 /
-        // use-package-108b). Non-package stylesheets are unaffected: CurrentComponentPackage
-        // is null for principal-owned code, so the principal's merged map is used as before.
-        var nsAliases = CurrentComponentPackage()?.NamespaceAliases ?? _stylesheet.NamespaceAliases;
 
         // Apply namespace aliases to element name
         var elemPrefix = instruction.Name.Prefix;
@@ -1467,9 +1439,6 @@ internal sealed partial class DefaultXsltExecutionContext
             ? $"{elemPrefix}:{elemLocalName}"
             : elemLocalName;
 
-        // Collect all attributes in a dictionary (last-wins deduplication)
-        var attributes = new Dictionary<string, string>();
-        AttrBuffer? attrSetBuffer = null;
 
         // Build set of prefixes in use by the element and its attributes (using aliased prefixes)
         var usedPrefixes = new HashSet<string>();
@@ -1572,6 +1541,111 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         }
 
+        // The names of the literal attributes, their prefixes aliased as the element's.
+        var attributeNames = new string[instruction.Attributes.Count];
+        var attributeIndex = 0;
+        foreach (var (name, _) in instruction.Attributes)
+        {
+            var attrPrefix = name.Prefix;
+            if (attrPrefix != null && prefixToUri.TryGetValue(attrPrefix, out var attrNsUri)
+                && nsAliases.TryGetValue(attrNsUri, out var attrAlias))
+            {
+                attrPrefix = string.IsNullOrEmpty(attrAlias.ResultPrefix) ? null : attrAlias.ResultPrefix;
+            }
+            attributeNames[attributeIndex++] = attrPrefix != null
+                ? $"{attrPrefix}:{name.LocalName}"
+                : name.LocalName;
+        }
+
+        // Track element name (with its EXPANDED namespace) for CDATA section serialization.
+        // instruction.Name only carries the source prefix — its NamespaceId is unresolved — so
+        // resolve the element's serialized namespace URI (applying any namespace-alias) and intern
+        // it, giving cdata-section-elements a correct expanded-name comparison. (decl/output-0138.)
+        var cdataNsUri = instruction.SourceNamespaceName;
+        if (nsAliases.Count > 0 && !string.IsNullOrEmpty(cdataNsUri)
+            && nsAliases.TryGetValue(cdataNsUri, out var cdataAlias))
+            cdataNsUri = cdataAlias.ResultUri;
+        var cdataNsId = string.IsNullOrEmpty(cdataNsUri)
+            ? NamespaceId.None
+            : StylesheetParser.ResolveNamespaceUri(cdataNsUri);
+
+        return new LrePlan
+        {
+            PrefixToUri = prefixToUri,
+            ElemPrefix = elemPrefix,
+            ElemName = elemName,
+            NsBindings = nsBindings.ToArray(),
+            CopiedPrefixes = lreCopiedPrefixes,
+            AttributeNames = attributeNames,
+            CdataNsUri = cdataNsUri,
+            CdataNsId = cdataNsId,
+        };
+    }
+
+    private async ValueTask CreateLiteralElementCoreAsync(XsltLiteralResultElement instruction)
+    {
+        // Inside attribute/comment/PI content, suppress element tags and pass through
+        // only text content (atomization per XSLT spec 5.7.2)
+        if (_textContentDepth > 0)
+        {
+            // When collecting simple content items, atomized elements are separate items
+            if (_collectTextAsSequenceItems && _sequenceAccumulator != null && _serializingElementDepth == 0)
+            {
+                // Slice and truncate from the current scope's base, as xsl:element does: the
+                // whole buffer took the text written before the comment or PI (bug-0305).
+                var pendingBase = Math.Clamp(_outputLogicalStart, 0, _output.Length);
+                var pending = _output.ToString(pendingBase, _output.Length - pendingBase);
+                if (pending.Length > 0)
+                {
+                    AppendToSeqAccumulator(new Xdm.TextNodeItem(pending));
+                    _output.Length = pendingBase;
+                }
+                _collectTextAsSequenceItems = false;
+                try
+                {
+                    await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _collectTextAsSequenceItems = true;
+                }
+                var elementBase = Math.Clamp(_outputLogicalStart, 0, _output.Length);
+                var elementText = _output.ToString(elementBase, _output.Length - elementBase);
+                _output.Length = elementBase;
+                if (elementText.Length > 0)
+                    AppendToSeqAccumulator(elementText);
+                return;
+            }
+            // Simple content construction: space between items from different nodes
+            // (only for comment/PI content; attribute content uses empty-string separator)
+            if (_attributeContentDepth == 0 && _output.Length > 0)
+                _sink.RawText(" ");
+            await instruction.Content.ExecuteAsync(this).ConfigureAwait(false);
+            if (_attributeContentDepth == 0)
+                _simpleContentLastWasNode = true;
+            return;
+        }
+
+        // xsl:namespace-alias is LOCAL to its declaring package (XSLT 3.0 §3.6.7 / §11.1.2):
+        // it rewrites only literal result elements produced by code in the SAME package.
+        // A literal element constructed while executing a used package's component must be
+        // aliased by THAT package's declarations, not the principal's (use-package-103 /
+        // use-package-108b). Non-package stylesheets are unaffected: CurrentComponentPackage
+        // is null for principal-owned code, so the principal's merged map is used as before.
+        var nsAliases = CurrentComponentPackage()?.NamespaceAliases ?? _stylesheet.NamespaceAliases;
+        var plan = GetLrePlan(instruction, nsAliases);
+        var prefixToUri = plan.PrefixToUri;
+        var elemPrefix = plan.ElemPrefix;
+        var elemLocalName = instruction.Name.LocalName;
+        var elemName = plan.ElemName;
+        // A copy: the element's fixup and inherit-namespaces change it.
+        var nsBindings = new Dictionary<string, string>(plan.NsBindings);
+        var lreCopiedPrefixes = plan.CopiedPrefixes;
+
+        // Collect all attributes in a dictionary (last-wins deduplication)
+        var attributes = new Dictionary<string, string>();
+        AttrBuffer? attrSetBuffer = null;
+
         // Push effective version and collation if set on this element
         // (must be before AVT evaluation so BC mode / collation affects attribute values)
         if (instruction.Version != null)
@@ -1588,20 +1662,11 @@ internal sealed partial class DefaultXsltExecutionContext
         }
 
         // 2. Inline attributes (override attribute-set values)
-        foreach (var (name, avt) in instruction.Attributes)
+        var literalIndex = 0;
+        foreach (var (_, avt) in instruction.Attributes)
         {
             var value = await EvaluateAvtAsync(avt).ConfigureAwait(false);
-            // Apply namespace alias to attribute prefix
-            var attrPrefix = name.Prefix;
-            if (attrPrefix != null && prefixToUri.TryGetValue(attrPrefix, out var attrNsUri)
-                && nsAliases.TryGetValue(attrNsUri, out var attrAlias))
-            {
-                attrPrefix = string.IsNullOrEmpty(attrAlias.ResultPrefix) ? null : attrAlias.ResultPrefix;
-            }
-            var attrName = attrPrefix != null
-                ? $"{attrPrefix}:{name.LocalName}"
-                : name.LocalName;
-            attributes[attrName] = EscapeAttributeValue(value);
+            attributes[plan.AttributeNames[literalIndex++]] = EscapeAttributeValue(value);
         }
 
         // 3. xsl:attribute instructions in body (highest priority)
@@ -1614,17 +1679,9 @@ internal sealed partial class DefaultXsltExecutionContext
         var savedLastAtomic = _lastResultWasAtomic;
         _lastResultWasAtomic = false;
 
-        // Track element name (with its EXPANDED namespace) for CDATA section serialization.
-        // instruction.Name only carries the source prefix — its NamespaceId is unresolved — so
-        // resolve the element's serialized namespace URI (applying any namespace-alias) and intern
-        // it, giving cdata-section-elements a correct expanded-name comparison. (decl/output-0138.)
-        var cdataNsUri = instruction.SourceNamespaceName;
-        if (nsAliases.Count > 0 && !string.IsNullOrEmpty(cdataNsUri)
-            && nsAliases.TryGetValue(cdataNsUri, out var cdataAlias))
-            cdataNsUri = cdataAlias.ResultUri;
-        var cdataNsId = string.IsNullOrEmpty(cdataNsUri)
-            ? NamespaceId.None
-            : StylesheetParser.ResolveNamespaceUri(cdataNsUri);
+        // The namespace of the element's name for cdata-section-elements (decl/output-0138).
+        var cdataNsUri = plan.CdataNsUri;
+        var cdataNsId = plan.CdataNsId;
         _outputElementStack.Push(new QName(cdataNsId, instruction.Name.LocalName, instruction.Name.Prefix));
         // Track whether element is in a namespace (for XTDE0440)
         var elemHasNs = elemPrefix != null
@@ -1741,14 +1798,12 @@ internal sealed partial class DefaultXsltExecutionContext
         // (S3); then the literal attributes over them.
         if (attrSetBuffer is { Items.Count: > 0 })
         {
-            CheckAttrGuard(attrSetBuffer, "literal result element, attribute sets");
             var fromSets = new Dictionary<string, string>();
             ReadCollectedAttributes(attrSetBuffer, fromSets, elemName, cdataNsUri, laterBindings: collectedAttrs);
             foreach (var (literalName, literalValue) in attributes)
                 fromSets[literalName] = literalValue;
             attributes = fromSets;
         }
-        CheckAttrGuard(collectedAttrs, "literal result element");
         ReadCollectedAttributes(collectedAttrs, attributes, elemName, cdataNsUri);
         // A declaration of the element's new prefix among the collected ones is dropped: the
         // element's own (nsBindings) is written.

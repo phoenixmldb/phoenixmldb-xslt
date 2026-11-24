@@ -546,7 +546,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// <summary>Who asks, for a load the running code makes.</summary>
     internal PhoenixmlDb.XQuery.Security.ResourceCaller Caller => PhoenixmlDb.XQuery.Security.ResourceGate.Caller(StaticBaseUri, ModuleLocation);
 
-    private StringBuilder? _collectedAttributes => _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek().Text : null;
 
     /// <summary>The attributes and namespace declarations of the element under construction, as text and as items (S1).</summary>
     private AttrBuffer? _collectedAttrBuffer => _collectedAttributesStack.Count > 0 ? _collectedAttributesStack.Peek() : null;
@@ -5520,12 +5519,11 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
 
         // Save collected attributes so where-populated content captures attributes separately.
         // This allows filtering zero-length "insignificant" attributes per XSLT 3.0 §11.4.
-        // As text and as items (S1).
         var savedAttrs = _collectedAttrBuffer?.Snapshot();
         _collectedAttrBuffer?.Clear();
 
         // When the surrounding scope is an `as=` template/function body, xsl:attribute goes
-        // to `_sequenceAccumulator` rather than `_collectedAttributes`. Snapshot its length
+        // to `_sequenceAccumulator` rather than the collected attributes. Snapshot its length
         // here so we can identify (and filter) accumulator items produced inside this body.
         var accumStartCount = _sequenceAccumulator?.Count ?? 0;
         var capturePositionsStartCount = _currentAsBodyCapture?.Positions.Count ?? 0;
@@ -5572,17 +5570,15 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         _outputLogicalStart = savedLogicalStart;
 
         // Collect and filter attributes produced inside where-populated
-        string? wpAttrs = null;
         object[]? wpItems = null;
         if (_collectedAttrBuffer is { } attrBuffer && savedAttrs is { } saved)
         {
-            var rawAttrs = attrBuffer.Text.ToString();
             var rawItems = attrBuffer.Items.ToArray();
             attrBuffer.Restore(saved);
 
-            // Filter out zero-length attribute values (insignificant per spec); the items as the
-            // text (the last value of a name is applied where the element ends).
-            wpAttrs = FilterInsignificantAttributes(rawAttrs);
+            // Filter out zero-length attribute values (insignificant per XSLT 3.0 §11.4); an
+            // earlier attribute of the same name stays (the last value of a name is applied where
+            // the element ends).
             wpItems = rawItems.Where(item => item switch
             {
                 AttrItem a => a.Value.Length > 0,
@@ -5591,7 +5587,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             }).ToArray();
         }
 
-        if (result.Length == 0 && string.IsNullOrEmpty(wpAttrs))
+        if (result.Length == 0 && wpItems is not { Length: > 0 })
             return;
 
         // Per XSLT 3.0 §11.4: filter out insignificant top-level element children individually.
@@ -5600,10 +5596,9 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         var filtered = result.Length > 0 ? FilterWherePopulatedContent(result) : "";
 
         // Apply surviving attributes first, then element content
-        if (!string.IsNullOrEmpty(wpAttrs))
+        if (wpItems is { Length: > 0 })
         {
-            _collectedAttributes!.Append(wpAttrs);
-            _collectedAttrBuffer!.Items.AddRange(wpItems ?? []);
+            _collectedAttrBuffer!.Items.AddRange(wpItems);
             MarkContentProduced();
         }
         if (filtered.Length > 0)
@@ -5621,72 +5616,6 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
             _output.Append(result);
             MarkContentProduced();
         }
-    }
-
-
-    /// <summary>
-    /// Filters attributes with zero-length values (insignificant per XSLT 3.0 §11.4 where-populated).
-    /// Among surviving attributes with the same name, last-wins applies.
-    /// An attribute overridden by a zero-length attribute is preserved (the zero-length one is removed).
-    /// </summary>
-    private static string? FilterInsignificantAttributes(string rawAttrs)
-    {
-        if (string.IsNullOrEmpty(rawAttrs))
-            return null;
-
-        // Parse all attributes preserving order
-        var all = new List<(string name, string value)>();
-        var pos = 0;
-        while (pos < rawAttrs.Length)
-        {
-            while (pos < rawAttrs.Length && char.IsWhiteSpace(rawAttrs[pos]))
-                pos++;
-            if (pos >= rawAttrs.Length) break;
-            var nameStart = pos;
-            while (pos < rawAttrs.Length && rawAttrs[pos] != '=')
-                pos++;
-            if (pos >= rawAttrs.Length) break;
-            var name = rawAttrs[nameStart..pos].Trim();
-            pos++; // skip '='
-            while (pos < rawAttrs.Length && char.IsWhiteSpace(rawAttrs[pos]))
-                pos++;
-            if (pos >= rawAttrs.Length) break;
-            var quote = rawAttrs[pos];
-            if (quote != '"' && quote != '\'') break;
-            pos++;
-            var valueStart = pos;
-            while (pos < rawAttrs.Length && rawAttrs[pos] != quote)
-                pos++;
-            var value = rawAttrs[valueStart..pos];
-            if (pos < rawAttrs.Length) pos++;
-            if (!string.IsNullOrEmpty(name))
-                all.Add((name, value));
-        }
-
-        // Filter: keep only attributes with non-empty values, last-wins among non-empty
-        // Zero-length attributes are insignificant and simply ignored (they do NOT override
-        // a previous non-empty value — the insignificant attribute is discarded per spec)
-        var surviving = new Dictionary<string, string>();
-        foreach (var (name, value) in all)
-        {
-            if (value.Length > 0)
-                surviving[name] = value;
-            // Zero-length values are silently ignored
-        }
-
-        if (surviving.Count == 0)
-            return null;
-
-        var sb = new StringBuilder();
-        foreach (var (name, value) in surviving)
-        {
-            sb.Append(' ');
-            sb.Append(name);
-            sb.Append("=\"");
-            sb.Append(value);
-            sb.Append('"');
-        }
-        return sb.ToString();
     }
 
 

@@ -550,7 +550,6 @@ internal sealed partial class DefaultXsltExecutionContext
 
                 // Deduplicate attributes (last-wins) like CreateElementCoreAsync
                 var attrs = new Dictionary<string, string>();
-                CheckAttrGuard(collectedAttrs, "xsl:copy");
                 ReadCollectedAttributes(collectedAttrs, attrs, elemName, _nodeStore?.GetNamespaceUri(elem.Namespace));
                 DeduplicateByExpandedName(attrs, elemName);
                 foreach (var (attrName, attrValue) in attrs)
@@ -710,7 +709,6 @@ internal sealed partial class DefaultXsltExecutionContext
                     throw new XsltException("XTDE0410: Cannot add an attribute to an element after children have been added", _currentInstructionLocation);
 
                 // When in attribute collection mode, add as attribute
-                var target = _attributeCollecting ? _collectedAttributes! : _output;
                 var copyPrefix = attr.Prefix;
 
                 // Namespace fixup: emit namespace declaration for prefixed attributes
@@ -723,7 +721,7 @@ internal sealed partial class DefaultXsltExecutionContext
                         {
                             if (IsPrefixInUse(copyPrefix))
                                 copyPrefix = GenerateUniquePrefix(copyPrefix);
-                            AppendNamespaceDeclarationTo(target, copyPrefix, copyNsUri);
+                            WriteNamespaceDeclaration(copyPrefix, copyNsUri);
                             if (_outputNsScopes.Count > 0)
                                 _outputNsScopes.Peek()[copyPrefix] = copyNsUri;
                         }
@@ -731,15 +729,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
 
                 var attrName = !string.IsNullOrEmpty(copyPrefix) ? $"{copyPrefix}:{attr.LocalName}" : attr.LocalName;
-                if (target == _output)
-                {
-                    _sink.Attribute(attrName, attr.Value);
-                }
-                else
-                {
-                    AppendAttributeTo(target, attrName, attr.Value,
-                        attr.Namespace == NamespaceId.None ? null : _nodeStore?.GetNamespaceUri(attr.Namespace));
-                }
+                WriteAttribute(attrName, attr.Value,
+                    attr.Namespace == NamespaceId.None ? null : _nodeStore?.GetNamespaceUri(attr.Namespace));
                 break;
             }
 

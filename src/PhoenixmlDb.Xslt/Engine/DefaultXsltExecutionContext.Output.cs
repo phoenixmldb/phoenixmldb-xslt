@@ -662,8 +662,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 if (IsNamespaceInScope(prefix, uri))
                     break;
 
-                var target = _attributeCollecting ? _collectedAttributes! : _output;
-                AppendNamespaceDeclarationTo(target, prefix, uri);
+                WriteNamespaceDeclaration(prefix, uri);
                 if (_outputNsScopes.Count > 0)
                     _outputNsScopes.Peek()[prefix] = uri;
                 break;
@@ -2516,7 +2515,6 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private void WriteCopiedAttribute(XdmAttribute attr)
     {
-        var target = _attributeCollecting ? _collectedAttributes! : _output;
         var attrPrefix = attr.Prefix;
         var attrLocalName = attr.LocalName;
 
@@ -2533,7 +2531,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     {
                         attrPrefix = GenerateUniquePrefix(attrPrefix);
                     }
-                    AppendNamespaceDeclarationTo(target, attrPrefix, attrNsUri);
+                    WriteNamespaceDeclaration(attrPrefix, attrNsUri);
                     if (_outputNsScopes.Count > 0)
                         _outputNsScopes.Peek()[attrPrefix] = attrNsUri;
                 }
@@ -2542,15 +2540,8 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // An unprefixed attribute can carry Prefix "" (the streamed paths build it so) as well as null.
         var aName = !string.IsNullOrEmpty(attrPrefix) ? $"{attrPrefix}:{attrLocalName}" : attrLocalName;
-        if (target == _output)
-        {
-            _sink.Attribute(aName, attr.Value);
-        }
-        else
-        {
-            AppendAttributeTo(target, aName, attr.Value,
-                attr.Namespace == NamespaceId.None ? null : _nodeStore?.GetNamespaceUri(attr.Namespace));
-        }
+        WriteAttribute(aName, attr.Value,
+            attr.Namespace == NamespaceId.None ? null : _nodeStore?.GetNamespaceUri(attr.Namespace));
     }
 
     private static readonly System.Buffers.SearchValues<char> AuthorityEnd = System.Buffers.SearchValues.Create("/?#");
