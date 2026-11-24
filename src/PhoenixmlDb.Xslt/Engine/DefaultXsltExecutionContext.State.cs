@@ -672,7 +672,8 @@ internal sealed partial class DefaultXsltExecutionContext
     // Recursion depth guard
     private int _recursionDepth;
 
-    private const int MaxRecursionDepth = 1200;
+    // XsltTransformOptions.MaxRecursionDepth, of this transformation.
+    private int MaxRecursionDepth { get; set; } = XsltTransformOptions.DefaultMaxRecursionDepth;
 
     // How many levels of recursion an exception's stack trace may span. See ShedsStackTrace.
     private const int StackTraceSpan = 8;
@@ -814,7 +815,7 @@ internal sealed partial class DefaultXsltExecutionContext
     private XsltException RecursionLimitExceeded(string instruction) =>
         Error($"XTDE0000: {instruction} nested more than {MaxRecursionDepth} levels deep. The transformation may " +
               "contain unbounded recursion; a named template that calls itself as its last instruction runs as a " +
-              "tail call and is not limited.");
+              "tail call and is not limited. Set XsltTransformOptions.MaxRecursionDepth to allow more.");
 
 
     /// <summary>
@@ -1254,6 +1255,7 @@ internal sealed partial class DefaultXsltExecutionContext
         if (options.RegexMatchTimeout is { } regexLimit)
             schemaProvider?.LimitPatternMatchTime(regexLimit);
         _maxOutputSize = options.MaxOutputSize;
+        MaxRecursionDepth = options.MaxRecursionDepth;
         _documentResolver = new XsltDocumentResolver(stylesheet, nodeStore)
         {
             PreloadedResources = options.PreloadedResources,

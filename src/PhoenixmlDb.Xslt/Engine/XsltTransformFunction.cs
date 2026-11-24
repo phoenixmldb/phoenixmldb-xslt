@@ -408,6 +408,7 @@ internal sealed class XsltTransformFunction : PhoenixmlDb.XQuery.Ast.XQueryFunct
             // timeout and on the same cancellation. It had neither.
             RegexMatchTimeout = _context._options.RegexMatchTimeout,
             MaxStringLength = _context._options.MaxStringLength,
+            MaxRecursionDepth = _context._options.MaxRecursionDepth,
             CancellationToken = _context._options.CancellationToken,
         };
 

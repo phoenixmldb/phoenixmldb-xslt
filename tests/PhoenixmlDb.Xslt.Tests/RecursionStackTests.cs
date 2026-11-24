@@ -4,7 +4,8 @@ using Xunit;
 namespace PhoenixmlDb.Xslt.Tests;
 
 /// <summary>
-/// Deep recursion reaches the engine's recursion-depth limit (1200) before it exhausts the native
+/// Deep recursion reaches the engine's recursion-depth limit (then 1,200; since 3.3.0
+/// XsltTransformOptions.MaxRecursionDepth, 2,500 by default) before it exhausts the native
 /// stack, whatever thread the host calls from (xslt#197).
 /// </summary>
 /// <remarks>

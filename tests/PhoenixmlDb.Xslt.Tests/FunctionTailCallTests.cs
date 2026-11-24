@@ -6,7 +6,8 @@ namespace PhoenixmlDb.Xslt.Tests;
 /// <summary>
 /// A call to a stylesheet function in tail position of a stylesheet function's body runs as the
 /// caller's next iteration, not nested (xquery#296): tail recursion, direct or mutual, is not
-/// limited by the recursion depth (XTDE0000 at 1,200). Tail position: the select of the
+/// limited by the recursion depth (XTDE0000 past XsltTransformOptions.MaxRecursionDepth, 2,500 by
+/// default). Tail position: the select of the
 /// xsl:sequence the body evaluates last, also in the chosen xsl:choose / xsl:if branch, and there
 /// the then/else of an if. Not tail calls: a call whose result is used, one inside xsl:try, a call
 /// of or from a memoised function, and one to a function of another return type. A string walked

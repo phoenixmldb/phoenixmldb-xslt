@@ -301,6 +301,37 @@ public sealed class XsltTransformOptions
     /// </summary>
     public int? MaxStringLength { get; init; }
 
+    /// <summary>The default of <see cref="MaxRecursionDepth"/>.</summary>
+    internal const int DefaultMaxRecursionDepth = 2_500;
+
+    /// <summary>
+    /// How deep the stylesheet's calls may nest. Each <c>xsl:apply-templates</c> (also a built-in
+    /// template rule), each <c>xsl:call-template</c> that is not a tail call, and each call of a
+    /// stylesheet function (<c>xsl:function</c>) is one level. <c>xsl:next-match</c>,
+    /// <c>xsl:apply-imports</c>, a named template that calls itself as its last instruction (a
+    /// tail call, which does not nest), and element construction do not count. Nesting deeper
+    /// fails the transformation with XTDE0000.
+    /// </summary>
+    /// <remarks>
+    /// Default: 2,500; an identity transform of a document 2,500 elements deep runs. A higher value
+    /// allows deeper recursion, which takes longer per level as it goes deeper; the stack of the
+    /// transformation's thread still bounds it, and beyond that the transformation fails with
+    /// XTDE0000 too ("exhausted the execution stack"). A nested <c>fn:transform</c> uses the value
+    /// of the transformation that calls it.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The value is less than 1.</exception>
+    public int MaxRecursionDepth
+    {
+        get => _maxRecursionDepth;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            _maxRecursionDepth = value;
+        }
+    }
+
+    private readonly int _maxRecursionDepth = DefaultMaxRecursionDepth;
+
     /// <summary>
     /// XPath expression to evaluate against the source document to determine the initial context node.
     /// When null, the document root is used. Example: "/doc" selects the document element named "doc".

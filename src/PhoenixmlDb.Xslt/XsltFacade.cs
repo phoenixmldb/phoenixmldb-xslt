@@ -375,6 +375,24 @@ public sealed class XsltTransformer
     public int? MaxStringLength { get; set; }
 
     /// <summary>
+    /// How deep the stylesheet's calls may nest: <c>xsl:apply-templates</c>, <c>xsl:call-template</c>
+    /// that is not a tail call, and stylesheet functions; see
+    /// <see cref="XsltTransformOptions.MaxRecursionDepth"/>. Default: 2,500.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is less than 1.</exception>
+    public int MaxRecursionDepth
+    {
+        get => _maxRecursionDepth;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            _maxRecursionDepth = value;
+        }
+    }
+
+    private int _maxRecursionDepth = XsltTransformOptions.DefaultMaxRecursionDepth;
+
+    /// <summary>
     /// Pre-fetched contents for URIs that <c>xsl:import</c> / <c>xsl:include</c> /
     /// <c>fn:doc()</c> would otherwise need to fetch over HTTP synchronously.
     /// Required on Blazor WebAssembly, which cannot block the calling thread; ignored
@@ -1618,6 +1636,7 @@ public sealed class XsltTransformer
             AllowedOutputMethods = AllowedOutputMethods,
             RegexMatchTimeout = RegexMatchTimeout,
             MaxStringLength = MaxStringLength,
+            MaxRecursionDepth = MaxRecursionDepth,
             KeepResultMarkup = KeepResultMarkup,
             PreloadedResources = PreloadedResources,
             XQueryModules = XQueryModules?.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal),

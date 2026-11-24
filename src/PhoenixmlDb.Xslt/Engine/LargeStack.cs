@@ -8,7 +8,7 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// function, nested apply-templates) is a chain of roughly 7–15 .NET async frames, and those
 /// frames stay on the native stack for as long as every await completes synchronously — which
 /// for in-memory evaluation is nearly always. A default thread therefore ran out of stack long
-/// before the engine's recursion-depth limit (1200): about 800 levels on
+/// before the engine's recursion-depth limit (then 1,200): about 800 levels on
 /// Linux, and under 100 on Windows/.NET 8, whose threads get 1 MB. The documented limit was not
 /// true on any platform.
 /// <para>

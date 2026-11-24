@@ -2754,7 +2754,8 @@ internal sealed partial class DefaultXsltExecutionContext
         await EnsureStackAsync().ConfigureAwait(false);
         _recursionDepth++;
         if (_recursionDepth > MaxRecursionDepth)
-            throw Error($"XTDE0000: Maximum recursion depth ({MaxRecursionDepth}) exceeded in function '{func.Name.LocalName}'");
+            throw Error($"XTDE0000: Maximum recursion depth ({MaxRecursionDepth}) exceeded in function '{func.Name.LocalName}'. "
+                + "Set XsltTransformOptions.MaxRecursionDepth to allow more.");
         // Probe the physical stack: recursive stylesheet functions overflow the native
         // stack (uncatchable SIGABRT) well before _recursionDepth hits the limit above,
         // because each call burns ~15 async frames. CheckResourceLimits converts that
