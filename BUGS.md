@@ -8248,8 +8248,9 @@ Saxon-HE 10.9, but not the same bytes:
 | namespace declarations of an element | the default one first, then sorted by prefix | the default one first, then in the order of the data model |
 | `"` in an attribute value | `&#34;` | `&quot;` |
 | html-version 5: `<!DOCTYPE html>` | the document element right after it | a line break after it |
-| html-version 5: a void element | `<br/>` | `<br />` (the `<br/>` ruling of 2026-11-24 was for the XQuery serializer) |
+| a document element outside the XHTML namespace: an empty XHTML element in it | `<div></div>` | `<div/>` (the xml rules, as for such a document element before) |
 
 The tree is the same; only the serialized form differs, and Serialization 3.1 leaves each choice to the processor.
 The saxon-he-10 layout writes Saxon's form (it re-reads the result and writes the declaration, the DOCTYPE, the
-namespace declarations and the attributes itself). Ruled to stay as it is (2026-11-24): no fix.
+namespace declarations and the attributes itself). Ruled to stay as it is (2026-11-24): no fix. (A void element
+with html-version 5 was in this list too; it is written `<br/>` now, as Saxon and the XQuery serializer write it.)
