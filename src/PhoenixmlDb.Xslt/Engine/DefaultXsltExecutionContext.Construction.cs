@@ -363,7 +363,6 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Deduplicate attributes (last-wins)
         var attrs = new Dictionary<string, string>();
-        CheckAttrGuard(collectedAttrs, "xsl:element");
         ReadCollectedAttributes(collectedAttrs, attrs, name, nsUri);
         DeduplicateByExpandedName(attrs, name);
         foreach (var (attrName, attrValue) in attrs)
@@ -468,8 +467,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Skip when accumulating XDM nodes — the attribute node stores namespace info natively
                 if (_sequenceAccumulator == null && prefix != "xml" && prefixNsUri != null && !IsNamespaceInScope(prefix, prefixNsUri))
                 {
-                    var target2 = _attributeCollecting ? _collectedAttributes! : _output;
-                    AppendNamespaceDeclarationTo(target2, prefix, prefixNsUri);
+                    WriteNamespaceDeclaration(prefix, prefixNsUri);
                     if (_outputNsScopes.Count > 0)
                         _outputNsScopes.Peek()[prefix] = prefixNsUri;
                 }
@@ -529,8 +527,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     }
                     if (!IsNamespaceInScope(attrPrefix, explicitNsUri))
                     {
-                        var target2 = _attributeCollecting ? _collectedAttributes! : _output;
-                        AppendNamespaceDeclarationTo(target2, attrPrefix, explicitNsUri);
+                        WriteNamespaceDeclaration(attrPrefix, explicitNsUri);
                         // Register in the current scope so child elements won't re-emit it
                         if (_outputNsScopes.Count > 0)
                             _outputNsScopes.Peek()[attrPrefix] = explicitNsUri;
@@ -720,15 +717,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 _tcAttributeAnnotations?.Remove(key);
         }
 
-        var target = _attributeCollecting ? _collectedAttributes! : _output;
-        if (target == _output)
-        {
-            _sink.Attribute(name, value);
-        }
-        else
-        {
-            AppendAttributeTo(target, name, value, attributeNamespace);
-        }
+        WriteAttribute(name, value, attributeNamespace);
     }
 
 
@@ -951,8 +940,6 @@ internal sealed partial class DefaultXsltExecutionContext
         // exclude-result-prefixes was set (→ namespace fixup) or not (→ XTDE0430).
 
         // Namespace declarations should appear in the element's start tag,
-        // so write to _collectedAttributes when in attribute collection mode
-        var target = _attributeCollecting ? _collectedAttributes! : _output;
 
         // Adding a namespace node for a (prefix, uri) the element under construction already
         // has is a no-op, not a duplicate declaration: XTDE0430 covers only the case where the
@@ -981,7 +968,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 return;
         }
 
-        AppendNamespaceDeclarationTo(target, prefix, uri);
+        WriteNamespaceDeclaration(prefix, uri);
         // In force for the element's content, which is written before the element's start tag:
         // a child in the namespace the prefix had before declares it again (xslt#628).
         if (_attributeCollecting && _outputNsScopes.Count > 0)
@@ -1741,14 +1728,12 @@ internal sealed partial class DefaultXsltExecutionContext
         // (S3); then the literal attributes over them.
         if (attrSetBuffer is { Items.Count: > 0 })
         {
-            CheckAttrGuard(attrSetBuffer, "literal result element, attribute sets");
             var fromSets = new Dictionary<string, string>();
             ReadCollectedAttributes(attrSetBuffer, fromSets, elemName, cdataNsUri, laterBindings: collectedAttrs);
             foreach (var (literalName, literalValue) in attributes)
                 fromSets[literalName] = literalValue;
             attributes = fromSets;
         }
-        CheckAttrGuard(collectedAttrs, "literal result element");
         ReadCollectedAttributes(collectedAttrs, attributes, elemName, cdataNsUri);
         // A declaration of the element's new prefix among the collected ones is dropped: the
         // element's own (nsBindings) is written.
