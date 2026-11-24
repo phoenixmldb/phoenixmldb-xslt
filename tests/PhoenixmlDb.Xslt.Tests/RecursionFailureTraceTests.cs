@@ -99,7 +99,8 @@ public sealed class RecursionFailureTraceTests
     [Fact]
     public async Task The_depth_limit_in_the_built_in_rules_fails_with_a_short_trace()
     {
-        var failure = await FailureOfAsync(BuiltIn, DeepSource(1300));
+        // Past the recursion-depth limit (XsltTransformOptions.MaxRecursionDepth, 2,500 by default).
+        var failure = await FailureOfAsync(BuiltIn, DeepSource(2_600));
 
         failure.Should().BeOfType<XsltException>().Which.ErrorCode.Should().Be("XTDE0000");
         failure.StackTrace!.Length.Should().BeLessThan(MaxTraceLength);
