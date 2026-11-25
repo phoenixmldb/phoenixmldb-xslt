@@ -8059,9 +8059,9 @@ Fixed with `XdmDocumentStore.MarkReadOnly(XdmDocument)` (approved by Lucas 2026-
 target is a node of a marked document is `phx:XUDY9001` before anything is changed, in any store. The
 check is per target, by the target's root (a copy can keep its source's `DocumentId` or tree ordinal), so
 nodes the query constructs and the copies of a `copy` clause can still be updated, also in the same store.
-Not yet tested: an updating function used only inside copy-modify on a marked document, because no query
-can declare an updating function yet (`declare updating function` is XPST0003, `declare %updating
-function` XQST0045); that waits for the rest of XQUF in 3.3.0 (ruled 2026-11-20).
+An updating function used inside copy-modify on a marked document changes the copy only, and called on
+the marked document itself it is `phx:XUDY9001` (`ReadOnlyDocumentTests`, xquery#428): it waited for
+updating functions, which no query could declare before (#155).
 
 ### 144. The text of a cdata-section-elements element was a CDATA section only when xsl:value-of or literal text wrote it — fixed (2026-11-23)
 
@@ -8281,7 +8281,7 @@ Tests: `FunctionResultOrderTests` — the seven constructors in a function, a ty
 (21 cases, Saxon-HE 10.9's output as the expected result); copies, atomic values and elements in a function (6); a
 function with no `as`; a function of a used package. The 12 cases with a function fail on the source before the fix.
 
-### 154. Static expressions had two evaluators, and the hand-written one allowed and refused the wrong functions — fixed (static expressions, 2026-11-24)
+### 154. Static expressions had two evaluators, and the hand-written one allowed and refused the wrong functions — fixed (xslt#648, xslt#650, 2026-11-24)
 
 Engine: **XSLT**. A `use-when`, the `select` of a static variable or parameter and a shadow attribute were evaluated
 by a hand-written interpreter of the AST (and, for shadow attributes, a string matcher), and by the engine's runtime
@@ -8311,8 +8311,38 @@ in a static expression, W3C system-property-101*-qname). About 900 lines of the 
 are gone. One evaluation context serves the static expressions of all the modules (it was one per module, and each
 built the whole function library); each evaluation gives it the static base URI of its element.
 
-Breaking: a static variable or parameter whose `select` calls a stylesheet function no longer loads (XPST0017, as
-Saxon-HE 10.9 reports it); it loaded before and took its value at run time.
+Breaking (accepted by Lucas for 3.3.0): a static variable or parameter whose `select` calls a stylesheet function no
+longer loads (XPST0017, as Saxon-HE 10.9 reports it); it loaded before and took its value at run time. The message
+says to remove `static="yes"` or not to call the function there (xslt#650).
 
-Tests: `StaticExpressionAllowListTests` (19; every expected result is Saxon-HE 10.9's); 6 fail on the source before
-the fix. The regex time limit in a static expression (`TransformCancellationTests`) now covers the only evaluator.
+Tests: `StaticExpressionAllowListTests` (19, and 3 for the message in xslt#650; every expected result is Saxon-HE
+10.9's); 6 fail on the source before the fix. The regex time limit in a static expression (`TransformCancellationTests`) now covers the only evaluator.
+
+### 155. XQuery Update: no expression category was checked, and an updating function could not be declared — fixed (xquery#428, 2026-11-24)
+
+Engine: **XQuery**. XQuery Update Facility 3.0 classifies every expression as updating or simple (§2.2) and allows
+an updating expression only where the category rules say so. None of them was checked, so an update where a
+simple expression is required ran, or was dropped:
+
+```xquery
+let $x := delete node doc('d.xml')/r/a return 1     (: main: 1, and a is deleted; 3.0: XUST0001 :)
+if (delete node doc('d.xml')/r/a) then 1 else 2     (: main: 2, and a is deleted; 3.0: XUST0001 :)
+```
+
+And no updating function could be declared: `declare updating function` (XQuery Update 1.0) was XPST0003, and
+`declare %updating function` XQST0045 ("reserved namespace").
+
+The fix: a static pass after namespace resolution (`UpdateCategoryChecker`) classifies every expression and
+reports XUST0001 where 3.0 requires a simple expression: a FLWOR clause other than return, the test of if,
+typeswitch and switch, the value of a variable or context item declaration, the body of a function not declared
+%updating or of an inline function declared %simple, and an operand of any other expression (§7.13). The comma,
+branches, try/catch, node constructors, function arguments and the clauses of copy-modify may be of any category,
+as 3.0 allows (1.0 did not, and XQUTS 1.0.1 tests 1.0's rules; those states are judged by their 3.0 result,
+xquery#429). `declare updating function`, %updating and %simple are supported, also on inline functions; a static
+call of an updating function is an updating expression; XUST0032 and XUST0033 check the annotations.
+
+Breaking (accepted by Lucas for 3.3.0): such a query is XUST0001 when it is compiled. On 3.2.0 every update through
+`QueryEngine` was refused when the query ran, and through `ExecutionPlan.ExecuteAsync` its updates were dropped (#127).
+
+Tests: `UpdateCategoryTests` (46; 35 fail on the source before the fix), `ReadOnlyDocumentTests` (+4, #143).
+XQUTS 1.0.1: 377 -> 442 (then 492 with the 3.0 results of xquery#429).
