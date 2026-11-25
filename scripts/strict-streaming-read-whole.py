@@ -12,7 +12,8 @@ The per-set baseline gate of that run fails, as it must: the cases are counted a
 The counts go to stderr (by code, by set, by instruction), with the number of FAILED entries read,
 so that a run with no logs does not read as "no cases".
 
-Columns: set, case, code, construct (the expression or the instruction the error names).
+The first line names the columns: set, case, code, construct (the expression or the instruction the
+error names).
 """
 import glob
 import os
@@ -49,6 +50,7 @@ def main(logdir):
                     rows.append((current_set, m.group(1), e.group(1), e.group(2)))
                     break
     rows.sort()
+    print('set\tcase\tcode\tconstruct')
     for row in rows:
         print('\t'.join(row))
     print(f'logs={len(logs)} failed-entries={failed_entries} cases={len(rows)}', file=sys.stderr)

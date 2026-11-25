@@ -8501,6 +8501,12 @@ it is not certain of: by default the stylesheet runs (Lucas, 2026-11-25: no new 
 check it is XTSE3430. Inspecting an ancestor (`name(..)`, `exists(..)`, `../@id`, `count(ancestor::*)`, `.. is x`)
 streams as before; the node comparison operators are inspection in the check now too (§19.8.8.6).
 
+Open: the fallback finds the value of an ancestor by the form of the expression, not by its posture. In a loop over
+copies (`<xsl:for-each select="snapshot(book)"><xsl:value-of select="string(..)"/></xsl:for-each>` in a rule for
+`books`) the ancestor is a node of a tree in memory, and §19.8 accepts the rule (grounded), but the input is read into
+memory for it all the same; the result is right, `--stream` warns, and under `--strict-streaming` it is phx:XTSE9430
+(#165) for a stylesheet that §19.8 accepts. No case of the W3C suite has this form, so it is not in the #165 list.
+
 Tests: `StreamingFallbackReportTests.The_value_of_an_ancestor_is_evaluated_on_a_tree` and
 `…_is_XTSE3430_under_the_strict_check` (12 forms each; each part of the change, removed, fails one of them),
 `An_inspected_ancestor_streams` (6).

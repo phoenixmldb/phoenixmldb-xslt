@@ -1,3 +1,4 @@
+set	case	code	construct
 attr/mode	mode-1428	phx:XTSE9430	xsl:apply-imports
 attr/mode	mode-1430	phx:XTSE9430	xsl:apply-imports
 decl/accumulator	accumulator-031	phx:XTDE9430	the body
