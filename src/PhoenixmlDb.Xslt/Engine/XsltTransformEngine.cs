@@ -5712,7 +5712,7 @@ public sealed partial class XsltTransformEngine
             Id = syntheticDocId,
             Document = new DocumentId(0),
             Children = [],
-            BaseUri = options.SourceDocumentUri?.AbsoluteUri
+            DocumentUri = options.SourceDocumentUri?.AbsoluteUri
         };
         nodeStore.Register(syntheticDoc);
 
@@ -5845,7 +5845,10 @@ public sealed partial class XsltTransformEngine
 
             var docProcessor = new StreamingXmlProcessor(
                 _stylesheet, _templateIndex, context, nodeStore, options.InitialMode,
-                streamingAccumulators, docWatchers, docSubscriptions, subscriptionOnly);
+                streamingAccumulators, docWatchers, docSubscriptions, subscriptionOnly)
+            {
+                DocumentUri = options.SourceDocumentUri?.AbsoluteUri,
+            };
 
             // Expose the document node as the focus so the body's grounded expressions
             // (and the subscription path matchers, which are relative to /) resolve
@@ -5976,9 +5979,19 @@ public sealed partial class XsltTransformEngine
 
         var processor = new StreamingXmlProcessor(
             _stylesheet, _templateIndex, context, nodeStore, options.InitialMode,
-            streamingAccumulators);
+            streamingAccumulators)
+        {
+            DocumentUri = options.SourceDocumentUri?.AbsoluteUri,
+        };
+        // The document node of the pass, so the accumulator rules that match it are evaluated at
+        // its start and end, as the pass for a rule for the document node does: with no such rule
+        // an accumulator-rule match="/" never ran, and every node read the initial value.
+        // The context is this transformation's own, so it is not restored when the pass fails.
+        var savedDocument = context._activeStreamingDocument;
+        context._activeStreamingDocument = syntheticDoc;
         await processor.ProcessAsync(inputReader, options.CancellationToken)
             .ConfigureAwait(false);
+        context._activeStreamingDocument = savedDocument;
 
         // Final drain — anything emitted after the last event-boundary drain.
         await context.DrainStreamingOutputAsync(options.CancellationToken).ConfigureAwait(false);

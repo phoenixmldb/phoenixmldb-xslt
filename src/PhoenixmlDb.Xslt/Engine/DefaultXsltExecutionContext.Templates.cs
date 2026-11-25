@@ -2230,6 +2230,13 @@ internal sealed partial class DefaultXsltExecutionContext
         if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.IsEmptyElement)
             return;
 
+        // A comment, a processing instruction or a text node has no children either. The reader
+        // is on it, and the loop read on to the end of its parent: the rule for a processing
+        // instruction before the document element took the whole document as its children
+        // (xslt#652).
+        if (streamedParent is not null and not (Xdm.Nodes.XdmElement or Xdm.Nodes.XdmDocument))
+            return;
+
         // Forward these with-params into the streamed dispatch. Each node this loop
         // dispatches (and any built-in shallow-copy recursion underneath it) binds
         // this ambient set (si-apply-templates-008/009). Restored on exit.
