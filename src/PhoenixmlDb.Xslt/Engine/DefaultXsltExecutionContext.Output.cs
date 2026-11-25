@@ -1936,6 +1936,29 @@ internal sealed partial class DefaultXsltExecutionContext
         }
     }
 
+    private HashSet<XsltSourceDocument>? _readWholeDocuments;
+
+    /// <summary>
+    /// An xsl:source-document with streamable="yes" whose body this processor cannot evaluate
+    /// while streaming reads its document into memory: under StrictStreamability that is
+    /// phx:XTDE9430, and otherwise a warning when the caller asked for one, once for each
+    /// instruction (xslt#582).
+    /// </summary>
+    private void ReportReadingWholeDocument(XsltSourceDocument instruction, string href)
+    {
+        if (!(_readWholeDocuments ??= new HashSet<XsltSourceDocument>(ReferenceEqualityComparer.Instance)).Add(instruction))
+            return;
+        var (construct, location) = instruction.Content is { } body
+            ? XsltTransformEngine.DocLevelReadWholeConstruct(body, _stylesheet)
+            : ("the body", instruction.Location);
+        var cause = ReadWholeCause.OfConstruct(construct, location ?? instruction.Location, "the body of xsl:source-document")
+            with { Subject = "the document " + href };
+        if (XsltTransformEngine.StrictAboutReadingWhole(_options))
+            throw cause.StrictError(sourceDocument: true);
+        if (_options.StreamingFallbackWarnings && _options.WarningListener is { } listener)
+            listener(cause.Warning);
+    }
+
     private async ValueTask SourceDocumentCoreAsync(XsltSourceDocument instruction)
     {
         // Deferred XTSE3430 streamability error — throw at runtime instead of parse time
@@ -2032,6 +2055,8 @@ internal sealed partial class DefaultXsltExecutionContext
         // body never triggers it, so si-iterate-037 and kin still stream).
         var sourceDocNeedsWholeInput =
             XsltTransformEngine.DocLevelWholeInputBuffer(instruction.Content, _stylesheet);
+        if (instruction.Streamable && sourceDocNeedsWholeInput && !_options.DisableStreaming)
+            ReportReadingWholeDocument(instruction, href);
         if (instruction.Streamable && (resolvedUri.IsFile || hostSource != null) && string.IsNullOrEmpty(fragment)
             && !sourceDocNeedsWholeInput && !ValidatesSourceDocument(instruction))
         {

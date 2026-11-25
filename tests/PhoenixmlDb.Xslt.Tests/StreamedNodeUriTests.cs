@@ -66,8 +66,34 @@ public sealed class StreamedNodeUriTests
         """<xsl:template match="title/text()"><t base="{base-uri(.)}"/></xsl:template>""",
         """<xsl:template match="book"><b base="{base-uri(.)}"><xsl:for-each select="title"><t base="{base-uri(.)}"/></xsl:for-each></b></xsl:template>""",
         """<xsl:template match="/"><out><xsl:apply-templates select="." mode="v"/></out></xsl:template><xsl:template match="* | root()" mode="v" priority="-10"><xsl:apply-templates select="node()" mode="v"/></xsl:template><xsl:template match="book" mode="v"><b base="{base-uri(.)}"/></xsl:template>""",
-        """<xsl:template match="shelf"><xsl:for-each-group select="book" group-adjacent="@price > 0"><g base="{base-uri(current-group()[1])}"/></xsl:for-each-group></xsl:template>""",
+        """<xsl:template match="shelf"><xsl:for-each-group select="book" group-adjacent="@price > 0"><g base="{base-uri(current-group()[1])}" second="{base-uri(current-group()[2])}"/></xsl:for-each-group></xsl:template>""",
+        """<xsl:template match="books"><xsl:for-each select="shelf"><xsl:for-each-group select="book" group-adjacent="@price > 0"><g base="{base-uri(current-group()[1])}" second="{base-uri(current-group()[2])}"/></xsl:for-each-group></xsl:for-each></xsl:template>""",
+        // A child that a streamed xsl:for-each or xsl:iterate reads whole is linked to its parent.
+        """<xsl:template match="books"><xsl:for-each select="shelf"><s parent="{name(..)}" base="{base-uri(.)}"/></xsl:for-each></xsl:template>""",
+        """<xsl:template match="shelf"><xsl:iterate select="book"><b parent="{name(..)}" base="{base-uri(.)}"/></xsl:iterate></xsl:template>""",
     };
+
+    // A child that a streamed xsl:for-each or xsl:iterate reads whole had no parent: name(..) was ""
+    // and count(ancestor::*) was 0 (xslt#582, BUGS.md #164).
+    public static TheoryData<string> LoopChildRules => new()
+    {
+        """<xsl:template match="books"><xsl:for-each select="book"><b parent="{name(..)}"/></xsl:for-each></xsl:template>""",
+        """<xsl:template match="books"><xsl:iterate select="book"><b up="{count(ancestor::*)}"/></xsl:iterate></xsl:template>""",
+    };
+
+    [Theory]
+    [MemberData(nameof(LoopChildRules))]
+    public async Task A_child_that_a_streamed_loop_reads_whole_has_its_parent(string rules)
+    {
+        var stylesheet = Stylesheet(rules);
+
+        var tree = await RunAsync(stylesheet, Books, disableStreaming: true);
+        var streamed = await RunAsync(stylesheet, Books, disableStreaming: false);
+
+        tree.Output.Should().ContainAny("parent=\"books\"", "up=\"1\"");
+        streamed.Output.Should().Be(tree.Output);
+        streamed.Streamed.Should().BeTrue();
+    }
 
     [Theory]
     [MemberData(nameof(XmlBaseRules))]
@@ -87,7 +113,7 @@ public sealed class StreamedNodeUriTests
     public static TheoryData<string> DescentRules => new()
     {
         """<xsl:template match="books"><xsl:for-each-group select="book" group-starting-with="book[@price > 100]"><g base="{base-uri(current-group()[1])}"/></xsl:for-each-group></xsl:template>""",
-        """<xsl:template match="books"><xsl:for-each-group select="book" group-adjacent="@price > 100"><g base="{base-uri(current-group()[last()])}"/></xsl:for-each-group></xsl:template>""",
+        """<xsl:template match="books"><xsl:for-each-group select="book" group-adjacent="@price > 100"><g base="{base-uri(current-group()[1])}"/></xsl:for-each-group></xsl:template>""",
     };
 
     [Theory]

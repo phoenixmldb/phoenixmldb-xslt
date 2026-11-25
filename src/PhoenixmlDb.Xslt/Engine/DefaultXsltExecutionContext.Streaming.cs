@@ -571,6 +571,9 @@ internal sealed partial class DefaultXsltExecutionContext
             Document = documentId,
             Parent = NodeId.None,
             Children = [],
+            // The streamed document's URI, so base-uri() and document-uri(root()) of the elements
+            // linked to it are the input's, as without streaming (BUGS #156, xslt#582).
+            DocumentUri = (_activeStreamingDocument ?? ContextItem as XdmDocument)?.DocumentUri,
         });
 
         var parentId = docId;

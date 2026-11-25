@@ -8436,3 +8436,125 @@ streamed writer's check of the output scope first.
 
 Test: `StreamedNodeUriTests.A_copy_of_an_element_read_whole_for_a_rule_keeps_its_namespaces` (2 cases, compared by
 expanded name; each fails before the fix).
+
+### 160. A rule that inspects root() read the whole streamed input into memory — fixed (xslt#582, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. Found with xslt#582 (Martin Honnen's SchXslt2 validator). A template rule of a
+streamable mode that called `root()` in an instruction, as `base-uri(root())` in an `xsl:if` test or an
+`xsl:attribute` select, made the whole run read its input into memory, with no message (only `--timing` said so),
+also with `--strict-streaming`. `StreamedScopeEscapeDetector` took every call of `root()` as a read outside the
+matched element. XSLT 3.0 §19.8.9.18 rewrites `root(.)` of an element as `head((.)/ancestor-or-self::node())`, a
+climb; `base-uri`, `document-uri`, `exists`, `name` and the like inspect their argument (operand usage I), so the
+rule is guaranteed-streamable, and §19.10 says it must then be processed with streaming.
+
+Fix: `root()` and `root(.)` are a climb to the document node. Where the node is only inspected (the argument of
+an inspecting function, an operand of `is`, `<<`, `>>`, `instance of`) the rule streams. A step down from it
+(`root()/x`, `root()//x`) is roaming and free-ranging by §19.8, XTSE3430 as before. Its value (`string(root())`)
+is the value of an ancestor: see #163.
+
+The same check did not examine the attributes of a literal result element (a dictionary, whose entries it skipped
+as value types): see #162.
+
+Tests: `StreamedRootAndDocumentReadTests` (the `root()` cases fail before the fix).
+
+### 161. A rule for the document node that read its URI read the whole streamed input into memory — fixed (xslt#582, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. `<xsl:template match="/"><r doc="{document-uri(.)}"><xsl:apply-templates/></r>` (in
+an attribute, an `xsl:attribute`, or an `xsl:catch`, as the xslt#582 validator has it) read the input into memory
+before the run, with no message. Two document-level checks took `document-uri(.)` and `base-uri(.)` as reads of
+the input: `StreamingSubtreeBufferDetector.NavigatesInput` (any use of `.`), and the planner's classifier, whose
+role table did not list them, so they were "unknown" and not streamable. They inspect the document node, which
+the pass carries with its URI since #156. Now both take them as inspections. A document-level `xsl:iterate` or
+`xsl:for-each-group` over a path of child steps whose body reads `base-uri(.)` streams too; its document node (the
+striding descent's) gets the URI of the input (the part #156 left for here).
+
+Tests: `StreamedRootAndDocumentReadTests` (each fails before the fix), and the xslt#582 validator as given: it
+streams, with the report it gives without streaming.
+
+### 162. last() in an attribute of a literal result element streamed and gave 1 — fixed (xslt#582, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. In a template rule of a streamable mode, `<b v="{last()}"/>` streamed and gave
+`v="1"` for every node (9 without streaming); `<b><xsl:value-of select="last()"/></b>` was answered from a tree,
+right. `StreamedScopeEscapeDetector` walked the properties of each instruction, and the attributes of a literal
+result element are a dictionary: its entries are value types, which the walker skipped, so no expression in such
+an attribute was examined. `--strict-streaming` gave XTSE3430 for both forms, as it should (§19.8.9.14: `last()`
+with a striding context is roaming and free-ranging). Now the walker examines the values of a dictionary.
+
+Test: `StreamedRootAndDocumentReadTests.A_read_outside_the_match_is_answered_from_a_tree` (fails before the fix).
+
+### 163. The value of an ancestor of a streamed node was empty — fixed (xslt#582, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. In a template rule of a streamable mode, the value of an ancestor of the matched node
+streamed and was empty: `string(..)`, `data(..)`, `string(ancestor::book)`, `string(root())`,
+`<xsl:value-of select=".."/>`, `{..}` in an attribute value template, `.. = 'A'`, `concat(.., '!')`,
+`xsl:copy-of select=".."` (an empty copy). The tree gives the text of the ancestor. The streaming pass builds the
+ancestors of a node with their names and attributes and no children. XSLT 3.0 §19.8.1 makes an operand that is
+climbing with usage absorption free-ranging, so such a rule is not guaranteed-streamable; the strict check did not
+apply that rule (absorption of a climbing operand kept its sweep), and `--strict-streaming` accepted the rule.
+
+Fix: `StreamedScopeEscapeDetector` takes the value of an ancestor (`..`, `ancestor::x`, `root()` and steps up from
+them, where they are absorbed: an argument with usage absorption, an operand of a comparison, of arithmetic, of
+`||` or of a cast, an attribute value template, the select of `xsl:value-of`, `xsl:copy-of`, `xsl:attribute`,
+`xsl:comment`, `xsl:processing-instruction`) as a read outside the match: the input is read into memory and the
+result is right. The check of §19.8 (`StreamabilityClassifier`) makes the same operands free-ranging, as a verdict
+it is not certain of: by default the stylesheet runs (Lucas, 2026-11-25: no new default error), and under the strict
+check it is XTSE3430. Inspecting an ancestor (`name(..)`, `exists(..)`, `../@id`, `count(ancestor::*)`, `.. is x`)
+streams as before; the node comparison operators are inspection in the check now too (§19.8.8.6).
+
+Open: the fallback finds the value of an ancestor by the form of the expression, not by its posture. In a loop over
+copies (`<xsl:for-each select="snapshot(book)"><xsl:value-of select="string(..)"/></xsl:for-each>` in a rule for
+`books`) the ancestor is a node of a tree in memory, and §19.8 accepts the rule (grounded), but the input is read into
+memory for it all the same; the result is right, `--stream` warns, and under `--strict-streaming` it is phx:XTSE9430
+(#165) for a stylesheet that §19.8 accepts. No case of the W3C suite has this form, so it is not in the #165 list.
+
+Tests: `StreamingFallbackReportTests.The_value_of_an_ancestor_is_evaluated_on_a_tree` and
+`…_is_XTSE3430_under_the_strict_check` (12 forms each; each part of the change, removed, fails one of them),
+`An_inspected_ancestor_streams` (6).
+
+### 164. A child that a streamed xsl:for-each or xsl:iterate read whole had no parent — fixed (xslt#582, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. In a template rule of a streamable mode, `xsl:for-each` and `xsl:iterate` over the children
+of the matched node read each child whole from the streamed input and ran the body on it. That child had no parent: in
+`<xsl:template match="books"><xsl:for-each select="book"><b parent="{name(..)}"/></xsl:for-each></xsl:template>`,
+`name(..)` was `""` (`books` without streaming), `count(ancestor::*)` in an `xsl:iterate` was 0 (1), and `base-uri()`
+of a node in the child ignored the URI of the input and the `xml:base` above the child. The streamed
+`xsl:apply-templates` links such a child to its streamed parent; these two did not. Found with xslt#582: once
+`base-uri()` is a property of a node to the streaming plan (#161), a group inside such a loop
+(`<xsl:for-each select="shelf"><xsl:for-each-group select="book" …>{base-uri(current-group()[1])}`) streamed through
+this path and gave `b/` in place of `file:///…/dir/s1/b/`.
+
+Fix: the child is linked to the streamed node whose children the loop reads, as for `xsl:apply-templates`; for the
+accumulators it stays the top of its own tree (#93).
+
+Tests: `StreamedNodeUriTests.A_child_that_a_streamed_loop_reads_whole_has_its_parent` (2) and the loop cases of
+`Xml_base_of_the_ancestors_is_resolved_as_in_a_tree` (3); each fails when the link is removed.
+
+### 165. Under --strict-streaming, 1632 W3C cases that XSLT 3.0 §19.8 accepts are phx:XTSE9430 or phx:XTDE9430: this processor reads them into memory — recorded (xslt#582, xslt#143, 2026-11-25)
+
+Engine: **XSLT**. Since xslt#582, `StrictStreamability` (`--strict-streaming`) raises phx:XTSE9430 where this
+processor reads the principal input into memory although the rules of XSLT 3.0 §19.8 find the stylesheet
+guaranteed-streamable, and phx:XTDE9430 where it reads the document of an `xsl:source-document streamable="yes"`
+into memory (Lucas, 2026-11-25: an error, not a silent read into memory). Without the strict check the same runs
+read into memory and give the right result; with `StreamingFallbackWarnings` (`--stream`) they say why. These are
+constructs the streaming pass does not cover yet: the work of xslt#143.
+
+The W3C harness runs the streaming sets under the strict check, because they test XTSE3430, and reads into memory
+in these cases (the internal option `ReadWholeUnderStrictStreamability`), so the suite measures the rules of §19.8
+as before. Run as a user would, on 2026-11-25 (the xslt#582 branch):
+
+- **phx:XTSE9430, 43 cases.** 41 in a rule for "/" that the streaming pass cannot evaluate, 2 that read outside
+  the match. attr/mode: mode-1428, mode-1430; decl/accumulator: accumulator-046s, -047s, -048s, -049s;
+  decl/function: function-5001 to -5007, -5011 to -5018; decl/use-package: use-package-152; insn/merge: merge-098;
+  strm/sf-xml-to-json: sf-xml-to-json-006, -007; strm/si-apply-templates: si-apply-templates-002, -006;
+  strm/si-for-each: si-for-each-801, si-for-each-807 ("/" in a loop over a snapshot); strm/si-for-each-group:
+  si-group-034, -040, -065 (`last()`), -204, -205; strm/si-fork: si-fork-802, -809; strm/si-iterate: si-iterate-037,
+  -094, -131, -132, -133; strm/si-value-of: si-value-of-100; strm/su-absorbing: su-absorbing-301.
+- **phx:XTDE9430, 1589 cases in 84 sets.** By the instruction named: `xsl:value-of` 830, `xsl:copy-of` 307, `xsl:sequence` 112, `xsl:attribute` 42, `xsl:fork` 36, `xsl:apply-templates` 33, `xsl:document` 29, `xsl:for-each` 27, `xsl:try` 26, a literal result element 23, `xsl:copy` 20, `xsl:where-populated` 19, more than one instruction that reads the children of the document node 14, `xsl:on-empty` 12, a text value template 10, `xsl:variable` 10, `xsl:iterate` 7, `xsl:choose` 6, `xsl:on-non-empty` 6, `xsl:comment` 4, `xsl:map-entry` 4, `xsl:assert` 3, `xsl:call-template` 2, `xsl:message` 2, the body 1, `xsl:element` 1, `xsl:for-each-group` 1, `xsl:if` 1, `xsl:processing-instruction` 1. By set (strm/ unless
+  named): sx-UnionExpr 63, sx-ExceptExpr 56, sx-IntersectExpr 55, sx-SquareArrayConstructor 53, sx-IfExpr 49, sx-CommaExpr 46, si-attribute 42, si-LRE 41, si-copy 40, si-element 39, si-try 39, sf-deep-equal 35, si-for-each-group 34, sx-InstanceofExpr 33, sf-boolean 32, sf-not 32, sx-TreatExpr 32, si-on-non-empty 31, sf-one-or-more 28, sx-GeneralComp-eq 28, sx-GeneralComp-ge 28, sx-GeneralComp-gt 28, sx-GeneralComp-le 28, sx-GeneralComp-lt 28, sx-GeneralComp-ne 28, sf-empty 27, sf-exists 27, sf-max 27, sf-min 27, si-copy-of 27, sf-outermost 26, sf-avg 25, si-fork 25, sf-sum 24, si-document 24, si-on-empty 22, si-value-of 22, su-absorbing 22, sf-fold-left 20, sf-insert-before 20, sf-subsequence 18, si-iterate 18, sf-count 17, si-where-populated 16, sf-distinct-values 12, sx-QuantifiedExpr 10, sf-head 9, sf-index-of 9, sf-remove 9, sf-tail 9, sf-trace 9, sf-unordered 9, si-for-each 9, sf-exactly-one 8, sf-zero-or-one 7, si-choose 7, si-result-document 7, sx-ArithmeticExpr 7, sx-SimpleMappingExpr 7, sf-snapshot 6, su-filter 6, su-unclassified 6, sf-xml-to-json 5, si-map 5, su-shallow-descent 5, sx-ForExpr 5, sx-MapExpr 5, sf-codepoints-to-string 4, sf-current 4, si-assert 4, su-inspection 4, si-apply-imports 3, si-message 3, sf-filter 2, si-call-template 2, su-ascent 2, decl/accumulator 1, decl/override 1, sf-copy-of 1, sf-fold-right 1, sf-innermost 1, sf-reverse 1, si-apply-templates 1, si-next-match 1.
+
+The full list (set, case, code, construct) is `scripts/strict-streaming-read-whole.tsv`. To measure it again:
+
+    CONFORMANCE_STRICT_READ_WHOLE=error CONFORMANCE_OUT=/tmp/strict-read-whole ./scripts/conformance.sh
+    python3 -I scripts/strict-streaming-read-whole.py /tmp/strict-read-whole > scripts/strict-streaming-read-whole.tsv
+
+(The per-set baseline gate of that run fails, as it must: the cases count as failures there.)

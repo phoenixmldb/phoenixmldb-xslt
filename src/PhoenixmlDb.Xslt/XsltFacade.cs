@@ -226,6 +226,36 @@ public sealed class XsltTransformer
     /// <para>Saxon-EE has a setting of the same purpose, the streamingFallback feature.</para>
     /// </remarks>
     public bool StreamingFallback { get; set; }
+
+    /// <summary>
+    /// When <c>true</c>, a transformation of a stylesheet with a streamable initial mode that
+    /// reads its input into memory, in place of streaming it, reports why (the construct and its
+    /// location) to <see cref="WarningListener"/>. Default <c>false</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>At most one warning for the principal input, which starts <c>XSLT streaming: the
+    /// input was read into memory:</c>, plus one for each <c>xsl:source-document</c> with
+    /// <c>streamable="yes"</c> that reads its document into memory, which starts
+    /// <c>XSLT streaming: the document</c>. The causes for the principal input: a construct of a
+    /// template rule of a streamable mode that this processor cannot evaluate while streaming; the
+    /// start at a named template or a function; validation of the input
+    /// (<see cref="SourceValidation"/>); XInclude expansion of the input
+    /// (<see cref="EnableXInclude"/>). For an <c>xsl:source-document</c>: a construct of its body
+    /// that this processor cannot evaluate while streaming. Nothing is reported when
+    /// <see cref="DisableStreaming"/> is set.</para>
+    /// <para>Under <see cref="StrictStreamability"/>, a construct that the rules of XSLT 3.0 §19.8
+    /// find guaranteed-streamable but that this processor cannot evaluate while streaming is an
+    /// error, phx:XTSE9430 (phx:XTDE9430 for an <c>xsl:source-document</c>), in place of the
+    /// warning, unless <see cref="StreamingFallback"/> is set. The other causes give the warning
+    /// only. The xslt command line sets this property with <c>--stream</c>.</para>
+    /// </remarks>
+    public bool StreamingFallbackWarnings { get; set; }
+
+    /// <summary>
+    /// The W3C harness only: under <see cref="StrictStreamability"/>, read the input into memory
+    /// in place of phx:XTSE9430 and phx:XTDE9430 (<see cref="XsltTransformOptions.ReadWholeUnderStrictStreamability"/>).
+    /// </summary>
+    internal bool ReadWholeUnderStrictStreamability { get; set; }
     private bool _allowRemoteXInclude;
     private PhoenixmlDb.Core.Xml.IXmlResourceResolver? _xIncludeResolver;
     private string? _sourceSelect;
@@ -1155,8 +1185,9 @@ public sealed class XsltTransformer
     public Action<string, bool>? MessageListener { get; set; }
 
     /// <summary>
-    /// Receives processor warnings — currently the xsl:mode warning-on-no-match diagnostic,
-    /// reported once per node processed with no matching template rule.
+    /// Receives processor warnings: the xsl:mode warning-on-no-match diagnostic, reported once per
+    /// node processed with no matching template rule; warning-on-multiple-match; and, with
+    /// <see cref="StreamingFallbackWarnings"/>, why the input was read into memory.
     /// </summary>
     public Action<string>? WarningListener { get; set; }
 
@@ -1622,6 +1653,8 @@ public sealed class XsltTransformer
             DocumentValidation = DocumentValidation,
             StrictStreamability = StrictStreamability,
             StreamingFallback = StreamingFallback,
+            StreamingFallbackWarnings = StreamingFallbackWarnings,
+            ReadWholeUnderStrictStreamability = ReadWholeUnderStrictStreamability,
             AllowRemoteXInclude = _allowRemoteXInclude,
             XIncludeResolver = _xIncludeResolver,
             HasSourceDocument = hasSource,

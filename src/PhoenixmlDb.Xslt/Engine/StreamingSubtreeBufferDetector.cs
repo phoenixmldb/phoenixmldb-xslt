@@ -765,6 +765,13 @@ internal static class StreamingSubtreeBufferDetector
             case UnaryExpression un:
                 return NavigatesInput(un.Operand);
 
+            // The URI of the context node: the document node of the pass carries it (BUGS #156),
+            // so it is answered there with nothing read (xslt#582). It was taken as a read of the
+            // input, and a rule for "/" that wrote document-uri(.) read the whole input first.
+            case FunctionCallExpression { Name.LocalName: "document-uri" or "base-uri" } uri
+                when uri.Arguments is [] or [ContextItemExpression]:
+                return false;
+
             case FunctionCallExpression fc:
                 foreach (var arg in fc.Arguments)
                     if (NavigatesInput(arg)) return true;

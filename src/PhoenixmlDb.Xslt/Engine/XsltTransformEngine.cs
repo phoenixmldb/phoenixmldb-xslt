@@ -5357,6 +5357,9 @@ public sealed partial class XsltTransformEngine
         {
             return await TransformStreamingAsync(xmlSource, options).ConfigureAwait(false);
         }
+        // The input of a streamable initial mode is read into memory: why, to the warning
+        // listener, or phx:XTSE9430 under the strict check (xslt#582).
+        ReportReadingWhole(WhyTheInputIsReadWhole(options, entryIsInitialTemplate), options);
 
         // (see CreateSourceReaderSettings for the DTD/entity posture)
         // Parse the XML to an XdmNode tree
@@ -5569,14 +5572,7 @@ public sealed partial class XsltTransformEngine
     /// Whether the streaming pass from the document node gives the right result for this
     /// stylesheet. Where it does not, the input is read whole and the tree engine answers.
     /// </summary>
-    private bool StreamingPassAnswersRight(XsltTransformOptions? options)
-        // A rule of a streamable mode that reads outside its matched element cannot be
-        // answered by the streaming pass; it answered wrongly with no error (xslt#298).
-        => !StreamedScopeEscapeDetector.AnyStreamableRuleEscapesItsMatch(_stylesheet)
-            // XInclude expansion needs the whole input buffered into a DOM before ConvertToXdm;
-            // the streaming forward pass bypasses that, so fall through to the buffered path.
-            && options?.ExpandXInclude != true
-            && !DocNodeTemplateRequiresWholeInputBuffer(options);
+    private bool StreamingPassAnswersRight(XsltTransformOptions? options) => WhyThePassCannotAnswer(options) is null;
 
     private async Task TransformOnCurrentStackAsync(XmlReader input, TextWriter output, XsltTransformOptions? options)
     {
@@ -5725,7 +5721,7 @@ public sealed partial class XsltTransformEngine
         // its select against this empty node. Distinguishing that regression from the many
         // correct empty-evaluations requires threading the docNodeTemplate's StreamingPlanner.Plan
         // classification into every EvaluateAsync-against-syntheticDoc call site (a broad change).
-        // The document-level whole-input-buffer dispatch (DocNodeTemplateRequiresWholeInputBuffer,
+        // The document-level whole-input-buffer dispatch (DocNodeTemplateReadWholeCause,
         // gated below) already routes such bodies away from this node. The invariant is enforced
         // at the in-template text-only-copy sink (OwningConstructIsGuaranteedStreamable guard); the
         // document-level synthetic-empty guard is deferred to the executor-parity phase where Plan
@@ -6044,16 +6040,15 @@ public sealed partial class XsltTransformEngine
     /// xsl:source-document streamable path.
     /// </summary>
     /// <summary>
-    /// Returns true when a streamable transform would dispatch through a document-node
-    /// template (<c>match="/"</c>) whose body cannot be driven off the live reader at the
-    /// document level (see <see cref="StreamingSubtreeBufferDetector.RequiresWholeInputBuffer"/>).
-    /// Such a body must run against a fully materialized input, so the caller routes to the
-    /// in-memory engine instead of the streaming pass.
+    /// The rule for the document node that a streamable transform would dispatch through, or
+    /// null. Where its body cannot be driven off the live reader at the document level (see
+    /// <see cref="DocLevelWholeInputBuffer"/>), it must run against a fully materialized input,
+    /// so the caller routes to the in-memory engine instead of the streaming pass.
     /// </summary>
-    private bool DocNodeTemplateRequiresWholeInputBuffer(XsltTransformOptions? options)
+    private XsltTemplate? DocNodeTemplate(XsltTransformOptions? options)
     {
         // Named-initial-template invocations don't dispatch through match="/".
-        if (options?.InitialTemplate != null) return false;
+        if (options?.InitialTemplate != null) return null;
 
         var probeStore = new XdmInMemoryStore();
         var probeDoc = new XdmDocument
@@ -6073,13 +6068,12 @@ public sealed partial class XsltTransformEngine
         using (var mc = ctx.AcquireMatchContext())
             docNodeTemplate = _templateIndex.FindMatchingTemplate(probeDoc, options?.InitialMode, mc.Value);
 
-        if (docNodeTemplate?.Body == null) return false;
-        return DocLevelWholeInputBuffer(docNodeTemplate.Body, _stylesheet);
+        return docNodeTemplate;
     }
 
     /// <summary>
     /// #143 Phase 1.5 — the document-level whole-input-buffer decision, unified across the two
-    /// document-level sites (<see cref="DocNodeTemplateRequiresWholeInputBuffer"/> and the
+    /// document-level sites (<see cref="DocNodeTemplateReadWholeCause"/> and the
     /// xsl:source-document streamable path). ADDITIVE: it buffers when EITHER the proven legacy
     /// executor-capability detector <see cref="StreamingSubtreeBufferDetector.RequiresWholeInputBuffer"/>
     /// demands it, OR the posture/sweep classifier's <see cref="StreamingPlanner.Plan"/> derives

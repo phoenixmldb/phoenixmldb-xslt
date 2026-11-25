@@ -19,9 +19,13 @@ public sealed class StreamingD1FixTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
     }
 
-    private static async Task<string> RunAsync(string stylesheet, string input, bool tree = false, bool strict = false)
+    private static async Task<string> RunAsync(string stylesheet, string input, bool tree = false, bool strict = false,
+        bool asTheW3CHarness = false)
     {
-        var t = new XsltTransformer { DisableStreaming = tree, StrictStreamability = strict };
+        var t = new XsltTransformer
+        {
+            DisableStreaming = tree, StrictStreamability = strict, ReadWholeUnderStrictStreamability = asTheW3CHarness,
+        };
         await t.LoadStylesheetAsync(stylesheet);
         return (await t.TransformAsync(input)).Trim();
     }
@@ -110,7 +114,7 @@ public sealed class StreamingD1FixTests : IDisposable
         (await run.Should().ThrowAsync<XsltException>()).Which.Message.Should().StartWith("XTSE3430");
     }
 
-    private async Task<string> GroupedAsync(string population)
+    private async Task<string> GroupedAsync(string population, bool asTheW3CHarness = false)
     {
         var docs = Path.Combine(_dir, "t.xml");
         await File.WriteAllTextAsync(docs, """<ts><t d="1" v="a"/><t d="2" v="b"/></ts>""", TestContext.Current.CancellationToken);
@@ -122,17 +126,29 @@ public sealed class StreamingD1FixTests : IDisposable
               </xsl:for-each-group></out>
             </xsl:template>
             </xsl:stylesheet>
-            """, """<r><o k="1" d="1"/><o k="2" d="2"/></r>""", strict: true);
+            """, """<r><o k="1" d="1"/><o k="2" d="2"/></r>""", strict: true, asTheW3CHarness: asTheW3CHarness);
     }
 
     /// <summary>
     /// In an xsl:source-document inside a group of copied nodes, current-group() is held in
     /// memory and a predicate that reads it does not read the streamed document (W3C
-    /// si-group-051); with a group of streamed nodes it is XTSE3430 (si-group-052).
+    /// si-group-051); with a group of streamed nodes it is XTSE3430 (si-group-052). The engine
+    /// reads that document into memory for the predicate: as the W3C harness runs it, the result;
+    /// under the strict check alone, phx:XTDE9430 (xslt#582).
     /// </summary>
     [Fact]
     public async Task A_group_of_copies_may_be_read_in_a_nested_streamed_document()
-        => (await GroupedAsync("o/copy-of()")).Should().Be("<out><g>a</g><g>b</g></out>");
+        => (await GroupedAsync("o/copy-of()", asTheW3CHarness: true)).Should().Be("<out><g>a</g><g>b</g></out>");
+
+    [Fact]
+    public async Task A_nested_streamed_document_that_is_read_into_memory_is_phx_XTDE9430_under_the_strict_check()
+    {
+        var run = () => GroupedAsync("o/copy-of()");
+        var error = (await run.Should().ThrowAsync<XsltException>()).Which;
+        error.ErrorCode.Should().Be("phx:XTDE9430");
+        error.Message.Should().StartWith("phx:XTDE9430: The document of xsl:source-document cannot be streamed: this processor cannot evaluate ")
+            .And.EndWith(" it reads the document into memory and gives the same result.");
+    }
 
     [Fact]
     public async Task A_group_of_streamed_nodes_may_not()

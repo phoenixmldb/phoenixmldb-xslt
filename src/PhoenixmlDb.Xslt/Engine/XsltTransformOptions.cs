@@ -210,9 +210,10 @@ public sealed class XsltTransformOptions
     public Action<string, bool>? MessageListener { get; init; }
 
     /// <summary>
-    /// Receives processor warnings — currently xsl:mode warning-on-no-match. A warning is a
-    /// diagnostic the transform continues past, so it has its own channel rather than sharing
-    /// xsl:message's.
+    /// Receives processor warnings: xsl:mode warning-on-no-match and warning-on-multiple-match,
+    /// and, with <see cref="XsltTransformer.StreamingFallbackWarnings"/>, why the input was read
+    /// into memory. A warning is a diagnostic the transform continues past, so it has its own
+    /// channel rather than sharing xsl:message's.
     /// </summary>
     public Action<string>? WarningListener { get; init; }
 
@@ -250,6 +251,20 @@ public sealed class XsltTransformOptions
     /// where a case asks for it, also when the result is serialized by the text method.
     /// </summary>
     internal bool KeepResultMarkup { get; set; }
+
+    /// <summary>
+    /// Report to <see cref="WarningListener"/> why the input of a stylesheet with a streamable
+    /// initial mode is read into memory (<see cref="XsltTransformer.StreamingFallbackWarnings"/>).
+    /// </summary>
+    internal bool StreamingFallbackWarnings { get; init; }
+
+    /// <summary>
+    /// The W3C harness only: under <see cref="StrictStreamability"/>, read the input into memory
+    /// where this processor cannot stream a stylesheet that the rules of XSLT 3.0 §19.8 accept,
+    /// in place of phx:XTSE9430 and phx:XTDE9430. The suite tests those rules (XTSE3430), not the
+    /// coverage of this processor's streaming pass.
+    /// </summary>
+    internal bool ReadWholeUnderStrictStreamability { get; init; }
 
     /// <summary>
     /// Cancellation token for cooperative cancellation of transformation.
