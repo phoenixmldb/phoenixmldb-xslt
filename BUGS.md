@@ -8593,3 +8593,21 @@ with what it did: `(streamed by the transform)` or `(read into memory by the tra
 when the CLI chose to stream.
 
 Tests: `TimingLabelTests` (3 new; each fails before the fix).
+
+### 168. base-uri() of a fn:copy-of or fn:snapshot result was empty — fixed (F1, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. Found with xslt#652. Without streaming, the nodes that `fn:copy-of` and `fn:snapshot` return
+had no base URI: `base-uri(copy-of(//a))` and `base-uri(snapshot(//a))` were empty, the document node of a snapshot
+had none, and an element with a relative `xml:base` kept it unresolved (`base-uri(copy-of(//b))` gave `sub/`). XSLT 3.0
+§11.9.2, which `fn:copy-of` follows: "The base URI of a node is copied, except in the case of an element node having an
+xml:base attribute, in which case the base URI of the new node is taken as the value of the xml:base attribute,
+resolved if it is relative against the base URI of the xsl:copy-of instruction"; §18.4: each ancestor that a snapshot
+keeps has the base URI of the original. The copies were made without the base URI of their originals.
+
+Fix: the top node of each copy gets the base URI of its original; an element with `xml:base` gets that value resolved
+against the static base URI of the call; the document node of a snapshot gets that of the original document. The
+instructions (`xsl:copy-of`, `xsl:copy`, the built-in deep copy) were right and are not changed: a copy attached to a
+new parent takes the parent's base URI there, and one with no parent keeps the original's.
+
+Tests: `CopyFunctionBaseUriTests` (18: 15 forms of `fn:copy-of` and `fn:snapshot`, of which 13 fail before the fix;
+3 forms of the instructions, which were right).
