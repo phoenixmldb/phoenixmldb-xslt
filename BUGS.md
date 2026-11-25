@@ -8581,3 +8581,15 @@ proposed fix is to rewrite `root()/x` to `x` where the context item is a documen
 Tests: `RootOfDocumentRuleTests` (13: the forms in a rule for "/" run with the `--no-stream` result and are not
 XTSE3430 under the strict check, and each fails before the fix; the forms in a rule for an element, in `match="/ | book"`
 and in a loop stay XTSE3430).
+
+### 167. xslt --timing said "source: (streaming)" for a run that read its input into memory — fixed (xslt#653, 2026-11-25)
+
+Engine: **XSLT** (CLI). In 3.2.0. Found with xslt#582. With `--timing --stream`, the CLI wrote
+`source: … (streaming)` before the transform started: the label was only the `--stream` flag (`auto-streaming`
+without it), and the time measured no read, because the transform opens the file itself. A run that then read
+the input into memory wrote both `source: … (streaming)` and `transform: … (not streamed: the input was read into
+memory)`. xslt#463 had corrected only the `transform:` line. The `source:` line is now written after the transform,
+with what it did: `(streamed by the transform)` or `(read into memory by the transform)`, prefixed `auto-stream: `
+when the CLI chose to stream.
+
+Tests: `TimingLabelTests` (3 new; each fails before the fix).
