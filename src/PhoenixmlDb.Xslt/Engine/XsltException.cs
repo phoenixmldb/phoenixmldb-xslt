@@ -40,7 +40,8 @@ public class XsltException : Exception
 
     /// <summary>
     /// The W3C error code this exception reports — <c>XTDE0640</c>, <c>XPST0008</c>,
-    /// <c>XTSE0010</c> — or <c>null</c> when the message carries none.
+    /// <c>XTSE0010</c> — or a code of this processor with its prefix, <c>phx:XTSE9430</c>, or
+    /// <c>null</c> when the message carries none.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -72,6 +73,9 @@ public class XsltException : Exception
     /// </summary>
     private static string? ExtractErrorCode(string? message)
     {
+        // A code of this processor: phx:XTSE9430 (xslt#582).
+        if (message is not null && message.StartsWith("phx:", StringComparison.Ordinal))
+            return ExtractErrorCode(message[4..]) is { } own ? "phx:" + own : null;
         if (message is null || message.Length < 8)
             return null;
         for (var i = 0; i < 4; i++)

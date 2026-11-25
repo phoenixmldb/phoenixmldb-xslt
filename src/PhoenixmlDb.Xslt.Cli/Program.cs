@@ -192,6 +192,11 @@ try
         Console.Error.WriteLine(message);
     };
 
+    // Processor warnings go to stderr: xsl:mode warning-on-no-match and on-multiple-match="use-last"
+    // with warning-on-multiple-match, and, with --stream, why a stylesheet with a streamable mode
+    // read its input into memory (xslt#582). They were not written at all.
+    transformer.WarningListener = warning => Console.Error.WriteLine("Warning: " + warning);
+
     // Set up trace listener
     if (options.Trace)
     {
@@ -333,6 +338,8 @@ try
         transformer.DisableStreaming = options.NoStream;
         transformer.StrictStreamability = options.StrictStreaming;
         transformer.StreamingFallback = options.StreamingFallback;
+        // --stream asks for streaming: a run that reads the input into memory says why.
+        transformer.StreamingFallbackWarnings = options.Stream;
         transformer.SourceValidation = options.SourceValidation;
 
         // Streaming requires a local file (we hand the path to File.OpenRead). When the
@@ -694,6 +701,8 @@ static void PrintUsage()
                              inputs when the stylesheet declares a streamable mode;
                              use this flag to force streaming on other stylesheets
                              (with the existing fallback if the body isn't streamable).
+                             A run with a streamable mode that reads the input into
+                             memory writes a warning that says why.
           --no-stream        Disable auto-streaming. Forces the in-memory tree path
                              even when the stylesheet declares a streamable mode.
           --strict-streaming Report XTSE3430 for a template in a streamable mode, or
@@ -704,8 +713,11 @@ static void PrintUsage()
                              only certain answers are reported, and the others
                              run on a buffered copy). A few constructs beyond
                              those rules that this engine streams correctly are
-                             accepted. No effect with --no-stream or
-                             --streaming-fallback.
+                             accepted. A construct that those rules find
+                             guaranteed streamable but that this engine cannot
+                             evaluate while streaming is phx:XTSE9430 (phx:XTDE9430
+                             for xsl:source-document), not a read into memory.
+                             No effect with --no-stream or --streaming-fallback.
           --streaming-fallback
                              Run a template in a streamable mode, or an
                              xsl:source-document streamable="yes" body, that is

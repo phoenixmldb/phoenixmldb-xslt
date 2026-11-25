@@ -747,6 +747,10 @@ public static partial class StreamabilityClassifier
             case BinaryOperator.And when ctx.BySpec:
             case BinaryOperator.Or when ctx.BySpec:
                 return GeneralRule([(Classify(bin.Left, ctx), 'I'), (Classify(bin.Right, ctx), 'I')], atMostOneItem: false);
+            // §19.8.8.6: the operands of a node comparison are inspected, not atomized, so
+            // root() is $n and .. << $n read nothing of the climbed node.
+            case BinaryOperator.Is or BinaryOperator.Precedes or BinaryOperator.Follows when ctx is { BySpec: true, ForTheCheck: true }:
+                return GeneralRule([(Classify(bin.Left, ctx), 'I'), (Classify(bin.Right, ctx), 'I')], atMostOneItem: false);
 
             default:
                 return ClassifyAtomizingPair(bin.Left, bin.Right, ctx);
@@ -1173,6 +1177,9 @@ public static partial class StreamabilityClassifier
         var ps = Classify(e, ctx);
         if (ps.Sweep == Sweep.FreeRanging)
             return Sweep.FreeRanging;
+        // §19.8.1: atomizing an ancestor (.. = 'x') is climbing and absorption, free-ranging.
+        if (ps.Posture == Posture.Climbing && ctx is { BySpec: true, ForTheCheck: true } && StreamedScopeEscapeDetector.IsClimbing(e))
+            return DoubtfulFreeRanging();
         if (ps.Posture is not (Posture.Striding or Posture.Crawling))
             return ps.Sweep;
         // §19.8.1: absorbing a node that cannot have children is inspection.
@@ -1404,7 +1411,7 @@ public static partial class StreamabilityClassifier
         {
             for (var i = 0; i < count; i++)
                 operands.Add((Classify(fc.Arguments[i], ctx),
-                    usages[i] == 'A' && ctx.ForTheCheck ? Absorption(fc.Arguments[i], ctx)
+                    usages[i] == 'A' && ctx.ForTheCheck ? AbsorptionOf(fc.Arguments[i], ctx)
                         : usages[i] == 'A' && ctx.ContextHasNoChildren && fc.Arguments[i] is ContextItemExpression ? 'I' : usages[i]));
         }
 
@@ -1419,7 +1426,8 @@ public static partial class StreamabilityClassifier
     /// §19.8.1, the general streamability rules, for operands that are not higher-order and
     /// are not a choice group. The classifier has no static type for an operand, so the one
     /// rule that needs it (absorption of a node that cannot have children is inspection) is
-    /// applied to the climbing posture, which is where this classifier puts an attribute.
+    /// applied to the climbing posture, which is where this classifier puts an attribute. The usage
+    /// 'C' is absorption of an operand that selects an ancestor (<see cref="AbsorptionOf"/>).
     /// </summary>
     private static PostureSweep GeneralRule(List<(PostureSweep Operand, char Usage)> operands, bool atMostOneItem)
     {
@@ -1446,7 +1454,8 @@ public static partial class StreamabilityClassifier
         return Sweep.Consuming;
     }
 
-    private static PostureSweep GeneralRuleCore(List<(PostureSweep Operand, char Usage)> operands, bool atMostOneItem, out bool postureMismatchWithClimbing)
+    private static PostureSweep GeneralRuleCore(List<(PostureSweep Operand, char Usage)> operands, bool atMostOneItem,
+        out bool postureMismatchWithClimbing)
     {
         postureMismatchWithClimbing = false;
         var consuming = 0;
@@ -1464,6 +1473,12 @@ public static partial class StreamabilityClassifier
                 : usage switch
                 {
                     'A' => operand.Posture == Posture.Climbing ? operand.Sweep : Sweep.Consuming,
+                    // Absorbing an ancestor reads its descendants, which have passed or are still
+                    // to come: climbing and absorption, free-ranging (§19.8.1). string(..) streamed
+                    // and gave "" (xslt#582). The transformation reads the input into memory for it
+                    // (StreamedScopeEscapeDetector), so by default it is not reported (the verdict
+                    // is uncertain), and under the strict check it is XTSE3430.
+                    'C' => operand.Posture == Posture.Climbing ? DoubtfulFreeRanging() : Sweep.Consuming,
                     // Absorbed without a known static type: by the specification it may be a
                     // node that has no children, and absorbing it is then inspection (§19.8.1
                     // rule 1(b)(iii)(A)). It is taken to consume, and whatever is concluded from
@@ -1498,7 +1513,7 @@ public static partial class StreamabilityClassifier
             postureMismatchWithClimbing = consumingAreMotionlessTransmission && sawClimbing;
             return NotStreamable();
         }
-        if (only.Usage is 'A' or 'a' or 'I')
+        if (only.Usage is 'A' or 'a' or 'I' or 'C')
             return Grounded(Sweep.Consuming);
         if (only.Operand.Posture == Posture.Crawling && atMostOneItem)
             return new PostureSweep(Posture.Striding, only.Adjusted);
@@ -2075,7 +2090,7 @@ public static partial class StreamabilityClassifier
             return NotStreamable();
         // §19.8.4.14: the select expression has usage absorption.
         if (ctx.BySpec)
-            return GeneralRule([(s, 'A')], atMostOneItem: false);
+            return GeneralRule([(s, ctx.ForTheCheck ? AbsorptionOf(select, ctx) : 'A')], atMostOneItem: false);
         return Grounded(s.Sweep);
     }
 

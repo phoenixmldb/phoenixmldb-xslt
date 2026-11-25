@@ -252,6 +252,23 @@ public sealed class XsltTransformOptions
     internal bool KeepResultMarkup { get; set; }
 
     /// <summary>
+    /// Report to <see cref="WarningListener"/> why the input of a stylesheet with a streamable
+    /// initial mode is read into memory (<see cref="XsltTransformer.StreamingFallbackWarnings"/>).
+    /// </summary>
+    internal bool StreamingFallbackWarnings { get; init; }
+
+    /// <summary>
+    /// The W3C harness only: under <see cref="StrictStreamability"/>, read the input into memory
+    /// where this processor cannot stream a stylesheet that the rules of XSLT 3.0 §19.8 accept,
+    /// in place of phx:XTSE9430 and phx:XTDE9430. The suite tests those rules (XTSE3430), not the
+    /// coverage of this processor's streaming pass.
+    /// </summary>
+    internal bool ReadWholeUnderStrictStreamability { get; init; }
+
+    /// <summary>The reason to read the input whole has been reported for this transformation.</summary>
+    internal bool ReadWholeReported { get; set; }
+
+    /// <summary>
     /// Cancellation token for cooperative cancellation of transformation.
     /// When cancelled, the transformation throws OperationCanceledException.
     /// </summary>

@@ -470,6 +470,19 @@ internal sealed partial class DefaultXsltExecutionContext
     internal XmlReader? _activeStreamingReader;
 
     /// <summary>
+    /// The base URI in scope at a depth of the document the active streaming pass reads
+    /// (<see cref="StreamingXmlProcessor.BaseUriAtDepth"/>); null outside a streaming pass.
+    /// </summary>
+    internal Func<int, string?>? _streamedBaseUriAtDepth;
+
+    /// <summary>
+    /// The base URI a detached copy of the element at the reader's position reports: the copy has
+    /// no parent, so it is the base URI in scope where the element stands in the streamed
+    /// document. Without it, base-uri() of a member of a streamed group was empty (xslt#582).
+    /// </summary>
+    internal string? StreamedBaseUriAt(XmlReader reader) => _streamedBaseUriAtDepth?.Invoke(reader.Depth);
+
+    /// <summary>
     /// The document node standing in for the document being streamed — the context item pushed
     /// alongside <see cref="_activeStreamingProcessor"/>. The streaming interceptions must fire
     /// for THIS document only: testing <c>ContextItem is XdmDocument</c> let any other document

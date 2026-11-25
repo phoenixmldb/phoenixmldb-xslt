@@ -21,7 +21,19 @@ namespace PhoenixmlDb.Xslt.Engine;
 internal static class StreamingSubtreeMaterializer
 {
     public static XdmElement? Materialize(XmlReader reader, XdmInMemoryStore store, DocumentId documentId,
-        IReadOnlyList<KeyValuePair<string, string>>? rootInScopeNamespaces = null)
+        IReadOnlyList<KeyValuePair<string, string>>? rootInScopeNamespaces = null, string? rootBaseUri = null)
+    {
+        var root = MaterializeTree(reader, store, documentId, rootInScopeNamespaces);
+        // A root with no parent in the store: base-uri() of it and of every node under it ends
+        // here, at the base URI in scope where it stands in the streamed document (its own xml:base
+        // is resolved against it). It was empty (xslt#582).
+        if (root is not null && rootBaseUri is not null)
+            root.BaseUri = rootBaseUri;
+        return root;
+    }
+
+    private static XdmElement? MaterializeTree(XmlReader reader, XdmInMemoryStore store, DocumentId documentId,
+        IReadOnlyList<KeyValuePair<string, string>>? rootInScopeNamespaces)
     {
         if (reader.NodeType != XmlNodeType.Element) return null;
 

@@ -87,7 +87,7 @@ public sealed class StreamedNodeUriTests
     public static TheoryData<string> DescentRules => new()
     {
         """<xsl:template match="books"><xsl:for-each-group select="book" group-starting-with="book[@price > 100]"><g base="{base-uri(current-group()[1])}"/></xsl:for-each-group></xsl:template>""",
-        """<xsl:template match="books"><xsl:for-each-group select="book" group-adjacent="@price > 100"><g base="{base-uri(current-group()[last()])}"/></xsl:for-each-group></xsl:template>""",
+        """<xsl:template match="books"><xsl:for-each-group select="book" group-adjacent="@price > 100"><g base="{base-uri(current-group()[1])}"/></xsl:for-each-group></xsl:template>""",
     };
 
     [Theory]

@@ -25,22 +25,46 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// </remarks>
 internal static class StreamedScopeEscapeDetector
 {
-    private static readonly ConditionalWeakTable<XsltStylesheet, StrongBox<bool>> _cache = new();
+    /// <summary>The first read outside the match that was found: the rule, the expression and where it is.</summary>
+    internal sealed record Escape(XsltTemplate Template, string Construct, SourceLocation? Location);
 
-    public static bool AnyStreamableRuleEscapesItsMatch(XsltStylesheet stylesheet)
-        => _cache.GetValue(stylesheet, s => new StrongBox<bool>(Compute(s))).Value;
+    private static readonly ConditionalWeakTable<XsltStylesheet, StrongBox<Escape?>> _cache = new();
 
-    private static bool Compute(XsltStylesheet stylesheet)
+    public static bool AnyStreamableRuleEscapesItsMatch(XsltStylesheet stylesheet) => FirstEscape(stylesheet) is not null;
+
+    /// <summary>The first rule of a streamable mode that reads outside its match, or null.</summary>
+    public static Escape? FirstEscape(XsltStylesheet stylesheet)
+        => _cache.GetValue(stylesheet, s => new StrongBox<Escape?>(Compute(s))).Value;
+
+    private static Escape? Compute(XsltStylesheet stylesheet)
     {
         foreach (var template in StreamableModeRules(stylesheet))
         {
             var contextRoots = MatchesOnlyDocument(template.Match)
                 ? ContextRootPaths(template.Body)
                 : NoPaths;
-            if (Escapes(template.Body, new HashSet<object>(ReferenceEqualityComparer.Instance), contextRoots))
-                return true;
+            var search = new Search(contextRoots);
+            if (Escapes(template.Body, search, template.Body.Location))
+                return new Escape(template, search.Construct ?? "an expression", search.Location ?? template.Body.Location);
         }
-        return false;
+        return null;
+    }
+
+    /// <summary>The state of the walk over one rule, and what it found.</summary>
+    private sealed class Search(HashSet<PathExpression> contextRoots)
+    {
+        public HashSet<PathExpression> ContextRoots { get; } = contextRoots;
+        public HashSet<object> Seen { get; } = new(ReferenceEqualityComparer.Instance);
+        public string? Construct { get; set; }
+        public SourceLocation? Location { get; set; }
+
+        /// <summary>Records the expression found and returns true.</summary>
+        public bool Found(XQueryExpression expr, SourceLocation? where)
+        {
+            Construct = expr.ToString();
+            Location = expr.Location is { Line: > 0 } at ? at : where;
+            return true;
+        }
     }
 
     private static readonly HashSet<PathExpression> NoPaths = new(ReferenceEqualityComparer.Instance);
@@ -216,21 +240,27 @@ internal static class StreamedScopeEscapeDetector
         }
     }
 
-    /// <summary>Walks an instruction tree: its XPath expressions, AVT parts and nested instructions.</summary>
-    private static bool Escapes(object? node, HashSet<object> seen, HashSet<PathExpression> contextRoots)
+    /// <summary>
+    /// Walks an instruction tree: its XPath expressions, AVT parts and nested instructions.
+    /// <paramref name="where"/> is the location of the innermost instruction, for an expression
+    /// that has none of its own.
+    /// </summary>
+    private static bool Escapes(object? node, Search search, SourceLocation? where)
     {
         switch (node)
         {
             case null:
                 return false;
             case XQueryExpression expr:
-                return ExpressionEscapes(expr, contextRoots);
+                return ExpressionEscapes(expr, search, where);
+            // The value of an attribute value template is the string value of what it selects.
             case AvtExpression avt:
-                return ExpressionEscapes(avt.Expression, contextRoots);
+                return IsClimbing(avt.Expression) ? search.Found(avt.Expression, where)
+                    : ExpressionEscapes(avt.Expression, search, where);
             case string or QName or ValueType:
                 return false;
         }
-        if (!seen.Add(node))
+        if (!search.Seen.Add(node))
             return false;
         // The attributes of a literal result element are a dictionary: its entries are value types,
         // which the case above skipped, so an expression in an attribute was not examined at all:
@@ -238,36 +268,82 @@ internal static class StreamedScopeEscapeDetector
         if (node is IDictionary dictionary)
         {
             foreach (var value in dictionary.Values)
-                if (Escapes(value, seen, contextRoots))
+                if (Escapes(value, search, where))
                     return true;
             return false;
         }
         if (node is IEnumerable items)
         {
             foreach (var item in items)
-                if (Escapes(item, seen, contextRoots))
+                if (Escapes(item, search, where))
                     return true;
             return false;
         }
         if (node is not (XsltInstruction or XsltAttributeValueTemplate or XsltWithParam or XsltSort
             or XsltWhen or XsltParam))
             return false;
+        if (node is XsltInstruction { Location: { Line: > 0 } location })
+            where = location;
+        // The body of xsl:source-document reads another document, with that document as its focus:
+        // "/" there is its root. Only the href is evaluated with the rule's focus. The body is checked
+        // when the instruction runs (StrictStreamability). Taken as a read outside the match, it sent
+        // the principal input to the tree, and under the strict check was phx:XTSE9430 (W3C
+        // si-group-051, -052).
+        if (node is XsltSourceDocument sourceDocument)
+            return Escapes(sourceDocument.Href, search, where);
+        // These take the string value of what they select, or copy it.
+        if (node switch
+            {
+                XsltValueOf v => v.Select,
+                XsltCopyOf c => c.Select,
+                XsltAttribute a => a.Select,
+                XsltComment c => c.Select,
+                XsltProcessingInstruction pi => pi.Select,
+                _ => null,
+            } is { } absorbed && IsClimbing(absorbed))
+            return search.Found(absorbed, where);
         foreach (var property in node.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             if (property.GetIndexParameters().Length > 0)
                 continue;
-            if (Escapes(property.GetValue(node), seen, contextRoots))
+            if (Escapes(property.GetValue(node), search, where))
                 return true;
         }
         return false;
     }
 
-    private static bool ExpressionEscapes(XQueryExpression expr, HashSet<PathExpression> contextRoots)
+    private static bool ExpressionEscapes(XQueryExpression expr, Search search, SourceLocation? where)
     {
-        var walker = new EscapeWalker(contextRoots);
+        var walker = new EscapeWalker(search.ContextRoots);
         walker.Walk(expr);
-        return walker.Escapes;
+        return walker.Escapes && search.Found(walker.Offender ?? expr, where);
     }
+
+    /// <summary>
+    /// Whether an expression selects an ancestor of the context node, as a climb: <c>..</c>,
+    /// <c>ancestor::x</c>, <c>root()</c>, with no step down or to an attribute after it. Its value
+    /// (string(..), data(ancestor::x), .. = 'a') is the content of that ancestor: what the
+    /// streamed input has passed or not yet reached. XSLT 3.0 §19.8.1 makes a climbing operand
+    /// with usage absorption free-ranging. Streamed, string(..) gave "" (xslt#582).
+    /// </summary>
+    internal static bool IsClimbing(XQueryExpression? expr) => expr switch
+    {
+        StepExpression step => step.Axis is Axis.Parent or Axis.Ancestor or Axis.AncestorOrSelf
+            && step.NodeTest is not KindTest { Kind: XdmNodeKind.Attribute or XdmNodeKind.Namespace or XdmNodeKind.Text
+                or XdmNodeKind.Comment or XdmNodeKind.ProcessingInstruction },
+        PathExpression { IsAbsolute: false, Steps.Count: > 0 } path
+            when path.InitialExpression is null or ContextItemExpression || IsRootCall(path.InitialExpression) =>
+            path.Steps.All(s => s is StepExpression { Axis: Axis.Parent or Axis.Ancestor or Axis.AncestorOrSelf or Axis.Self })
+            && (IsClimbing(path.Steps[^1]) || (path.Steps[^1] is StepExpression { Axis: Axis.Self } && (IsRootCall(path.InitialExpression)
+                || path.Steps.Any(s => s is StepExpression { Axis: Axis.Parent or Axis.Ancestor or Axis.AncestorOrSelf })))),
+        PathExpression { IsAbsolute: false, Steps.Count: 0, InitialExpression: { } initial } => IsClimbing(initial),
+        FunctionCallExpression => IsRootCall(expr),
+        FilterExpression filter => IsClimbing(filter.Primary),
+        _ => false,
+    };
+
+    private static bool IsRootCall(XQueryExpression? expr)
+        => expr is FunctionCallExpression { Name.LocalName: "root" } call && call.Arguments is [] or [ContextItemExpression];
 
     // Functions that only inspect a node given as their argument (§19.8.9: operand usage "I"): of a
     // node already open above the matched one, they read nothing that has passed.
@@ -281,6 +357,16 @@ internal static class StreamedScopeEscapeDetector
     {
         public bool Escapes { get; private set; }
 
+        /// <summary>The first expression that reads outside the match.</summary>
+        public XQueryExpression? Offender { get; private set; }
+
+        private void Escape(XQueryExpression expr)
+        {
+            if (!Escapes)
+                Offender = expr;
+            Escapes = true;
+        }
+
         // The root() calls whose result is only inspected, or climbed from: they stream.
         private readonly HashSet<XQueryExpression> _inspectedRoots = new(ReferenceEqualityComparer.Instance);
 
@@ -291,7 +377,7 @@ internal static class StreamedScopeEscapeDetector
         public override object? VisitPathExpression(PathExpression expr)
         {
             if (expr.IsAbsolute && !contextRoots.Contains(expr))
-                Escapes = true;
+                Escape(expr);
             // Climbing, then descending again: ../* reads the parent's other children. root() is a
             // climb to the document node (XSLT 3.0 §19.8.9.18: head(ancestor-or-self::node())), so
             // root()/x and root()//x read outside the match as /x does.
@@ -308,7 +394,7 @@ internal static class StreamedScopeEscapeDetector
                 if (st.Axis is Axis.Parent or Axis.Ancestor or Axis.AncestorOrSelf)
                     climbed = true;
                 else if (climbed && st.Axis is not (Axis.Self or Axis.Attribute or Axis.Namespace))
-                    Escapes = true;
+                    Escape(expr);
             }
             return base.VisitPathExpression(expr);
         }
@@ -316,7 +402,7 @@ internal static class StreamedScopeEscapeDetector
         public override object? VisitStepExpression(StepExpression expr)
         {
             if (expr.Axis is Axis.PrecedingSibling or Axis.FollowingSibling or Axis.Preceding or Axis.Following)
-                Escapes = true;
+                Escape(expr);
             return base.VisitStepExpression(expr);
         }
 
@@ -330,20 +416,60 @@ internal static class StreamedScopeEscapeDetector
                 if (IsRootOfContext(expr.Right))
                     _inspectedRoots.Add(expr.Right);
             }
+            // The other operators that take values atomize their operands: .. = 'a' reads the
+            // content of the parent. and, or and the set operators do not.
+            else if (expr.Operator is not (BinaryOperator.And or BinaryOperator.Or or BinaryOperator.Union
+                or BinaryOperator.Intersect or BinaryOperator.Except))
+            {
+                if (IsClimbing(expr.Left))
+                    Escape(expr.Left);
+                else if (IsClimbing(expr.Right))
+                    Escape(expr.Right);
+            }
             return base.VisitBinaryExpression(expr);
+        }
+
+        public override object? VisitInstanceOfExpression(InstanceOfExpression expr)
+        {
+            // The type of a node is known when it opens (root() instance of document-node()).
+            if (IsRootOfContext(expr.Expression))
+                _inspectedRoots.Add(expr.Expression);
+            return base.VisitInstanceOfExpression(expr);
+        }
+
+        public override object? VisitUnaryExpression(UnaryExpression expr)
+        {
+            if (IsClimbing(expr.Operand))
+                Escape(expr.Operand);
+            return base.VisitUnaryExpression(expr);
+        }
+
+        public override object? VisitCastExpression(CastExpression expr)
+        {
+            if (IsClimbing(expr.Expression))
+                Escape(expr.Expression);
+            return base.VisitCastExpression(expr);
+        }
+
+        public override object? VisitStringConcatExpression(StringConcatExpression expr)
+        {
+            foreach (var operand in expr.Operands)
+                if (IsClimbing(operand))
+                    Escape(operand);
+            return base.VisitStringConcatExpression(expr);
         }
 
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
             if (expr.Name.LocalName is "last")
-                Escapes = true;
+                Escape(expr);
             else if (expr.Name.LocalName is "root")
             {
                 // root() streams where its node is only inspected (base-uri(root()), exists(root())),
                 // as name(..) does: the node is open. Anywhere else (its string value, a step down
                 // from it) it reads what has passed or is still to come.
                 if (!_inspectedRoots.Contains(expr) || expr.Arguments is not ([] or [ContextItemExpression]))
-                    Escapes = true;
+                    Escape(expr);
             }
             else if (InspectingFunctions.Contains(expr.Name.LocalName))
             {
@@ -351,7 +477,29 @@ internal static class StreamedScopeEscapeDetector
                     if (IsRootOfContext(argument))
                         _inspectedRoots.Add(argument);
             }
+            // An argument that the function absorbs (§19.8.9: string(..), data(ancestor::x)).
+            if (AbsorbedArguments(expr) is { } usages)
+            {
+                for (var i = 0; i < expr.Arguments.Count && i < usages.Length; i++)
+                    if (usages[i] == 'A' && IsClimbing(expr.Arguments[i]))
+                    {
+                        Escape(expr.Arguments[i]);
+                        break;
+                    }
+            }
             return base.VisitFunctionCallExpression(expr);
+        }
+
+        /// <summary>The operand usages of a built-in function of fn:, as XSLT 3.0 §19.8.9 lists them, or null.</summary>
+        private static string? AbsorbedArguments(FunctionCallExpression call)
+        {
+            if (!FunctionNames.IsFn(call.Name))
+                return null;
+            var count = call.Arguments.Count;
+            if (call.Name.LocalName == "concat")
+                return new string('A', count);
+            return Streamability.BuiltInFunctionUsages.ByNameAndArity.GetValueOrDefault(
+                "fn:" + call.Name.LocalName + "#" + count.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
     }
 }

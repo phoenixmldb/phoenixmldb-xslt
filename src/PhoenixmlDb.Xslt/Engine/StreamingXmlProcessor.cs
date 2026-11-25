@@ -211,6 +211,8 @@ internal sealed class StreamingXmlProcessor
     public async ValueTask ProcessAsync(XmlReader reader, CancellationToken ct = default)
     {
         _reader = reader;
+        var previousBaseUriAtDepth = _context._streamedBaseUriAtDepth;
+        _context._streamedBaseUriAtDepth = BaseUriAtDepth;
         var ancestorStack = new Stack<StreamingNodeContext>();
 
         // Track sibling element position per depth level.
@@ -800,6 +802,8 @@ internal sealed class StreamingXmlProcessor
                             // This loop's own dispatch, between events: a rule's body run from here
                             // has nothing open around it (BUGS #140, StreamedDrain.cs).
                             _context._processorDispatch = true;
+                            var outerDispatched = _dispatchedElement;
+                            _dispatchedElement = current;
                             try
                             {
                                 wasSuppressed = await _context.MatchAndExecuteStreamingNodeAsync(xdmElem, _mode, templatePosition)
@@ -808,6 +812,7 @@ internal sealed class StreamingXmlProcessor
                             finally
                             {
                                 _context._processorDispatch = false;
+                                _dispatchedElement = outerDispatched;
                             }
 
                             // A matched template that never read into this element's children did
@@ -1123,8 +1128,47 @@ internal sealed class StreamingXmlProcessor
             _context._activeStreamingReader = previousStreamingReader;
             _context._activeStreamingCancellationToken = previousStreamingCt;
             _context._accumulatorStreamOwner = previousAccumulatorOwner;
+            _context._streamedBaseUriAtDepth = previousBaseUriAtDepth;
         }
     }
+
+    private static readonly string XmlBaseKey = AttributeKey("base", "http://www.w3.org/XML/1998/namespace", "xml");
+
+    /// <summary>
+    /// The base URI in scope for a node at <paramref name="depth"/> of the streamed document
+    /// (the base URI of its parent): the document URI, resolved against the xml:base of each open
+    /// ancestor above that depth, outermost first, as fn:base-uri resolves them in a tree.
+    /// </summary>
+    internal string? BaseUriAtDepth(int depth)
+    {
+        var baseUri = StreamedDocumentUri;
+        var open = Math.Min(depth, _ancestorAttributes.Count);
+        for (var i = 0; i < open; i++)
+        {
+            if (_ancestorAttributes[i] is { } attributes && attributes.TryGetValue(XmlBaseKey, out var xmlBase))
+                baseUri = Resolve(baseUri, xmlBase);
+        }
+        // The element whose rule is running is added to the open ancestors after the rule: a node
+        // its rule reads below it is in the scope of its xml:base too.
+        if (depth > _ancestorAttributes.Count && _dispatchedElement?.Attributes is { } dispatched)
+        {
+            foreach (var attribute in dispatched)
+            {
+                if (attribute is { LocalName: "base", NamespaceUri: "http://www.w3.org/XML/1998/namespace" })
+                    baseUri = Resolve(baseUri, attribute.StringValue ?? "");
+            }
+        }
+        return baseUri;
+
+        static string Resolve(string? baseUri, string xmlBase)
+            => baseUri is not null && Uri.TryCreate(baseUri, UriKind.Absolute, out var parent)
+                && Uri.TryCreate(parent, xmlBase, out var resolved)
+                ? resolved.OriginalString
+                : xmlBase;
+    }
+
+    /// <summary>The element whose template rule the pass is running, while it runs.</summary>
+    private StreamingNodeContext? _dispatchedElement;
 
     /// <summary>
     /// Initializes accumulator current-values and per-node value maps.

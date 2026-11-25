@@ -1520,7 +1520,8 @@ internal sealed partial class DefaultXsltExecutionContext
             // refers to it; in the transform's store every member stayed until the end, so the
             // memory grew with the input (BUGS #140).
             using var memberTree = _nodeStore!.TemporaryTree();
-            var elem = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore!, DocumentId.None)!;
+            var elem = StreamingSubtreeMaterializer.Materialize(reader, _nodeStore!, DocumentId.None,
+                rootBaseUri: StreamedBaseUriAt(reader))!;
             // Detach the materialized root: as a selected group member it stands on
             // its own, and later snapshot(current-group())/.. synthesizes the parent.
             elem.Parent = NodeId.None;

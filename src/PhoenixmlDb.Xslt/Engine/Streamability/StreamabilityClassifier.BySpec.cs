@@ -72,6 +72,17 @@ public static partial class StreamabilityClassifier
         _ => 'a',
     };
 
+    /// <summary>
+    /// The usage of an operand with usage absorption, adjusted for its static type: 'C' where it
+    /// selects an ancestor of the context node (<c>..</c>, <c>ancestor::x</c>, <c>root()</c>), which
+    /// <see cref="GeneralRule"/> makes free-ranging (§19.8.1: climbing and absorption); otherwise
+    /// as <see cref="Absorption(XQueryExpression?, StreamingContext)"/>. The shapes are those of
+    /// <see cref="StreamedScopeEscapeDetector.IsClimbing"/>, which reads the input into memory for
+    /// them, so that the check and the fallback agree.
+    /// </summary>
+    private static char AbsorptionOf(XQueryExpression? e, StreamingContext ctx)
+        => StreamedScopeEscapeDetector.IsClimbing(e) ? 'C' : Absorption(e, ctx);
+
     private static char Union(IReadOnlyList<XQueryExpression> items, StreamingContext ctx)
     {
         var usage = 'I';
@@ -471,7 +482,7 @@ public static partial class StreamabilityClassifier
     private static void Absorb(List<(PostureSweep Operand, char Usage)> operands, XQueryExpression? expr, StreamingContext ctx)
     {
         if (expr is not null)
-            operands.Add((Classify(expr, ctx), Absorption(expr, ctx)));
+            operands.Add((Classify(expr, ctx), AbsorptionOf(expr, ctx)));
     }
 
     private static void Absorb(List<(PostureSweep Operand, char Usage)> operands, XsltSequenceConstructor? body, StreamingContext ctx)
