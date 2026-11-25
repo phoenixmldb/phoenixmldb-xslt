@@ -232,6 +232,16 @@ internal static class StreamedScopeEscapeDetector
         }
         if (!seen.Add(node))
             return false;
+        // The attributes of a literal result element are a dictionary: its entries are value types,
+        // which the case above skipped, so an expression in an attribute was not examined at all:
+        // <b v="{last()}"/> streamed and gave 1 for every node (xslt#582).
+        if (node is IDictionary dictionary)
+        {
+            foreach (var value in dictionary.Values)
+                if (Escapes(value, seen, contextRoots))
+                    return true;
+            return false;
+        }
         if (node is IEnumerable items)
         {
             foreach (var item in items)
@@ -259,16 +269,38 @@ internal static class StreamedScopeEscapeDetector
         return walker.Escapes;
     }
 
+    // Functions that only inspect a node given as their argument (§19.8.9: operand usage "I"): of a
+    // node already open above the matched one, they read nothing that has passed.
+    private static readonly HashSet<string> InspectingFunctions = new(StringComparer.Ordinal)
+    {
+        "base-uri", "document-uri", "exists", "empty", "boolean", "not", "name", "local-name",
+        "namespace-uri", "node-name", "generate-id", "has-children", "nilled",
+    };
+
     private sealed class EscapeWalker(HashSet<PathExpression> contextRoots) : XQueryExpressionWalker
     {
         public bool Escapes { get; private set; }
+
+        // The root() calls whose result is only inspected, or climbed from: they stream.
+        private readonly HashSet<XQueryExpression> _inspectedRoots = new(ReferenceEqualityComparer.Instance);
+
+        private static bool IsRootOfContext(XQueryExpression? expr)
+            => expr is FunctionCallExpression { Name.LocalName: "root" } call
+                && call.Arguments is [] or [ContextItemExpression];
 
         public override object? VisitPathExpression(PathExpression expr)
         {
             if (expr.IsAbsolute && !contextRoots.Contains(expr))
                 Escapes = true;
-            // Climbing, then descending again: ../* reads the parent's other children.
+            // Climbing, then descending again: ../* reads the parent's other children. root() is a
+            // climb to the document node (XSLT 3.0 §19.8.9.18: head(ancestor-or-self::node())), so
+            // root()/x and root()//x read outside the match as /x does.
             var climbed = false;
+            if (IsRootOfContext(expr.InitialExpression))
+            {
+                _inspectedRoots.Add(expr.InitialExpression!);
+                climbed = true;
+            }
             foreach (var step in expr.Steps)
             {
                 if (step is not StepExpression st)
@@ -288,10 +320,37 @@ internal static class StreamedScopeEscapeDetector
             return base.VisitStepExpression(expr);
         }
 
+        public override object? VisitBinaryExpression(BinaryExpression expr)
+        {
+            // A node comparison inspects its operands (§19.8.8: is, <<, >>): root() is root(..).
+            if (expr.Operator is BinaryOperator.Is or BinaryOperator.Precedes or BinaryOperator.Follows)
+            {
+                if (IsRootOfContext(expr.Left))
+                    _inspectedRoots.Add(expr.Left);
+                if (IsRootOfContext(expr.Right))
+                    _inspectedRoots.Add(expr.Right);
+            }
+            return base.VisitBinaryExpression(expr);
+        }
+
         public override object? VisitFunctionCallExpression(FunctionCallExpression expr)
         {
-            if (expr.Name.LocalName is "last" or "root")
+            if (expr.Name.LocalName is "last")
                 Escapes = true;
+            else if (expr.Name.LocalName is "root")
+            {
+                // root() streams where its node is only inspected (base-uri(root()), exists(root())),
+                // as name(..) does: the node is open. Anywhere else (its string value, a step down
+                // from it) it reads what has passed or is still to come.
+                if (!_inspectedRoots.Contains(expr) || expr.Arguments is not ([] or [ContextItemExpression]))
+                    Escapes = true;
+            }
+            else if (InspectingFunctions.Contains(expr.Name.LocalName))
+            {
+                foreach (var argument in expr.Arguments)
+                    if (IsRootOfContext(argument))
+                        _inspectedRoots.Add(argument);
+            }
             return base.VisitFunctionCallExpression(expr);
         }
     }

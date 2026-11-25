@@ -1713,6 +1713,10 @@ public static partial class StreamabilityClassifier
         {
             "name" or "local-name" or "node-name" or "namespace-uri"
                 or "generate-id" => FnRole.NodeProperty,
+            // The URI of a node (§19.8.9: operand usage I): a streamed node has it (BUGS #156).
+            // Not listed, they fell to the unknown default, and a rule for "/" that wrote
+            // document-uri(.) was read into memory (xslt#582).
+            "base-uri" or "document-uri" => FnRole.NodeProperty,
 
             // §19.8 / fn spec: the "current date and time" accessor functions — nullary
             // deterministic per-transform constants that navigate no streamed input. Motionless,
