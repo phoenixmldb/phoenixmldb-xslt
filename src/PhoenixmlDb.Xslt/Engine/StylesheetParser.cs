@@ -3559,7 +3559,17 @@ public sealed partial class StylesheetParser
                 // that can tell a string literal from an expression that merely begins and ends
                 // with a quote — `'a' || 'b'` satisfies StartsWith('\'') && EndsWith('\'') and the
                 // hand-rolled check below would strip it to `a' || 'b`.
-                if (TryEvaluateStaticSelect(val, child, child.Attribute("select"), out var evaluated))
+                bool selectEvaluated;
+                object? evaluated;
+                try
+                {
+                    selectEvaluated = TryEvaluateStaticSelect(val, child, child.Attribute("select"), out evaluated);
+                }
+                catch (XsltException e) when (e.ErrorCode == "XPST0017")
+                {
+                    throw StaticSelectXpst0017(e, child);
+                }
+                if (selectEvaluated)
                 {
                     typedValue = evaluated;
                 }

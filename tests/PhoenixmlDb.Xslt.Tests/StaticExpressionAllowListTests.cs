@@ -77,6 +77,29 @@ public sealed class StaticExpressionAllowListTests
         => (await RunAsync("""<xsl:value-of select="$v"/>""", """<xsl:variable name="v" static="yes" select="f:x()"/>"""))
             .Should().Be("XPST0017");
 
+    // It loaded before, the value computed at run time; the message says how to change it.
+    [Theory]
+    [InlineData("""<xsl:variable name="v" static="yes" select="f:x()"/>""", true)]
+    [InlineData("""<xsl:param name="v" static="yes" select="f:x()"/>""", true)]
+    [InlineData("""<xsl:variable name="v" select="'x'" use-when="f:x() = 'from-f'"/>""", false)]
+    public async Task The_message_of_a_static_select_that_calls_a_stylesheet_function_says_what_to_change(string declaration, bool static_)
+    {
+        var transformer = new XsltTransformer();
+        var load = () => transformer.LoadStylesheetAsync($"""
+            <xsl:stylesheet version="3.0" {Namespaces}>
+              <xsl:function name="f:x" as="xs:string"><xsl:sequence select="'from-f'"/></xsl:function>
+              {declaration}
+              <xsl:template name="xsl:initial-template"><xsl:value-of select="$v"/></xsl:template>
+            </xsl:stylesheet>
+            """);
+        var error = (await load.Should().ThrowAsync<Engine.XsltException>()).Which;
+        error.ErrorCode.Should().Be("XPST0017");
+        if (static_)
+            error.Message.Should().Contain("remove static=\"yes\" from the declaration, or do not call the function");
+        else
+            error.Message.Should().NotContain("static=\"yes\"", "a use-when is not the select of a static declaration");
+    }
+
     // The prefix of a named function reference is bound like that of a call; only predeclared
     // prefixes were known to a static expression (W3C system-property-101*-qname).
     [Theory]

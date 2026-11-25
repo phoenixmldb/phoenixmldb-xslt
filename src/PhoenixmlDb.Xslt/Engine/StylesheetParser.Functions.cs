@@ -217,11 +217,29 @@ public sealed partial class StylesheetParser
     }
 
     /// <summary>
-    /// Safely evaluates a static param/variable's select expression.
-    /// Returns the evaluated value or null if evaluation fails (e.g., complex expressions).
+    /// The value of the select of a static variable or parameter, or null when it cannot be
+    /// evaluated yet (see <see cref="TryEvaluateStatic"/>). A function a static expression may not
+    /// call, a stylesheet function for one, is XPST0017; the message says what to change.
     /// </summary>
     private object? EvaluateStaticSelectSafe(XQueryExpression expr, XElement context)
-        => TryEvaluateStatic(expr, context, out var value) ? value : null;
+    {
+        try
+        {
+            return TryEvaluateStatic(expr, context, out var value) ? value : null;
+        }
+        catch (XsltException e) when (e.ErrorCode == "XPST0017")
+        {
+            throw StaticSelectXpst0017(e, context);
+        }
+    }
+
+    // XPST0017 in the select of a static variable or parameter, with what to change: it loaded
+    // before 3.3.0, the value computed at run time (Lucas, 2026-11-24).
+    private static XsltException StaticSelectXpst0017(XsltException e, XElement declaration)
+        => new(e.Message.TrimEnd('.') + ". The select of a static variable or parameter is evaluated when the "
+            + "stylesheet is compiled, where only the functions of XSLT 3.0 §9.7 can be called, not a stylesheet "
+            + "function: remove static=\"yes\" from the declaration, or do not call the function in its select.",
+            e.Location ?? GetSourceLocation(declaration));
 
 
 
