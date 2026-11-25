@@ -839,8 +839,15 @@ public static partial class StreamabilityClassifier
                || (reference.Arity == 1 && reference.Name.LocalName is "lang" or "id" or "idref" or "element-with-id"));
 
     private static PostureSweep ClassifyUnary(UnaryExpression un, StreamingContext ctx)
+    {
+        // Unary + and - atomize their operand: of an ancestor (-..), that is climbing and
+        // absorption, free-ranging (§19.8.1), as AtomizeSweep has it.
+        if (ctx is { BySpec: true, ForTheCheck: true } && StreamedScopeEscapeDetector.IsClimbing(un.Operand)
+            && Classify(un.Operand, ctx).Posture == Posture.Climbing)
+            return Grounded(DoubtfulFreeRanging());
         // Unary +/-/not yield atomic/boolean results — grounded, operand's sweep.
-        => Grounded(SweepOf(un.Operand, ctx));
+        return Grounded(SweepOf(un.Operand, ctx));
+    }
 
     private static PostureSweep ClassifyFilter(FilterExpression filt, StreamingContext ctx)
     {

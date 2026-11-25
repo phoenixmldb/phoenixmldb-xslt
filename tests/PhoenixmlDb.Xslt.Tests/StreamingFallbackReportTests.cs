@@ -33,6 +33,9 @@ public sealed class StreamingFallbackReportTests
         """<xsl:template match="title"><t><xsl:value-of select=".. = 'A'"/></t></xsl:template>""",
         """<xsl:template match="title"><t><xsl:value-of select="concat(.., '!')"/></t></xsl:template>""",
         """<xsl:template match="title"><t><xsl:copy-of select=".."/></t></xsl:template>""",
+        """<xsl:template match="title"><t><xsl:value-of select=".. || '!'"/></t></xsl:template>""",
+        """<xsl:template match="title"><t><xsl:value-of select="-.."/></t></xsl:template>""",
+        """<xsl:template match="title"><t><xsl:value-of select=".. cast as xs:string"/></t></xsl:template>""",
     };
 
     [Theory]
@@ -66,6 +69,8 @@ public sealed class StreamingFallbackReportTests
         """<xsl:template match="title"><t><xsl:value-of select="count(ancestor::*)"/></t></xsl:template>""",
         """<xsl:template match="title"><t><xsl:value-of select="exists(..)"/></t></xsl:template>""",
         """<xsl:template match="title"><t p="{ancestor::book/@price}"/></xsl:template>""",
+        // A node comparison inspects its operands (§19.8.8.6).
+        """<xsl:template match="title"><t><xsl:value-of select=".. is ancestor::book"/></t></xsl:template>""",
     };
 
     [Theory]
@@ -104,7 +109,7 @@ public sealed class StreamingFallbackReportTests
             t.SetInitialTemplate("go");
         });
 
-        run.Output.Should().Contain("<go/>");
+        run.Output.Should().Contain("<go");
         run.Warnings.Should().Equal(
             "XSLT streaming: the input was read into memory: the transformation starts at the named template go, not at a template rule of the streamable mode.");
     }
@@ -183,7 +188,7 @@ public sealed class StreamingFallbackReportTests
     }
 
     private static string Stylesheet(string rules) => $$"""
-        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+        <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:xs="http://www.w3.org/2001/XMLSchema">
           <xsl:mode streamable="yes" on-no-match="shallow-skip"/>
           {{rules}}
         </xsl:stylesheet>
