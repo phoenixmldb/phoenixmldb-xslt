@@ -59,7 +59,8 @@ internal static class StrictStreamability
             ? (certainOnly ? _certainBodies : _bodies).GetValue(instruction, _ => new StrongBox<string?>(
                 // The context item of the body is the document node (§18.1).
                 Reason(body, stylesheet, certainOnly, childType: 'A',
-                    outerGroupIsGrounded: EnclosingGroupIsGrounded(stylesheet, instruction)) is { } reason
+                    outerGroupIsGrounded: EnclosingGroupIsGrounded(stylesheet, instruction),
+                    documentRoots: StreamedScopeEscapeDetector.FocusRootCalls(body)) is { } reason
                     ? "XTSE3430: The body of xsl:source-document is not guaranteed streamable: " + reason + "." + Remedy
                     : null)).Value
             : null;
@@ -73,7 +74,10 @@ internal static class StrictStreamability
         foreach (var template in StreamedScopeEscapeDetector.StreamableModeRules(stylesheet))
         {
             var subject = "XTSE3430: The body of " + Describe(template) + " in a streamable mode is not guaranteed streamable: ";
-            var reason = Reason(template.Body, stylesheet, certainOnly, ContextChildType(template.Match), MatchesNoDocument(template.Match));
+            var reason = Reason(template.Body, stylesheet, certainOnly, ContextChildType(template.Match), MatchesNoDocument(template.Match),
+                documentRoots: StreamedScopeEscapeDetector.MatchesOnlyDocument(template.Match)
+                    ? StreamedScopeEscapeDetector.FocusRootCalls(template.Body)
+                    : null);
             // The opt-in check also reports what its two detectors find; the default check
             // reports only what the classifier is certain of, and uses them for the message.
             if (certainOnly && reason is null)
@@ -185,7 +189,8 @@ internal static class StrictStreamability
     /// is XTSE3430, si-group-052).
     /// </remarks>
     private static string? Reason(XsltSequenceConstructor body, XsltStylesheet stylesheet, bool certainOnly, char childType,
-        bool contextIsNeverDocument = false, bool outerGroupIsGrounded = false)
+        bool contextIsNeverDocument = false, bool outerGroupIsGrounded = false,
+        IReadOnlySet<PhoenixmlDb.XQuery.Ast.XQueryExpression>? documentRoots = null)
     {
         var context = new StreamingContext(
             Posture.Striding, InStreamedScope: true, BySpec: true, Functions: stylesheet.Functions, Stylesheet: stylesheet,
@@ -194,6 +199,7 @@ internal static class StrictStreamability
         {
             ContextMayHaveChildren = childType == 'A',
             ForTheCheck = true,
+            DocumentRoots = documentRoots,
         };
         var result = StreamabilityClassifier.ClassifyWithCertainty(() => StreamabilityClassifier.Classify(body, context), out var certain);
         if (certainOnly && !certain)

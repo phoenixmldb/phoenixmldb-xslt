@@ -114,6 +114,13 @@ public readonly record struct StreamingContext(
     /// on by default, so that what streams does not change.
     /// </summary>
     internal bool ForTheCheck { get; init; }
+
+    /// <summary>
+    /// The calls of <c>root()</c> and <c>root(.)</c> whose context item is a document node: those
+    /// at the focus of a template rule whose pattern matches only document nodes, or of the body
+    /// of xsl:source-document. There root() is the context item (§19.8.9.18).
+    /// </summary>
+    internal IReadOnlySet<XQueryExpression>? DocumentRoots { get; init; }
 }
 
 /// <summary>
@@ -1368,12 +1375,18 @@ public static partial class StreamabilityClassifier
                 : new PostureSweep(Posture.Climbing, Sweep.Motionless);
         }
 
-        if (name == "fn:root" && count == 0)
+        if (name == "fn:root" && (count == 0 || fc.Arguments[0] is ContextItemExpression))
         {
-            // §19.8.9.18: root() of a streamed node is its document node, reached upward.
-            return ctx.ContextPosture == Posture.Grounded
-                ? Grounded(Sweep.Motionless)
-                : new PostureSweep(Posture.Climbing, Sweep.Motionless);
+            if (ctx.ContextPosture == Posture.Grounded)
+                return Grounded(Sweep.Motionless);
+            // §19.8.9.18: where the static type of the context item is document-node(), root() is
+            // the context item, so root()/books in a rule for "/" is books (xslt#655): a call at the
+            // focus of a rule whose pattern matches only document nodes, or of the body of
+            // xsl:source-document. Elsewhere root() of a streamed node is its document node,
+            // reached upward: climbing, so that a step down from it is roaming and free-ranging.
+            if (ctx.DocumentRoots is { } documentRoots && documentRoots.Contains(fc))
+                return new PostureSweep(ctx.ContextPosture, Sweep.Motionless);
+            return new PostureSweep(Posture.Climbing, Sweep.Motionless);
         }
         if (name is "fn:unparsed-entity-uri" or "fn:unparsed-entity-public-id" && count == 1)
         {

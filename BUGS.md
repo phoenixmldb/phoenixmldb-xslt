@@ -8558,3 +8558,26 @@ The full list (set, case, code, construct) is `scripts/strict-streaming-read-who
     python3 -I scripts/strict-streaming-read-whole.py /tmp/strict-read-whole > scripts/strict-streaming-read-whole.tsv
 
 (The per-set baseline gate of that run fails, as it must: the cases count as failures there.)
+
+### 166. root()/x in a rule for the document node was XTSE3430 — fixed (xslt#655, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. Found with xslt#582. In a template rule of a streamable mode whose pattern matches the
+document node (`match="/"`), `count(root()/books)` or `count(root()//title)` made the stylesheet fail with XTSE3430,
+also without `--strict-streaming`. XSLT 3.0 §19.8.9.18: where the context item is a document node, `root()` is that
+node, so `root()/books` is `books` and the rule is guaranteed-streamable. The check (`StreamabilityClassifier`) took
+`root()` as a climb to the document node in every rule, and a step down from a climb is roaming and free-ranging. It
+gave a leading `/` (which is `root(self::node())`, §19.8.8.8) the right posture already.
+
+Fix: a call of `root()` or `root(.)` evaluated with the focus of a rule whose pattern matches only document
+nodes, or of the body of `xsl:source-document`, is the context item. Elsewhere it is a climb as before: in a rule for
+an element, in a rule whose pattern also matches elements (`match="/ | book"`), and in a loop inside the rule. The
+stylesheet runs, with the result it gives without streaming; in a rule for an element, `root()/x` and `root()//x`
+are XTSE3430, as before and as §19.8 says.
+
+Open: in such a rule, `root()/x` is not streamed yet. The streaming pass evaluates `books` but not `root()/books`, so
+the input is read into memory for it: `--stream` warns, and `--strict-streaming` gives phx:XTSE9430 (#165). The
+proposed fix is to rewrite `root()/x` to `x` where the context item is a document node (a later PR, after F1).
+
+Tests: `RootOfDocumentRuleTests` (13: the forms in a rule for "/" run with the `--no-stream` result and are not
+XTSE3430 under the strict check, and each fails before the fix; the forms in a rule for an element, in `match="/ | book"`
+and in a loop stay XTSE3430).
