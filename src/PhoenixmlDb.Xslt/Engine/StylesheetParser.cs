@@ -3674,21 +3674,6 @@ public sealed partial class StylesheetParser
 
 
     /// <summary>
-    /// Evaluates a static expression the same way <c>use-when</c> does — parse to an AST, resolve
-    /// namespaces, then run the real static evaluator — rather than through the string-matching
-    /// subset in <see cref="EvaluateShadowExpression"/>.
-    /// </summary>
-    /// <remarks>
-    /// These are two implementations of one job: evaluating XPath at compile time with no context
-    /// item. <c>use-when</c> got the AST evaluator; shadow attributes got a string matcher that
-    /// understood <c>||</c>, <c>$var</c> and literals, and fell back to pasting the expression's
-    /// SOURCE TEXT where its value belonged. That produced stylesheets compiled against garbage
-    /// (BUGS.md #47). Shadow attributes now try the real evaluator first and only fall back to the
-    /// subset for shapes it cannot reach. Returns false when the expression genuinely cannot be
-    /// evaluated statically — a context item, an inline function item — so the caller can record
-    /// an honest non-evaluation instead of inventing a value.
-    /// </remarks>
-    /// <summary>
     /// Resolves a static variable's <c>name</c> to a QName in the declaring element's namespace
     /// context, so its evaluated value can be keyed the same way <c>use-when</c> looks it up.
     /// </summary>
@@ -3709,26 +3694,9 @@ public sealed partial class StylesheetParser
     private bool TryEvaluateStaticSelect(string exprText, XElement context, System.Xml.Linq.XObject? origin, out object? value)
     {
         value = null;
+        // Not evaluable here (a variable of a module not read yet, a refused read) is not an error
+        // yet: the declaration stays unset, and a real use of it reports the cause with its name.
         XQueryExpression expr;
-        try
-        {
-            expr = ParseXPathWithContext(exprText, origin ?? context);
-            ResolveExpressionNamespaces(expr, context);
-            value = EvaluateStaticExpression(expr, context);
-            return true;
-        }
-        catch (XsltException)
-        {
-            // The hand-written evaluator rejects every path expression as needing a context item,
-            // including doc(...)/x and $v/x, which need none. The runtime evaluator below has an
-            // absent focus, so a path that really needs one still fails there (XPDY0002).
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException or NotSupportedException)
-        {
-            // Shapes the hand-written evaluator does not implement (inline function items,
-            // argument placeholders, !, let, doc() paths): hand them to the runtime evaluator.
-        }
-
         try
         {
             expr = ParseXPathWithContext(exprText, origin ?? context);
@@ -3826,22 +3794,15 @@ public sealed partial class StylesheetParser
                     }
                     else
                     {
-                        // Real static evaluation first (the use-when path); the string-matching
-                        // subset only for shapes it cannot reach.
+                        // The static evaluator, as for use-when.
                         if (contextElement != null && TryEvaluateStaticSelect(expr, contextElement, null, out var realValue))
                         {
                             result.Append(StaticValueToString(realValue));
                         }
                         else
                         {
-                            var evaluated = EvaluateShadowExpression(expr, staticParams);
-                            if (evaluated != null)
-                                result.Append(evaluated);
-                            else
-                            {
-                                complete = false;
-                                failedExpression ??= expr;
-                            }
+                            complete = false;
+                            failedExpression ??= expr;
                         }
                     }
                     i = end + 1;
@@ -3902,101 +3863,8 @@ public sealed partial class StylesheetParser
     }
 
 
-    /// <summary>
-    /// Finds a matching closing parenthesis, respecting nesting and string literals.
-    /// </summary>
-    private static int FindMatchingParen(string expr, int openPos)
-    {
-        var depth = 0;
-        var inSingle = false;
-        var inDouble = false;
-        for (var i = openPos; i < expr.Length; i++)
-        {
-            var c = expr[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble)
-            {
-                if (c == '(') depth++;
-                else if (c == ')') { depth--; if (depth == 0) return i; }
-            }
-        }
-        return -1;
-    }
 
 
-    /// <summary>
-    /// Finds a keyword in an expression, ensuring it's a word boundary (not inside a string or parentheses).
-    /// </summary>
-    private static int FindKeyword(string expr, string keyword)
-    {
-        var inSingle = false;
-        var inDouble = false;
-        var parenDepth = 0;
-        for (var i = 0; i <= expr.Length - keyword.Length; i++)
-        {
-            var c = expr[i];
-            if (c == '\'' && !inDouble) { inSingle = !inSingle; continue; }
-            if (c == '"' && !inSingle) { inDouble = !inDouble; continue; }
-            if (inSingle || inDouble) continue;
-            if (c == '(') { parenDepth++; continue; }
-            if (c == ')') { parenDepth--; continue; }
-            if (parenDepth > 0) continue;
-            if (expr.AsSpan(i, keyword.Length).SequenceEqual(keyword.AsSpan()) &&
-                (i == 0 || !char.IsLetterOrDigit(expr[i - 1])) &&
-                (i + keyword.Length >= expr.Length || !char.IsLetterOrDigit(expr[i + keyword.Length])))
-            {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-
-    /// <summary>
-    /// Splits an expression on a binary operator, respecting string literal boundaries.
-    /// </summary>
-    private static List<string>? SplitOnOperator(string expr, string op)
-    {
-        var parts = new List<string>();
-        var inSingleQuote = false;
-        var inDoubleQuote = false;
-        var parenDepth = 0;
-        var lastSplit = 0;
-
-        for (var j = 0; j < expr.Length; j++)
-        {
-            var c = expr[j];
-            if (c == '\'' && !inDoubleQuote) inSingleQuote = !inSingleQuote;
-            else if (c == '"' && !inSingleQuote) inDoubleQuote = !inDoubleQuote;
-            else if (c == '(' && !inSingleQuote && !inDoubleQuote) parenDepth++;
-            else if (c == ')' && !inSingleQuote && !inDoubleQuote) parenDepth--;
-            else if (!inSingleQuote && !inDoubleQuote && parenDepth == 0 &&
-                     j + op.Length <= expr.Length && expr.AsSpan(j, op.Length).SequenceEqual(op.AsSpan()))
-            {
-                parts.Add(expr[lastSplit..j]);
-                lastSplit = j + op.Length;
-                j += op.Length - 1;
-            }
-        }
-        parts.Add(expr[lastSplit..]);
-        return parts.Count > 1 ? parts : null;
-    }
-
-
-    private static int FindCommaOutsideQuotes(string s)
-    {
-        var inSingleQuote = false;
-        var inDoubleQuote = false;
-        for (var j = 0; j < s.Length; j++)
-        {
-            var c = s[j];
-            if (c == '\'' && !inDoubleQuote) inSingleQuote = !inSingleQuote;
-            else if (c == '"' && !inSingleQuote) inDoubleQuote = !inDoubleQuote;
-            else if (c == ',' && !inSingleQuote && !inDoubleQuote) return j;
-        }
-        return -1;
-    }
 
 
     // ── use-when static evaluation ──────────────────────────────────────
@@ -4048,17 +3916,8 @@ public sealed partial class StylesheetParser
                 ?? element;
             expr = ParseXPathWithContext(useWhenExpr, useWhenOrigin);
             ResolveExpressionNamespaces(expr, element);
-            return IncludeByUseWhen(EvaluateStaticExpression(expr, element), hasPrefixedUseWhen, element);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException)
-        {
-            // A shape the hand-written evaluator does not implement (castable, instance of, …):
-            // the runtime evaluator implements them all, as it does for static variables (#156).
-            // Including the element regardless made use-when="not(X castable as T)" true.
-            if (expr != null && TryEvaluateStaticViaRuntime(expr, element, out var value))
-                return IncludeByUseWhen(value, hasPrefixedUseWhen, element);
-            // Unevaluable either way: include it, and let a real use of it raise the error.
-            return true;
+            // A read the resource policy refused: include the element, as before.
+            return !TryEvaluateStatic(expr, element, out var value) || IncludeByUseWhen(value, hasPrefixedUseWhen, element);
         }
         catch (XsltException)
         {
@@ -4074,38 +3933,6 @@ public sealed partial class StylesheetParser
         }
     }
 
-
-    /// <summary>
-    /// Static evaluation of "instance of" in use-when context.
-    /// Only handles atomic type checks on static values (strings, numbers, booleans).
-    /// </summary>
-    private static bool StaticInstanceOf(object? value, XdmSequenceType targetType)
-    {
-        // Check occurrence: null = empty sequence
-        if (value == null)
-            return targetType.Occurrence is Occurrence.ZeroOrMore or Occurrence.ZeroOrOne;
-
-        // Single item check
-        return targetType.ItemType switch
-        {
-            ItemType.Item => true,
-            ItemType.AnyAtomicType => value is string or double or bool or int or long or decimal,
-            ItemType.String => value is string,
-            ItemType.Boolean => value is bool,
-            ItemType.Integer => value is int or long || (value is double d && d == Math.Floor(d) && !double.IsInfinity(d) && !double.IsNaN(d)),
-            ItemType.Decimal => value is decimal or int or long || (value is double d2 && !double.IsInfinity(d2) && !double.IsNaN(d2)),
-            ItemType.Double => value is double,
-            ItemType.Float => value is float or double,
-            ItemType.Node or ItemType.Element or ItemType.Attribute or ItemType.Document
-                or ItemType.Text or ItemType.Comment or ItemType.ProcessingInstruction => false, // static values are never nodes
-            // Function, map, array and other item types: the engine's own matcher. Answering false
-            // here made `$f instance of function(*)` false for a static variable holding a function
-            // item, so use-when dropped the instruction (W3C load-xquery-module-004). The atomic
-            // cases above stay hand-written: this evaluator's numbers are not typed like the engine's.
-            _ => PhoenixmlDb.XQuery.Execution.TypeCastHelper.MatchesType(
-                value is object?[] seq ? seq : [value], targetType, schemaProvider: null),
-        };
-    }
 
 
     private static double ToDouble(object? value) =>

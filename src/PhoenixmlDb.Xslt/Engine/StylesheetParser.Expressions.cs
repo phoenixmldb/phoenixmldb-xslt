@@ -1206,6 +1206,16 @@ public sealed partial class StylesheetParser
             return base.VisitFunctionCallExpression(fc);
         }
 
+        // A named function reference too (xpath:system-property#1): its prefix was left to the
+        // runtime, which resolves only the predeclared ones, so in a static expression the
+        // reference was XPST0017 under any other prefix bound to the same namespace.
+        public override object? VisitNamedFunctionRef(NamedFunctionRef nf)
+        {
+            if (!string.IsNullOrEmpty(nf.Name.Prefix) && nf.Name.Namespace == NamespaceId.None)
+                nf.Name = ResolveXPathQName(nf.Name);
+            return base.VisitNamedFunctionRef(nf);
+        }
+
         /// <summary>
         /// Binds a prefixed function or variable name in an XPath expression to the stylesheet element's in-scope
         /// namespaces, raising XPST0081 when the prefix is not declared there (xslt#109).

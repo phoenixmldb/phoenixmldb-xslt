@@ -1050,7 +1050,14 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// ('xsl:supports-dynamic-evaluation') then reports "no" and element-available('xsl:evaluate')
     /// false. Static expressions are evaluated by the parser, which still reports the feature.
     /// </summary>
-    internal bool DynamicEvaluationDisabled => Policy is { AllowXslEvaluate: false };
+    internal bool DynamicEvaluationDisabled => !EvaluatesStaticExpressions && Policy is { AllowXslEvaluate: false };
+
+    /// <summary>
+    /// This context evaluates static expressions while a stylesheet loads. There a feature that the
+    /// resource policy disables at run time still reads as available (XSLT 3.0 §27.6): a static
+    /// expression cannot use xsl:evaluate, and its answer must not depend on the policy.
+    /// </summary>
+    internal bool EvaluatesStaticExpressions { get; init; }
 
     /// <summary>
     /// Authorises <paramref name="resolved"/> under the transformation's resource policy and
@@ -1178,7 +1185,7 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         lib.Register(new XsltCurrentMergeGroup1Function(this));
         lib.Register(new XsltCurrentMergeKeyFunction(this));
         lib.Register(new XsltRegexGroupFunction(this));
-        lib.Register(new XsltFunctionAvailableFunction(lib));
+        lib.Register(new XsltFunctionAvailableFunction(lib, () => EvaluatesStaticExpressions));
         lib.Register(new XsltFunctionLookupFunction(this));
         lib.Register(new XsltElementAvailableFunction(_stylesheet.ExtensionElementPrefixes, () => DynamicEvaluationDisabled));
         lib.Register(new XsltSystemPropertyFunction(() => DynamicEvaluationDisabled));
