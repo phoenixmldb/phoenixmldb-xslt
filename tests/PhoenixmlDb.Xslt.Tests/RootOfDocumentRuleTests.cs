@@ -49,9 +49,13 @@ public sealed class RootOfDocumentRuleTests
         error.Message.Should().Contain("this processor cannot evaluate root(");
     }
 
-    // These must stay errors: in a rule for an element, root() is the document node above it.
+    // These must stay errors: in a rule for an element, root() is the document node above it; and
+    // in a rule whose pattern also matches elements, or in a loop of a rule for "/", the context
+    // item is not known to be a document node.
     public static TheoryData<string> ElementRules => new()
     {
+        """<xsl:template match="/ | book"><b n="{count(root()/books)}"/><xsl:apply-templates/></xsl:template>""",
+        """<xsl:template match="/"><out><xsl:for-each select="books/book"><b n="{count(root()/books)}"/></xsl:for-each></out></xsl:template>""",
         """<xsl:template match="book"><b n="{count(root()/books)}"/></xsl:template>""",
         """<xsl:template match="book"><b n="{count(root()//title)}"/></xsl:template>""",
         """<xsl:template match="book"><b><xsl:value-of select="count(root()/books)"/></b></xsl:template>""",

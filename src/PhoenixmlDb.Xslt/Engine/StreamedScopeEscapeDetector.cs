@@ -51,9 +51,9 @@ internal static class StreamedScopeEscapeDetector
     }
 
     /// <summary>The state of the walk over one rule, and what it found.</summary>
-    private sealed class Search(HashSet<PathExpression> contextRoots)
+    private sealed class Search(HashSet<XQueryExpression> contextRoots)
     {
-        public HashSet<PathExpression> ContextRoots { get; } = contextRoots;
+        public HashSet<XQueryExpression> ContextRoots { get; } = contextRoots;
         public HashSet<object> Seen { get; } = new(ReferenceEqualityComparer.Instance);
         public string? Construct { get; set; }
         public SourceLocation? Location { get; set; }
@@ -67,7 +67,20 @@ internal static class StreamedScopeEscapeDetector
         }
     }
 
-    private static readonly HashSet<PathExpression> NoPaths = new(ReferenceEqualityComparer.Instance);
+    private static readonly HashSet<XQueryExpression> NoPaths = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The calls of root() and root(.) in a body that are evaluated with the body's own focus
+    /// (see <see cref="ContextRootPaths"/>): where that focus is a document node, root() is it.
+    /// </summary>
+    internal static IReadOnlySet<XQueryExpression> FocusRootCalls(XsltSequenceConstructor? body)
+    {
+        var calls = new HashSet<XQueryExpression>(ReferenceEqualityComparer.Instance);
+        foreach (var expr in ContextRootPaths(body))
+            if (expr is FunctionCallExpression)
+                calls.Add(expr);
+        return calls;
+    }
 
     /// <summary>
     /// Whether a match pattern matches document nodes only: <c>/</c>, <c>document-node()</c>,
@@ -86,14 +99,14 @@ internal static class StreamedScopeEscapeDetector
     /// the right of "!", the body of xsl:for-each, an inline function) has another focus, where "/"
     /// is the root of another node, so a path there still counts as leaving the match.
     /// </summary>
-    private static HashSet<PathExpression> ContextRootPaths(XsltSequenceConstructor? body)
+    private static HashSet<XQueryExpression> ContextRootPaths(XsltSequenceConstructor? body)
     {
-        var found = new HashSet<PathExpression>(ReferenceEqualityComparer.Instance);
+        var found = new HashSet<XQueryExpression>(ReferenceEqualityComparer.Instance);
         AddFromBody(body, found);
         return found;
     }
 
-    private static void AddFromBody(XsltSequenceConstructor? body, HashSet<PathExpression> found)
+    private static void AddFromBody(XsltSequenceConstructor? body, HashSet<XQueryExpression> found)
     {
         if (body is null)
             return;
@@ -155,7 +168,7 @@ internal static class StreamedScopeEscapeDetector
         }
     }
 
-    private static void AddFromAvt(XsltAttributeValueTemplate? avt, HashSet<PathExpression> found)
+    private static void AddFromAvt(XsltAttributeValueTemplate? avt, HashSet<XQueryExpression> found)
     {
         if (avt is null)
             return;
@@ -164,7 +177,7 @@ internal static class StreamedScopeEscapeDetector
                 AddFromExpression(ae.Expression, found);
     }
 
-    private static void AddFromExpression(XQueryExpression? expr, HashSet<PathExpression> found)
+    private static void AddFromExpression(XQueryExpression? expr, HashSet<XQueryExpression> found)
     {
         switch (expr)
         {
@@ -175,6 +188,10 @@ internal static class StreamedScopeEscapeDetector
                 break;
             case PathExpression { IsAbsolute: false, InitialExpression: { } initial }:
                 AddFromExpression(initial, found);
+                break;
+            // root() and root(.) evaluated with the rule's focus (for the classifier, xslt#655).
+            case FunctionCallExpression call when IsRootCall(call):
+                found.Add(call);
                 break;
             case FunctionCallExpression fc:
                 foreach (var arg in fc.Arguments)
@@ -353,7 +370,7 @@ internal static class StreamedScopeEscapeDetector
         "namespace-uri", "node-name", "generate-id", "has-children", "nilled",
     };
 
-    private sealed class EscapeWalker(HashSet<PathExpression> contextRoots) : XQueryExpressionWalker
+    private sealed class EscapeWalker(HashSet<XQueryExpression> contextRoots) : XQueryExpressionWalker
     {
         public bool Escapes { get; private set; }
 
