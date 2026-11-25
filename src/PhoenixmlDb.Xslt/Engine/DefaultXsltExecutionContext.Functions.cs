@@ -239,41 +239,63 @@ internal sealed partial class DefaultXsltExecutionContext
     /// nothing and no item was added. The markup is read inside a synthetic wrapper, so it must
     /// declare its own namespaces (a body run with the output namespace scopes cleared does).
     /// </summary>
-    internal object? MarkupAndItemsToValue(string markup, List<object?> items)
+    /// <remarks>
+    /// With <paramref name="positions"/> (for each item, the offset in <paramref name="markup"/>
+    /// where it was added), each item goes where it was added, between the nodes of the markup
+    /// before and after it (#645): a function whose body was <c>&lt;xsl:sequence select="1"/&gt;&lt;w/&gt;</c>
+    /// returned (&lt;w/&gt;, 1). Text items are not added: their text is in the markup.
+    /// </remarks>
+    internal object? MarkupAndItemsToValue(string markup, List<object?> items, List<int>? positions = null)
     {
         try
         {
-            // Stream-parse via XmlReader rather than allocating a full XmlDocument
-            // and re-converting to XDM. Children parented under the synthetic
-            // wrapper, then unparented before being returned.
-            var settings = new System.Xml.XmlReaderSettings
-            {
-                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
-                IgnoreWhitespace = false,
-                IgnoreComments = false,
-                IgnoreProcessingInstructions = false,
-            };
-            using var stringReader = new System.IO.StringReader($"<_fn_root_>{markup}</_fn_root_>");
-            using var reader = System.Xml.XmlReader.Create(stringReader, settings);
-            var children = new List<object?>();
-            ReadAsBodyChunkChildren(reader, children);
             var parsed = new List<object?>();
-            foreach (var child in children)
+            var cursor = 0;
+            for (var i = 0; i < items.Count; i++)
             {
-                if (child is XdmNode cn)
-                    cn.Parent = null;
-                parsed.Add(child);
+                if (items[i] is Xdm.TextNodeItem)
+                    continue;
+                // An item with no position (added after the body: a tail call's result) goes last.
+                var at = positions is null || i >= positions.Count ? markup.Length : Math.Clamp(positions[i], cursor, markup.Length);
+                if (at > cursor)
+                {
+                    AddMarkupNodes(markup[cursor..at], parsed);
+                    cursor = at;
+                }
+                parsed.Add(items[i]);
             }
-            foreach (var item in items)
-            {
-                if (item is not Xdm.TextNodeItem)
-                    parsed.Add(item);
-            }
+            AddMarkupNodes(markup[cursor..], parsed);
             return parsed.Count == 1 ? parsed[0] : parsed.Count > 1 ? parsed.ToArray() : null;
         }
         catch (System.Xml.XmlException)
         {
             return null;
+        }
+    }
+
+    // The nodes of a piece of a body's markup, parentless. Stream-parsed via XmlReader rather
+    // than a full XmlDocument re-converted to XDM; read inside a synthetic wrapper that declares
+    // nothing, so the markup must declare its own namespaces.
+    private void AddMarkupNodes(string markup, List<object?> parsed)
+    {
+        if (markup.Length == 0)
+            return;
+        var settings = new System.Xml.XmlReaderSettings
+        {
+            DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+            IgnoreWhitespace = false,
+            IgnoreComments = false,
+            IgnoreProcessingInstructions = false,
+        };
+        using var stringReader = new System.IO.StringReader($"<_fn_root_>{markup}</_fn_root_>");
+        using var reader = System.Xml.XmlReader.Create(stringReader, settings);
+        var children = new List<object?>();
+        ReadAsBodyChunkChildren(reader, children);
+        foreach (var child in children)
+        {
+            if (child is XdmNode cn)
+                cn.Parent = null;
+            parsed.Add(child);
         }
     }
 
@@ -2906,6 +2928,11 @@ internal sealed partial class DefaultXsltExecutionContext
             _functionBodyDepth++;
             var savedFunctionBodyAccumulator = _functionBodyAccumulator;
             _functionBodyAccumulator = _sequenceAccumulator;
+            var savedFunctionBodyPositions = _functionBodyPositions;
+            var savedFunctionBodyOutputBase = _functionBodyOutputBase;
+            var functionBodyPositions = new List<int>();
+            _functionBodyPositions = functionBodyPositions;
+            _functionBodyOutputBase = savedOutput;
             PhoenixmlDb.XQuery.Execution.TailCallRequest? tailCall;
             _pendingFunctionTailCall = null;
             try
@@ -2921,6 +2948,8 @@ internal sealed partial class DefaultXsltExecutionContext
                 tailCall = _pendingFunctionTailCall;
                 _pendingFunctionTailCall = null;
                 _functionBodyAccumulator = savedFunctionBodyAccumulator;
+                _functionBodyPositions = savedFunctionBodyPositions;
+                _functionBodyOutputBase = savedFunctionBodyOutputBase;
                 _functionBodyDepth--;
                 _temporaryOutputDepth--;
                 // Restore namespace scopes
@@ -2936,6 +2965,9 @@ internal sealed partial class DefaultXsltExecutionContext
 
             var accumulatedItems = _sequenceAccumulator;
             _sequenceAccumulator = savedAccumulator;
+            // Where each item of the body went in its output; not when some item was added
+            // without a position (then the items go after the markup, as before #645).
+            var itemPositions = functionBodyPositions.Count == accumulatedItems.Count ? functionBodyPositions : null;
 
             // The body ended in a tail call (SequenceAsync). With nothing else output, the call is
             // this function's result: the caller's loop runs it next, with the callee's return type
@@ -3061,7 +3093,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // Parse text output to XDM nodes. This handles:
                 // - Functions with node return type (as="node()") — so instance-of checks work
                 // - Functions with no as attribute (XSLT 3.0 §10.3: result used directly)
-                funcResult = MarkupAndItemsToValue(textOutput, accumulatedItems);
+                funcResult = MarkupAndItemsToValue(textOutput, accumulatedItems, itemPositions);
                 funcResult ??= textOutput.Contains('<', StringComparison.Ordinal) ? new ResultTreeFragment(textOutput) : StripXmlMarkup(textOutput);
             }
             else if (accumulatedItems.Count > 0 && !string.IsNullOrEmpty(textOutput))
