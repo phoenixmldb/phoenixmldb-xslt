@@ -1368,12 +1368,18 @@ public static partial class StreamabilityClassifier
                 : new PostureSweep(Posture.Climbing, Sweep.Motionless);
         }
 
-        if (name == "fn:root" && count == 0)
+        if (name == "fn:root" && (count == 0 || fc.Arguments[0] is ContextItemExpression))
         {
-            // §19.8.9.18: root() of a streamed node is its document node, reached upward.
-            return ctx.ContextPosture == Posture.Grounded
-                ? Grounded(Sweep.Motionless)
-                : new PostureSweep(Posture.Climbing, Sweep.Motionless);
+            if (ctx.ContextPosture == Posture.Grounded)
+                return Grounded(Sweep.Motionless);
+            // §19.8.9.18: where the context item is a document node, root() is that node, so
+            // root()/books in a rule for "/" is books. A leading "/" is root(self::node())
+            // (§19.8.8.8), and ClassifyPath gives it the same rule: the context is taken to be a
+            // document node unless the match pattern rules that out (xslt#655). Elsewhere root()
+            // of a streamed node is its document node, reached upward: climbing.
+            if (ctx.BySpec && !ctx.ContextIsNeverDocument && ctx.InStreamedScope)
+                return new PostureSweep(Posture.Striding, Sweep.Motionless);
+            return new PostureSweep(Posture.Climbing, Sweep.Motionless);
         }
         if (name is "fn:unparsed-entity-uri" or "fn:unparsed-entity-public-id" && count == 1)
         {
