@@ -59,7 +59,7 @@ internal static class SnapshotHelper
             return false;
         foreach (var attributeId in element.Attributes)
             if (store.GetNode(attributeId) is XdmAttribute { LocalName: "base" } attribute
-                && (attribute.Namespace == NamespaceId.Xml || attribute.Prefix == "xml"))
+                && attribute.Namespace == NamespaceId.Xml)
                 return true;
         return false;
     }
