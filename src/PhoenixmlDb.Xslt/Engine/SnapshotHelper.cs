@@ -19,8 +19,51 @@ namespace PhoenixmlDb.Xslt.Engine;
 /// <summary>
 /// Helper class for fn:snapshot implementation. Creates pruned deep copies of nodes.
 /// </summary>
+/// <summary>
+/// What a call of fn:copy-of or fn:snapshot needs to give its top-level copies their base URI: the
+/// node provider to compute the base URI of an original, and the static base URI of the call.
+/// </summary>
+internal readonly record struct CopyBaseUris(PhoenixmlDb.XQuery.INodeProvider? Provider, string? StaticBaseUri);
+
 internal static class SnapshotHelper
 {
+    /// <summary>
+    /// The base URI of a top-level copy (XSLT 3.0 §11.9.2, which fn:copy-of follows): the base URI
+    /// of a node is copied; an element with an xml:base attribute takes it, resolved against the
+    /// base URI of the call. A copy with no parent had none, so base-uri() of it, and of every node
+    /// in it, was empty. A copy attached to a new parent later inherits that parent's, as before.
+    /// </summary>
+    internal static void GiveCopyItsBaseUri(XdmNode original, XdmNode? copy, CopyBaseUris baseUris)
+    {
+        switch (copy)
+        {
+            case XdmElement element when original is XdmElement source:
+                if (HasXmlBase(source, element.Store as XdmInMemoryStore))
+                    element.BaseUri = baseUris.StaticBaseUri;
+                else
+                    element.CopySourceBaseUri = BaseUriOf(source, baseUris);
+                break;
+            case XdmDocument document when original is XdmDocument:
+                // The base URI, not the document URI: a copied document node has none.
+                document.BaseUri = BaseUriOf(original, baseUris);
+                break;
+        }
+    }
+
+    private static string? BaseUriOf(XdmNode node, CopyBaseUris baseUris)
+        => PhoenixmlDb.XQuery.Functions.BaseUriFunction.ComputeBaseUri(node, baseUris.Provider);
+
+    private static bool HasXmlBase(XdmElement element, XdmInMemoryStore? store)
+    {
+        if (store is null)
+            return false;
+        foreach (var attributeId in element.Attributes)
+            if (store.GetNode(attributeId) is XdmAttribute { LocalName: "base" } attribute
+                && (attribute.Namespace == NamespaceId.Xml || attribute.Prefix == "xml"))
+                return true;
+        return false;
+    }
+
     /// <summary>
     /// Whether the copies being made drop their type annotations (validation="strip"). A copy
     /// made by fn:copy-of or fn:snapshot keeps them, as validation="preserve" does (XSLT 3.0
@@ -52,13 +95,13 @@ internal static class SnapshotHelper
     /// Deep copy items without ancestor chains (for fn:copy-of).
     /// </summary>
     public static object? DeepCopyItems(object? input, XdmInMemoryStore store,
-        Dictionary<NodeId, NodeId>? nodeMapping = null, bool stripAnnotations = false)
+        Dictionary<NodeId, NodeId>? nodeMapping = null, bool stripAnnotations = false, CopyBaseUris? baseUris = null)
     {
         var saved = t_stripAnnotations;
         t_stripAnnotations = stripAnnotations;
         try
         {
-            return DeepCopyItemsCore(input, store, nodeMapping);
+            return DeepCopyItemsCore(input, store, nodeMapping, baseUris);
         }
         finally
         {
@@ -67,11 +110,19 @@ internal static class SnapshotHelper
     }
 
     private static object? DeepCopyItemsCore(object? input, XdmInMemoryStore store,
-        Dictionary<NodeId, NodeId>? nodeMapping)
+        Dictionary<NodeId, NodeId>? nodeMapping, CopyBaseUris? baseUris)
     {
         if (input is null)
             return null;
         var docId = new DocumentId(1);
+
+        XdmNode? CopyTop(XdmNode node)
+        {
+            var copy = DeepCopyNode(node, NodeId.None, docId, store, nodeMapping);
+            if (baseUris is { } uris)
+                GiveCopyItsBaseUri(node, copy, uris);
+            return copy;
+        }
 
         if (input is object?[] arr)
         {
@@ -79,7 +130,7 @@ internal static class SnapshotHelper
             foreach (var item in arr)
             {
                 if (item is XdmNode node)
-                    results.Add(DeepCopyNode(node, NodeId.None, docId, store, nodeMapping));
+                    results.Add(CopyTop(node));
                 else if (item is not null)
                     results.Add(item);
             }
@@ -92,7 +143,7 @@ internal static class SnapshotHelper
             foreach (var item in seq)
             {
                 if (item is XdmNode node)
-                    results.Add(DeepCopyNode(node, NodeId.None, docId, store, nodeMapping));
+                    results.Add(CopyTop(node));
                 else if (item is not null)
                     results.Add(item);
             }
@@ -100,12 +151,13 @@ internal static class SnapshotHelper
         }
 
         if (input is XdmNode singleNode)
-            return DeepCopyNode(singleNode, NodeId.None, docId, store, nodeMapping);
+            return CopyTop(singleNode);
 
         return input;
     }
 
-    public static async ValueTask<object?> ProcessSnapshotAsync(object? input, DefaultXsltExecutionContext context)
+    public static async ValueTask<object?> ProcessSnapshotAsync(object? input, DefaultXsltExecutionContext context,
+        CopyBaseUris? baseUris = null)
     {
         if (input is null)
             return null;
@@ -125,19 +177,19 @@ internal static class SnapshotHelper
             foreach (var item in arr)
             {
                 if (item is not null)
-                    results.Add(SnapshotItem(item, context, nodeMapping));
+                    results.Add(SnapshotItem(item, context, nodeMapping, baseUris));
             }
             context.CopyAccumulatorValues(nodeMapping);
             return results.ToArray();
         }
 
-        var result = SnapshotItem(input, context, nodeMapping);
+        var result = SnapshotItem(input, context, nodeMapping, baseUris);
         context.CopyAccumulatorValues(nodeMapping);
         return result;
     }
 
     public static object? SnapshotItem(object item, DefaultXsltExecutionContext context,
-        Dictionary<NodeId, NodeId>? nodeMapping = null)
+        Dictionary<NodeId, NodeId>? nodeMapping = null, CopyBaseUris? baseUris = null)
     {
         if (item is not XdmNode node)
             return item; // Non-node items pass through unchanged
@@ -162,15 +214,13 @@ internal static class SnapshotHelper
         ancestors.Reverse(); // Now: root → ... → parent of target
 
         // Case 1: Document node — deep copy the entire document
-        if (node is XdmDocument)
-        {
-            return DeepCopyNode(node, NodeId.None, docId, store, nodeMapping);
-        }
-
         // Case 2: Orphan node (no parent) — deep copy just the node
-        if (ancestors.Count == 0)
+        if (node is XdmDocument || ancestors.Count == 0)
         {
-            return DeepCopyNode(node, NodeId.None, docId, store, nodeMapping);
+            var copy = DeepCopyNode(node, NodeId.None, docId, store, nodeMapping);
+            if (baseUris is { } uris)
+                GiveCopyItsBaseUri(node, copy, uris);
+            return copy;
         }
 
         // Case 3: Node with ancestors — create pruned tree
@@ -190,6 +240,10 @@ internal static class SnapshotHelper
                     Document = docId,
                     Parent = NodeId.None,
                     DocumentUri = null, // Snapshot docs lose their URI
+                    // ...but not their base URI: each ancestor of a snapshot has the base URI of
+                    // the original (XSLT 3.0 §18.4), and the nodes under it inherit it. It had none,
+                    // so base-uri(snapshot(.)) was empty where no ancestor had an absolute xml:base.
+                    BaseUri = baseUris is { } uris ? BaseUriOf(ancestorDoc, uris) : null,
                     Children = [] // Will be updated via LinkChild
                 };
                 store.Register(newDoc);
@@ -308,6 +362,7 @@ internal static class SnapshotHelper
                 Document = doc.Document,
                 Parent = doc.Parent,
                 DocumentUri = doc.DocumentUri,
+                BaseUri = doc.BaseUri,
                 DocumentElement = childId,
                 Children = [childId],
                 DocumentElementLocalName = (store.GetNode(childId) as XdmElement)?.LocalName

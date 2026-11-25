@@ -1598,7 +1598,8 @@ internal sealed partial class DefaultXsltExecutionContext
     /// Deep-copies nodes and propagates accumulator values from source to copy.
     /// Ensures accumulators are computed on the source document first.
     /// </summary>
-    internal async ValueTask<object?> DeepCopyWithAccumulatorsAsync(object? input, bool stripAnnotations = false)
+    internal async ValueTask<object?> DeepCopyWithAccumulatorsAsync(object? input, bool stripAnnotations = false,
+        CopyBaseUris? baseUris = null)
     {
         if (input == null || _nodeStore == null)
             return input;
@@ -1630,7 +1631,7 @@ internal sealed partial class DefaultXsltExecutionContext
 
         // Deep copy with mapping
         var mapping = new Dictionary<NodeId, NodeId>();
-        var result = SnapshotHelper.DeepCopyItems(input, _nodeStore, mapping, stripAnnotations);
+        var result = SnapshotHelper.DeepCopyItems(input, _nodeStore, mapping, stripAnnotations, baseUris);
 
         // Copy accumulator values to the new nodes
         CopyAccumulatorValues(mapping);
