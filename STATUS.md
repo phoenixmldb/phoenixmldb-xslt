@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-25 02:33 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-25 17:24 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,13 +18,15 @@ Generated 2026-11-25 02:33 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 1 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 2 | 1 |
+| phoenixmldb-xslt | 4 | 0 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
+- [653] --timing says "(streaming)" for a run that was not streamed
+- [582] Schxslt2 transpiled XSLT 3.0 with streaming passing (after an edit) strict streamability analyis of Saxon EE and of go-xml doesn't stream with PhoenixmlDb.Xslt
 - [445] Nightly regression report
 - [13] Backlog triage: 57 failing W3C XSLT cases (11,461/11,518 applicable pass)
 
@@ -34,13 +36,9 @@ Generated 2026-11-25 02:33 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [54] build: SDK 11, and ship net11.0 next to net8.0 and net10.0
 
-**phoenixmldb-xslt**
-
-- [648] Static expressions: the runtime is the only evaluator; the §9.7 function list
-
 ## Defect register
 
-`BUGS.md`: **154** entries, **23** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **167** entries, **22** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
@@ -64,7 +62,6 @@ the engines are split but the defects are not.
 - 90. OPEN — a second `xsl:mode` declaration silently discards the first's attributes (2026-09-13)
 - 91. OPEN — built-in-rule descent to a matching template emits the element empty and leaks its text (2026-09-13)
 - 92. OPEN — `has-children()` always answers false under streaming, and the cheap fix is wrong (2026-09-13)
-- 93. OPEN — the buffered subtree has no ancestors, and the missing parent is load-bearing (2026-09-13)
 - 105. OPEN — call-template-1003 gives three different verdicts on identical code (2026-09-16)
 
 ## Conformance
