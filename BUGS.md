@@ -5408,7 +5408,7 @@ Also found while here: the zero-argument `has-children()` — the form match pat
 own copy of the logic in `XsltHasChildren0Function`, so a fix to the one-argument form alone
 changed nothing. Both now call one implementation.
 
-### 93. OPEN — the buffered subtree has no ancestors, and the missing parent is load-bearing (2026-09-13)
+### 93. The buffered subtree had no ancestors, and the missing parent was load-bearing — fixed (xslt#177, 2026-09-27)
 
 `streamable-137/138/139`. A fix was built, **measured at +2**, and **reverted** — it trades
 accumulator correctness for two cases. **Sixth refusal of that shape this session.**
@@ -5488,6 +5488,11 @@ Done the way this entry said it had to be: the buffered root now gets its stream
 root. So the ancestor axis sees the real ancestors, while "which tree is this?" answers exactly what
 it answered before, and `AccumulatorAfter_CountsTheSubtree` still passes. `streamable-137` is not
 among the gains and has a separate cause. Regression tests in `BufferedSubtreeAncestorTests`.
+
+2026-11-25 (xslt#582, xslt#652): nothing is open. `streamable-137` passes as well: `attr/streamable` is 139/139 on
+main 9db9824 and on xslt#652. With the document URI of #156, `root()`, `document-uri(root())`, the parent
+and the ancestors of a node in a buffered body are those of the tree, as on the live reader, in a group member and
+under `xsl:iterate`.
 
 ### 94. The engine contains a purpose-built diagnostic for this class of defect, and no run exercises it (2026-09-13)
 
@@ -8346,3 +8351,88 @@ Breaking (accepted by Lucas for 3.3.0): such a query is XUST0001 when it is comp
 
 Tests: `UpdateCategoryTests` (46; 35 fail on the source before the fix), `ReadOnlyDocumentTests` (+4, #143).
 XQUTS 1.0.1: 377 -> 442 (then 492 with the 3.0 results of xquery#429).
+
+### 156. base-uri() and document-uri() of a streamed node were empty — fixed (xslt#652, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. Found with xslt#582: a SchXslt2 validator that streams lost every `document`
+attribute of its report. With `xsl:mode streamable="yes"` and `<xsl:template match="book"><b base="{base-uri(.)}"/>`,
+`xslt --stream` gave `<b base=""/>`; without streaming, `<b base="file:///…/books.xml"/>`. The same for
+`base-uri(@price)`, `document-uri(root())`, `base-uri(root())` and a text node, on every streaming path.
+
+The cause: the document nodes the streaming pass builds had no URI — the parent of the document element
+(`StreamingXmlProcessor.EnsureStreamingRootDocId`), the document of a snapshot's ancestors
+(`SynthesizeAncestorChain`), and the document node the body of a rule for `/` runs on (also for
+`xsl:source-document`). Every streamed node, and every copy read whole for a rule body or a group (each is linked
+to the streamed element's parent, #93), reaches one of them through its parents. Now each has the URI of the input
+as its document-uri, so its base URI too, and xml:base on the ancestors is resolved against it as in a tree. The
+processor is given the URI (`StreamingXmlProcessor.DocumentUri`, from `XsltTransformOptions.SourceDocumentUri`), or
+takes the reader's base URI.
+
+Still open, with xslt#582 (D3): a document-level `xsl:iterate` or `xsl:for-each-group` whose body reads
+`base-uri(.)` is read into memory; the striding descent's document node has no URI yet, and gets one there.
+
+Not this entry: the accumulator case named in xslt#652 (an accumulator rule for `/` that reads `base-uri(.)`)
+was #157: the rule did not run at all.
+
+Tests: `StreamedNodeUriTests` (base-uri on the live reader, of an attribute, of a text node, of root(), in a
+buffered body, under a rule for every element, of a group member, in a streamed `xsl:source-document` and its
+accumulator rule for `/`, through `XsltTransformEngine.TransformAsync(XmlReader, …)` with a reader that has no
+base URI, and with relative xml:base on the ancestors); every case fails on the source before the fix.
+
+### 157. In a streamed run, an accumulator rule for the document node did not run unless a rule for "/" did — fixed (xslt#652, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. With no template rule for the document node,
+`<xsl:accumulator name="doc" initial-value="'init'" streamable="yes"><xsl:accumulator-rule match="/" select="'fired'"/></xsl:accumulator>`
+and `<xsl:template match="book"><b doc="{accumulator-before('doc')}"/>`: `--stream` gave `doc="init"` for each
+book, `--no-stream` gave `doc="fired"`. The streaming pass evaluates the rules for the document node at its start
+and end only when it was given the document node, and only the pass for a rule for `/` gave it (xslt#461). The
+pass that dispatches from the document element is now given it too.
+
+Test: `StreamedNodeUriTests.An_accumulator_rule_for_the_document_node_runs_with_no_rule_for_it` (fails before).
+
+### 158. A streamed comment or processing instruction had no parent — fixed (xslt#652, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. Found with xslt#582: Martin's input starts with `<?xml-model …?>`. The streaming pass
+built text nodes under their parent, but comments and processing instructions with none. So each was the root of
+its own tree: `..`, `ancestor::node()` and `base-uri(.)` were empty, `root() instance of document-node()` was
+false, and `match="root()"` matched it. In the validator, `<xsl:template match="* | root()" mode="group.d6e2">`
+with `<xsl:apply-templates select="node()" mode="#current"/>` matched the `xml-model` instruction, and the streamed
+`xsl:apply-templates` then read on to the end of its parent: the whole document became the instruction's children,
+and each `book` had the ancestors `xml-model/books`, not `#doc/books`. The same happened to a rule for
+`processing-instruction()` with an `xsl:apply-templates` in it, before any document element (`<?xml-stylesheet?>`).
+
+Fix: a streamed comment and processing instruction get their parent from the same stack a text node does; the
+streamed `xsl:apply-templates` reads nothing when its context node is not an element or a document node (a
+comment, a processing instruction and a text node have no children).
+
+Tests: `StreamedNodeUriTests.A_streamed_comment_or_instruction_has_its_parent` (3 cases),
+`A_stylesheet_instruction_before_the_document_element_is_processed_in_its_place`, and
+`A_schxslt2_validator_streams_with_its_document_attributes` (the xslt#582 validator in the form that streams
+before the fixes of xslt#582, on the issue's input: the full report is the unstreamed one, with a `document`
+attribute and the ancestors `#doc/books` on each fired-rule); each fails before the fix.
+
+### 159. An element that a streamed xsl:apply-templates read whole lost its namespace declarations, comments and processing instructions — fixed (xslt#652, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. Found with #156, when W3C `streamable-010` failed with XPTY0019. A rule whose
+`xsl:apply-templates` dispatches its children reads each child element whole (`ReadStreamingElementForDispatchAsync`).
+That element had no namespace declarations, and only its elements and text: a copy of it named prefixes it did not
+declare, and had no comments or processing instructions. Under `<Pool xmlns:my="urn:my">`, a rule for `Loan` that
+writes `<xsl:copy-of select="."/>` gave `<Loan><x my:v="1"/></Loan>` with streaming, which is not
+namespace-well-formed; without streaming, `<Loan xmlns:my="urn:my"><x my:v="1"/></Loan>`. With #156 the copy has a
+base URI, so a temporary tree of it is built from its text, and that failed: `$Loan/Loan` was XPTY0019 in
+`streamable-010` (`<your:extra my:value="22" xmlns:my="…"><!--comment-->242<?PI?></your:extra>`).
+
+Fix: each element read keeps its own namespace declarations and its comments and processing instructions, and the
+element at the top also declares the bindings its streamed ancestors make for the prefixes that attributes in its
+tree use and that the tree does not declare (the writer already declares the namespace of an element name). A copy
+is namespace-well-formed and has the same names; the declarations of a copied element can come
+in another order than without streaming (not significant in XDM).
+
+Still open: without streaming, the copy also carries the in-scope namespaces that no name in it uses
+(`copy-namespaces="yes"`, XSLT 3.0 §11.9.2); the streamed copy does not, as in 3.2.0. Adding them all to the top
+element made the streamed built-in shallow copy declare them again on elements whose output already has them in
+scope (`ElementContentInPlaceTests`, "streaming": `<c xmlns:p="urn:p"/>` where `<c/>` is written), so that needs the
+streamed writer's check of the output scope first.
+
+Test: `StreamedNodeUriTests.A_copy_of_an_element_read_whole_for_a_rule_keeps_its_namespaces` (2 cases, compared by
+expanded name; each fails before the fix).

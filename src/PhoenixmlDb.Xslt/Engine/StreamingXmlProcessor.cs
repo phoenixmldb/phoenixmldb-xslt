@@ -92,6 +92,33 @@ internal sealed class StreamingXmlProcessor
     // NodeResolver walk from the root reaches an XdmDocument. NodeId.None until then.
     private NodeId _streamingRootDocId = NodeId.None;
 
+    /// <summary>
+    /// The URI of the streamed document: the document-uri of the document nodes this pass
+    /// builds, and so the base URI of its nodes (each resolved with its xml:base). Null: the
+    /// base URI of the reader, read when the first document node is built. The nodes had none,
+    /// so base-uri() and document-uri() of a streamed node were empty, where the same
+    /// stylesheet without streaming gave the URI of the input (xslt#652).
+    /// </summary>
+    internal string? DocumentUri { get; init; }
+
+    private string? _streamedDocumentUri;
+    private bool _streamedDocumentUriKnown;
+    private XmlReader? _reader;
+
+    /// <summary><see cref="DocumentUri"/>, or the reader's base URI.</summary>
+    private string? StreamedDocumentUri
+    {
+        get
+        {
+            if (!_streamedDocumentUriKnown)
+            {
+                _streamedDocumentUri = DocumentUri ?? (string.IsNullOrEmpty(_reader?.BaseURI) ? null : _reader.BaseURI);
+                _streamedDocumentUriKnown = true;
+            }
+            return _streamedDocumentUri;
+        }
+    }
+
     // Ancestor element attributes, parallel to _ancestorNames (outermost first).
     // Maintained at the same push/pop sites so a matched leaf can evaluate a
     // motionless intermediate predicate (e.g. ITEM[@CAT='P']) against the
@@ -183,6 +210,7 @@ internal sealed class StreamingXmlProcessor
     /// </summary>
     public async ValueTask ProcessAsync(XmlReader reader, CancellationToken ct = default)
     {
+        _reader = reader;
         var ancestorStack = new Stack<StreamingNodeContext>();
 
         // Track sibling element position per depth level.
@@ -1038,7 +1066,13 @@ internal sealed class StreamingXmlProcessor
                         {
                             Id = commentId,
                             Document = new DocumentId(0),
-                            Value = reader.Value
+                            Value = reader.Value,
+                            // Under its parent, as a text node is: without one, a comment or a
+                            // processing instruction was the root of its own tree, so match="root()"
+                            // matched it, and before the document element its rule read the rest
+                            // of the input as its children; its parent, ancestors and base URI were
+                            // empty (xslt#652).
+                            Parent = ancestorStack.Count > 0 ? ancestorStack.Peek().NodeId : EnsureStreamingRootDocId(),
                         };
                         RegisterStreamed(comment);
 
@@ -1063,7 +1097,9 @@ internal sealed class StreamingXmlProcessor
                             Id = piId,
                             Document = new DocumentId(0),
                             Target = reader.LocalName,
-                            Value = reader.Value
+                            Value = reader.Value,
+                            // Under its parent, as a comment is (xslt#652).
+                            Parent = ancestorStack.Count > 0 ? ancestorStack.Peek().NodeId : EnsureStreamingRootDocId(),
                         };
                         RegisterStreamed(pi);
 
@@ -1660,6 +1696,7 @@ internal sealed class StreamingXmlProcessor
             Document = documentId,
             Children = XdmDocument.EmptyChildren,
             Parent = null,
+            DocumentUri = StreamedDocumentUri,
         });
         NodeId? parentId = docNodeId;
         // Build outermost → innermost so each ancestor's Parent points at the one above.
@@ -3215,6 +3252,7 @@ internal sealed class StreamingXmlProcessor
             Document = StreamingDocumentId,
             Children = XdmDocument.EmptyChildren,
             Parent = null,
+            DocumentUri = StreamedDocumentUri,
         });
         _streamingRootDocId = docId;
         return docId;

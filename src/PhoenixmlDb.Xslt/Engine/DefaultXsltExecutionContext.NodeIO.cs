@@ -440,14 +440,23 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <see cref="ForEachGroupStreamingAsync"/>.
     /// </summary>
     private async ValueTask<Xdm.Nodes.XdmElement> ReadStreamingElementForDispatchAsync(
-        System.Xml.XmlReader reader, CancellationToken ct)
+        System.Xml.XmlReader reader, CancellationToken ct, HashSet<string>? undeclaredPrefixes = null,
+        HashSet<string>? declaredAbove = null)
     {
+        // The top of the read: the prefixes its tree uses and does not declare are collected for it.
+        var isRoot = undeclaredPrefixes is null;
+        undeclaredPrefixes ??= new HashSet<string>(StringComparer.Ordinal);
+        var inScope = isRoot && reader is System.Xml.IXmlNamespaceResolver resolver
+            ? resolver.GetNamespacesInScope(System.Xml.XmlNamespaceScope.ExcludeXml)
+            : null;
+        List<string>? attributePrefixes = null;
         var startDepth = reader.Depth;
         var startName = reader.LocalName;
         var startNs = reader.NamespaceURI;
         var startPrefix = reader.Prefix;
         var startId = new NodeId(_nextStreamGroupNodeId++);
         var attrIds = new List<NodeId>();
+        List<NamespaceBinding>? nsDecls = null;
         var nsId = !string.IsNullOrEmpty(startNs)
             ? _nodeStore!.InternNamespace(startNs)
             : NamespaceId.None;
@@ -458,10 +467,21 @@ internal sealed partial class DefaultXsltExecutionContext
             {
                 reader.MoveToAttribute(i);
                 if (reader.Prefix == "xmlns" || (reader.Prefix.Length == 0 && reader.LocalName == "xmlns"))
+                {
+                    // The element's own namespace declarations, as the other materialisers keep
+                    // them. They were dropped, so a copy of the element written as text named a
+                    // prefix it did not declare (<your:extra my:value=".." xmlns:my=".."> lost
+                    // xmlns:my), and the temporary tree that reads that text back could not be
+                    // built (W3C streamable-010, once its copies have a base URI, xslt#652).
+                    (nsDecls ??= []).Add(new NamespaceBinding(reader.Prefix == "xmlns" ? reader.LocalName : "",
+                        _nodeStore!.InternNamespace(reader.Value)));
                     continue;
+                }
                 var attrNsId = !string.IsNullOrEmpty(reader.NamespaceURI)
                     ? _nodeStore!.InternNamespace(reader.NamespaceURI)
                     : NamespaceId.None;
+                if (reader.Prefix.Length > 0)
+                    (attributePrefixes ??= []).Add(reader.Prefix);
                 var attrId = new NodeId(_nextStreamGroupNodeId++);
                 var attrNode = new Xdm.Nodes.XdmAttribute
                 {
@@ -478,6 +498,20 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             reader.MoveToElement();
         }
+        // The prefixes this element's attributes use that no element of the tree read so far
+        // declares: the top element declares them, below. (A prefix in an element name needs
+        // nothing: the writer declares the namespace of an element's name where it is missing.)
+        HashSet<string>? declaredHere = declaredAbove;
+        if (nsDecls is not null)
+        {
+            declaredHere = declaredAbove is null ? new HashSet<string>(StringComparer.Ordinal) : new HashSet<string>(declaredAbove, StringComparer.Ordinal);
+            foreach (var binding in nsDecls)
+                declaredHere.Add(binding.Prefix);
+        }
+        if (attributePrefixes is not null)
+            foreach (var prefix in attributePrefixes)
+                if (declaredHere?.Contains(prefix) != true)
+                    undeclaredPrefixes.Add(prefix);
 
         var children = new List<NodeId>();
         if (!reader.IsEmptyElement)
@@ -491,7 +525,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     case System.Xml.XmlNodeType.Element:
                     {
-                        var child = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                        var child = await ReadStreamingElementForDispatchAsync(reader, ct, undeclaredPrefixes, declaredHere).ConfigureAwait(false);
                         child.Parent = startId;
                         children.Add(child.Id);
                         break;
@@ -513,7 +547,51 @@ internal sealed partial class DefaultXsltExecutionContext
                         children.Add(textId);
                         break;
                     }
+                    // Comments and processing instructions are children too; they were dropped,
+                    // so a copy of the element lost them (xslt#652).
+                    case System.Xml.XmlNodeType.Comment:
+                    {
+                        var commentId = new NodeId(_nextStreamGroupNodeId++);
+                        _nodeStore!.Register(new Xdm.Nodes.XdmComment
+                        {
+                            Id = commentId,
+                            Document = DocumentId.None,
+                            Parent = startId,
+                            Value = reader.Value
+                        });
+                        children.Add(commentId);
+                        break;
+                    }
+                    case System.Xml.XmlNodeType.ProcessingInstruction:
+                    {
+                        var piId = new NodeId(_nextStreamGroupNodeId++);
+                        _nodeStore!.Register(new Xdm.Nodes.XdmProcessingInstruction
+                        {
+                            Id = piId,
+                            Document = DocumentId.None,
+                            Parent = startId,
+                            Target = reader.LocalName,
+                            Value = reader.Value
+                        });
+                        children.Add(piId);
+                        break;
+                    }
                 }
+            }
+        }
+
+        // The top element read stands for a tree of its own: it also declares the namespaces its
+        // streamed ancestors bound to the prefixes the tree uses and does not declare. A copy of it
+        // named such a prefix and declared none (<x my:v="1"/> under <Pool xmlns:my="…">): the
+        // output was not namespace-well-formed (xslt#652). The ones nothing uses are not added, so
+        // a copy declares no more than before.
+        if (inScope is not null)
+        {
+            foreach (var (prefix, uri) in inScope)
+            {
+                if (uri.Length == 0 || !undeclaredPrefixes.Contains(prefix) || nsDecls?.Exists(b => b.Prefix == prefix) == true)
+                    continue;
+                (nsDecls ??= []).Add(new NamespaceBinding(prefix, _nodeStore!.InternNamespace(uri)));
             }
         }
 
@@ -528,7 +606,7 @@ internal sealed partial class DefaultXsltExecutionContext
             Prefix = string.IsNullOrEmpty(startPrefix) ? null : startPrefix,
             Children = children,
             Attributes = attrIds,
-            NamespaceDeclarations = Array.Empty<NamespaceBinding>()
+            NamespaceDeclarations = nsDecls is null ? Array.Empty<NamespaceBinding>() : nsDecls.ToArray()
         };
         _nodeStore!.Register(elem);
         return elem;

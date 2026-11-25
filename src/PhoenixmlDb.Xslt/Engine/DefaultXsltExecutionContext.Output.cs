@@ -2099,7 +2099,7 @@ internal sealed partial class DefaultXsltExecutionContext
                     Id = syntheticDocId,
                     Document = new DocumentId(0),
                     Children = [],
-                    BaseUri = resolvedUri.AbsoluteUri
+                    DocumentUri = resolvedUri.AbsoluteUri
                 };
                 streamNodeStore.Register(syntheticDoc);
 
