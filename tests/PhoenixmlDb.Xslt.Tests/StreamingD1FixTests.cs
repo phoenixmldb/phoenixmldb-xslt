@@ -146,7 +146,8 @@ public sealed class StreamingD1FixTests : IDisposable
         var run = () => GroupedAsync("o/copy-of()");
         var error = (await run.Should().ThrowAsync<XsltException>()).Which;
         error.ErrorCode.Should().Be("phx:XTDE9430");
-        error.Message.Should().StartWith("phx:XTDE9430: The document of xsl:source-document cannot be streamed: ");
+        error.Message.Should().StartWith("phx:XTDE9430: The document of xsl:source-document cannot be streamed: this processor cannot evaluate ")
+            .And.EndWith(" it reads the document into memory and gives the same result.");
     }
 
     [Fact]

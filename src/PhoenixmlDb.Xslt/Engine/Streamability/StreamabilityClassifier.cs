@@ -1520,7 +1520,7 @@ public static partial class StreamabilityClassifier
             postureMismatchWithClimbing = consumingAreMotionlessTransmission && sawClimbing;
             return NotStreamable();
         }
-        if (only.Usage is 'A' or 'a' or 'I' or 'C')
+        if (only.Usage is 'A' or 'a' or 'I')
             return Grounded(Sweep.Consuming);
         if (only.Operand.Posture == Posture.Crawling && atMostOneItem)
             return new PostureSweep(Posture.Striding, only.Adjusted);

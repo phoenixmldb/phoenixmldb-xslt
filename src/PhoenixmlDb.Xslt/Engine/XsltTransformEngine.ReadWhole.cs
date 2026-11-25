@@ -31,18 +31,15 @@ internal sealed record ReadWholeCause(string Detail, string? Construct = null, S
     /// xsl:source-document, found when it runs.
     /// </summary>
     public XsltException StrictError(bool sourceDocument)
-        => new(sourceDocument
-                ? "phx:XTDE9430: The document of xsl:source-document cannot be streamed: " + Construct + (Place is null ? "" : " (" + Place + ")")
-                    + " needs the whole document in memory, although the rules of XSLT 3.0 section 19.8 find it guaranteed streamable."
-                    + Remedy
-                : "phx:XTSE9430: The input cannot be streamed: " + Construct + (Place is null ? "" : " (" + Place + ")")
-                    + " needs the whole input in memory, although the rules of XSLT 3.0 section 19.8 find it guaranteed streamable."
-                    + Remedy,
+        => new((sourceDocument
+                    ? "phx:XTDE9430: The document of xsl:source-document cannot be streamed: "
+                    : "phx:XTSE9430: The input cannot be streamed: ")
+                + "this processor cannot evaluate " + Construct + (Place is null ? "" : " (" + Place + ")")
+                + " while streaming, although the rules of XSLT 3.0 section 19.8 find it guaranteed streamable."
+                + " Without StrictStreamability (xslt command line: --strict-streaming), or with StreamingFallback"
+                + " (--streaming-fallback), it reads the " + (sourceDocument ? "document" : "input")
+                + " into memory and gives the same result.",
             Location);
-
-    private const string Remedy =
-        " Without StrictStreamability (xslt command line: --strict-streaming), or with StreamingFallback (--streaming-fallback),"
-        + " this processor reads it into memory and gives the same result.";
 
     /// <summary>" at file:line:column", as the command line writes the location of an error.</summary>
     internal static string At(SourceLocation? location)

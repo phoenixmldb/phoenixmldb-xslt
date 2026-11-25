@@ -66,7 +66,8 @@ public sealed class StreamedNodeUriTests
         """<xsl:template match="title/text()"><t base="{base-uri(.)}"/></xsl:template>""",
         """<xsl:template match="book"><b base="{base-uri(.)}"><xsl:for-each select="title"><t base="{base-uri(.)}"/></xsl:for-each></b></xsl:template>""",
         """<xsl:template match="/"><out><xsl:apply-templates select="." mode="v"/></out></xsl:template><xsl:template match="* | root()" mode="v" priority="-10"><xsl:apply-templates select="node()" mode="v"/></xsl:template><xsl:template match="book" mode="v"><b base="{base-uri(.)}"/></xsl:template>""",
-        """<xsl:template match="shelf"><xsl:for-each-group select="book" group-adjacent="@price > 0"><g base="{base-uri(current-group()[1])}"/></xsl:for-each-group></xsl:template>""",
+        """<xsl:template match="shelf"><xsl:for-each-group select="book" group-adjacent="@price > 0"><g base="{base-uri(current-group()[1])}" second="{base-uri(current-group()[2])}"/></xsl:for-each-group></xsl:template>""",
+        """<xsl:template match="books"><xsl:for-each select="shelf"><xsl:for-each-group select="book" group-adjacent="@price > 0"><g base="{base-uri(current-group()[1])}" second="{base-uri(current-group()[2])}"/></xsl:for-each-group></xsl:for-each></xsl:template>""",
     };
 
     [Theory]

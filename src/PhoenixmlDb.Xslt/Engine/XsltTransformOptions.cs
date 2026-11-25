@@ -210,9 +210,10 @@ public sealed class XsltTransformOptions
     public Action<string, bool>? MessageListener { get; init; }
 
     /// <summary>
-    /// Receives processor warnings — currently xsl:mode warning-on-no-match. A warning is a
-    /// diagnostic the transform continues past, so it has its own channel rather than sharing
-    /// xsl:message's.
+    /// Receives processor warnings: xsl:mode warning-on-no-match and warning-on-multiple-match,
+    /// and, with <see cref="XsltTransformer.StreamingFallbackWarnings"/>, why the input was read
+    /// into memory. A warning is a diagnostic the transform continues past, so it has its own
+    /// channel rather than sharing xsl:message's.
     /// </summary>
     public Action<string>? WarningListener { get; init; }
 

@@ -106,7 +106,7 @@ public sealed class StreamingWarningOptionTests : IDisposable
         exit.Should().Be(2);
         output.Should().BeEmpty();
         error.Should().StartWith($"XSLT error at {Path.Combine(_dir, "accepted.xsl")}:")
-            .And.Contain(": phx:XTSE9430: The input cannot be streamed: ");
+            .And.Contain(": phx:XTSE9430: The input cannot be streamed: this processor cannot evaluate ");
     }
 
     [Fact]

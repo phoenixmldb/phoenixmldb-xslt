@@ -100,12 +100,18 @@ public sealed class StreamingFallbackReportTests
             .And.EndWith(", which this processor cannot evaluate while streaming.");
     }
 
-    [Fact]
-    public async Task A_run_that_starts_at_a_named_template_is_reported()
+    // The causes that are not a construct of the stylesheet give the warning only, also under the
+    // strict check: the run does not start at the document node, or the caller asked for
+    // validation or XInclude.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_run_that_starts_at_a_named_template_is_reported(bool strict)
     {
         var run = await RunAsync(Stylesheet("""<xsl:template name="go"><go/></xsl:template>"""), t =>
         {
             t.StreamingFallbackWarnings = true;
+            t.StrictStreamability = strict;
             t.SetInitialTemplate("go");
         });
 
@@ -114,15 +120,19 @@ public sealed class StreamingFallbackReportTests
             "XSLT streaming: the input was read into memory: the transformation starts at the named template go, not at a template rule of the streamable mode.");
     }
 
-    [Fact]
-    public async Task A_run_that_starts_at_a_function_is_reported()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_run_that_starts_at_a_function_is_reported(bool strict)
     {
         var run = await RunAsync(Stylesheet("""<xsl:function name="f:go" xmlns:f="urn:f" visibility="public"><go/></xsl:function>"""), t =>
         {
             t.StreamingFallbackWarnings = true;
+            t.StrictStreamability = strict;
             t.SetInitialFunction("go", "urn:f");
         });
 
+        run.Output.Should().Contain("<go");
         run.Warnings.Should().ContainSingle().Which.Should().StartWith(
             "XSLT streaming: the input was read into memory: the transformation starts at the function ");
         run.Warnings[0].Should().EndWith("go, not at a template rule of the streamable mode.");
@@ -140,27 +150,39 @@ public sealed class StreamingFallbackReportTests
         warnings.Should().BeEmpty();
     }
 
-    [Fact]
-    public async Task XInclude_expansion_of_the_input_is_reported()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task XInclude_expansion_of_the_input_is_reported(bool strict)
     {
+        var tree = await RunAsync(Stylesheet(Streams), t => t.DisableStreaming = true);
         var run = await RunAsync(Stylesheet(Streams), t =>
         {
             t.StreamingFallbackWarnings = true;
+            t.StrictStreamability = strict;
             t.EnableXInclude();
         });
+
+        run.Output.Should().Be(tree.Output);
 
         run.Warnings.Should().Equal(
             "XSLT streaming: the input was read into memory: XInclude expansion of the input (ExpandXInclude) reads it as a tree.");
     }
 
-    [Fact]
-    public async Task Validation_of_the_input_is_reported()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Validation_of_the_input_is_reported(bool strict)
     {
+        var tree = await RunAsync(Stylesheet(Streams), t => t.DisableStreaming = true);
         var run = await RunAsync(Stylesheet(Streams), t =>
         {
             t.StreamingFallbackWarnings = true;
+            t.StrictStreamability = strict;
             t.SourceValidation = PhoenixmlDb.Xslt.Ast.ValidationMode.Lax;
         });
+
+        run.Output.Should().Be(tree.Output);
 
         run.Warnings.Should().Equal(
             "XSLT streaming: the input was read into memory: the input is validated (SourceValidation Lax), and it is validated as a tree.");
@@ -262,9 +284,31 @@ public sealed class StreamingFallbackReportTests
 
         var error = (await act.Should().ThrowAsync<XsltException>()).Which;
         error.ErrorCode.Should().Be("phx:XTSE9430");
-        error.Message.Should().StartWith("phx:XTSE9430: The input cannot be streamed: ")
-            .And.Contain("(the template match=\"/\") needs the whole input in memory, although the rules of XSLT 3.0 section 19.8 find it guaranteed streamable.");
-        error.Location.Should().NotBeNull();
+        error.Message.Should().StartWith("phx:XTSE9430: The input cannot be streamed: this processor cannot evaluate ")
+            .And.Contain(" (the template match=\"/\") while streaming, although the rules of XSLT 3.0 section 19.8 find it guaranteed streamable.")
+            .And.EndWith(" Without StrictStreamability (xslt command line: --strict-streaming), or with StreamingFallback"
+                + " (--streaming-fallback), it reads the input into memory and gives the same result.");
+    }
+
+    // A library user has the location of the construct: the instruction that holds it, in the
+    // stylesheet module.
+    [Fact]
+    public async Task The_strict_error_has_the_location_of_the_construct()
+    {
+        const string module = "file:///data/xsl/accepted.xsl";
+        var stylesheet = Stylesheet(AcceptedButReadWhole);
+        var transformer = new XsltTransformer { StrictStreamability = true };
+        await transformer.LoadStylesheetAsync(stylesheet, new Uri(module));
+        transformer.SetSourceDocumentUri(new Uri(SourceUri));
+
+        var act = () => transformer.TransformAsync(Books);
+
+        var location = (await act.Should().ThrowAsync<XsltException>()).Which.Location;
+        location.Should().NotBeNull();
+        location!.Module.Should().Be(module);
+        location.Line.Should().Be(3);
+        // The literal result element b, which holds count(/*): the column of its name.
+        location.Column.Should().Be(stylesheet.Split('\n')[2].IndexOf("<b n=", StringComparison.Ordinal) + 2);
     }
 
     [Theory]

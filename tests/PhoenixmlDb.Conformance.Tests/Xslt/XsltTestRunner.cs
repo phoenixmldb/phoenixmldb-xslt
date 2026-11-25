@@ -1149,10 +1149,12 @@ public sealed class XsltTestRunner
                 transformer.StrictStreamability = testCase.IsStreamingSet
                     || testCase.Dependencies.Exists(static d => d is { Type: "feature", Value: "streaming" } && d.Satisfied);
                 // The suite tests the rules of §19.8 (XTSE3430). Where this processor cannot stream
-                // a construct those rules accept, the strict check makes that phx:XTSE9430 for a user
-                // (xslt#582); the suite reads the input into memory there, as before, and the cases
-                // are listed in BUGS.md (#164) as streaming work.
-                transformer.ReadWholeUnderStrictStreamability = true;
+                // a construct those rules accept, the strict check makes that phx:XTSE9430 or
+                // phx:XTDE9430 for a user (xslt#582); the suite reads the input into memory there,
+                // as before. CONFORMANCE_STRICT_READ_WHOLE=error runs it as a user would, to list
+                // those cases (BUGS.md #164, scripts/strict-streaming-read-whole.py).
+                transformer.ReadWholeUnderStrictStreamability =
+                    Environment.GetEnvironmentVariable("CONFORMANCE_STRICT_READ_WHOLE") != "error";
                 // As a schema-aware processor: the schemas of the environment are known to the
                 // transformer, and a source the environment says is validated is validated, so
                 // that its nodes are typed.
