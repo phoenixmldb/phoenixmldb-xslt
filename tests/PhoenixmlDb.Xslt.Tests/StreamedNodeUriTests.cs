@@ -73,6 +73,28 @@ public sealed class StreamedNodeUriTests
         """<xsl:template match="shelf"><xsl:iterate select="book"><b parent="{name(..)}" base="{base-uri(.)}"/></xsl:iterate></xsl:template>""",
     };
 
+    // A child that a streamed xsl:for-each or xsl:iterate reads whole had no parent: name(..) was ""
+    // and count(ancestor::*) was 0 (xslt#582, BUGS.md #164).
+    public static TheoryData<string> LoopChildRules => new()
+    {
+        """<xsl:template match="books"><xsl:for-each select="book"><b parent="{name(..)}"/></xsl:for-each></xsl:template>""",
+        """<xsl:template match="books"><xsl:iterate select="book"><b up="{count(ancestor::*)}"/></xsl:iterate></xsl:template>""",
+    };
+
+    [Theory]
+    [MemberData(nameof(LoopChildRules))]
+    public async Task A_child_that_a_streamed_loop_reads_whole_has_its_parent(string rules)
+    {
+        var stylesheet = Stylesheet(rules);
+
+        var tree = await RunAsync(stylesheet, Books, disableStreaming: true);
+        var streamed = await RunAsync(stylesheet, Books, disableStreaming: false);
+
+        tree.Output.Should().ContainAny("parent=\"books\"", "up=\"1\"");
+        streamed.Output.Should().Be(tree.Output);
+        streamed.Streamed.Should().BeTrue();
+    }
+
     [Theory]
     [MemberData(nameof(XmlBaseRules))]
     public async Task Xml_base_of_the_ancestors_is_resolved_as_in_a_tree(string rules)
