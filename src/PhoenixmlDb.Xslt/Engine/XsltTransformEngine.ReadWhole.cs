@@ -80,13 +80,11 @@ public sealed partial class XsltTransformEngine
         if (options.SourceValidation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax)
             return new ReadWholeCause(
                 $"the input is validated (SourceValidation {options.SourceValidation}), and it is validated as a tree");
-        // With no input there is nothing to read.
+        // With no input there is nothing to read (and xsl:initial-template is the entry only then).
         if (entryIsNotAtTheDocument)
             return !options.HasSourceDocument ? null : new ReadWholeCause(options.InitialFunction is { } function
                 ? $"the transformation starts at the function {function.PrefixedName}, not at a template rule of the streamable mode"
-                : options.InitialTemplate is { } template
-                    ? $"the transformation starts at the named template {template.PrefixedName}, not at a template rule of the streamable mode"
-                    : "the transformation starts at xsl:initial-template, not at a template rule of the streamable mode");
+                : $"the transformation starts at the named template {options.InitialTemplate?.PrefixedName}, not at a template rule of the streamable mode");
         return WhyThePassCannotAnswer(options);
     }
 
@@ -111,13 +109,13 @@ public sealed partial class XsltTransformEngine
     /// <summary>
     /// Reports why the input is read into memory: under StrictStreamability a construct of the
     /// stylesheet is phx:XTSE9430, and otherwise the warning goes to the warning listener when the
-    /// caller asked for it. Once for each transformation.
+    /// caller asked for it. Every overload that reads the input into memory does it through the one
+    /// that takes it as text, which reports, so it is reported once.
     /// </summary>
     private static void ReportReadingWhole(ReadWholeCause? cause, XsltTransformOptions? options)
     {
-        if (cause is null || options is null || options.ReadWholeReported)
+        if (cause is null || options is null)
             return;
-        options.ReadWholeReported = true;
         if (cause.Construct is not null && StrictAboutReadingWhole(options))
             throw cause.StrictError(sourceDocument: false);
         if (options.StreamingFallbackWarnings && options.WarningListener is { } listener)

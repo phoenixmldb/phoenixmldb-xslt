@@ -5606,14 +5606,11 @@ public sealed partial class XsltTransformEngine
         // A source to be validated is validated as a tree, as the overloads that take the input
         // as text do: the streaming pass reads the input unvalidated, so a schema-aware rule saw
         // no type annotations (W3C si-apply-templates-012, once the TextReader overloads streamed).
-        var entryIsNotAtTheDocument = options?.InitialTemplate != null || options?.InitialFunction != null;
         if (options?.DisableStreaming == true
-            || entryIsNotAtTheDocument
+            || options?.InitialTemplate != null || options?.InitialFunction != null
             || options?.SourceValidation is Ast.ValidationMode.Strict or Ast.ValidationMode.Lax
             || !StreamingPassAnswersRight(options))
         {
-            // Before the input is read (xslt#582): under the strict check the error comes first.
-            ReportReadingWhole(WhyTheInputIsReadWhole(options, entryIsNotAtTheDocument), options);
             var text = new StringBuilder();
             var settings = new XmlWriterSettings { OmitXmlDeclaration = true, Async = true, ConformanceLevel = ConformanceLevel.Auto };
             var copy = XmlWriter.Create(text, settings);

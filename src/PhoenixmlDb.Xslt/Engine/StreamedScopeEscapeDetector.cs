@@ -58,11 +58,11 @@ internal static class StreamedScopeEscapeDetector
         public string? Construct { get; set; }
         public SourceLocation? Location { get; set; }
 
-        /// <summary>Records the expression found and returns true.</summary>
+        /// <summary>Records the expression found, at the instruction that holds it, and returns true.</summary>
         public bool Found(XQueryExpression expr, SourceLocation? where)
         {
             Construct = expr.ToString();
-            Location = expr.Location is { Line: > 0 } at ? at : where;
+            Location = where;
             return true;
         }
     }

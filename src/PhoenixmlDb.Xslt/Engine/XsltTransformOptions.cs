@@ -265,9 +265,6 @@ public sealed class XsltTransformOptions
     /// </summary>
     internal bool ReadWholeUnderStrictStreamability { get; init; }
 
-    /// <summary>The reason to read the input whole has been reported for this transformation.</summary>
-    internal bool ReadWholeReported { get; set; }
-
     /// <summary>
     /// Cancellation token for cooperative cancellation of transformation.
     /// When cancelled, the transformation throws OperationCanceledException.

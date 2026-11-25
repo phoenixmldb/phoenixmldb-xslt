@@ -114,6 +114,115 @@ public sealed class StreamingFallbackReportTests
             "XSLT streaming: the input was read into memory: the transformation starts at the named template go, not at a template rule of the streamable mode.");
     }
 
+    [Fact]
+    public async Task A_run_that_starts_at_a_function_is_reported()
+    {
+        var run = await RunAsync(Stylesheet("""<xsl:function name="f:go" xmlns:f="urn:f" visibility="public"><go/></xsl:function>"""), t =>
+        {
+            t.StreamingFallbackWarnings = true;
+            t.SetInitialFunction("go", "urn:f");
+        });
+
+        run.Warnings.Should().ContainSingle().Which.Should().StartWith(
+            "XSLT streaming: the input was read into memory: the transformation starts at the function ");
+        run.Warnings[0].Should().EndWith("go, not at a template rule of the streamable mode.");
+    }
+
+    [Fact]
+    public async Task A_run_with_no_input_reports_nothing()
+    {
+        var warnings = new List<string>();
+        var transformer = new XsltTransformer { WarningListener = warnings.Add, StreamingFallbackWarnings = true };
+        await transformer.LoadStylesheetAsync(Stylesheet("""<xsl:template name="go"><go/></xsl:template>"""));
+        transformer.SetInitialTemplate("go");
+
+        (await transformer.TransformAsync((string?)null)).Should().Contain("<go");
+        warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task XInclude_expansion_of_the_input_is_reported()
+    {
+        var run = await RunAsync(Stylesheet(Streams), t =>
+        {
+            t.StreamingFallbackWarnings = true;
+            t.EnableXInclude();
+        });
+
+        run.Warnings.Should().Equal(
+            "XSLT streaming: the input was read into memory: XInclude expansion of the input (ExpandXInclude) reads it as a tree.");
+    }
+
+    [Fact]
+    public async Task Validation_of_the_input_is_reported()
+    {
+        var run = await RunAsync(Stylesheet(Streams), t =>
+        {
+            t.StreamingFallbackWarnings = true;
+            t.SourceValidation = PhoenixmlDb.Xslt.Ast.ValidationMode.Lax;
+        });
+
+        run.Warnings.Should().Equal(
+            "XSLT streaming: the input was read into memory: the input is validated (SourceValidation Lax), and it is validated as a tree.");
+    }
+
+    // A rule for the document node that the streaming pass cannot evaluate: the comparison in the
+    // attribute of the literal result element. §19.8 accepts it.
+    private const string DocumentRule = """<xsl:template match="/"><out r="{/*/book/@price = (93, 7)}"/></xsl:template>""";
+
+    [Fact]
+    public async Task A_rule_for_the_document_node_is_reported_with_the_instruction()
+    {
+        var run = await RunAsync(Stylesheet(DocumentRule), t => t.StreamingFallbackWarnings = true);
+
+        run.Output.Should().Contain("r=\"true\"");
+        run.Warnings.Should().ContainSingle().Which.Should().StartWith(
+            "XSLT streaming: the input was read into memory: the literal result element out at line 3, column ")
+            .And.EndWith("(the template match=\"/\"), which this processor cannot evaluate while streaming.");
+    }
+
+    [Fact]
+    public async Task A_rule_for_the_document_node_is_phx_XTSE9430_under_the_strict_check()
+    {
+        var act = () => RunAsync(Stylesheet(DocumentRule), t => t.StrictStreamability = true);
+
+        (await act.Should().ThrowAsync<XsltException>()).Which.ErrorCode.Should().Be("phx:XTSE9430");
+    }
+
+    [Fact]
+    public async Task A_document_of_xsl_source_document_read_into_memory_is_reported_once()
+    {
+        var dir = Directory.CreateTempSubdirectory("phx-read-whole").FullName;
+        try
+        {
+            var href = new Uri(Path.Combine(dir, "t.xml")).AbsoluteUri;
+            await File.WriteAllTextAsync(Path.Combine(dir, "t.xml"), """<ts><t d="1"/><t d="7"/></ts>""", TestContext.Current.CancellationToken);
+            var stylesheet = $$"""
+                <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+                  <xsl:template match="/"><out><xsl:for-each select="1 to 2"><xsl:source-document streamable="yes" href="{{href}}"><o r="{/*/t/@d = (1, 9)}"/></xsl:source-document></xsl:for-each></out></xsl:template>
+                </xsl:stylesheet>
+                """;
+
+            var run = await RunAsync(stylesheet, t => t.StreamingFallbackWarnings = true, asText: true);
+            var tree = await RunAsync(stylesheet, t =>
+            {
+                t.DisableStreaming = true;
+                t.StrictStreamability = true;
+            }, asText: true);
+
+            run.Output.Should().Contain("""<o r="true"/><o r="true"/>""");
+            run.Warnings.Should().ContainSingle().Which.Should().StartWith(
+                $"XSLT streaming: the document {href} was read into memory: the literal result element o at line 2, column ")
+                .And.EndWith("(the body of xsl:source-document), which this processor cannot evaluate while streaming.");
+            tree.Output.Should().Be(run.Output);
+            tree.Warnings.Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData(false, false)] // not asked for
     [InlineData(true, true)]   // a tree asked for
@@ -129,11 +238,12 @@ public sealed class StreamingFallbackReportTests
         run.Warnings.Should().BeEmpty();
     }
 
+    private const string Streams = """<xsl:template match="book"><b p="{@price}"/></xsl:template>""";
+
     [Fact]
     public async Task A_run_that_streams_reports_nothing()
     {
-        var run = await RunAsync(Stylesheet("""<xsl:template match="book"><b p="{@price}"/></xsl:template>"""),
-            t => t.StreamingFallbackWarnings = true);
+        var run = await RunAsync(Stylesheet(Streams), t => t.StreamingFallbackWarnings = true);
 
         run.Streamed.Should().BeTrue();
         run.Warnings.Should().BeEmpty();
@@ -195,13 +305,15 @@ public sealed class StreamingFallbackReportTests
         """;
 
     private static async Task<(string Output, bool Streamed, List<string> Warnings)> RunAsync(string stylesheet,
-        Action<XsltTransformer>? configure = null)
+        Action<XsltTransformer>? configure = null, bool asText = false)
     {
         var warnings = new List<string>();
         var transformer = new XsltTransformer { WarningListener = warnings.Add };
         configure?.Invoke(transformer);
         await transformer.LoadStylesheetAsync(stylesheet);
         transformer.SetSourceDocumentUri(new Uri(SourceUri));
+        if (asText)
+            return (await transformer.TransformAsync(Books), transformer.LastTransformStreamed, warnings);
         using var source = new MemoryStream(Encoding.UTF8.GetBytes(Books));
         using var output = new StringWriter();
         await transformer.TransformAsync(source, output);
