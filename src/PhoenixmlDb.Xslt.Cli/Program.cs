@@ -349,13 +349,10 @@ try
         {
             ranStreaming = true;
             sourceSw.Stop();
-            if (options.Timing)
-            {
-                var streamLabel = options.Stream ? "streaming" : "auto-streaming";
-                await Console.Error.WriteLineAsync(
-                    $"  source:  {sourceSw.Elapsed.TotalMilliseconds,8:F1} ms  ({streamLabel})")
-                    .ConfigureAwait(true);
-            }
+            // The source line is written after the transform: here the transform reads the file
+            // itself, and only then is it known whether it streamed it. It was written first with
+            // the label of the --stream flag, "(streaming)", also for a run that then read the
+            // input into memory (xslt#653).
 
             if (options.OutputDir != null)
             {
@@ -411,6 +408,12 @@ try
                 var how = transformer.LastTransformStreamed
                     ? "(streaming)"
                     : "(not streamed: the input was read into memory)";
+                var source = transformer.LastTransformStreamed
+                    ? "streamed by the transform"
+                    : "read into memory by the transform";
+                await Console.Error.WriteLineAsync(
+                    $"  source:  {sourceSw.Elapsed.TotalMilliseconds,8:F1} ms  ({(options.Stream ? "" : "auto-stream: ")}{source})")
+                    .ConfigureAwait(true);
                 await Console.Error.WriteLineAsync(
                     $"  transform: {streamTransformSw.Elapsed.TotalMilliseconds,6:F1} ms  {how}")
                     .ConfigureAwait(true);

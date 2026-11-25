@@ -64,4 +64,31 @@ public sealed class TimingLabelTests : IDisposable
         output.Should().Be("go");
         error.Should().Contain("(not streamed").And.NotContain("(streaming)");
     }
+
+    // The source line: written before the transform, it said "(streaming)" for --stream also when
+    // the run then read the input into memory (xslt#653). It now says what the transform did.
+    [Fact]
+    public async Task With_stream_a_run_that_reads_the_input_into_memory_says_so_on_the_source_line()
+    {
+        var (exit, output, error) = await RunAsync("s.xsl", "in.xml", "-it", "go", "--stream", "--timing");
+
+        exit.Should().Be(0, error);
+        output.Should().Be("go");
+        error.Should().Contain("(read into memory by the transform)").And.NotContain("(streaming)");
+    }
+
+    [Theory]
+    [InlineData("--stream", "(streamed by the transform)")]
+    [InlineData(null, "(auto-stream: streamed by the transform)")]
+    public async Task A_streamed_run_says_so_on_the_source_line(string? flag, string label)
+    {
+        var (exit, output, error) = flag is null
+            ? await RunAsync("s.xsl", "in.xml", "--timing")
+            : await RunAsync("s.xsl", "in.xml", flag, "--timing");
+
+        exit.Should().Be(0, error);
+        output.Should().Be("3");
+        error.Should().Contain(label);
+        error.IndexOf("source:", StringComparison.Ordinal).Should().BeLessThan(error.IndexOf("transform:", StringComparison.Ordinal));
+    }
 }
