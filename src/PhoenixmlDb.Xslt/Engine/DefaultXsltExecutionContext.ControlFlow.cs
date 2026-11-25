@@ -1187,6 +1187,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private async ValueTask ForEachStreamingAsync(XQueryExpression select, XsltSequenceConstructor body)
     {
+        var streamedParent = ContextItem as Xdm.Nodes.XdmNode;
         var reader = _activeStreamingReader!;
         var ct = _activeStreamingCancellationToken;
         var parentDepth = reader.Depth;
@@ -1215,6 +1216,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 }
 
                 var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+                LinkStreamedChild(elem, streamedParent);
                 position++;
                 PushContextItem(elem, position, 0);
                 PushCurrentItem(elem);
@@ -1301,7 +1303,8 @@ internal sealed partial class DefaultXsltExecutionContext
         var parentDepth = reader.Depth;
         // Only the children the select names (sx-gc-eq-801: select="ProteinEntry" was handed a
         // <Database> first, and its xsl:break ended the iteration).
-        var children = StreamedChildElementsAsync(reader, StreamedChildTest(instruction.Select), parentDepth, ct);
+        var children = StreamedChildElementsAsync(reader, StreamedChildTest(instruction.Select), parentDepth,
+            ContextItem as Xdm.Nodes.XdmNode, ct);
         await IterateOverStreamedAsync(instruction, children, async brokeOut =>
         {
             // xsl:break stops iteration early with the reader parked at the broken
@@ -1332,6 +1335,7 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     private async IAsyncEnumerable<Xdm.Nodes.XdmElement> StreamedChildElementsAsync(
         System.Xml.XmlReader reader, PhoenixmlDb.XQuery.Ast.NodeTest? childTest, int parentDepth,
+        Xdm.Nodes.XdmNode? streamedParent,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         while (await reader.ReadAsync().ConfigureAwait(false))
@@ -1349,8 +1353,25 @@ internal sealed partial class DefaultXsltExecutionContext
                     await SkipStreamingSubtreeAsync(reader, reader.Depth, ct).ConfigureAwait(false);
                 continue;
             }
-            yield return await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+            var elem = await ReadStreamingElementForDispatchAsync(reader, ct).ConfigureAwait(false);
+            LinkStreamedChild(elem, streamedParent);
+            yield return elem;
         }
+    }
+
+    /// <summary>
+    /// Links a child that a streamed xsl:for-each or xsl:iterate read whole to the streamed node
+    /// whose children it reads, as the streamed xsl:apply-templates does: its ancestor axis and its
+    /// base URI reach the input. It had no parent, so base-uri() of a node in it ignored the
+    /// xml:base above it and the URI of the input (xslt#582). For the accumulators it stays the
+    /// top of its own tree (BUGS #93).
+    /// </summary>
+    private void LinkStreamedChild(Xdm.Nodes.XdmElement elem, Xdm.Nodes.XdmNode? streamedParent)
+    {
+        if (streamedParent is not (Xdm.Nodes.XdmElement or Xdm.Nodes.XdmDocument))
+            return;
+        elem.Parent = streamedParent.Id;
+        (_bufferedSubtreeOrigin ??= new Dictionary<NodeId, NodeId>())[elem.Id] = elem.Id;
     }
 
     /// <summary>
