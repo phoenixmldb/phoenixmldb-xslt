@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The W3C cases that this processor reads into memory although the rules of XSLT 3.0 §19.8 accept
 them: under StrictStreamability they give phx:XTSE9430 (the principal input) or phx:XTDE9430
-(xsl:source-document), BUGS.md #164 and xslt#143.
+(xsl:source-document), BUGS.md #165 and xslt#143.
 
 Make the list again from a conformance run in which the harness raises these errors:
 

@@ -185,7 +185,8 @@ public sealed partial class XsltTransformEngine
         var type = instruction.GetType().Name;
         if (type.StartsWith("Xslt", StringComparison.Ordinal))
             type = type[4..];
-        if (type.EndsWith("Instruction", StringComparison.Ordinal) && type.Length > "Instruction".Length)
+        // XsltVariableInstruction and XsltParamInstruction; not XsltProcessingInstruction.
+        if (type is "VariableInstruction" or "ParamInstruction")
             type = type[..^"Instruction".Length];
         var name = new System.Text.StringBuilder("xsl:");
         for (var i = 0; i < type.Length; i++)

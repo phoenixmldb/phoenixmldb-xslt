@@ -1,5 +1,6 @@
 using System.Text;
 using AwesomeAssertions;
+using PhoenixmlDb.Xslt.Ast;
 using PhoenixmlDb.Xslt.Engine;
 using Xunit;
 
@@ -243,6 +244,19 @@ public sealed class StreamingFallbackReportTests
         {
             Directory.Delete(dir, recursive: true);
         }
+    }
+
+    [Fact]
+    public void A_message_names_an_instruction_as_a_stylesheet_writes_it()
+    {
+        static XsltSequenceConstructor Empty() => new() { Instructions = [] };
+        var avt = new XsltAttributeValueTemplate { Parts = [] };
+
+        XsltTransformEngine.InstructionName(new XsltProcessingInstruction { Name = avt }).Should().Be("xsl:processing-instruction");
+        XsltTransformEngine.InstructionName(new XsltForEachGroup { Select = PhoenixmlDb.XQuery.Ast.ContextItemExpression.Instance, Body = Empty() })
+            .Should().Be("xsl:for-each-group");
+        XsltTransformEngine.InstructionName(new XsltVariableInstruction { Name = new PhoenixmlDb.Core.QName(PhoenixmlDb.Core.NamespaceId.None, "v") })
+            .Should().Be("xsl:variable");
     }
 
     [Theory]

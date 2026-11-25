@@ -1152,7 +1152,7 @@ public sealed class XsltTestRunner
                 // a construct those rules accept, the strict check makes that phx:XTSE9430 or
                 // phx:XTDE9430 for a user (xslt#582); the suite reads the input into memory there,
                 // as before. CONFORMANCE_STRICT_READ_WHOLE=error runs it as a user would, to list
-                // those cases (BUGS.md #164, scripts/strict-streaming-read-whole.py).
+                // those cases (BUGS.md #165, scripts/strict-streaming-read-whole.py).
                 transformer.ReadWholeUnderStrictStreamability =
                     Environment.GetEnvironmentVariable("CONFORMANCE_STRICT_READ_WHOLE") != "error";
                 // As a schema-aware processor: the schemas of the environment are known to the
