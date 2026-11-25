@@ -17,14 +17,14 @@ using OrderedXdmMap = PhoenixmlDb.XQuery.Execution.OrderedXdmMap;
 namespace PhoenixmlDb.Xslt.Engine;
 
 /// <summary>
-/// Helper class for fn:snapshot implementation. Creates pruned deep copies of nodes.
-/// </summary>
-/// <summary>
 /// What a call of fn:copy-of or fn:snapshot needs to give its top-level copies their base URI: the
 /// node provider to compute the base URI of an original, and the static base URI of the call.
 /// </summary>
 internal readonly record struct CopyBaseUris(PhoenixmlDb.XQuery.INodeProvider? Provider, string? StaticBaseUri);
 
+/// <summary>
+/// Helper class for fn:snapshot implementation. Creates pruned deep copies of nodes.
+/// </summary>
 internal static class SnapshotHelper
 {
     /// <summary>

@@ -34,6 +34,11 @@ public sealed class CopyFunctionBaseUriTests
     [InlineData("base-uri(root(snapshot(//a)))", SourceUri)]
     [InlineData("base-uri(snapshot(//c))", "file:///data/in/sub/")]
     [InlineData("base-uri(snapshot(//e))", "http://ex.org/d/")]
+    [InlineData("base-uri(snapshot(/))", SourceUri)]
+    // The forms with no argument copy the context item.
+    [InlineData("string(//a/base-uri(copy-of()))", SourceUri)]
+    [InlineData("string(//b/base-uri(copy-of()))", "file:///data/xsl/sub/")]
+    [InlineData("string(//a/base-uri(snapshot()))", SourceUri)]
     public async Task The_base_uri_of_a_copy_or_a_snapshot_is_the_one_the_specification_gives(string expression, string expected)
         => (await EvaluateAsync(expression)).Should().Be(expected);
 
