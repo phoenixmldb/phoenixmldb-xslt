@@ -19,7 +19,15 @@ namespace PhoenixmlDb.Xslt.Engine;
 internal sealed class XsltFunctionAvailableFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
 {
     private readonly PhoenixmlDb.XQuery.Functions.FunctionLibrary _library;
-    public XsltFunctionAvailableFunction(PhoenixmlDb.XQuery.Functions.FunctionLibrary library) => _library = library;
+    // True while the context evaluates static expressions: only the functions a static expression
+    // may call are available (StaticFunctions).
+    private readonly Func<bool>? _inStaticExpression;
+
+    public XsltFunctionAvailableFunction(PhoenixmlDb.XQuery.Functions.FunctionLibrary library, Func<bool>? inStaticExpression = null)
+    {
+        _library = library;
+        _inStaticExpression = inStaticExpression;
+    }
     public override QName Name => new(PhoenixmlDb.XQuery.Functions.FunctionNamespaces.Fn, "function-available");
     public override XdmSequenceType ReturnType => XdmSequenceType.Boolean;
     public override IReadOnlyList<FunctionParameterDef> Parameters =>
@@ -59,6 +67,13 @@ internal sealed class XsltFunctionAvailableFunction : PhoenixmlDb.XQuery.Ast.XQu
         {
             var parts = name.Split(':');
             qname = new QName(NamespaceId.None, parts[1], parts[0]);
+            // A prefix with no namespace declaration in scope is XTDE1400. In a static expression the
+            // namespaces in scope are exactly those of the element whose expression it is (W3C
+            // extension-functions-0104: use-when="function-available('test:foo')", test undeclared).
+            if (_inStaticExpression?.Invoke() == true && parts[0] != "xml"
+                && context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext { PrefixNamespaceBindings: { } bindings }
+                && !bindings.ContainsKey(parts[0]))
+                throw new XsltException($"XTDE1400: The prefix '{parts[0]}' of '{name}' in function-available has no namespace declaration in scope");
         }
         else
         {
@@ -71,16 +86,21 @@ internal sealed class XsltFunctionAvailableFunction : PhoenixmlDb.XQuery.Ast.XQu
         // A function the host has turned off is not available.
         if (arity >= 0)
         {
-            return ValueTask.FromResult<object?>(IsThere(_library.Resolve(qname, arity), context));
+            return ValueTask.FromResult<object?>(IsThere(_library.Resolve(qname, arity), context) && InScope(qname, arity));
         }
         // Try common arities 0-3
         for (int i = 0; i <= 3; i++)
         {
-            if (IsThere(_library.Resolve(qname, i), context))
+            if (IsThere(_library.Resolve(qname, i), context) && InScope(qname, i))
                 return ValueTask.FromResult<object?>(true);
         }
         return ValueTask.FromResult<object?>(false);
     }
+
+    // Outside a static expression every function found is in scope.
+    private bool InScope(QName name, int arity)
+        => _inStaticExpression?.Invoke() != true
+           || (_library.Resolve(name, arity) is { } function && StaticFunctions.IsAvailable(function.Name));
 
     private static bool IsThere(PhoenixmlDb.XQuery.Ast.XQueryFunction? function, PhoenixmlDb.XQuery.Ast.ExecutionContext context)
         => function is not null

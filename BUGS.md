@@ -8280,3 +8280,39 @@ functions: it also changes how attributes and typed builders are routed in the b
 Tests: `FunctionResultOrderTests` — the seven constructors in a function, a typed variable and a typed named template
 (21 cases, Saxon-HE 10.9's output as the expected result); copies, atomic values and elements in a function (6); a
 function with no `as`; a function of a used package. The 12 cases with a function fail on the source before the fix.
+
+### 154. Static expressions had two evaluators, and the hand-written one allowed and refused the wrong functions — fixed (static expressions, 2026-11-24)
+
+Engine: **XSLT**. A `use-when`, the `select` of a static variable or parameter and a shadow attribute were evaluated
+by a hand-written interpreter of the AST (and, for shadow attributes, a string matcher), and by the engine's runtime
+only for the shapes the interpreter did not know. The two did not agree with each other or with XSLT 3.0 §9.7:
+
+```xml
+<xsl:sequence use-when="math:pi() gt 3" select="'in'"/>              <!-- XPST0017; math: is allowed -->
+<xsl:sequence use-when="xs:integer('2') eq 2" select="'in'"/>        <!-- XPST0017; xs constructors are allowed -->
+<xsl:sequence use-when="doc-available('x.xml')" select="'in'"/>      <!-- FODC0002 "not available"; it is F&O -->
+<xsl:sequence use-when="if (true()) then true() else current()"/>    <!-- accepted; current() is not allowed -->
+<xsl:variable name="v" static="yes" select="f:x()"/>                 <!-- f:x a stylesheet function: computed at run time -->
+```
+
+A deny-list (`StaticFunctionGuard`) checked only what reached the runtime, so a refused function in a branch the
+interpreter did not take was never seen. A static variable whose `select` failed in both evaluators was quietly left
+to be computed at run time.
+
+The fix: the runtime is the only evaluator of a static expression. Before evaluation the expression is checked
+against the functions §9.7 allows (`StaticFunctions`: F&O with the math, map and array namespaces, the xs
+constructors, `element-available`, `function-available`, `type-available`, `available-system-properties`,
+`system-property`, and the extension functions); any other function, a stylesheet function included, is XPST0017.
+`function-available` in a static expression answers from the same list, and raises XTDE1400 for a prefix with no
+namespace declaration (the interpreter did; W3C extension-functions-0104). A dynamic error of a static expression is a
+static error with its own code and the location of its element. The prefix of a named function reference is bound
+like that of a call (`xpath:system-property#1` with any prefix of the fn namespace; only predeclared prefixes worked
+in a static expression, W3C system-property-101*-qname). About 900 lines of the interpreter and the string matcher
+are gone. One evaluation context serves the static expressions of all the modules (it was one per module, and each
+built the whole function library); each evaluation gives it the static base URI of its element.
+
+Breaking: a static variable or parameter whose `select` calls a stylesheet function no longer loads (XPST0017, as
+Saxon-HE 10.9 reports it); it loaded before and took its value at run time.
+
+Tests: `StaticExpressionAllowListTests` (19; every expected result is Saxon-HE 10.9's); 6 fail on the source before
+the fix. The regex time limit in a static expression (`TransformCancellationTests`) now covers the only evaluator.
