@@ -23,4 +23,11 @@ public sealed class XsltIf : XsltInstruction
             await Then.ExecuteAsync(context).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// This instruction with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltIf WithOperands(XQueryExpression test, XsltSequenceConstructor then)
+        => KeepSettings(new XsltIf { Test = test, Then = then, Location = Location });
 }

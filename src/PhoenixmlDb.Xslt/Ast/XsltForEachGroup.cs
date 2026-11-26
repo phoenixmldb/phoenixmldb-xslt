@@ -31,4 +31,16 @@ public sealed class XsltForEachGroup : XsltInstruction
     {
         await context.ForEachGroupAsync(this).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// This instruction with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltForEachGroup WithSelect(XQueryExpression select)
+        => KeepSettings(new XsltForEachGroup
+        {
+            Select = select, GroupBy = GroupBy, GroupAdjacent = GroupAdjacent, GroupStartingWith = GroupStartingWith,
+            GroupEndingWith = GroupEndingWith, Collation = Collation, Composite = Composite, Sorts = Sorts, Body = Body,
+            Location = Location,
+        });
 }

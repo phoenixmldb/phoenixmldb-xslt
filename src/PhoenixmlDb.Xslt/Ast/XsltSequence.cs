@@ -28,4 +28,11 @@ public sealed class XsltSequence : XsltInstruction
     {
         await context.SequenceAsync(this).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// This instruction with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltSequence WithOperands(XQueryExpression? select, XsltSequenceConstructor? content)
+        => KeepSettings(new XsltSequence { Select = select, Content = content, TailCallKey = TailCallKey, Location = Location });
 }

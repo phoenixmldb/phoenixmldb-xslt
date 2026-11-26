@@ -20,4 +20,12 @@ public class XsltAttributeValueTemplate
             Parts = [new AvtLiteral { Value = value }]
         };
     }
+
+    /// <summary>
+    /// This attribute value template with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static",
+        Justification = "An instance method, so that a property added later is copied here; RootOfDocumentRewriteTests checks it")]
+    internal XsltAttributeValueTemplate WithParts(IReadOnlyList<AvtPart> parts) => new() { Parts = parts };
 }

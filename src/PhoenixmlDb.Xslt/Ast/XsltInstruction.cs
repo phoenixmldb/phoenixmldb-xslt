@@ -45,4 +45,16 @@ public abstract class XsltInstruction
     /// Accept a visitor for analysis or transformation passes.
     /// </summary>
     public abstract T Accept<T>(IXsltInstructionVisitor<T> visitor);
+
+    /// <summary>
+    /// Copies the properties of this instruction that are set after it is built to
+    /// <paramref name="copy"/>, and returns it (see Engine.RootOfDocumentRewrite).
+    /// </summary>
+    private protected T KeepSettings<T>(T copy) where T : XsltInstruction
+    {
+        copy.Version = Version;
+        copy.DefaultCollation = DefaultCollation;
+        copy.StaticBaseUri = StaticBaseUri;
+        return copy;
+    }
 }

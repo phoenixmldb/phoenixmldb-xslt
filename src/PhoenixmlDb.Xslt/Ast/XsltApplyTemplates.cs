@@ -24,4 +24,14 @@ public sealed class XsltApplyTemplates : XsltInstruction
         var effectiveMode = UseCurrentMode ? context.CurrentMode : Mode;
         await context.ApplyTemplatesAsync(Select, effectiveMode, Sorts, WithParams).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// This instruction with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltApplyTemplates WithSelect(XQueryExpression? select)
+        => KeepSettings(new XsltApplyTemplates
+        {
+            Select = select, Mode = Mode, UseCurrentMode = UseCurrentMode, Sorts = Sorts, WithParams = WithParams, Location = Location,
+        });
 }

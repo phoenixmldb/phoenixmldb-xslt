@@ -21,4 +21,11 @@ public sealed class XsltForEach : XsltInstruction
     {
         await context.ForEachAsync(Select, Sorts, Body).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// This instruction with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltForEach WithSelect(XQueryExpression select)
+        => KeepSettings(new XsltForEach { Select = select, Sorts = Sorts, Body = Body, Location = Location });
 }

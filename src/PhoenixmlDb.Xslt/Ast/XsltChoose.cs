@@ -43,4 +43,11 @@ public sealed class XsltChoose : XsltInstruction
             await Otherwise.ExecuteAsync(context).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// This instruction with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltChoose WithOperands(IReadOnlyList<XsltWhen> when, XsltSequenceConstructor? otherwise)
+        => KeepSettings(new XsltChoose { When = when, Otherwise = otherwise, Location = Location });
 }
