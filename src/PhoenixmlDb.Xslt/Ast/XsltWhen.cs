@@ -19,4 +19,11 @@ public sealed class XsltWhen
     /// §3.7.2, standard attributes apply to the element and its descendants). Null to inherit.
     /// </summary>
     public string? DefaultCollation { get; init; }
+
+    /// <summary>
+    /// This xsl:when with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltWhen WithOperands(XQueryExpression test, XsltSequenceConstructor body)
+        => new() { Test = test, Body = body, DefaultCollation = DefaultCollation };
 }

@@ -136,4 +136,11 @@ public sealed class XsltSequenceConstructor : XsltInstruction
                 context.RestoreEmptyStringSeparators();
         }
     }
+
+    /// <summary>
+    /// This sequence constructor with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltSequenceConstructor WithInstructions(IReadOnlyList<XsltInstruction> instructions)
+        => KeepSettings(new XsltSequenceConstructor { Instructions = instructions, Location = Location });
 }

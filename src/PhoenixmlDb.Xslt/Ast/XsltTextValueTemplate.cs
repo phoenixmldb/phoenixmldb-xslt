@@ -25,4 +25,11 @@ public sealed class XsltTextValueTemplate : XsltInstruction
         // Use WriteTextItem for sequence accumulation support (same as XsltText)
         context.WriteTextItem(sb.ToString());
     }
+
+    /// <summary>
+    /// This text value template with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltTextValueTemplate WithTemplate(XsltAttributeValueTemplate template)
+        => KeepSettings(new XsltTextValueTemplate { Template = template, Location = Location });
 }

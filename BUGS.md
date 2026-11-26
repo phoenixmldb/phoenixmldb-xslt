@@ -8574,9 +8574,14 @@ an element, in a rule whose pattern also matches elements (`match="/ | book"`), 
 stylesheet runs, with the result it gives without streaming; in a rule for an element, `root()/x` and `root()//x`
 are XTSE3430, as before and as §19.8 says.
 
-Open: in such a rule, `root()/x` is not streamed yet. The streaming pass evaluates `books` but not `root()/books`, so
-the input is read into memory for it: `--stream` warns, and `--strict-streaming` gives phx:XTSE9430 (#165). The
-proposed fix is to rewrite `root()/x` to `x` where the context item is a document node (a later PR, after F1).
+Left open here, fixed later (2026-11-26): in such a rule, `root()/x` was not streamed. The streaming pass evaluated
+`books` but not `root()/books`, so the input was read into memory for it: `--stream` warned, and `--strict-streaming`
+gave phx:XTSE9430 (#165). Now the parser writes a call of `root()` or `root(.)` evaluated with the focus of a rule
+whose pattern matches only document nodes, and that has no name, as the context item (`Engine.RootOfDocumentRewrite`):
+`count(root()/books)` is `count(./books)`, and the rule streams. Not in a rule with a name (`xsl:call-template` runs
+it with the caller's context item), in a rule whose pattern also matches elements, or where the focus is another
+item (a grouping key, a sort key, the body of a loop). The body of `xsl:source-document` is not rewritten.
+Tests: `RootOfDocumentRewriteTests`; `RootOfDocumentRuleTests` expects the forms in a rule for "/" to stream.
 
 Tests: `RootOfDocumentRuleTests` (13: the forms in a rule for "/" run with the `--no-stream` result and are not
 XTSE3430 under the strict check, and each fails before the fix; the forms in a rule for an element, in `match="/ | book"`

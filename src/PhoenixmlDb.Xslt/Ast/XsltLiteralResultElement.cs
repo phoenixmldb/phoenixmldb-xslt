@@ -47,4 +47,16 @@ public sealed class XsltLiteralResultElement : XsltInstruction
     {
         await context.CreateLiteralElementAsync(this).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// This literal result element with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltLiteralResultElement WithOperands(Dictionary<QName, XsltAttributeValueTemplate> attributes, XsltSequenceConstructor content)
+        => KeepSettings(new XsltLiteralResultElement
+        {
+            Name = Name, SourceNamespaceName = SourceNamespaceName, Attributes = attributes, NamespaceDeclarations = NamespaceDeclarations,
+            UseAttributeSets = UseAttributeSets, InheritNamespaces = InheritNamespaces, Validation = Validation,
+            ValidationType = ValidationType, Content = content, ExcludeResultPrefixes = ExcludeResultPrefixes, Location = Location,
+        });
 }

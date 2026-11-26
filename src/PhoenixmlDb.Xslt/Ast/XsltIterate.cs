@@ -22,4 +22,11 @@ public sealed class XsltIterate : XsltInstruction
     {
         await context.IterateAsync(this).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// This instruction with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltIterate WithSelect(XQueryExpression select)
+        => KeepSettings(new XsltIterate { Select = select, Params = Params, OnCompletion = OnCompletion, Body = Body, Location = Location });
 }

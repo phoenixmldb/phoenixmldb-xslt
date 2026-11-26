@@ -9,10 +9,10 @@ namespace PhoenixmlDb.Xslt.Tests;
 /// XSLT 3.0 §19.8.9.18: where the context item is a document node, <c>root()</c> is that node. In a
 /// template rule for the document node, <c>root()/books</c> is <c>books</c>, and the rule is
 /// guaranteed-streamable; it was refused with XTSE3430, also without the strict check, because the
-/// check took <c>root()</c> as a climb in every rule (xslt#655). It runs now, with the input read into
-/// memory: the streaming pass does not evaluate a path from <c>root()</c> (it does <c>books</c>), so
-/// the strict check gives phx:XTSE9430 for it (BUGS.md #165). In a rule for an element,
-/// <c>root()/x</c> and <c>root()//x</c> are roaming and free-ranging (§19.8), and XTSE3430 stays.
+/// check took <c>root()</c> as a climb in every rule (xslt#655). It streams: the run-time check took
+/// <c>root()</c> as a climb too, and read the input into memory for it (BUGS.md #166). In a rule for
+/// an element, <c>root()/x</c> and <c>root()//x</c> are roaming and free-ranging (§19.8), and
+/// XTSE3430 stays.
 /// </summary>
 public sealed class RootOfDocumentRuleTests
 {
@@ -24,6 +24,8 @@ public sealed class RootOfDocumentRuleTests
         """<xsl:template match="/"><out><xsl:value-of select="count(root()//title)"/></out></xsl:template>""",
         """<xsl:template match="/"><out><xsl:value-of select="count(root(.)/books/book)"/></out></xsl:template>""",
         """<xsl:template match="/"><out n="{count(root()/books)}"/></xsl:template>""",
+        """<xsl:template match="/"><out><xsl:value-of select="count(root(.)//title)"/></out></xsl:template>""",
+        """<xsl:template match="/"><out><xsl:value-of select="root()/books/book[@price &gt; 100]/title"/></out></xsl:template>""",
     };
 
     [Theory]
@@ -35,18 +37,19 @@ public sealed class RootOfDocumentRuleTests
 
         tree.Output.Should().Contain("<out");
         run.Output.Should().Be(tree.Output);
+        run.Streamed.Should().BeTrue();
     }
 
     [Theory]
     [MemberData(nameof(DocumentRules))]
     public async Task The_strict_check_accepts_root_in_a_rule_for_the_document_node(string rules)
     {
-        // Accepted by §19.8, so not XTSE3430; the input is read into memory for the path from root().
-        var act = () => RunAsync(rules, t => t.StrictStreamability = true);
+        // Accepted by §19.8, and streamed: neither XTSE3430 nor phx:XTSE9430.
+        var tree = await RunAsync(rules, t => t.DisableStreaming = true);
+        var strict = await RunAsync(rules, t => t.StrictStreamability = true);
 
-        var error = (await act.Should().ThrowAsync<XsltException>()).Which;
-        error.ErrorCode.Should().Be("phx:XTSE9430");
-        error.Message.Should().Contain("this processor cannot evaluate root(");
+        strict.Output.Should().Be(tree.Output);
+        strict.Streamed.Should().BeTrue();
     }
 
     // These must stay errors: in a rule for an element, root() is the document node above it; and

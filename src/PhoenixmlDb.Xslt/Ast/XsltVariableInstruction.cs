@@ -23,4 +23,11 @@ public sealed class XsltVariableInstruction : XsltInstruction
     {
         await context.BindVariableAsync(this).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// This instruction with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    internal XsltVariableInstruction WithOperands(XQueryExpression? select, XsltSequenceConstructor? content)
+        => KeepSettings(new XsltVariableInstruction { Name = Name, As = As, Select = select, Content = content, BaseUri = BaseUri, Location = Location });
 }

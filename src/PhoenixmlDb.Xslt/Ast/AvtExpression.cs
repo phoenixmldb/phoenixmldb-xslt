@@ -177,4 +177,12 @@ public sealed class AvtExpression : AvtPart
     private static string FormatDouble(double d) => XQuery.Functions.ConcatFunction.FormatDoubleXPath(d);
 
     private static string FormatFloat(float f) => XQuery.Functions.ConcatFunction.FormatFloatXPath(f);
+
+    /// <summary>
+    /// This part with other operands and every other property kept: for the rewrite of
+    /// <c>root()</c> in a rule for the document node (Engine.RootOfDocumentRewrite, BUGS.md #166).
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static",
+        Justification = "An instance method, so that a property added later is copied here; RootOfDocumentRewriteTests checks it")]
+    internal AvtExpression WithExpression(XQueryExpression expression) => new() { Expression = expression };
 }

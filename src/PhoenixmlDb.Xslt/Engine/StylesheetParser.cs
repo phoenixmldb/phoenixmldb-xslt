@@ -612,10 +612,11 @@ public sealed partial class StylesheetParser
                     }
                 ]
             },
-            Body = new XsltSequenceConstructor
+            // A rule for the document node with no name (see ParseTemplate).
+            Body = RootOfDocumentRewrite.Apply(new XsltSequenceConstructor
             {
                 Instructions = [ParseInstruction(element)]
-            }
+            })
         };
 
         stylesheet.Templates.Add(template);
@@ -898,10 +899,16 @@ public sealed partial class StylesheetParser
         // a tail call. With `as`, the call's output is captured and validated after it returns.
         if (asAttr == null)
             MarkTailCalls(templateBody);
+        var match = matchAttr != null ? ParsePattern(matchAttr.Value, element) : null;
+        // In a rule for the document node, root() with the rule's focus is the context item (XSLT
+        // 3.0 §19.8.9.18), and written as it, the rule streams (BUGS.md #166). Not in a rule with a
+        // name: xsl:call-template runs it with the caller's context item.
+        if (templateName == null && StreamedScopeEscapeDetector.MatchesOnlyDocument(match))
+            templateBody = RootOfDocumentRewrite.Apply(templateBody);
         return new XsltTemplate
         {
             Name = templateName,
-            Match = matchAttr != null ? ParsePattern(matchAttr.Value, element) : null,
+            Match = match,
             Priority = priorityAttr != null ? ParsePriorityValue(priorityAttr.Value, GetSourceLocation(element)) : null,
             Modes = modes,
             As = asAttr != null ? ParseSequenceType(asAttr.Value, element) : null,
