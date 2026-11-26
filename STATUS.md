@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-25 17:24 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-26 02:13 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,14 +18,13 @@ Generated 2026-11-25 17:24 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 1 |
 | phoenixmldb-xquery | 0 | 0 |
-| phoenixmldb-xslt | 4 | 0 |
+| phoenixmldb-xslt | 3 | 1 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
 
 **phoenixmldb-xslt**
 
-- [653] --timing says "(streaming)" for a run that was not streamed
 - [582] Schxslt2 transpiled XSLT 3.0 with streaming passing (after an edit) strict streamability analyis of Saxon EE and of go-xml doesn't stream with PhoenixmlDb.Xslt
 - [445] Nightly regression report
 - [13] Backlog triage: 57 failing W3C XSLT cases (11,461/11,518 applicable pass)
@@ -36,9 +35,13 @@ Generated 2026-11-25 17:24 UTC by `scripts/status.sh`. Do not edit by hand.
 
 - [54] build: SDK 11, and ship net11.0 next to net8.0 and net10.0
 
+**phoenixmldb-xslt**
+
+- [661] BUGS.md: #170-#173, the XQuery Update fixes of xquery#433, #434 and #435
+
 ## Defect register
 
-`BUGS.md`: **167** entries, **22** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **170** entries, **22** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
