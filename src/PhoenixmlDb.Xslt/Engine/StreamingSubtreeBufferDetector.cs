@@ -388,12 +388,7 @@ internal static class StreamingSubtreeBufferDetector
                 // empty (W3C si-value-of-046, -076). A body of plain xsl:text reads nothing.
                 return AvtNavigatesInput(vo.Separator)
                     || (vo.Content is { Instructions.Count: > 0 } body && body.Instructions.Any(i => i is not XsltText))
-                    || (vo.Select != null && IsContextItem(vo.Select))
-                    || (vo.Select != null
-                        && (SelectAbsorbsInput(vo.Select) || SelectNavigatesViaUnstreamableOperator(vo.Select)
-                            || SelectNavigatesViaClimbingAxis(vo.Select)
-                            || SelectCopiesWholeContextItem(vo.Select)
-                            || ReferencesUnknownContextAccumulator(vo.Select, consumed)));
+                    || (vo.Select != null && ValueNeedsWholeInput(vo.Select, consumed));
 
             case XsltCopyOf cof:
                 return SelectHasPositionalPredicateOnInputPath(cof.Select) || SelectAbsorbsInput(cof.Select) || SelectNavigatesViaUnstreamableOperator(cof.Select)
@@ -438,11 +433,14 @@ internal static class StreamingSubtreeBufferDetector
 
             case XsltLiteralResultElement lre:
                 // Also inspect attribute value templates: an AVT expression on a CONSTRUCTED
-                // element (e.g. <banana x="{count(//*)}"/>) gets no watcher/document-level
-                // streaming dispatch — it evaluates against the synthetic empty node and folds
-                // to "" / 0. Any input-navigating AVT therefore needs the whole-input buffer. (#143)
-                // The attributes are evaluated before the content, with what came before it.
-                return AttributesNavigateInput(lre.Attributes)
+                // element (e.g. <banana x="{count(//*)}"/>) is evaluated at the document level.
+                // The scanner gives its expressions watchers, as it does the select of
+                // xsl:value-of (BUGS.md #174), so an expression they compute during the pass
+                // streams; one they cannot, evaluated against the synthetic empty node, would fold
+                // to "" / 0 and needs the whole-input buffer (#143). Every navigating AVT was sent
+                // there, so <out n="{count(books)}"/> in the rule for "/" read the input into
+                // memory. The attributes are evaluated before the content, with what came before it.
+                return AttributesNeedWholeInput(lre.Attributes, consumed)
                     || AttributesReferenceContextAccumulator(lre.Attributes, consumed)
                     || BodyRequiresWholeInput(lre.Content, consumed);
 
@@ -561,13 +559,66 @@ internal static class StreamingSubtreeBufferDetector
     /// a navigating <c>{…}</c> would fold the empty synthetic node. (#143)
     /// </summary>
     private static bool AttributesNavigateInput(IReadOnlyDictionary<QName, XsltAttributeValueTemplate> attrs)
+        => attrs.Values.Any(avt => avt.Parts.Any(part => part is AvtExpression ae && NavigatesInput(ae.Expression)));
+
+    /// <summary>
+    /// Whether a value an instruction computes at the document level (the select of xsl:value-of,
+    /// an expression of an attribute value template of a literal result element) is one the watchers of the
+    /// streaming pass cannot compute, so that the whole input must be read: the context item
+    /// itself, an absorbing select, an input path under an operator, a climbing axis, a copy of
+    /// the whole context item, or an accumulator value of the document node not yet known.
+    /// </summary>
+    private static bool ValueNeedsWholeInput(XQueryExpression select, bool consumed)
+        => IsContextItem(select)
+            || SelectAbsorbsInput(select) || SelectNavigatesViaUnstreamableOperator(select)
+            || SelectNavigatesViaClimbingAxis(select)
+            || SelectCopiesWholeContextItem(select)
+            || ReferencesUnknownContextAccumulator(select, consumed);
+
+    /// <summary>
+    /// <see cref="ValueNeedsWholeInput"/> for any expression of the attribute value templates of a
+    /// literal result element, and more: a path step that is not an axis step or a "!"
+    /// (<c>@price/number()</c>, a <see cref="SimpleMapExpression"/>), and a FLWOR expression,
+    /// still read the whole input. A subscription for one wrote its items where the instruction
+    /// stands, so in an attribute <c>{PAGES/number()}</c> wrote the numbers as text and lost the
+    /// element; with a watcher <c>{book/@price/number()}</c> failed, its context item no longer a
+    /// node (BUGS.md #174).
+    /// </summary>
+    private static bool AttributesNeedWholeInput(IReadOnlyDictionary<QName, XsltAttributeValueTemplate> attrs, bool consumed)
     {
         foreach (var avt in attrs.Values)
             foreach (var part in avt.Parts)
-                if (part is AvtExpression ae && NavigatesInput(ae.Expression))
+                if (part is AvtExpression ae
+                    && (ValueNeedsWholeInput(ae.Expression, consumed)
+                        || (NavigatesInput(ae.Expression) && MapsOrIterates(ae.Expression))))
                     return true;
         return false;
     }
+
+    private static bool MapsOrIterates(XQueryExpression expr)
+    {
+        var finder = new MapOrIterationFinder();
+        finder.Walk(expr);
+        return finder.Found;
+    }
+
+    private sealed class MapOrIterationFinder : XQueryExpressionWalker
+    {
+        internal bool Found { get; private set; }
+
+        public override object? VisitSimpleMapExpression(SimpleMapExpression expr)
+        {
+            Found = true;
+            return null;
+        }
+
+        public override object? VisitFlworExpression(FlworExpression expr)
+        {
+            Found = true;
+            return null;
+        }
+    }
+
 
 
     /// <summary>
