@@ -328,11 +328,91 @@ public sealed class StreamedNodeUriTests
         var streamed = await RunAsync(stylesheet, input, disableStreaming: false);
 
         // Namespace-well-formed, with the same names (namespace and local name), values, text,
-        // comments and instructions. Where the declarations are made is not compared: the
-        // streamed copy does not carry the in-scope namespaces that no name in it uses (BUGS #159).
+        // comments and instructions, and the same namespace declarations on each element; their
+        // order on an element can differ, which is not significant (xslt#159).
         Names(streamed.Output).Should().Be(Names(tree.Output));
+        Declarations(streamed.Output).Should().Be(Declarations(tree.Output));
         streamed.Streamed.Should().BeTrue();
     }
+
+    [Theory]
+    // In scope from an ancestor and on the element itself.
+    [InlineData("""<r xmlns:up="urn:up"><Pool xmlns:my="urn:my"><Loan><x my:v="1" up:w="2"/></Loan><Loan xmlns:own="urn:own"><y own:z="3"/></Loan></Pool></r>""")]
+    // A default namespace, and a prefix that no name uses.
+    [InlineData("""<r xmlns:u="urn:unused" xmlns="urn:d"><Pool><Loan><x/></Loan></Pool></r>""")]
+    public async Task A_copy_of_an_element_read_whole_has_its_in_scope_namespaces(string input)
+    {
+        // Each Loan is read whole for its rule. Its copy has the namespaces in scope on the Loan,
+        // as without streaming; it had only those its own tree declared and those its attributes
+        // used (BUGS.md #159).
+        var stylesheet = Stylesheet("""
+            <xsl:template match="*:Pool"><p><xsl:apply-templates/></p></xsl:template>
+            <xsl:template match="*:Loan"><xsl:variable name="c" select="copy-of(.)"/><xsl:copy-of select="$c"/><n p="{sort(in-scope-prefixes($c))}"/></xsl:template>
+            """);
+
+        var tree = await RunAsync(stylesheet, input, disableStreaming: true);
+        var streamed = await RunAsync(stylesheet, input, disableStreaming: false);
+
+        tree.Output.Should().Contain(" xml\"/>");
+        Names(streamed.Output).Should().Be(Names(tree.Output));
+        Declarations(streamed.Output).Should().Be(Declarations(tree.Output));
+        streamed.Streamed.Should().BeTrue();
+    }
+
+    // What the streaming pass leaves open puts its namespaces in the scope of what is written inside
+    // it, until its end tag (xslt#159). Each case gives the output of the run without streaming.
+    public static TheoryData<string, string> OpenElementScopes => new()
+    {
+        // The built-in shallow copy of r leaves it open; the rule for a copies a.
+        { """<xsl:template match="a"><xsl:copy-of select="."/></xsl:template>""",
+          """<r xmlns:p="urn:p"><a n="1"><p:b>t1</p:b><c/></a><a n="2"><p:b>t2</p:b></a><e/></r>""" },
+        // xsl:copy of a, which declares q, leaves it open; q:b is written inside.
+        { """<xsl:template match="a"><xsl:copy><xsl:apply-templates/></xsl:copy></xsl:template>""",
+          """<r><a xmlns:q="urn:q"><q:b/><c/></a></r>""" },
+        // xsl:namespace in the content of xsl:copy declares z on its start tag; z:e is written inside.
+        { """<xsl:template match="a"><xsl:copy><xsl:namespace name="z">urn:z</xsl:namespace><xsl:apply-templates/></xsl:copy></xsl:template><xsl:template match="c"><xsl:element name="z:e" namespace="urn:z"/></xsl:template>""",
+          """<r><a><c/></a></r>""" },
+        // The end tag takes the namespaces out of scope again: q:e after a declares q itself.
+        { "",
+          """<r><a xmlns:q="urn:q"><q:b/></a><d><q:e xmlns:q="urn:q"/></d></r>""" },
+        // xsl:copy whose content groups the streamed children: its start tag goes out between groups.
+        { """<xsl:template match="r"><xsl:copy><xsl:for-each-group select="*" group-adjacent="local-name()"><g><xsl:copy-of select="current-group()"/></g></xsl:for-each-group></xsl:copy></xsl:template>""",
+          """<r xmlns:q="urn:q"><q:x n="1"/><q:x n="2"/><q:y/><q:x n="3"/></r>""" },
+        // The same, and the members, copied with xsl:copy, declare q again: in the output q is in scope.
+        { """<xsl:template match="r"><xsl:copy><xsl:for-each-group select="*" group-adjacent="local-name()"><g><xsl:for-each select="current-group()"><xsl:copy/></xsl:for-each></g></xsl:for-each-group></xsl:copy></xsl:template>""",
+          """<r xmlns:q="urn:q"><q:x xmlns:q="urn:q" n="1"/><q:x n="2"/><q:y xmlns:q="urn:q"/></r>""" },
+        // xsl:copy, inside xsl:copy of a, of a child that declares q again.
+        { """<xsl:template match="a | b"><xsl:copy><xsl:apply-templates/></xsl:copy></xsl:template>""",
+          """<r><a xmlns:q="urn:q"><b xmlns:q="urn:q"><c/></b></a></r>""" },
+        // xsl:copy, inside xsl:copy with xsl:namespace z, of a child that declares z itself.
+        { """<xsl:template match="a"><xsl:copy><xsl:namespace name="z">urn:z</xsl:namespace><xsl:apply-templates/></xsl:copy></xsl:template><xsl:template match="b"><xsl:copy><xsl:apply-templates/></xsl:copy></xsl:template>""",
+          """<r><a><b xmlns:z="urn:z"><c/></b></a></r>""" },
+    };
+
+    [Theory]
+    [MemberData(nameof(OpenElementScopes))]
+    public async Task A_streamed_copy_declares_no_namespace_the_output_has_in_scope(string rules, string input)
+    {
+        var stylesheet = $$"""
+            <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output omit-xml-declaration="yes"/>
+              <xsl:mode streamable="yes" on-no-match="shallow-copy"/>
+              {{rules}}
+            </xsl:stylesheet>
+            """;
+
+        var tree = await RunAsync(stylesheet, input, disableStreaming: true);
+        var streamed = await RunAsync(stylesheet, input, disableStreaming: false);
+
+        streamed.Output.Should().Be(tree.Output);
+        streamed.Streamed.Should().BeTrue();
+    }
+
+    // The namespace declarations of each element in document order, each element's in prefix order.
+    private static string Declarations(string xml)
+        => string.Join('\n', System.Xml.Linq.XElement.Parse($"<_c>{xml}</_c>").Descendants()
+            .Select(e => e.Name + ":" + string.Join(' ', e.Attributes().Where(a => a.IsNamespaceDeclaration)
+                .Select(a => a.Name.LocalName + "=" + a.Value).OrderBy(d => d, StringComparer.Ordinal))));
 
     // Each node of the document with its expanded name: elements, attributes in name order (no
     // namespace declarations), text, comments and processing instructions. Parsing fails for output

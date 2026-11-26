@@ -229,7 +229,9 @@ public sealed class ElementContentInPlaceTests
             """
             <out n="4"><item><a xmlns:p="urn:p" i="1"><p:b>t1</p:b><c/></a></item><item><a xmlns:p="urn:p" i="2"><p:b>t2</p:b></a></item><item>1</item><item>2</item></out>
             """),
-        // streamed xsl:copy and xsl:element with attributes added by the content.
+        // streamed xsl:copy and xsl:element with attributes added by the content. The output is the
+        // one the transformation gives without streaming: <c/> with no namespace declaration, and
+        // p:b with none either, as <r> declares p (xslt#159: the streamed copy redeclared it).
         "streaming" => (
             """
             <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:p="urn:p">
@@ -241,7 +243,7 @@ public sealed class ElementContentInPlaceTests
             </xsl:stylesheet>
             """,
             """
-            <r xmlns:p="urn:p"><a seen="yes"><p:b xmlns:p="urn:p"><wrapped>t1</wrapped></p:b><c/></a><a seen="yes"><p:b xmlns:p="urn:p"><wrapped>t2</wrapped></p:b></a><was-e x="1"/></r>
+            <r xmlns:p="urn:p"><a seen="yes"><p:b><wrapped>t1</wrapped></p:b><c/></a><a seen="yes"><p:b><wrapped>t2</wrapped></p:b></a><was-e x="1"/></r>
             """),
         // the element prefix renamed for a namespace node in the content; empty elements; attributes only.
         "prefix-fixup" => (

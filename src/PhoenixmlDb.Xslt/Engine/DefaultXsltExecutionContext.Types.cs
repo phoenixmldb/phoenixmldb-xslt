@@ -600,11 +600,19 @@ internal sealed partial class DefaultXsltExecutionContext
     /// </summary>
     /// <param name="startTagLast">Whether the start tag is the last thing written: no content of
     /// the element precedes this call. Only then can the element still be written <c>&lt;e/&gt;</c>.</param>
-    private void OpenStreamingElement(string lexicalName, QName cdataName, bool startTagLast)
+    /// <param name="nsBindings">The namespace bindings its start tag declares, when the streaming loop
+    /// writes its children (the built-in shallow copy): they are in scope for what is written inside
+    /// it, until its end tag, as the path that does not stream pushes them for the element's content.
+    /// They were not, so an element written inside declared a namespace its ancestor in the output had
+    /// declared already (xslt#159: <c>&lt;p:b xmlns:p="urn:p"&gt;</c> inside <c>&lt;r xmlns:p="urn:p"&gt;</c>).
+    /// None for xsl:copy: its content wrote the children, with the bindings in scope, and only the end
+    /// tag is left.</param>
+    private void OpenStreamingElement(string lexicalName, QName cdataName, bool startTagLast, Dictionary<string, string>? nsBindings = null)
     {
         _streamingOpenElements.Push(lexicalName);
         _outputElementStack.Push(cdataName);
         _streamingOpenStartTagEnds.Push(startTagLast ? _streamingSentChars + _output.Length : -1);
+        PushOutputNsScope(nsBindings ?? new Dictionary<string, string>());
     }
 
     /// <summary>
@@ -615,6 +623,7 @@ internal sealed partial class DefaultXsltExecutionContext
     internal void CloseStreamingOpenElement()
     {
         _outputElementStack.Pop();
+        PopOutputNsScope();
         var startTagEnd = _streamingOpenStartTagEnds.Pop();
         var lexicalName = _streamingOpenElements.Pop();
         if (_streamingSentChars + _output.Length == startTagEnd && _output.Length > 0 && _output[^1] == '>')

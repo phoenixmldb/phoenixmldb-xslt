@@ -8428,10 +8428,10 @@ tree use and that the tree does not declare (the writer already declares the nam
 is namespace-well-formed and has the same names; the declarations of a copied element can come
 in another order than without streaming (not significant in XDM).
 
-Still open: without streaming, the copy also carries the in-scope namespaces that no name in it uses
-(`copy-namespaces="yes"`, XSLT 3.0 §11.9.2); the streamed copy does not, as in 3.2.0. Adding them all to the top
+Left open here, fixed by #169: without streaming, the copy also carries the in-scope namespaces that no name in it
+uses (`copy-namespaces="yes"`, XSLT 3.0 §11.9.2); the streamed copy did not, as in 3.2.0. Adding them all to the top
 element made the streamed built-in shallow copy declare them again on elements whose output already has them in
-scope (`ElementContentInPlaceTests`, "streaming": `<c xmlns:p="urn:p"/>` where `<c/>` is written), so that needs the
+scope (`ElementContentInPlaceTests`, "streaming": `<c xmlns:p="urn:p"/>` where `<c/>` is written), so that needed the
 streamed writer's check of the output scope first.
 
 Test: `StreamedNodeUriTests.A_copy_of_an_element_read_whole_for_a_rule_keeps_its_namespaces` (2 cases, compared by
@@ -8611,3 +8611,28 @@ new parent takes the parent's base URI there, and one with no parent keeps the o
 
 Tests: `CopyFunctionBaseUriTests` (18: 15 forms of `fn:copy-of` and `fn:snapshot`, of which 13 fail before the fix;
 3 forms of the instructions, which were right).
+
+
+### 169. A streamed run redeclared namespaces the output had in scope, and a copy lacked the in-scope namespaces no name in it used — fixed (xslt#159, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. The part of #159 left open, and the defect of the writer that stood in its way.
+
+1. An element that the built-in shallow copy of a streamed run writes, and whose children and end tag the streaming
+   loop writes later, did not put its namespace declarations in the scope of what is written inside it. An element written inside declared again what that ancestor declared:
+   `<r xmlns:p="urn:p"><a seen="yes"><p:b xmlns:p="urn:p">`, where the run without streaming writes `<p:b>`. The same
+   names, but not the same output; and it is why the second part could not be fixed in #159.
+2. An element read whole from the streamed input for a rule (#159) had its own namespace declarations, and those its
+   attributes needed, but not the other namespaces in scope on it. `in-scope-prefixes(copy-of(.))` of a `Loan` under
+   `<r xmlns:u="urn:unused">` lacked `u`, and a copy of it lacked `xmlns:u` where the output does not have it in scope
+   (`copy-namespaces="yes"`, XSLT 3.0 §11.9.2).
+
+Fix: that element puts its bindings in the writer's scope until its end tag, as the path that does not stream does for
+the element's content (an element `xsl:copy` leaves open has had its children written by its content already, with its
+bindings in scope); the element read whole has all the namespaces in scope on it.
+On a copied element, the declarations can come in another order than without streaming (not significant in XDM).
+
+Tests: `StreamedNodeUriTests.A_copy_of_an_element_read_whole_has_its_in_scope_namespaces` (2) and
+`A_streamed_copy_declares_no_namespace_the_output_has_in_scope` (8: the shallow copy, the end tag, and `xsl:copy` with
+`xsl:namespace` and with a streamed grouping, each output byte-identical to the run without streaming); the declarations
+are now compared in `A_copy_of_an_element_read_whole_for_a_rule_keeps_its_namespaces`. `ElementContentInPlaceTests`
+("streaming") expects the output without streaming: `<p:b>` with no declaration, and `<c/>` as before.

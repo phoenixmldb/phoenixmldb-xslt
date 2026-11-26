@@ -440,16 +440,12 @@ internal sealed partial class DefaultXsltExecutionContext
     /// <see cref="ForEachGroupStreamingAsync"/>.
     /// </summary>
     private async ValueTask<Xdm.Nodes.XdmElement> ReadStreamingElementForDispatchAsync(
-        System.Xml.XmlReader reader, CancellationToken ct, HashSet<string>? undeclaredPrefixes = null,
-        HashSet<string>? declaredAbove = null)
+        System.Xml.XmlReader reader, CancellationToken ct, bool isRoot = true)
     {
-        // The top of the read: the prefixes its tree uses and does not declare are collected for it.
-        var isRoot = undeclaredPrefixes is null;
-        undeclaredPrefixes ??= new HashSet<string>(StringComparer.Ordinal);
+        // The namespaces in scope on the top element of the read, its ancestors' among them.
         var inScope = isRoot && reader is System.Xml.IXmlNamespaceResolver resolver
             ? resolver.GetNamespacesInScope(System.Xml.XmlNamespaceScope.ExcludeXml)
             : null;
-        List<string>? attributePrefixes = null;
         var startDepth = reader.Depth;
         var startName = reader.LocalName;
         var startNs = reader.NamespaceURI;
@@ -480,8 +476,6 @@ internal sealed partial class DefaultXsltExecutionContext
                 var attrNsId = !string.IsNullOrEmpty(reader.NamespaceURI)
                     ? _nodeStore!.InternNamespace(reader.NamespaceURI)
                     : NamespaceId.None;
-                if (reader.Prefix.Length > 0)
-                    (attributePrefixes ??= []).Add(reader.Prefix);
                 var attrId = new NodeId(_nextStreamGroupNodeId++);
                 var attrNode = new Xdm.Nodes.XdmAttribute
                 {
@@ -498,21 +492,6 @@ internal sealed partial class DefaultXsltExecutionContext
             }
             reader.MoveToElement();
         }
-        // The prefixes this element's attributes use that no element of the tree read so far
-        // declares: the top element declares them, below. (A prefix in an element name needs
-        // nothing: the writer declares the namespace of an element's name where it is missing.)
-        HashSet<string>? declaredHere = declaredAbove;
-        if (nsDecls is not null)
-        {
-            declaredHere = declaredAbove is null ? new HashSet<string>(StringComparer.Ordinal) : new HashSet<string>(declaredAbove, StringComparer.Ordinal);
-            foreach (var binding in nsDecls)
-                declaredHere.Add(binding.Prefix);
-        }
-        if (attributePrefixes is not null)
-            foreach (var prefix in attributePrefixes)
-                if (declaredHere?.Contains(prefix) != true)
-                    undeclaredPrefixes.Add(prefix);
-
         var children = new List<NodeId>();
         if (!reader.IsEmptyElement)
         {
@@ -525,7 +504,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 {
                     case System.Xml.XmlNodeType.Element:
                     {
-                        var child = await ReadStreamingElementForDispatchAsync(reader, ct, undeclaredPrefixes, declaredHere).ConfigureAwait(false);
+                        var child = await ReadStreamingElementForDispatchAsync(reader, ct, isRoot: false).ConfigureAwait(false);
                         child.Parent = startId;
                         children.Add(child.Id);
                         break;
@@ -580,16 +559,18 @@ internal sealed partial class DefaultXsltExecutionContext
             }
         }
 
-        // The top element read stands for a tree of its own: it also declares the namespaces its
-        // streamed ancestors bound to the prefixes the tree uses and does not declare. A copy of it
-        // named such a prefix and declared none (<x my:v="1"/> under <Pool xmlns:my="…">): the
-        // output was not namespace-well-formed (xslt#652). The ones nothing uses are not added, so
-        // a copy declares no more than before.
+        // The top element read stands for a tree of its own: it also has the namespaces its streamed
+        // ancestors bound, as the same element has in a tree (its in-scope namespaces). A copy of it
+        // named a prefix bound above and declared none (<x my:v="1"/> under <Pool xmlns:my="…">):
+        // the output was not namespace-well-formed (xslt#652); and a copy lacked the in-scope
+        // namespaces that no name in it uses, which a copy keeps (copy-namespaces="yes", XSLT 3.0
+        // §11.9.2; xslt#159). The writer declares none of them again where the output has them in
+        // scope already.
         if (inScope is not null)
         {
             foreach (var (prefix, uri) in inScope)
             {
-                if (uri.Length == 0 || !undeclaredPrefixes.Contains(prefix) || nsDecls?.Exists(b => b.Prefix == prefix) == true)
+                if (uri.Length == 0 || nsDecls?.Exists(b => b.Prefix == prefix) == true)
                     continue;
                 (nsDecls ??= []).Add(new NamespaceBinding(prefix, _nodeStore!.InternNamespace(uri)));
             }
