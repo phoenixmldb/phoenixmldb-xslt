@@ -8594,7 +8594,7 @@ when the CLI chose to stream.
 
 Tests: `TimingLabelTests` (3 new; each fails before the fix).
 
-### 168. base-uri() of a fn:copy-of or fn:snapshot result was empty — fixed (F1, 2026-11-25)
+### 168. base-uri() of a fn:copy-of or fn:snapshot result was empty — fixed (xslt#659, 2026-11-25)
 
 Engine: **XSLT**. In 3.2.0. Found with xslt#652. Without streaming, the nodes that `fn:copy-of` and `fn:snapshot` return
 had no base URI: `base-uri(copy-of(//a))` and `base-uri(snapshot(//a))` were empty, the document node of a snapshot
@@ -8636,3 +8636,74 @@ Tests: `StreamedNodeUriTests.A_copy_of_an_element_read_whole_has_its_in_scope_na
 `xsl:namespace` and with a streamed grouping, each output byte-identical to the run without streaming); the declarations
 are now compared in `A_copy_of_an_element_read_whole_for_a_rule_keeps_its_namespaces`. `ElementContentInPlaceTests`
 ("streaming") expects the output without streaming: `<p:b>` with no declaration, and `<c/>` as before.
+
+### 170. XQuery Update: the pending updates were applied in the order of the list, not in the order of XQUF 3.0 §8.2.3 — fixed (xquery#433, 2026-11-25)
+
+Engine: **XQuery**. In 3.2.0. `upd:applyUpdates` (§8.2.3) applies the update primitives in five steps: first
+`upd:insertInto`, `upd:insertAttributes`, `upd:replaceValue` and `upd:rename`; then `upd:insertBefore`,
+`upd:insertAfter`, `upd:insertIntoAsFirst` and `upd:insertIntoAsLast`; then `upd:replaceNode`; then
+`upd:replaceElementContent`; then `upd:delete`. `PendingUpdateApplicator.Apply` applied every insert in the order of
+the list, then replace node, replace value (of every kind), rename and delete. A node inserted `as last into` an
+element by one expression came before a node inserted `into` it by a later one: `(insert node <l/> as last into $r,
+insert node <i/> into $r)` gave `l i`, where the specification gives `i l` (W3C XQUTS id-insert-expr-052).
+
+Fix: the five steps, in their order. The attributes of an insertion are inserted in the first step, the other nodes
+in the step of their position.
+
+Tests: `UpdateApplyOrderTests` (the inserts, in a stored document and in a copy; the order of the expressions does not
+change the result). XQUTS: id-insert-expr-052 now passes.
+
+### 171. XQuery Update: in a copy, "replace value of node" of an element kept its element children — fixed (xquery#433, 2026-11-25)
+
+Engine: **XQuery**. In 3.2.0. `copy $e := <e><a/>t<!--c--></e> modify replace value of node $e with 'v' return $e`
+gave `<e><a/><!--c-->v</e>`: the store of copies (`InMemoryUpdatableNodeStore`) removed only the text children of the
+element. `upd:replaceElementContent` (XQUF 3.0 §3.3.2) replaces all the children with one text node (none for an empty
+value) (W3C XQUTS id-transform-expr-025). A stored document (`XdmDocumentStore`) was right.
+
+Fix: all the children are removed.
+
+Tests: `UpdateApplyOrderTests.Replace_value_of_an_element_in_a_copy_replaces_all_its_children` (fails before the fix),
+and the same updates in a stored document. XQUTS: id-transform-expr-025 now passes.
+
+### 172. XQuery Update: `invoke updating` did not parse, and a dynamic call of an updating function applied its updates — fixed (xquery#434, 2026-11-25)
+
+Engine: **XQuery**. In 3.2.0. XQUF 3.0 §5.5 calls a function item dynamically with
+`invoke updating $f(...)`, an updating expression; it did not parse (XPST0003). An ordinary dynamic
+call `$f(...)` is a simple expression, and §7.11 makes it XUDY0038 when `$f` is an updating
+function. It was evaluated, and the function's updates were applied: `let $f := local:del#1 return
+$f($n)` deleted `$n`. The same held for the arrow (`$n => $f()`), a lookup (`$m?f($n)`), an array
+member, `fn:function-lookup`, a partial application and `fn:put#2`.
+
+Fix: `invoke updating` (grammar [207], an ExprSingle; XPath does not have it). Each function item
+knows whether it is an updating function: a function or an inline function declared `%updating`,
+`fn:put`, and an item made from one of them (a named reference, a partial application, a coercion).
+A dynamic call of one is XUDY0038, before the arguments are evaluated; `invoke updating` calls it,
+or a simple function. An `invoke updating` where a simple expression is required is XUST0001.
+
+Breaking: a query that called an updating function with `$f(...)` now fails with XUDY0038; write
+`invoke updating $f(...)`.
+
+Open: XQUF 3.0 §2.3.2 (a function test without `%updating` matches only simple functions;
+`%updating("allowed")` and `%updating("required")`) is not implemented here. An updating function item
+matches `function(*)`, and a higher-order function that calls it applies its updates
+(`for-each($n, local:del#1)` deletes the nodes). Ruled for 3.3.0, in its own XQuery PR (breaking too:
+XPTY0004 for such a call).
+
+Tests: `InvokeUpdatingTests`.
+
+### 173. XQuery Update: an element the store replaced lost its string value; a later recompute threw after the document had changed — fixed (xquery#435, 2026-11-25)
+
+Engine: **XQuery**. Not released: `XdmDocumentStore` applies updates since xquery#416 (after 3.2.0). The store
+replaces a node object to change it (`NodeReplacement`: its name, children and attributes are
+init-only). The replacement of a renamed element, or of an element whose attributes were inserted,
+had no computed string value. `XdmElement.StringValue` of it threw `InvalidOperationException`
+(`StrictStringValue`). When the same list also changed the children of its parent, the store threw
+the same exception while it computed the parent's string value again, after it had applied every
+update: `(delete node $r/a, rename node $r/b as 'c')` failed with an exception that is not an XQuery
+error, and the document had changed. `fn:string` was right: it computes the value from the tree.
+
+Fix: the replacement of an element or document node keeps its string value. Where its children
+change, the store computes it again when the list is applied, as before.
+
+Tests: `ReplacedElementStringValueTests`. Found with the tests of the update API for hosts (a list of a delete
+and a rename, merged from two runs).
