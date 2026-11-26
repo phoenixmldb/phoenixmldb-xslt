@@ -21,7 +21,7 @@ decl/function	function-5015	phx:XTSE9430	xsl:copy-of
 decl/function	function-5016	phx:XTSE9430	xsl:copy-of
 decl/function	function-5017	phx:XTSE9430	the literal result element inverted-section
 decl/function	function-5018	phx:XTSE9430	the literal result element inverted-section
-decl/override	override-misc-007	phx:XTDE9430	the literal result element count
+decl/override	override-misc-007	phx:XTDE9430	the literal result element a
 decl/use-package	use-package-152	phx:XTSE9430	xsl:sequence
 insn/merge	merge-098	phx:XTSE9430	xsl:copy-of
 strm/sf-avg	sf-avg-005	phx:XTDE9430	xsl:copy-of
@@ -547,8 +547,6 @@ strm/si-LRE	si-lre-221	phx:XTDE9430	xsl:sequence
 strm/si-LRE	si-lre-222	phx:XTDE9430	xsl:sequence
 strm/si-LRE	si-lre-223	phx:XTDE9430	xsl:sequence
 strm/si-LRE	si-lre-243	phx:XTDE9430	xsl:sequence
-strm/si-LRE	si-lre-247	phx:XTDE9430	the literal result element a
-strm/si-LRE	si-lre-248	phx:XTDE9430	the literal result element a
 strm/si-LRE	si-lre-249	phx:XTDE9430	the literal result element a
 strm/si-LRE	si-lre-250	phx:XTDE9430	xsl:where-populated
 strm/si-LRE	si-lre-251	phx:XTDE9430	xsl:where-populated
@@ -849,7 +847,6 @@ strm/si-iterate	si-iterate-133	phx:XTSE9430	xsl:iterate
 strm/si-iterate	si-iterate-134	phx:XTDE9430	xsl:variable
 strm/si-iterate	si-iterate-135	phx:XTDE9430	xsl:variable
 strm/si-iterate	si-iterate-139	phx:XTDE9430	xsl:iterate
-strm/si-map	si-map-002	phx:XTDE9430	the literal result element books
 strm/si-map	si-map-004	phx:XTDE9430	xsl:map-entry
 strm/si-map	si-map-005	phx:XTDE9430	xsl:map-entry
 strm/si-map	si-map-006	phx:XTDE9430	xsl:map-entry
@@ -861,8 +858,8 @@ strm/si-next-match	si-next-match-067	phx:XTDE9430	xsl:apply-templates
 strm/si-on-empty	si-on-empty-001	phx:XTDE9430	xsl:on-empty
 strm/si-on-empty	si-on-empty-002	phx:XTDE9430	xsl:on-empty
 strm/si-on-empty	si-on-empty-003	phx:XTDE9430	xsl:sequence
-strm/si-on-empty	si-on-empty-004	phx:XTDE9430	the literal result element banana
-strm/si-on-empty	si-on-empty-005	phx:XTDE9430	the literal result element banana
+strm/si-on-empty	si-on-empty-004	phx:XTDE9430	xsl:if
+strm/si-on-empty	si-on-empty-005	phx:XTDE9430	xsl:if
 strm/si-on-empty	si-on-empty-006	phx:XTDE9430	xsl:for-each
 strm/si-on-empty	si-on-empty-007	phx:XTDE9430	xsl:for-each
 strm/si-on-empty	si-on-empty-008	phx:XTDE9430	xsl:comment
@@ -871,8 +868,8 @@ strm/si-on-empty	si-on-empty-010	phx:XTDE9430	xsl:fork
 strm/si-on-empty	si-on-empty-011	phx:XTDE9430	xsl:fork
 strm/si-on-empty	si-on-empty-012	phx:XTDE9430	xsl:document
 strm/si-on-empty	si-on-empty-027	phx:XTDE9430	xsl:for-each
-strm/si-on-empty	si-on-empty-032	phx:XTDE9430	the literal result element banana
-strm/si-on-empty	si-on-empty-033	phx:XTDE9430	the literal result element banana
+strm/si-on-empty	si-on-empty-032	phx:XTDE9430	xsl:if
+strm/si-on-empty	si-on-empty-033	phx:XTDE9430	xsl:if
 strm/si-on-empty	si-on-empty-034	phx:XTDE9430	xsl:where-populated
 strm/si-on-empty	si-on-empty-037	phx:XTDE9430	xsl:fork
 strm/si-on-empty	si-on-empty-038	phx:XTDE9430	xsl:fork
@@ -884,10 +881,10 @@ strm/si-on-non-empty	si-on-non-empty-001	phx:XTDE9430	xsl:on-non-empty
 strm/si-on-non-empty	si-on-non-empty-001a	phx:XTDE9430	xsl:on-non-empty
 strm/si-on-non-empty	si-on-non-empty-002	phx:XTDE9430	xsl:on-non-empty
 strm/si-on-non-empty	si-on-non-empty-003	phx:XTDE9430	xsl:sequence
-strm/si-on-non-empty	si-on-non-empty-004	phx:XTDE9430	the literal result element banana
-strm/si-on-non-empty	si-on-non-empty-004a	phx:XTDE9430	the literal result element banana
-strm/si-on-non-empty	si-on-non-empty-005	phx:XTDE9430	the literal result element banana
-strm/si-on-non-empty	si-on-non-empty-005a	phx:XTDE9430	the literal result element banana
+strm/si-on-non-empty	si-on-non-empty-004	phx:XTDE9430	xsl:if
+strm/si-on-non-empty	si-on-non-empty-004a	phx:XTDE9430	xsl:if
+strm/si-on-non-empty	si-on-non-empty-005	phx:XTDE9430	xsl:if
+strm/si-on-non-empty	si-on-non-empty-005a	phx:XTDE9430	xsl:if
 strm/si-on-non-empty	si-on-non-empty-006	phx:XTDE9430	xsl:for-each
 strm/si-on-non-empty	si-on-non-empty-006a	phx:XTDE9430	xsl:for-each
 strm/si-on-non-empty	si-on-non-empty-007	phx:XTDE9430	xsl:for-each
@@ -899,8 +896,8 @@ strm/si-on-non-empty	si-on-non-empty-011	phx:XTDE9430	xsl:fork
 strm/si-on-non-empty	si-on-non-empty-011a	phx:XTDE9430	xsl:fork
 strm/si-on-non-empty	si-on-non-empty-012	phx:XTDE9430	xsl:document
 strm/si-on-non-empty	si-on-non-empty-027	phx:XTDE9430	xsl:for-each
-strm/si-on-non-empty	si-on-non-empty-032	phx:XTDE9430	the literal result element banana
-strm/si-on-non-empty	si-on-non-empty-033	phx:XTDE9430	the literal result element banana
+strm/si-on-non-empty	si-on-non-empty-032	phx:XTDE9430	xsl:if
+strm/si-on-non-empty	si-on-non-empty-033	phx:XTDE9430	xsl:if
 strm/si-on-non-empty	si-on-non-empty-034	phx:XTDE9430	xsl:where-populated
 strm/si-on-non-empty	si-on-non-empty-035	phx:XTDE9430	xsl:where-populated
 strm/si-on-non-empty	si-on-non-empty-036	phx:XTDE9430	xsl:where-populated
@@ -983,8 +980,8 @@ strm/si-value-of	si-value-of-100	phx:XTSE9430	xsl:apply-templates
 strm/si-where-populated	si-coco-001	phx:XTDE9430	xsl:where-populated
 strm/si-where-populated	si-coco-002	phx:XTDE9430	xsl:where-populated
 strm/si-where-populated	si-coco-003	phx:XTDE9430	xsl:sequence
-strm/si-where-populated	si-coco-004	phx:XTDE9430	the literal result element banana
-strm/si-where-populated	si-coco-005	phx:XTDE9430	the literal result element banana
+strm/si-where-populated	si-coco-004	phx:XTDE9430	xsl:if
+strm/si-where-populated	si-coco-005	phx:XTDE9430	xsl:if
 strm/si-where-populated	si-coco-006	phx:XTDE9430	xsl:for-each
 strm/si-where-populated	si-coco-007	phx:XTDE9430	xsl:for-each
 strm/si-where-populated	si-coco-008	phx:XTDE9430	xsl:comment
@@ -1461,7 +1458,6 @@ strm/sx-IntersectExpr	sx-intersect-332	phx:XTDE9430	xsl:value-of
 strm/sx-IntersectExpr	sx-intersect-333	phx:XTDE9430	xsl:value-of
 strm/sx-IntersectExpr	sx-intersect-334	phx:XTDE9430	xsl:value-of
 strm/sx-IntersectExpr	sx-intersect-335	phx:XTDE9430	xsl:value-of
-strm/sx-MapExpr	sx-MapExpr-002	phx:XTDE9430	the literal result element books
 strm/sx-MapExpr	sx-MapExpr-004	phx:XTDE9430	xsl:variable
 strm/sx-MapExpr	sx-MapExpr-005	phx:XTDE9430	xsl:variable
 strm/sx-MapExpr	sx-MapExpr-006	phx:XTDE9430	xsl:variable

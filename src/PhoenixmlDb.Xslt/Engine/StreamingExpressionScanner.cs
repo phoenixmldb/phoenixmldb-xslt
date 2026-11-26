@@ -183,8 +183,14 @@ internal sealed class StreamingExpressionScanner
                 ScanInstructions(ctor);
                 break;
 
-            // Literal result elements have Content that may contain consuming instructions
+            // Literal result elements have Content that may contain consuming instructions. Their
+            // attribute value templates read the stream as the name of xsl:element does, and are
+            // resolved the same way, by watcher value substitution at EvaluateAvtAsync time. They
+            // were not scanned, so in the rule for the document node <out n="{count(books)}"/>
+            // had no watcher, and the input was read into memory for it (BUGS.md #174).
             case XsltLiteralResultElement lre:
+                foreach (var avt in lre.Attributes.Values)
+                    ScanAvt(avt);
                 _constructionDepth++;
                 ScanInstructions(lre.Content);
                 _constructionDepth--;

@@ -8707,3 +8707,30 @@ change, the store computes it again when the list is applied, as before.
 
 Tests: `ReplacedElementStringValueTests`. Found with the tests of the update API for hosts (a list of a delete
 and a rename, merged from two runs).
+
+### 174. A literal result element whose attribute reads the input, in a rule for the document node, read the streamed input into memory — fixed (xslt#655, 2026-11-25)
+
+Engine: **XSLT**. In 3.2.0. Found with xslt#655 (#166). In the template rule for "/" of a streamable mode,
+`<out n="{count(books)}"/>` read the whole input into memory. The output was right (`<out n="1"/>`); `--stream`
+warned "the literal result element out ... which this processor cannot evaluate while streaming", and
+`--strict-streaming` gave phx:XTSE9430, although XSLT 3.0 §19.8 finds the body guaranteed streamable (one
+consuming operand). The same for the other attribute value templates that read downward (`{count(books/book)}`,
+`{name(books)}`, `{books/book/title}`). The same attribute written with `xsl:element` and `xsl:attribute`
+streamed; so did a consuming attribute value template in a rule for an element, and a motionless one in the rule
+for "/". The scanner gave the attribute value templates of a literal result element no watcher, and the
+document-level check (`StreamingSubtreeBufferDetector`) sent every attribute that navigates the input to the
+whole-input buffer.
+
+Fix: the scanner gives the expressions of those attribute value templates watchers, and the check judges each
+expression as it judges the select of `xsl:value-of`. It also keeps on the whole-input path what the watchers do
+not compute right in an attribute: a path step that is not an axis step or a "!" (a subscription for
+`{PAGES/number()}` wrote the numbers as text and lost the element; with a watcher `{book/@price/number()}` failed,
+its context item no longer a node), and a FLWOR expression. Still read whole, with the same output: those, what
+the check of `xsl:value-of` sends there (an operator over input paths, the context item), a path to attributes, and an
+`xsl:attribute` whose select reads the input inside a literal result element (`<out><xsl:attribute name="n"
+select="count(books)"/></out>`; open: with the same check, W3C si-attribute-010 in `xsl:source-document` gave
+`a=""`). The list of #165 has 1628 cases: si-lre-247, si-lre-248, si-map-002 and sx-MapExpr-002 stream.
+
+Tests: `DocumentRuleAttributeStreamingTests` (the bodies that stream, each output equal to the output without
+streaming; the shapes still read whole; the cases that streamed before). `StreamingFallbackReportTests` takes an
+`xsl:attribute` as its example of a construct read whole.

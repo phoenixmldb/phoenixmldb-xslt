@@ -190,8 +190,9 @@ public sealed class StreamingFallbackReportTests
     }
 
     // A rule for the document node that the streaming pass cannot evaluate: the comparison in the
-    // attribute of the literal result element. §19.8 accepts it.
-    private const string DocumentRule = """<xsl:template match="/"><out r="{/*/book/@price = (93, 7)}"/></xsl:template>""";
+    // select of xsl:attribute. §19.8 accepts it. (In an attribute value template of the literal
+    // result element it streams, BUGS.md #174.)
+    private const string DocumentRule = """<xsl:template match="/"><out><xsl:attribute name="r" select="/*/book/@price = (93, 7)"/></out></xsl:template>""";
 
     [Fact]
     public async Task A_rule_for_the_document_node_is_reported_with_the_instruction()
@@ -200,7 +201,7 @@ public sealed class StreamingFallbackReportTests
 
         run.Output.Should().Contain("r=\"true\"");
         run.Warnings.Should().ContainSingle().Which.Should().StartWith(
-            "XSLT streaming: the input was read into memory: the literal result element out at line 3, column ")
+            "XSLT streaming: the input was read into memory: /*/book/@price at line 3, column ")
             .And.EndWith("(the template match=\"/\"), which this processor cannot evaluate while streaming.");
     }
 
@@ -222,7 +223,7 @@ public sealed class StreamingFallbackReportTests
             await File.WriteAllTextAsync(Path.Combine(dir, "t.xml"), """<ts><t d="1"/><t d="7"/></ts>""", TestContext.Current.CancellationToken);
             var stylesheet = $$"""
                 <xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-                  <xsl:template match="/"><out><xsl:for-each select="1 to 2"><xsl:source-document streamable="yes" href="{{href}}"><o r="{/*/t/@d = (1, 9)}"/></xsl:source-document></xsl:for-each></out></xsl:template>
+                  <xsl:template match="/"><out><xsl:for-each select="1 to 2"><xsl:source-document streamable="yes" href="{{href}}"><o><xsl:attribute name="r" select="/*/t/@d = (1, 9)"/></o></xsl:source-document></xsl:for-each></out></xsl:template>
                 </xsl:stylesheet>
                 """;
 
@@ -235,7 +236,7 @@ public sealed class StreamingFallbackReportTests
 
             run.Output.Should().Contain("""<o r="true"/><o r="true"/>""");
             run.Warnings.Should().ContainSingle().Which.Should().StartWith(
-                $"XSLT streaming: the document {href} was read into memory: the literal result element o at line 2, column ")
+                $"XSLT streaming: the document {href} was read into memory: xsl:attribute at line 2, column ")
                 .And.EndWith("(the body of xsl:source-document), which this processor cannot evaluate while streaming.");
             tree.Output.Should().Be(run.Output);
             tree.Warnings.Should().BeEmpty();
