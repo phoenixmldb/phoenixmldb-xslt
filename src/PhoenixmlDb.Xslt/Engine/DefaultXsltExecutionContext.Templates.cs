@@ -1275,7 +1275,7 @@ internal sealed partial class DefaultXsltExecutionContext
                 // never be popped (the tag stays open) — close it inline instead.
                 if (_isStreamingExecution && !_streamingDispatchElementMaterialized)
                 {
-                    OpenStreamingElement(qname, CdataTrackingName(elem), startTagLast: templateChildContent.Length == 0);
+                    OpenStreamingElement(qname, CdataTrackingName(elem), startTagLast: templateChildContent.Length == 0, shallowCopyNsBindings);
                     // Descendants in the streaming loop inherit this subtree's base context;
                     // restore happens on the matching EndElement is out of scope here, so
                     // restore now — sentinel already emitted on the open tag above.
