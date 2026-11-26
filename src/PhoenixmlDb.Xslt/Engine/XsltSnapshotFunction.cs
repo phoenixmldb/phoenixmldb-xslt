@@ -36,6 +36,6 @@ internal sealed class XsltSnapshotFunction : PhoenixmlDb.XQuery.Ast.XQueryFuncti
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         var input = arguments[0];
-        return await SnapshotHelper.ProcessSnapshotAsync(input, _context).ConfigureAwait(false);
+        return await SnapshotHelper.ProcessSnapshotAsync(input, _context, XsltCopyOfFunction.CopyBaseUrisOf(context)).ConfigureAwait(false);
     }
 }

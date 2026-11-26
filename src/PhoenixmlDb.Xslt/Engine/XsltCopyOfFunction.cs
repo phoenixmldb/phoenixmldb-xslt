@@ -32,11 +32,17 @@ internal sealed class XsltCopyOfFunction : PhoenixmlDb.XQuery.Ast.XQueryFunction
         new() { Name = new QName(NamespaceId.None, "input"), Type = new PhoenixmlDb.XQuery.Ast.XdmSequenceType { ItemType = PhoenixmlDb.XQuery.Ast.ItemType.Item, Occurrence = PhoenixmlDb.XQuery.Ast.Occurrence.ZeroOrMore } }
     ];
 
+    /// <summary>The node provider and static base URI of a call, for the base URI of its copies.</summary>
+    internal static CopyBaseUris CopyBaseUrisOf(PhoenixmlDb.XQuery.Ast.ExecutionContext context)
+        => context is PhoenixmlDb.XQuery.Execution.QueryExecutionContext query
+            ? new CopyBaseUris(query.NodeProvider, query.StaticBaseUri)
+            : new CopyBaseUris(null, null);
+
     public override async ValueTask<object?> InvokeAsync(
         IReadOnlyList<object?> arguments,
         PhoenixmlDb.XQuery.Ast.ExecutionContext context)
     {
         // fn:copy-of always copies accumulator values per XSLT 3.0 §16.6.9
-        return await _context.DeepCopyWithAccumulatorsAsync(arguments[0]).ConfigureAwait(false);
+        return await _context.DeepCopyWithAccumulatorsAsync(arguments[0], baseUris: CopyBaseUrisOf(context)).ConfigureAwait(false);
     }
 }

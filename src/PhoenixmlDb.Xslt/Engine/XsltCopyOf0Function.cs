@@ -35,7 +35,7 @@ internal sealed class XsltCopyOf0Function : PhoenixmlDb.XQuery.Ast.XQueryFunctio
     {
         var contextItem = context.ContextItem ?? _context.ContextItem;
         // fn:copy-of() always copies accumulator values per XSLT 3.0 §16.6.9
-        return await _context.DeepCopyWithAccumulatorsAsync(contextItem).ConfigureAwait(false);
+        return await _context.DeepCopyWithAccumulatorsAsync(contextItem, baseUris: XsltCopyOfFunction.CopyBaseUrisOf(context)).ConfigureAwait(false);
     }
 }
 
