@@ -279,9 +279,9 @@ public sealed class ErrorCodeRoutesTests
     [InlineData($"Q{{{Phx}}}XTDE9430: Assertion failed", Phx, "XTDE9430", "phx:XTDE9430")]
     [InlineData("Q{urn:q}1E: the local name is not an NCName", null, null, null)]
     [InlineData("Q{urn:q: no closing brace", null, null, null)]
-    public void ErrorCode_and_xsl_try_read_an_expanded_code_alike(string message, string? uri, string? local, string? errorCode)
+    public void ErrorCode_and_xsl_try_read_an_expanded_code_alike(string message, string? ns, string? local, string? errorCode)
     {
         new XsltException(message).ErrorCode.Should().Be(errorCode);
-        DefaultXsltExecutionContext.ExtractErrorCode(message).Should().Be(local is null ? null : $"Q{{{uri}}}{local}");
+        DefaultXsltExecutionContext.ExtractErrorCode(message).Should().Be(local is null ? null : $"Q{{{ns}}}{local}");
     }
 }
