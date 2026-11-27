@@ -293,8 +293,17 @@ public sealed partial class XsltTransformEngine
             throw new XsltException(finding.Message, finding.Location);
     }
 
+    /// <summary>
+    /// Transforms <paramref name="source"/>. The nodes that the transformation constructs
+    /// (temporary trees, XPath node constructors, <c>fn:json-to-xml</c>, the functions of
+    /// <c>load-xquery-module</c>) are made in a new <see cref="XdmInMemoryStore"/>.
+    /// </summary>
+    /// <remarks>
+    /// With no store, a stylesheet that constructed nodes failed through this method: a path into a
+    /// temporary tree, an XPath element constructor, <c>fn:json-to-xml</c>.
+    /// </remarks>
     public Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options = null)
-        => TransformAsync(source, options, null);
+        => TransformAsync(source, options, new XdmInMemoryStore());
 
     /// <summary>
     /// Runs a transformation on the large stack, in the implicit timezone the options ask for
