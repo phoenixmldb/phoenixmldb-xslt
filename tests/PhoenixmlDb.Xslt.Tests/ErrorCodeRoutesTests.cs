@@ -93,7 +93,7 @@ public sealed class ErrorCodeRoutesTests
     [InlineData($"QName('{Phx}', 'phx:MYCODE')", "MYCODE", Phx, "phx")]
     [InlineData("QName('urn:q', 'q:E1')", "E1", "urn:q", "q")]
     [InlineData($"QName('{Err}', 'err:FOER0001')", "FOER0001", Err, "err")]
-    public async Task Fn_error_keeps_the_namespace_and_the_prefix_of_its_code(string qname, string local, string uri, string prefix)
+    public async Task Fn_error_keeps_the_namespace_and_the_prefix_of_its_code(string qname, string local, string ns, string prefix)
     {
         foreach (var error in new[]
         {
@@ -102,7 +102,7 @@ public sealed class ErrorCodeRoutesTests
         })
         {
             var x = error.Should().BeOfType<XQueryException>().Subject;
-            (x.ErrorCode, x.ErrorNamespaceUri, x.ErrorPrefix).Should().Be((local, uri, prefix));
+            (x.ErrorCode, x.ErrorNamespaceUri, x.ErrorPrefix).Should().Be((local, ns, prefix));
         }
     }
 
@@ -118,14 +118,14 @@ public sealed class ErrorCodeRoutesTests
     [InlineData("<xsl:sequence select=\"error(QName('urn:q', 'q:E1'), 'e')\"/>", "q:E1", "E1", "urn:q")]
     [InlineData($"<xsl:sequence select=\"error(QName('{Phx}', 'phx:XTDE9430'), 'e')\"/>", "phx:XTDE9430", "XTDE9430", Phx)]
     [InlineData($"<xsl:sequence select=\"error(QName('{Err}', 'err:FOER0001'), 'e')\"/>", "err:FOER0001", "FOER0001", Err)]
-    public async Task Xsl_catch_matches_the_code(string body, string catchName, string local, string uri)
+    public async Task Xsl_catch_matches_the_code(string body, string catchName, string local, string ns)
     {
         var transformer = new XsltTransformer();
         await transformer.LoadStylesheetAsync(Sheet(
             $"<xsl:try>{body}<xsl:catch errors='{catchName}'><c l='{{local-name-from-QName($err:code)}}'"
             + " ns='{namespace-uri-from-QName($err:code)}'/></xsl:catch><xsl:catch><other/></xsl:catch></xsl:try>")).ConfigureAwait(true);
         var result = await transformer.TransformAsync("<r/>").ConfigureAwait(true);
-        result.Should().Contain($"<c ").And.Contain($"l=\"{local}\"").And.Contain($"ns=\"{uri}\"");
+        result.Should().Contain($"<c ").And.Contain($"l=\"{local}\"").And.Contain($"ns=\"{ns}\"");
     }
 
     [Fact]
