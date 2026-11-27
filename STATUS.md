@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-26 16:59 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-27 01:45 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -18,7 +18,7 @@ Generated 2026-11-26 16:59 UTC by `scripts/status.sh`. Do not edit by hand.
 |---|---|---|
 | phoenixmldb-core | 0 | 1 |
 | phoenixmldb-xquery | 0 | 1 |
-| phoenixmldb-xslt | 3 | 1 |
+| phoenixmldb-xslt | 3 | 0 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
@@ -37,15 +37,11 @@ Generated 2026-11-26 16:59 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
-- [436] XQuery Update 3.0 §2.3.2: a function test matches an updating function only with %updating
-
-**phoenixmldb-xslt**
-
-- [662] Streaming: an attribute of a literal result element that reads the input streams in the rule for the document node (BUGS.md #174)
+- [442] Serialization: the text method writes a space only between adjacent atomic values
 
 ## Defect register
 
-`BUGS.md`: **174** entries, **22** marked OPEN. It spans repos deliberately —
+`BUGS.md`: **175** entries, **22** marked OPEN. It spans repos deliberately —
 the engines are split but the defects are not.
 
 - 34. OPEN — the 1,001 XQTS cases the fail-open was hiding, clustered
