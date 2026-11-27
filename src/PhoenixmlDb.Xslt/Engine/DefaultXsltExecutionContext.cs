@@ -2173,6 +2173,18 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
         {
             return message[..end];
         }
+        // A code of this processor, as the engine raises it: phx:XTDE9430. It is in the processor's
+        // namespace; read as no code at all, xsl:catch errors="phx:XTDE9430" did not match it, and a
+        // catch-all saw err:XSLT0000.
+        if (message.StartsWith("phx:", StringComparison.Ordinal))
+        {
+            var stop = 4;
+            if (stop < message.Length && (char.IsLetter(message[stop]) || message[stop] == '_'))
+                for (stop++; stop < message.Length && (char.IsLetterOrDigit(message[stop]) || message[stop] is '_' or '-' or '.'); stop++) { }
+            return stop > 4 && (stop == message.Length || message[stop] is ':' or ' ')
+                ? $"Q{{{StylesheetParser.PhxNamespace}}}{message[4..stop]}"
+                : null;
+        }
         if (message.Length >= 8
             && char.IsUpper(message[0]) && char.IsUpper(message[1])
             && char.IsLetterOrDigit(message[2]) && char.IsLetterOrDigit(message[3])

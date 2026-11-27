@@ -23,10 +23,10 @@ public sealed class ErrorCodeRoutesTests
     private const string Phx = "https://schemas.phoenixml.dev/2026/functions";
     private const string Err = "http://www.w3.org/2005/xqt-errors";
 
-    private static string Sheet(string body) =>
+    private static string Sheet(string body, string declarations = "") =>
         "<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'"
         + $" xmlns:phx='{Phx}' xmlns:q='urn:q' xmlns:err='{Err}'>"
-        + $"<xsl:template match='/'>{body}</xsl:template></xsl:stylesheet>";
+        + $"{declarations}<xsl:template match='/'>{body}</xsl:template></xsl:stylesheet>";
 
     private static async Task<Exception?> TransformAsync(string body)
     {
@@ -46,10 +46,11 @@ public sealed class ErrorCodeRoutesTests
     public static TheoryData<string, string> TerminatingInstructions() => new()
     {
         { "<xsl:message terminate='yes' error-code='phx:XTDE9430'>m</xsl:message>", "phx:XTDE9430" },
-        { $"<xsl:message terminate='yes' error-code='Q{{{Phx}}}XTDE9430'>m</xsl:message>", "phx:XTDE9430" },
+        // error-code is an attribute value template: the braces of an EQName are doubled.
+        { $"<xsl:message terminate='yes' error-code='Q{{{{{Phx}}}}}XTDE9430'>m</xsl:message>", "phx:XTDE9430" },
         { "<xsl:message terminate='yes' error-code='phx:MYCODE'>m</xsl:message>", "phx:MYCODE" },
         { "<xsl:message terminate='yes' error-code='q:E1'>m</xsl:message>", "Q{urn:q}E1" },
-        { "<xsl:message terminate='yes' error-code='Q{urn:q}E1'>m</xsl:message>", "Q{urn:q}E1" },
+        { "<xsl:message terminate='yes' error-code='Q{{urn:q}}E1'>m</xsl:message>", "Q{urn:q}E1" },
         { "<xsl:message terminate='yes' error-code='MYCODE'>m</xsl:message>", "Q{}MYCODE" },
         { "<xsl:message terminate='yes' error-code='{concat(\"q:\", \"E1\")}'>m</xsl:message>", "Q{urn:q}E1" },
         { "<xsl:assert test='false()' error-code='phx:XTDE9430'>a</xsl:assert>", "phx:XTDE9430" },
@@ -136,5 +137,97 @@ public sealed class ErrorCodeRoutesTests
             "<xsl:try><xsl:sequence select=\"error(QName('urn:q', 'q:E1'), 'e')\"/>"
             + "<xsl:catch><c code='{$err:code}'/></xsl:catch></xsl:try>")).ConfigureAwait(true);
         (await transformer.TransformAsync("<r/>").ConfigureAwait(true)).Should().Contain("code=\"q:E1\"");
+    }
+
+    /// <summary>
+    /// XSLT 3.0 §2.3.2 lets a dynamic error of a global variable wait until the variable is
+    /// referenced. The engine defers an error whose code is not a static one; with no code (null)
+    /// it did not, so an xsl:message terminate="yes" with a code outside the error namespace in a
+    /// global variable that is never referenced stopped the transformation, and the same
+    /// instruction with the default code did not. Now one rule holds for every code.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(" error-code='err:FOER0000'")]
+    [InlineData(" error-code='q:E1'")]
+    [InlineData(" error-code='phx:MYCODE'")]
+    [InlineData(" error-code='MYCODE'")]
+    public async Task A_global_variable_that_is_never_referenced_does_not_stop_the_transformation(string errorCode)
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(Sheet("<done/>",
+            $"<xsl:variable name='g'><xsl:message terminate='yes'{errorCode}>g</xsl:message></xsl:variable>")).ConfigureAwait(true);
+        (await transformer.TransformAsync("<r/>").ConfigureAwait(true)).Should().Contain("<done");
+    }
+
+    /// <summary>Guard: a reference to the variable raises the error, with its code.</summary>
+    [Theory]
+    [InlineData(" error-code='q:E1'", "Q{urn:q}E1")]
+    [InlineData(" error-code='phx:MYCODE'", "phx:MYCODE")]
+    [InlineData("", "XTMM9000")]
+    public async Task A_referenced_global_variable_raises_the_code(string errorCode, string code)
+    {
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(Sheet("<xsl:value-of select='$g'/>",
+            $"<xsl:variable name='g'><xsl:message terminate='yes'{errorCode}>g</xsl:message></xsl:variable>")).ConfigureAwait(true);
+        var error = await Record.ExceptionAsync(() => transformer.TransformAsync("<r/>")).ConfigureAwait(true);
+        error.Should().BeOfType<XsltException>().Which.ErrorCode.Should().Be(code);
+    }
+
+    /// <summary>
+    /// An error that the engine raises with a code of this processor, phx:XTDE9430 (an
+    /// xsl:source-document that cannot be streamed, under StrictStreamability). xsl:try read its
+    /// message with its own reader, which did not read phx:, so the code was err:XSLT0000: a catch
+    /// by name did not match, and a catch-all saw err:XSLT0000.
+    /// </summary>
+    [Theory]
+    [InlineData("phx:XTDE9430")]
+    [InlineData("*:XTDE9430")]
+    [InlineData($"Q{{{Phx}}}XTDE9430")]
+    [InlineData("phx:*")]
+    [InlineData("")]
+    public async Task Xsl_catch_matches_an_engine_phx_code(string catchName)
+    {
+        var dir = Directory.CreateTempSubdirectory("phoenixml-phx-code-");
+        try
+        {
+            var input = Path.Combine(dir.FullName, "b.xml");
+            await File.WriteAllTextAsync(input, "<B><I><P>1</P></I><I><P>2</P></I></B>").ConfigureAwait(true);
+            var errors = catchName.Length == 0 ? "" : $" errors='{catchName}'";
+            var transformer = new XsltTransformer { StrictStreamability = true };
+            await transformer.LoadStylesheetAsync(Sheet(
+                $"<xsl:try><xsl:source-document streamable='yes' href='{new Uri(input).AbsoluteUri}'>"
+                + "<out><xsl:copy-of select='round(avg(./B/I[position() lt 4]/P), 2)'/></out></xsl:source-document>"
+                + $"<xsl:catch{errors}><c code='{{$err:code}}' l='{{local-name-from-QName($err:code)}}'"
+                + " ns='{namespace-uri-from-QName($err:code)}'/></xsl:catch><xsl:catch><other code='{$err:code}'/></xsl:catch></xsl:try>")).ConfigureAwait(true);
+            var result = await transformer.TransformAsync("<r/>").ConfigureAwait(true);
+            result.Should().Contain("<c ").And.Contain("code=\"phx:XTDE9430\"").And.Contain("l=\"XTDE9430\"").And.Contain($"ns=\"{Phx}\"");
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>Guard: the same transformation outside xsl:try still raises phx:XTDE9430.</summary>
+    [Fact]
+    public async Task The_engine_phx_code_reaches_the_host()
+    {
+        var dir = Directory.CreateTempSubdirectory("phoenixml-phx-code-");
+        try
+        {
+            var input = Path.Combine(dir.FullName, "b.xml");
+            await File.WriteAllTextAsync(input, "<B><I><P>1</P></I></B>").ConfigureAwait(true);
+            var transformer = new XsltTransformer { StrictStreamability = true };
+            await transformer.LoadStylesheetAsync(Sheet(
+                $"<xsl:source-document streamable='yes' href='{new Uri(input).AbsoluteUri}'>"
+                + "<out><xsl:copy-of select='round(avg(./B/I[position() lt 4]/P), 2)'/></out></xsl:source-document>")).ConfigureAwait(true);
+            var error = await Record.ExceptionAsync(() => transformer.TransformAsync("<r/>")).ConfigureAwait(true);
+            error.Should().BeOfType<XsltException>().Which.ErrorCode.Should().Be("phx:XTDE9430");
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
     }
 }
