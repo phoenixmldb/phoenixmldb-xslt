@@ -89,18 +89,13 @@ public class XsltException : Exception
         // A code with a namespace URI, as xsl:message and xsl:assert write it (Q{} for no
         // namespace). The xqt-errors namespace is the local name and the processor's namespace
         // phx:local, as the engine raises them; another namespace keeps the form of the message.
-        if (message.StartsWith("Q{", StringComparison.Ordinal)
-            && message.IndexOf('}', StringComparison.Ordinal) is var close and > 1
-            && NCNameLength(message, close + 1) is var localLength and > 0
-            && close + 1 + localLength < message.Length
-            && message[close + 1 + localLength] == ':')
+        if (TryReadExpandedCode(message, out var namespaceUri, out var localName))
         {
-            var local = message.Substring(close + 1, localLength);
-            return message[2..close] switch
+            return namespaceUri switch
             {
-                StylesheetParser.PhxNamespace => "phx:" + local,
-                "http://www.w3.org/2005/xqt-errors" => local,
-                _ => message[..(close + 1 + localLength)],
+                StylesheetParser.PhxNamespace => "phx:" + localName,
+                "http://www.w3.org/2005/xqt-errors" => localName,
+                _ => $"Q{{{namespaceUri}}}{localName}",
             };
         }
         // A code of this processor: phx:XTSE9430 (xslt#582), or phx: and any NCName.
@@ -115,6 +110,30 @@ public class XsltException : Exception
         if (message.Length > 8 && message[8] is not (':' or ' '))
             return null;
         return message[..8];
+    }
+
+    /// <summary>
+    /// The namespace URI and the local name of a code at the start of <paramref name="message"/>
+    /// written as <c>Q{uri}local</c> and a colon (<c>Q{}</c> for no namespace), as xsl:message and
+    /// xsl:assert write the code of their <c>error-code</c> attribute; the local name is an NCName.
+    /// <c>false</c> when the message does not start with one. The one reader of this form:
+    /// <see cref="ErrorCode"/> and xsl:try both use it, so the two cannot read a message
+    /// differently.
+    /// </summary>
+    internal static bool TryReadExpandedCode(string message, out string namespaceUri, out string localName)
+    {
+        namespaceUri = localName = "";
+        if (!message.StartsWith("Q{", StringComparison.Ordinal))
+            return false;
+        var close = message.IndexOf('}', StringComparison.Ordinal);
+        if (close < 2)
+            return false;
+        var length = NCNameLength(message, close + 1);
+        if (length == 0 || close + 1 + length >= message.Length || message[close + 1 + length] != ':')
+            return false;
+        namespaceUri = message[2..close];
+        localName = message.Substring(close + 1, length);
+        return true;
     }
 
     /// <summary>

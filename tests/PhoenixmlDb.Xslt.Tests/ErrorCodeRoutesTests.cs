@@ -265,4 +265,23 @@ public sealed class ErrorCodeRoutesTests
         var result = await transformer.TransformAsync("<r/>").ConfigureAwait(true);
         result.Should().Contain("<c ").And.Contain("l=\"MY-CODE.v2\"").And.Contain($"ns=\"{Phx}\"");
     }
+
+    /// <summary>
+    /// ErrorCode and xsl:try read a code written as <c>Q{uri}local:</c> with one reader
+    /// (<c>XsltException.TryReadExpandedCode</c>), which checks that the local name is an NCName.
+    /// ErrorCode gives the err namespace as the local name and the phx namespace as phx:local;
+    /// xsl:try gives every namespace as Q{uri}local, which its catch matches by URI and local name.
+    /// </summary>
+    [Theory]
+    [InlineData("Q{urn:q}E1: Transformation terminated: m", "urn:q", "E1", "Q{urn:q}E1")]
+    [InlineData("Q{}MYCODE: Transformation terminated: m", "", "MYCODE", "Q{}MYCODE")]
+    [InlineData($"Q{{{Err}}}FOER0000: Transformation terminated: m", Err, "FOER0000", "FOER0000")]
+    [InlineData($"Q{{{Phx}}}XTDE9430: Assertion failed", Phx, "XTDE9430", "phx:XTDE9430")]
+    [InlineData("Q{urn:q}1E: the local name is not an NCName", null, null, null)]
+    [InlineData("Q{urn:q: no closing brace", null, null, null)]
+    public void ErrorCode_and_xsl_try_read_an_expanded_code_alike(string message, string? uri, string? local, string? errorCode)
+    {
+        new XsltException(message).ErrorCode.Should().Be(errorCode);
+        DefaultXsltExecutionContext.ExtractErrorCode(message).Should().Be(local is null ? null : $"Q{{{uri}}}{local}");
+    }
 }
