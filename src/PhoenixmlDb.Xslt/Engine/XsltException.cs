@@ -105,12 +105,7 @@ public class XsltException : Exception
         }
         // A code of this processor: phx:XTSE9430 (xslt#582), or phx: and any NCName.
         if (message.StartsWith("phx:", StringComparison.Ordinal))
-        {
-            var length = NCNameLength(message, 4);
-            return length > 0 && (message.Length == 4 + length || message[4 + length] is ':' or ' ')
-                ? message[..(4 + length)]
-                : null;
-        }
+            return ReadPhxCode(message) is { } local ? "phx:" + local : null;
         if (message.Length < 8)
             return null;
         for (var i = 0; i < 4; i++)
@@ -120,6 +115,22 @@ public class XsltException : Exception
         if (message.Length > 8 && message[8] is not (':' or ' '))
             return null;
         return message[..8];
+    }
+
+    /// <summary>
+    /// The local name of a code of this processor at the start of <paramref name="message"/>:
+    /// <c>phx:</c>, an NCName, then a colon, a space or the end; <c>null</c> when the message does
+    /// not start with one. The one reader of this form: <see cref="ErrorCode"/> and xsl:try both
+    /// use it, so the two cannot read a message differently.
+    /// </summary>
+    internal static string? ReadPhxCode(string message)
+    {
+        if (!message.StartsWith("phx:", StringComparison.Ordinal))
+            return null;
+        var length = NCNameLength(message, 4);
+        return length > 0 && (message.Length == 4 + length || message[4 + length] is ':' or ' ')
+            ? message.Substring(4, length)
+            : null;
     }
 
     /// <summary>

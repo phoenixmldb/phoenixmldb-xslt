@@ -230,4 +230,39 @@ public sealed class ErrorCodeRoutesTests
             dir.Delete(recursive: true);
         }
     }
+
+    /// <summary>
+    /// ErrorCode and xsl:try read a code of this processor at the start of a message with one
+    /// reader (<c>XsltException.ReadPhxCode</c>), so they agree on every message, also with '-' and
+    /// '.' in the local name.
+    /// </summary>
+    [Theory]
+    [InlineData("phx:MY-CODE.v2: m", "MY-CODE.v2")]
+    [InlineData("phx:MY-CODE.v2 m", "MY-CODE.v2")]
+    [InlineData("phx:MY-CODE.v2", "MY-CODE.v2")]
+    [InlineData("phx:XTDE9430: The document of xsl:source-document cannot be streamed", "XTDE9430")]
+    [InlineData("phx:-CODE: the local name does not start with a letter", null)]
+    [InlineData("phx:: no local name", null)]
+    [InlineData("phx:CODE!: no delimiter after the local name", null)]
+    public void ErrorCode_and_xsl_try_read_a_phx_code_alike(string message, string? local)
+    {
+        new XsltException(message).ErrorCode.Should().Be(local is null ? null : "phx:" + local);
+        DefaultXsltExecutionContext.ExtractErrorCode(message).Should().Be(local is null ? null : $"Q{{{Phx}}}{local}");
+    }
+
+    /// <summary>A phx code with '-' and '.' in its local name is the same code as ErrorCode and as $err:code.</summary>
+    [Fact]
+    public async Task A_phx_code_with_a_hyphen_and_a_dot_is_the_same_on_both_routes()
+    {
+        const string body = "<xsl:message terminate='yes' error-code='phx:MY-CODE.v2'>m</xsl:message>";
+        var error = await TransformAsync(body).ConfigureAwait(true);
+        error.Should().BeOfType<XsltException>().Which.ErrorCode.Should().Be("phx:MY-CODE.v2");
+
+        var transformer = new XsltTransformer();
+        await transformer.LoadStylesheetAsync(Sheet(
+            $"<xsl:try>{body}<xsl:catch errors='phx:MY-CODE.v2'><c l='{{local-name-from-QName($err:code)}}'"
+            + " ns='{namespace-uri-from-QName($err:code)}'/></xsl:catch><xsl:catch><other/></xsl:catch></xsl:try>")).ConfigureAwait(true);
+        var result = await transformer.TransformAsync("<r/>").ConfigureAwait(true);
+        result.Should().Contain("<c ").And.Contain("l=\"MY-CODE.v2\"").And.Contain($"ns=\"{Phx}\"");
+    }
 }
