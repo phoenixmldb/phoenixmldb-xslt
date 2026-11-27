@@ -1184,10 +1184,16 @@ internal sealed partial class DefaultXsltExecutionContext
             // are still meaningful and $err:line-number must not go empty because of it.
             if (expr.Location is not null)
                 _lastExpressionErrorLocation = expr.Location;
+            // The code is a QName: its namespace and prefix go with it. Without them a host saw
+            // fn:error(QName('urn:q', 'q:E1')) as E1 in no namespace.
             throw new PhoenixmlDb.XQuery.Functions.XQueryException(
                 xqe.ErrorCode,
                 $"{sourcePrefix}{xqe.Message}\n  ↳ in expression ({expr.GetType().Name}): {snippet}",
-                xqe);
+                xqe)
+            {
+                ErrorNamespaceUri = xqe.ErrorNamespaceUri,
+                ErrorPrefix = xqe.ErrorPrefix,
+            };
         }
 
         return results.Count switch

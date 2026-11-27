@@ -2163,16 +2163,17 @@ internal sealed partial class DefaultXsltExecutionContext : XsltExecutionContext
     /// Extracts a standard error code (e.g., "XTTE1000") from an exception message
     /// that starts with "XTTE1000: ..." or similar pattern.
     /// </summary>
-    private static string? ExtractErrorCode(string message)
+    internal static string? ExtractErrorCode(string message)
     {
-        // A code in another namespace, as xsl:message/@error-code reports it: Q{uri}local.
-        if (message.StartsWith("Q{", StringComparison.Ordinal)
-            && message.IndexOf('}', StringComparison.Ordinal) is var close and > 1
-            && message.IndexOf(':', close) is var end and > 0
-            && end > close + 1)
-        {
-            return message[..end];
-        }
+        // A code in another namespace, as xsl:message/@error-code reports it: Q{uri}local. The
+        // reader is XsltException.ErrorCode's (the local name must be an NCName).
+        if (XsltException.TryReadExpandedCode(message, out var namespaceUri, out var localName))
+            return $"Q{{{namespaceUri}}}{localName}";
+        // A code of this processor, as the engine raises it: phx:XTDE9430. It is in the processor's
+        // namespace; read as no code at all, xsl:catch errors="phx:XTDE9430" did not match it, and a
+        // catch-all saw err:XSLT0000. The reader is XsltException.ErrorCode's.
+        if (XsltException.ReadPhxCode(message) is { } phxLocal)
+            return $"Q{{{StylesheetParser.PhxNamespace}}}{phxLocal}";
         if (message.Length >= 8
             && char.IsUpper(message[0]) && char.IsUpper(message[1])
             && char.IsLetterOrDigit(message[2]) && char.IsLetterOrDigit(message[3])

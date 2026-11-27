@@ -1,6 +1,6 @@
 # Status
 
-Generated 2026-11-27 01:45 UTC by `scripts/status.sh`. Do not edit by hand.
+Generated 2026-11-27 16:45 UTC by `scripts/status.sh`. Do not edit by hand.
 
 ## Packages
 
@@ -17,8 +17,8 @@ Generated 2026-11-27 01:45 UTC by `scripts/status.sh`. Do not edit by hand.
 | repo | open issues | open PRs |
 |---|---|---|
 | phoenixmldb-core | 0 | 1 |
-| phoenixmldb-xquery | 0 | 1 |
-| phoenixmldb-xslt | 3 | 0 |
+| phoenixmldb-xquery | 0 | 3 |
+| phoenixmldb-xslt | 3 | 2 |
 | phoenixmldb-cli | unreadable | unreadable |
 
 ### Open issues
@@ -37,7 +37,14 @@ Generated 2026-11-27 01:45 UTC by `scripts/status.sh`. Do not edit by hand.
 
 **phoenixmldb-xquery**
 
-- [442] Serialization: the text method writes a space only between adjacent atomic values
+- [446] XQUTS baseline: 660 -> 672 (the gains of #440 and #441)
+- [445] Node constructors need a node builder (no node with id 0); the copy store takes namespace ids from the query store
+- [443] Built-in function calls check the item types of their arguments; fn:serialize rejects other parameters
+
+**phoenixmldb-xslt**
+
+- [665] XsltTransformEngine.TransformAsync(XdmNode) works in the source's store; a node of another store is refused
+- [664] Error codes: phx:LOCAL and Q{uri}local from xsl:message and xsl:assert; fn:error keeps its namespace; xsl:try catches engine phx codes
 
 ## Defect register
 

@@ -2146,7 +2146,9 @@ internal sealed partial class DefaultXsltExecutionContext
                         : errorNamespace.Length == 0
                             ? (object)new QName(NamespaceId.None, errorLocal)
                             : (object)new QName(StylesheetParser.ResolveNamespaceUri(errorNamespace), errorLocal,
-                                (ex as XQuery.Functions.XQueryException)?.ErrorPrefix) { ExpandedNamespace = errorNamespace };
+                                (ex as XQuery.Functions.XQueryException)?.ErrorPrefix
+                                // A code the engine raised as phx:LOCAL keeps its prefix.
+                                ?? (ex.Message.StartsWith("phx:", StringComparison.Ordinal) ? "phx" : null)) { ExpandedNamespace = errorNamespace };
                     SetVariable(new QName(errNs, "code", "err"), errCodeValue);
                     SetVariable(new QName(NamespaceId.None, "code", "") { ExpandedNamespace = errUri }, errCodeValue);
                     // $err:value is fn:error()'s third argument (the error object). It rides on
