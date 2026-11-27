@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using PhoenixmlDb.Core;
 using PhoenixmlDb.Xdm.Nodes;
+using PhoenixmlDb.Xslt.Ast;
 using PhoenixmlDb.Xslt.Engine;
 using Xunit;
 
@@ -42,10 +43,15 @@ public sealed class EngineNodeEntryStoreTests : IDisposable
 
     private static XsltTransformOptions WithSource() => new() { HasSourceDocument = true };
 
-    /// <summary><c>&lt;r&gt;&lt;i&gt;1&lt;/i&gt;&lt;i&gt;2&lt;/i&gt;&lt;/r&gt;</c> as a document of an <see cref="XdmInMemoryStore"/>.</summary>
-    private static XdmDocument InMemorySource()
+    /// <summary>
+    /// <c>&lt;r&gt;&lt;i&gt;1&lt;/i&gt;&lt;i&gt;2&lt;/i&gt;&lt;/r&gt;</c> as a document of an
+    /// <see cref="XdmInMemoryStore"/>, or of a temporary tree of one (the store the engine gives the
+    /// tree that a variable body builds, xslt#516).
+    /// </summary>
+    private static XdmDocument InMemorySource(bool temporaryTree = false)
     {
         var store = new XdmInMemoryStore();
+        using var scope = temporaryTree ? store.TemporaryTree() : default;
         var docId = store.NextId();
         var rId = store.NextId();
         var i1 = store.NextId();
@@ -148,20 +154,14 @@ public sealed class EngineNodeEntryStoreTests : IDisposable
     }
 
     /// <summary>
-    /// A node of a temporary tree of an earlier transformation (its store is the tree's) is read
-    /// through the store of that transformation.
+    /// A node of a temporary tree (its store is the tree's) is read through the store of the
+    /// transformation that built the tree.
     /// </summary>
     [Theory]
     [MemberData(nameof(SourceCases))]
     public async Task A_node_of_a_temporary_tree_is_read_in_its_transformation_store(string body, string expected)
     {
-        var first = new XsltTransformer();
-        await first.LoadStylesheetAsync(
-            "<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>"
-            + "<xsl:template name='xsl:initial-template'><xsl:variable name='v'>" + SourceXml + "</xsl:variable>"
-            + "<xsl:sequence select='$v'/></xsl:template></xsl:stylesheet>").ConfigureAwait(true);
-        var sequence = await first.TransformToSequenceAsync(null).ConfigureAwait(true);
-        var tree = sequence[0].Should().BeOfType<XdmDocument>().Subject;
+        var tree = InMemorySource(temporaryTree: true);
         tree.Store.Should().BeOfType<TemporaryTreeStore>("the precondition of this test");
         (await ViaNodeAsync(body, tree).ConfigureAwait(true)).Should().Be(expected);
     }
