@@ -293,8 +293,41 @@ public sealed partial class XsltTransformEngine
             throw new XsltException(finding.Message, finding.Location);
     }
 
+    /// <summary>
+    /// Transforms <paramref name="source"/>, a node of an <see cref="XdmInMemoryStore"/> or a node
+    /// that no store holds. The transformation reads the source's tree in the source's store
+    /// (<see cref="XdmNode.Store"/>), and constructs its nodes there; for a node that no store
+    /// holds, in a new <see cref="XdmInMemoryStore"/>.
+    /// </summary>
+    /// <remarks>
+    /// The engine reads a source's tree (keys, <c>xsl:number</c>, <c>root()</c>, accumulators) only
+    /// in an <see cref="XdmInMemoryStore"/>. With no store, this method gave wrong results for a node
+    /// of another store (<c>key()</c> found nothing, <c>xsl:number</c> counted one node), and a
+    /// stylesheet that constructed nodes failed (a path into a temporary tree, an XPath element
+    /// constructor, <c>fn:json-to-xml</c>).
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="source"/> is a node of another store, such as an <c>XdmDocumentStore</c>.
+    /// Load the source into an <see cref="XdmInMemoryStore"/>, or use <see cref="PhoenixmlDb.Xslt.XsltTransformer"/>.
+    /// </exception>
     public Task<string> TransformAsync(XdmNode source, XsltTransformOptions? options = null)
-        => TransformAsync(source, options, null);
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var store = source.Store switch
+        {
+            null => new XdmInMemoryStore(),
+            XdmInMemoryStore own => own,
+            // A node of a temporary tree of an earlier transformation: its tree is found through
+            // the store of that transformation (xslt#516).
+            TemporaryTreeStore tree => tree.Main,
+            var other => throw new InvalidOperationException(
+                $"The source node is a node of a {other.GetType().Name}, not of an XdmInMemoryStore. The "
+                + "transformation reads the source's tree only in an XdmInMemoryStore (keys, xsl:number, root(), "
+                + "accumulators). Load the source into an XdmInMemoryStore, or use XsltTransformer with "
+                + "XdmSequence.OfNode(node, store)."),
+        };
+        return TransformAsync(source, options, store);
+    }
 
     /// <summary>
     /// Runs a transformation on the large stack, in the implicit timezone the options ask for
