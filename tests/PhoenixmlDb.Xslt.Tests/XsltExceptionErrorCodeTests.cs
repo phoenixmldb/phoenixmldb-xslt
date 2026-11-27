@@ -21,6 +21,15 @@ public class XsltExceptionErrorCodeTests
     [InlineData("XPST0008: Variable $x is not in scope", "XPST0008")]
     [InlineData("XTSE0010: Invalid XML in stylesheet module", "XTSE0010")]
     [InlineData("SESU0007: unsupported encoding", "SESU0007")]
+    [InlineData("phx:XTSE9430: The input cannot be streamed", "phx:XTSE9430")]
+    // A code of this processor that is not W3C-shaped, and the forms xsl:message and xsl:assert
+    // write for a code of error-code: the processor's namespace with its prefix, the error
+    // namespace as the local name, another namespace (or none) as Q{uri}local.
+    [InlineData("phx:MYCODE: Transformation terminated: m", "phx:MYCODE")]
+    [InlineData("Q{https://schemas.phoenixml.dev/2026/functions}XTDE9430: Transformation terminated: m", "phx:XTDE9430")]
+    [InlineData("Q{http://www.w3.org/2005/xqt-errors}FOER0000: Transformation terminated: m", "FOER0000")]
+    [InlineData("Q{urn:q}E1: Assertion failed", "Q{urn:q}E1")]
+    [InlineData("Q{}MYCODE: Transformation terminated: m", "Q{}MYCODE")]
     public void Leading_code_is_extracted(string message, string expected)
         => new XsltException(message).ErrorCode.Should().Be(expected);
 
@@ -38,6 +47,11 @@ public class XsltExceptionErrorCodeTests
     [InlineData("XTDEABCD: digits required")]
     [InlineData("XTDE0640X: not delimited")]
     [InlineData("")]
+    [InlineData("Q{urn:q}E1 is not followed by a colon")]
+    [InlineData("Q{urn:q}: no local name")]
+    [InlineData("Q{urn:q}1E: not an NCName")]
+    [InlineData("Q{urn:q: not closed")]
+    [InlineData("phx:: no local name")]
     public void Non_codes_yield_null(string message)
         => new XsltException(message).ErrorCode.Should().BeNull();
 

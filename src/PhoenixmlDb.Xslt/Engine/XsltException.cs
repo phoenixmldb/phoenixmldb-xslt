@@ -40,10 +40,19 @@ public class XsltException : Exception
 
     /// <summary>
     /// The W3C error code this exception reports — <c>XTDE0640</c>, <c>XPST0008</c>,
-    /// <c>XTSE0010</c> — or a code of this processor with its prefix, <c>phx:XTSE9430</c>, or
-    /// <c>null</c> when the message carries none.
+    /// <c>XTSE0010</c> — or a code of this processor with its prefix, <c>phx:XTSE9430</c>, or a
+    /// code in another namespace, <c>Q{uri}local</c>, or <c>null</c> when the message carries none.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// A code that <c>xsl:message terminate="yes"</c> or <c>xsl:assert</c> gives in
+    /// <c>error-code</c> has the same forms: a code in the error namespace
+    /// (<c>http://www.w3.org/2005/xqt-errors</c>) is its local name, <c>FOER0000</c>; a code in
+    /// the namespace of this processor (<c>https://schemas.phoenixml.dev/2026/functions</c>) is
+    /// <c>phx:</c> and its local name, <c>phx:MYCODE</c>; a code in any other namespace is
+    /// <c>Q{uri}local</c>, as the message writes it: <c>Q{urn:example}E1</c>, and
+    /// <c>Q{}local</c> for no namespace.
+    /// </para>
     /// <para>
     /// Derived from the message, because that is where 454 of this engine's 577 throw sites
     /// already put it: every one writes <c>"CODE: description"</c>. Without this property the
@@ -68,15 +77,31 @@ public class XsltException : Exception
     public bool IsDeferredGlobalError { get; set; }
 
     /// <summary>
-    /// Reads a leading W3C error code — four uppercase letters, four digits, then a delimiter.
+    /// Reads a leading error code: a W3C error code — four uppercase letters, four digits, then a
+    /// delimiter; <c>phx:</c> and an NCName, then a delimiter; or <c>Q{uri}local</c> and a colon,
+    /// as xsl:message and xsl:assert write a code of their <c>error-code</c> attribute.
     /// Deliberately anchored: a code mentioned mid-sentence is prose, not this error's identity.
     /// </summary>
     private static string? ExtractErrorCode(string? message)
     {
-        // A code of this processor: phx:XTSE9430 (xslt#582).
-        if (message is not null && message.StartsWith("phx:", StringComparison.Ordinal))
-            return ExtractErrorCode(message[4..]) is { } own ? "phx:" + own : null;
-        if (message is null || message.Length < 8)
+        if (message is null)
+            return null;
+        // A code with a namespace URI, as xsl:message and xsl:assert write it (Q{} for no
+        // namespace). The xqt-errors namespace is the local name and the processor's namespace
+        // phx:local, as the engine raises them; another namespace keeps the form of the message.
+        if (TryReadExpandedCode(message, out var namespaceUri, out var localName))
+        {
+            return namespaceUri switch
+            {
+                StylesheetParser.PhxNamespace => "phx:" + localName,
+                "http://www.w3.org/2005/xqt-errors" => localName,
+                _ => $"Q{{{namespaceUri}}}{localName}",
+            };
+        }
+        // A code of this processor: phx:XTSE9430 (xslt#582), or phx: and any NCName.
+        if (message.StartsWith("phx:", StringComparison.Ordinal))
+            return ReadPhxCode(message) is { } local ? "phx:" + local : null;
+        if (message.Length < 8)
             return null;
         for (var i = 0; i < 4; i++)
             if (message[i] is < 'A' or > 'Z') return null;
@@ -85,6 +110,60 @@ public class XsltException : Exception
         if (message.Length > 8 && message[8] is not (':' or ' '))
             return null;
         return message[..8];
+    }
+
+    /// <summary>
+    /// The namespace URI and the local name of a code at the start of <paramref name="message"/>
+    /// written as <c>Q{uri}local</c> and a colon (<c>Q{}</c> for no namespace), as xsl:message and
+    /// xsl:assert write the code of their <c>error-code</c> attribute; the local name is an NCName.
+    /// <c>false</c> when the message does not start with one. The one reader of this form:
+    /// <see cref="ErrorCode"/> and xsl:try both use it, so the two cannot read a message
+    /// differently.
+    /// </summary>
+    internal static bool TryReadExpandedCode(string message, out string namespaceUri, out string localName)
+    {
+        namespaceUri = localName = "";
+        if (!message.StartsWith("Q{", StringComparison.Ordinal))
+            return false;
+        var close = message.IndexOf('}', StringComparison.Ordinal);
+        if (close < 2)
+            return false;
+        var length = NCNameLength(message, close + 1);
+        if (length == 0 || close + 1 + length >= message.Length || message[close + 1 + length] != ':')
+            return false;
+        namespaceUri = message[2..close];
+        localName = message.Substring(close + 1, length);
+        return true;
+    }
+
+    /// <summary>
+    /// The local name of a code of this processor at the start of <paramref name="message"/>:
+    /// <c>phx:</c>, an NCName, then a colon, a space or the end; <c>null</c> when the message does
+    /// not start with one. The one reader of this form: <see cref="ErrorCode"/> and xsl:try both
+    /// use it, so the two cannot read a message differently.
+    /// </summary>
+    internal static string? ReadPhxCode(string message)
+    {
+        if (!message.StartsWith("phx:", StringComparison.Ordinal))
+            return null;
+        var length = NCNameLength(message, 4);
+        return length > 0 && (message.Length == 4 + length || message[4 + length] is ':' or ' ')
+            ? message.Substring(4, length)
+            : null;
+    }
+
+    /// <summary>
+    /// The length of the NCName at <paramref name="start"/> of <paramref name="s"/>, 0 when none
+    /// starts there; the rule of xsl:message's error-code check.
+    /// </summary>
+    private static int NCNameLength(string s, int start)
+    {
+        if (start >= s.Length || !(char.IsLetter(s[start]) || s[start] == '_'))
+            return 0;
+        var end = start + 1;
+        while (end < s.Length && (char.IsLetterOrDigit(s[end]) || s[end] is '_' or '-' or '.'))
+            end++;
+        return end - start;
     }
 
     /// <summary>
