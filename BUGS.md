@@ -9122,3 +9122,59 @@ sequence. The engine implements the 3.1 rule: each argument is one atomic value 
 Engine: **XQuery** and **XSLT**. The 4.0 draft declares `$key as (fn(...) as xs:anyAtomicType*)?` with the default `fn:data#1`.
 The engine requires a function ("Third argument to sort must be callable", XPTY0004); the declaration is F&O 3.1's
 (`function(*)`, exactly one).
+
+### 202. A call of fn:put with no prefix or as Q{…}put, or of an updating function named by a Q{} name, was not an updating expression — fixed (xquery#452, 2026-11-28)
+
+Engine: **XQuery**. Not in 3.2.0 (measured: 3.2.0 has no fn:put, no `declare updating function` and no
+`ExecutionPlan.IsUpdating`). The update category check (XUST0001, `ExecutionPlan.IsUpdating`) runs after the
+namespace pass, which resolves only prefixed function names, and it compared the name as written. So `put(<a/>, 'u')`,
+`Q{http://www.w3.org/2005/xpath-functions}put(<a/>, 'u')` and `put(<a/>, 'u', ())` were simple calls:
+`IsUpdating` was false, and `let $x := put(<a/>, 'u') return 1` gave no XUST0001. A call `Q{urn:x}u()` of
+`declare %updating function Q{urn:x}u()` was simple too, and two Q{} functions with one local name in two namespaces
+were one function to the check. Found by the PhoenixmlDb database (XQUTS put-001 on stored documents).
+
+Fix: the check compares the expanded name (namespace URI, local name, arity), resolved as the function resolver
+resolves a call: a Q{} URI, the URI of the prefix, or the default function namespace (fn when none is declared).
+
+Tests: `HostUpdatesTests.IsUpdating_is_the_category_of_the_body_of_the_main_module` (the forms of put, Q{} and
+prefixed declarations and calls, two namespaces, a default function namespace),
+`UpdateCategoryTests.An_updating_expression_where_a_simple_one_is_required_is_XUST0001`.
+
+### 203. Two functions with one local name in two Q{} namespaces were refused as a duplicate (XQST0034) — fixed (xquery#452, 2026-11-28)
+
+Engine: **XQuery**. In 3.2.0 (measured). The duplicate check at parse time keys a declaration by prefix, local name
+and arity; a Q{uri}local name has no prefix, so `declare function Q{urn:a}f() { 1 }; declare function Q{urn:b}f() { 2 }`
+was XQST0034. A Q{} name is now keyed by its URI. Not changed: `p:f` and `Q{uri}f` with `p` bound to that URI are not
+found as a duplicate at parse time (not checked whether a later pass finds them).
+
+Tests: `FunctionDeclarationNameTests`.
+
+### 204. The new name of a rename was not checked as a constructor's name — fixed (xquery#452, 2026-11-28)
+
+Engine: **XQuery**. In 3.2.0 (measured: a rename to `""`, `"12"` or `("", "element", "")` gave a .NET
+ArgumentException; a rename to a comment gave XPTY0004). XQUF 3.0 §5.4 evaluates the new name as though it were the
+name expression of a computed element, attribute or processing-instruction constructor. The rename took the first
+item, and a string without a colon became a local name unchecked, so on main a sequence, a comment, `""` and `"12"`
+were accepted and the document could not be serialized (XQUTS id-rename-expr-020, -024, -026). An element's new name
+was in no namespace whatever the default element namespace; a processing instruction's `'a:b'` was XQDY0074 (the
+constructor's error is XQDY0041). Found by the PhoenixmlDb database (XQUTS on stored documents).
+
+Fix: the name rules of the three computed constructors are one method each (`EvaluateNameAsync`,
+`EvaluateTargetAsync`), moved out of the constructors unchanged; the rename calls the one for its target's kind.
+
+Breaking (accepted by Lucas for 3.3.0), compared with 3.2.0 (measured with the 3.2.0 package): a sequence as the new
+name is XPTY0004 (3.2.0 used its first item); a processing instruction renamed to an `xs:QName` is XPTY0004, the rule
+of the processing-instruction constructor (3.2.0 renamed it); with a default element namespace, an element renamed to
+a name with no prefix is in that namespace (it was in no namespace).
+
+Tests: `RenameNewNameTests` (each error in place and in a copy, valid names, the default element namespace).
+
+### 205. The XUDY0023 check read a copied element's namespaces from its own store — fixed (xquery#452, 2026-11-28)
+
+Engine: **XQuery**. Not in 3.2.0 (from the code: the check came with xquery#431, 2026-11-25). The check of a rename,
+and of attributes inserted or replaced, read each in-scope namespace URI from the element's store alone, which does not
+know an id a copy kept from its source. The default namespace of a copied element read as none, so with
+`declare default element namespace 'urn:d'` a rename of a copied element to `'t'` (now in urn:d, #204) was XUDY0023.
+The URIs are now read as `fn:namespace-uri-for-prefix` reads them (`NodeNamespaces.UriOf`).
+
+Tests: `RenameNewNameTests.The_namespaces_of_a_copied_element_are_its_own` (a conflicting binding is still XUDY0023).
