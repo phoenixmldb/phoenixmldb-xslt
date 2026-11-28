@@ -8739,3 +8739,292 @@ select="count(books)"/></out>`; open: with the same check, W3C si-attribute-010 
 Tests: `DocumentRuleAttributeStreamingTests` (the bodies that stream, each output equal to the output without
 streaming; the shapes still read whole; the cases that streamed before). `StreamingFallbackReportTests` takes an
 `xsl:attribute` as its example of a construct read whole.
+
+### 175. XQuery Update: a node of another store inserted into an XdmDocumentStore replaced a node of the store — fixed (xquery#437, 2026-11-26)
+
+Engine: **XQuery**. Found while writing the host's update API (R1-R3). An update that inserted a node of another store
+(`insert node $n into ...`, an attribute update, a replace) gave it to `IUpdatableNodeStore.AddNode` with its own ids,
+which are ids of the other store. Each store numbers its nodes from 1, so the node replaced the node of this store with
+the same id, and the ids its children, attributes and namespaces name were looked up among this store's nodes. The
+applicator also set the parent of an inserted node before the store added it: for a node of another store the parent
+named a node of this store in the other one, and the import read the other store's ancestors through it and did not end.
+In 3.2.0 a node did not know its store (#124), so the store could not tell such a node from its own.
+
+Fix: the store imports such a node (a copy with ids of this store; the node itself unchanged), and the parent is set on
+the node the store holds, after it is added.
+
+Tests: `HostUpdatesTests` (a node of another store whose id is the id of a node of this store: inserted into an element,
+as an attribute, replacing an attribute, replacing an element).
+
+### 176. An output method name that is not one of Serialization 3.1 was taken as adaptive — fixed (xquery#439, 2026-11-26)
+
+Engine: **XQuery** (also XSLT's `fn:serialize`). In 3.2.0. `XQueryResultSerializer.ParseSerializationOptions` compared the
+method name in lower case and took a name that matched none as `adaptive`, with no error: `serialize($x, map { 'method':
+'XML' })` gave XML output, `'bogus'` adaptive output. The same for an `output:serialization-parameters` element, `fn:put#3`,
+a parameter document and `declare option output:method`. An `xs:QName` method in a map was read as its local name, so
+`QName('', 'xml')` and `QName('urn:x', 'xml')` were the xml method. The facade's prolog reader did not expand the references
+of a string literal: `" Q{}xml&#x9;"` (QT3 K2-Serialization-29) was read as `Q{}xml&#x9;`, adaptive by accident. The xquery
+CLI had its own prolog reader, case-insensitive.
+
+Fix: one reader (`OutputMethodNamed`): the name as written, `Q{}` and the white space at both ends removed. A name it does
+not know is SEPM0016 for a map and the prolog, and SEPM0017 in an element (Serialization 3.1 §3, §3.1); an `xs:QName` is
+SEPM0016 (F&O 3.1 §14.7.3). The prolog option values have their references expanded with the parser's decoder. The CLI
+reads the prolog's method with the library's reader. Breaking.
+
+Tests: `OutputMethodNameTests`; `PutHostWriterTests` (fn:put#3); `CliOutputMethodTests`.
+
+### 177. The facade reads the prolog's output declarations with its own pattern, not from the parsed query — open (2026-11-26)
+
+Engine: **XQuery**. `XQueryFacade.DetectSerializationOptions` (public; used by `EvaluateAsync` and the QT3 runner) reads
+`declare option output:*`, the namespace declarations, the default element namespace and `output:parameter-document` from
+the query text with regular expressions: a second reader of the query. It did not expand the references of a string literal
+(#176, fixed there with the parser's decoder). The parser keeps no option values (`VisitOptionDecl` returns an empty
+sequence), and the method is public and works on a query that does not parse, so reading the parsed prolog is a larger
+change. The CLI now uses the facade's reader for the method (#176).
+
+### 178. XQuery Update: atomic values, arrays and function items in an insertion or replacement sequence were lost, and adjacent text nodes were not merged — fixed (xquery#440, 2026-11-26)
+
+Engine: **XQuery**. In 3.2.0. Found by the database engine (an atomic value inserted before the document element of a
+stored document was lost). For every parent and position, with `insert node` and `replace node`, on both apply paths and in
+copy modify: an atomic value in the content was lost with no error (XQUTS id-replace-expr-029 failed for this reason), an
+array was lost, a map or a function was lost with no error, and in copy modify a document node was placed as a child. XQUF
+3.0 §5.1 and §5.3.1 evaluate the content "as though it were an enclosed expression in an element constructor (see Rule 1e
+in Section 3.9.1.3 Content)". After any primitive, adjacent text nodes stayed two and an empty text node stayed; upd:applyUpdates
+merges and deletes them (§8.2.3, the steps after the primitives).
+
+Fix: `UpdateTargets.AsElementContent` makes the content element content (arrays flattened, XQTY0105 for a function item,
+each run of atomic values one text node, a document node as its children); `PendingUpdateApplicator.Apply` merges adjacent
+text nodes into the first (which keeps its id) and deletes empty ones, for each node whose children the list can change. A
+text node of atomic content is made in a store that builds nodes (never with the id 0). Hosts that index text nodes index the
+children of the changed nodes again. XQUTS 660 -> 670.
+
+Tests: `AtomicInsertionContentTests`, `TextNodeNormalizationTests`.
+
+### 179. XQuery Update: two copy modify expressions in one query had the same node ids — fixed (xquery#441, 2026-11-26)
+
+Engine: **XQuery**. In 3.2.0. Found by the database engine. Each copy modify expression copied into a store that counted
+node ids from 1,000,000,000, and its copies were registered in the query's store. A second copy modify expression made nodes
+with the same ids and replaced the first one's there: `(copy $c := $d/r/a modify () return $c, copy $c := $d/r/b modify ()
+return $c)` gave `<a><b1/></a><b><b1/></b>`, with no error. A store that had given more ids than the start could also give a
+copy an id a stored node had.
+
+Fix: the copies' store takes its ids from the query's store. XQUTS 660 -> 662.
+
+Tests: `CopyModifyNodeIdTests`.
+
+### 180. The copy modify store gave namespace ids from its own counter — fixed (xquery#445, 2026-11-27)
+
+Engine: **XQuery**. `InMemoryUpdatableNodeStore` (the store of a copy modify expression) interned namespaces with its own
+counter, which starts at 100, while its nodes are registered in the query's store and its node ids come from there (#179). The
+analyzer registers the query's namespaces in the query's store from 100 too (`RegisterNamespace`), so the copy store could give
+a URI an id that the query's store had for another URI. No query gave a wrong result: a copy keeps the namespace ids of its
+source, a source of another store is first imported into the query's store, and a renamed or constructed name takes its
+namespace id from the query's store (#129). Repros that gave the right result: a copy renamed into a new namespace, two copies
+renamed into two new namespaces, a new attribute and a new element in a modify clause, in memory and inserted into a stored
+document (both apply paths).
+
+Fix: the copy store takes namespace ids from the query's store, as it takes node ids.
+
+Tests: `CopyStoreNamespaceIdTests` (on the store).
+
+### 181. XSLT: the streaming processors count node ids from one base — open (2026-11-26)
+
+Engine: **XSLT**. The three places that make a `StreamingXmlProcessor` count node ids from `1 << 40` and register the nodes
+in the transform's store. No repro gave a wrong result: two sequential streamed `xsl:source-document` with copies kept in
+variables; a streamed `xsl:source-document` inside the rule of a streamed principal input (both streamed under
+`--strict-streaming`), reading the outer item after the inner stream; nested `xsl:source-document` (the outer is read into
+memory); `xsl:merge` with two streamable sources (each merge action is read whole). A path that keeps the nodes of two streams
+in one store at once could collide; one id source (the store's) would remove the risk.
+
+### 182. XdmDocumentStore is not thread-safe — open (2026-11-27)
+
+Engine: **XQuery**. `XdmDocumentStore.AllocateNodeId` is `_nextNodeIdBase++` (no `Interlocked`, no lock), and the nodes and
+documents are in `Dictionary` instances; only namespace interning is thread-safe. Two threads that use one store at the same
+time can get the same id and can corrupt the dictionaries. This is also true for reading: `ResolveDocument`,
+`IsDocumentAvailable` and the collection members (`fn:doc`, `fn:doc-available`, `fn:collection`) load a document into the
+store the first time they get its URI. An atomic counter alone does not fix it. The database engine uses one store on one
+thread at a time (each store is a local of one call; update runs are sequential). The class documentation states the rule
+since xquery#445: one store, one thread at a time.
+
+### 183. The text output method wrote a space next to a node — fixed (xquery#442, 2026-11-27)
+
+Engine: **XQuery** (also XSLT's `fn:serialize`). In 3.2.0. `fn:serialize` with the text method wrote a space between any
+two items of a sequence, nodes too: `serialize((<a>x</a>, <b>y</b>), map { 'method': 'text' })` gave `x y`, and an array of
+nodes the same. Serialization 3.1 §8.1.15 uses the sequence normalization of §2, whose step 3 puts a space only between
+adjacent atomic values when item-separator is absent. XSLT's own text output (`xsl:output method="text"`,
+`xsl:result-document`) was already right.
+
+Fix: `XQueryResultSerializer.WriteSeparator` gives the text method the rule of the xml, html and xhtml methods. The adaptive
+method does not change (§10: no sequence normalization).
+
+Fixed (xquery): `serialize((<a>x</a>, <b>y</b>), map { 'method': 'text' })` gave "x y", now "xy".
+
+Tests: `TextMethodSeparatorTests`.
+
+### 184. The xquery4 text output method wrote an element as XML — fixed (xquery#444, 2026-11-27)
+
+Engine: **XQuery** (the `xquery4` command line). In 3.2.0. `-o text` and `declare option output:method "text"` used the
+CLI's own serializer: an element or a document was written as XML, a comment or a processing instruction as its string
+value, and a space went between any two items: `xquery4 -o text '<a>x<b>y</b></a>'` gave `<a>x<b>y</b></a>`, and
+`(attribute a { 'v' }, <b>x</b>)` gave `v <b>x</b>`.
+
+Fix: the text method of the CLI is the library's serializer, as html and xhtml were. One rule stays the CLI's: an attribute
+at the top of the result (also in an array) is written as its string value, as 3.2.0 wrote it (`-o text //@href` gives
+`h1 h2`); `fn:serialize` gives SENR0001 for it (Serialization 3.1 §2 step 7). The CLI's other methods are #186.
+
+Fixed (xquery4): `xquery4 -o text '<a>x<b>y</b></a>'` gave "<a>x<b>y</b></a>", now "xy"; `(attribute a { 'v' }, <b>x</b>)`
+gave "v <b>x</b>", now "vx".
+
+Tests: `CliTextMethodTests` (each input compared with `fn:serialize` of the input with its top-level attributes replaced by
+their string values).
+
+### 185. A static call of a built-in function did not check the item types of its arguments — fixed (xquery#443, 2026-11-27)
+
+Engine: **XQuery** and **XSLT** (the same built-in functions). In 3.2.0. A static call checked only the cardinality of each
+argument and its xs:string items; a dynamic call of the same function checked the item types. `name('x')` gave "",
+`array:size('x')` 0, `substring('abcd', '2')` "bcd", `format-integer('5', 'w')` "five", `format-integer('x', 'w')` a .NET
+FormatException; `name#1('x')` gave XPTY0004. The dynamic check took an xs:untypedAtomic value for any parameter type:
+`name(xs:untypedAtomic('x'))` gave "" on both paths. `fn:serialize` ignored a second argument that is neither an element nor a
+map and used the defaults (F&O 3.1 §14.7.3 makes it XPTY0004).
+
+Fix: each argument of a built-in has the dynamic call's item-type check (XQuery 3.1 §3.1.5.2), after an array, map or function
+item in an atomic argument is atomized (§2.4.2: an array is its members, a map or function FOTY0013). A declared function
+converts its own arguments, as before. An xs:untypedAtomic value is cast only to an atomic type. `fn:serialize` gives XPTY0004
+for other parameters. Breaking.
+
+Fixed (xquery): `name('x')` gave "", now XPTY0004; `substring('abcd', '2')` gave "bcd", now XPTY0004.
+
+Tests: `BuiltinArgumentItemTypeTests` (a sweep of 303 calls over the library's built-ins).
+
+### 186. The xquery4 command line serializes the xml, adaptive and json methods itself — open (2026-11-27)
+
+Engine: **XQuery** (the `xquery4` command line). In 3.2.0. The text (#184), html and xhtml methods are the library's
+serializer; xml, adaptive and json are the CLI's own, and their output is different from `fn:serialize` of the same method.
+Measured with 15 inputs each on xquery main (the CLI text fix applied):
+- xml (5 of 15 differ): a document gets an XML declaration; adjacent atomic values have no space (`(1, 'a', 2.5)` gives
+  `1a2.5`, the library `1 a 2.5`; an array `[1, [2, 'x']]` gives `12x`, the library `1 2 x`); a map is written as
+  `map{...}`, the library gives SENR0001. An attribute at the top is written as `name="value"`, with no separator between
+  two: `xquery4 -o xml //@href` on `<r><a href="h1"/><a href="h2"/></r>` gives `href="h1"href="h2"` (also in 3.2.0), the
+  library gives SENR0001 (Serialization 3.1 §2 step 7).
+- adaptive (5 of 15 differ): a document gets an XML declaration; items are separated by a new line, the library a space
+  (`(<a>x</a>, <b>y</b>)`, `(1, 'a', 2.5)`); `xs:date('2020-01-01')` gives `2020-01-01`, the library
+  `xs:date("2020-01-01")`.
+- json (10 of 15 differ): an element or a document is written as XML, the library a JSON string; a sequence of more than one
+  item is concatenated, the library gives SERE0023 (also for a map value that is a sequence, which the CLI writes as an
+  array); `()` gives nothing, the library `null`; a comment or a processing instruction gives its string value, the library
+  `"<!--c-->"` and `"<?p q?>"`; `[<a/>, 1]` gives `["",1]`, the library `["<a\/>",1]`.
+- html and xhtml: an attribute at the top is SENR0001, as in the library (also in 3.2.0).
+
+### 187. A node constructor with no node builder made a node with the id 0 — fixed (xquery#445, 2026-11-27)
+
+Engine: **XQuery** (also XSLT, through XPath expressions). In 3.2.0. With no node store that builds nodes (a `QueryEngine` made
+with no node provider, or a provider that only reads nodes), the text, comment, processing-instruction, attribute and
+namespace constructors made a node with the id 0 (`NodeId.None`), which no store can find, and an attribute lost its namespace;
+the element and document constructors threw `InvalidOperationException`. `string(text { 'x' })` on `new QueryEngine()` gave
+`x`.
+
+Fix: every constructor throws the element constructor's `InvalidOperationException` when there is no builder. A constructor
+that makes no node (`text { () }`) needs none. Breaking: a host gives the engine a node provider that builds nodes, for
+example an `XdmDocumentStore`.
+
+Note for the next pin bump of phoenixml-platform (it pins XQuery 1.6.2): `XPathQueryService` (the XPath find of the editor)
+gives a store that only reads nodes and catches `XQueryParseException` and `XQueryRuntimeException`. An element constructor
+in the find box already throws an `InvalidOperationException` that it does not catch; after this fix every constructor does.
+It must catch `InvalidOperationException` (or give a builder).
+
+Tests: `ConstructorNodeBuilderTests`.
+
+### 188. XsltTransformEngine.TransformAsync(XdmNode) gave the transformation no store — fixed (xslt#665, 2026-11-27)
+
+Engine: **XSLT**. The public `XsltTransformEngine.TransformAsync(XdmNode, options)` gave the transformation no node store.
+A stylesheet that constructed nodes failed through it: a path into a temporary tree ("An axis step ..."), an XPath element
+constructor, the element of a `load-xquery-module` function, a path on `fn:analyze-string`, `fn:json-to-xml` (FOJS0001); an
+XPath text constructor made a node with the id 0. A source of another store (an `XdmDocumentStore`) gave wrong results:
+`key()` found nothing, `xsl:number level="any"` gave 1 for each node, `root()` found no children, an accumulator gave
+XTDE3362. No caller in our repos.
+
+Fix: the method works in the source's store (`XdmNode.Store`): an `XdmInMemoryStore`, the store of the transformation of a
+temporary-tree node, or a new store for a node that no store holds. A node of another store is refused with an
+`InvalidOperationException` (Breaking). Needs the Core release that has `XdmNode.Store`.
+
+Open: a node of another store could be imported into the transformation's store (a copy), as the XQuery store imports a node
+of another store (#175).
+
+Tests: `EngineNodeEntryStoreTests` (each case compared with the string entry point).
+
+### 189. XSLT error codes: the code of xsl:message and xsl:assert in another namespace was null, fn:error lost its namespace, and xsl:try missed the engine's phx codes — fixed (xslt#664, 2026-11-27)
+
+Engine: **XSLT**. `XsltException.ErrorCode` was null for `xsl:message terminate="yes"` and `xsl:assert` with an `error-code`
+outside the err namespace: the message starts with `Q{uri}local:`, and the reader read only a W3C-shaped code or `phx:` and a
+W3C-shaped code. The location wrap of an `XQueryException` (an `fn:error` in an XPath expression) did not copy
+`ErrorNamespaceUri` and `ErrorPrefix`: `fn:error(QName('urn:q', 'q:E1'))` left as `E1` in no namespace. `xsl:try` read its
+messages with its own reader, which did not read `phx:`: `xsl:catch errors="phx:XTDE9430"` did not catch the engine's
+`phx:XTDE9430` (StrictStreamability, an `xsl:source-document` that cannot be streamed), and a catch-all saw `err:XSLT0000`.
+3.2.0 raised no `phx:` code, so its `xsl:try` missed none; `phx:XTSE9430` and `phx:XTDE9430` are new in 3.3.0 (#582).
+
+Fix: `ErrorCode` gives `phx:LOCAL` for the phx namespace, the local name for the err namespace, `Q{uri}local` for another
+namespace (`Q{}local` for none); the message text does not change. The wrap keeps the namespace and the prefix. One reader of
+each form (`phx:local`, `Q{uri}local:`) serves `ErrorCode` and `xsl:try`. Changed: an `xsl:message terminate="yes"` in a
+global variable that is never referenced no longer stops the transformation for a code outside the err namespace (XSLT 3.0
+§2.3.2, one rule for all codes); in `xsl:catch`, `$err:code` of `fn:error` keeps the prefix of its QName (`q:E1`, was `E1`).
+
+Tests: `ErrorCodeRoutesTests`, `XsltExceptionErrorCodeTests`.
+
+### 190. Two fn:put calls to one file under two spellings wrote it twice when a host resolver did not take them — fixed (xquery#447, 2026-11-27)
+
+Engine: **XQuery**. XQUF 3.0 §5.8 and §8.2.1 (upd:compatibilityCheck): XUDY0031 when two `upd:put` primitives have the
+same `$uri` operand. The check compared the URIs as `fn:put` recorded them. Without a host resolver `fn:put` authorises the
+URI at the call, and the authorised file URI has every symbolic link resolved, so a link and the path it leads to were the
+same URI and gave XUDY0031. With a host resolver (`ResourcePolicy.ResourceResolver`) `fn:put` keeps the URI as written: the
+two spellings passed the check, the resolver was asked for each, and when it did not take them the library wrote the file
+twice — the second write replaced the first.
+
+Fix: `PendingUpdateApplicator.ApplyUpdates` also compares the authorised file URIs of all puts, after it authorised them and
+before any change: XUDY0031, nothing written, no store changed. The message names the URIs as written, not the resolved path
+(which would say where a link leads). This is stricter than the letter of §8.2.1 (the same `$uri` operand), as the path without
+a resolver already was. The same xquery PR changes `fn:put` under `DeferPendingUpdates`: it is not authorised at the call, so
+the check is also what catches two spellings in a list the host applies.
+
+Known limit: the paths are compared without case on Windows and with case elsewhere. On a file system that ignores case
+but is not Windows (the default APFS on macOS), two spellings that differ only in case are not caught. macOS hosts are not
+a target now.
+
+Tests: `PutDeferredAuthorizationTests` (the link pair with and without a resolver, deferred and not; two different files are
+both written).
+
+### 191. The xml output method wrote no document type declaration for doctype-system — fixed (xquery#448, 2026-11-27)
+
+Engine: **XQuery** (and XSLT's `fn:serialize`, which uses the same serializer). Serialization 3.1 §5.1.7: "If the
+doctype-system parameter is specified, the XML output method MUST output a document type declaration immediately before
+the first element." The xml method of `XQueryResultSerializer` wrote none, in every form: `fn:serialize` with a map or an
+`output:serialization-parameters` element, the prolog options, and `fn:put#3` (reported by the PhoenixmlDb database on xquery da4bdb7:
+`<?xml version="1.0" encoding="UTF-8"?><n/>`). 3.2.0 had the same defect. The xhtml and html methods, and the Saxon layout
+(`phx:indent-style`), wrote one. XSLT's `xsl:output` writes its own and was not affected.
+
+Fix: `<!DOCTYPE name SYSTEM "sys">`, or `PUBLIC "pub" "sys"`, immediately before the first element, named as the element is
+written. doctype-public alone is ignored. A document that is not one element gets none (§5: the serializer may recover). A
+system identifier with a quotation mark is written in apostrophes; one with both, and a public identifier with a character
+outside PubidChar, are SEPM0016. Indented output puts the element on the next line.
+
+Open, not changed: the xquery4 command line's own xml method (186) still writes no declaration.
+
+Tests: `XmlMethodDoctypeTests`.
+
+### 192. A node provider that is not an INodeStore: fn:serialize, path(), the parameters element and validate read no namespaces — fixed (xquery#449, 2026-11-27)
+
+Engine: **XQuery**. Several places read the namespace URI of a node's namespace id only in the context's node provider,
+"when it is an `INodeStore`", or only in the context's node store. A host whose provider is not one (the public
+`DelegateNodeProvider`, or its own `INodeProvider`) got: `fn:serialize` through a second serializer that ignored most
+parameters and threw `InvalidOperationException` ("namespace id 102 is not registered with the node store") for a
+namespace; `path()` without the namespace (`Q{}a` for `Q{urn:q}a`); XPTY0004 for a correct `output:serialization-parameters`
+element; a different `validate` result. For a node of another store, `lang()` and `xml-to-json` read the wrong store. The
+shipped hosts all give an `INodeStore` and were not affected. Found while answering the PhoenixmlDb database's `fn:put` question (the
+parameters element of xquery#443's review).
+
+Fix: one internal helper, `NodeNamespaces`, with one rule for the namespace URIs, the nodes of ids and the store of a node's
+tree. For a node that a store holds (`XdmNode.Store`), it reads that store only: an id that store does not know has no URI and
+no node, because another store's ids can name other URIs and nodes. Only a node that no store holds falls back to the
+provider, the context's node store and the namespace resolver. `fn:serialize` always uses `XQueryResultSerializer`; the second serializer
+is removed. `QueryEngine` takes the context's namespace resolver from the document resolver when the provider is not a store.
+
+Tests: `NamespaceFromNodeStoreTests`.
