@@ -216,7 +216,7 @@ Four rules, each from a way this was actually got wrong:
   its passing value.
 
 **These runs are not interchangeable across machines.** The two sessions working on this repo are
-on different hosts (`palukerjr`, `mechapaluker`) with materially different speed: six cases trip
+on different hosts with materially different speed: six cases trip
 the 10s cap on the slower one and zero across ten runs on the faster. Any A/B whose arms were
 measured on different hosts is not an A/B. This is also why the gate matters more than it looks —
 whoever is on the faster host will not see the problem at all, and will be the one who believes

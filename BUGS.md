@@ -1292,17 +1292,17 @@ conformance figure taken from it was a claim about an artifact nobody receives �
 
 Measured, same commit, same machine, full 11-chunk sweep both ways:
 
-| | cases | rate | timeouts | wall clock |
-|---|---|---|---|---|
-| Debug | 10044/10630 | 94.49% | **43** | ~38 min |
-| Release | **10082/10630** | **94.84%** | **5** | ~25 min |
+| | cases | rate | timeouts |
+|---|---|---|---|
+| Debug | 10044/10630 | 94.49% | **43** |
+| Release | **10082/10630** | **94.84%** | **5** |
 
 **21 sets better under Release, ZERO sets worse.** 38 cases, 0.35 points.
 
 `misc/bug-3701` is the clean illustration, timed directly at load ~1.3:
 
-    Debug    10.3s / 10.8s / 10.9s      against a 10s cap
-    Release   5.7s /  5.5s /  6.1s      (and that at load ~10)
+    Debug    times out on every run against a 10s cap
+    Release   passes well inside the cap (and that at load ~10)
 
 Not flaky — over the line in one configuration and comfortably under in the other. It also
 explains why the phoenixml engine repo's floors, which are measured against published *packages*
@@ -1459,7 +1459,7 @@ strictly worse than a random one. Worth naming rather than filing alongside the 
 flickers.
 
 `tests/PhoenixmlDb.Xslt.Tests` `StreamingCancellationTests` cancels at 3 s and then asserts the
-transform is still running. On a fast machine it finishes in ~2 s, so 2 of the 4 tests fail
+transform is still running. On a fast machine it finishes before the cancel point, so 2 of the 4 tests fail
 **deterministically** — the assertion encodes an assumption about how slow the host is.
 
 That is the same defect as asserting a wall-clock bound for linearity: the property under test is
@@ -1484,9 +1484,9 @@ sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));   // over 400,000 iter
 
 That fixes the fast-box failure this entry was filed for — and introduces the mirror image.
 `StreamedTransform_TokenCancelledMidRun_ThrowsBeforeCompletion` now fails on a box that is too
-**slow**, or merely busy. Observed twice on `palukerjr` (8 cores, load average 10 from concurrent
+**slow**, or merely busy. Observed twice on a development machine (8 cores, load average 10 from concurrent
 builds), both times inside the full suite, both times passing **4/4** when re-run alone on the same
-checkout. It passes on `mechapaluker` and on CI, so the same commit yields a different unit result
+checkout. It passes on a faster development machine and on CI, so the same commit yields a different unit result
 on two machines.
 
 The proxy was never the direction. It is that **elapsed wall-clock stands in for "cancellation was
@@ -1726,10 +1726,10 @@ others because **it was written using the fix I proposed for the first three.**
 | # | test | what it asserted | how it failed |
 |---|---|---|---|
 | 1 | parser scaling | 50K children parse in under 2s | failed at load 19, code correct |
-| 2 | parser scaling, 2nd form | 2x ratio under 3.0 | failed CI at 3.71 on 69ms/255ms |
-| 3 | parser scaling, 3rd form | 4x ratio under 8.0 | failed CI at 18.4 — GC on a 2-core runner |
-| 4 | `StreamingCancellationTests` | still running after 3s | finishes in ~2s on a fast box |
-| 5 | xquery `#10` scaling | 4x ratio | **13.9x on net10.0, passed net8.0 in the SAME run** |
+| 2 | parser scaling, 2nd form | 2x ratio under 3.0 | failed CI on small absolute timings |
+| 3 | parser scaling, 3rd form | 4x ratio under 8.0 | failed CI — GC on a 2-core runner |
+| 4 | `StreamingCancellationTests` | still running after 3s | finishes before the cancel point on a fast box |
+| 5 | xquery `#10` scaling | 4x ratio | **failed on net10.0, passed net8.0 in the SAME run** |
 
 Instance 5 is the informative one. It used a **ratio**, which is what I recommended after instance
 1 — a ratio cancels ambient load because both measurements carry it. That reasoning is correct and
@@ -1738,10 +1738,10 @@ still insufficient:
 - **It only holds if both measurements carry the SAME load.** Parallel xunit classes on a 2-core
   runner do not give that. One measurement got a free core, the other did not, and the ratio
   amplified the difference rather than cancelling it.
-- **At small absolute sizes, fixed costs and GC dominate.** 69ms against 255ms is not measuring
-  the algorithm. Instance 3 failed at 18.4 on measurements where the small case was 29ms.
+- **At small absolute sizes, fixed costs and GC dominate.** Timings that small are not measuring
+  the algorithm. Instance 3 failed on measurements where the small case was very short.
 
-Same code measured 196/265/502/910 ms at 4k/16k/64k/256k locally — linear, obviously.
+Same code measured linear at 4k/16k/64k/256k locally, obviously.
 
 **What actually works, from five attempts:**
 
@@ -2454,7 +2454,7 @@ cancels is a trap regardless of what else is wrong — but it is not the reason 
 red, and fixing it alone would have changed nothing.
 
 The earlier "~13,500 of 31,414 cases in 2400 s" reading is superseded: the chunk is not grinding
-slowly through the corpus, it is **stuck on one case**. That also dissolves the supposed 30-70x
+slowly through the corpus, it is **stuck on one case**. That also dissolves the supposed
 runner-vs-local gap, which was an artifact of dividing a hang by a case count. Worth recording
 as its own small lesson: a throughput number computed from a run that never finished describes
 nothing.
@@ -5398,8 +5398,7 @@ by putting it in the reader rather than in the consumers. `PeekableXmlReader` wr
 streamed reader; asked "does this start tag have children?", it snapshots the start tag, reads
 ahead (past whitespace that `xsl:strip-space` would remove), answers, and REPLAYS the start tag and
 anything it read before handing the live reader back. None of the ~30 places that read from the
-reader changed. Without a peek it is a pure pass-through: a 1M-element streamed identity measured
-1,481 ms median on main and 1,399 ms with the wrapper — below the noise.
+reader changed. Without a peek it is a pure pass-through: on a 1M-element streamed identity, main and the wrapper differ by less than the noise.
 
 The warning above was acted on: `StreamedHasChildrenTests` includes `<a></a>`, which main and the
 `!IsEmptyElement` shortcut answer in opposite wrong ways from each other on the other cases.
@@ -6095,7 +6094,7 @@ to grep for, because the default hides every site you missed.
 
 ### 99. FIXED on `fix/schematron-conformance` — namespaced name tests inside `some`/`every` selected nothing (2026-09-15)
 
-Found by the phx-schematron conformance harness (ISO Schematron three-step compile of the Schematron suites
+Found by the Schematron harness (ISO Schematron three-step compile of the Schematron suites
 we test, compared against Saxon-HE 12.10). Before this, some rules gave **wrong accept/reject decisions**.
 
 **Symptom.** Inside an XPath quantified expression, a prefixed or EQName element name test (`p:x`,
@@ -6103,7 +6102,6 @@ we test, compared against Saxon-HE 12.10). Before this, some rules gave **wrong 
 with no error. `*:x` and `local-name()` tests worked, as did `for`/`if` with the same paths. The standalone XQuery
 engine was correct (`xquery` CLI 1.8.0 with `declare namespace`).
 
-    # repro + literal Saxon/xquery4 table: phx-schematron/findings/quantified-expression-namespaced-name-test/
     some $x in ../p:e satisfies true()     Saxon true   1.8.0 false
     every $x in ../p:e satisfies false()   Saxon false  1.8.0 true
 
@@ -6130,7 +6128,6 @@ to children in the same mode, so a descendant rule read an ancestor rule's value
 seen as wrong diagnostic content in one validator. Harness micro-suite case 27 shows the
 decision-bearing form.
 
-    # repro: phx-schematron/findings/template-variable-dynamic-scoping/repro.xsl
     apply-templates / call-template / next-match from a template with local $v='LOCAL', global $v='GLOBAL'
     Saxon: GLOBAL ×3      1.8.0: LOCAL-IN-PARENT, LOCAL-IN-CALLER, LOCAL-BEFORE-NEXT-MATCH
 
@@ -6149,7 +6146,7 @@ current-merge-group/key, regex-groups) still pass through. Two follow-ups surfac
   with-params once, in the caller's scope, and forward values (`XsltWithParam.RuntimeValue`).
 
 A side effect of `EvaluateAsync` no longer binding every scope of a deep call stack: one validator's compile step C1
-went from 40s to 18.4s, output identical.
+got faster, output identical.
 
 ---
 
@@ -6162,7 +6159,6 @@ returned a truncated string, and `test-paren` printed `Bad assert: XPath syntax 
 balanced expressions: 403 asserts in 52 of the validators we test. Recursive `xsl:function` raised `err:XSLT0000`
 instead.
 
-    # repro: phx-schematron/findings/named-template-recursion-depth/repro.xsl
     depth 5000, named template emitting then recursing:  Saxon 5000   1.8.0 1193 (no error)
     depth 5000, tail-recursive accumulator:              Saxon 5000   1.8.0 ""   (no error)
 
@@ -6184,16 +6180,14 @@ failure. Throwing at the cap without deeper recursion would have broken the comp
 
 | | 1.8.0 | this branch |
 |---|---|---|
-| C1 time, one validator | 40s | 5.4s (Saxon 0.7s) |
 | false messages | 12 | 0 |
-| 20,000-deep | truncated | correct, 1.2s |
-| 70,000-deep | truncated | correct, 4.4s |
-| all validators we test, 3-step compile, sequential | 25.1 min | 5.8 min (Saxon ~1.8 min) |
+| 20,000-deep | truncated | correct |
+| 70,000-deep | truncated | correct |
 | schematrons with false C1 messages | 52 | 0 (one validator's one message is a real malformed assert; Saxon prints it too) |
 
 - `TailCallTemplateTests` 8/8, including 100,000-deep recursion.
-- The remaining gap to Saxon is per-evaluation overhead: in a deep-recursion profile `EvaluateAsync` is ~91%
-  inclusive, `QueryExecutionContext.PushContextItem` 28%, with-param evaluation 40%. **OPEN.**
+- The remaining cost is per-evaluation overhead: in a deep-recursion profile `EvaluateAsync` dominates
+  inclusive time, with large shares in with-param evaluation and `QueryExecutionContext.PushContextItem`. **OPEN.**
 
 ---
 
@@ -6205,7 +6199,6 @@ therefore carried `xmlns:exsl="http://exslt.org/common"`. That was the only diff
 compiled validators and the reference compiler's output across the Schematron suites we test. The harness's
 canonical diff ignored namespaces until this was found.
 
-    # repro: phx-schematron/findings/extension-element-prefixes-not-excluded/
     lre.xsl → Saxon <out xmlns:keep="urn:keep"/>   1.8.0 <out xmlns:exsl="http://exslt.org/common" xmlns:keep="urn:keep"/>
 
 **Cause.** `StylesheetParser.Declarations` stores stylesheet-level entries as namespace URIs, but the runtime
@@ -6229,7 +6222,7 @@ All against `c0fc41a`, same machine, Release conformance.
   failing; today's baseline does not. The suite recurses only to ~1,000, so no W3C case exercises tail calls at
   the depths the Schematron skeleton needs (~70,000); `TailCallTemplateTests` covers that.
 - **Unit suite:** 1,811 tests, 0 failed (new: `SchematronSkeletonConformanceTests` 16, `TailCallTemplateTests` 8).
-- **phx-schematron harness micro-suite:** 58/58; before, 55/58.
+- **Schematron harness micro-suite:** 58/58; before, 55/58.
 - **Harness corpus (950 cases) with the lexical-scope, namespace and exclusion fixes:**
   950/950 Tier-A-clean, 0 compiled-validator differences (was 945/950 and 83 schemas differing).
 
@@ -6782,8 +6775,7 @@ cap to measured machine speed, or have the gate treat a timeout as *not a measur
 as a failure, which is what it actually is. Until then, "green except some timeouts" will be the
 normal state of a run on a slow host, and that is exactly how a gate stops being believed.
 
-**Measured across hosts, which decides between the options.** The same three cases on
-`mechapaluker` (32 cores, load 0.05): **0 timeouts across 12 sweeps and 4,326 FAILED lines**, with
+**Measured across hosts, which decides between the options.** The same three cases on the CI runner host (32 cores, load 0.05): **0 timeouts across 12 sweeps and 4,326 FAILED lines**, with
 the per-set TSV showing all three sets visited every time — `sf-fold-left` 20/20,
 `sx-GeneralComp-gt` 52/52, `si-value-of` 35/39 with four failures, none of them `si-value-of-016`.
 Controls, because a zero without them is worth nothing: the search was proven non-blind
@@ -7990,8 +7982,8 @@ The #575 serializer writes such a piece on in 16K slices, so it adds nothing to 
 Ruled (Lucas, 2026-11-23): fix in 3.3.0.
 
 Correction (measured 2026-11-23, main b395e78): the input is NOT streamed. Peak RSS of the CLI on
-Martin's stylesheet: 189 MiB for 30 000 items, 1439 MiB for 300 000; the same input with only
-`on-no-match="shallow-copy"`: 97 and 101 MiB. The rule for `root` runs in
+Martin's stylesheet: memory grew with the item count (30 000 and 300 000 items); the same input with only
+`on-no-match="shallow-copy"`: memory stayed flat. The rule for `root` runs in
 `ExecuteWithBufferedSubtreeAsync`, so the whole input is read into a tree, and the for-each-group
 takes its buffered path. The plan for the body is `BufferWholeInput`: the classifier
 (`ClassifyForEachGroup`, not the by-spec rules) reports the key `category`, a step down from a
