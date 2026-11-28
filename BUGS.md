@@ -6095,18 +6095,17 @@ to grep for, because the default hides every site you missed.
 
 ### 99. FIXED on `fix/schematron-conformance` — namespaced name tests inside `some`/`every` selected nothing (2026-09-15)
 
-Found by the phx-schematron conformance harness (ISO Schematron three-step compile of 77 state EMS
-schematrons + 6 national, compared against Saxon-HE 12.10). Before this, **wrong accept/reject decisions**
-came from AL.EMS.v350 and PA.EMS.v350/v351 state rules, plus national `nemSch_e077`.
+Found by the phx-schematron conformance harness (ISO Schematron three-step compile of the Schematron suites
+we test, compared against Saxon-HE 12.10). Before this, some rules gave **wrong accept/reject decisions**.
 
-**Symptom.** Inside an XPath quantified expression, a prefixed or EQName element name test (`nem:x`,
+**Symptom.** Inside an XPath quantified expression, a prefixed or EQName element name test (`p:x`,
 `Q{uri}x`) matched only no-namespace nodes: `some` returned false and `every` returned true for any data,
 with no error. `*:x` and `local-name()` tests worked, as did `for`/`if` with the same paths. The standalone XQuery
 engine was correct (`xquery` CLI 1.8.0 with `declare namespace`).
 
     # repro + literal Saxon/xquery4 table: phx-schematron/findings/quantified-expression-namespaced-name-test/
-    some $x in ../nem:eSituation.10 satisfies true()     Saxon true   1.8.0 false
-    every $x in ../nem:eSituation.10 satisfies false()   Saxon false  1.8.0 true
+    some $x in ../p:e satisfies true()     Saxon true   1.8.0 false
+    every $x in ../p:e satisfies false()   Saxon false  1.8.0 true
 
 **Cause.** The three stylesheet-namespace walkers — `StylesheetParser.ResolveExpressionNamespaces`,
 `DefaultXsltExecutionContext.ResolveExpressionNamespaceIds` and `ResolveExpressionNamespacesRuntime` — were
@@ -6128,7 +6127,7 @@ instead of raising XTSE0280.
 function body, resolved `$v` to the invoker's local `$v` instead of the global (XSLT 3.0 §9.9 lexical scope).
 The ISO Schematron skeleton compiles each rule to a template that declares its `sch:let`s and then applies templates
 to children in the same mode, so a descendant rule read an ancestor rule's value for a schema-level default. That was
-seen as wrong NEMSIS diagnostic content (OR.EMS.v351 `or_e142`). Harness micro-suite case 27 shows the
+seen as wrong diagnostic content in one validator. Harness micro-suite case 27 shows the
 decision-bearing form.
 
     # repro: phx-schematron/findings/template-variable-dynamic-scoping/repro.xsl
@@ -6149,7 +6148,7 @@ current-merge-group/key, regex-groups) still pass through. Two follow-ups surfac
   re-evaluated the select from deeper scopes. apply-templates, apply-imports and next-match now evaluate their
   with-params once, in the caller's scope, and forward values (`XsltWithParam.RuntimeValue`).
 
-A side effect of `EvaluateAsync` no longer binding every scope of a deep call stack: GA.EMS.v350 compile step C1
+A side effect of `EvaluateAsync` no longer binding every scope of a deep call stack: one validator's compile step C1
 went from 40s to 18.4s, output identical.
 
 ---
@@ -6160,7 +6159,7 @@ went from 40s to 18.4s, output identical.
 `MaxRecursionDepth` (1,200), truncating output. The ISO skeleton's `sch-check:strip-strings` (in
 `iso_dsdl_include.xsl`) walks each assert test one character per call. For tests longer than ~1,150 characters it
 returned a truncated string, and `test-paren` printed `Bad assert: XPath syntax error. Unclosed parenthesis` for
-balanced expressions: 403 asserts in 52 of 77 state schematrons. Recursive `xsl:function` raised `err:XSLT0000`
+balanced expressions: 403 asserts in 52 of the validators we test. Recursive `xsl:function` raised `err:XSLT0000`
 instead.
 
     # repro: phx-schematron/findings/named-template-recursion-depth/repro.xsl
@@ -6168,7 +6167,7 @@ instead.
     depth 5000, tail-recursive accumulator:              Saxon 5000   1.8.0 ""   (no error)
 
 **What did not work, measured.** Raising the cap to 200,000 exhausted the native stack at 5,000 frames
-(`XTDE0000`, identical with `DOTNET_DefaultStackSize=0x10000000`) and turned the GA include step into a hard
+(`XTDE0000`, identical with `DOTNET_DefaultStackSize=0x10000000`) and turned one validator's include step into a hard
 failure. Throwing at the cap without deeper recursion would have broken the compile of 52 schematrons.
 
 **Fix.**
@@ -6185,12 +6184,12 @@ failure. Throwing at the cap without deeper recursion would have broken the comp
 
 | | 1.8.0 | this branch |
 |---|---|---|
-| GA C1 time | 40s | 5.4s (Saxon 0.7s) |
+| C1 time, one validator | 40s | 5.4s (Saxon 0.7s) |
 | false messages | 12 | 0 |
 | 20,000-deep | truncated | correct, 1.2s |
 | 70,000-deep | truncated | correct, 4.4s |
-| 77 state schematrons, 3-step compile, sequential | 25.1 min | 5.8 min (Saxon ~1.8 min) |
-| schematrons with false C1 messages | 52 | 0 (WY.EMS.v350's one message is a real malformed assert; Saxon prints it too) |
+| all validators we test, 3-step compile, sequential | 25.1 min | 5.8 min (Saxon ~1.8 min) |
+| schematrons with false C1 messages | 52 | 0 (one validator's one message is a real malformed assert; Saxon prints it too) |
 
 - `TailCallTemplateTests` 8/8, including 100,000-deep recursion.
 - The remaining gap to Saxon is per-evaluation overhead: in a deep-recursion profile `EvaluateAsync` is ~91%
@@ -6203,8 +6202,8 @@ failure. Throwing at the cap without deeper recursion would have broken the comp
 **Symptom.** A namespace named in `extension-element-prefixes` on `xsl:stylesheet` was copied onto literal result
 elements (XSLT 3.0 §11.1.3 excludes it). Every validator compiled from `iso_schematron_skeleton_for_saxon.xsl`
 therefore carried `xmlns:exsl="http://exslt.org/common"`. That was the only difference between this engine's
-compiled validators and Saxon's (and the customer's production `.xsl`) across all 77 state schematrons. The
-harness's canonical diff ignored namespaces until this was found.
+compiled validators and the reference compiler's output across the Schematron suites we test. The harness's
+canonical diff ignored namespaces until this was found.
 
     # repro: phx-schematron/findings/extension-element-prefixes-not-excluded/
     lre.xsl → Saxon <out xmlns:keep="urn:keep"/>   1.8.0 <out xmlns:exsl="http://exslt.org/common" xmlns:keep="urn:keep"/>
@@ -6231,7 +6230,7 @@ All against `c0fc41a`, same machine, Release conformance.
   the depths the Schematron skeleton needs (~70,000); `TailCallTemplateTests` covers that.
 - **Unit suite:** 1,811 tests, 0 failed (new: `SchematronSkeletonConformanceTests` 16, `TailCallTemplateTests` 8).
 - **phx-schematron harness micro-suite:** 58/58; before, 55/58.
-- **Harness corpus (950 NEMSIS national/state cases) with the lexical-scope, namespace and exclusion fixes:**
+- **Harness corpus (950 cases) with the lexical-scope, namespace and exclusion fixes:**
   950/950 Tier-A-clean, 0 compiled-validator differences (was 945/950 and 83 schemas differing).
 
 ---
@@ -6522,7 +6521,7 @@ Three instances today, all found by asking it rather than by anything going wron
 - **#133's corpus gate.** 33,464 `xsl:variable`/`xsl:param` declarations in the Schematron path,
   **zero** with an `as=` attribute — so a 950-case run never constructs a typed variable and cannot
   exercise the defect. A green row there means "no regression" and nothing more. (Strengthened
-  further: 0 of 77 use `@documents`, so the one typed declaration never reaches a compiled
+  further: none of the validators use `@documents`, so the one typed declaration never reaches a compiled
   validator.)
 - **The #129 and #132 conformance A/Bs.** Byte-identical 334/334 failure sets on both arms. That
   proves nothing broke; it proves nothing whatever about whether either fix *works*, because the
@@ -6627,7 +6626,7 @@ provenance field is to an artifact what a denominator is to a count.
 
 **And a note on normalisers, which failed in both directions in one day.** Under-matching fabricated
 differences twice, once in the very pattern written to fix the first. Over-matching silently erased
-85 pure-decimal NEMSIS code values from *both sides* of a comparison — invisible, because deleting
+85 pure-decimal code values from *both sides* of a comparison — invisible, because deleting
 the same thing from both arms leaves them equal. **Under-match is loud and costs an investigation;
 over-match is silent and costs the finding.** The over-match was caught only because the under-match
 screamed and prompted an audit, which is not a detection method.
