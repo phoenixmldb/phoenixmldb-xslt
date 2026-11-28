@@ -9028,3 +9028,106 @@ provider, the context's node store and the namespace resolver. `fn:serialize` al
 is removed. `QueryEngine` takes the context's namespace resolver from the document resolver when the provider is not a store.
 
 Tests: `NamespaceFromNodeStoreTests`.
+
+### 193. A function registered under a built-in's name and arity skipped the built-in's argument check — fixed (xquery#450, 2026-11-28)
+
+Engine: **XQuery** and **XSLT**. Since xquery#443 (BUGS #185) a static call of a built-in checks the item types of its
+arguments, but only for the function objects of `FunctionLibrary.Standard`. A host that registers its own function under a
+built-in's name and arity (the PhoenixmlDb database wraps `parse-xml`, `parse-xml-fragment`, `unparsed-text`,
+`unparsed-text-lines`, `unparsed-text-available`, `json-doc`, `transform` and `load-xquery-module` for its resource policy),
+and the XSLT engine's own versions of F&O functions (42 share a name and arity with a built-in), skipped it: the result
+depended on the policy. Through a wrapper, `parse-xml-fragment(['<a/>'])` parsed the text
+"System.Collections.Generic.List`1[System.Object]", and `unparsed-text(map { })` gave no FOTY0013. In a version="3.0"
+stylesheet, `format-number('x', '0')` gave `NaN`.
+
+Fix: a function under the expanded name and arity of a built-in (exact namespace, local name and arity) converts its arguments
+with the built-in's parameter types: atomization, the cardinality, the string check and the item type. A host function under
+another name is not checked, as before. A wrapper's function item keeps the wrapper's own signature (`instance of`). Breaking:
+more XPTY0004 and FOTY0013 through wrappers and in XSLT.
+
+Fixed (xquery, xslt): `format-number('x', '0')` in a version="3.0" stylesheet gave `NaN`, now XPTY0004 (in a version="1.0"
+stylesheet it is still `NaN`).
+
+Tests: `BuiltinNameArgumentCheckTests` (the #443 sweep through a wrapper of every built-in).
+
+### 194. A dynamic call or a partial application of a built-in did not atomize an array or raise FOTY0013 — fixed (xquery#450, 2026-11-28)
+
+Engine: **XQuery** and **XSLT**. In 3.2.0. A dynamic call (a named function reference, `function-lookup`) and a partial
+application checked only the item type of each argument; a static call atomizes an array in an atomic argument and raises
+FOTY0013 for a map or a function item (XQuery 3.1 §2.4.2, §3.1.5.2). `let $f := string-length#1 return $f(['ab'])` was XPTY0004
+(the static call gives 2); `$f(map { })` was XPTY0004 (FOTY0013); `parse-xml-fragment#1` given `['<a/>']` was XPTY0004.
+
+Fix: the static call, the dynamic call and the partial application of a built-in use one conversion (`BuiltInArguments`). A
+dynamic call's and a partial application's conversion errors are `XQueryRuntimeException`, as before; a static call's are as
+before (see #199).
+
+Tests: `BuiltinNameArgumentCheckTests.The_static_and_the_dynamic_call_convert_arguments_alike`.
+
+### 195. A node given to a map, array, function or record parameter was accepted — fixed (xquery#450, 2026-11-28)
+
+Engine: **XQuery** and **XSLT**. In 3.2.0. The item check let a node through to any parameter that is not a node type or
+`item()`, as if it were atomic: `transform(<options/>)` gave FOXT0001, `map:size(<a/>)` gave 0. A node is never a map, an array
+or a function: XPTY0004, on the static and the dynamic path. A node given to an atomic parameter is still atomized.
+
+Tests: `BuiltinNameArgumentCheckTests` (a node in every map, array and function parameter of the library).
+
+### 196. 79 built-in parameters were declared item(), item()? or item()* where F&O gives a narrower type — fixed (xquery#450, 2026-11-28)
+
+Engine: **XQuery** and **XSLT**. In 3.2.0. For example `$options` of `json-doc#2`, `parse-json#2` and `load-xquery-module#2`
+was `item()` (F&O 3.1: `map(*)`), so `json-doc('x.json', 'notamap')` gave FOUT1170 and `load-xquery-module('urn:x', 'notamap')`
+FOQM0002, not XPTY0004; the 25 date, time and duration functions cast a string (`year-from-date('2020-01-01')` gave
+2020; now XPTY0004, write `xs:date('2020-01-01')`); `number(('1', '2'))` gave NaN; `sum(1, map { })` gave 1;
+`format-number`'s `$value` was `xs:double?` (F&O 3.1: `xs:numeric?`).
+
+Fix: each declaration follows F&O 3.1, and for a function F&O 3.1 does not define, the F&O 4.0 Community Group draft
+(qt4cg/qtspecs 892f717e, 2026-11-24). Where the 4.0 draft allows more and the function implements it (an empty `$options`; an
+empty `$key` of `highest` and `lowest`), the 4.0 cardinality is used. The list is in the PR. In a version="1.0" stylesheet
+(XPath 1.0 compatibility mode) the first item of a single-item argument is now taken: `concat(('a', 'b'), 'c')` gives "ac" (was
+XPTY0004), `number(('1', '2'))` gives 1 (was NaN). Breaking: more XPTY0004 and FOTY0013.
+
+Tests: `BuiltinArgumentItemTypeTests` (the sweep covers the new declarations),
+`BuiltinNameArgumentCheckTests.The_declared_types_apply`.
+
+### 197. array:of-members and fn:transitive-closure follow other 4.0 drafts — open (2026-11-28)
+
+Engine: **XQuery**. `array:of-members` declares `$seq as item()*`; the 4.0 draft (qt4cg/qtspecs 892f717e) has
+`$input as jnode()*`, a type the engine does not have. `fn:transitive-closure` declares `($seq as item()*, $fn as function(*))`;
+the draft has `($node as node()?, $step as fn($node as node()) as node()*)`. The implementation follows an older draft. Not
+changed by #196.
+
+### 198. abs, ceiling, floor, round and round-half-to-even declare xs:anyAtomicType?; function parameters declare function(*) — open (2026-11-28)
+
+Engine: **XQuery** and **XSLT**. F&O 3.1 declares `$arg as xs:numeric?`. A string is XPTY0004 already (measured: "Cannot pass
+xs:string to fn:abs"), from the functions' own check; the declarations matter for `instance of` and function coercion:
+`abs#1 instance of function(xs:string?) as xs:numeric?` is true. Parameters that F&O gives a typed function
+(`function(item()) as xs:boolean` for `fn:filter`, and others) declare `function(*)`.
+
+### 199. A static call and a dynamic call throw different exception types for the same conversion error — open, for a later breaking release (2026-11-28)
+
+Engine: **XQuery**. `PhoenixmlDb.XQuery.Execution.XQueryRuntimeException` and `PhoenixmlDb.XQuery.Functions.XQueryException`
+both derive from `System.Exception` only. Measured with `XQueryFacade.EvaluateAsync` (3.2.0 = the NuGet package; main after
+#193-#196):
+
+| call | 3.2.0 | after #193-#196 |
+|---|---|---|
+| `string-length(('a', 'b'))` (static, cardinality) | Functions.XQueryException | the same |
+| `string-length(map { })` (static, FOTY0013) | Functions.XQueryException | the same |
+| `unparsed-text(1)` (static, string check) | XQueryRuntimeException | the same |
+| `string-length#1` given `('a', 'b')` (dynamic) | XQueryRuntimeException | the same |
+| `string-length(?)` given `('a', 'b')` (partial) | XQueryRuntimeException | the same |
+
+Hosts catch both: in src, the XQuery library has 30 catch clauses for XQueryRuntimeException and 4 for XQueryException, the
+XSLT library 7 and 3, the database engine 4 and 9. One type for both paths changes the type a host sees on one path: for a
+breaking release.
+
+### 200. fn:concat does not take sequences (the 4.0 form) — open (2026-11-28)
+
+Engine: **XQuery** and **XSLT**. F&O 4.0 declares `fn:concat($values as xs:anyAtomicType* := ())`: each argument may be a
+sequence. The engine implements the 3.1 rule: each argument is one atomic value or empty, else XPTY0004
+(`concat(('a', 'b'), 'c')`). A new feature, not for 3.3.0.
+
+### 201. fn:sort#3 and array:sort#3 do not take an empty $key (the 4.0 form) — open (2026-11-28)
+
+Engine: **XQuery** and **XSLT**. The 4.0 draft declares `$key as (fn(...) as xs:anyAtomicType*)?` with the default `fn:data#1`.
+The engine requires a function ("Third argument to sort must be callable", XPTY0004); the declaration is F&O 3.1's
+(`function(*)`, exactly one).
