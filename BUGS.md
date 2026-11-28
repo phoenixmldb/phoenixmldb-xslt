@@ -8997,7 +8997,7 @@ both written).
 Engine: **XQuery** (and XSLT's `fn:serialize`, which uses the same serializer). Serialization 3.1 §5.1.7: "If the
 doctype-system parameter is specified, the XML output method MUST output a document type declaration immediately before
 the first element." The xml method of `XQueryResultSerializer` wrote none, in every form: `fn:serialize` with a map or an
-`output:serialization-parameters` element, the prolog options, and `fn:put#3` (reported by db-engine on xquery da4bdb7:
+`output:serialization-parameters` element, the prolog options, and `fn:put#3` (reported by the PhoenixmlDb database on xquery da4bdb7:
 `<?xml version="1.0" encoding="UTF-8"?><n/>`). 3.2.0 had the same defect. The xhtml and html methods, and the Saxon layout
 (`phx:indent-style`), wrote one. XSLT's `xsl:output` writes its own and was not affected.
 
@@ -9018,7 +9018,7 @@ Engine: **XQuery**. Several places read the namespace URI of a node's namespace 
 parameters and threw `InvalidOperationException` ("namespace id 102 is not registered with the node store") for a
 namespace; `path()` without the namespace (`Q{}a` for `Q{urn:q}a`); XPTY0004 for a correct `output:serialization-parameters`
 element; a different `validate` result. For a node of another store, `lang()` and `xml-to-json` read the wrong store. The
-shipped hosts all give an `INodeStore` and were not affected. Found while answering db-engine's `fn:put` question (the
+shipped hosts all give an `INodeStore` and were not affected. Found while answering the PhoenixmlDb database's `fn:put` question (the
 parameters element of xquery#443's review).
 
 Fix: one internal helper, `NodeNamespaces`, with one rule for the namespace URIs, the nodes of ids and the store of a node's
