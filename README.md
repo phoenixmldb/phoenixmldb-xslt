@@ -101,8 +101,8 @@ Measured both ways on the same commit, same machine:
 | Debug | 10,044/10,630 | 94.49% | 43 |
 | Release | 10,082/10,630 | 94.84% | 5 |
 
-21 sets better under Release, **zero worse**. `misc/bug-3701` is the clean illustration: ~10.5s in
-Debug against a 10s cap, ~5.7s in Release. `scripts/conformance.sh` now defaults to Release.
+21 sets better under Release, **zero worse**. `misc/bug-3701` is the clean illustration: it times out in
+Debug against a 10s cap and passes in Release. `scripts/conformance.sh` now defaults to Release.
 
 That correction is why the published figure rose from 94.4% to 94.8% on 2026-09-10 without the
 engine changing. The rise since then — to 95.6% — *is* engine work. See `BUGS.md` #43.

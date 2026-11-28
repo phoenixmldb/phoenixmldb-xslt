@@ -1292,17 +1292,17 @@ conformance figure taken from it was a claim about an artifact nobody receives �
 
 Measured, same commit, same machine, full 11-chunk sweep both ways:
 
-| | cases | rate | timeouts | wall clock |
-|---|---|---|---|---|
-| Debug | 10044/10630 | 94.49% | **43** | ~38 min |
-| Release | **10082/10630** | **94.84%** | **5** | ~25 min |
+| | cases | rate | timeouts |
+|---|---|---|---|
+| Debug | 10044/10630 | 94.49% | **43** |
+| Release | **10082/10630** | **94.84%** | **5** |
 
 **21 sets better under Release, ZERO sets worse.** 38 cases, 0.35 points.
 
 `misc/bug-3701` is the clean illustration, timed directly at load ~1.3:
 
-    Debug    10.3s / 10.8s / 10.9s      against a 10s cap
-    Release   5.7s /  5.5s /  6.1s      (and that at load ~10)
+    Debug    times out on every run against a 10s cap
+    Release   passes well inside the cap (and that at load ~10)
 
 Not flaky — over the line in one configuration and comfortably under in the other. It also
 explains why the phoenixml engine repo's floors, which are measured against published *packages*
@@ -1459,7 +1459,7 @@ strictly worse than a random one. Worth naming rather than filing alongside the 
 flickers.
 
 `tests/PhoenixmlDb.Xslt.Tests` `StreamingCancellationTests` cancels at 3 s and then asserts the
-transform is still running. On a fast machine it finishes in ~2 s, so 2 of the 4 tests fail
+transform is still running. On a fast machine it finishes before the cancel point, so 2 of the 4 tests fail
 **deterministically** — the assertion encodes an assumption about how slow the host is.
 
 That is the same defect as asserting a wall-clock bound for linearity: the property under test is
@@ -1484,9 +1484,9 @@ sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));   // over 400,000 iter
 
 That fixes the fast-box failure this entry was filed for — and introduces the mirror image.
 `StreamedTransform_TokenCancelledMidRun_ThrowsBeforeCompletion` now fails on a box that is too
-**slow**, or merely busy. Observed twice on `palukerjr` (8 cores, load average 10 from concurrent
+**slow**, or merely busy. Observed twice on a development machine (8 cores, load average 10 from concurrent
 builds), both times inside the full suite, both times passing **4/4** when re-run alone on the same
-checkout. It passes on `mechapaluker` and on CI, so the same commit yields a different unit result
+checkout. It passes on a faster development machine and on CI, so the same commit yields a different unit result
 on two machines.
 
 The proxy was never the direction. It is that **elapsed wall-clock stands in for "cancellation was
@@ -1726,10 +1726,10 @@ others because **it was written using the fix I proposed for the first three.**
 | # | test | what it asserted | how it failed |
 |---|---|---|---|
 | 1 | parser scaling | 50K children parse in under 2s | failed at load 19, code correct |
-| 2 | parser scaling, 2nd form | 2x ratio under 3.0 | failed CI at 3.71 on 69ms/255ms |
-| 3 | parser scaling, 3rd form | 4x ratio under 8.0 | failed CI at 18.4 — GC on a 2-core runner |
-| 4 | `StreamingCancellationTests` | still running after 3s | finishes in ~2s on a fast box |
-| 5 | xquery `#10` scaling | 4x ratio | **13.9x on net10.0, passed net8.0 in the SAME run** |
+| 2 | parser scaling, 2nd form | 2x ratio under 3.0 | failed CI on small absolute timings |
+| 3 | parser scaling, 3rd form | 4x ratio under 8.0 | failed CI — GC on a 2-core runner |
+| 4 | `StreamingCancellationTests` | still running after 3s | finishes before the cancel point on a fast box |
+| 5 | xquery `#10` scaling | 4x ratio | **failed on net10.0, passed net8.0 in the SAME run** |
 
 Instance 5 is the informative one. It used a **ratio**, which is what I recommended after instance
 1 — a ratio cancels ambient load because both measurements carry it. That reasoning is correct and
@@ -1738,10 +1738,10 @@ still insufficient:
 - **It only holds if both measurements carry the SAME load.** Parallel xunit classes on a 2-core
   runner do not give that. One measurement got a free core, the other did not, and the ratio
   amplified the difference rather than cancelling it.
-- **At small absolute sizes, fixed costs and GC dominate.** 69ms against 255ms is not measuring
-  the algorithm. Instance 3 failed at 18.4 on measurements where the small case was 29ms.
+- **At small absolute sizes, fixed costs and GC dominate.** Timings that small are not measuring
+  the algorithm. Instance 3 failed on measurements where the small case was very short.
 
-Same code measured 196/265/502/910 ms at 4k/16k/64k/256k locally — linear, obviously.
+Same code measured linear at 4k/16k/64k/256k locally, obviously.
 
 **What actually works, from five attempts:**
 
@@ -2454,7 +2454,7 @@ cancels is a trap regardless of what else is wrong — but it is not the reason 
 red, and fixing it alone would have changed nothing.
 
 The earlier "~13,500 of 31,414 cases in 2400 s" reading is superseded: the chunk is not grinding
-slowly through the corpus, it is **stuck on one case**. That also dissolves the supposed 30-70x
+slowly through the corpus, it is **stuck on one case**. That also dissolves the supposed
 runner-vs-local gap, which was an artifact of dividing a hang by a case count. Worth recording
 as its own small lesson: a throughput number computed from a run that never finished describes
 nothing.
@@ -5398,8 +5398,7 @@ by putting it in the reader rather than in the consumers. `PeekableXmlReader` wr
 streamed reader; asked "does this start tag have children?", it snapshots the start tag, reads
 ahead (past whitespace that `xsl:strip-space` would remove), answers, and REPLAYS the start tag and
 anything it read before handing the live reader back. None of the ~30 places that read from the
-reader changed. Without a peek it is a pure pass-through: a 1M-element streamed identity measured
-1,481 ms median on main and 1,399 ms with the wrapper — below the noise.
+reader changed. Without a peek it is a pure pass-through: on a 1M-element streamed identity, main and the wrapper differ by less than the noise.
 
 The warning above was acted on: `StreamedHasChildrenTests` includes `<a></a>`, which main and the
 `!IsEmptyElement` shortcut answer in opposite wrong ways from each other on the other cases.
@@ -6095,18 +6094,16 @@ to grep for, because the default hides every site you missed.
 
 ### 99. FIXED on `fix/schematron-conformance` — namespaced name tests inside `some`/`every` selected nothing (2026-09-15)
 
-Found by the phx-schematron conformance harness (ISO Schematron three-step compile of 77 state EMS
-schematrons + 6 national, compared against Saxon-HE 12.10). Before this, **wrong accept/reject decisions**
-came from AL.EMS.v350 and PA.EMS.v350/v351 state rules, plus national `nemSch_e077`.
+Found by the Schematron harness (ISO Schematron three-step compile of the Schematron suites
+we test, compared against Saxon-HE 12.10). Before this, some rules gave **wrong accept/reject decisions**.
 
-**Symptom.** Inside an XPath quantified expression, a prefixed or EQName element name test (`nem:x`,
+**Symptom.** Inside an XPath quantified expression, a prefixed or EQName element name test (`p:x`,
 `Q{uri}x`) matched only no-namespace nodes: `some` returned false and `every` returned true for any data,
 with no error. `*:x` and `local-name()` tests worked, as did `for`/`if` with the same paths. The standalone XQuery
 engine was correct (`xquery` CLI 1.8.0 with `declare namespace`).
 
-    # repro + literal Saxon/xquery4 table: phx-schematron/findings/quantified-expression-namespaced-name-test/
-    some $x in ../nem:eSituation.10 satisfies true()     Saxon true   1.8.0 false
-    every $x in ../nem:eSituation.10 satisfies false()   Saxon false  1.8.0 true
+    some $x in ../p:e satisfies true()     Saxon true   1.8.0 false
+    every $x in ../p:e satisfies false()   Saxon false  1.8.0 true
 
 **Cause.** The three stylesheet-namespace walkers — `StylesheetParser.ResolveExpressionNamespaces`,
 `DefaultXsltExecutionContext.ResolveExpressionNamespaceIds` and `ResolveExpressionNamespacesRuntime` — were
@@ -6128,10 +6125,9 @@ instead of raising XTSE0280.
 function body, resolved `$v` to the invoker's local `$v` instead of the global (XSLT 3.0 §9.9 lexical scope).
 The ISO Schematron skeleton compiles each rule to a template that declares its `sch:let`s and then applies templates
 to children in the same mode, so a descendant rule read an ancestor rule's value for a schema-level default. That was
-seen as wrong NEMSIS diagnostic content (OR.EMS.v351 `or_e142`). Harness micro-suite case 27 shows the
+seen as wrong diagnostic content in one validator. Harness micro-suite case 27 shows the
 decision-bearing form.
 
-    # repro: phx-schematron/findings/template-variable-dynamic-scoping/repro.xsl
     apply-templates / call-template / next-match from a template with local $v='LOCAL', global $v='GLOBAL'
     Saxon: GLOBAL ×3      1.8.0: LOCAL-IN-PARENT, LOCAL-IN-CALLER, LOCAL-BEFORE-NEXT-MATCH
 
@@ -6149,8 +6145,8 @@ current-merge-group/key, regex-groups) still pass through. Two follow-ups surfac
   re-evaluated the select from deeper scopes. apply-templates, apply-imports and next-match now evaluate their
   with-params once, in the caller's scope, and forward values (`XsltWithParam.RuntimeValue`).
 
-A side effect of `EvaluateAsync` no longer binding every scope of a deep call stack: GA.EMS.v350 compile step C1
-went from 40s to 18.4s, output identical.
+A side effect of `EvaluateAsync` no longer binding every scope of a deep call stack: one validator's compile step C1
+got faster, output identical.
 
 ---
 
@@ -6160,15 +6156,14 @@ went from 40s to 18.4s, output identical.
 `MaxRecursionDepth` (1,200), truncating output. The ISO skeleton's `sch-check:strip-strings` (in
 `iso_dsdl_include.xsl`) walks each assert test one character per call. For tests longer than ~1,150 characters it
 returned a truncated string, and `test-paren` printed `Bad assert: XPath syntax error. Unclosed parenthesis` for
-balanced expressions: 403 asserts in 52 of 77 state schematrons. Recursive `xsl:function` raised `err:XSLT0000`
+balanced expressions: 403 asserts in 52 of the validators we test. Recursive `xsl:function` raised `err:XSLT0000`
 instead.
 
-    # repro: phx-schematron/findings/named-template-recursion-depth/repro.xsl
     depth 5000, named template emitting then recursing:  Saxon 5000   1.8.0 1193 (no error)
     depth 5000, tail-recursive accumulator:              Saxon 5000   1.8.0 ""   (no error)
 
 **What did not work, measured.** Raising the cap to 200,000 exhausted the native stack at 5,000 frames
-(`XTDE0000`, identical with `DOTNET_DefaultStackSize=0x10000000`) and turned the GA include step into a hard
+(`XTDE0000`, identical with `DOTNET_DefaultStackSize=0x10000000`) and turned one validator's include step into a hard
 failure. Throwing at the cap without deeper recursion would have broken the compile of 52 schematrons.
 
 **Fix.**
@@ -6185,16 +6180,14 @@ failure. Throwing at the cap without deeper recursion would have broken the comp
 
 | | 1.8.0 | this branch |
 |---|---|---|
-| GA C1 time | 40s | 5.4s (Saxon 0.7s) |
 | false messages | 12 | 0 |
-| 20,000-deep | truncated | correct, 1.2s |
-| 70,000-deep | truncated | correct, 4.4s |
-| 77 state schematrons, 3-step compile, sequential | 25.1 min | 5.8 min (Saxon ~1.8 min) |
-| schematrons with false C1 messages | 52 | 0 (WY.EMS.v350's one message is a real malformed assert; Saxon prints it too) |
+| 20,000-deep | truncated | correct |
+| 70,000-deep | truncated | correct |
+| schematrons with false C1 messages | 52 | 0 (one validator's one message is a real malformed assert; Saxon prints it too) |
 
 - `TailCallTemplateTests` 8/8, including 100,000-deep recursion.
-- The remaining gap to Saxon is per-evaluation overhead: in a deep-recursion profile `EvaluateAsync` is ~91%
-  inclusive, `QueryExecutionContext.PushContextItem` 28%, with-param evaluation 40%. **OPEN.**
+- The remaining cost is per-evaluation overhead: in a deep-recursion profile `EvaluateAsync` dominates
+  inclusive time, with large shares in with-param evaluation and `QueryExecutionContext.PushContextItem`. **OPEN.**
 
 ---
 
@@ -6203,10 +6196,9 @@ failure. Throwing at the cap without deeper recursion would have broken the comp
 **Symptom.** A namespace named in `extension-element-prefixes` on `xsl:stylesheet` was copied onto literal result
 elements (XSLT 3.0 §11.1.3 excludes it). Every validator compiled from `iso_schematron_skeleton_for_saxon.xsl`
 therefore carried `xmlns:exsl="http://exslt.org/common"`. That was the only difference between this engine's
-compiled validators and Saxon's (and the customer's production `.xsl`) across all 77 state schematrons. The
-harness's canonical diff ignored namespaces until this was found.
+compiled validators and the reference compiler's output across the Schematron suites we test. The harness's
+canonical diff ignored namespaces until this was found.
 
-    # repro: phx-schematron/findings/extension-element-prefixes-not-excluded/
     lre.xsl → Saxon <out xmlns:keep="urn:keep"/>   1.8.0 <out xmlns:exsl="http://exslt.org/common" xmlns:keep="urn:keep"/>
 
 **Cause.** `StylesheetParser.Declarations` stores stylesheet-level entries as namespace URIs, but the runtime
@@ -6230,8 +6222,8 @@ All against `c0fc41a`, same machine, Release conformance.
   failing; today's baseline does not. The suite recurses only to ~1,000, so no W3C case exercises tail calls at
   the depths the Schematron skeleton needs (~70,000); `TailCallTemplateTests` covers that.
 - **Unit suite:** 1,811 tests, 0 failed (new: `SchematronSkeletonConformanceTests` 16, `TailCallTemplateTests` 8).
-- **phx-schematron harness micro-suite:** 58/58; before, 55/58.
-- **Harness corpus (950 NEMSIS national/state cases) with the lexical-scope, namespace and exclusion fixes:**
+- **Schematron harness micro-suite:** 58/58; before, 55/58.
+- **Harness corpus (950 cases) with the lexical-scope, namespace and exclusion fixes:**
   950/950 Tier-A-clean, 0 compiled-validator differences (was 945/950 and 83 schemas differing).
 
 ---
@@ -6522,7 +6514,7 @@ Three instances today, all found by asking it rather than by anything going wron
 - **#133's corpus gate.** 33,464 `xsl:variable`/`xsl:param` declarations in the Schematron path,
   **zero** with an `as=` attribute — so a 950-case run never constructs a typed variable and cannot
   exercise the defect. A green row there means "no regression" and nothing more. (Strengthened
-  further: 0 of 77 use `@documents`, so the one typed declaration never reaches a compiled
+  further: none of the validators use `@documents`, so the one typed declaration never reaches a compiled
   validator.)
 - **The #129 and #132 conformance A/Bs.** Byte-identical 334/334 failure sets on both arms. That
   proves nothing broke; it proves nothing whatever about whether either fix *works*, because the
@@ -6627,7 +6619,7 @@ provenance field is to an artifact what a denominator is to a count.
 
 **And a note on normalisers, which failed in both directions in one day.** Under-matching fabricated
 differences twice, once in the very pattern written to fix the first. Over-matching silently erased
-85 pure-decimal NEMSIS code values from *both sides* of a comparison — invisible, because deleting
+85 pure-decimal code values from *both sides* of a comparison — invisible, because deleting
 the same thing from both arms leaves them equal. **Under-match is loud and costs an investigation;
 over-match is silent and costs the finding.** The over-match was caught only because the under-match
 screamed and prompted an audit, which is not a detection method.
@@ -6783,8 +6775,7 @@ cap to measured machine speed, or have the gate treat a timeout as *not a measur
 as a failure, which is what it actually is. Until then, "green except some timeouts" will be the
 normal state of a run on a slow host, and that is exactly how a gate stops being believed.
 
-**Measured across hosts, which decides between the options.** The same three cases on
-`mechapaluker` (32 cores, load 0.05): **0 timeouts across 12 sweeps and 4,326 FAILED lines**, with
+**Measured across hosts, which decides between the options.** The same three cases on the CI runner host (32 cores, load 0.05): **0 timeouts across 12 sweeps and 4,326 FAILED lines**, with
 the per-set TSV showing all three sets visited every time — `sf-fold-left` 20/20,
 `sx-GeneralComp-gt` 52/52, `si-value-of` 35/39 with four failures, none of them `si-value-of-016`.
 Controls, because a zero without them is worth nothing: the search was proven non-blind
@@ -7991,8 +7982,8 @@ The #575 serializer writes such a piece on in 16K slices, so it adds nothing to 
 Ruled (Lucas, 2026-11-23): fix in 3.3.0.
 
 Correction (measured 2026-11-23, main b395e78): the input is NOT streamed. Peak RSS of the CLI on
-Martin's stylesheet: 189 MiB for 30 000 items, 1439 MiB for 300 000; the same input with only
-`on-no-match="shallow-copy"`: 97 and 101 MiB. The rule for `root` runs in
+Martin's stylesheet: memory grew with the item count (30 000 and 300 000 items); the same input with only
+`on-no-match="shallow-copy"`: memory stayed flat. The rule for `root` runs in
 `ExecuteWithBufferedSubtreeAsync`, so the whole input is read into a tree, and the for-each-group
 takes its buffered path. The plan for the body is `BufferWholeInput`: the classifier
 (`ClassifyForEachGroup`, not the by-spec rules) reports the key `category`, a step down from a
@@ -9028,3 +9019,106 @@ provider, the context's node store and the namespace resolver. `fn:serialize` al
 is removed. `QueryEngine` takes the context's namespace resolver from the document resolver when the provider is not a store.
 
 Tests: `NamespaceFromNodeStoreTests`.
+
+### 193. A function registered under a built-in's name and arity skipped the built-in's argument check — fixed (xquery#450, 2026-11-28)
+
+Engine: **XQuery** and **XSLT**. Since xquery#443 (BUGS #185) a static call of a built-in checks the item types of its
+arguments, but only for the function objects of `FunctionLibrary.Standard`. A host that registers its own function under a
+built-in's name and arity (the PhoenixmlDb database wraps `parse-xml`, `parse-xml-fragment`, `unparsed-text`,
+`unparsed-text-lines`, `unparsed-text-available`, `json-doc`, `transform` and `load-xquery-module` for its resource policy),
+and the XSLT engine's own versions of F&O functions (42 share a name and arity with a built-in), skipped it: the result
+depended on the policy. Through a wrapper, `parse-xml-fragment(['<a/>'])` parsed the text
+"System.Collections.Generic.List`1[System.Object]", and `unparsed-text(map { })` gave no FOTY0013. In a version="3.0"
+stylesheet, `format-number('x', '0')` gave `NaN`.
+
+Fix: a function under the expanded name and arity of a built-in (exact namespace, local name and arity) converts its arguments
+with the built-in's parameter types: atomization, the cardinality, the string check and the item type. A host function under
+another name is not checked, as before. A wrapper's function item keeps the wrapper's own signature (`instance of`). Breaking:
+more XPTY0004 and FOTY0013 through wrappers and in XSLT.
+
+Fixed (xquery, xslt): `format-number('x', '0')` in a version="3.0" stylesheet gave `NaN`, now XPTY0004 (in a version="1.0"
+stylesheet it is still `NaN`).
+
+Tests: `BuiltinNameArgumentCheckTests` (the #443 sweep through a wrapper of every built-in).
+
+### 194. A dynamic call or a partial application of a built-in did not atomize an array or raise FOTY0013 — fixed (xquery#450, 2026-11-28)
+
+Engine: **XQuery** and **XSLT**. In 3.2.0. A dynamic call (a named function reference, `function-lookup`) and a partial
+application checked only the item type of each argument; a static call atomizes an array in an atomic argument and raises
+FOTY0013 for a map or a function item (XQuery 3.1 §2.4.2, §3.1.5.2). `let $f := string-length#1 return $f(['ab'])` was XPTY0004
+(the static call gives 2); `$f(map { })` was XPTY0004 (FOTY0013); `parse-xml-fragment#1` given `['<a/>']` was XPTY0004.
+
+Fix: the static call, the dynamic call and the partial application of a built-in use one conversion (`BuiltInArguments`). A
+dynamic call's and a partial application's conversion errors are `XQueryRuntimeException`, as before; a static call's are as
+before (see #199).
+
+Tests: `BuiltinNameArgumentCheckTests.The_static_and_the_dynamic_call_convert_arguments_alike`.
+
+### 195. A node given to a map, array, function or record parameter was accepted — fixed (xquery#450, 2026-11-28)
+
+Engine: **XQuery** and **XSLT**. In 3.2.0. The item check let a node through to any parameter that is not a node type or
+`item()`, as if it were atomic: `transform(<options/>)` gave FOXT0001, `map:size(<a/>)` gave 0. A node is never a map, an array
+or a function: XPTY0004, on the static and the dynamic path. A node given to an atomic parameter is still atomized.
+
+Tests: `BuiltinNameArgumentCheckTests` (a node in every map, array and function parameter of the library).
+
+### 196. 79 built-in parameters were declared item(), item()? or item()* where F&O gives a narrower type — fixed (xquery#450, 2026-11-28)
+
+Engine: **XQuery** and **XSLT**. In 3.2.0. For example `$options` of `json-doc#2`, `parse-json#2` and `load-xquery-module#2`
+was `item()` (F&O 3.1: `map(*)`), so `json-doc('x.json', 'notamap')` gave FOUT1170 and `load-xquery-module('urn:x', 'notamap')`
+FOQM0002, not XPTY0004; the 25 date, time and duration functions cast a string (`year-from-date('2020-01-01')` gave
+2020; now XPTY0004, write `xs:date('2020-01-01')`); `number(('1', '2'))` gave NaN; `sum(1, map { })` gave 1;
+`format-number`'s `$value` was `xs:double?` (F&O 3.1: `xs:numeric?`).
+
+Fix: each declaration follows F&O 3.1, and for a function F&O 3.1 does not define, the F&O 4.0 Community Group draft
+(qt4cg/qtspecs 892f717e, 2026-11-24). Where the 4.0 draft allows more and the function implements it (an empty `$options`; an
+empty `$key` of `highest` and `lowest`), the 4.0 cardinality is used. The list is in the PR. In a version="1.0" stylesheet
+(XPath 1.0 compatibility mode) the first item of a single-item argument is now taken: `concat(('a', 'b'), 'c')` gives "ac" (was
+XPTY0004), `number(('1', '2'))` gives 1 (was NaN). Breaking: more XPTY0004 and FOTY0013.
+
+Tests: `BuiltinArgumentItemTypeTests` (the sweep covers the new declarations),
+`BuiltinNameArgumentCheckTests.The_declared_types_apply`.
+
+### 197. array:of-members and fn:transitive-closure follow other 4.0 drafts — open (2026-11-28)
+
+Engine: **XQuery**. `array:of-members` declares `$seq as item()*`; the 4.0 draft (qt4cg/qtspecs 892f717e) has
+`$input as jnode()*`, a type the engine does not have. `fn:transitive-closure` declares `($seq as item()*, $fn as function(*))`;
+the draft has `($node as node()?, $step as fn($node as node()) as node()*)`. The implementation follows an older draft. Not
+changed by #196.
+
+### 198. abs, ceiling, floor, round and round-half-to-even declare xs:anyAtomicType?; function parameters declare function(*) — open (2026-11-28)
+
+Engine: **XQuery** and **XSLT**. F&O 3.1 declares `$arg as xs:numeric?`. A string is XPTY0004 already (measured: "Cannot pass
+xs:string to fn:abs"), from the functions' own check; the declarations matter for `instance of` and function coercion:
+`abs#1 instance of function(xs:string?) as xs:numeric?` is true. Parameters that F&O gives a typed function
+(`function(item()) as xs:boolean` for `fn:filter`, and others) declare `function(*)`.
+
+### 199. A static call and a dynamic call throw different exception types for the same conversion error — open, for a later breaking release (2026-11-28)
+
+Engine: **XQuery**. `PhoenixmlDb.XQuery.Execution.XQueryRuntimeException` and `PhoenixmlDb.XQuery.Functions.XQueryException`
+both derive from `System.Exception` only. Measured with `XQueryFacade.EvaluateAsync` (3.2.0 = the NuGet package; main after
+#193-#196):
+
+| call | 3.2.0 | after #193-#196 |
+|---|---|---|
+| `string-length(('a', 'b'))` (static, cardinality) | Functions.XQueryException | the same |
+| `string-length(map { })` (static, FOTY0013) | Functions.XQueryException | the same |
+| `unparsed-text(1)` (static, string check) | XQueryRuntimeException | the same |
+| `string-length#1` given `('a', 'b')` (dynamic) | XQueryRuntimeException | the same |
+| `string-length(?)` given `('a', 'b')` (partial) | XQueryRuntimeException | the same |
+
+Hosts catch both: in src, the XQuery library has 30 catch clauses for XQueryRuntimeException and 4 for XQueryException, the
+XSLT library 7 and 3, the database engine 4 and 9. One type for both paths changes the type a host sees on one path: for a
+breaking release.
+
+### 200. fn:concat does not take sequences (the 4.0 form) — open (2026-11-28)
+
+Engine: **XQuery** and **XSLT**. F&O 4.0 declares `fn:concat($values as xs:anyAtomicType* := ())`: each argument may be a
+sequence. The engine implements the 3.1 rule: each argument is one atomic value or empty, else XPTY0004
+(`concat(('a', 'b'), 'c')`). A new feature, not for 3.3.0.
+
+### 201. fn:sort#3 and array:sort#3 do not take an empty $key (the 4.0 form) — open (2026-11-28)
+
+Engine: **XQuery** and **XSLT**. The 4.0 draft declares `$key as (fn(...) as xs:anyAtomicType*)?` with the default `fn:data#1`.
+The engine requires a function ("Third argument to sort must be callable", XPTY0004); the declaration is F&O 3.1's
+(`function(*)`, exactly one).

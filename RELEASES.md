@@ -100,13 +100,13 @@ host maps, do not change. It requires PhoenixmlDb.XQuery 3.2.0 (GHSA-v27x-ffg3-3
 - A question to the processor in a streamed rule streams (#480): `system-property()`,
   `function-available()`, `element-available()`, `type-available()` and
   `available-system-properties()` read no input. Over 1,000,000 items, an `accumulator-after()`
-  total followed by `system-property('xsl:product-name')` peaks at 106 MiB (3.1.0: 986 MiB).
+  total followed by `system-property('xsl:product-name')` peaks far lower than in 3.1.0.
   Reported by Martin Honnen.
 - Constant memory over 1,000,000 items:
   - streamed `copy-of(path)` in a variable, and in a sequence such as `(copy-of(path), $x)`:
-    approx. 105 MiB (3.1.0: 650 MiB and 1.26 GiB) (#525);
-  - streamed `count(copy-of(path))`: approx. 102 MiB (3.1.0: 1.25 GiB) (#532);
-  - a streamed nested `xsl:apply-templates`: approx. 98 MiB (3.1.0: 932 MiB) (#533).
+    far lower than in 3.1.0 (#525);
+  - streamed `count(copy-of(path))`: far lower than in 3.1.0 (#532);
+  - a streamed nested `xsl:apply-templates`: far lower than in 3.1.0 (#533).
 - Streamed `count()` over a path that ends in `text()` or `node()` counts those nodes (#486).
 - Streamed `xsl:merge` (#488): a `select` is matched from the document node, a `select` with more
   than one step streams, the documents of one `xsl:merge-source` are merged in key order, and
@@ -212,14 +212,14 @@ CLI comes from it.
 
 - **The `TextReader` overloads stream** (#464): with a streamable initial mode, they read from the
   reader as the `Stream` overloads do. The CLI writes standard output as the result is produced:
-  `sum(root/item)` over 4 million items uses 100 MiB (3.0.0: 331 MiB).
+  `sum(root/item)` over 4 million items uses far less memory than 3.0.0.
 - **A streamed `xsl:source-document` with `use-accumulators="#all"` runs the accumulators.** In
   3.0.0 the values on streamed elements were those of an empty tree, with no error.
 - **`accumulator-after()` of the document node streams** (#461): after `xsl:apply-templates`, and
-  as the only read of the input. 3.0.0 read the input into a tree, about 1 GiB per million items.
+  as the only read of the input. 3.0.0 read the input into a tree, with memory growing with the input.
 - **A leading `/` in a rule for the document node is that node** (#468): in a `match="/"` rule,
-  `sum(/root/item)`, `sum(//item)` and `count(/root/item)` stream, about 100 MiB per million items
-  (3.0.0: about 800 MiB).
+  `sum(/root/item)`, `sum(//item)` and `count(/root/item)` stream, with memory far below
+  that of 3.0.0.
 - **An aggregate over a value computed from each element streams** (#462).
 - **With a caller's writer** (#472): `method="json"` output reaches the writer, and a source with
   strict or lax validation is read whole and validated as a tree.
@@ -332,21 +332,21 @@ for the details and workarounds.
   last, also in the chosen xsl:choose / xsl:if branch, and there the then/else of an if) runs as
   the caller's next iteration instead of nested, when the callee has the caller's `as` type.
   Tail recursion, direct or mutual, is no longer limited by the recursion depth (XTDE0000 at
-  1,200): a million iterations run in about 1.4 s. Not tail calls, and still limited: a call
+  1,200): a million iterations now complete. Not tail calls, and still limited: a call
   whose result is used, one inside xsl:try, a call of or from a memoised (`cache="yes"`,
   `new-each-time="no"`) or streamable function. A string walked with `substring($s, 2)` is passed
-  as a slice where the parameter is untyped or `xs:string`: a 100,000-character walk takes about
-  0.6 s. The trace listener reports each iteration as a call, as before. An infinite tail
+  as a slice where the parameter is untyped or `xs:string`: a 100,000-character walk is linear.
+  The trace listener reports each iteration as a call, as before. An infinite tail
   recursion now runs until the transformation is cancelled, as a loop does.
 
 - **XPath evaluations reuse their query context** (xquery#294): each used to make a new one, with
   its stacks and scope; a small pool now keeps them for the next evaluation, reset, and never one
-  a function item keeps. `iso_dsdl_include` over NY.EMS.v350: 4.2 GB -> 2.3 GB, time 0.93x;
-  W3C evaluate-010: 685 -> 370 MB. Output unchanged.
+  a function item keeps. `iso_dsdl_include` over one validator: lower allocation and slightly less time;
+  W3C evaluate-010: lower allocation. Output unchanged.
 
 - **A template parameter declared `as="xs:string"` also holds a slice** (xquery#293): the walk
-  of xquery#287 is linear for it too (a 100,000-character walk: 3.9 s and 10 GB -> 0.16 s and 438
-  MB). A type derived from xs:string still casts the value.
+  of xquery#287 is linear for it too (a 100,000-character walk: much faster, and it allocates far
+  less). A type derived from xs:string still casts the value.
 
 - **The element test inside `document-node()` in a step is applied** (xquery#292). In a step such
   as `self::document-node(element(N))` or `child::document-node(element(*, T))`, the element test
@@ -358,8 +358,8 @@ for the details and workarounds.
   An `xsl:call-template` parameter bound to `substring(...)`, without an `as` type, holds a slice of
   the original string instead of a copy of its rest; `substring`, `string-length` and `starts-with`
   read the slice, and any other use of the parameter sees an ordinary string. The ISO Schematron
-  skeleton's `sch-check:xpath-wf` walks every XPath this way: `iso_dsdl_include` over NY.EMS.v350
-  allocates 4.2 GB instead of 21.4 GB and runs in 1.9 s instead of 8.0 s; output byte-identical.
+  skeleton's `sch-check:xpath-wf` walks every XPath this way: `iso_dsdl_include` over one validator
+  allocates far less and runs faster; output byte-identical.
 
 - **New: `XsltTransformer.DocumentValidation`** (`XsltTransformOptions.DocumentValidation`).
   With `Strict` or `Lax`, the documents a transformation reads with `fn:doc`, `document()` and
@@ -371,7 +371,7 @@ for the details and workarounds.
 - **`xsl:evaluate` parses each target expression once per transformation** (#405): an instruction
   that evaluates the same text again reuses the expression it parsed and checked, where its
   namespace bindings are its own (no `namespace-context`). W3C evaluate-010, which evaluates two
-  strings 100,000 times, takes 1.2 s, not 2.7 s; the output is the same.
+  strings 100,000 times, is faster than before; the output is the same.
 
 - **In `xsl:override`, an `xsl:param` may override an `xsl:variable` of the used package, and an
   `xsl:variable` an `xsl:param`** (XSLT 3.0 §3.5.3.4): the overriding parameter takes the value
@@ -435,7 +435,7 @@ for the details and workarounds.
 
 - **The indentation pass grows its buffer in chunks** (#401). Sized for the whole result, it was one
   large-object-heap array, which only a full collection frees: the committed heap of the
-  Schematron compile of GA.EMS.v350 rose by 12 MB on Linux, and the peak private commit by 1.9 MB
+  Schematron compile of one validator rose on Linux, and the peak private commit rose slightly
   on Windows, against 2.9.0. It is back to the 2.9.0 level.
 - **`on-no-match="deep-copy"` keeps type annotations**: its built-in rule is
   `xsl:copy-of select="." validation="preserve"` (XSLT 3.0 §6.7.2). An element or attribute it
@@ -446,7 +446,7 @@ for the details and workarounds.
   the XQuery change for elements validated against a type.
 - **The in-scope namespaces of each stylesheet element are worked out once** (#401). Each instruction
   and XPath expression walked its ancestors' attributes for them. For a generated Schematron
-  validator of 2.3 MB, a compile now allocates 419 MB, not 465 MB (-10%).
+  validator of 2.3 MB, a compile now allocates less than before.
 - **`suppress-indentation` with the html method matches names as HTML does** (#400, which stays open). An element in no
   namespace or the XHTML namespace is matched by local name without case; any other element by its
   expanded QName, its prefix resolved through the namespace declarations of the output. The names
@@ -455,7 +455,7 @@ for the details and workarounds.
 - **`indent="yes"` for the xml and xhtml methods is one streaming pass** (#400, part 1; the issue stays open). The result
   was read into an `XDocument` and written again, then the text was passed over once more for
   `suppress-indentation`. It now goes once through an `XmlReader` and `XmlWriter`, with the same
-  bytes; the pass allocates 56% less (12.6 MB against 28.7 MB for a 1.8 MB result).
+  bytes; the pass allocates much less for a 1.8 MB result.
   `suppress-indentation` now names elements by expanded QName (Serialization 3.1 §7.1): it matched
   local names only, so `suppress-indentation="p"` also suppressed `x:p` in another namespace. An
   element keeps the prefix it has in the result tree; the `XDocument` pass could change it where
@@ -912,7 +912,7 @@ Hosts that run untrusted stylesheets under a time limit should set `RegexMatchTi
 
 ### Performance
 
-Applying a compiled Schematron validator is 2.6 to 3 times faster than 2.5.1, with identical
+Applying a compiled Schematron validator is faster than in 2.5.1, with identical
 SVRL: `xsl:apply-templates` allocates far less per call, XPath plans evaluate synchronously where
 the operator tree allows, and the built-in text-only-copy rule recurses directly.
 
@@ -1126,8 +1126,8 @@ XQuery moves with this release and the order matters: that package carries `xs:I
 **A match pattern carrying any predicate was O(n²) in sibling count** (#169). The predicate's
 content was irrelevant — `w:p[@zzz]` cost the same as one walking every descendant twice, because
 the cost was establishing `position()`/`last()` context for a predicate that cannot observe it.
-Measured on the issue's own repro: **12.6× faster at n=4000**, and a predicate now costs 3% over
-having none rather than 250%.
+On the issue's own repro: **much faster**, and a predicate now costs little over
+having none, where before it cost far more.
 
 ### Conformance
 
@@ -1215,7 +1215,7 @@ case the old behaviour was non-conformant.
   in scope. It fails identically on 1.8.0, 2.0.0 and every build between, so no release regressed.
 
   **This is what makes SchXslt2 transpilation work at all.** Before it, no `.sch` could be
-  transpiled on any build from 1.8.0 onward, the NEMSIS national rules included. Reported by
+  transpiled on any build from 1.8.0 onward, large real-world rule sets included. Reported by
   Martin Honnen.
 - **Martin's second report** — the DocBook xslTNG `XPTY0004` on `$hierarchical-uri` — is fixed by
   #132 above. Also pre-existing on 2.0.0.
@@ -1232,20 +1232,11 @@ case the old behaviour was non-conformant.
 ### Performance
 
 **Per-call-site and per-context setup is paid once instead of per evaluation** (#116). Measured on
-the Schematron corpus: the include step **3.81 → 2.70 minutes**, and the full compile
-**5.93 → 4.68 minutes**.
+the Schematron corpus: the include step got faster, and the full compile
+got faster too.
 
-**Both halves ship together.** The figures above are the XSLT evaluator alone. `PhoenixmlDb.XQuery`
-2.1.0 (#67) applies the same change to the XQuery evaluator, and this release pins it, so what a
-consumer actually installs is the pair:
-
-| | Total compile | Include step |
-|---|---|---|
-| 2.0.0 | 5.93 min | 3.81 min |
-| XSLT half alone | 4.68 min | 2.70 min |
-| **2.1.0 as shipped** | **3.97 min** | **2.06 min** |
-
-**46% off the include step.** Quoting either half on its own understates it by roughly half, which
+**Both halves ship together.** The result above is the XSLT evaluator alone. `PhoenixmlDb.XQuery`
+2.1.0 (#67) applies the same change to the XQuery evaluator, and this release pins it, so what a consumer actually installs is the pair, and with the pair **the include step is faster still.** Quoting either half on its own understates it, which
 is why the two engines are tagged as one train. All 231 compile-step outputs are byte-identical to
 2.0.0's.
 
@@ -1312,7 +1303,7 @@ metadata providers now receive `Q{uri}local` rather than a prefixed key).
   `fn:serialize` resolved namespace URIs only for one store type and emitted `xmlns:p=""` for
   everything else — output that would not reparse. XQuery 2.0.0 carries the store-aware
   serializers, so the override is retired rather than maintained in two places.
-- **Four defects found by compiling the NEMSIS schematrons**, from the Schematron session.
+- **Four defects found by compiling a Schematron suite**, from the Schematron session.
 
 ## 1.8.0 — 2026-09-13
 
@@ -2745,20 +2736,16 @@ Profile-driven streaming-allocation overhaul. No behavior or API changes.
 
 ### Bench: streaming-identity, 1M items
 
-| | alloc | elapsed | peak RSS |
-|---|---|---|---|
-| 1.4.3 baseline | 3328.6 MiB | 4921 ms | 16 MiB |
-| 1.4.4 | **368.4 MiB** | **3412 ms** | 16 MiB |
-| delta | **−88.9%** | **−30.7%** | flat |
+Allocation is much lower than in 1.4.3 and elapsed time is lower; peak RSS is unchanged.
 
 ### What changed
 
 `dotnet-trace --profile gc-verbose` plus a small `GCAllocationTick` aggregator on the 1M-item `streaming-identity` bench surfaced a sequence of distinct hotspots. Each was attacked one at a time, with the bench and a re-trace gating the next step.
 
-- **Match-context delegates cached.** `CreateMatchContext()` rebuilt seven `Func<>` delegates on every per-element template-match call (method-group conversions allocate a fresh delegate each call). The seven delegates plus the `XsltContext` instance together accounted for ~55% of the original streaming-identity allocation. Delegates are now built once lazily on the transformer / processor and reused.
+- **Match-context delegates cached.** `CreateMatchContext()` rebuilt seven `Func<>` delegates on every per-element template-match call (method-group conversions allocate a fresh delegate each call). The seven delegates plus the `XsltContext` instance together accounted for a large share of the original streaming-identity allocation. Delegates are now built once lazily on the transformer / processor and reused.
 - **XsltContext pooled via lease pattern.** Introduced a `MatchContextLease` ref struct with `Dispose`; 17 callsites (`FindMatchingTemplate`, `FindImportedTemplate`, `pattern.Matches`, etc.) migrated to `using var mc = AcquireMatchContext(...)`. The allocating `CreateMatchContext()` is kept as a fallback for callers that need the context out of scope.
 - **Scope pooled.** `PushScope` / `PopScope` draw from a per-context `Stack<Scope>` (cap 32); the lazy `Variables` / `TunnelParameters` dictionaries are `Clear()`'d in place so variable-heavy scopes reuse their hashtable rather than reallocating.
-- **`Scope.Variables` and `TunnelParameters` lazy-initialized.** Most template fires bind no variables; the eager pair of empty `Dictionary<QName, object?>` per `PushScope` was ~28% of post-delegate-cache alloc. Backing fields are now nullable; readers use new `VariablesOrNull` / `TunnelParametersOrNull` short-circuits in the three hot lookup paths.
+- **`Scope.Variables` and `TunnelParameters` lazy-initialized.** Most template fires bind no variables; the eager pair of empty `Dictionary<QName, object?>` per `PushScope` was a large share of the remaining allocation. Backing fields are now nullable; readers use new `VariablesOrNull` / `TunnelParametersOrNull` short-circuits in the three hot lookup paths.
 - **`StreamingNodeContext` pooled (element + per-attribute).** Properties switched from `init` to `set` so a single per-processor `Stack<StreamingNodeContext>` (cap 256) can mutate fields on reuse. `CleanupStreamingNode` releases both the inner attribute contexts and the outer element context.
 - **`XdmElement` pooled with backing lists.** `_elementPool` (cap 64) with `UnsafeAccessor` setters for the init-only `Namespace` / `LocalName` / `Prefix` / `Attributes` / `Children` / `NamespaceDeclarations` fields. The `List<NodeId>` attrIds and `List<XdmAttribute>` materializedAttrs are pooled in step, so their backing arrays are reused too. Safe under streaming mode — XSLT 3.0 §19 prohibits streamable templates from retaining non-grounded node refs across element boundaries.
 - **`XdmAttribute` pooled.** Mirrors the existing `XdmText` pool; per-processor `Stack<XdmAttribute>` (cap 128) with `UnsafeAccessor` field setters. `MaterializeElement` stashes the materialized refs on the streaming node context so cleanup can release them.
@@ -2808,7 +2795,7 @@ Native streaming `group-by` inside `ForEachGroupStreamingAsync` remains a deferr
 
 ### Perf: `XdmText` pooled in streaming processor
 
-`StreamingXmlProcessor` now reuses `XdmText` instances across the per-event Register/Remove cycle via a small instance-scoped pool. Reduces allocation by ~2.2% on a 1M-item streamed identity transform. Snapshot materialization and body-capture paths bypass the pool so captured snapshots never alias pooled instances.
+`StreamingXmlProcessor` now reuses `XdmText` instances across the per-event Register/Remove cycle via a small instance-scoped pool. Reduces allocation on a 1M-item streamed identity transform. Snapshot materialization and body-capture paths bypass the pool so captured snapshots never alias pooled instances.
 
 ## 1.4.1 (2026-06-01)
 
@@ -2886,15 +2873,15 @@ Conditional wrappers (`xsl:on-empty`, `xsl:on-non-empty`, `xsl:where-populated`)
 (facade) stream the serialized result incrementally to the caller's sink rather than
 buffering the entire result in a `StringBuilder`. The streaming processor drains the
 engine's internal output buffer at each event-loop boundary, so peak working-set delta
-for a 1M-item streamed identity transform measured at **17.2 MiB** (vs. hundreds of MiB
-to multi-GiB before, depending on result size).
+for a 1M-item streamed identity transform is far lower than before, by an amount that depends on
+result size.
 
 `TransformAsync(Stream, Stream)` also gained a fast path: when the stylesheet's initial
 mode is streamable, the input `Stream` is wrapped directly by `XmlReader.Create` instead
 of being fully read into a UTF-16 string via `ReadToEndAsync`. Non-streaming transforms
 keep their existing buffered semantics.
 
-The total allocation figure on very-large streams (~97 GiB for a 10M-item input) is
+The total allocation figure on very-large streams is
 dominated by per-event XdmText/XdmAttribute/XdmComment node-store churn and is addressed
 in a separate follow-up.
 
@@ -2982,10 +2969,10 @@ appending a `memory:` line with peak working-set bytes and total managed
 allocations alongside the parse/compile/transform breakdown:
 
 ```
-  parse:     12 ms
-  compile:   47 ms
-  transform: 134 ms
-  memory:    peak=86.3 MB  allocated=1.2 GB
+  parse:     <n> ms
+  compile:   <n> ms
+  transform: <n> ms
+  memory:    peak=<n> MB  allocated=<n> GB
 ```
 
 No library code changes from 1.3.19.
@@ -3889,17 +3876,9 @@ output is now stream-parsed via `XmlReader` directly into XDM nodes,
 eliminating the per-iteration DOM allocation that dominated wall time on
 large source documents.
 
-Bench result on a synthesized 10 MB Dataverse-shape XSD with the
-`projection-style` stylesheet (`xsl:variable as="element(entry)" / xsl:where-populated`
-inside a deep `xsl:for-each`):
+Benched on a synthesized 10 MB Dataverse-shape XSD with the `projection-style` stylesheet (`xsl:variable as="element(entry)" / xsl:where-populated` inside a deep `xsl:for-each`).
 
-| | Before | After |
-|---|---|---|
-| ProjectToReport (mean of 30 runs) | 4151 ms | 1593 ms |
-| ProjectToReport (median) | — | 1597 ms |
-| ProjectToReport (stddev) | — | 110 ms |
-
-Net: 2.6× speedup on this shape. No measurable change on identity-copy and
+Net: much faster on this shape. No measurable change on identity-copy and
 LRE-only workloads (those don't go through the body parse-back path).
 
 The bench harness gains a `micro` mode for reproducible A/B comparisons:
@@ -3908,7 +3887,7 @@ The bench harness gains a `micro` mode for reproducible A/B comparisons:
 dotnet run --project bench/PhoenixmlDb.Xslt.Bench -c Release -- micro report 30 10
 ```
 
-Reports min / median / p90 / max / mean / stddev across 30 iterations after
+Reports min / median / p90 / max / mean / stddev across repeated iterations after
 a 3-iteration warm-up.
 
 ## 1.2.10 (2026-05-06)
