@@ -9021,9 +9021,10 @@ element; a different `validate` result. For a node of another store, `lang()` an
 shipped hosts all give an `INodeStore` and were not affected. Found while answering db-engine's `fn:put` question (the
 parameters element of xquery#443's review).
 
-Fix: one internal helper, `NodeNamespaces`. For a node that a store holds (`XdmNode.Store`), it reads that store only: an id
-that store does not know has no URI, because another store's ids can name other URIs. Only a node that no store holds falls
-back to the provider, the context's node store and the namespace resolver. `fn:serialize` always uses `XQueryResultSerializer`; the second serializer
+Fix: one internal helper, `NodeNamespaces`, with one rule for the namespace URIs, the nodes of ids and the store of a node's
+tree. For a node that a store holds (`XdmNode.Store`), it reads that store only: an id that store does not know has no URI and
+no node, because another store's ids can name other URIs and nodes. Only a node that no store holds falls back to the
+provider, the context's node store and the namespace resolver. `fn:serialize` always uses `XQueryResultSerializer`; the second serializer
 is removed. `QueryEngine` takes the context's namespace resolver from the document resolver when the provider is not a store.
 
 Tests: `NamespaceFromNodeStoreTests`.
