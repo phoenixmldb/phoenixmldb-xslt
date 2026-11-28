@@ -8846,7 +8846,7 @@ store the first time they get its URI. An atomic counter alone does not fix it. 
 thread at a time (each store is a local of one call; update runs are sequential). The class documentation states the rule
 since xquery#445: one store, one thread at a time.
 
-### 183. The text output method wrote a space next to a node — fixed (xquery#442, 2026-11-26)
+### 183. The text output method wrote a space next to a node — fixed (xquery#442, 2026-11-27)
 
 Engine: **XQuery** (also XSLT's `fn:serialize`). In 3.2.0. `fn:serialize` with the text method wrote a space between any
 two items of a sequence, nodes too: `serialize((<a>x</a>, <b>y</b>), map { 'method': 'text' })` gave `x y`, and an array of
@@ -8878,7 +8878,7 @@ gave "v <b>x</b>", now "vx".
 Tests: `CliTextMethodTests` (each input compared with `fn:serialize` of the input with its top-level attributes replaced by
 their string values).
 
-### 185. A static call of a built-in function did not check the item types of its arguments — fixed (xquery#443, 2026-11-26)
+### 185. A static call of a built-in function did not check the item types of its arguments — fixed (xquery#443, 2026-11-27)
 
 Engine: **XQuery** and **XSLT** (the same built-in functions). In 3.2.0. A static call checked only the cardinality of each
 argument and its xs:string items; a dynamic call of the same function checked the item types. `name('x')` gave "",
